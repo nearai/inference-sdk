@@ -2,14 +2,10 @@
   "name": "verification-sdk",
   "version": "0.0.1",
   "type": "module",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js"
-    }
-  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
-    "./dist"
+    "dist"
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
