@@ -29,9 +29,7 @@ export async function verifyNvidiaGpu(
   );
 
   if (!response.ok) {
-    throw Error(
-      `Get GPU attestation failed with status code ${response.status}`,
-    );
+    throw Error(`Verify Nvidia GPU failed with status code ${response.status}`);
   }
 
   const verification = await response.json();
