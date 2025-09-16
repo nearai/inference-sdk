@@ -10,8 +10,8 @@
   "scripts": {
     "build": "rm -rf dist && tsup",
     "check": "tsc",
-    "lint": "eslint 'src/**/*.ts' '*.js' --fix",
-    "prettier": "prettier 'src/**/*.ts' '*.js' --write --list-different",
+    "lint": "eslint 'src/**/*.ts' '*.mjs' --fix",
+    "prettier": "prettier 'src/**/*.ts' '*.mjs' --write --list-different",
     "prepare": "husky",
     "prepublishOnly": "pnpm build"
   },
