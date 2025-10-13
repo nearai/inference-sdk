@@ -1,7 +1,5 @@
 import {
-  NvidiaGpuJwtPayload,
   NvidiaGpuVerificationRaw,
-  NvidiaJwtPayload,
   NvidiaGpuVerification,
 } from '../types/nvidia';
 import { decodeJwt } from 'jose';
@@ -10,7 +8,11 @@ import { mapRecord } from './common';
 export function isNvidiaGpuVerified(
   verification: NvidiaGpuVerification,
 ): boolean {
-  return verification.JWT['x-nvidia-overall-att-result'];
+  const result = verification.JWT['x-nvidia-overall-att-result'];
+  if (typeof result !== 'boolean') {
+    throw Error('Unreachable: `x-nvidia-overall-att-result` is not a boolean');
+  }
+  return result;
 }
 
 export async function verifyNvidiaGpu(
@@ -41,10 +43,7 @@ function parseNvidiaGpuVerification(
   verification: NvidiaGpuVerificationRaw,
 ): NvidiaGpuVerification {
   return {
-    JWT: decodeJwt(verification[0][1]) as NvidiaJwtPayload,
-    GPU: mapRecord(
-      verification[1],
-      (key, value) => decodeJwt(value) as NvidiaGpuJwtPayload,
-    ),
+    JWT: decodeJwt(verification[0][1]),
+    GPU: mapRecord(verification[1], (key, value) => decodeJwt(value)),
   };
 }
