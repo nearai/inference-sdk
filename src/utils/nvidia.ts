@@ -4,6 +4,7 @@ import {
 } from '../types/nvidia';
 import { decodeJwt } from 'jose';
 import { mapRecord } from './common';
+import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 
 export function isNvidiaGpuVerified(
   verification: NvidiaGpuVerification,
@@ -18,17 +19,14 @@ export function isNvidiaGpuVerified(
 export async function verifyNvidiaGpu(
   payload: string,
 ): Promise<NvidiaGpuVerification> {
-  const response = await fetch(
-    'https://nras.attestation.nvidia.com/v3/attest/gpu',
-    {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: payload,
+  const response = await fetch(NVIDIA_GPU_VERIFIER_API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json',
     },
-  );
+    body: payload,
+  });
 
   if (!response.ok) {
     throw Error(`Verify Nvidia GPU failed with status code ${response.status}`);
