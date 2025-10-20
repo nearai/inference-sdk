@@ -16,10 +16,14 @@
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "jose": "^6.1.0"
+    "buffer": "^6.0.3",
+    "ethers": "^6.15.0",
+    "jose": "^6.1.0",
+    "sha256": "^0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.23.0",
+    "@types/sha256": "^0.2.2",
     "eslint": "^9.23.0",
     "husky": "^9.1.6",
     "lint-staged": "^15.2.10",
