@@ -1,12 +1,18 @@
 export {
-  verifyAttestationReport,
+  verifyModelAttestation,
   isModelAttestationReportVerified,
+} from './utils/attestation';
+export {
+  ModelAttestationVerification,
+  ModelAttestation,
+} from './types/attestation';
+
+export {
+  verifyGatewayAttestation,
   isGatewayAttestationReportVerified,
 } from './utils/attestation';
 export {
-  AttestationReportVerification,
-  AttestationReport,
-  ModelAttestation,
+  GatewayAttestationVerification,
   GatewayAttestation,
 } from './types/attestation';
 

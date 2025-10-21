@@ -1,14 +1,9 @@
 import { NvidiaGpuVerification } from './nvidia';
 import { IntelTdxVerification } from './intel';
 
-export type AttestationReportVerification = {
+export type ModelAttestationVerification = {
   intel: IntelTdxVerification;
   nvidia: NvidiaGpuVerification;
-};
-
-export type AttestationReport = ModelAttestation & {
-  model_attestations: ModelAttestation[];
-  gateway_attestation?: GatewayAttestation;
 };
 
 export type ModelAttestation = {
@@ -16,6 +11,10 @@ export type ModelAttestation = {
   intel_quote: string;
   nvidia_payload: string;
   request_nonce: string;
+};
+
+export type GatewayAttestationVerification = {
+  intel: IntelTdxVerification;
 };
 
 export type GatewayAttestation = {
