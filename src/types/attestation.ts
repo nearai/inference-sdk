@@ -11,6 +11,9 @@ export type AttestationReport = {
   intel_quote: string;
   nvidia_payload: string;
   all_attestations?: AttestationReport[];
+  model_attestations?: AttestationReport[];
+  gateway_attestation?: AttestationReport;
+  signing_algo?: string;
   info: {
     tcb_info:
       | string
@@ -18,7 +21,4 @@ export type AttestationReport = {
           app_compose: string;
         };
   };
-  signing_algo?: string;
-  model_attestations?: AttestationReport[];
-  gateway_attestation?: AttestationReport;
 };

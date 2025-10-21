@@ -1,4 +1,5 @@
 import {
+  ChatMessage,
   ChatMessageSignature,
   ChatMessageVerification,
 } from '../types/signature';
@@ -10,24 +11,24 @@ import { trim0x } from './common';
 export function isChatMessageVerified(
   verification: ChatMessageVerification,
 ): boolean {
-  return verification.isHashMatched && verification.isSignatureVerified;
+  return verification.isHashVerified && verification.isSignatureVerified;
 }
 
 export function verifyChatMessage(
+  message: ChatMessage,
   signature: ChatMessageSignature,
-  { requestBody, responseBody }: { requestBody: Buffer; responseBody: Buffer },
 ): ChatMessageVerification {
-  const requestHash = sha256(requestBody);
-  const responseHash = sha256(responseBody);
+  const requestHash = sha256(message.requestBody);
+  const responseHash = sha256(message.responseBody);
   const isHashMatched = compareHash(signature.text, requestHash, responseHash);
-  const isSignatureVerified = verifySignature(signature);
+  const isSignatureVerified = verifyChatMessageSignature(signature);
   return {
-    isHashMatched,
+    isHashVerified: isHashMatched,
     isSignatureVerified,
   };
 }
 
-function verifySignature(signature: ChatMessageSignature): boolean {
+function verifyChatMessageSignature(signature: ChatMessageSignature): boolean {
   if (signature.signing_algo === 'ecdsa') {
     const recoveredAddress = ethers.verifyMessage(
       signature.text,

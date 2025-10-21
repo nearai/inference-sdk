@@ -1,7 +1,9 @@
 export type ChatMessageVerification = {
-  isHashMatched: boolean;
+  isHashVerified: boolean;
   isSignatureVerified: boolean;
 };
+
+export type ChatMessage = { requestBody: Buffer; responseBody: Buffer };
 
 export type ChatMessageSignature = {
   text: string;
