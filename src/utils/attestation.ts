@@ -11,10 +11,9 @@ export function isModelAttestationReportVerified(
   requestNonce: string,
   signingAddress: string,
 ): boolean {
-  return isAttestationReportVerified(
-    verification,
-    requestNonce,
-    signingAddress,
+  return (
+    isIntelTdxVerified(verification.intel, requestNonce, signingAddress) &&
+    isNvidiaGpuVerified(verification.nvidia)
   );
 }
 
@@ -22,21 +21,10 @@ export function isGatewayAttestationReportVerified(
   verification: AttestationReportVerification,
   requestNonce: string,
 ): boolean {
-  return isAttestationReportVerified(
-    verification,
+  return isIntelTdxVerified(
+    verification.intel,
     requestNonce,
     ETHEREUM_ZERO_ADDRESS,
-  );
-}
-
-function isAttestationReportVerified(
-  verification: AttestationReportVerification,
-  requestNonce: string,
-  signingAddress: string,
-): boolean {
-  return (
-    isIntelTdxVerified(verification.intel, requestNonce, signingAddress) &&
-    isNvidiaGpuVerified(verification.nvidia)
   );
 }
 

@@ -11,7 +11,7 @@ export function isNvidiaGpuVerified(
 ): boolean {
   const result = verification.JWT['x-nvidia-overall-att-result'];
   if (typeof result !== 'boolean') {
-    throw Error('Unreachable: `x-nvidia-overall-att-result` is not a boolean');
+    throw Error('x-nvidia-overall-att-result is invalid');
   }
   return result;
 }

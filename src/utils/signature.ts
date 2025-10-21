@@ -18,12 +18,14 @@ export function verifyChatMessage(
   message: ChatMessage,
   signature: ChatMessageSignature,
 ): ChatMessageVerification {
-  const requestHash = sha256(message.requestBody);
-  const responseHash = sha256(message.responseBody);
-  const isHashMatched = compareHash(signature.text, requestHash, responseHash);
+  const isHashVerified = compareHash(
+    signature.text,
+    message.requestBody,
+    message.responseBody,
+  );
   const isSignatureVerified = verifyChatMessageSignature(signature);
   return {
-    isHashVerified: isHashMatched,
+    isHashVerified,
     isSignatureVerified,
   };
 }
@@ -49,8 +51,8 @@ function verifyChatMessageSignature(signature: ChatMessageSignature): boolean {
 
 function compareHash(
   text: string,
-  requestHash: string,
-  responseHash: string,
+  requestBody: Buffer,
+  responseBody: Buffer,
 ): boolean {
-  return text === `${requestHash}:${responseHash}`;
+  return text === `${sha256(requestBody)}:${sha256(responseBody)}`;
 }

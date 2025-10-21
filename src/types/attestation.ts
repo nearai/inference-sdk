@@ -6,20 +6,19 @@ export type AttestationReportVerification = {
   nvidia: NvidiaGpuVerification;
 };
 
-export type AttestationReport = {
+export type AttestationReport = ModelAttestation & {
+  model_attestations: ModelAttestation[];
+  gateway_attestation?: GatewayAttestation;
+};
+
+export type ModelAttestation = {
   signing_address: string;
   intel_quote: string;
   nvidia_payload: string;
   request_nonce: string;
-  all_attestations?: AttestationReport[];
-  model_attestations?: AttestationReport[];
-  gateway_attestation?: AttestationReport;
-  signing_algo?: string;
-  info?: {
-    tcb_info:
-      | string
-      | {
-          app_compose: string;
-        };
-  };
+};
+
+export type GatewayAttestation = {
+  intel_quote: string;
+  request_nonce: string;
 };

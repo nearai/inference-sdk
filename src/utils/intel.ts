@@ -18,35 +18,13 @@ export function isIntelTdxVerified(
   );
 }
 
-function isReportDataVerified(
-  reportData: string,
-  requestNonce: string,
-  signingAddress: string,
-): boolean {
-  const reportDataRaw = hexToBuffer(reportData);
-  const signingAddressRaw = hexToBuffer(signingAddress);
-
-  const embeddedAddress = reportDataRaw.subarray(0, 32);
-  const embeddedNonce = reportDataRaw.subarray(32);
-
-  const addressVerified = embeddedAddress.equals(
-    Buffer.concat([
-      signingAddressRaw,
-      Buffer.alloc(32 - signingAddressRaw.length, 0),
-    ]),
-  );
-  const nonceVerified = embeddedNonce.equals(hexToBuffer(requestNonce));
-
-  return addressVerified && nonceVerified;
-}
-
 export async function verifyIntelTdx(
   quote: string,
 ): Promise<IntelTdxVerification> {
   return verifyIntelTdxLocal(quote);
 }
 
-async function verifyIntelTdxLocal(
+export async function verifyIntelTdxLocal(
   quote: string,
 ): Promise<IntelTdxVerification> {
   const quoteRaw = hexToBuffer(quote);
@@ -94,8 +72,7 @@ async function verifyIntelTdxLocal(
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function verifyIntelTdxRemote(
+export async function verifyIntelTdxRemote(
   quote: string,
 ): Promise<IntelTdxVerification> {
   const response = await fetch(INTEL_TDX_VERIFIER_API_URL, {
@@ -112,4 +89,26 @@ async function verifyIntelTdxRemote(
   }
 
   return await response.json();
+}
+
+function isReportDataVerified(
+  reportData: string,
+  requestNonce: string,
+  signingAddress: string,
+): boolean {
+  const reportDataRaw = hexToBuffer(reportData);
+  const signingAddressRaw = hexToBuffer(signingAddress);
+
+  const embeddedAddress = reportDataRaw.subarray(0, 32);
+  const embeddedNonce = reportDataRaw.subarray(32);
+
+  const addressVerified = embeddedAddress.equals(
+    Buffer.concat([
+      signingAddressRaw,
+      Buffer.alloc(32 - signingAddressRaw.length, 0),
+    ]),
+  );
+  const nonceVerified = embeddedNonce.equals(hexToBuffer(requestNonce));
+
+  return addressVerified && nonceVerified;
 }
