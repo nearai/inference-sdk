@@ -4,18 +4,39 @@ import {
 } from '../types/attestation';
 import { isIntelTdxVerified, verifyIntelTdx } from './intel';
 import { isNvidiaGpuVerified, verifyNvidiaGpu } from './nvidia';
+import { ETHEREUM_ZERO_ADDRESS } from './consts';
 
-export function isAttestationReportVerified(
+export function isModelAttestationReportVerified(
   verification: AttestationReportVerification,
-  report: AttestationReport,
+  requestNonce: string,
+  signingAddress: string,
+): boolean {
+  return isAttestationReportVerified(
+    verification,
+    signingAddress,
+    requestNonce,
+  );
+}
+
+export function isGatewayAttestationReportVerified(
+  verification: AttestationReportVerification,
   requestNonce: string,
 ): boolean {
+  return isAttestationReportVerified(
+    verification,
+    ETHEREUM_ZERO_ADDRESS,
+    requestNonce,
+  );
+}
+
+function isAttestationReportVerified(
+  verification: AttestationReportVerification,
+  requestNonce: string,
+  signingAddress: string,
+): boolean {
   return (
-    isIntelTdxVerified(
-      verification.intel,
-      report.signing_address,
-      requestNonce,
-    ) && isNvidiaGpuVerified(verification.nvidia)
+    isIntelTdxVerified(verification.intel, requestNonce, signingAddress) &&
+    isNvidiaGpuVerified(verification.nvidia)
   );
 }
 

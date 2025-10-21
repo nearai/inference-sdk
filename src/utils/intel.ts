@@ -1,27 +1,27 @@
-import { INTEL_TDX_VERIFIER_API_URL } from './consts';
+import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
 import { IntelTdxVerification } from '../types/intel';
 import { hexToBuffer } from './common';
+import { js_verify, js_get_collateral } from '@phala/dcap-qvl-node';
 
 export function isIntelTdxVerified(
   verification: IntelTdxVerification,
-  signingAddress: string,
   requestNonce: string,
+  signingAddress: string,
 ): boolean {
   return (
-    verification.success &&
     verification.quote.verified &&
     isReportDataVerified(
       verification.quote.body.reportdata,
-      signingAddress,
       requestNonce,
+      signingAddress,
     )
   );
 }
 
 function isReportDataVerified(
   reportData: string,
-  signingAddress: string,
   requestNonce: string,
+  signingAddress: string,
 ): boolean {
   const reportDataRaw = hexToBuffer(reportData);
   const signingAddressRaw = hexToBuffer(signingAddress);
@@ -41,6 +41,50 @@ function isReportDataVerified(
 }
 
 export async function verifyIntelTdx(
+  quote: string,
+): Promise<IntelTdxVerification> {
+  return verifyIntelTdxLocal(quote);
+}
+
+async function verifyIntelTdxLocal(
+  quote: string,
+): Promise<IntelTdxVerification> {
+  const now = BigInt(Math.floor(Date.now() / 1000));
+  const quoteRaw = hexToBuffer(quote);
+  const quoteCollateral = await js_get_collateral(INTEL_PCCS_API_URL, quoteRaw);
+  const verificationRaw = js_verify(quoteRaw, quoteCollateral, now);
+
+  const td10 = verificationRaw?.report?.TD10 ? verificationRaw.report.TD10 : {};
+  if (!td10.report_data || typeof td10.report_data !== 'string') {
+    throw Error('Failed to verify intel tdx: bad report_data');
+  }
+  if (!td10.mr_config_id || typeof td10.mr_config_id !== 'string') {
+    throw Error('Failed to verify intel tdx: bad mr_config_id');
+  }
+
+  const reportData: string = td10.report_data;
+  const mrConfig: string = td10.mr_config_id;
+
+  const status: string | undefined =
+    typeof verificationRaw?.status === 'string'
+      ? verificationRaw.status
+      : undefined;
+  const verifiedFromStatus = status ? status === 'UpToDate' : false;
+  const verified = verifiedFromStatus || !!verificationRaw?.quote?.verified;
+
+  return {
+    quote: {
+      body: {
+        reportdata: reportData,
+        mrconfig: mrConfig,
+      },
+      verified,
+    },
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function verifyIntelTdxRemote(
   quote: string,
 ): Promise<IntelTdxVerification> {
   const response = await fetch(INTEL_TDX_VERIFIER_API_URL, {

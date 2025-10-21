@@ -6,7 +6,8 @@ export { NvidiaGpuVerification } from './types/nvidia';
 
 export {
   verifyAttestationReport,
-  isAttestationReportVerified,
+  isModelAttestationReportVerified,
+  isGatewayAttestationReportVerified,
 } from './utils/attestation';
 export {
   AttestationReportVerification,
