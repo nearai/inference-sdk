@@ -13,8 +13,8 @@ export function isModelAttestationReportVerified(
 ): boolean {
   return isAttestationReportVerified(
     verification,
-    signingAddress,
     requestNonce,
+    signingAddress,
   );
 }
 
@@ -24,8 +24,8 @@ export function isGatewayAttestationReportVerified(
 ): boolean {
   return isAttestationReportVerified(
     verification,
-    ETHEREUM_ZERO_ADDRESS,
     requestNonce,
+    ETHEREUM_ZERO_ADDRESS,
   );
 }
 

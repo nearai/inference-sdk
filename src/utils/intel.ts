@@ -49,10 +49,21 @@ export async function verifyIntelTdx(
 async function verifyIntelTdxLocal(
   quote: string,
 ): Promise<IntelTdxVerification> {
-  const now = BigInt(Math.floor(Date.now() / 1000));
   const quoteRaw = hexToBuffer(quote);
-  const quoteCollateral = await js_get_collateral(INTEL_PCCS_API_URL, quoteRaw);
-  const verificationRaw = js_verify(quoteRaw, quoteCollateral, now);
+
+  let collateral;
+
+  try {
+    collateral = await js_get_collateral(INTEL_PCCS_API_URL, quoteRaw);
+  } catch {
+    throw Error('Failed to get collateral');
+  }
+
+  const verificationRaw = js_verify(
+    quoteRaw,
+    collateral,
+    BigInt(Math.floor(Date.now() / 1000)),
+  );
 
   const td10 = verificationRaw?.report?.TD10 ? verificationRaw.report.TD10 : {};
   if (!td10.report_data || typeof td10.report_data !== 'string') {
