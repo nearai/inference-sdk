@@ -12,10 +12,10 @@ export function mapRecord<K extends string | number | symbol, V, U>(
 }
 
 export function hexToBuffer(hex: string): Buffer {
-  return Buffer.from(trim0x(hex), 'hex');
+  return Buffer.from(trimHexPrefix(hex), 'hex');
 }
 
-export function trim0x(hex: string): string {
+export function trimHexPrefix(hex: string): string {
   if (hex.startsWith('0x')) {
     return hex.slice(2);
   }
