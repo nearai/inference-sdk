@@ -1,11 +1,3 @@
-import { Buffer } from 'buffer';
-
-export type VerifyChatMessageParams = {
-  requestBody: Buffer;
-  responseBody: Buffer;
-  signature: ChatMessageSignature;
-};
-
 export type ChatMessageVerification = {
   isHashMatched: boolean;
   isSignatureVerified: boolean;

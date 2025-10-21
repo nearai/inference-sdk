@@ -1,10 +1,11 @@
 import {
   ChatMessageSignature,
   ChatMessageVerification,
-  VerifyChatMessageParams,
 } from '../types/signature';
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
+import * as nacl from 'tweetnacl';
+import { trim0x } from './common';
 
 export function isChatMessageVerified(
   verification: ChatMessageVerification,
@@ -12,11 +13,10 @@ export function isChatMessageVerified(
   return verification.isHashMatched && verification.isSignatureVerified;
 }
 
-export function verifyChatMessage({
-  requestBody,
-  responseBody,
-  signature,
-}: VerifyChatMessageParams): ChatMessageVerification {
+export function verifyChatMessage(
+  signature: ChatMessageSignature,
+  { requestBody, responseBody }: { requestBody: Buffer; responseBody: Buffer },
+): ChatMessageVerification {
   const requestHash = sha256(requestBody);
   const responseHash = sha256(responseBody);
   const isHashMatched = compareHash(signature.text, requestHash, responseHash);
@@ -33,18 +33,18 @@ function verifySignature(signature: ChatMessageSignature): boolean {
       signature.text,
       signature.signature,
     );
-    const recoveredAddressRaw = Buffer.from(
-      recoveredAddress.replace('0x', ''),
-      'hex',
-    );
+    const recoveredAddressRaw = Buffer.from(trim0x(recoveredAddress), 'hex');
     const signingAddressRaw = Buffer.from(
-      signature.signing_address.replace('0x', ''),
+      trim0x(signature.signing_address),
       'hex',
     );
     return recoveredAddressRaw.equals(signingAddressRaw);
   } else {
-    throw Error(
-      `Unimplemented signature verification for signing algo: ${signature.signing_algo}`,
+    const publicKey = Buffer.from(trim0x(signature.signing_address), 'hex');
+    return nacl.sign.detached.verify(
+      Buffer.from(signature.text, 'utf-8'),
+      Buffer.from(trim0x(signature.signature), 'hex'),
+      publicKey,
     );
   }
 }

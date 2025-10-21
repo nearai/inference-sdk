@@ -10,3 +10,10 @@ export function mapRecord<K extends string | number | symbol, V, U>(
 
   return result;
 }
+
+export function trim0x(s: string): string {
+  if (s.startsWith('0x')) {
+    return s.slice(2);
+  }
+  return s;
+}

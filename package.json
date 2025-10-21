@@ -19,7 +19,8 @@
     "buffer": "^6.0.3",
     "ethers": "^6.15.0",
     "jose": "^6.1.0",
-    "sha256": "^0.2.0"
+    "sha256": "^0.2.0",
+    "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.23.0",
