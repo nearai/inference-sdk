@@ -2,9 +2,9 @@ export type IntelTdxVerification = {
   success: boolean;
   quote: {
     verified: boolean;
-
-    [k: string]: unknown;
+    body: {
+      mrconfig: string;
+      reportdata: string;
+    };
   };
-
-  [k: string]: unknown;
 };

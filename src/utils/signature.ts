@@ -6,7 +6,7 @@ import {
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
-import { trim0x } from './common';
+import { hexToBuffer } from './common';
 
 export function isChatMessageVerified(
   verification: ChatMessageVerification,
@@ -34,17 +34,14 @@ function verifyChatMessageSignature(signature: ChatMessageSignature): boolean {
       signature.text,
       signature.signature,
     );
-    const recoveredAddressRaw = Buffer.from(trim0x(recoveredAddress), 'hex');
-    const signingAddressRaw = Buffer.from(
-      trim0x(signature.signing_address),
-      'hex',
-    );
+    const recoveredAddressRaw = hexToBuffer(recoveredAddress);
+    const signingAddressRaw = hexToBuffer(signature.signing_address);
     return recoveredAddressRaw.equals(signingAddressRaw);
   } else {
-    const publicKey = Buffer.from(trim0x(signature.signing_address), 'hex');
+    const publicKey = hexToBuffer(signature.signing_address);
     return nacl.sign.detached.verify(
-      Buffer.from(signature.text, 'utf-8'),
-      Buffer.from(trim0x(signature.signature), 'hex'),
+      Buffer.from(signature.text),
+      hexToBuffer(signature.signature),
       publicKey,
     );
   }

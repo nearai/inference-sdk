@@ -17,5 +17,4 @@ export { verifyChatMessage, isChatMessageVerified } from './utils/signature';
 export {
   ChatMessageVerification,
   ChatMessageSignature,
-  SigningAlgo,
 } from './types/signature';

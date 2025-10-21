@@ -10,11 +10,12 @@ export type AttestationReport = {
   signing_address: string;
   intel_quote: string;
   nvidia_payload: string;
+  request_nonce: string;
   all_attestations?: AttestationReport[];
   model_attestations?: AttestationReport[];
   gateway_attestation?: AttestationReport;
   signing_algo?: string;
-  info: {
+  info?: {
     tcb_info:
       | string
       | {

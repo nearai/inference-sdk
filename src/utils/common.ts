@@ -11,9 +11,13 @@ export function mapRecord<K extends string | number | symbol, V, U>(
   return result;
 }
 
-export function trim0x(s: string): string {
-  if (s.startsWith('0x')) {
-    return s.slice(2);
+export function trim0x(hex: string): string {
+  if (hex.startsWith('0x')) {
+    return hex.slice(2);
   }
-  return s;
+  return hex;
+}
+
+export function hexToBuffer(hex: string): Buffer {
+  return Buffer.from(trim0x(hex), 'hex');
 }

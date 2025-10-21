@@ -7,10 +7,15 @@ import { isNvidiaGpuVerified, verifyNvidiaGpu } from './nvidia';
 
 export function isAttestationReportVerified(
   verification: AttestationReportVerification,
+  report: AttestationReport,
+  requestNonce: string,
 ): boolean {
   return (
-    isIntelTdxVerified(verification.intel) &&
-    isNvidiaGpuVerified(verification.nvidia)
+    isIntelTdxVerified(
+      verification.intel,
+      report.signing_address,
+      requestNonce,
+    ) && isNvidiaGpuVerified(verification.nvidia)
   );
 }
 

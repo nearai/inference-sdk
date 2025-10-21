@@ -9,7 +9,5 @@ export type ChatMessageSignature = {
   text: string;
   signature: string;
   signing_address: string;
-  signing_algo: SigningAlgo;
+  signing_algo: 'ecdsa' | 'ed25519';
 };
-
-export type SigningAlgo = 'ecdsa' | 'ed25519';
