@@ -17,9 +17,6 @@ importers:
       ethers:
         specifier: ^6.15.0
         version: 6.15.0
-      jose:
-        specifier: ^6.1.0
-        version: 6.1.0
       sha256:
         specifier: ^0.2.0
         version: 0.2.0
@@ -1664,9 +1661,6 @@ packages:
     peerDependenciesMeta:
       node-notifier:
         optional: true
-
-  jose@6.1.0:
-    resolution: {integrity: sha512-TTQJyoEoKcC1lscpVDCSsVgYzUDg/0Bt3WE//WiTPK6uOCQC2KZS4MpugbMWt/zyjkopgZoXhZuCi00gLudfUA==}
 
   joycon@3.1.1:
     resolution: {integrity: sha512-34wB/Y7MW7bzjKRjUKTa46I2Z7eV62Rkhva+KkopW7Qvv/OSWBqvkSY7vusOPrNuZcUG3tApvdVgNB8POj3SPw==}
@@ -4212,8 +4206,6 @@ snapshots:
       - esbuild-register
       - supports-color
       - ts-node
-
-  jose@6.1.0: {}
 
   joycon@3.1.1: {}
 

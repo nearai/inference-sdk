@@ -2,8 +2,7 @@ import {
   NvidiaGpuVerificationRaw,
   NvidiaGpuVerification,
 } from '../types/nvidia';
-import { decodeJwt } from 'jose';
-import { mapRecord } from './common';
+import { decodeJwt, mapRecord } from './common';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 
 export function isNvidiaGpuVerified(

@@ -16,9 +16,16 @@ export {
   GatewayAttestation,
 } from './types/attestation';
 
-export { verifyChat, isChatVerified } from './utils/signature';
-export { ChatVerification, ChatSignature } from './types/signature';
-
-// Helper types
 export { AttestationReport } from './types/attestation';
-export { JWTPayload } from 'jose';
+export { IntelTdxVerification } from './types/intel';
+export { NvidiaGpuVerification } from './types/nvidia';
+
+export { verifyChat, isChatVerified } from './utils/signature';
+export {
+  ChatVerification,
+  ChatSignature,
+  Chat,
+  SigningAlgo,
+} from './types/signature';
+
+export { JwtPayload } from './types/common';

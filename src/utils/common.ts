@@ -1,3 +1,19 @@
+import { JwtPayload } from '../types/common';
+
+export function decodeJwt(jwt: string): JwtPayload {
+  const parts = jwt.split('.');
+
+  if (parts.length !== 3) {
+    throw Error('Invalid JWT format');
+  }
+
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64').toString());
+  } catch {
+    throw Error('Invalid JWT payload');
+  }
+}
+
 export function mapRecord<K extends string | number | symbol, V, U>(
   record: Record<K, V>,
   map: (key: K, value: V) => U,
