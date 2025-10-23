@@ -1,36 +1,30 @@
-import {
-  ChatMessage,
-  ChatMessageSignature,
-  ChatMessageVerification,
-} from '../types/signature';
+import { Chat, ChatSignature, ChatVerification } from '../types/signature';
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
 import { hexToBuffer } from './common';
 
-export function isChatMessageVerified(
-  verification: ChatMessageVerification,
-): boolean {
+export function isChatVerified(verification: ChatVerification): boolean {
   return verification.isHashVerified && verification.isSignatureVerified;
 }
 
-export function verifyChatMessage(
-  message: ChatMessage,
-  signature: ChatMessageSignature,
-): ChatMessageVerification {
+export function verifyChat(
+  message: Chat,
+  signature: ChatSignature,
+): ChatVerification {
   const isHashVerified = compareHash(
     signature.text,
     message.requestBody,
     message.responseBody,
   );
-  const isSignatureVerified = verifyChatMessageSignature(signature);
+  const isSignatureVerified = verifyChatSignature(signature);
   return {
     isHashVerified,
     isSignatureVerified,
   };
 }
 
-function verifyChatMessageSignature(signature: ChatMessageSignature): boolean {
+function verifyChatSignature(signature: ChatSignature): boolean {
   if (signature.signing_algo === 'ecdsa') {
     const recoveredAddress = ethers.verifyMessage(
       signature.text,

@@ -16,8 +16,7 @@ export {
   GatewayAttestation,
 } from './types/attestation';
 
-export { verifyChatMessage, isChatMessageVerified } from './utils/signature';
-export {
-  ChatMessageVerification,
-  ChatMessageSignature,
-} from './types/signature';
+export { AttestationReport } from './types/attestation';
+
+export { verifyChat, isChatVerified } from './utils/signature';
+export { ChatVerification, ChatSignature } from './types/signature';

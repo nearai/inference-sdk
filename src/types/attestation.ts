@@ -21,3 +21,8 @@ export type GatewayAttestation = {
   intel_quote: string;
   request_nonce: string;
 };
+
+export type AttestationReport = ModelAttestation & {
+  gateway_attestation: GatewayAttestation;
+  model_attestations: ModelAttestation[];
+};

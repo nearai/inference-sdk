@@ -1,11 +1,11 @@
-export type ChatMessageVerification = {
+export type ChatVerification = {
   isHashVerified: boolean;
   isSignatureVerified: boolean;
 };
 
-export type ChatMessage = { requestBody: Buffer; responseBody: Buffer };
+export type Chat = { requestBody: Buffer; responseBody: Buffer };
 
-export type ChatMessageSignature = {
+export type ChatSignature = {
   text: string;
   signature: string;
   signing_address: string;
