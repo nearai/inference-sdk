@@ -58,8 +58,8 @@ export async function chatCompletions({
    `${apiUrl}/chat/completions`, {
     method: 'POST',
     headers: {
-      'content-type': 'application/json',
       'authorization': `Bearer ${apiKey}`,
+      'content-type': 'application/json',
     },
     body: requestBodyRaw,
   });
