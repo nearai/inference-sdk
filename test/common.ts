@@ -1,4 +1,4 @@
-import { ChatSignature, AttestationReport } from '../src';
+import { ChatSignature, AttestationReport, SigningAlgo } from '../src';
 import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
 
 export async function fetchAttestationReport(
@@ -31,7 +31,7 @@ export async function fetchChatSignature(
   apiKey: string,
   chatId: string,
   model: string,
-  signingAlgo: string,
+  signingAlgo: SigningAlgo,
 ): Promise<ChatSignature> {
   const res = await fetch(
     `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${encodeURIComponent(signingAlgo)}`,

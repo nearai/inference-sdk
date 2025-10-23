@@ -20,7 +20,7 @@ describe('signature', () => {
       },
     });
 
-    const signature = await fetchChatSignature(
+    const signatureEcdsa = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
       res.responseBody.id,
@@ -28,14 +28,34 @@ describe('signature', () => {
       'ecdsa',
     );
 
-    const verification = verifyChat(
+    const verificationEcdsa = verifyChat(
       {
         requestBody: res.requestBodyRaw,
         responseBody: res.responseBodyRaw,
       },
-      signature,
+      signatureEcdsa,
     );
 
-    expect(isChatVerified(verification)).toBe(true);
+    expect(signatureEcdsa.signing_algo).toEqual('ecdsa');
+    expect(isChatVerified(verificationEcdsa)).toBe(true);
+
+    const signatureEd25519 = await fetchChatSignature(
+      context.apiUrl,
+      context.apiKey,
+      res.responseBody.id,
+      context.model,
+      'ed25519',
+    );
+
+    const verificationEd25519 = verifyChat(
+      {
+        requestBody: res.requestBodyRaw,
+        responseBody: res.responseBodyRaw,
+      },
+      signatureEd25519,
+    );
+
+    expect(signatureEd25519.signing_algo).toEqual('ed25519');
+    expect(isChatVerified(verificationEd25519)).toBe(true);
   });
 });
