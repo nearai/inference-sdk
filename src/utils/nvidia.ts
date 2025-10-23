@@ -22,7 +22,6 @@ export async function verifyNvidiaGpu(
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      accept: 'application/json',
     },
     body: payload,
   });

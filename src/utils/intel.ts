@@ -79,7 +79,6 @@ export async function verifyIntelTdxRemote(
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      accept: 'application/json',
     },
     body: JSON.stringify({ hex: quote }),
   });
