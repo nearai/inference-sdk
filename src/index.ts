@@ -16,7 +16,9 @@ export {
   GatewayAttestation,
 } from './types/attestation';
 
-export { AttestationReport } from './types/attestation';
-
 export { verifyChat, isChatVerified } from './utils/signature';
 export { ChatVerification, ChatSignature } from './types/signature';
+
+// Helper types
+export { AttestationReport } from './types/attestation';
+export { JWTPayload } from 'jose';
