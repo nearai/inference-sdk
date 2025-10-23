@@ -29,14 +29,14 @@ describe('attestation', () => {
       isGatewayAttestationReportVerified(gatewayVerification, requestNonce),
     ).toBe(true);
 
-    for (const model_attestation of report.model_attestations) {
-      const modelVerification = await verifyModelAttestation(model_attestation);
+    for (const modelAttestation of report.model_attestations) {
+      const modelVerification = await verifyModelAttestation(modelAttestation);
 
       expect(
         isModelAttestationReportVerified(
           modelVerification,
           requestNonce,
-          model_attestation.signing_address,
+          modelAttestation.signing_address,
         ),
       ).toBe(true);
     }
