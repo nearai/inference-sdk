@@ -13,6 +13,7 @@ describe('attestation', () => {
 
   test('attestation', async () => {
     const requestNonce = crypto.randomBytes(32).toString('hex');
+
     const report = await fetchAttestationReport(
       context.apiUrl,
       context.apiKey,
