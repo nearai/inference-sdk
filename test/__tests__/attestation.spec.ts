@@ -11,7 +11,7 @@ import {
 describe('attestation', () => {
   const context = initContext();
 
-  test('attestation', async () => {
+  test('gateway attestation and model attestations', async () => {
     const requestNonce = crypto.randomBytes(32).toString('hex');
 
     const report = await fetchAttestationReport(

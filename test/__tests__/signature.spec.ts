@@ -11,7 +11,7 @@ import {
 describe('signature', () => {
   const context = initContext();
 
-  test('signature', async () => {
+  test('chat signature', async () => {
     const res = await chatCompletions({
       apiUrl: context.apiUrl,
       apiKey: context.apiKey,
