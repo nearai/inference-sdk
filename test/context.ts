@@ -20,5 +20,5 @@ export function initContext(): Context {
     apiUrl,
     apiKey,
     model,
-  }
+  };
 }

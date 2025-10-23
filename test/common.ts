@@ -1,25 +1,26 @@
 import { ChatSignature, AttestationReport } from '../src';
-import {
-  ChatCompletionsParams,
-  ChatCompletionsResponse,
-} from './types';
+import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
 
 export async function fetchAttestationReport(
   apiUrl: string,
   apiKey: string,
   model: string,
-  requestNonce: string
+  requestNonce: string,
 ): Promise<AttestationReport> {
   const res = await fetch(
-    `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}`, {
+    `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}`,
+    {
       method: 'GET',
       headers: {
-        'authorization': `Bearer ${apiKey}`,
-      }
-  });
+        authorization: `Bearer ${apiKey}`,
+      },
+    },
+  );
 
   if (!res.ok) {
-    throw Error(`Failed to fetch attestation report with status code: ${res.status}`);
+    throw Error(
+      `Failed to fetch attestation report with status code: ${res.status}`,
+    );
   }
 
   return res.json();
@@ -30,15 +31,17 @@ export async function fetchChatSignature(
   apiKey: string,
   chatId: string,
   model: string,
-  signingAlgo: string
+  signingAlgo: string,
 ): Promise<ChatSignature> {
   const res = await fetch(
-  `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${encodeURIComponent(signingAlgo)}`, {
-    method: 'GET',
-    headers: {
-      'authorization': `Bearer ${apiKey}`,
-    }
-  });
+    `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${encodeURIComponent(signingAlgo)}`,
+    {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+      },
+    },
+  );
 
   if (!res.ok) {
     throw Error(`Failed to fetch signature with status code: ${res.status}`);
@@ -54,11 +57,10 @@ export async function chatCompletions({
 }: ChatCompletionsParams): Promise<ChatCompletionsResponse> {
   const requestBodyRaw = Buffer.from(JSON.stringify(requestBody));
 
-  const res = await fetch(
-   `${apiUrl}/chat/completions`, {
+  const res = await fetch(`${apiUrl}/chat/completions`, {
     method: 'POST',
     headers: {
-      'authorization': `Bearer ${apiKey}`,
+      authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
     body: requestBodyRaw,
@@ -75,5 +77,5 @@ export async function chatCompletions({
     requestBodyRaw,
     responseBodyRaw,
     responseBody,
-  }
+  };
 }

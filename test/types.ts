@@ -2,7 +2,7 @@ export type Context = {
   apiUrl: string;
   apiKey: string;
   model: string;
-}
+};
 
 export type ChatCompletionsParams = {
   apiUrl: string;
@@ -14,13 +14,13 @@ export type ChatCompletionsParams = {
       content: string;
     }[];
     [k: string]: unknown;
-  }
-}
+  };
+};
 
 export type ChatCompletionsResponse = {
-  requestBodyRaw: Buffer,
-  responseBodyRaw: Buffer,
+  requestBodyRaw: Buffer;
+  responseBodyRaw: Buffer;
   responseBody: {
     id: string;
-  },
-}
+  };
+};

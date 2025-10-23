@@ -1,12 +1,6 @@
 import { initContext } from '../context';
-import {
-  chatCompletions,
-  fetchChatSignature,
-} from '../common';
-import {
-  isChatVerified,
-  verifyChat,
-} from '../../src';
+import { chatCompletions, fetchChatSignature } from '../common';
+import { isChatVerified, verifyChat } from '../../src';
 
 describe('signature', () => {
   const context = initContext();
@@ -20,10 +14,10 @@ describe('signature', () => {
         messages: [
           {
             role: 'user',
-            content: 'Hello'
-          }
-        ]
-      }
+            content: 'Hello',
+          },
+        ],
+      },
     });
 
     const signature = await fetchChatSignature(
@@ -34,13 +28,14 @@ describe('signature', () => {
       'ecdsa',
     );
 
-    const verification = verifyChat({
-      requestBody: res.requestBodyRaw,
-      responseBody: res.responseBodyRaw,
-    }, signature);
+    const verification = verifyChat(
+      {
+        requestBody: res.requestBodyRaw,
+        responseBody: res.responseBodyRaw,
+      },
+      signature,
+    );
 
-    expect(
-      isChatVerified(verification)
-    ).toBe(true);
-  })
+    expect(isChatVerified(verification)).toBe(true);
+  });
 });

@@ -20,19 +20,25 @@ describe('attestation', () => {
       context.model,
       requestNonce,
     );
-    
-    const gatewayVerification = await verifyGatewayAttestation(report.gateway_attestation);
+
+    const gatewayVerification = await verifyGatewayAttestation(
+      report.gateway_attestation,
+    );
 
     expect(
-      isGatewayAttestationReportVerified(gatewayVerification, requestNonce)
+      isGatewayAttestationReportVerified(gatewayVerification, requestNonce),
     ).toBe(true);
 
     for (const model_attestation of report.model_attestations) {
       const modelVerification = await verifyModelAttestation(model_attestation);
 
       expect(
-        isModelAttestationReportVerified(modelVerification, requestNonce, model_attestation.signing_address),
+        isModelAttestationReportVerified(
+          modelVerification,
+          requestNonce,
+          model_attestation.signing_address,
+        ),
       ).toBe(true);
     }
-  })
+  });
 });
