@@ -1,12 +1,15 @@
 import { initContext } from '../context';
 import { chatCompletions, fetchChatSignature } from '../common';
 import { isChatVerified, verifyChat } from '../../src';
+import { ChatCompletionsResponse } from '../types';
 
 describe('signature', () => {
   const context = initContext();
 
-  test('chat signature', async () => {
-    const res = await chatCompletions({
+  let completions: ChatCompletionsResponse;
+
+  beforeAll(async () => {
+    completions = await chatCompletions({
       apiUrl: context.apiUrl,
       apiKey: context.apiKey,
       requestBody: {
@@ -19,43 +22,47 @@ describe('signature', () => {
         ],
       },
     });
+  });
 
-    const signatureEcdsa = await fetchChatSignature(
+  test('signature ecdsa', async () => {
+    const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
-      res.responseBody.id,
+      completions.responseBody.id,
       context.model,
       'ecdsa',
     );
 
-    const verificationEcdsa = verifyChat(
+    const verification = verifyChat(
       {
-        requestBody: res.requestBodyRaw,
-        responseBody: res.responseBodyRaw,
+        requestBody: completions.requestBodyRaw,
+        responseBody: completions.responseBodyRaw,
       },
-      signatureEcdsa,
+      signature,
     );
 
-    expect(signatureEcdsa.signing_algo).toEqual('ecdsa');
-    expect(isChatVerified(verificationEcdsa)).toBe(true);
+    expect(signature.signing_algo).toEqual('ecdsa');
+    expect(isChatVerified(verification)).toBe(true);
+  });
 
-    const signatureEd25519 = await fetchChatSignature(
+  test('signature ed25519', async () => {
+    const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
-      res.responseBody.id,
+      completions.responseBody.id,
       context.model,
       'ed25519',
     );
 
-    const verificationEd25519 = verifyChat(
+    const verification = verifyChat(
       {
-        requestBody: res.requestBodyRaw,
-        responseBody: res.responseBodyRaw,
+        requestBody: completions.requestBodyRaw,
+        responseBody: completions.responseBodyRaw,
       },
-      signatureEd25519,
+      signature,
     );
 
-    expect(signatureEd25519.signing_algo).toEqual('ed25519');
-    expect(isChatVerified(verificationEd25519)).toBe(true);
+    expect(signature.signing_algo).toEqual('ed25519');
+    expect(isChatVerified(verification)).toBe(true);
   });
 });
