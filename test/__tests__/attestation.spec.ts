@@ -1,6 +1,6 @@
 import { initContext } from '../context';
 import { fetchAttestationReport } from '../common';
-import * as crypto from 'node:crypto';
+import * as crypto from 'crypto';
 import {
   isGatewayAttestationReportVerified,
   isModelAttestationReportVerified,
