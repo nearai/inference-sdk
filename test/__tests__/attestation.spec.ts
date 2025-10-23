@@ -8,7 +8,7 @@ import {
   verifyModelAttestation,
 } from '../../src';
 
-describe.skip('attestation', () => {
+describe('attestation', () => {
   const context = initContext();
 
   test('attestation', async () => {

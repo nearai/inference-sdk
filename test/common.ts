@@ -14,7 +14,7 @@ export async function fetchAttestationReport(
     `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'authorization': `Bearer ${apiKey}`,
       }
   });
 
@@ -36,7 +36,7 @@ export async function fetchChatSignature(
   `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${encodeURIComponent(signingAlgo)}`, {
     method: 'GET',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      'authorization': `Bearer ${apiKey}`,
     }
   });
 
@@ -53,12 +53,12 @@ export async function chatCompletions({
   requestBody,
 }: ChatCompletionsParams): Promise<ChatCompletionsResponse> {
   const requestBodyRaw = Buffer.from(JSON.stringify(requestBody));
-  
+
   const res = await fetch(
    `${apiUrl}/chat/completions`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${apiKey}`,
+      'authorization': `Bearer ${apiKey}`,
     },
     body: requestBodyRaw,
   });
