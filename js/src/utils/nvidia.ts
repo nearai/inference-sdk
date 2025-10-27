@@ -4,15 +4,13 @@ import {
 } from '../types/nvidia';
 import { decodeJwt, mapRecord } from './common';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
+import { VerificationError } from './errors';
 
-export function isNvidiaGpuVerified(
-  verification: NvidiaGpuVerification,
-): boolean {
+export function assertNvidiaGpuVerified(verification: NvidiaGpuVerification) {
   const result = verification.JWT['x-nvidia-overall-att-result'];
-  if (typeof result !== 'boolean') {
-    throw Error('x-nvidia-overall-att-result is invalid');
+  if (!result) {
+    throw new VerificationError('Failed to verify Nvidia GPU');
   }
-  return result;
 }
 
 export async function verifyNvidiaGpu(
@@ -27,7 +25,9 @@ export async function verifyNvidiaGpu(
   });
 
   if (!response.ok) {
-    throw Error(`Verify Nvidia GPU failed with status code ${response.status}`);
+    throw new VerificationError(
+      `Verify Nvidia GPU failed with status code ${response.status}`,
+    );
   }
 
   const verification = await response.json();

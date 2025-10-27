@@ -1,6 +1,6 @@
 export {
   verifyModelAttestation,
-  isModelAttestationVerified,
+  assertModelAttestationVerified,
 } from './utils/attestation';
 export {
   ModelAttestationVerification,
@@ -9,7 +9,7 @@ export {
 
 export {
   verifyGatewayAttestation,
-  isGatewayAttestationVerified,
+  assertGatewayAttestationVerified,
 } from './utils/attestation';
 export {
   GatewayAttestationVerification,
@@ -20,7 +20,7 @@ export { AttestationReport } from './types/attestation';
 export { IntelTdxVerification } from './types/intel';
 export { NvidiaGpuVerification } from './types/nvidia';
 
-export { verifyChat, isChatVerified } from './utils/signature';
+export { verifyChat, assertChatVerified } from './utils/signature';
 export {
   ChatVerification,
   ChatSignature,
@@ -29,3 +29,5 @@ export {
 } from './types/signature';
 
 export { JwtPayload } from './types/common';
+
+export { VerificationError } from './utils/errors';

@@ -3,9 +3,16 @@ import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
 import { hexToBuffer } from './common';
+import { VerificationError } from './errors';
 
-export function isChatVerified(verification: ChatVerification): boolean {
-  return verification.isHashVerified && verification.isSignatureVerified;
+export function assertChatVerified(verification: ChatVerification) {
+  if (!verification.isHashVerified) {
+    throw new VerificationError('Chat hash mismatching');
+  }
+
+  if (!verification.isSignatureVerified) {
+    throw new VerificationError('Invalid chat signature');
+  }
 }
 
 export function verifyChat(

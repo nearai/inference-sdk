@@ -1,6 +1,6 @@
 import { initContext } from '../context';
 import { chatCompletions, fetchChatSignature } from '../common';
-import { isChatVerified, verifyChat } from '../../src';
+import { assertChatVerified, verifyChat } from '../../src';
 import { ChatCompletionsResponse } from '../types';
 
 describe('signature', () => {
@@ -43,9 +43,7 @@ describe('signature', () => {
       signature,
     );
 
-    const verified = isChatVerified(verification);
-
-    expect(verified).toBe(true);
+    assertChatVerified(verification);
   });
 
   test('signature ed25519', async () => {
@@ -67,8 +65,6 @@ describe('signature', () => {
       signature,
     );
 
-    const verified = isChatVerified(verification);
-
-    expect(verified).toBe(true);
+    assertChatVerified(verification);
   });
 });
