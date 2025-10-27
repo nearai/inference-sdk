@@ -25,11 +25,12 @@ describe('attestation', () => {
       report.gateway_attestation,
     );
 
-    const verified = isGatewayAttestationVerified(gatewayVerification, requestNonce);
+    const verified = isGatewayAttestationVerified(
+      gatewayVerification,
+      requestNonce,
+    );
 
-    expect(
-      verified
-    ).toBe(true);
+    expect(verified).toBe(true);
 
     for (const modelAttestation of report.model_attestations) {
       const modelVerification = await verifyModelAttestation(modelAttestation);
