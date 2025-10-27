@@ -33,6 +33,8 @@ describe('signature', () => {
       'ecdsa',
     );
 
+    expect(signature.signing_algo).toEqual('ecdsa');
+
     const verification = verifyChat(
       {
         requestBody: completions.requestBodyRaw,
@@ -41,8 +43,9 @@ describe('signature', () => {
       signature,
     );
 
-    expect(signature.signing_algo).toEqual('ecdsa');
-    expect(isChatVerified(verification)).toBe(true);
+    const verified = isChatVerified(verification);
+
+    expect(verified).toBe(true);
   });
 
   test('signature ed25519', async () => {
@@ -54,6 +57,8 @@ describe('signature', () => {
       'ed25519',
     );
 
+    expect(signature.signing_algo).toEqual('ed25519');
+
     const verification = verifyChat(
       {
         requestBody: completions.requestBodyRaw,
@@ -62,7 +67,8 @@ describe('signature', () => {
       signature,
     );
 
-    expect(signature.signing_algo).toEqual('ed25519');
-    expect(isChatVerified(verification)).toBe(true);
+    const verified = isChatVerified(verification);
+
+    expect(verified).toBe(true);
   });
 });
