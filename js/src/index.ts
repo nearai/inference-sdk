@@ -1,6 +1,6 @@
 export {
   verifyModelAttestation,
-  isModelAttestationReportVerified,
+  isModelAttestationVerified,
 } from './utils/attestation';
 export {
   ModelAttestationVerification,
@@ -9,7 +9,7 @@ export {
 
 export {
   verifyGatewayAttestation,
-  isGatewayAttestationReportVerified,
+  isGatewayAttestationVerified,
 } from './utils/attestation';
 export {
   GatewayAttestationVerification,

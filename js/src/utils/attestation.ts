@@ -8,7 +8,7 @@ import { isIntelTdxVerified, verifyIntelTdx } from './intel';
 import { isNvidiaGpuVerified, verifyNvidiaGpu } from './nvidia';
 import { ETHEREUM_ZERO_ADDRESS } from './consts';
 
-export function isModelAttestationReportVerified(
+export function isModelAttestationVerified(
   verification: ModelAttestationVerification,
   requestNonce: string,
   signingAddress: string,
@@ -28,7 +28,7 @@ export async function verifyModelAttestation(
   };
 }
 
-export function isGatewayAttestationReportVerified(
+export function isGatewayAttestationVerified(
   verification: GatewayAttestationVerification,
   requestNonce: string,
 ): boolean {

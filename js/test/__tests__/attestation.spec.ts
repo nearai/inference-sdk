@@ -2,8 +2,8 @@ import { initContext } from '../context';
 import { fetchAttestationReport } from '../common';
 import * as crypto from 'crypto';
 import {
-  isGatewayAttestationReportVerified,
-  isModelAttestationReportVerified,
+  isGatewayAttestationVerified,
+  isModelAttestationVerified,
   verifyGatewayAttestation,
   verifyModelAttestation,
 } from '../../src';
@@ -26,14 +26,14 @@ describe('attestation', () => {
     );
 
     expect(
-      isGatewayAttestationReportVerified(gatewayVerification, requestNonce),
+      isGatewayAttestationVerified(gatewayVerification, requestNonce),
     ).toBe(true);
 
     for (const modelAttestation of report.model_attestations) {
       const modelVerification = await verifyModelAttestation(modelAttestation);
 
       expect(
-        isModelAttestationReportVerified(
+        isModelAttestationVerified(
           modelVerification,
           requestNonce,
           modelAttestation.signing_address,
