@@ -13,14 +13,13 @@ export type ChatCompletionsParams = {
       role: string;
       content: string;
     }[];
+    stream?: boolean;
     [k: string]: unknown;
   };
 };
 
 export type ChatCompletionsResponse = {
+  id: string;
   requestBodyRaw: Buffer;
   responseBodyRaw: Buffer;
-  responseBody: {
-    id: string;
-  };
 };

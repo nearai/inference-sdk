@@ -20,6 +20,7 @@ describe('signature', () => {
             content: 'Hello',
           },
         ],
+        stream: true,
       },
     });
   });
@@ -28,7 +29,7 @@ describe('signature', () => {
     const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
-      completions.responseBody.id,
+      completions.id,
       context.model,
       'ecdsa',
     );
@@ -50,7 +51,7 @@ describe('signature', () => {
     const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
-      completions.responseBody.id,
+      completions.id,
       context.model,
       'ed25519',
     );

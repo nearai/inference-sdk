@@ -70,12 +70,22 @@ export async function chatCompletions({
     throw Error(`Failed to chat with status code: ${res.status}`);
   }
 
-  const responseBodyRaw = Buffer.from(await res.arrayBuffer());
-  const responseBody = JSON.parse(responseBodyRaw.toString());
+  const responseBodyRaw = Buffer.from(await res.bytes());
+
+  let id: string;
+
+  if (requestBody.stream) {
+    const lines = responseBodyRaw.toString().split('\n');
+    const firstChunk = JSON.parse(lines[0].slice(6)); // data: {...
+    id = firstChunk.id;
+  } else {
+    const data = JSON.parse(responseBodyRaw.toString());
+    id = data.id;
+  }
 
   return {
+    id,
     requestBodyRaw,
     responseBodyRaw,
-    responseBody,
   };
 }

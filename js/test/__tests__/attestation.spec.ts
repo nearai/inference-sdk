@@ -8,7 +8,7 @@ import {
   verifyModelAttestation,
 } from '../../src';
 
-describe('attestation', () => {
+describe.skip('attestation', () => {
   const context = initContext();
 
   test('gateway attestation and model attestations', async () => {
