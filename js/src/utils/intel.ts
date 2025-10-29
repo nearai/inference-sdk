@@ -1,7 +1,7 @@
 import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
 import { IntelTdxVerification } from '../types/intel';
 import { hexToBuffer } from './common';
-import { getDcapVerifier } from './dcap-qvl';
+import { getDcapQvlUtils } from './dcap-qvl';
 import { VerificationError } from './errors';
 import { Buffer } from 'buffer';
 
@@ -59,7 +59,7 @@ export async function verifyIntelTdx(
 async function verifyIntelTdxLocal(
   quote: string,
 ): Promise<IntelTdxVerification> {
-  const { jsVerify, jsGetCollateral } = await getDcapVerifier();
+  const { jsVerify, jsGetCollateral } = await getDcapQvlUtils();
 
   const quoteRaw = hexToBuffer(quote);
 

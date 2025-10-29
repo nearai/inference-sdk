@@ -1,4 +1,4 @@
-export async function getDcapVerifier() {
+export async function getDcapQvlUtils() {
   let module;
 
   if (typeof window === 'undefined') {
