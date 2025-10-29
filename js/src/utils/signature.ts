@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
 import { hexToBuffer } from './common';
 import { VerificationError } from './errors';
+import { Buffer } from 'buffer';
 
 export function assertChatVerified(verification: ChatVerification) {
   if (!verification.isHashVerified) {

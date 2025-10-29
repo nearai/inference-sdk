@@ -1,8 +1,9 @@
 import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
 import { IntelTdxVerification } from '../types/intel';
 import { hexToBuffer } from './common';
-import { js_verify, js_get_collateral } from '@phala/dcap-qvl-node';
+import { getDcapVerifier } from './dcap-qvl';
 import { VerificationError } from './errors';
+import { Buffer } from 'buffer';
 
 export function assertIntelTdxVerified(
   verification: IntelTdxVerification,
@@ -58,12 +59,14 @@ export async function verifyIntelTdx(
 async function verifyIntelTdxLocal(
   quote: string,
 ): Promise<IntelTdxVerification> {
+  const { jsVerify, jsGetCollateral } = await getDcapVerifier();
+
   const quoteRaw = hexToBuffer(quote);
 
   let collateral;
 
   try {
-    collateral = await js_get_collateral(INTEL_PCCS_API_URL, quoteRaw);
+    collateral = await jsGetCollateral(INTEL_PCCS_API_URL, quoteRaw);
   } catch {
     throw new VerificationError('Failed to get collateral');
   }
@@ -71,7 +74,7 @@ async function verifyIntelTdxLocal(
   let verificationRaw;
 
   try {
-    verificationRaw = js_verify(
+    verificationRaw = jsVerify(
       quoteRaw,
       collateral,
       BigInt(Math.floor(Date.now() / 1000)),

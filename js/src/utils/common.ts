@@ -1,4 +1,5 @@
 import { JwtPayload } from '../types/common';
+import { Buffer } from 'buffer';
 
 export function decodeJwt(jwt: string): JwtPayload {
   const parts = jwt.split('.');
