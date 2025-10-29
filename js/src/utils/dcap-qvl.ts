@@ -1,14 +1,25 @@
 export async function getDcapQvlUtils() {
-  let module;
-
   if (typeof window === 'undefined') {
-    module = await import('@phala/dcap-qvl-node');
+    const { js_verify, js_get_collateral } = await import(
+      '@phala/dcap-qvl-node'
+    );
+    return {
+      jsVerify: js_verify,
+      jsGetCollateral: js_get_collateral,
+    };
   } else {
-    module = await import('@phala/dcap-qvl-web');
+    const {
+      js_verify,
+      js_get_collateral,
+      default: init,
+    } = await import('@phala/dcap-qvl-web');
+    const { default: wasm } = await import(
+      '@phala/dcap-qvl-web/dcap-qvl-web_bg.wasm'
+    );
+    await init({ module_or_path: wasm });
+    return {
+      jsVerify: js_verify,
+      jsGetCollateral: js_get_collateral,
+    };
   }
-
-  return {
-    jsVerify: module.js_verify,
-    jsGetCollateral: module.js_get_collateral,
-  };
 }
