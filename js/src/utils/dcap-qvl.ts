@@ -1,14 +1,7 @@
-export async function getDcapQvlUtils() {
-  if (typeof window === 'undefined') {
-    const { js_verify, js_get_collateral } = await import(
-      '@phala/dcap-qvl-node'
-    );
+import { isBrowser } from './common';
 
-    return {
-      jsVerify: js_verify,
-      jsGetCollateral: js_get_collateral,
-    };
-  } else {
+export async function getDcapQvlUtils() {
+  if (isBrowser()) {
     const {
       js_verify,
       js_get_collateral,
@@ -20,6 +13,15 @@ export async function getDcapQvlUtils() {
     );
 
     await init({ module_or_path: wasm });
+
+    return {
+      jsVerify: js_verify,
+      jsGetCollateral: js_get_collateral,
+    };
+  } else {
+    const { js_verify, js_get_collateral } = await import(
+      '@phala/dcap-qvl-node'
+    );
 
     return {
       jsVerify: js_verify,

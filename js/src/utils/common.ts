@@ -38,3 +38,7 @@ export function trimHexPrefix(hex: string): string {
   }
   return hex;
 }
+
+export function isBrowser(): boolean {
+  return typeof window !== 'undefined';
+}
