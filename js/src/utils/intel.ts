@@ -67,8 +67,8 @@ async function verifyIntelTdxLocal(
 
   try {
     collateral = await jsGetCollateral(INTEL_PCCS_API_URL, quoteRaw);
-  } catch {
-    throw new VerificationError('Failed to get collateral');
+  } catch (e: unknown) {
+    throw new VerificationError(`Failed to get collateral: ${e}`);
   }
 
   let verificationRaw;
@@ -79,8 +79,8 @@ async function verifyIntelTdxLocal(
       collateral,
       BigInt(Math.floor(Date.now() / 1000)),
     );
-  } catch {
-    throw new VerificationError('Failed to verify Intel TDX');
+  } catch (e: unknown) {
+    throw new VerificationError(`Failed to verify Intel TDX: ${e}`);
   }
 
   const td10 = verificationRaw?.report?.TD10 ? verificationRaw.report.TD10 : {};
