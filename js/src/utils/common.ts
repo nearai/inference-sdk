@@ -29,6 +29,10 @@ export function mapRecord<K extends string | number | symbol, V, U>(
 }
 
 export function hexToBuffer(hex: string): Buffer {
+  const hexPattern = /^0x[0-9a-fA-F]+$|^[0-9a-fA-F]+$/;
+  if (!hexPattern.test(hex)) {
+    throw Error('Invalid hex string');
+  }
   return Buffer.from(trimHexPrefix(hex), 'hex');
 }
 

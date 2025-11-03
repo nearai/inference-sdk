@@ -1,5 +1,7 @@
 import { isBrowser } from './common';
 
+let wasmInited = false;
+
 export async function getDcapQvlUtils() {
   if (isBrowser()) {
     const {
@@ -12,7 +14,10 @@ export async function getDcapQvlUtils() {
       '@phala/dcap-qvl-web/dcap-qvl-web_bg.wasm'
     );
 
-    await init({ module_or_path: wasm });
+    if (!wasmInited) {
+      await init({ module_or_path: wasm });
+      wasmInited = true;
+    }
 
     return {
       jsVerify: js_verify,
