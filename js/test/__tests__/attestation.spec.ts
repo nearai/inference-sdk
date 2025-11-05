@@ -1,12 +1,7 @@
 import { initContext } from '../context';
 import { fetchAttestationReport } from '../common';
 import * as crypto from 'crypto';
-import {
-  assertGatewayAttestationVerified,
-  assertModelAttestationVerified,
-  verifyGatewayAttestation,
-  verifyModelAttestation,
-} from '../../src';
+import { verifyGatewayAttestation, verifyModelAttestation } from '../../src';
 
 describe('attestation', () => {
   const context = initContext();
@@ -21,15 +16,11 @@ describe('attestation', () => {
       requestNonce,
     );
 
-    const gatewayVerification = await verifyGatewayAttestation(
-      report.gateway_attestation,
-    );
-    assertGatewayAttestationVerified(gatewayVerification, requestNonce);
+    await verifyGatewayAttestation(report.gateway_attestation, requestNonce);
 
     for (const modelAttestation of report.model_attestations) {
-      const modelVerification = await verifyModelAttestation(modelAttestation);
-      assertModelAttestationVerified(
-        modelVerification,
+      await verifyModelAttestation(
+        modelAttestation,
         requestNonce,
         modelAttestation.signing_address,
       );

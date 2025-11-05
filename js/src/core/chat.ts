@@ -1,4 +1,4 @@
-import { Chat, ChatSignature, ChatVerification } from '../types/chat';
+import { Chat, ChatSignature } from '../types/chat';
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
@@ -6,33 +6,12 @@ import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import { Buffer } from 'buffer';
 
-export function assertChatVerified(verification: ChatVerification) {
-  if (!verification.isHashVerified) {
-    throw new VerificationError('Chat hash mismatching');
-  }
-
-  if (!verification.isSignatureVerified) {
-    throw new VerificationError('Invalid chat signature');
-  }
+export function verifyChat(message: Chat, signature: ChatSignature) {
+  verifyChatHash(signature.text, message.requestBody, message.responseBody);
+  verifyChatSignature(signature);
 }
 
-export function verifyChat(
-  message: Chat,
-  signature: ChatSignature,
-): ChatVerification {
-  const isHashVerified = compareHash(
-    signature.text,
-    message.requestBody,
-    message.responseBody,
-  );
-  const isSignatureVerified = verifyChatSignature(signature);
-  return {
-    isHashVerified,
-    isSignatureVerified,
-  };
-}
-
-function verifyChatSignature(signature: ChatSignature): boolean {
+function verifyChatSignature(signature: ChatSignature) {
   if (signature.signing_algo === 'ecdsa') {
     const recoveredAddress = ethers.verifyMessage(
       signature.text,
@@ -40,21 +19,29 @@ function verifyChatSignature(signature: ChatSignature): boolean {
     );
     const recoveredAddressRaw = hexToBuffer(recoveredAddress);
     const signingAddressRaw = hexToBuffer(signature.signing_address);
-    return recoveredAddressRaw.equals(signingAddressRaw);
+    if (!recoveredAddressRaw.equals(signingAddressRaw)) {
+      throw new VerificationError('Invalid ECDSA chat signature');
+    }
   } else {
     const publicKey = hexToBuffer(signature.signing_address);
-    return nacl.sign.detached.verify(
+    const verified = nacl.sign.detached.verify(
       Buffer.from(signature.text),
       hexToBuffer(signature.signature),
       publicKey,
     );
+    if (!verified) {
+      throw new VerificationError('Invalid ED25519 chat signature');
+    }
   }
 }
 
-function compareHash(
+function verifyChatHash(
   text: string,
   requestBody: Buffer,
   responseBody: Buffer,
-): boolean {
-  return text === `${sha256(requestBody)}:${sha256(responseBody)}`;
+) {
+  const expected = `${sha256(requestBody)}:${sha256(responseBody)}`;
+  if (text !== expected) {
+    throw new VerificationError('Chat hash mismatching');
+  }
 }

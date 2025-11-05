@@ -1,33 +1,16 @@
-export {
-  verifyGatewayAttestation,
-  assertGatewayAttestationVerified,
-} from './core/attestation-gateway';
-export {
-  GatewayAttestationVerification,
-  GatewayAttestation,
-} from './types/attestation-gateway';
+export { verifyGatewayAttestation } from './core/attestation-gateway';
+export { GatewayAttestation } from './types/attestation-gateway';
 
-export {
-  verifyModelAttestation,
-  assertModelAttestationVerified,
-} from './core/attestation-model';
-export {
-  ModelAttestationVerification,
-  ModelAttestation,
-} from './types/attestation-model';
+export { verifyModelAttestation } from './core/attestation-model';
+export { ModelAttestation } from './types/attestation-model';
 
 export { AttestationReport } from './types/attestation-model';
 
 export { IntelTdxVerification } from './types/intel';
 export { NvidiaGpuVerification } from './types/nvidia';
 
-export { verifyChat, assertChatVerified } from './core/chat';
-export {
-  ChatVerification,
-  ChatSignature,
-  Chat,
-  SigningAlgo,
-} from './types/chat';
+export { verifyChat } from './core/chat';
+export { Chat, ChatSignature, SigningAlgo } from './types/chat';
 
 export { JwtPayload } from './types/common';
 

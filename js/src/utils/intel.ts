@@ -5,7 +5,7 @@ import { getDcapQvlUtils } from './dcap-qvl';
 import { VerificationError } from './errors';
 import { Buffer } from 'buffer';
 
-export function assertIntelTdxVerified(
+export function checkIntelTdxVerification(
   verification: IntelTdxVerification,
   requestNonce: string,
   signingAddress: string,

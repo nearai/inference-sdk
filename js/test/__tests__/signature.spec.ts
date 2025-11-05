@@ -1,6 +1,6 @@
 import { initContext } from '../context';
 import { chatCompletions, fetchChatSignature } from '../common';
-import { assertChatVerified, verifyChat } from '../../src';
+import { verifyChat } from '../../src';
 import { ChatCompletionsResponse } from '../types';
 
 describe('signature', () => {
@@ -36,15 +36,13 @@ describe('signature', () => {
 
     expect(signature.signing_algo).toEqual('ecdsa');
 
-    const verification = verifyChat(
+    verifyChat(
       {
         requestBody: completions.requestBodyRaw,
         responseBody: completions.responseBodyRaw,
       },
       signature,
     );
-
-    assertChatVerified(verification);
   });
 
   test('signature ed25519', async () => {
@@ -58,14 +56,12 @@ describe('signature', () => {
 
     expect(signature.signing_algo).toEqual('ed25519');
 
-    const verification = verifyChat(
+    verifyChat(
       {
         requestBody: completions.requestBodyRaw,
         responseBody: completions.responseBodyRaw,
       },
       signature,
     );
-
-    assertChatVerified(verification);
   });
 });

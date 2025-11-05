@@ -1,24 +1,17 @@
-import {
-  ModelAttestationVerification,
-  ModelAttestation,
-} from '../types/attestation-model';
-import { assertIntelTdxVerified, verifyIntelTdx } from '../utils/intel';
-import { assertNvidiaGpuVerified, verifyNvidiaGpu } from '../utils/nvidia';
-
-export function assertModelAttestationVerified(
-  verification: ModelAttestationVerification,
-  requestNonce: string,
-  signingAddress: string,
-) {
-  assertIntelTdxVerified(verification.intel, requestNonce, signingAddress);
-  assertNvidiaGpuVerified(verification.nvidia);
-}
+import { ModelAttestation } from '../types/attestation-model';
+import { checkIntelTdxVerification, verifyIntelTdx } from '../utils/intel';
+import { checkNvidiaGpuVerification, verifyNvidiaGpu } from '../utils/nvidia';
 
 export async function verifyModelAttestation(
   attestation: ModelAttestation,
-): Promise<ModelAttestationVerification> {
-  return {
-    intel: await verifyIntelTdx(attestation.intel_quote),
-    nvidia: await verifyNvidiaGpu(attestation.nvidia_payload),
-  };
+  requestNonce: string,
+  signingAddress: string,
+) {
+  const intelTdxVerification = await verifyIntelTdx(attestation.intel_quote);
+  checkIntelTdxVerification(intelTdxVerification, requestNonce, signingAddress);
+
+  const nvidiaGpuVerification = await verifyNvidiaGpu(
+    attestation.nvidia_payload,
+  );
+  checkNvidiaGpuVerification(nvidiaGpuVerification);
 }

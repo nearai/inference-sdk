@@ -1,8 +1,3 @@
-export type ChatVerification = {
-  isHashVerified: boolean;
-  isSignatureVerified: boolean;
-};
-
 export type Chat = { requestBody: Buffer; responseBody: Buffer };
 
 export type ChatSignature = {

@@ -6,7 +6,9 @@ import { decodeJwt, mapRecord } from './common';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { VerificationError } from './errors';
 
-export function assertNvidiaGpuVerified(verification: NvidiaGpuVerification) {
+export function checkNvidiaGpuVerification(
+  verification: NvidiaGpuVerification,
+) {
   const result = verification.JWT['x-nvidia-overall-att-result'];
   if (!result) {
     throw new VerificationError('Failed to verify Nvidia GPU');
