@@ -32,20 +32,20 @@ function verifyReportData(
   const embeddedAddress = reportDataRaw.subarray(0, 32);
   const embeddedNonce = reportDataRaw.subarray(32);
 
-  const addressVerified = embeddedAddress.equals(
+  const signingAddressVerified = embeddedAddress.equals(
     Buffer.concat([
       signingAddressRaw,
       Buffer.alloc(32 - signingAddressRaw.length, 0),
     ]),
   );
 
-  if (!addressVerified) {
+  if (!signingAddressVerified) {
     throw new VerificationError('Signing address mismatching');
   }
 
-  const nonceVerified = embeddedNonce.equals(hexToBuffer(requestNonce));
+  const requestNonceVerified = embeddedNonce.equals(hexToBuffer(requestNonce));
 
-  if (!nonceVerified) {
+  if (!requestNonceVerified) {
     throw new VerificationError('Request nonce mismatching');
   }
 }
