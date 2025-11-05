@@ -20,13 +20,13 @@ export { AttestationReport } from './types/attestation';
 export { IntelTdxVerification } from './types/intel';
 export { NvidiaGpuVerification } from './types/nvidia';
 
-export { verifyChat, assertChatVerified } from './utils/signature';
+export { verifyChat, assertChatVerified } from './utils/chat';
 export {
   ChatVerification,
   ChatSignature,
   Chat,
   SigningAlgo,
-} from './types/signature';
+} from './types/chat';
 
 export { JwtPayload } from './types/common';
 

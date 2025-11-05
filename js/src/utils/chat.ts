@@ -1,4 +1,4 @@
-import { Chat, ChatSignature, ChatVerification } from '../types/signature';
+import { Chat, ChatSignature, ChatVerification } from '../types/chat';
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
