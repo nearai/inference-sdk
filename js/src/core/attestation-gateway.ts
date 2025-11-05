@@ -2,8 +2,8 @@ import {
   GatewayAttestation,
   GatewayAttestationVerification,
 } from '../types/attestation-gateway';
-import { assertIntelTdxVerified, verifyIntelTdx } from './intel';
-import { ETHEREUM_ZERO_ADDRESS } from './consts';
+import { assertIntelTdxVerified, verifyIntelTdx } from '../utils/intel';
+import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
 
 export function assertGatewayAttestationVerified(
   verification: GatewayAttestationVerification,

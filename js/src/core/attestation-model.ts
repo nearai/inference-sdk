@@ -2,8 +2,8 @@ import {
   ModelAttestationVerification,
   ModelAttestation,
 } from '../types/attestation-model';
-import { assertIntelTdxVerified, verifyIntelTdx } from './intel';
-import { assertNvidiaGpuVerified, verifyNvidiaGpu } from './nvidia';
+import { assertIntelTdxVerified, verifyIntelTdx } from '../utils/intel';
+import { assertNvidiaGpuVerified, verifyNvidiaGpu } from '../utils/nvidia';
 
 export function assertModelAttestationVerified(
   verification: ModelAttestationVerification,

@@ -2,8 +2,8 @@ import { Chat, ChatSignature, ChatVerification } from '../types/chat';
 import sha256 from 'sha256';
 import { ethers } from 'ethers';
 import * as nacl from 'tweetnacl';
-import { hexToBuffer } from './common';
-import { VerificationError } from './errors';
+import { hexToBuffer } from '../utils/common';
+import { VerificationError } from '../utils/errors';
 import { Buffer } from 'buffer';
 
 export function assertChatVerified(verification: ChatVerification) {

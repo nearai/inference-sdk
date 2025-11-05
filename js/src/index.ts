@@ -1,7 +1,7 @@
 export {
   verifyGatewayAttestation,
   assertGatewayAttestationVerified,
-} from './utils/attestation-gateway';
+} from './core/attestation-gateway';
 export {
   GatewayAttestationVerification,
   GatewayAttestation,
@@ -10,7 +10,7 @@ export {
 export {
   verifyModelAttestation,
   assertModelAttestationVerified,
-} from './utils/attestation-model';
+} from './core/attestation-model';
 export {
   ModelAttestationVerification,
   ModelAttestation,
@@ -21,7 +21,7 @@ export { AttestationReport } from './types/attestation-model';
 export { IntelTdxVerification } from './types/intel';
 export { NvidiaGpuVerification } from './types/nvidia';
 
-export { verifyChat, assertChatVerified } from './utils/chat';
+export { verifyChat, assertChatVerified } from './core/chat';
 export {
   ChatVerification,
   ChatSignature,
