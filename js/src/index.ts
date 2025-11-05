@@ -1,22 +1,23 @@
 export {
-  verifyModelAttestation,
-  assertModelAttestationVerified,
-} from './utils/attestation';
-export {
-  ModelAttestationVerification,
-  ModelAttestation,
-} from './types/attestation';
-
-export {
   verifyGatewayAttestation,
   assertGatewayAttestationVerified,
-} from './utils/attestation';
+} from './utils/attestation-gateway';
 export {
   GatewayAttestationVerification,
   GatewayAttestation,
-} from './types/attestation';
+} from './types/attestation-gateway';
 
-export { AttestationReport } from './types/attestation';
+export {
+  verifyModelAttestation,
+  assertModelAttestationVerified,
+} from './utils/attestation-model';
+export {
+  ModelAttestationVerification,
+  ModelAttestation,
+} from './types/attestation-model';
+
+export { AttestationReport } from './types/attestation-model';
+
 export { IntelTdxVerification } from './types/intel';
 export { NvidiaGpuVerification } from './types/nvidia';
 

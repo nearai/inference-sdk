@@ -1,12 +1,9 @@
 import {
   ModelAttestationVerification,
-  GatewayAttestation,
   ModelAttestation,
-  GatewayAttestationVerification,
-} from '../types/attestation';
+} from '../types/attestation-model';
 import { assertIntelTdxVerified, verifyIntelTdx } from './intel';
 import { assertNvidiaGpuVerified, verifyNvidiaGpu } from './nvidia';
-import { ETHEREUM_ZERO_ADDRESS } from './consts';
 
 export function assertModelAttestationVerified(
   verification: ModelAttestationVerification,
@@ -23,24 +20,5 @@ export async function verifyModelAttestation(
   return {
     intel: await verifyIntelTdx(attestation.intel_quote),
     nvidia: await verifyNvidiaGpu(attestation.nvidia_payload),
-  };
-}
-
-export function assertGatewayAttestationVerified(
-  verification: GatewayAttestationVerification,
-  requestNonce: string,
-) {
-  assertIntelTdxVerified(
-    verification.intel,
-    requestNonce,
-    ETHEREUM_ZERO_ADDRESS,
-  );
-}
-
-export async function verifyGatewayAttestation(
-  attestation: GatewayAttestation,
-): Promise<GatewayAttestationVerification> {
-  return {
-    intel: await verifyIntelTdx(attestation.intel_quote),
   };
 }
