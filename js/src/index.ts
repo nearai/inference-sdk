@@ -6,9 +6,6 @@ export { ModelAttestation } from './types/attestation-model';
 
 export { AttestationReport } from './types/attestation-model';
 
-export { IntelTdxVerification } from './types/intel';
-export { NvidiaGpuVerification } from './types/nvidia';
-
 export { verifyChat } from './core/chat';
 export { Chat, ChatSignature, SigningAlgo } from './types/chat';
 

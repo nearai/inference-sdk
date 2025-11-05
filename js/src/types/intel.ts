@@ -1,4 +1,4 @@
-export type IntelTdxVerification = {
+export type IntelTdxVerificationData = {
   quote: {
     verified: boolean;
     body: {

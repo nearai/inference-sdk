@@ -1,23 +1,21 @@
 import {
-  NvidiaGpuVerificationRaw,
-  NvidiaGpuVerification,
+  NvidiaGpuVerificationDataRaw,
+  NvidiaGpuVerificationData,
 } from '../types/nvidia';
 import { decodeJwt, mapRecord } from './common';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { VerificationError } from './errors';
 
-export function checkNvidiaGpuVerification(
-  verification: NvidiaGpuVerification,
-) {
-  const result = verification.JWT['x-nvidia-overall-att-result'];
+export function verifyNvidiaGpu(verificationData: NvidiaGpuVerificationData) {
+  const result = verificationData.JWT['x-nvidia-overall-att-result'];
   if (!result) {
-    throw new VerificationError('Failed to verify Nvidia GPU');
+    throw new VerificationError('Nvidia GPU not verified');
   }
 }
 
-export async function verifyNvidiaGpu(
+export async function fetchNvidiaGpuVerificationData(
   payload: string,
-): Promise<NvidiaGpuVerification> {
+): Promise<NvidiaGpuVerificationData> {
   const response = await fetch(NVIDIA_GPU_VERIFIER_API_URL, {
     method: 'POST',
     headers: {
@@ -28,18 +26,18 @@ export async function verifyNvidiaGpu(
 
   if (!response.ok) {
     throw new VerificationError(
-      `Verify Nvidia GPU failed with status code ${response.status}`,
+      `Failed to fetch Nvidia GPU verification data with status code ${response.status}`,
     );
   }
 
-  const verification = await response.json();
+  const verificationData = await response.json();
 
-  return parseNvidiaGpuVerification(verification);
+  return parseNvidiaGpuVerificationData(verificationData);
 }
 
-function parseNvidiaGpuVerification(
-  verification: NvidiaGpuVerificationRaw,
-): NvidiaGpuVerification {
+function parseNvidiaGpuVerificationData(
+  verification: NvidiaGpuVerificationDataRaw,
+): NvidiaGpuVerificationData {
   return {
     JWT: decodeJwt(verification[0][1]),
     GPU: mapRecord(verification[1], (key, value) => decodeJwt(value)),

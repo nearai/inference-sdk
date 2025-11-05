@@ -1,6 +1,6 @@
 export class VerificationError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = 'VerificationError';
   }
 }

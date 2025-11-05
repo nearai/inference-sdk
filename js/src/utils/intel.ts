@@ -1,27 +1,27 @@
 import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
-import { IntelTdxVerification } from '../types/intel';
+import { IntelTdxVerificationData } from '../types/intel';
 import { hexToBuffer } from './common';
 import { getDcapQvlUtils } from './dcap-qvl';
 import { VerificationError } from './errors';
 import { Buffer } from 'buffer';
 
-export function checkIntelTdxVerification(
-  verification: IntelTdxVerification,
+export function verifyIntelTdx(
+  verificationData: IntelTdxVerificationData,
   requestNonce: string,
   signingAddress: string,
 ) {
-  if (!verification.quote.verified) {
-    throw new VerificationError('Failed to verify Intel quote');
+  if (!verificationData.quote.verified) {
+    throw new VerificationError('Intel quote not verified');
   }
 
-  assertReportDataVerified(
-    verification.quote.body.reportdata,
+  verifyReportData(
+    verificationData.quote.body.reportdata,
     requestNonce,
     signingAddress,
   );
 }
 
-function assertReportDataVerified(
+function verifyReportData(
   reportData: string,
   requestNonce: string,
   signingAddress: string,
@@ -50,15 +50,15 @@ function assertReportDataVerified(
   }
 }
 
-export async function verifyIntelTdx(
+export async function fetchIntelTdxVerificationData(
   quote: string,
-): Promise<IntelTdxVerification> {
-  return verifyIntelTdxLocal(quote);
+): Promise<IntelTdxVerificationData> {
+  return fetchIntelTdxVerificationDataFromPccs(quote);
 }
 
-async function verifyIntelTdxLocal(
+async function fetchIntelTdxVerificationDataFromPccs(
   quote: string,
-): Promise<IntelTdxVerification> {
+): Promise<IntelTdxVerificationData> {
   const { jsVerify, jsGetCollateral } = await getDcapQvlUtils();
 
   const quoteRaw = hexToBuffer(quote);
@@ -68,22 +68,24 @@ async function verifyIntelTdxLocal(
   try {
     collateral = await jsGetCollateral(INTEL_PCCS_API_URL, quoteRaw);
   } catch (e: unknown) {
-    throw new VerificationError(`Failed to get collateral: ${e}`);
+    throw new VerificationError('Failed to get collateral', e);
   }
 
-  let verificationRaw;
+  let verificationDataRaw;
 
   try {
-    verificationRaw = jsVerify(
+    verificationDataRaw = jsVerify(
       quoteRaw,
       collateral,
       BigInt(Math.floor(Date.now() / 1000)),
     );
   } catch (e: unknown) {
-    throw new VerificationError(`Failed to verify Intel TDX: ${e}`);
+    throw new VerificationError('Failed to verify Intel quote', e);
   }
 
-  const td10 = verificationRaw?.report?.TD10 ? verificationRaw.report.TD10 : {};
+  const td10 = verificationDataRaw?.report?.TD10
+    ? verificationDataRaw.report.TD10
+    : {};
   if (!td10.report_data || typeof td10.report_data !== 'string') {
     throw new VerificationError('Bad report_data');
   }
@@ -95,11 +97,11 @@ async function verifyIntelTdxLocal(
   const mrConfig: string = td10.mr_config_id;
 
   const status: string | undefined =
-    typeof verificationRaw?.status === 'string'
-      ? verificationRaw.status
+    typeof verificationDataRaw?.status === 'string'
+      ? verificationDataRaw.status
       : undefined;
   const verifiedFromStatus = status ? status === 'UpToDate' : false;
-  const verified = verifiedFromStatus || !!verificationRaw?.quote?.verified;
+  const verified = verifiedFromStatus || !!verificationDataRaw?.quote?.verified;
 
   return {
     quote: {
@@ -113,9 +115,9 @@ async function verifyIntelTdxLocal(
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function verifyIntelTdxRemote(
+async function fetchIntelTdxVerificationDataFromVerifier(
   quote: string,
-): Promise<IntelTdxVerification> {
+): Promise<IntelTdxVerificationData> {
   const response = await fetch(INTEL_TDX_VERIFIER_API_URL, {
     method: 'POST',
     headers: {
@@ -126,7 +128,7 @@ async function verifyIntelTdxRemote(
 
   if (!response.ok) {
     throw new VerificationError(
-      `Failed to verify Intel TDX with status code ${response.status}`,
+      `Failed to fetch Intel TDX verification data with status code ${response.status}`,
     );
   }
 
