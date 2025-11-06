@@ -95,7 +95,9 @@ export async function chatCompletions({
   };
 }
 
-export async function fetchDomainAttestation(baseApiUrl: string,): Promise<DomainAttestation> {
+export async function fetchDomainAttestation(
+  baseApiUrl: string,
+): Promise<DomainAttestation> {
   const domain = new URL(baseApiUrl).hostname;
   const evidencesUrl = `${baseApiUrl}/evidences/`;
 
@@ -104,32 +106,36 @@ export async function fetchDomainAttestation(baseApiUrl: string,): Promise<Domai
   const acmeAccountUrl = `${evidencesUrl}acme-account.json`;
   const sha256sumUrl = `${evidencesUrl}sha256sum.txt`;
 
-  const [
-    intelQuoteRes,
-    certRes,
-    acmeAccountRes,
-    sha256sumRes
-  ] = await Promise.all([
-    fetch(intelQuoteUrl),
-    fetch(certUrl),
-    fetch(acmeAccountUrl),
-    fetch(sha256sumUrl),
-  ]);
+  const [intelQuoteRes, certRes, acmeAccountRes, sha256sumRes] =
+    await Promise.all([
+      fetch(intelQuoteUrl),
+      fetch(certUrl),
+      fetch(acmeAccountUrl),
+      fetch(sha256sumUrl),
+    ]);
 
   if (!intelQuoteRes.ok) {
-    throw Error(`Failed to fetch intel quote with status code: ${intelQuoteRes.status}`);
+    throw Error(
+      `Failed to fetch intel quote with status code: ${intelQuoteRes.status}`,
+    );
   }
 
   if (!certRes.ok) {
-    throw Error(`Failed to fetch certificate with status code: ${certRes.status}`);
+    throw Error(
+      `Failed to fetch certificate with status code: ${certRes.status}`,
+    );
   }
 
   if (!acmeAccountRes.ok) {
-    throw Error(`Failed to fetch ACME account with status code: ${acmeAccountRes.status}`);
+    throw Error(
+      `Failed to fetch ACME account with status code: ${acmeAccountRes.status}`,
+    );
   }
 
   if (!sha256sumRes.ok) {
-    throw Error(`Failed to fetch sha256 sum with status code: ${sha256sumRes.status}`);
+    throw Error(
+      `Failed to fetch sha256 sum with status code: ${sha256sumRes.status}`,
+    );
   }
 
   return {

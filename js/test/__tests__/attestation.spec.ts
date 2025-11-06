@@ -1,7 +1,11 @@
 import { initContext } from '../context';
-import { fetchAttestationReport, fetchDomainAttestation} from '../common';
+import { fetchAttestationReport, fetchDomainAttestation } from '../common';
 import * as crypto from 'crypto';
-import { verifyDomainAttestation, verifyGatewayAttestation, verifyModelAttestation } from '../../src';
+import {
+  verifyDomainAttestation,
+  verifyGatewayAttestation,
+  verifyModelAttestation,
+} from '../../src';
 
 describe('attestation', () => {
   const context = initContext();
@@ -30,5 +34,5 @@ describe('attestation', () => {
   test.only('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.baseApiUrl);
     await verifyDomainAttestation(attestation);
-  })
+  });
 });
