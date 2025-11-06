@@ -1,4 +1,9 @@
-import { ChatSignature, AttestationReport, SigningAlgo } from '../src';
+import {
+  ChatSignature,
+  AttestationReport,
+  SigningAlgo,
+  DomainAttestation,
+} from '../src';
 import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
 
 export async function fetchAttestationReport(
@@ -87,5 +92,51 @@ export async function chatCompletions({
     id,
     requestBodyRaw,
     responseBodyRaw,
+  };
+}
+
+export async function fetchDomainAttestation(baseApiUrl: string,): Promise<DomainAttestation> {
+  const domain = new URL(baseApiUrl).hostname;
+  const evidencesUrl = `${baseApiUrl}/evidences/`;
+
+  const intelQuoteUrl = `${evidencesUrl}quote.json`;
+  const certUrl = `${evidencesUrl}cert-${domain}.pem`;
+  const acmeAccountUrl = `${evidencesUrl}acme-account.json`;
+  const sha256sumUrl = `${evidencesUrl}sha256sum.txt`;
+
+  const [
+    intelQuoteRes,
+    certRes,
+    acmeAccountRes,
+    sha256sumRes
+  ] = await Promise.all([
+    fetch(intelQuoteUrl),
+    fetch(certUrl),
+    fetch(acmeAccountUrl),
+    fetch(sha256sumUrl),
+  ]);
+
+  if (!intelQuoteRes.ok) {
+    throw Error(`Failed to fetch intel quote with status code: ${intelQuoteRes.status}`);
+  }
+
+  if (!certRes.ok) {
+    throw Error(`Failed to fetch certificate with status code: ${certRes.status}`);
+  }
+
+  if (!acmeAccountRes.ok) {
+    throw Error(`Failed to fetch ACME account with status code: ${acmeAccountRes.status}`);
+  }
+
+  if (!sha256sumRes.ok) {
+    throw Error(`Failed to fetch sha256 sum with status code: ${sha256sumRes.status}`);
+  }
+
+  return {
+    domain,
+    intel_quote: (await intelQuoteRes.json()).quote,
+    cert: await certRes.text(),
+    acmeAccount: await acmeAccountRes.text(),
+    sha256sum: await sha256sumRes.text(),
   };
 }

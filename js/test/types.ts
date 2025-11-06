@@ -1,4 +1,5 @@
 export type Context = {
+  baseApiUrl: string;
   apiUrl: string;
   apiKey: string;
   model: string;

@@ -1,8 +1,8 @@
 import { Context } from './types';
 
 export function initContext(): Context {
-  const apiUrl = process.env.API_URL;
-  if (!apiUrl) {
+  const baseApiUrl = process.env.BASE_API_URL;
+  if (!baseApiUrl) {
     throw Error('Missing env API_URL');
   }
 
@@ -17,7 +17,8 @@ export function initContext(): Context {
   }
 
   return {
-    apiUrl,
+    baseApiUrl,
+    apiUrl: `${baseApiUrl}/v1`,
     apiKey,
     model,
   };
