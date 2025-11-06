@@ -31,7 +31,7 @@ describe('attestation', () => {
     }
   });
 
-  test.only('domain attestation', async () => {
+  test('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.baseApiUrl);
     await verifyDomainAttestation(attestation);
   });
