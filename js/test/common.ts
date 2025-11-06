@@ -139,8 +139,8 @@ export async function fetchDomainAttestation(
   }
 
   return {
-    domain,
     intel_quote: (await intelQuoteRes.json()).quote,
+    domain,
     cert: await certRes.text(),
     acmeAccount: await acmeAccountRes.text(),
     sha256sum: await sha256sumRes.text(),

@@ -49,35 +49,38 @@ function verifyIntelQuteReportDataForDomain(
   acmeAccount: string,
   sha256sum: string,
 ) {
-  const acmeAccountHash = createHash('sha256')
-    .update(acmeAccount)
-    .digest('hex');
-  const certHash = createHash('sha256').update(cert).digest('hex');
+  const certHash = createHash('sha256').update(cert).digest();
+  const acmeAccountHash = createHash('sha256').update(acmeAccount).digest();
+
   const expectedSha256sumFile =
-    `${acmeAccountHash}  acme-account.json\n` +
-    `${certHash}  cert-${domain}.pem\n`;
+    `${acmeAccountHash.toString('hex')}  acme-account.json\n` +
+    `${certHash.toString('hex')}  cert-${domain}.pem\n`;
+
   const expectedSha256sum = createHash('sha256')
     .update(expectedSha256sumFile)
-    .digest('hex');
+    .digest();
 
   const reportDataRaw = hexToBuffer(reportData);
 
-  const embeddedSha256sum = reportDataRaw.subarray(0, 32).toString('hex');
-  const emptyBytes = reportDataRaw.subarray(32).toString('hex');
+  const embeddedSha256sum = reportDataRaw.subarray(0, 32);
+  const embeddedRemaining = reportDataRaw.subarray(32);
 
-  const sha256sumFileMatches = expectedSha256sumFile === sha256sum;
-  const sha256sumMatches = embeddedSha256sum === expectedSha256sum;
-  const emptyBytesMatches = emptyBytes === '0'.repeat(64);
+  const sha256sumFileMatched = expectedSha256sumFile === sha256sum;
 
-  if (!sha256sumFileMatches) {
+  if (!sha256sumFileMatched) {
     throw new VerificationError('sha256sum file mismatching');
   }
-  if (!sha256sumMatches) {
+
+  const sha256sumMatched = embeddedSha256sum.equals(expectedSha256sum);
+
+  if (!sha256sumMatched) {
     throw new VerificationError('sha256sum mismatching');
   }
 
-  if (!emptyBytesMatches) {
-    throw new VerificationError('empty bytes mismatching');
+  const embeddedRemainingMatched = embeddedRemaining.equals(Buffer.alloc(32));
+
+  if (!embeddedRemainingMatched) {
+    throw new VerificationError('Embedded remaining bytes mismatching');
   }
 }
 
