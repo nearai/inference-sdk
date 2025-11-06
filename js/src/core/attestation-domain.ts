@@ -107,7 +107,7 @@ async function verifyLiveCertificate(liveCert: X509Certificate, cert: string) {
   verifyCertificateRoot(rootCert);
   verifyCertificateLeaf(leafCert);
 
-  verifyCertificateFingerprint(leafCert, liveCert);
+  await verifyCertificateFingerprint(leafCert, liveCert);
 }
 
 function verifyCertificateChain(certChain: X509Certificate[]) {
@@ -166,12 +166,12 @@ function verifyCertificateLeaf(cert: X509Certificate) {
   }
 }
 
-function verifyCertificateFingerprint(
+async function verifyCertificateFingerprint(
   cert1: X509Certificate,
   cert2: X509Certificate,
 ) {
-  const fingerprint1 = getCertificateFingerprint(cert1);
-  const fingerprint2 = getCertificateFingerprint(cert2);
+  const fingerprint1 = await getCertificateFingerprint(cert1);
+  const fingerprint2 = await getCertificateFingerprint(cert2);
 
   if (fingerprint1 !== fingerprint2) {
     throw new VerificationError('Certificate fingerprint mismatching');
