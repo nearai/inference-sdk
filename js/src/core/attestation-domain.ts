@@ -107,7 +107,7 @@ function verifyCertificateChain(certChain: X509Certificate[]) {
     const issuerCert = certChain[i + 1];
 
     const isVerified = cert.verify(issuerCert.publicKey);
-    const isIssuerMatches = cert.issuer === issuerCert.subject;
+    const isIssuerMatched = cert.issuer === issuerCert.subject;
 
     if (!isVerified) {
       throw new VerificationError(
@@ -115,7 +115,7 @@ function verifyCertificateChain(certChain: X509Certificate[]) {
       );
     }
 
-    if (!isIssuerMatches) {
+    if (!isIssuerMatched) {
       throw new VerificationError(
         `Certificate chain verification failed: Certificate ${i} issuer '${cert.issuer}' does not match next certificate subject '${issuerCert.subject}'`,
       );
