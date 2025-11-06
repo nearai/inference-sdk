@@ -4,6 +4,9 @@ export { GatewayAttestation } from './types/attestation-gateway';
 export { verifyModelAttestation } from './core/attestation-model';
 export { ModelAttestation } from './types/attestation-model';
 
+export { verifyDomainAttestation } from './core/attestation-domain';
+export { DomainAttestation } from './types/attestation-domain';
+
 export { AttestationReport } from './types/attestation-model';
 
 export { verifyChat } from './core/chat';

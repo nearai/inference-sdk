@@ -3,52 +3,6 @@ import { IntelTdxVerificationData } from '../types/intel';
 import { hexToBuffer } from './common';
 import { getDcapQvlUtils } from './dcap-qvl';
 import { VerificationError } from './errors';
-import { Buffer } from 'buffer';
-
-export function verifyIntelTdx(
-  verificationData: IntelTdxVerificationData,
-  requestNonce: string,
-  signingAddress: string,
-) {
-  if (!verificationData.quote.verified) {
-    throw new VerificationError('Intel quote not verified');
-  }
-
-  verifyReportData(
-    verificationData.quote.body.reportdata,
-    requestNonce,
-    signingAddress,
-  );
-}
-
-function verifyReportData(
-  reportData: string,
-  requestNonce: string,
-  signingAddress: string,
-) {
-  const reportDataRaw = hexToBuffer(reportData);
-  const signingAddressRaw = hexToBuffer(signingAddress);
-
-  const embeddedAddress = reportDataRaw.subarray(0, 32);
-  const embeddedNonce = reportDataRaw.subarray(32);
-
-  const signingAddressVerified = embeddedAddress.equals(
-    Buffer.concat([
-      signingAddressRaw,
-      Buffer.alloc(32 - signingAddressRaw.length, 0),
-    ]),
-  );
-
-  if (!signingAddressVerified) {
-    throw new VerificationError('Signing address mismatching');
-  }
-
-  const requestNonceVerified = embeddedNonce.equals(hexToBuffer(requestNonce));
-
-  if (!requestNonceVerified) {
-    throw new VerificationError('Request nonce mismatching');
-  }
-}
 
 export async function fetchIntelTdxVerificationData(
   quote: string,

@@ -1,9 +1,10 @@
 import { ModelAttestation } from '../types/attestation-model';
-import { verifyIntelTdx, fetchIntelTdxVerificationData } from '../utils/intel';
-import {
-  verifyNvidiaGpu,
-  fetchNvidiaGpuVerificationData,
-} from '../utils/nvidia';
+import { fetchIntelTdxVerificationData } from '../utils/intel';
+import { fetchNvidiaGpuVerificationData } from '../utils/nvidia';
+import { verifyIntelQuoteReportDataForAttestationReport } from './common';
+import { IntelTdxVerificationData } from '../types/intel';
+import { VerificationError } from '../utils/errors';
+import { NvidiaGpuVerificationData } from '../types/nvidia';
 
 export async function verifyModelAttestation(
   attestation: ModelAttestation,
@@ -13,10 +14,37 @@ export async function verifyModelAttestation(
   const intelTdxVerificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
-  verifyIntelTdx(intelTdxVerificationData, requestNonce, signingAddress);
+  verifyIntelTdxForModel(
+    intelTdxVerificationData,
+    requestNonce,
+    signingAddress,
+  );
 
   const nvidiaGpuVerificationData = await fetchNvidiaGpuVerificationData(
     attestation.nvidia_payload,
   );
-  verifyNvidiaGpu(nvidiaGpuVerificationData);
+  verifyNvidiaGpuForModel(nvidiaGpuVerificationData);
+}
+
+function verifyIntelTdxForModel(
+  verificationData: IntelTdxVerificationData,
+  requestNonce: string,
+  signingAddress: string,
+) {
+  if (!verificationData.quote.verified) {
+    throw new VerificationError('Intel quote not verified');
+  }
+
+  verifyIntelQuoteReportDataForAttestationReport(
+    verificationData.quote.body.reportdata,
+    requestNonce,
+    signingAddress,
+  );
+}
+
+function verifyNvidiaGpuForModel(verificationData: NvidiaGpuVerificationData) {
+  const result = verificationData.JWT['x-nvidia-overall-att-result'];
+  if (!result) {
+    throw new VerificationError('Nvidia GPU not verified');
+  }
 }
