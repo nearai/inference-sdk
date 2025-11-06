@@ -2,9 +2,8 @@ import { fetchIntelTdxVerificationData } from '../utils/intel';
 import { DomainAttestation } from '../types/attestation-domain';
 import { VerificationError } from '../utils/errors';
 import { hexToBuffer } from '../utils/common';
-import { createHash, X509Certificate } from 'crypto';
-import * as tls from 'tls';
 import { IntelTdxVerificationData } from '../types/intel';
+import { type X509Certificate } from 'crypto';
 
 export async function verifyDomainAttestation(attestation: DomainAttestation) {
   const verificationData = await fetchIntelTdxVerificationData(
@@ -19,7 +18,7 @@ export async function verifyDomainAttestation(attestation: DomainAttestation) {
   );
 
   const liveCert = await fetchLiveCertificate(attestation.domain);
-  verifyLiveCertificate(liveCert, attestation.cert);
+  await verifyLiveCertificate(liveCert, attestation.cert);
 }
 
 async function verifyIntelTdxForDomain(
@@ -33,7 +32,7 @@ async function verifyIntelTdxForDomain(
     throw new VerificationError('Intel quote not verified');
   }
 
-  verifyIntelQuteReportDataForDomain(
+  await verifyIntelQuteReportDataForDomain(
     verificationData.quote.body.reportdata,
     domain,
     cert,
@@ -42,21 +41,27 @@ async function verifyIntelTdxForDomain(
   );
 }
 
-function verifyIntelQuteReportDataForDomain(
+async function verifyIntelQuteReportDataForDomain(
   reportData: string,
   domain: string,
   cert: string,
   acmeAccount: string,
   sha256sum: string,
 ) {
-  const certHash = createHash('sha256').update(cert).digest();
-  const acmeAccountHash = createHash('sha256').update(acmeAccount).digest();
+  const crypto = await import('crypto');
+
+  const certHash = crypto.createHash('sha256').update(cert).digest();
+  const acmeAccountHash = crypto
+    .createHash('sha256')
+    .update(acmeAccount)
+    .digest();
 
   const expectedSha256sumFile =
     `${acmeAccountHash.toString('hex')}  acme-account.json\n` +
     `${certHash.toString('hex')}  cert-${domain}.pem\n`;
 
-  const expectedSha256sum = createHash('sha256')
+  const expectedSha256sum = crypto
+    .createHash('sha256')
     .update(expectedSha256sumFile)
     .digest();
 
@@ -84,8 +89,8 @@ function verifyIntelQuteReportDataForDomain(
   }
 }
 
-function verifyLiveCertificate(liveCert: X509Certificate, cert: string) {
-  const certChain = parseCertificateChain(cert);
+async function verifyLiveCertificate(liveCert: X509Certificate, cert: string) {
+  const certChain = await parseCertificateChain(cert);
 
   if (certChain.length < 2) {
     throw new VerificationError('Unexpected length of certificate chain');
@@ -169,22 +174,28 @@ function verifyCertificateFingerprint(
   }
 }
 
-function parseCertificateChain(cert: string): X509Certificate[] {
+async function parseCertificateChain(cert: string): Promise<X509Certificate[]> {
+  const crypto = await import('crypto');
+
   const pemCertificateRegex =
     /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g;
   const parsedCertificates: X509Certificate[] = [];
 
   for (const certificateMatch of cert.matchAll(pemCertificateRegex)) {
-    const x509Certificate = new X509Certificate(certificateMatch[0]);
+    const x509Certificate = new crypto.X509Certificate(certificateMatch[0]);
     parsedCertificates.push(x509Certificate);
   }
 
   return parsedCertificates;
 }
 
-function getCertificateFingerprint(cert: X509Certificate): string {
+async function getCertificateFingerprint(
+  cert: X509Certificate,
+): Promise<string> {
+  const crypto = await import('crypto');
+
   const der = cert.raw;
-  const hash = createHash('sha256').update(der).digest('hex');
+  const hash = crypto.createHash('sha256').update(der).digest('hex');
   // Format as colon-separated uppercase hex (OpenSSL format)
   const fingerprint = hash.toUpperCase().match(/.{2}/g)?.join(':');
   if (!fingerprint) {
@@ -197,6 +208,9 @@ async function fetchLiveCertificate(
   domain: string,
   port: number = 443,
 ): Promise<X509Certificate> {
+  const crypto = await import('crypto');
+  const tls = await import('tls');
+
   return new Promise((resolve, reject) => {
     const socket = tls.connect(port, domain, {
       servername: domain,
@@ -221,7 +235,7 @@ async function fetchLiveCertificate(
             ?.join('\n') +
           '\n-----END CERTIFICATE-----';
 
-        resolve(new X509Certificate(pem));
+        resolve(new crypto.X509Certificate(pem));
       } catch (e: unknown) {
         reject(new VerificationError(`Failed to parse certificate`, e));
       } finally {
