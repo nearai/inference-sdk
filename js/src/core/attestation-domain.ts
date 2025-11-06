@@ -5,6 +5,10 @@ import { hexToBuffer } from '../utils/common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { type X509Certificate } from 'crypto';
 
+/**
+ * Verify domain attestation.
+ * Note: This function is only available in Node.js environment
+ */
 export async function verifyDomainAttestation(attestation: DomainAttestation) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
