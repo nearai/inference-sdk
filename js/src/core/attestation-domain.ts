@@ -186,7 +186,11 @@ function getCertificateFingerprint(cert: X509Certificate): string {
   const der = cert.raw;
   const hash = createHash('sha256').update(der).digest('hex');
   // Format as colon-separated uppercase hex (OpenSSL format)
-  return hash.toUpperCase().match(/.{2}/g)?.join(':') || '';
+  const fingerprint = hash.toUpperCase().match(/.{2}/g)?.join(':');
+  if (!fingerprint) {
+    throw new VerificationError('Failed to get certificate fingerprint');
+  }
+  return fingerprint;
 }
 
 async function fetchLiveCertificate(
