@@ -11,9 +11,10 @@ export async function fetchAttestationReport(
   apiKey: string,
   model: string,
   requestNonce: string,
+  signingAlgo: SigningAlgo = 'ecdsa',
 ): Promise<AttestationReport> {
   const res = await fetch(
-    `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}`,
+    `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}&signing_algo=${signingAlgo}`,
     {
       method: 'GET',
       headers: {
@@ -36,10 +37,10 @@ export async function fetchChatSignature(
   apiKey: string,
   chatId: string,
   model: string,
-  signingAlgo: SigningAlgo,
+  signingAlgo: SigningAlgo = 'ecdsa',
 ): Promise<ChatSignature> {
   const res = await fetch(
-    `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${encodeURIComponent(signingAlgo)}`,
+    `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${signingAlgo}`,
     {
       method: 'GET',
       headers: {

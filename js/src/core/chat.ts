@@ -5,10 +5,28 @@ import * as nacl from 'tweetnacl';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import { Buffer } from 'buffer';
+import { ModelAttestation } from '../types/attestation-model';
 
 export function verifyChat(message: Chat, signature: ChatSignature) {
   verifyChatHash(signature.text, message.requestBody, message.responseBody);
   verifyChatSignature(signature);
+}
+
+export function verifySigningAddress(
+  signingAddress: string,
+  attestations: ModelAttestation[],
+) {
+  const modelAttestation = attestations.find((attestation) => {
+    return hexToBuffer(attestation.signing_address).equals(
+      hexToBuffer(signingAddress),
+    );
+  });
+
+  if (!modelAttestation) {
+    throw new VerificationError(
+      'The signing address does not match any of the model attestations',
+    );
+  }
 }
 
 function verifyChatSignature(signature: ChatSignature) {

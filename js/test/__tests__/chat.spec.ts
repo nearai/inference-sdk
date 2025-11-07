@@ -1,9 +1,14 @@
 import { initContext } from '../context';
-import { chatCompletions, fetchChatSignature } from '../common';
-import { verifyChat } from '../../src';
+import {
+  chatCompletions,
+  fetchAttestationReport,
+  fetchChatSignature,
+} from '../common';
+import { verifyChat, verifySigningAddress } from '../../src';
 import { ChatCompletionsResponse } from '../types';
+import crypto from 'crypto';
 
-describe('signature', () => {
+describe('chat', () => {
   const context = initContext();
 
   let completions: ChatCompletionsResponse;
@@ -25,7 +30,7 @@ describe('signature', () => {
     });
   });
 
-  test('signature ecdsa', async () => {
+  test('chat signature ecdsa', async () => {
     const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
@@ -43,9 +48,19 @@ describe('signature', () => {
       },
       signature,
     );
+
+    const report = await fetchAttestationReport(
+      context.apiUrl,
+      context.apiKey,
+      context.model,
+      crypto.randomBytes(32).toString('hex'),
+      'ecdsa',
+    );
+
+    verifySigningAddress(signature.signing_address, report.model_attestations);
   });
 
-  test('signature ed25519', async () => {
+  test('chat signature ed25519', async () => {
     const signature = await fetchChatSignature(
       context.apiUrl,
       context.apiKey,
@@ -63,5 +78,15 @@ describe('signature', () => {
       },
       signature,
     );
+
+    const report = await fetchAttestationReport(
+      context.apiUrl,
+      context.apiKey,
+      context.model,
+      crypto.randomBytes(32).toString('hex'),
+      'ed25519',
+    );
+
+    verifySigningAddress(signature.signing_address, report.model_attestations);
   });
 });
