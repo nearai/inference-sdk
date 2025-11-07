@@ -1,6 +1,6 @@
 import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import { SIGSTORE_SEARCH_API_URL } from '../utils/consts';
+import { SIGSTORE_SEARCH_API_URL, TIMEOUT } from '../utils/consts';
 import { TcbInfo } from '../types/attestation-common';
 
 export function verifyIntelQuoteReportDataForAttestationReport(
@@ -62,7 +62,7 @@ function getSigstoreLinksFromCompose(compose: string): string[] {
 
 async function verifySigstoreLink(link: string) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
 
   let res;
 

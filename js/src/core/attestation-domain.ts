@@ -5,6 +5,7 @@ import { hexToBuffer } from '../utils/common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { type X509Certificate } from 'crypto';
 import { getComposeFromTcbInfo, verifyCompose } from './attestation-common';
+import { TIMEOUT } from '../utils/consts';
 
 /**
  * Verify domain attestation.
@@ -221,7 +222,7 @@ async function fetchLiveCertificate(
   return new Promise((resolve, reject) => {
     const socket = tls.connect(port, domain, {
       servername: domain,
-      timeout: 5000,
+      timeout: TIMEOUT,
       rejectUnauthorized: false, // We're just fetching the cert, not verifying it
     });
 
