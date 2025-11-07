@@ -51,10 +51,11 @@ export async function verifyCompose(compose: string) {
 }
 
 function getSigstoreLinksFromCompose(compose: string): string[] {
-  const pattern = /@sha256:([0-9a-f]{64})/g;
-  const digestsIter = compose.matchAll(pattern).map(([, digest]) => digest);
-  const digests = new Set(digestsIter);
-  return Array.from(digests).map(
+  const digestsIter = compose
+    .matchAll(/@sha256:([0-9a-f]{64})/g)
+    .map(([, digest]) => digest);
+  const digests = Array.from(new Set(digestsIter));
+  return digests.map(
     (digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`,
   );
 }
