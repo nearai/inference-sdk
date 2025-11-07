@@ -1,6 +1,8 @@
 export const ETHEREUM_ZERO_ADDRESS =
   '0x0000000000000000000000000000000000000000';
 
+export const SIGSTORE_SEARCH_API_URL = 'https://search.sigstore.dev';
+
 export const INTEL_PCCS_API_URL = 'https://pccs.phala.network';
 
 export const INTEL_TDX_VERIFIER_API_URL =

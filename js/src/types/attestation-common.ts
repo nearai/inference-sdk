@@ -1,0 +1,11 @@
+import { GatewayAttestation } from './attestation-gateway';
+import { ModelAttestation } from './attestation-model';
+
+export type TcbInfo = {
+  app_compose: string;
+};
+
+export type AttestationReport = ModelAttestation & {
+  gateway_attestation: GatewayAttestation;
+  model_attestations: ModelAttestation[];
+};

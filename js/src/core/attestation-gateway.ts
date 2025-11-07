@@ -1,6 +1,10 @@
 import { GatewayAttestation } from '../types/attestation-gateway';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
-import { verifyIntelQuoteReportDataForAttestationReport } from './common';
+import {
+  getComposeFromTcbInfo,
+  verifyCompose,
+  verifyIntelQuoteReportDataForAttestationReport,
+} from './attestation-common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { VerificationError } from '../utils/errors';
 import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
@@ -13,6 +17,8 @@ export async function verifyGatewayAttestation(
     attestation.intel_quote,
   );
   verifyIntelTdxForGateway(verificationData, requestNonce);
+
+  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
 }
 
 function verifyIntelTdxForGateway(

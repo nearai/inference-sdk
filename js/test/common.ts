@@ -105,13 +105,15 @@ export async function fetchDomainAttestation(
   const certUrl = `${evidencesUrl}cert-${domain}.pem`;
   const acmeAccountUrl = `${evidencesUrl}acme-account.json`;
   const sha256sumUrl = `${evidencesUrl}sha256sum.txt`;
+  const infoUrl = `${evidencesUrl}info.json`;
 
-  const [intelQuoteRes, certRes, acmeAccountRes, sha256sumRes] =
+  const [intelQuoteRes, certRes, acmeAccountRes, sha256sumRes, infoRes] =
     await Promise.all([
       fetch(intelQuoteUrl),
       fetch(certUrl),
       fetch(acmeAccountUrl),
       fetch(sha256sumUrl),
+      fetch(infoUrl),
     ]);
 
   if (!intelQuoteRes.ok) {
@@ -138,11 +140,16 @@ export async function fetchDomainAttestation(
     );
   }
 
+  if (!infoRes.ok) {
+    throw Error(`Failed to fetch info with status code: ${infoRes.status}`);
+  }
+
   return {
     intel_quote: (await intelQuoteRes.json()).quote,
     domain,
     cert: await certRes.text(),
     acmeAccount: await acmeAccountRes.text(),
     sha256sum: await sha256sumRes.text(),
+    info: await infoRes.json(),
   };
 }

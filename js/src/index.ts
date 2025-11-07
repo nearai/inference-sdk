@@ -7,7 +7,7 @@ export { ModelAttestation } from './types/attestation-model';
 export { verifyDomainAttestation } from './core/attestation-domain';
 export { DomainAttestation } from './types/attestation-domain';
 
-export { AttestationReport } from './types/attestation-model';
+export { AttestationReport, TcbInfo } from './types/attestation-common';
 
 export { verifyChat } from './core/chat';
 export { Chat, ChatSignature, SigningAlgo } from './types/chat';

@@ -4,6 +4,7 @@ import { VerificationError } from '../utils/errors';
 import { hexToBuffer } from '../utils/common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { type X509Certificate } from 'crypto';
+import { getComposeFromTcbInfo, verifyCompose } from './attestation-common';
 
 /**
  * Verify domain attestation.
@@ -20,6 +21,8 @@ export async function verifyDomainAttestation(attestation: DomainAttestation) {
     attestation.acmeAccount,
     attestation.sha256sum,
   );
+
+  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
 
   const liveCert = await fetchLiveCertificate(attestation.domain);
   await verifyLiveCertificate(liveCert, attestation.cert);

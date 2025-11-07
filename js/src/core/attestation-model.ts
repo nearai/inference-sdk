@@ -1,7 +1,11 @@
 import { ModelAttestation } from '../types/attestation-model';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
 import { fetchNvidiaGpuVerificationData } from '../utils/nvidia';
-import { verifyIntelQuoteReportDataForAttestationReport } from './common';
+import {
+  getComposeFromTcbInfo,
+  verifyCompose,
+  verifyIntelQuoteReportDataForAttestationReport,
+} from './attestation-common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { VerificationError } from '../utils/errors';
 import { NvidiaGpuVerificationData } from '../types/nvidia';
@@ -24,6 +28,8 @@ export async function verifyModelAttestation(
     attestation.nvidia_payload,
   );
   verifyNvidiaGpuForModel(nvidiaGpuVerificationData);
+
+  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
 }
 
 function verifyIntelTdxForModel(
