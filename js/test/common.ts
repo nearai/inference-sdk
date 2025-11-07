@@ -5,14 +5,25 @@ import {
   DomainAttestation,
 } from '../src';
 import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
+import crypto from 'crypto';
 
-export async function fetchAttestationReport(
-  apiUrl: string,
-  apiKey: string,
-  model: string,
-  requestNonce: string,
-  signingAlgo: SigningAlgo = 'ecdsa',
-): Promise<AttestationReport> {
+export async function fetchAttestationReport({
+  apiUrl,
+  apiKey,
+  params: {
+    model,
+    requestNonce = crypto.randomBytes(32).toString('hex'),
+    signingAlgo = 'ecdsa',
+  },
+}: {
+  apiUrl: string;
+  apiKey: string;
+  params: {
+    model: string;
+    requestNonce?: string;
+    signingAlgo?: SigningAlgo;
+  };
+}): Promise<AttestationReport> {
   const res = await fetch(
     `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}&signing_algo=${signingAlgo}`,
     {
@@ -32,13 +43,19 @@ export async function fetchAttestationReport(
   return res.json();
 }
 
-export async function fetchChatSignature(
-  apiUrl: string,
-  apiKey: string,
-  chatId: string,
-  model: string,
-  signingAlgo: SigningAlgo = 'ecdsa',
-): Promise<ChatSignature> {
+export async function fetchChatSignature({
+  apiUrl,
+  apiKey,
+  params: { chatId, model, signingAlgo = 'ecdsa' },
+}: {
+  apiUrl: string;
+  apiKey: string;
+  params: {
+    chatId: string;
+    model: string;
+    signingAlgo?: SigningAlgo;
+  };
+}): Promise<ChatSignature> {
   const res = await fetch(
     `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${signingAlgo}`,
     {

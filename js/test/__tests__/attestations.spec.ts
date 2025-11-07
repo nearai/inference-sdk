@@ -13,12 +13,14 @@ describe('attestations', () => {
   test('gateway attestation and model attestations', async () => {
     const requestNonce = crypto.randomBytes(32).toString('hex');
 
-    const report = await fetchAttestationReport(
-      context.apiUrl,
-      context.apiKey,
-      context.model,
-      requestNonce,
-    );
+    const report = await fetchAttestationReport({
+      apiUrl: context.apiUrl,
+      apiKey: context.apiKey,
+      params: {
+        model: context.model,
+        requestNonce,
+      },
+    });
 
     await verifyGatewayAttestation(report.gateway_attestation, requestNonce);
 

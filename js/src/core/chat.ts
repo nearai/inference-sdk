@@ -16,6 +16,10 @@ export function verifySigningAddress(
   signingAddress: string,
   attestations: ModelAttestation[],
 ) {
+  console.log({
+    signingAddress,
+    attestations,
+  });
   const modelAttestation = attestations.find((attestation) => {
     return hexToBuffer(attestation.signing_address).equals(
       hexToBuffer(signingAddress),

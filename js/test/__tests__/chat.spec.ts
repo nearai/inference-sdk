@@ -6,7 +6,6 @@ import {
 } from '../common';
 import { verifyChat, verifySigningAddress } from '../../src';
 import { ChatCompletionsResponse } from '../types';
-import crypto from 'crypto';
 
 describe('chat', () => {
   const context = initContext();
@@ -31,13 +30,15 @@ describe('chat', () => {
   });
 
   test('chat signature ecdsa', async () => {
-    const signature = await fetchChatSignature(
-      context.apiUrl,
-      context.apiKey,
-      completions.id,
-      context.model,
-      'ecdsa',
-    );
+    const signature = await fetchChatSignature({
+      apiUrl: context.apiUrl,
+      apiKey: context.apiKey,
+      params: {
+        chatId: completions.id,
+        model: context.model,
+        signingAlgo: 'ecdsa',
+      },
+    });
 
     expect(signature.signing_algo).toEqual('ecdsa');
 
@@ -49,25 +50,28 @@ describe('chat', () => {
       signature,
     );
 
-    const report = await fetchAttestationReport(
-      context.apiUrl,
-      context.apiKey,
-      context.model,
-      crypto.randomBytes(32).toString('hex'),
-      'ecdsa',
-    );
+    const report = await fetchAttestationReport({
+      apiUrl: context.apiUrl,
+      apiKey: context.apiKey,
+      params: {
+        model: context.model,
+        signingAlgo: 'ecdsa',
+      },
+    });
 
     verifySigningAddress(signature.signing_address, report.model_attestations);
   });
 
   test('chat signature ed25519', async () => {
-    const signature = await fetchChatSignature(
-      context.apiUrl,
-      context.apiKey,
-      completions.id,
-      context.model,
-      'ed25519',
-    );
+    const signature = await fetchChatSignature({
+      apiUrl: context.apiUrl,
+      apiKey: context.apiKey,
+      params: {
+        chatId: completions.id,
+        model: context.model,
+        signingAlgo: 'ed25519',
+      },
+    });
 
     expect(signature.signing_algo).toEqual('ed25519');
 
@@ -79,13 +83,14 @@ describe('chat', () => {
       signature,
     );
 
-    const report = await fetchAttestationReport(
-      context.apiUrl,
-      context.apiKey,
-      context.model,
-      crypto.randomBytes(32).toString('hex'),
-      'ed25519',
-    );
+    const report = await fetchAttestationReport({
+      apiUrl: context.apiUrl,
+      apiKey: context.apiKey,
+      params: {
+        model: context.model,
+        signingAlgo: 'ed25519',
+      },
+    });
 
     verifySigningAddress(signature.signing_address, report.model_attestations);
   });
