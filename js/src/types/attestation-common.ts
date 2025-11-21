@@ -5,7 +5,7 @@ export type TcbInfo = {
   app_compose: string;
 };
 
-export type AttestationReport = ModelAttestation & {
+export type AttestationReport = {
   gateway_attestation: GatewayAttestation;
-  model_attestations: ModelAttestation[];
+  model_attestations?: ModelAttestation[];
 };
