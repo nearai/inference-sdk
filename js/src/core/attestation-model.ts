@@ -13,7 +13,6 @@ import { NvidiaGpuVerificationData } from '../types/nvidia';
 export async function verifyModelAttestation(
   attestation: ModelAttestation,
   requestNonce: string,
-  signingAddress: string,
 ) {
   const intelTdxVerificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
@@ -21,7 +20,7 @@ export async function verifyModelAttestation(
   verifyIntelTdxForModel(
     intelTdxVerificationData,
     requestNonce,
-    signingAddress,
+    attestation.signing_address,
   );
 
   const nvidiaGpuVerificationData = await fetchNvidiaGpuVerificationData(

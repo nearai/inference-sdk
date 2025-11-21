@@ -16,7 +16,11 @@ export async function verifyGatewayAttestation(
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
-  verifyIntelTdxForGateway(verificationData, requestNonce);
+  verifyIntelTdxForGateway(
+    verificationData,
+    requestNonce,
+    attestation.signing_address,
+  );
 
   await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
 }
@@ -24,6 +28,7 @@ export async function verifyGatewayAttestation(
 function verifyIntelTdxForGateway(
   verificationData: IntelTdxVerificationData,
   requestNonce: string,
+  signingAddress = ETHEREUM_ZERO_ADDRESS,
 ) {
   if (!verificationData.quote.verified) {
     throw new VerificationError('Intel quote not verified');
@@ -32,6 +37,6 @@ function verifyIntelTdxForGateway(
   verifyIntelQuoteReportDataForAttestationReport(
     verificationData.quote.body.reportdata,
     requestNonce,
-    ETHEREUM_ZERO_ADDRESS,
+    signingAddress,
   );
 }

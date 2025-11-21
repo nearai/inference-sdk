@@ -25,11 +25,7 @@ describe('attestations', () => {
     await verifyGatewayAttestation(report.gateway_attestation, requestNonce);
 
     for (const modelAttestation of report.model_attestations ?? []) {
-      await verifyModelAttestation(
-        modelAttestation,
-        requestNonce,
-        modelAttestation.signing_address,
-      );
+      await verifyModelAttestation(modelAttestation, requestNonce);
     }
   });
 
