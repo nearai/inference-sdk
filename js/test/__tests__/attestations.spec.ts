@@ -40,19 +40,19 @@ async function testGatewayAttestationAndModelAttestations(
     apiKey: context.apiKey,
     params: {
       model: context.model,
-      signingAlgo,
       requestNonce,
+      signingAlgo,
     },
   });
 
-  expect(report.gateway_attestation.signing_algo).toEqual(signingAlgo);
   expect(report.gateway_attestation.request_nonce).toEqual(requestNonce);
+  expect(report.gateway_attestation.signing_algo).toEqual(signingAlgo);
 
   await verifyGatewayAttestation(report.gateway_attestation);
 
   for (const modelAttestation of report.model_attestations ?? []) {
-    expect(modelAttestation.signing_algo).toEqual(signingAlgo);
     expect(modelAttestation.request_nonce).toEqual(requestNonce);
+    expect(modelAttestation.signing_algo).toEqual(signingAlgo);
 
     await verifyModelAttestation(modelAttestation);
   }

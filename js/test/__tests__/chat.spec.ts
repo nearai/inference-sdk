@@ -3,7 +3,6 @@ import {
   chatCompletions,
   fetchAttestationReport,
   fetchChatSignature,
-  generateRequestNonce,
 } from '../common';
 import { SigningAlgo, verifyChat, verifySigningAddress } from '../../src';
 import { ChatCompletionsResponse, Context } from '../types';
@@ -70,7 +69,6 @@ async function testChatSignature(
     params: {
       model: context.model,
       signingAlgo,
-      requestNonce: generateRequestNonce(),
     },
   });
 
