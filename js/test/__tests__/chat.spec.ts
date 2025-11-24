@@ -59,10 +59,7 @@ describe('chat', () => {
       },
     });
 
-    verifySigningAddress(
-      signature.signing_address,
-      report.model_attestations ?? [],
-    );
+    verifySigningAddress(signature, report.model_attestations ?? []);
   });
 
   test('chat signature ed25519', async () => {
@@ -95,9 +92,6 @@ describe('chat', () => {
       },
     });
 
-    verifySigningAddress(
-      signature.signing_address,
-      report.model_attestations ?? [],
-    );
+    verifySigningAddress(signature, report.model_attestations ?? []);
   });
 });

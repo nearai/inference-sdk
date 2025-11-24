@@ -13,12 +13,12 @@ export function verifyChat(message: Chat, signature: ChatSignature) {
 }
 
 export function verifySigningAddress(
-  signingAddress: string,
+  signature: ChatSignature,
   attestations: ModelAttestation[],
 ) {
   const modelAttestation = attestations.find((attestation) => {
     return hexToBuffer(attestation.signing_address).equals(
-      hexToBuffer(signingAddress),
+      hexToBuffer(signature.signing_address),
     );
   });
 
