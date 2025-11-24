@@ -1,6 +1,9 @@
 import { initContext } from '../context';
-import { fetchAttestationReport, fetchDomainAttestation } from '../common';
-import * as crypto from 'crypto';
+import {
+  fetchAttestationReport,
+  fetchDomainAttestation,
+  generateRequestNonce,
+} from '../common';
 import {
   SigningAlgo,
   verifyDomainAttestation,
@@ -30,7 +33,7 @@ async function testGatewayAttestationAndModelAttestations(
   context: Context,
   signingAlgo: SigningAlgo,
 ) {
-  const requestNonce = crypto.randomBytes(32).toString('hex');
+  const requestNonce = generateRequestNonce();
 
   const report = await fetchAttestationReport({
     apiUrl: context.apiUrl,

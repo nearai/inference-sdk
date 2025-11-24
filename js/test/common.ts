@@ -7,21 +7,21 @@ import {
 import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
 import crypto from 'crypto';
 
+export function generateRequestNonce(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
 export async function fetchAttestationReport({
   apiUrl,
   apiKey,
-  params: {
-    model,
-    requestNonce = crypto.randomBytes(32).toString('hex'),
-    signingAlgo = 'ecdsa',
-  },
+  params: { model, requestNonce, signingAlgo },
 }: {
   apiUrl: string;
   apiKey: string;
   params: {
     model: string;
-    requestNonce?: string;
-    signingAlgo?: SigningAlgo;
+    requestNonce: string;
+    signingAlgo: SigningAlgo;
   };
 }): Promise<AttestationReport> {
   const res = await fetch(
@@ -46,14 +46,14 @@ export async function fetchAttestationReport({
 export async function fetchChatSignature({
   apiUrl,
   apiKey,
-  params: { chatId, model, signingAlgo = 'ecdsa' },
+  params: { chatId, model, signingAlgo },
 }: {
   apiUrl: string;
   apiKey: string;
   params: {
     chatId: string;
     model: string;
-    signingAlgo?: SigningAlgo;
+    signingAlgo: SigningAlgo;
   };
 }): Promise<ChatSignature> {
   const res = await fetch(
