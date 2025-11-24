@@ -17,14 +17,17 @@ export function verifySigningAddress(
   attestations: ModelAttestation[],
 ) {
   const modelAttestation = attestations.find((attestation) => {
-    return hexToBuffer(attestation.signing_address).equals(
-      hexToBuffer(signature.signing_address),
+    return (
+      signature.signing_algo === attestation.signing_algo &&
+      hexToBuffer(signature.signing_address).equals(
+        hexToBuffer(attestation.signing_address),
+      )
     );
   });
 
   if (!modelAttestation) {
     throw new VerificationError(
-      'The signing address does not match any of the model attestations',
+      'The signature signing algorithm or address does not match any of the model attestations',
     );
   }
 }
