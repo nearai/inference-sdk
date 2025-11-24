@@ -10,16 +10,13 @@ import { IntelTdxVerificationData } from '../types/intel';
 import { VerificationError } from '../utils/errors';
 import { NvidiaGpuVerificationData } from '../types/nvidia';
 
-export async function verifyModelAttestation(
-  attestation: ModelAttestation,
-  requestNonce: string,
-) {
+export async function verifyModelAttestation(attestation: ModelAttestation) {
   const intelTdxVerificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
   verifyIntelTdxForModel(
     intelTdxVerificationData,
-    requestNonce,
+    attestation.request_nonce,
     attestation.signing_address,
   );
 

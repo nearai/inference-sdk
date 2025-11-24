@@ -4,8 +4,8 @@ import {
   fetchAttestationReport,
   fetchChatSignature,
 } from '../common';
-import { verifyChat, verifySigningAddress } from '../../src';
-import { ChatCompletionsResponse } from '../types';
+import { SigningAlgo, verifyChat, verifySigningAddress } from '../../src';
+import { ChatCompletionsResponse, Context } from '../types';
 
 describe('chat', () => {
   const context = initContext();
@@ -30,68 +30,47 @@ describe('chat', () => {
   });
 
   test('chat signature ecdsa', async () => {
-    const signature = await fetchChatSignature({
-      apiUrl: context.apiUrl,
-      apiKey: context.apiKey,
-      params: {
-        chatId: completions.id,
-        model: context.model,
-        signingAlgo: 'ecdsa',
-      },
-    });
-
-    expect(signature.signing_algo).toEqual('ecdsa');
-
-    verifyChat(
-      {
-        requestBody: completions.requestBodyRaw,
-        responseBody: completions.responseBodyRaw,
-      },
-      signature,
-    );
-
-    const report = await fetchAttestationReport({
-      apiUrl: context.apiUrl,
-      apiKey: context.apiKey,
-      params: {
-        model: context.model,
-        signingAlgo: 'ecdsa',
-      },
-    });
-
-    verifySigningAddress(signature, report.model_attestations ?? []);
+    await testChatSignature(context, completions, 'ecdsa');
   });
 
   test('chat signature ed25519', async () => {
-    const signature = await fetchChatSignature({
-      apiUrl: context.apiUrl,
-      apiKey: context.apiKey,
-      params: {
-        chatId: completions.id,
-        model: context.model,
-        signingAlgo: 'ed25519',
-      },
-    });
-
-    expect(signature.signing_algo).toEqual('ed25519');
-
-    verifyChat(
-      {
-        requestBody: completions.requestBodyRaw,
-        responseBody: completions.responseBodyRaw,
-      },
-      signature,
-    );
-
-    const report = await fetchAttestationReport({
-      apiUrl: context.apiUrl,
-      apiKey: context.apiKey,
-      params: {
-        model: context.model,
-        signingAlgo: 'ed25519',
-      },
-    });
-
-    verifySigningAddress(signature, report.model_attestations ?? []);
+    await testChatSignature(context, completions, 'ed25519');
   });
 });
+
+async function testChatSignature(
+  context: Context,
+  completions: ChatCompletionsResponse,
+  signingAlgo: SigningAlgo,
+) {
+  const signature = await fetchChatSignature({
+    apiUrl: context.apiUrl,
+    apiKey: context.apiKey,
+    params: {
+      chatId: completions.id,
+      model: context.model,
+      signingAlgo,
+    },
+  });
+
+  expect(signature.signing_algo).toEqual(signingAlgo);
+
+  verifyChat(
+    {
+      requestBody: completions.requestBodyRaw,
+      responseBody: completions.responseBodyRaw,
+    },
+    signature,
+  );
+
+  const report = await fetchAttestationReport({
+    apiUrl: context.apiUrl,
+    apiKey: context.apiKey,
+    params: {
+      model: context.model,
+      signingAlgo,
+    },
+  });
+
+  verifySigningAddress(signature, report.model_attestations ?? []);
+}

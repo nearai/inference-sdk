@@ -11,14 +11,13 @@ import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
 
 export async function verifyGatewayAttestation(
   attestation: GatewayAttestation,
-  requestNonce: string,
 ) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
   verifyIntelTdxForGateway(
     verificationData,
-    requestNonce,
+    attestation.request_nonce,
     attestation.signing_address,
   );
 
