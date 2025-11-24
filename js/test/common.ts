@@ -14,13 +14,13 @@ export function generateRequestNonce(): string {
 export async function fetchAttestationReport({
   apiUrl,
   apiKey,
-  params: { model, requestNonce = generateRequestNonce(), signingAlgo },
+  params: { model, requestNonce, signingAlgo },
 }: {
   apiUrl: string;
   apiKey: string;
   params: {
     model: string;
-    requestNonce?: string;
+    requestNonce: string;
     signingAlgo: SigningAlgo;
   };
 }): Promise<AttestationReport> {
