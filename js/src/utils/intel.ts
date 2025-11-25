@@ -1,8 +1,8 @@
 import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
 import { IntelTdxVerificationData } from '../types/intel';
 import { hexToBuffer } from './common';
-import { getDcapQvlUtils } from './dcap-qvl';
 import { VerificationError } from './errors';
+import { getCollateral, verify } from '@phala/dcap-qvl';
 
 export async function fetchIntelTdxVerificationData(
   quote: string,
@@ -13,14 +13,12 @@ export async function fetchIntelTdxVerificationData(
 async function fetchIntelTdxVerificationDataFromPccs(
   quote: string,
 ): Promise<IntelTdxVerificationData> {
-  const { jsVerify, jsGetCollateral } = await getDcapQvlUtils();
-
   const quoteRaw = hexToBuffer(quote);
 
   let collateral;
 
   try {
-    collateral = await jsGetCollateral(INTEL_PCCS_API_URL, quoteRaw);
+    collateral = await getCollateral(INTEL_PCCS_API_URL, quoteRaw);
   } catch (e: unknown) {
     throw new VerificationError('Failed to get collateral', e);
   }
@@ -28,47 +26,42 @@ async function fetchIntelTdxVerificationDataFromPccs(
   let verificationDataRaw;
 
   try {
-    verificationDataRaw = jsVerify(
+    verificationDataRaw = verify(
       quoteRaw,
       collateral,
-      BigInt(Math.floor(Date.now() / 1000)),
+      Math.floor(Date.now() / 1000),
     );
   } catch (e: unknown) {
     throw new VerificationError('Failed to verify Intel quote', e);
   }
 
-  const td10 = verificationDataRaw?.report?.TD10
-    ? verificationDataRaw.report.TD10
-    : {};
-  if (!td10.report_data || typeof td10.report_data !== 'string') {
-    throw new VerificationError('Bad report_data');
-  }
-  if (!td10.mr_config_id || typeof td10.mr_config_id !== 'string') {
-    throw new VerificationError('Bad mr_config_id');
+  const td10 = verificationDataRaw?.report?.data;
+  if (!td10 || !td10.reportData || !td10.mrConfigId) {
+    throw new VerificationError('Bad report data');
   }
 
-  const reportData: string = td10.report_data;
-  const mrConfig: string = td10.mr_config_id;
+  const reportData = Buffer.from(td10.reportData);
+  const mrConfig = Buffer.from(td10.mrConfigId);
 
   const status: string | undefined =
     typeof verificationDataRaw?.status === 'string'
       ? verificationDataRaw.status
       : undefined;
-  const verifiedFromStatus = status ? status === 'UpToDate' : false;
-  const verified = verifiedFromStatus || !!verificationDataRaw?.quote?.verified;
+
+  const verified = status ? status === 'UpToDate' : false;
 
   return {
     quote: {
       body: {
-        reportdata: reportData,
-        mrconfig: mrConfig,
+        reportdata: `0x${reportData.toString('hex')}`,
+        mrconfig: `0x${mrConfig.toString('hex')}`,
       },
       verified,
     },
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+/* eslint-disable-next-line @typescript-eslint/no-unused-vars */
 async function fetchIntelTdxVerificationDataFromVerifier(
   quote: string,
 ): Promise<IntelTdxVerificationData> {
@@ -86,5 +79,5 @@ async function fetchIntelTdxVerificationDataFromVerifier(
     );
   }
 
-  return await response.json();
+  return response.json();
 }
