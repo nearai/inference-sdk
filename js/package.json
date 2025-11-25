@@ -16,7 +16,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@phala/dcap-qvl": "^0.1.2",
+    "@phala/dcap-qvl": "^0.2.0",
     "buffer": "^6.0.3",
     "ethers": "^6.15.0",
     "sha256": "^0.2.0",

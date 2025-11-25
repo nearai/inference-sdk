@@ -35,8 +35,9 @@ async function fetchIntelTdxVerificationDataFromPccs(
     throw new VerificationError('Failed to verify Intel quote', e);
   }
 
-  const td10 = verificationDataRaw?.report?.data;
-  if (!td10 || !td10.reportData || !td10.mrConfigId) {
+  const td10 = verificationDataRaw.report.asTd10();
+
+  if (!td10) {
     throw new VerificationError('Bad report data');
   }
 
