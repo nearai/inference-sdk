@@ -4,6 +4,7 @@ import {
   fetchAttestationReport,
   fetchChatSignature,
   generateRequestNonce,
+  sleep,
 } from '../common';
 import { SigningAlgo, verifyChat, verifySigningAddress } from '../../src';
 import { ChatCompletionsResponse, Context } from '../types';
@@ -28,6 +29,8 @@ describe('chat', () => {
         stream: true,
       },
     });
+
+    await sleep(5 * 1000); // Waiting for signature preparation
   });
 
   test('chat signature ecdsa', async () => {

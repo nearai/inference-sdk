@@ -7,6 +7,12 @@ import {
 import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
 import crypto from 'crypto';
 
+export async function sleep(ms: number) {
+  await new Promise<void>((resolve) => {
+    setTimeout(() => resolve(), ms);
+  });
+}
+
 export function generateRequestNonce(): string {
   return crypto.randomBytes(32).toString('hex');
 }
