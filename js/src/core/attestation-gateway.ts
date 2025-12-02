@@ -51,7 +51,7 @@ async function verifyVpcForGateway(
   vpcServerAppId: string,
   vpcHostname: string,
 ) {
-  const url = `https://${domain}/vpc.json`;
+  const url = `https://${domain}/evidences/vpc.json`;
 
   const res = await fetch(url);
 
