@@ -21,7 +21,7 @@ export async function verifyGatewayAttestation(
     attestation.signing_address,
   );
 
-  await verifyVpcInfoForGateway(
+  await verifyVpcForGateway(
     attestation.domain,
     attestation.vpc.vpc_server_app_id,
     attestation.vpc.vpc_hostname,
@@ -46,7 +46,7 @@ function verifyIntelTdxForGateway(
   );
 }
 
-async function verifyVpcInfoForGateway(
+async function verifyVpcForGateway(
   domain: string,
   vpcServerAppId: string,
   vpcHostname: string,
