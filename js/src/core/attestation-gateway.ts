@@ -56,7 +56,7 @@ async function verifyVpcForGateway(
   const res = await fetch(url);
 
   if (!res.ok) {
-    throw new VerificationError('Failed to fetch VPC info');
+    throw new VerificationError(`Failed to fetch VPC info with status code ${res.status}`);
   }
 
   const vpcInfo = await res.json();
