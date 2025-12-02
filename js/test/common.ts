@@ -120,10 +120,9 @@ export async function chatCompletions({
 }
 
 export async function fetchDomainAttestation(
-  baseApiUrl: string,
+  domain: string,
 ): Promise<DomainAttestation> {
-  const domain = new URL(baseApiUrl).hostname;
-  const evidencesUrl = `${baseApiUrl}/evidences/`;
+  const evidencesUrl = `https://${domain}/evidences/`;
 
   const intelQuoteUrl = `${evidencesUrl}quote.json`;
   const certUrl = `${evidencesUrl}cert-${domain}.pem`;

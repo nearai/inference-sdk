@@ -1,4 +1,4 @@
-import { GatewayAttestation } from '../types/attestation-gateway';
+import { GatewayAttestationWithDomain } from '../types/attestation-gateway';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
 import {
   getComposeFromTcbInfo,
@@ -10,7 +10,7 @@ import { VerificationError } from '../utils/errors';
 import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
 
 export async function verifyGatewayAttestation(
-  attestation: GatewayAttestation,
+  attestation: GatewayAttestationWithDomain,
 ) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
@@ -19,6 +19,12 @@ export async function verifyGatewayAttestation(
     verificationData,
     attestation.request_nonce,
     attestation.signing_address,
+  );
+
+  await verifyVpcInfoForGateway(
+    attestation.domain,
+    attestation.vpc.vpc_server_app_id,
+    attestation.vpc.vpc_hostname,
   );
 
   await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
@@ -38,4 +44,28 @@ function verifyIntelTdxForGateway(
     requestNonce,
     signingAddress,
   );
+}
+
+async function verifyVpcInfoForGateway(
+  domain: string,
+  vpcServerAppId: string,
+  vpcHostname: string,
+) {
+  const url = `https://${domain}/vpc.json`;
+
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    throw new VerificationError('Failed to fetch VPC info');
+  }
+
+  const vpcInfo = await res.json();
+
+  if (vpcInfo.vpc_server_app_id !== vpcServerAppId) {
+    throw new VerificationError('vpc_server_app_id mismatching');
+  }
+
+  if (!vpcInfo.nodes.includes(vpcHostname)) {
+    throw new VerificationError('vpc_hostname mismatching');
+  }
 }

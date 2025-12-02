@@ -9,4 +9,12 @@ export type GatewayAttestation = {
   info: {
     tcb_info: string | TcbInfo;
   };
+  vpc: {
+    vpc_server_app_id: string;
+    vpc_hostname: string;
+  };
+};
+
+export type GatewayAttestationWithDomain = GatewayAttestation & {
+  domain: string;
 };
