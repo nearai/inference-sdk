@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import requests
+
+from ..core.attestation_common import (
+    get_compose_from_tcb_info,
+    verify_compose,
+    verify_intel_quote_report_data_for_attestation_report,
+)
+from ..types.attestation_gateway import GatewayAttestationWithDomain
+from ..utils.consts import ETHEREUM_ZERO_ADDRESS
+from ..utils.errors import VerificationError
+from ..utils.intel import fetch_intel_tdx_verification_data
+
+
+def _verify_intel_tdx_for_gateway(
+    verification_data: dict,
+    request_nonce: str,
+    signing_address: str,
+) -> None:
+    quote = verification_data.get("quote", {})
+    if not quote.get("verified"):
+        raise VerificationError("Intel quote not verified")
+
+    body = quote.get("body", {})
+    report_data = body.get("reportdata", "")
+    verify_intel_quote_report_data_for_attestation_report(
+        report_data,
+        request_nonce,
+        signing_address,
+    )
+
+
+def _verify_vpc_for_gateway(
+    domain: str,
+    vpc_server_app_id: str,
+    vpc_hostname: str,
+) -> None:
+    url = f"https://{domain}/evidences/vpc.json"
+    try:
+        res = requests.get(url, timeout=30)
+    except requests.RequestException as exc:  # pragma: no cover - network
+        raise VerificationError("Failed to fetch VPC info") from exc
+
+    if not res.ok:
+        raise VerificationError(
+            f"Failed to fetch VPC info with status code {res.status_code}"
+        )
+
+    vpc_info = res.json()
+    if vpc_info.get("vpc_server_app_id") != vpc_server_app_id:
+        raise VerificationError("vpc_server_app_id mismatching")
+
+    nodes = vpc_info.get("nodes") or []
+    if vpc_hostname not in nodes:
+        raise VerificationError("vpc_hostname mismatching")
+
+
+def verify_gateway_attestation(attestation: GatewayAttestationWithDomain) -> None:
+    """Verify gateway attestation."""
+    intel_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
+    _verify_intel_tdx_for_gateway(
+        intel_data,
+        attestation.request_nonce,
+        attestation.signing_address or ETHEREUM_ZERO_ADDRESS,
+    )
+
+    _verify_vpc_for_gateway(
+        attestation.domain,
+        attestation.vpc.vpc_server_app_id,
+        attestation.vpc.vpc_hostname,
+    )
+
+    compose = get_compose_from_tcb_info(attestation.info.tcb_info)
+    verify_compose(compose)
+
+

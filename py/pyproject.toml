@@ -1,10 +1,16 @@
 [project]
-name = "verification-sdk"
+name = "verification_sdk"
 version = "0.1.0"
 description = "Verification SDK"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "requests>=2.31.0",
+    "eth-account>=0.10.0",
+    "cryptography>=42.0.0",
+    "dcap-qvl>=0.3.2",
+    "pynacl>=1.5.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.9.15,<0.10.0"]
