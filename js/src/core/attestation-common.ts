@@ -55,15 +55,17 @@ function getSigstoreLinksFromCompose(compose: string): string[] {
     .matchAll(/@sha256:([0-9a-f]{64})/g)
     .map(([, digest]) => digest);
 
-  const digests = Array.from(new Set(digestsIter));
+  const digests = new Set(digestsIter);
 
-  if (digests.length === 0) {
+  if (digests.size === 0) {
     throw new VerificationError('Failed to get sigstore links from compose');
   }
 
-  return digests.map(
-    (digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`,
-  );
+  const links = digests
+    .values()
+    .map((digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`);
+
+  return Array.from(links);
 }
 
 async function verifySigstoreLink(link: string) {
