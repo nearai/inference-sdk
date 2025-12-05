@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import requests
 
 from ..core.attestation_common import (

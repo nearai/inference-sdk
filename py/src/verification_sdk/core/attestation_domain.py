@@ -1,10 +1,9 @@
-from __future__ import annotations
+import requests
+import json
 
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Dict
-
-import requests
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,7 +15,7 @@ from ..core.attestation_common import (
     verify_compose,
 )
 from ..types.attestation_domain import DomainAttestation
-from ..utils.common import hex_to_bytes, json_loads
+from ..utils.common import hex_to_bytes
 from ..utils.errors import VerificationError
 from ..utils.intel import fetch_intel_tdx_verification_data
 
@@ -245,7 +244,7 @@ def verify_domain_attestation(attestation: DomainAttestation) -> None:
 
     _verify_certificate(attestation)
 
-    acme_account_data = json_loads(attestation.acme_account)
+    acme_account_data = json.loads(attestation.acme_account)
     acme_account_uri = acme_account_data.get("uri", "")
     if acme_account_uri:
         _verify_dns_caa(attestation.domain, acme_account_uri)

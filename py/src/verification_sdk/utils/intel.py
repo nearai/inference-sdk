@@ -1,10 +1,9 @@
-from __future__ import annotations
+import json
 
 from typing import Any, Dict
-
 from dcap_qvl import get_collateral_and_verify
 
-from .common import hex_to_bytes, json_loads
+from .common import hex_to_bytes
 from .errors import VerificationError
 
 
@@ -17,7 +16,7 @@ def fetch_intel_tdx_verification_data(quote: str) -> Dict[str, Any]:
     except Exception as e:
         raise VerificationError("Failed to verify Intel quote") from e
 
-    result_json = json_loads(result.to_json())
+    result_json = json.loads(result.to_json())
 
     verified = result.status == "UpToDate"
 

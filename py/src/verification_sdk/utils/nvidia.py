@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 import base64
+import requests
+import json
+
 from typing import Any, Dict
 
-import requests
-
-from .common import decode_jwt, json_loads
+from .common import decode_jwt
 from .consts import NVIDIA_GPU_VERIFIER_API_URL
 from .errors import VerificationError
 
@@ -41,7 +40,7 @@ def fetch_nvidia_gpu_verification_data(payload: str) -> Dict[str, Any]:
             f"Failed to fetch Nvidia GPU verification data with status code {response.status_code}"
         )
 
-    verification = json_loads(response.text)
+    verification = json.loads(response.text)
 
     # Raw format is expected to be:
     # [

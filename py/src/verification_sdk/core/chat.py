@@ -1,10 +1,8 @@
-from __future__ import annotations
+import nacl.signing
 
 from hashlib import sha256
-
 from eth_account import Account
 from eth_account.messages import encode_defunct
-import nacl.signing
 
 from ..types.chat import Chat, ChatSignature
 from ..utils.common import hex_to_bytes

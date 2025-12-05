@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,

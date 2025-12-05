@@ -1,7 +1,8 @@
-from __future__ import annotations
-
 import base64
-from typing import Any, Dict, Union
+import re
+import json
+
+from typing import Any, Dict
 
 
 def decode_jwt(jwt: str) -> Dict[str, Any]:
@@ -14,7 +15,7 @@ def decode_jwt(jwt: str) -> Dict[str, Any]:
 
     try:
         data = base64.b64decode(payload)
-        return json_loads(data)
+        return json.loads(data)
     except Exception as e:
         raise ValueError("Invalid JWT payload") from e
 
@@ -29,11 +30,11 @@ def hex_to_bytes(value: str) -> bytes:
     return bytes.fromhex(value)
 
 
-def json_loads(data: Union[bytes, str]) -> Dict[str, Any]:
-    """Small wrapper to load JSON from bytes or str."""
-    import json
+def hex_to_bytes2(value: str) -> bytes:
+    m = re.compile(r'^(?:0x)?([0-9a-f]+)$', re.IGNORECASE).match(value)
 
-    if isinstance(data, bytes):
-        return json.loads(data.decode("utf-8"))
-    return json.loads(data)
+    if not m:
+        raise ValueError("Invalid hex string")
+
+    return bytes.fromhex(m.group(1))
 
