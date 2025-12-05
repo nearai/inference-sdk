@@ -75,7 +75,6 @@ async function verifySigstoreLink(link: string) {
   try {
     res = await fetch(link, {
       method: 'HEAD',
-      redirect: 'follow',
       signal: controller.signal,
     });
   } catch (e: unknown) {
@@ -84,7 +83,7 @@ async function verifySigstoreLink(link: string) {
     clearTimeout(timeoutId);
   }
 
-  if (res.status >= 400) {
+  if (res.status < 200 || res.status >= 300) {
     throw new VerificationError(
       `Failed to verify sigstore link ${link} with status code ${res.status}`,
     );
