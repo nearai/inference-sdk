@@ -1,5 +1,4 @@
-import { TcbInfo } from './attestation-common';
-import { SigningAlgo } from './chat';
+import { SigningAlgo, TcbInfo } from './attestation-common';
 
 export type ModelAttestation = {
   request_nonce: string;

@@ -5,7 +5,10 @@ export const TIMEOUT = 10_000;
 
 export const SIGSTORE_SEARCH_API_URL = 'https://search.sigstore.dev';
 
-export const INTEL_PCCS_API_URL = 'https://pccs.phala.network';
+export const INTEL_PCCS_API_URL_BROWSER = 'https://pccs.phala.network';
+
+export const INTEL_PCCS_API_URL_NODE =
+  'https://api.trustedservices.intel.com/tdx/certification/v4';
 
 export const INTEL_TDX_VERIFIER_API_URL =
   'https://cloud-api.phala.network/api/v1/attestations/verify';

@@ -1,5 +1,4 @@
-import { TcbInfo } from './attestation-common';
-import { SigningAlgo } from './chat';
+import { SigningAlgo, TcbInfo } from './attestation-common';
 
 export type GatewayAttestation = {
   request_nonce: string;
@@ -13,8 +12,4 @@ export type GatewayAttestation = {
     vpc_server_app_id: string;
     vpc_hostname: string;
   };
-};
-
-export type GatewayAttestationWithDomain = GatewayAttestation & {
-  domain: string;
 };

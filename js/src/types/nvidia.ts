@@ -1,11 +1,9 @@
-import { JwtPayload } from './common';
-
 export type NvidiaGpuVerificationDataRaw = [
   ['JWT', string],
   Record<string, string>,
 ];
 
 export type NvidiaGpuVerificationData = {
-  JWT: JwtPayload;
-  GPU: Record<string, JwtPayload>;
+  JWT: Record<string, unknown>;
+  GPU: Record<string, Record<string, unknown>>;
 };

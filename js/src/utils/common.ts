@@ -1,7 +1,7 @@
-import { JwtPayload } from '../types/common';
 import { Buffer } from 'buffer';
+import { INTEL_PCCS_API_URL_BROWSER, INTEL_PCCS_API_URL_NODE } from './consts';
 
-export function decodeJwt(jwt: string): JwtPayload {
+export function decodeJwt(jwt: string): Record<string, unknown> {
   const parts = jwt.split('.');
 
   if (parts.length !== 3) {
@@ -41,4 +41,12 @@ export function trimHexPrefix(hex: string): string {
     return hex.slice(2);
   }
   return hex;
+}
+
+function isBrowser(): boolean {
+  return typeof window !== 'undefined';
+}
+
+export function getIntelPccsApiUrl(): string {
+  return isBrowser() ? INTEL_PCCS_API_URL_BROWSER : INTEL_PCCS_API_URL_NODE;
 }
