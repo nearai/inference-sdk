@@ -41,23 +41,17 @@ async function fetchIntelTdxVerificationDataFromPccs(
     throw new VerificationError('Bad report data');
   }
 
+  const verified = verificationDataRaw.status === 'UpToDate';
   const reportData = Buffer.from(td10.reportData);
   const mrConfig = Buffer.from(td10.mrConfigId);
 
-  const status: string | undefined =
-    typeof verificationDataRaw?.status === 'string'
-      ? verificationDataRaw.status
-      : undefined;
-
-  const verified = status ? status === 'UpToDate' : false;
-
   return {
     quote: {
+      verified,
       body: {
         reportdata: `0x${reportData.toString('hex')}`,
         mrconfig: `0x${mrConfig.toString('hex')}`,
       },
-      verified,
     },
   };
 }

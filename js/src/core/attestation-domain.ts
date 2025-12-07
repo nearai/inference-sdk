@@ -40,7 +40,7 @@ async function verifyIntelTdxForDomain(
     throw new VerificationError('Intel quote not verified');
   }
 
-  await verifyIntelQuteReportDataForDomain(
+  await verifyIntelQuoteReportDataForDomain(
     verificationData.quote.body.reportdata,
     domain,
     cert,
@@ -49,7 +49,7 @@ async function verifyIntelTdxForDomain(
   );
 }
 
-async function verifyIntelQuteReportDataForDomain(
+async function verifyIntelQuoteReportDataForDomain(
   reportData: string,
   domain: string,
   cert: string,
