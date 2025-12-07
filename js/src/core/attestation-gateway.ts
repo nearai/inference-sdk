@@ -1,4 +1,4 @@
-import { GatewayAttestationWithDomain } from '../types/attestation-gateway';
+import { GatewayAttestation } from '../types/attestation-gateway';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
 import {
   getComposeFromTcbInfo,
@@ -10,7 +10,8 @@ import { VerificationError } from '../utils/errors';
 import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
 
 export async function verifyGatewayAttestation(
-  attestation: GatewayAttestationWithDomain,
+  attestation: GatewayAttestation,
+  domain: string,
 ) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
@@ -22,7 +23,7 @@ export async function verifyGatewayAttestation(
   );
 
   await verifyVpcForGateway(
-    attestation.domain,
+    domain,
     attestation.vpc.vpc_server_app_id,
     attestation.vpc.vpc_hostname,
   );

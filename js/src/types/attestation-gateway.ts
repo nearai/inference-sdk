@@ -14,7 +14,3 @@ export type GatewayAttestation = {
     vpc_hostname: string;
   };
 };
-
-export type GatewayAttestationWithDomain = GatewayAttestation & {
-  domain: string;
-};
