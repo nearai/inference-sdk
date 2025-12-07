@@ -46,10 +46,10 @@ def verify_intel_tdx_for_domain(
     acme_account: str,
     sha256sum: str,
 ):
-    if not pydash.get(verification_data, "quote.verified"):
+    if not pydash.get(verification_data, 'quote.verified'):
         raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, "quote.body.reportdata")
+    report_data = pydash.get(verification_data, 'quote.body.reportdata')
 
     if not isinstance(report_data, str):
         raise VerificationError('Bad reportdata')
@@ -74,8 +74,8 @@ def verify_intel_quote_report_data_for_domain(
     acme_account_hash = hashlib.sha256(acme_account.encode()).digest()
 
     expected_sha256sum_file = (
-        f"{acme_account_hash.hex()}  acme-account.json\n"
-        f"{cert_hash.hex()}  cert-{domain}.pem\n"
+        f'{acme_account_hash.hex()}  acme-account.json\n'
+        f'{cert_hash.hex()}  cert-{domain}.pem\n'
     )
 
     expected_sha256sum = hashlib.sha256(expected_sha256sum_file.encode()).digest()

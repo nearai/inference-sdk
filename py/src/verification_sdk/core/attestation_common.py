@@ -18,15 +18,15 @@ def verify_intel_quote_report_data_for_attestation_report(
     embedded_address = report_raw[:32]
     embedded_nonce = report_raw[32:]
 
-    signing_address_verified = embedded_address == signing_address_raw.ljust(32, b"\x00")
+    signing_address_verified = embedded_address == signing_address_raw.ljust(32, b'\x00')
 
     if not signing_address_verified:
-        raise VerificationError("Signing address mismatching")
+        raise VerificationError('Signing address mismatching')
 
     request_nonce_verified = embedded_nonce == hex_to_bytes(request_nonce)
 
     if not request_nonce_verified:
-        raise VerificationError("Request nonce mismatching")
+        raise VerificationError('Request nonce mismatching')
 
 
 def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
@@ -34,7 +34,7 @@ def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
         try:
             tcb_info = TcbInfo.model_validate_json(tcb_info)
         except Exception as e:
-            raise VerificationError("Invalid tcb info") from e
+            raise VerificationError('Invalid tcb info') from e
 
     return tcb_info.app_compose
 
@@ -48,25 +48,25 @@ def verify_compose(compose: str):
 
 def get_sigstore_links_from_compose(compose: str) -> list[str]:
     digests_iter = (
-        m.group(1) for m in re.finditer(r"@sha256:([0-9a-f]{64})", compose)
+        m.group(1) for m in re.finditer(r'@sha256:([0-9a-f]{64})', compose)
     )
 
     digests = set(digests_iter)
 
     if not digests:
-        raise VerificationError("Failed to get sigstore links from compose")
+        raise VerificationError('Failed to get sigstore links from compose')
 
-    return [f"{SIGSTORE_SEARCH_API_URL}/?hash=sha256:{digest}" for digest in digests]
+    return [f'{SIGSTORE_SEARCH_API_URL}/?hash=sha256:{digest}' for digest in digests]
 
 
 def verify_sigstore_link(link: str):
     try:
         res = requests.head(link, timeout=TIMEOUT)
     except Exception as e:
-        raise VerificationError(f"Verify sigstore link {link} timeout") from e
+        raise VerificationError(f'Verify sigstore link {link} timeout') from e
 
     if res.status_code < 200 or res.status_code >= 300:
         raise VerificationError(
-            f"Failed to verify sigstore link {link} with status code {res.status_code}"
+            f'Failed to verify sigstore link {link} with status code {res.status_code}'
         )
 

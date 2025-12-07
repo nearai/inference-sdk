@@ -14,20 +14,20 @@ async def fetch_intel_tdx_verification_data(quote: str) -> dict:
     try:
         verified_report = await get_collateral_and_verify(quote_raw, INTEL_PCCS_API_URL)
     except Exception as e:
-        raise VerificationError("Failed to verify Intel quote") from e
+        raise VerificationError('Failed to verify Intel quote') from e
 
-    verified = verified_report.status == "UpToDate"
+    verified = verified_report.status == 'UpToDate'
 
     verification_data_raw = json.loads(verified_report.to_json())
-    reportdata = pydash.get(verification_data_raw, "report.TD10.report_data", "")
-    mrconfig = pydash.get(verification_data_raw, "report.TD10.mr_config_id", "")
+    reportdata = pydash.get(verification_data_raw, 'report.TD10.report_data', '')
+    mrconfig = pydash.get(verification_data_raw, 'report.TD10.mr_config_id', '')
 
     return {
-        "quote": {
-            "verified": verified,
-            "body": {
-                "reportdata": f"0x{reportdata}",
-                "mrconfig": f"0x{mrconfig}",
+        'quote': {
+            'verified': verified,
+            'body': {
+                'reportdata': f'0x{reportdata}',
+                'mrconfig': f'0x{mrconfig}',
             },
         }
     }

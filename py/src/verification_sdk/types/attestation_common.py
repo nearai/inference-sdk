@@ -2,7 +2,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 
-SigningAlgo = Literal["ecdsa", "ed25519"]
+SigningAlgo = Literal['ecdsa', 'ed25519']
 
 
 class TcbInfo(BaseModel):

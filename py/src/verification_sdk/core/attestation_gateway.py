@@ -37,10 +37,10 @@ def verify_intel_tdx_for_gateway(
     request_nonce: str,
     signing_address: Optional[str] = ETHEREUM_ZERO_ADDRESS,
 ):
-    if not pydash.get(verification_data, "quote.verified"):
+    if not pydash.get(verification_data, 'quote.verified'):
         raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, "quote.body.reportdata")
+    report_data = pydash.get(verification_data, 'quote.body.reportdata')
 
     if not isinstance(report_data, str):
         raise VerificationError('Bad reportdata')
@@ -57,25 +57,25 @@ def verify_vpc_for_gateway(
     vpc_server_app_id: str,
     vpc_hostname: str,
 ):
-    url = f"https://{domain}/evidences/vpc.json"
+    url = f'https://{domain}/evidences/vpc.json'
 
     try:
         res = requests.get(url)
     except Exception as e:
-        raise VerificationError("Failed to fetch VPC info") from e
+        raise VerificationError('Failed to fetch VPC info') from e
 
     if not res.ok:
         raise VerificationError(
-            f"Failed to fetch VPC info with status code {res.status_code}"
+            f'Failed to fetch VPC info with status code {res.status_code}'
         )
 
     vpc_info = res.json()
 
-    if vpc_info.get("vpc_server_app_id") != vpc_server_app_id:
-        raise VerificationError("vpc_server_app_id mismatching")
+    if vpc_info.get('vpc_server_app_id') != vpc_server_app_id:
+        raise VerificationError('vpc_server_app_id mismatching')
 
-    nodes = vpc_info.get("nodes")
+    nodes = vpc_info.get('nodes')
 
     if not nodes or vpc_hostname not in nodes:
-        raise VerificationError("vpc_hostname mismatching")
+        raise VerificationError('vpc_hostname mismatching')
 
