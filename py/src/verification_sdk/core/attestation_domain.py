@@ -22,8 +22,8 @@ from ..utils.errors import VerificationError
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-def verify_domain_attestation(attestation: DomainAttestation):
-    verification_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
+async def verify_domain_attestation(attestation: DomainAttestation):
+    verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
 
     verify_intel_tdx_for_domain(
         verification_data,

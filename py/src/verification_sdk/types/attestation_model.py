@@ -1,11 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass
 from pydantic import BaseModel
 
 from .attestation_common import TcbInfo, SigningAlgo
 
 
-@dataclass
 class ModelAttestation(BaseModel):
     request_nonce: str
     signing_algo: SigningAlgo
@@ -15,7 +13,6 @@ class ModelAttestation(BaseModel):
     info: ModelInfo
 
 
-@dataclass
 class ModelInfo(BaseModel):
     tcb_info: TcbInfo | str
 

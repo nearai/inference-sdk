@@ -14,8 +14,8 @@ from ..utils.errors import VerificationError
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-def verify_gateway_attestation(attestation: GatewayAttestation, domain: str):
-    verification_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
+async def verify_gateway_attestation(attestation: GatewayAttestation, domain: str):
+    verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
 
     verify_intel_tdx_for_gateway(
         verification_data,

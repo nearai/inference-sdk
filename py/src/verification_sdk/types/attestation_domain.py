@@ -1,11 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass
 from pydantic import BaseModel
 
 from .attestation_common import TcbInfo
 
 
-@dataclass
 class DomainAttestation(BaseModel):
     intel_quote: str
     domain: str
@@ -15,7 +13,6 @@ class DomainAttestation(BaseModel):
     info: DomainInfo
 
 
-@dataclass
 class DomainInfo(BaseModel):
     tcb_info: TcbInfo | str
 

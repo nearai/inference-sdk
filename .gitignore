@@ -112,3 +112,6 @@ dataset/local
 
 # JetBrains IDE
 .idea
+
+# Cache
+__pycache__
