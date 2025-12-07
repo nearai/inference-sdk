@@ -1,6 +1,6 @@
-import { INTEL_PCCS_API_URL, INTEL_TDX_VERIFIER_API_URL } from './consts';
+import { INTEL_TDX_VERIFIER_API_URL } from './consts';
 import { IntelTdxVerificationData } from '../types/intel';
-import { hexToBuffer } from './common';
+import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { VerificationError } from './errors';
 import { getCollateral, verify } from '@phala/dcap-qvl';
 
@@ -18,7 +18,7 @@ async function fetchIntelTdxVerificationDataFromPccs(
   let collateral;
 
   try {
-    collateral = await getCollateral(INTEL_PCCS_API_URL, quoteRaw);
+    collateral = await getCollateral(getIntelPccsApiUrl(), quoteRaw);
   } catch (e: unknown) {
     throw new VerificationError('Failed to get collateral', e);
   }
