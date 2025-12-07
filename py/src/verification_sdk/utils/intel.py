@@ -16,9 +16,9 @@ async def fetch_intel_tdx_verification_data(quote: str) -> dict:
     except Exception as e:
         raise VerificationError('Failed to verify Intel quote') from e
 
-    verified = verified_report.status == 'UpToDate'
-
     verification_data_raw = json.loads(verified_report.to_json())
+
+    verified = pydash.get(verification_data_raw, 'status') == 'UpToDate'
     reportdata = pydash.get(verification_data_raw, 'report.TD10.report_data', '')
     mrconfig = pydash.get(verification_data_raw, 'report.TD10.mr_config_id', '')
 
