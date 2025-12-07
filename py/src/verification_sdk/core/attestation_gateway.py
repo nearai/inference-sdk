@@ -1,27 +1,50 @@
+import pydash
 import requests
+
+from typing import Optional
 
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,
     verify_intel_quote_report_data_for_attestation_report,
 )
-from ..types.attestation_gateway import GatewayAttestationWithDomain
+from ..types.attestation_gateway import GatewayAttestation
 from ..utils.consts import ETHEREUM_ZERO_ADDRESS
 from ..utils.errors import VerificationError
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-def _verify_intel_tdx_for_gateway(
+def verify_gateway_attestation(attestation: GatewayAttestation, domain: str):
+    verification_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
+
+    verify_intel_tdx_for_gateway(
+        verification_data,
+        attestation.request_nonce,
+        attestation.signing_address,
+    )
+
+    verify_vpc_for_gateway(
+        domain,
+        attestation.vpc.vpc_server_app_id,
+        attestation.vpc.vpc_hostname,
+    )
+
+    verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+
+
+def verify_intel_tdx_for_gateway(
     verification_data: dict,
     request_nonce: str,
-    signing_address: str,
-) -> None:
-    quote = verification_data.get("quote", {})
-    if not quote.get("verified"):
-        raise VerificationError("Intel quote not verified")
+    signing_address: Optional[str] = ETHEREUM_ZERO_ADDRESS,
+):
+    if not pydash.get(verification_data, "quote.verified"):
+        raise VerificationError('Intel quote not verified')
 
-    body = quote.get("body", {})
-    report_data = body.get("reportdata", "")
+    report_data = pydash.get(verification_data, "quote.body.reportdata")
+
+    if not isinstance(report_data, str):
+        raise VerificationError('Bad reportdata')
+
     verify_intel_quote_report_data_for_attestation_report(
         report_data,
         request_nonce,
@@ -29,16 +52,17 @@ def _verify_intel_tdx_for_gateway(
     )
 
 
-def _verify_vpc_for_gateway(
+def verify_vpc_for_gateway(
     domain: str,
     vpc_server_app_id: str,
     vpc_hostname: str,
 ) -> None:
     url = f"https://{domain}/evidences/vpc.json"
+
     try:
-        res = requests.get(url, timeout=30)
-    except requests.RequestException as exc:  # pragma: no cover - network
-        raise VerificationError("Failed to fetch VPC info") from exc
+        res = requests.get(url)
+    except Exception as e:
+        raise VerificationError("Failed to fetch VPC info") from e
 
     if not res.ok:
         raise VerificationError(
@@ -46,30 +70,12 @@ def _verify_vpc_for_gateway(
         )
 
     vpc_info = res.json()
+
     if vpc_info.get("vpc_server_app_id") != vpc_server_app_id:
         raise VerificationError("vpc_server_app_id mismatching")
 
-    nodes = vpc_info.get("nodes") or []
-    if vpc_hostname not in nodes:
+    nodes = vpc_info.get("nodes")
+
+    if not nodes or vpc_hostname not in nodes:
         raise VerificationError("vpc_hostname mismatching")
-
-
-def verify_gateway_attestation(attestation: GatewayAttestationWithDomain) -> None:
-    """Verify gateway attestation."""
-    intel_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
-    _verify_intel_tdx_for_gateway(
-        intel_data,
-        attestation.request_nonce,
-        attestation.signing_address or ETHEREUM_ZERO_ADDRESS,
-    )
-
-    _verify_vpc_for_gateway(
-        attestation.domain,
-        attestation.vpc.vpc_server_app_id,
-        attestation.vpc.vpc_hostname,
-    )
-
-    compose = get_compose_from_tcb_info(attestation.info.tcb_info)
-    verify_compose(compose)
-
 

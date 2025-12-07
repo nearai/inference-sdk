@@ -1,3 +1,5 @@
+import pydash
+
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,
@@ -10,32 +12,32 @@ from ..utils.nvidia import fetch_nvidia_gpu_verification_data
 
 
 def verify_model_attestation(attestation: ModelAttestation) -> None:
-    """Verify model attestation (Intel TDX + NVIDIA GPU + compose)."""
-    intel_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
-    _verify_intel_tdx_for_model(
-        intel_data,
+    intel_tdx_verification_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
+    verify_intel_tdx_for_model(
+        intel_tdx_verification_data,
         attestation.request_nonce,
         attestation.signing_address,
     )
 
     nvidia_data = fetch_nvidia_gpu_verification_data(attestation.nvidia_payload)
-    _verify_nvidia_gpu_for_model(nvidia_data)
+    verify_nvidia_gpu_for_model(nvidia_data)
 
-    compose = get_compose_from_tcb_info(attestation.info.tcb_info)
-    verify_compose(compose)
+    verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
 
 
-def _verify_intel_tdx_for_model(
+def verify_intel_tdx_for_model(
     verification_data: dict,
     request_nonce: str,
     signing_address: str,
 ) -> None:
-    quote = verification_data.get("quote", {})
-    if not quote.get("verified"):
-        raise VerificationError("Intel quote not verified")
+    if not pydash.get(verification_data, "quote.verified"):
+        raise VerificationError('Intel quote not verified')
 
-    body = quote.get("body", {})
-    report_data = body.get("reportdata", "")
+    report_data = pydash.get(verification_data, "quote.body.reportdata")
+
+    if not isinstance(report_data, str):
+        raise VerificationError('Bad reportdata')
+
     verify_intel_quote_report_data_for_attestation_report(
         report_data,
         request_nonce,
@@ -43,9 +45,8 @@ def _verify_intel_tdx_for_model(
     )
 
 
-def _verify_nvidia_gpu_for_model(verification_data: dict) -> None:
-    result = verification_data.get("JWT", {}).get("x-nvidia-overall-att-result")
+def verify_nvidia_gpu_for_model(verification_data: dict):
+    result = pydash.get(verification_data, "GPU.x-nvidia-overall-att-result")
     if not result:
         raise VerificationError("Nvidia GPU not verified")
-
 
