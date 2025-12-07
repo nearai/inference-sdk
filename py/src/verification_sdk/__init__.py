@@ -1,40 +1,40 @@
-'''
-Python verification SDK mirroring the NEAR AI Cloud JS SDK.
-
-The public surface roughly matches `js/src/index.ts`:
-
-- verify_gateway_attestation
-- verify_model_attestation
-- verify_domain_attestation
-- verify_chat
-- verify_signing_address
-- VerificationError
-'''
-
 from .core.attestation_gateway import verify_gateway_attestation
-from .core.attestation_model import verify_model_attestation
-from .core.attestation_domain import verify_domain_attestation
-from .core.chat import verify_chat, verify_signing_address
 from .types.attestation_gateway import GatewayAttestation
+
+from .core.attestation_model import verify_model_attestation
 from .types.attestation_model import ModelAttestation
+
+from .core.attestation_domain import verify_domain_attestation
 from .types.attestation_domain import DomainAttestation
+
+from .core.chat import verify_chat, verify_signing_address
+from .types.chat import Chat, ChatSignature
+
+from .types.attestation_common import SigningAlgo
+
 from .types.attestation_report import AttestationReport
-from .types.chat import Chat, ChatSignature, SigningAlgo
+
 from .utils.errors import VerificationError
 
 __all__ = [
     'verify_gateway_attestation',
+    'GatewayAttestation',
+
     'verify_model_attestation',
+    'ModelAttestation',
+
     'verify_domain_attestation',
+    'DomainAttestation',
+
     'verify_chat',
     'verify_signing_address',
-    'GatewayAttestation',
-    'ModelAttestation',
-    'DomainAttestation',
-    'AttestationReport',
     'Chat',
     'ChatSignature',
+
     'SigningAlgo',
+
+    'AttestationReport',
+
     'VerificationError',
 ]
 
