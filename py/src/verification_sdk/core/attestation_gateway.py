@@ -71,11 +71,11 @@ def verify_vpc_for_gateway(
 
     vpc_info = res.json()
 
-    if vpc_info.get('vpc_server_app_id') != vpc_server_app_id:
+    if pydash.get(vpc_info, 'vpc_server_app_id') != vpc_server_app_id:
         raise VerificationError('vpc_server_app_id mismatching')
 
-    nodes = vpc_info.get('nodes')
+    nodes = pydash.get(vpc_info, 'nodes')
 
-    if not nodes or vpc_hostname not in nodes:
+    if not isinstance(nodes, list) or vpc_hostname not in nodes:
         raise VerificationError('vpc_hostname mismatching')
 

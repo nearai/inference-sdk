@@ -1,6 +1,6 @@
 import json
-
 import pydash
+
 from dcap_qvl import get_collateral_and_verify
 
 from .common import hex_to_bytes
