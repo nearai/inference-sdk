@@ -1,15 +1,12 @@
+from __future__ import annotations
 from dataclasses import dataclass
+from pydantic import BaseModel
 
 from .attestation_common import TcbInfo
 
 
 @dataclass
-class DomainInfo:
-    tcb_info: TcbInfo | str
-
-
-@dataclass
-class DomainAttestation:
+class DomainAttestation(BaseModel):
     intel_quote: str
     domain: str
     cert: str
@@ -17,4 +14,8 @@ class DomainAttestation:
     sha256sum: str
     info: DomainInfo
 
+
+@dataclass
+class DomainInfo(BaseModel):
+    tcb_info: TcbInfo | str
 

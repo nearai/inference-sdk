@@ -1,14 +1,12 @@
 import json
 
-from typing import Any, Dict
 from dcap_qvl import get_collateral_and_verify
 
 from .common import hex_to_bytes
 from .errors import VerificationError
 
 
-def fetch_intel_tdx_verification_data(quote: str) -> Dict[str, Any]:
-    """Fetch and verify Intel TDX quote using local dcap-qvl, mirroring JS structure."""
+def fetch_intel_tdx_verification_data(quote: str) -> dict:
     quote_raw = hex_to_bytes(quote)
 
     try:

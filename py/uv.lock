@@ -701,6 +701,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pydash"
+version = "8.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/24/91c037f47e434172c2112d65c00c84d475a6715425e3315ba2cbb7a87e66/pydash-8.0.5.tar.gz", hash = "sha256:7cc44ebfe5d362f4f5f06c74c8684143c5ac481376b059ff02570705523f9e2e", size = 164861, upload-time = "2025-01-17T16:08:50.562Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/86/e74c978800131c657fc5145f2c1c63e0cea01a49b6216f729cf77a2e1edf/pydash-8.0.5-py3-none-any.whl", hash = "sha256:b2625f8981862e19911daa07f80ed47b315ce20d9b5eb57aaf97aaf570c3892f", size = 102077, upload-time = "2025-01-17T16:08:47.91Z" },
+]
+
+[[package]]
 name = "pynacl"
 version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -889,6 +901,8 @@ dependencies = [
     { name = "cryptography" },
     { name = "dcap-qvl" },
     { name = "eth-account" },
+    { name = "pydantic" },
+    { name = "pydash" },
     { name = "pynacl" },
     { name = "requests" },
 ]
@@ -898,6 +912,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=42.0.0" },
     { name = "dcap-qvl", specifier = ">=0.3.2" },
     { name = "eth-account", specifier = ">=0.10.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pydash", specifier = ">=8.0.5" },
     { name = "pynacl", specifier = ">=1.5.0" },
     { name = "requests", specifier = ">=2.31.0" },
 ]

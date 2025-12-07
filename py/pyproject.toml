@@ -10,6 +10,8 @@ dependencies = [
     "cryptography>=42.0.0",
     "dcap-qvl>=0.3.2",
     "pynacl>=1.5.0",
+    "pydantic>=2.12.5",
+    "pydash>=8.0.5",
 ]
 
 [build-system]

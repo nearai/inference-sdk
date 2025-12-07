@@ -1,9 +1,7 @@
 import requests
 import re
-import json
 
-from typing import Any
-
+from ..types.attestation_common import TcbInfo
 from ..utils.common import hex_to_bytes
 from ..utils.consts import SIGSTORE_SEARCH_API_URL, TIMEOUT
 from ..utils.errors import VerificationError
@@ -31,19 +29,14 @@ def verify_intel_quote_report_data_for_attestation_report(
         raise VerificationError("Request nonce mismatching")
 
 
-def get_compose_from_tcb_info(tcb_info: str | dict[str, Any]) -> str:
+def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
     if isinstance(tcb_info, str):
         try:
-            tcb_info = json.loads(tcb_info)
+            tcb_info = TcbInfo.model_validate_json(tcb_info)
         except Exception as e:
             raise VerificationError("Invalid tcb info") from e
 
-    app_compose = tcb_info.get("app_compose")
-
-    if not isinstance(app_compose, str):
-        raise VerificationError("Invalid app_compose")
-
-    return app_compose
+    return tcb_info.app_compose
 
 
 def verify_compose(compose: str) -> None:

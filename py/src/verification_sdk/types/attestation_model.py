@@ -1,16 +1,13 @@
+from __future__ import annotations
 from dataclasses import dataclass
+from pydantic import BaseModel
 
 from .attestation_common import TcbInfo
 from .chat import SigningAlgo
 
 
 @dataclass
-class ModelInfo:
-    tcb_info: TcbInfo | str
-
-
-@dataclass
-class ModelAttestation:
+class ModelAttestation(BaseModel):
     request_nonce: str
     signing_algo: SigningAlgo
     signing_address: str
@@ -18,4 +15,8 @@ class ModelAttestation:
     nvidia_payload: str
     info: ModelInfo
 
+
+@dataclass
+class ModelInfo(BaseModel):
+    tcb_info: TcbInfo | str
 

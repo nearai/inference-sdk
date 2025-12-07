@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+from pydantic import BaseModel
 
 
 @dataclass
-class TcbInfo:
+class TcbInfo(BaseModel):
     app_compose: str
 

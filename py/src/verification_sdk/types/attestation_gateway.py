@@ -1,33 +1,29 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
+from pydantic import BaseModel
 
 from .attestation_common import TcbInfo
 from .chat import SigningAlgo
 
 
 @dataclass
-class GatewayVpcInfo:
-    vpc_server_app_id: str
-    vpc_hostname: str
-
-
-@dataclass
-class GatewayInfo:
-    tcb_info: TcbInfo | str
-
-
-@dataclass
-class GatewayAttestation:
+class GatewayAttestation(BaseModel):
     request_nonce: str
     intel_quote: str
     info: GatewayInfo
-    vpc: GatewayVpcInfo
+    vpc: VpcInfo
     signing_algo: Optional[SigningAlgo] = None
     signing_address: Optional[str] = None
 
 
 @dataclass
-class GatewayAttestationWithDomain(GatewayAttestation):
-    domain: str = ""
+class GatewayInfo(BaseModel):
+    tcb_info: TcbInfo | str
 
+
+@dataclass
+class VpcInfo(BaseModel):
+    vpc_server_app_id: str
+    vpc_hostname: str
 
