@@ -23,16 +23,16 @@ export async function fetchNvidiaGpuVerificationData(
     );
   }
 
-  const verificationData = await response.json();
+  const verificationDataRaw = await response.json();
 
-  return parseNvidiaGpuVerificationData(verificationData);
+  return parseNvidiaGpuVerificationData(verificationDataRaw);
 }
 
 function parseNvidiaGpuVerificationData(
-  verification: NvidiaGpuVerificationDataRaw,
+  verificationDataRaw: NvidiaGpuVerificationDataRaw,
 ): NvidiaGpuVerificationData {
   return {
-    JWT: decodeJwt(verification[0][1]),
-    GPU: mapRecord(verification[1], (key, value) => decodeJwt(value)),
+    JWT: decodeJwt(verificationDataRaw[0][1]),
+    GPU: mapRecord(verificationDataRaw[1], (key, value) => decodeJwt(value)),
   };
 }
