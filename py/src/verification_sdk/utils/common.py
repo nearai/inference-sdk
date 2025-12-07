@@ -9,6 +9,7 @@ def decode_jwt(jwt: str) -> dict:
         raise ValueError('Invalid JWT format')
 
     payload = parts[1]
+    payload = payload + "=" * ((4 - len(payload) % 4) % 4)
 
     try:
         data = base64.b64decode(payload)
