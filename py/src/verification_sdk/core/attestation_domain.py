@@ -9,6 +9,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
 from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.x509.oid import SignatureAlgorithmOID
 
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
@@ -119,64 +120,63 @@ def verify_live_certificate(
     verify_certificate_fingerprint(leaf_cert, live_cert)
 
 
+def _verify_certificate_signature(cert: x509.Certificate, public_key):
+    hash_algo = cert.signature_hash_algorithm or hashes.SHA256()
+    sig_oid = cert.signature_algorithm_oid
+
+    # Determine verification method based on signature algorithm OID
+    if sig_oid in (
+            SignatureAlgorithmOID.RSA_WITH_MD5,
+            SignatureAlgorithmOID.RSA_WITH_SHA1,
+            SignatureAlgorithmOID.RSA_WITH_SHA224,
+            SignatureAlgorithmOID.RSA_WITH_SHA256,
+            SignatureAlgorithmOID.RSA_WITH_SHA384,
+            SignatureAlgorithmOID.RSA_WITH_SHA512,
+            SignatureAlgorithmOID.RSASSA_PSS,
+    ):
+        # RSA signature
+        if not isinstance(public_key, rsa.RSAPublicKey):
+            raise VerificationError('Certificate signature verification failed: public key type mismatch')
+        public_key.verify(
+            cert.signature,
+            cert.tbs_certificate_bytes,
+            padding.PKCS1v15(),
+            hash_algo,
+        )
+    elif sig_oid in (
+            SignatureAlgorithmOID.ECDSA_WITH_SHA1,
+            SignatureAlgorithmOID.ECDSA_WITH_SHA224,
+            SignatureAlgorithmOID.ECDSA_WITH_SHA256,
+            SignatureAlgorithmOID.ECDSA_WITH_SHA384,
+            SignatureAlgorithmOID.ECDSA_WITH_SHA512,
+    ):
+        # ECDSA signature
+        if not isinstance(public_key, ec.EllipticCurvePublicKey):
+            raise VerificationError('Certificate signature verification failed: public key type mismatch')
+        public_key.verify(
+            cert.signature,
+            cert.tbs_certificate_bytes,
+            ec.ECDSA(hash_algo),
+        )
+    else:
+        raise VerificationError(f'Certificate signature verification failed: unsupported signature algorithm {sig_oid}')
+
+
 def verify_certificate_chain(cert_chain: list[x509.Certificate]):
     for i in range(len(cert_chain) - 1):
         cert = cert_chain[i]
         issuer_cert = cert_chain[i + 1]
 
-        # Verify certificate signature using issuer's public key
         try:
-            hash_alg = cert.signature_hash_algorithm
-            issuer_pubkey = issuer_cert.public_key()
-
-            # Verify signature based on public key type
-            if isinstance(issuer_pubkey, rsa.RSAPublicKey):
-                if hash_alg is not None:
-                    issuer_pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        padding.PKCS1v15(),
-                        hash_alg,
-                    )
-                else:
-                    issuer_pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        padding.PKCS1v15(),
-                    )
-            elif isinstance(issuer_pubkey, ec.EllipticCurvePublicKey):
-                if hash_alg is not None:
-                    issuer_pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        ec.ECDSA(hash_alg),
-                    )
-                else:
-                    # Default to SHA256 for ECDSA if no hash algorithm specified
-                    issuer_pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        ec.ECDSA(hashes.SHA256()),
-                    )
-            else:
-                raise VerificationError(
-                    f'Certificate chain verification failed: Certificate {i} unsupported public key type'
-                )
-            is_verified = True
+            _verify_certificate_signature(cert, issuer_cert.public_key())
         except Exception as e:
-            is_verified = False
-            if isinstance(e, VerificationError):
-                raise
+            raise VerificationError(
+                f'Certificate chain verification failed: Certificate {i} signature verification failed'
+            ) from e
 
         cert_issuer = cert.issuer.rfc4514_string()
         issuer_cert_subject = issuer_cert.subject.rfc4514_string()
-
         is_issuer_matched = cert_issuer == issuer_cert_subject
-
-        if not is_verified:
-            raise VerificationError(
-                f'Certificate chain verification failed: Certificate {i} signature verification failed'
-            )
 
         if not is_issuer_matched:
             raise VerificationError(
@@ -186,60 +186,22 @@ def verify_certificate_chain(cert_chain: list[x509.Certificate]):
 
 
 def verify_certificate_root(cert: x509.Certificate):
-    """Verify that the root certificate is trusted."""
-    # Note: TypeScript version uses newline-separated format, but Python's rfc4514_string()
-    # returns comma-separated format. We'll check both formats for compatibility.
     trusted_root_issuers = [
         'C=US, O=Internet Security Research Group, CN=ISRG Root X1',
-        'C=US\nO=Internet Security Research Group\nCN=ISRG Root X1',
         'C=US, O=Digital Signature Trust Co., CN=DST Root CA X3',
-        'C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3',
     ]
 
     cert_issuer = cert.issuer.rfc4514_string()
     cert_subject = cert.subject.rfc4514_string()
 
-    is_self_signed = cert_issuer == cert_subject
-
-    if is_self_signed:
+    if cert_issuer == cert_subject:
         try:
-            hash_alg = cert.signature_hash_algorithm
-            pubkey = cert.public_key()
-
-            if isinstance(pubkey, rsa.RSAPublicKey):
-                if hash_alg is not None:
-                    pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        padding.PKCS1v15(),
-                        hash_alg,
-                    )
-                else:
-                    pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        padding.PKCS1v15(),
-                    )
-            elif isinstance(pubkey, ec.EllipticCurvePublicKey):
-                if hash_alg is not None:
-                    pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        ec.ECDSA(hash_alg),
-                    )
-                else:
-                    pubkey.verify(
-                        cert.signature,
-                        cert.tbs_certificate_bytes,
-                        ec.ECDSA(hashes.SHA256()),
-                    )
-            is_trusted = True
-        except Exception:
-            is_trusted = False
-    else:
-        is_trusted = cert_issuer in trusted_root_issuers
-
-    if not is_trusted:
+            _verify_certificate_signature(cert, cert.public_key())
+        except Exception as e:
+            raise VerificationError(
+                f'Certificate verification failed: Root certificate is not trusted (issuer: {cert_issuer})'
+            ) from e
+    elif cert_issuer not in trusted_root_issuers:
         raise VerificationError(
             f'Certificate verification failed: Root certificate is not trusted (issuer: {cert_issuer})'
         )
