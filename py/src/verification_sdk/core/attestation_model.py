@@ -46,7 +46,7 @@ def verify_intel_tdx_for_model(
 
 
 def verify_nvidia_gpu_for_model(verification_data: dict):
-    result = pydash.get(verification_data, 'GPU.x-nvidia-overall-att-result')
+    result = pydash.get(verification_data, 'JWT.x-nvidia-overall-att-result')
     if not result:
         raise VerificationError('Nvidia GPU not verified')
 
