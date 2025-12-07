@@ -11,7 +11,7 @@ from ..utils.intel import fetch_intel_tdx_verification_data
 from ..utils.nvidia import fetch_nvidia_gpu_verification_data
 
 
-def verify_model_attestation(attestation: ModelAttestation) -> None:
+def verify_model_attestation(attestation: ModelAttestation):
     intel_tdx_verification_data = fetch_intel_tdx_verification_data(attestation.intel_quote)
     verify_intel_tdx_for_model(
         intel_tdx_verification_data,
@@ -29,7 +29,7 @@ def verify_intel_tdx_for_model(
     verification_data: dict,
     request_nonce: str,
     signing_address: str,
-) -> None:
+):
     if not pydash.get(verification_data, "quote.verified"):
         raise VerificationError('Intel quote not verified')
 

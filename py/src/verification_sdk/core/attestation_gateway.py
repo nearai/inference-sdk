@@ -56,7 +56,7 @@ def verify_vpc_for_gateway(
     domain: str,
     vpc_server_app_id: str,
     vpc_hostname: str,
-) -> None:
+):
     url = f"https://{domain}/evidences/vpc.json"
 
     try:

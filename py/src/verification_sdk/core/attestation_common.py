@@ -11,7 +11,7 @@ def verify_intel_quote_report_data_for_attestation_report(
     report_data: str,
     request_nonce: str,
     signing_address: str,
-) -> None:
+):
     report_raw = hex_to_bytes(report_data)
     signing_address_raw = hex_to_bytes(signing_address)
 
@@ -39,7 +39,7 @@ def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
     return tcb_info.app_compose
 
 
-def verify_compose(compose: str) -> None:
+def verify_compose(compose: str):
     links = get_sigstore_links_from_compose(compose)
 
     for link in links:

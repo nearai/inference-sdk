@@ -15,10 +15,7 @@ from .core.attestation_gateway import verify_gateway_attestation
 from .core.attestation_model import verify_model_attestation
 from .core.attestation_domain import verify_domain_attestation
 from .core.chat import verify_chat, verify_signing_address
-from .types.attestation_gateway import (
-    GatewayAttestation,
-    GatewayAttestationWithDomain,
-)
+from .types.attestation_gateway import GatewayAttestation
 from .types.attestation_model import ModelAttestation
 from .types.attestation_domain import DomainAttestation
 from .types.chat import Chat, ChatSignature, SigningAlgo
@@ -31,7 +28,6 @@ __all__ = [
     "verify_chat",
     "verify_signing_address",
     "GatewayAttestation",
-    "GatewayAttestationWithDomain",
     "ModelAttestation",
     "DomainAttestation",
     "Chat",
