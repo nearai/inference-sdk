@@ -1,3 +1,5 @@
+import { SigningAlgo } from './attestation-common';
+
 export type Chat = { requestBody: Buffer; responseBody: Buffer };
 
 export type ChatSignature = {
@@ -6,5 +8,3 @@ export type ChatSignature = {
   signing_address: string;
   signing_algo: SigningAlgo;
 };
-
-export type SigningAlgo = 'ecdsa' | 'ed25519';
