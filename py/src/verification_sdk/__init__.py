@@ -18,6 +18,7 @@ from .core.chat import verify_chat, verify_signing_address
 from .types.attestation_gateway import GatewayAttestation
 from .types.attestation_model import ModelAttestation
 from .types.attestation_domain import DomainAttestation
+from .types.attestation_report import AttestationReport
 from .types.chat import Chat, ChatSignature, SigningAlgo
 from .utils.errors import VerificationError
 
@@ -30,6 +31,7 @@ __all__ = [
     "GatewayAttestation",
     "ModelAttestation",
     "DomainAttestation",
+    "AttestationReport",
     "Chat",
     "ChatSignature",
     "SigningAlgo",

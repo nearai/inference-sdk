@@ -3,8 +3,7 @@ from dataclasses import dataclass
 from typing import Optional
 from pydantic import BaseModel
 
-from .attestation_common import TcbInfo
-from .chat import SigningAlgo
+from .attestation_common import TcbInfo, SigningAlgo
 
 
 @dataclass

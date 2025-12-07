@@ -1,10 +1,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pydantic import BaseModel
-from typing import Literal
 
-
-SigningAlgo = Literal["ecdsa", "ed25519"]
+from verification_sdk.types.attestation_common import SigningAlgo
 
 
 @dataclass

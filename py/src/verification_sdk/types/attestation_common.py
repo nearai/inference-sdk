@@ -1,19 +1,12 @@
 from dataclasses import dataclass
-from typing import Optional
-
+from typing import Literal
 from pydantic import BaseModel
 
-from verification_sdk.types.attestation_gateway import GatewayAttestation
-from verification_sdk.types.attestation_model import ModelAttestation
+
+SigningAlgo = Literal["ecdsa", "ed25519"]
 
 
 @dataclass
 class TcbInfo(BaseModel):
     app_compose: str
-
-
-@dataclass
-class AttestationReport(BaseModel):
-    gateway_attestation: GatewayAttestation
-    model_attestations: Optional[list[ModelAttestation]]
 
