@@ -55,15 +55,17 @@ function getSigstoreLinksFromCompose(compose: string): string[] {
     .matchAll(/@sha256:([0-9a-f]{64})/g)
     .map(([, digest]) => digest);
 
-  const digests = Array.from(new Set(digestsIter));
+  const digests = new Set(digestsIter);
 
-  if (digests.length === 0) {
+  if (digests.size === 0) {
     throw new VerificationError('Failed to get sigstore links from compose');
   }
 
-  return digests.map(
-    (digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`,
-  );
+  const links = digests
+    .values()
+    .map((digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`);
+
+  return Array.from(links);
 }
 
 async function verifySigstoreLink(link: string) {
@@ -75,7 +77,6 @@ async function verifySigstoreLink(link: string) {
   try {
     res = await fetch(link, {
       method: 'HEAD',
-      redirect: 'follow',
       signal: controller.signal,
     });
   } catch (e: unknown) {
@@ -84,7 +85,7 @@ async function verifySigstoreLink(link: string) {
     clearTimeout(timeoutId);
   }
 
-  if (res.status >= 400) {
+  if (res.status < 200 || res.status >= 300) {
     throw new VerificationError(
       `Failed to verify sigstore link ${link} with status code ${res.status}`,
     );
