@@ -132,19 +132,17 @@ def verify_live_certificate(
 def verify_certificate_chain(cert_chain: list[x509.Certificate]):
     for index in range(len(cert_chain) - 1):
         cert = cert_chain[index]
-        issuer_cert = cert_chain[index + 1]
+        next_cert = cert_chain[index + 1]
 
-        # Verify signature using issuer's public key
-        verify_certificate_signature(cert, issuer_cert.public_key())
+        verify_certificate_signature(cert, next_cert.public_key())
 
-        # Verify issuer matches
-        issuer_dn = cert.issuer.rfc4514_string()
-        subject_dn = issuer_cert.subject.rfc4514_string()
+        cert_issuer_dn = cert.issuer.rfc4514_string()
+        next_cert_dn = next_cert.subject.rfc4514_string()
 
-        if issuer_dn != subject_dn:
+        if cert_issuer_dn != next_cert_dn:
             raise VerificationError(
                 f"Certificate chain verification failed: Certificate {index} issuer "
-                f"'{issuer_dn}' does not match next certificate subject '{subject_dn}'"
+                f"'{cert_issuer_dn}' does not match next certificate subject '{next_cert_dn}'"
             )
 
 
@@ -154,57 +152,35 @@ def verify_certificate_root(cert: x509.Certificate):
         "C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3",
     ]
 
-    try:
-        issuer_dn = cert.issuer.rfc4514_string()
-        subject_dn = cert.subject.rfc4514_string()
+    cert_dn = cert.subject.rfc4514_string()
+    cert_issuer_dn = cert.issuer.rfc4514_string()
 
-        # Check if issuer is in trusted list (exact match or component match)
-        issuer_in_trusted = issuer_dn in trusted_root_ca_issuers
-        if not issuer_in_trusted:
-            # Try component-based matching
-            issuer_components = _extract_dn_components(issuer_dn)
-            for trusted_issuer in trusted_root_ca_issuers:
-                trusted_components = _extract_dn_components(trusted_issuer)
-                if (
-                    issuer_components.get("CN") == trusted_components.get("CN")
-                    and issuer_components.get("O") == trusted_components.get("O")
-                    and issuer_components.get("C") == trusted_components.get("C")
-                ):
-                    issuer_in_trusted = True
-                    break
+    issuer_in_trusted = cert_issuer_dn in trusted_root_ca_issuers
 
-        if issuer_dn == subject_dn:
-            # Self-signed root certificate - verify signature
-            try:
-                verify_certificate_signature(cert, cert.public_key())
-                return
-            except Exception:
-                # If signature verification fails, still check if issuer is trusted
-                if not issuer_in_trusted:
-                    raise VerificationError(
-                        f"Certificate verification failed: Root certificate is not trusted (issuer: {issuer_dn})"
-                    )
-        else:
-            if not issuer_in_trusted:
-                raise VerificationError(
-                    f"Certificate verification failed: Root certificate is not trusted (issuer: {issuer_dn})"
-                )
-    except VerificationError:
-        raise
-    except Exception as error:
-        error_message = (
-            str(error) if isinstance(error, Exception)
-            else "Unknown root certificate trust verification error"
-        )
+    # if not issuer_in_trusted:
+    #     # Try component-based matching
+    #     issuer_components = extract_dn_components(cert_issuer_dn)
+    #     for trusted_issuer in trusted_root_ca_issuers:
+    #         trusted_components = extract_dn_components(trusted_issuer)
+    #         if (
+    #                 issuer_components.get("CN") == trusted_components.get("CN")
+    #                 and issuer_components.get("O") == trusted_components.get("O")
+    #                 and issuer_components.get("C") == trusted_components.get("C")
+    #         ):
+    #             issuer_in_trusted = True
+    #             break
+
+    if cert_dn == cert_issuer_dn:
+        verify_certificate_signature(cert, cert.public_key())
+    elif not issuer_in_trusted:
         raise VerificationError(
-            f"Root certificate trust verification failed: {error_message}"
-        ) from error
+            f"Certificate verification failed: Root certificate is not trusted (issuer: {cert_issuer_dn})"
+        )
 
 
 def verify_certificate_leaf(cert: x509.Certificate):
-    """Check certificate validity period."""
     current_time = datetime.now(timezone.utc)
-    # Use UTC-aware datetime properties (timezone-aware)
+
     not_valid_before = cert.not_valid_before_utc
     not_valid_after = cert.not_valid_after_utc
 
@@ -220,94 +196,71 @@ def verify_certificate_leaf(cert: x509.Certificate):
             f"(valid to: {not_valid_after})"
         )
 
-    # Validate public keys
-    leaf_certificate_public_key = cert.public_key()
-    if not leaf_certificate_public_key:
-        raise VerificationError(
-            "Certificate verification failed: Unable to extract public key from certificate"
-        )
-
 
 def verify_certificate_fingerprint(cert1: x509.Certificate, cert2: x509.Certificate):
-    """Compare certificate fingerprints."""
     fingerprint1 = get_certificate_fingerprint(cert1)
     fingerprint2 = get_certificate_fingerprint(cert2)
 
     if fingerprint1 != fingerprint2:
-        raise VerificationError(
-            f"Certificate fingerprint mismatch: "
-            f"evidence certificate fingerprint (SHA256): {fingerprint1}, "
-            f"live server certificate fingerprint (SHA256): {fingerprint2}"
-        )
+        raise VerificationError('Certificate fingerprint mismatching')
 
 
 def parse_certificate_chain(cert: str) -> list[x509.Certificate]:
-    """Parse PEM certificate chain into list of X509 certificates."""
     pem_certificate_regex = r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----"
     parsed_certificates = []
 
     for certificate_match in re.finditer(pem_certificate_regex, cert):
         try:
-            cert_pem = certificate_match.group(0)
-            cert_obj = x509.load_pem_x509_certificate(
-                cert_pem.encode(), default_backend()
+            x509_certificate = x509.load_pem_x509_certificate(
+                certificate_match.group(0).encode(),
+                # default_backend()
             )
-            parsed_certificates.append(cert_obj)
-        except Exception as parse_error:
+            parsed_certificates.append(x509_certificate)
+        except Exception as e:
             raise VerificationError(
-                f"Failed to parse certificate from PEM: {parse_error}"
-            ) from parse_error
+                f"Failed to parse certificate from PEM: {e}"
+            ) from e
 
     return parsed_certificates
 
 
 def get_certificate_fingerprint(cert: x509.Certificate) -> str:
-    """Get the SHA256 fingerprint of a certificate in OpenSSL format (colon-separated hex, uppercase)."""
-    # Get the raw DER encoding of the certificate
     der = cert.public_bytes(encoding=Encoding.DER)
-    # Compute SHA256 hash
+
     hash_obj = hashlib.sha256(der)
     hash_hex = hash_obj.hexdigest().upper()
+
     # Format as colon-separated uppercase hex (OpenSSL format)
     return ":".join(hash_hex[i : i + 2] for i in range(0, len(hash_hex), 2))
 
 
 def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certificate:
-    """Fetch the certificate from a live server via TLS connection."""
     try:
-        # Create SSL context
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
 
-        # Create socket and wrap with SSL
         sock = socket.create_connection((domain, port), timeout=TIMEOUT)
+
         try:
-            with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                # Get the peer certificate (leaf certificate)
-                cert_der = ssock.getpeercert(binary_form=True)
+            with context.wrap_socket(sock, server_hostname=domain) as ssl_sock:
+                cert_der = ssl_sock.getpeercert(binary_form=True)
 
                 if not cert_der:
-                    raise VerificationError("Failed to get certificate from server")
+                    raise VerificationError(f"Failed to get certificate from for domain: {domain}")
 
-                # Convert DER to X509 certificate
-                cert = x509.load_der_x509_certificate(cert_der, default_backend())
-                return cert
+                return x509.load_der_x509_certificate(cert_der, default_backend())
         finally:
             sock.close()
     except socket.timeout:
         raise VerificationError("TLS connection timeout")
-    except Exception as error:
-        error_message = (
-            str(error) if isinstance(error, Exception) else "Unknown TLS connection error"
-        )
-        raise VerificationError(f"TLS connection failed: {error_message}") from error
+    except Exception as e:
+        raise VerificationError(f"TLS connection failed") from e
 
 
 def verify_certificate_signature(cert: x509.Certificate, public_key: CertificatePublicKeyTypes):
     signature_algorithm = cert.signature_algorithm_oid
 
-    # Determine hash algorithm from signature algorithm
     if signature_algorithm == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA256:
         hash_algorithm = hashes.SHA256()
         padding_algorithm = padding.PKCS1v15()
@@ -327,13 +280,13 @@ def verify_certificate_signature(cert: x509.Certificate, public_key: Certificate
         hash_algorithm = hashes.SHA512()
         padding_algorithm = None
     else:
-        # Default to SHA256
-        hash_algorithm = hashes.SHA256()
-        padding_algorithm = (
-            padding.PKCS1v15() if isinstance(public_key, rsa.RSAPublicKey) else None
-        )
+        raise VerificationError(f'Unsupported signature_algorithm: {signature_algorithm}')
+        # # Default to SHA256
+        # hash_algorithm = hashes.SHA256()
+        # padding_algorithm = (
+        #     padding.PKCS1v15() if isinstance(public_key, rsa.RSAPublicKey) else None
+        # )
 
-    # Verify signature
     try:
         if isinstance(public_key, rsa.RSAPublicKey):
             public_key.verify(
@@ -350,13 +303,15 @@ def verify_certificate_signature(cert: x509.Certificate, public_key: Certificate
             )
         else:
             raise VerificationError("Unsupported public key type")
+    except VerificationError:
+        raise
     except Exception as e:
         raise VerificationError(f"Certificate signature verification failed") from e
 
 
-def _extract_dn_components(dn_string: str) -> dict[str, str]:
-    """Extract DN components for flexible comparison."""
+def extract_dn_components(dn_string: str) -> dict[str, str]:
     components = {}
+
     # RFC4514 format: "CN=...,O=...,C=..." or "C=US\nO=...\nCN=..."
     # Handle both comma-separated and newline-separated formats
     if "\n" in dn_string:
@@ -368,5 +323,6 @@ def _extract_dn_components(dn_string: str) -> dict[str, str]:
         if "=" in part:
             key, value = part.split("=", 1)
             components[key.strip()] = value.strip()
+
     return components
 
