@@ -36,7 +36,7 @@ def verify_intel_tdx_for_model(
     report_data = pydash.get(verification_data, 'quote.body.reportdata')
 
     if not isinstance(report_data, str):
-        raise VerificationError('Bad reportdata')
+        raise VerificationError('Bad report data')
 
     verify_intel_quote_report_data_for_attestation_report(
         report_data,

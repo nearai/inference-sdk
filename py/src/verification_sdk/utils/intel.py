@@ -19,15 +19,18 @@ async def fetch_intel_tdx_verification_data(quote: str) -> dict:
     verification_data_raw = json.loads(verified_report.to_json())
 
     verified = pydash.get(verification_data_raw, 'status') == 'UpToDate'
-    reportdata = pydash.get(verification_data_raw, 'report.TD10.report_data', '')
-    mrconfig = pydash.get(verification_data_raw, 'report.TD10.mr_config_id', '')
+    report_data = pydash.get(verification_data_raw, 'report.TD10.report_data')
+    mr_config = pydash.get(verification_data_raw, 'report.TD10.mr_config_id')
+
+    if not isinstance(report_data, str) or not isinstance(mr_config, str):
+        raise VerificationError('Bad report data')
 
     return {
         'quote': {
             'verified': verified,
             'body': {
-                'reportdata': f'0x{reportdata}',
-                'mrconfig': f'0x{mrconfig}',
+                'reportdata': f'0x{report_data}',
+                'mrconfig': f'0x{mr_config}',
             },
         }
     }
