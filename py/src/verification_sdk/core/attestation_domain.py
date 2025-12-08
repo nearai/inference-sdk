@@ -7,7 +7,6 @@ import pydash
 from datetime import datetime, timezone
 from typing import Optional
 from cryptography import x509
-from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
 from cryptography.hazmat.primitives.asymmetric.types import CertificatePublicKeyTypes
@@ -147,30 +146,16 @@ def verify_certificate_chain(cert_chain: list[x509.Certificate]):
 
 
 def verify_certificate_root(cert: x509.Certificate):
-    trusted_root_ca_issuers = [
+    trusted_root_ca_issuer_dns = [
         "C=US\nO=Internet Security Research Group\nCN=ISRG Root X1",
         "C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3",
     ]
 
-    cert_dn = cert.subject.rfc4514_string()
     cert_issuer_dn = cert.issuer.rfc4514_string()
 
-    issuer_in_trusted = cert_issuer_dn in trusted_root_ca_issuers
+    issuer_in_trusted = is_dn_trusted(trusted_root_ca_issuer_dns, cert_issuer_dn)
 
-    # if not issuer_in_trusted:
-    #     # Try component-based matching
-    #     issuer_components = extract_dn_components(cert_issuer_dn)
-    #     for trusted_issuer in trusted_root_ca_issuers:
-    #         trusted_components = extract_dn_components(trusted_issuer)
-    #         if (
-    #                 issuer_components.get("CN") == trusted_components.get("CN")
-    #                 and issuer_components.get("O") == trusted_components.get("O")
-    #                 and issuer_components.get("C") == trusted_components.get("C")
-    #         ):
-    #             issuer_in_trusted = True
-    #             break
-
-    if cert_dn == cert_issuer_dn:
+    if cert.subject.rfc4514_string() == cert_issuer_dn:
         verify_certificate_signature(cert, cert.public_key())
     elif not issuer_in_trusted:
         raise VerificationError(
@@ -207,19 +192,14 @@ def verify_certificate_fingerprint(cert1: x509.Certificate, cert2: x509.Certific
 
 def parse_certificate_chain(cert: str) -> list[x509.Certificate]:
     pem_certificate_regex = r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----"
+
     parsed_certificates = []
 
     for certificate_match in re.finditer(pem_certificate_regex, cert):
-        try:
-            x509_certificate = x509.load_pem_x509_certificate(
-                certificate_match.group(0).encode(),
-                # default_backend()
-            )
-            parsed_certificates.append(x509_certificate)
-        except Exception as e:
-            raise VerificationError(
-                f"Failed to parse certificate from PEM: {e}"
-            ) from e
+        x509_certificate = x509.load_pem_x509_certificate(
+            certificate_match.group(0).encode()
+        )
+        parsed_certificates.append(x509_certificate)
 
     return parsed_certificates
 
@@ -249,7 +229,7 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
                 if not cert_der:
                     raise VerificationError(f"Failed to get certificate from for domain: {domain}")
 
-                return x509.load_der_x509_certificate(cert_der, default_backend())
+                return x509.load_der_x509_certificate(cert_der)
         finally:
             sock.close()
     except socket.timeout:
@@ -280,12 +260,7 @@ def verify_certificate_signature(cert: x509.Certificate, public_key: Certificate
         hash_algorithm = hashes.SHA512()
         padding_algorithm = None
     else:
-        raise VerificationError(f'Unsupported signature_algorithm: {signature_algorithm}')
-        # # Default to SHA256
-        # hash_algorithm = hashes.SHA256()
-        # padding_algorithm = (
-        #     padding.PKCS1v15() if isinstance(public_key, rsa.RSAPublicKey) else None
-        # )
+        raise VerificationError(f'Unsupported signature algorithm: {signature_algorithm}')
 
     try:
         if isinstance(public_key, rsa.RSAPublicKey):
@@ -302,22 +277,50 @@ def verify_certificate_signature(cert: x509.Certificate, public_key: Certificate
                 ec.ECDSA(hash_algorithm),
             )
         else:
-            raise VerificationError("Unsupported public key type")
+            raise VerificationError("Unsupported public key")
     except VerificationError:
         raise
     except Exception as e:
         raise VerificationError(f"Certificate signature verification failed") from e
 
 
-def extract_dn_components(dn_string: str) -> dict[str, str]:
+def is_dn_trusted(trusted_dns: list[str], dn: str) -> bool:
+    dn_components = dn_string_to_components(dn)
+
+    for trusted_dn in trusted_dns:
+        trusted_dn_components = dn_string_to_components(trusted_dn)
+
+        trusted_dn_cn = trusted_dn_components.get("CN")
+        if not trusted_dn_cn:
+            raise VerificationError("Trusted dn must include 'CN' component")
+
+        trusted_dn_o = trusted_dn_components.get("O")
+        if not trusted_dn_o:
+            raise VerificationError("Trusted dn must include 'O' component")
+
+        trusted_dn_c = trusted_dn_components.get("C")
+        if not trusted_dn_c:
+            raise VerificationError("Trusted dn must include 'C' component")
+
+        if (
+                dn_components.get("CN") == trusted_dn_cn and
+                dn_components.get("O") == trusted_dn_o and
+                dn_components.get("C") == trusted_dn_c
+        ):
+            return True
+
+    return False
+
+
+def dn_string_to_components(dn: str) -> dict[str, str]:
     components = {}
 
-    # RFC4514 format: "CN=...,O=...,C=..." or "C=US\nO=...\nCN=..."
     # Handle both comma-separated and newline-separated formats
-    if "\n" in dn_string:
-        parts = dn_string.split("\n")
+    if "\n" in dn:
+        parts = dn.split("\n")
     else:
-        parts = dn_string.split(",")
+        parts = dn.split(",")
+
     for part in parts:
         part = part.strip()
         if "=" in part:
