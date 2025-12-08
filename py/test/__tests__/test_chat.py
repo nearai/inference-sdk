@@ -19,7 +19,6 @@ from verification_sdk import (
 )
 
 
-@pytest.mark.asyncio
 class TestChat:
     @pytest.fixture(scope='class')
     def context(self) -> Context:
@@ -45,13 +44,11 @@ class TestChat:
         await sleep(5 * 1000)  # Waiting for signature preparation
         return completions
 
-    @pytest.mark.asyncio
     async def test_chat_signature_ecdsa(
         self, context: Context, completions: ChatCompletionsResponse
     ):
         await test_chat_signature(context, completions, 'ecdsa')
 
-    @pytest.mark.asyncio
     async def test_chat_signature_ed25519(
         self, context: Context, completions: ChatCompletionsResponse
     ):
@@ -71,15 +68,14 @@ async def test_chat_signature(
         signing_algo=signing_algo,
     )
 
-    assert signature['signing_algo'] == signing_algo
+    assert signature.signing_algo == signing_algo
 
-    chat = Chat(
-        request_body=completions['request_body_raw'],
-        response_body=completions['response_body_raw'],
-    )
-    chat_signature = ChatSignature(**signature)
+    chat = Chat.model_validate({
+        "request_body": completions['request_body_raw'],
+        "response_body": completions['response_body_raw'],
+    })
 
-    verify_chat(chat, chat_signature)
+    verify_chat(chat, signature)
 
     report = await fetch_attestation_report(
         api_url=context['api_url'],
@@ -89,9 +85,5 @@ async def test_chat_signature(
         signing_algo=signing_algo,
     )
 
-    model_attestations = [
-        ModelAttestation(**att) for att in (report.get('model_attestations') or [])
-    ]
-
-    verify_signing_address(chat_signature, model_attestations)
+    verify_signing_address(signature, report.model_attestations or [])
 
