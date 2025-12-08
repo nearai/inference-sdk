@@ -1,5 +1,3 @@
-from typing import Optional
-
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,
@@ -18,7 +16,7 @@ async def verify_gateway_attestation(attestation: GatewayAttestation, domain: st
     verify_intel_tdx_for_gateway(
         verification_data,
         attestation.request_nonce,
-        attestation.signing_address,
+        attestation.signing_address or ETHEREUM_ZERO_ADDRESS,
     )
 
     await verify_vpc_for_gateway(
@@ -33,7 +31,7 @@ async def verify_gateway_attestation(attestation: GatewayAttestation, domain: st
 def verify_intel_tdx_for_gateway(
     verification_data: dict,
     request_nonce: str,
-    signing_address: Optional[str] = ETHEREUM_ZERO_ADDRESS,
+    signing_address: str,
 ):
     if not verification_data.get('quote', {}).get('verified'):
         raise VerificationError('Intel quote not verified')

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
 from pydantic import BaseModel
 
 from .attestation_common import TcbInfo, SigningAlgo
@@ -11,8 +10,8 @@ class GatewayAttestation(BaseModel):
     intel_quote: str
     info: GatewayInfo
     vpc: VpcInfo
-    signing_algo: Optional[SigningAlgo] = None
-    signing_address: Optional[str] = None
+    signing_algo: SigningAlgo | None = None
+    signing_address: str | None = None
 
 
 class GatewayInfo(BaseModel):

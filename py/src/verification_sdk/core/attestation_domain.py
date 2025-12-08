@@ -4,7 +4,6 @@ import socket
 import ssl
 
 from datetime import datetime, timezone
-from typing import Optional
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa, ec
@@ -214,7 +213,7 @@ def get_certificate_fingerprint(cert: x509.Certificate) -> str:
     return ':'.join(hash_hex[i : i + 2] for i in range(0, len(hash_hex), 2))
 
 
-def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certificate:
+def fetch_live_certificate(domain: str, port: int = 443) -> x509.Certificate:
     try:
         context = ssl.create_default_context()
         context.check_hostname = False

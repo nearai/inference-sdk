@@ -1,14 +1,14 @@
 import json
 import aiohttp
 
-from typing import Optional, Literal, Any
+from typing import Literal, Any
 from dataclasses import dataclass
 
 
 @dataclass
 class FetchResponse:
     status: int
-    data: Optional[bytes] = None
+    data: bytes | None = None
 
     @property
     def ok(self) -> bool:
@@ -36,9 +36,9 @@ Method = Literal['GET', 'POST', 'HEAD']
 async def fetch(
     url: str,
     method: Method = 'GET',
-    data: Optional[Any] = None,
-    headers: Optional[dict[str, str]] = None,
-    timeout: Optional[float] = None,
+    data: Any = None,
+    headers: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> FetchResponse:
     timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
 
