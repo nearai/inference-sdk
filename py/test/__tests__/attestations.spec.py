@@ -1,16 +1,14 @@
 import pytest
 
-from test.common import (
+from ..common import (
     fetch_attestation_report,
     fetch_domain_attestation,
     generate_request_nonce,
 )
-from test.context import init_context
-from test.types import Context
+from ..context import init_context
+from ..types import Context
 from verification_sdk import (
     DomainAttestation,
-    GatewayAttestation,
-    ModelAttestation,
     SigningAlgo,
     verify_domain_attestation,
     verify_gateway_attestation,
@@ -34,8 +32,7 @@ class TestAttestations:
         await test_gateway_attestation_and_model_attestations(context, 'ed25519')
 
     async def test_domain_attestation(self, context: Context):
-        attestation_dict = await fetch_domain_attestation(context['api_domain'])
-        attestation = DomainAttestation(**attestation_dict)
+        attestation = await fetch_domain_attestation(context['api_domain'])
         await verify_domain_attestation(attestation)
 
 

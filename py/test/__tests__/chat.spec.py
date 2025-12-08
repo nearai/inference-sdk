@@ -1,18 +1,16 @@
 import pytest
 
-from test.common import (
+from ..common import (
     chat_completions,
     fetch_attestation_report,
     fetch_chat_signature,
     generate_request_nonce,
     sleep,
 )
-from test.context import init_context
-from test.types import ChatCompletionsResponse, Context
+from ..context import init_context
+from ..types import ChatCompletionsResponse, Context
 from verification_sdk import (
     Chat,
-    ChatSignature,
-    ModelAttestation,
     SigningAlgo,
     verify_chat,
     verify_signing_address,
@@ -42,6 +40,7 @@ class TestChat:
         )
 
         await sleep(5)  # Waiting for signature preparation
+
         return completions
 
     async def test_chat_signature_ecdsa(
