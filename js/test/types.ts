@@ -1,8 +1,30 @@
+import { SigningAlgo } from '../src';
+
 export type Context = {
   apiDomain: string;
   apiUrl: string;
   apiKey: string;
   model: string;
+};
+
+export type FetchAttestationReportParams = {
+  apiUrl: string;
+  apiKey: string;
+  params: {
+    model: string;
+    requestNonce: string;
+    signingAlgo: SigningAlgo;
+  };
+};
+
+export type FetchChatSignatureParams = {
+  apiUrl: string;
+  apiKey: string;
+  params: {
+    chatId: string;
+    model: string;
+    signingAlgo: SigningAlgo;
+  };
 };
 
 export type ChatCompletionsParams = {

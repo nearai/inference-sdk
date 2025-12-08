@@ -1,10 +1,10 @@
+import { ChatSignature, AttestationReport, DomainAttestation } from '../src';
 import {
-  ChatSignature,
-  AttestationReport,
-  SigningAlgo,
-  DomainAttestation,
-} from '../src';
-import { ChatCompletionsParams, ChatCompletionsResponse } from './types';
+  ChatCompletionsParams,
+  ChatCompletionsResponse,
+  FetchAttestationReportParams,
+  FetchChatSignatureParams,
+} from './types';
 import crypto from 'crypto';
 
 export async function sleep(ms: number) {
@@ -21,15 +21,7 @@ export async function fetchAttestationReport({
   apiUrl,
   apiKey,
   params: { model, requestNonce, signingAlgo },
-}: {
-  apiUrl: string;
-  apiKey: string;
-  params: {
-    model: string;
-    requestNonce: string;
-    signingAlgo: SigningAlgo;
-  };
-}): Promise<AttestationReport> {
+}: FetchAttestationReportParams): Promise<AttestationReport> {
   const res = await fetch(
     `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}&signing_algo=${signingAlgo}`,
     {
@@ -53,15 +45,7 @@ export async function fetchChatSignature({
   apiUrl,
   apiKey,
   params: { chatId, model, signingAlgo },
-}: {
-  apiUrl: string;
-  apiKey: string;
-  params: {
-    chatId: string;
-    model: string;
-    signingAlgo: SigningAlgo;
-  };
-}): Promise<ChatSignature> {
+}: FetchChatSignatureParams): Promise<ChatSignature> {
   const res = await fetch(
     `${apiUrl}/signature/${chatId}?model=${encodeURIComponent(model)}&signing_algo=${signingAlgo}`,
     {
@@ -73,7 +57,9 @@ export async function fetchChatSignature({
   );
 
   if (!res.ok) {
-    throw Error(`Failed to fetch signature with status code: ${res.status}`);
+    throw Error(
+      `Failed to fetch chat signature with status code: ${res.status}`,
+    );
   }
 
   return res.json();
