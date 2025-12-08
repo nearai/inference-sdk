@@ -1,5 +1,3 @@
-import pydash
-
 from typing import Optional
 
 from ..core.attestation_common import (
@@ -37,10 +35,10 @@ def verify_intel_tdx_for_gateway(
     request_nonce: str,
     signing_address: Optional[str] = ETHEREUM_ZERO_ADDRESS,
 ):
-    if not pydash.get(verification_data, 'quote.verified'):
+    if not verification_data.get('quote', {}).get('verified'):
         raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, 'quote.body.reportdata')
+    report_data = verification_data.get('quote', {}).get('body', {}).get('reportdata')
 
     if not isinstance(report_data, str):
         raise VerificationError('Bad report data')

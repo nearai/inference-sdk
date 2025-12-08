@@ -2,7 +2,6 @@ import hashlib
 import re
 import socket
 import ssl
-import pydash
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -47,10 +46,10 @@ def verify_intel_tdx_for_domain(
     acme_account: str,
     sha256sum: str,
 ):
-    if not pydash.get(verification_data, 'quote.verified'):
+    if not verification_data.get('quote', {}).get('verified'):
         raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, 'quote.body.reportdata')
+    report_data = verification_data.get('quote', {}).get('body', {}).get('reportdata')
 
     if not isinstance(report_data, str):
         raise VerificationError('Bad report data')

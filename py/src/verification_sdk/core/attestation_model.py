@@ -1,5 +1,3 @@
-import pydash
-
 from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,
@@ -34,10 +32,10 @@ def verify_intel_tdx_for_model(
     request_nonce: str,
     signing_address: str,
 ):
-    if not pydash.get(verification_data, 'quote.verified'):
+    if not verification_data.get('quote', {}).get('verified'):
         raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, 'quote.body.reportdata')
+    report_data = verification_data.get('quote', {}).get('body', {}).get('reportdata')
 
     if not isinstance(report_data, str):
         raise VerificationError('Bad report data')
@@ -50,6 +48,6 @@ def verify_intel_tdx_for_model(
 
 
 def verify_nvidia_gpu_for_model(verification_data: dict):
-    result = pydash.get(verification_data, 'JWT.x-nvidia-overall-att-result')
+    result = verification_data.get('JWT', {}).get('x-nvidia-overall-att-result')
     if not result:
         raise VerificationError('Nvidia GPU not verified')
