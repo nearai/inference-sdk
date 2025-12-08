@@ -61,11 +61,11 @@ def get_sigstore_links_from_compose(compose: str) -> list[str]:
 
 async def verify_sigstore_link(link: str):
     try:
-        res = await fetch(link, method='HEAD', timeout=TIMEOUT)
+        response = await fetch(link, method='HEAD', timeout=TIMEOUT)
         
-        if not res.ok:
+        if not response.ok:
             raise VerificationError(
-                f'Failed to verify sigstore link {link} with status code {res.status}'
+                f'Failed to verify sigstore link {link} with status code {response.status}'
             )
     except Exception as e:
         raise VerificationError(f'Failed to verify sigstore link {link}') from e

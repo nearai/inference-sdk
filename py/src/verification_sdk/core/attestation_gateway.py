@@ -59,14 +59,14 @@ async def verify_vpc_for_gateway(
 ):
     url = f'https://{domain}/evidences/vpc.json'
 
-    res = await fetch(url, timeout=TIMEOUT)
+    response = await fetch(url, timeout=TIMEOUT)
 
-    if not res.ok:
+    if not response.ok:
         raise VerificationError(
-            f'Failed to fetch VPC info with status code {res.status}'
+            f'Failed to fetch VPC info with status code {response.status}'
         )
 
-    vpc_info = res.json()
+    vpc_info = response.json()
 
     if vpc_info.get('vpc_server_app_id') != vpc_server_app_id:
         raise VerificationError('vpc_server_app_id mismatching')

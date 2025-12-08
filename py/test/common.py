@@ -31,17 +31,17 @@ async def fetch_attestation_report(
 ) -> AttestationReport:
     url = f'{api_url}/attestation/report?model={quote(model)}&nonce={request_nonce}&signing_algo={signing_algo}'
 
-    response = await fetch(
+    res = await fetch(
         url,
         headers={"authorization": f'Bearer {api_key}'},
     )
 
-    if not response.ok:
+    if not res.ok:
         raise ValueError(
-            f'Failed to fetch attestation report with status code: {response.status}'
+            f'Failed to fetch attestation report with status code: {res.status}'
         )
 
-    return AttestationReport.model_validate_json(response.bytes())
+    return AttestationReport.model_validate_json(res.bytes())
 
 
 async def fetch_chat_signature(
@@ -53,17 +53,17 @@ async def fetch_chat_signature(
 ) -> ChatSignature:
     url = f'{api_url}/signature/{chat_id}?model={quote(model)}&signing_algo={signing_algo}'
 
-    response = await fetch(
+    res = await fetch(
         url,
         headers={"authorization": f'Bearer {api_key}'},
     )
 
-    if not response.ok:
+    if not res.ok:
         raise ValueError(
-            f'Failed to fetch signature with status code: {response.status}'
+            f'Failed to fetch signature with status code: {res.status}'
         )
 
-    return ChatSignature.model_validate_json(response.bytes())
+    return ChatSignature.model_validate_json(res.bytes())
 
 
 async def chat_completions(
@@ -73,7 +73,7 @@ async def chat_completions(
 ) -> ChatCompletionsResponse:
     request_body_raw = json.dumps(request_body).encode()
 
-    response = await fetch(
+    res = await fetch(
         f'{api_url}/chat/completions',
         method='POST',
         data=request_body_raw,
@@ -83,12 +83,12 @@ async def chat_completions(
         },
     )
 
-    if not response.ok:
+    if not res.ok:
         raise ValueError(
-            f'Failed to chat with status code: {response.status}'
+            f'Failed to chat with status code: {res.status}'
         )
 
-    response_body_raw = response.bytes()
+    response_body_raw = res.bytes()
 
     if request_body.get('stream'):
         lines = response_body_raw.decode().split('\n')
