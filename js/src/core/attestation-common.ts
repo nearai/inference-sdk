@@ -2,6 +2,7 @@ import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import { SIGSTORE_SEARCH_API_URL, TIMEOUT } from '../utils/consts';
 import { TcbInfo } from '../types/attestation-common';
+import { Buffer } from 'buffer';
 
 export function verifyIntelQuoteReportDataForAttestationReport(
   reportData: string,
