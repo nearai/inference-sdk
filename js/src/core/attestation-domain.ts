@@ -120,13 +120,14 @@ function verifyCertificateChain(certChain: X509Certificate[]) {
     const issuerCert = certChain[i + 1];
 
     const isVerified = cert.verify(issuerCert.publicKey);
-    const isIssuerMatched = cert.issuer === issuerCert.subject;
 
     if (!isVerified) {
       throw new VerificationError(
         `Certificate chain verification failed: Certificate ${i} signature verification failed`,
       );
     }
+
+    const isIssuerMatched = cert.issuer === issuerCert.subject;
 
     if (!isIssuerMatched) {
       throw new VerificationError(
@@ -142,10 +143,12 @@ function verifyCertificateRoot(cert: X509Certificate) {
     'C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3',
   ];
 
+  const isIssuerTrusted = isDnTrusted(trustedRootIssuers, cert.issuer);
+
   const isTrusted =
     cert.issuer === cert.subject
       ? cert.verify(cert.publicKey)
-      : trustedRootIssuers.includes(cert.issuer);
+      : isIssuerTrusted;
 
   if (!isTrusted) {
     throw new VerificationError(
@@ -260,4 +263,57 @@ async function fetchLiveCertificate(
       reject(new VerificationError(`TLS connection error`, e));
     });
   });
+}
+
+function dnStringToComponents(dn: string): Record<string, string> {
+  const components: Record<string, string> = {};
+
+  const parts: string[] = dn.includes('\n') ? dn.split('\n') : dn.split(',');
+
+  for (let part of parts) {
+    part = part.trim();
+    const idx = part.indexOf('=');
+    if (idx !== -1) {
+      const key = part.substring(0, idx).trim();
+      const value = part.substring(idx + 1).trim();
+      if (key.length > 0) {
+        components[key] = value;
+      }
+    }
+  }
+
+  return components;
+}
+
+function isDnTrusted(trustedDns: string[], dn: string): boolean {
+  const dnComponents = dnStringToComponents(dn);
+
+  for (const trustedDn of trustedDns) {
+    const trustedDnComponents = dnStringToComponents(trustedDn);
+
+    const trustedDnCn = trustedDnComponents['CN'];
+    if (!trustedDnCn) {
+      throw new VerificationError("Trusted dn must include 'CN' component");
+    }
+
+    const trustedDnO = trustedDnComponents['O'];
+    if (!trustedDnO) {
+      throw new VerificationError("Trusted dn must include 'O' component");
+    }
+
+    const trustedDnC = trustedDnComponents['C'];
+    if (!trustedDnC) {
+      throw new VerificationError("Trusted dn must include 'C' component");
+    }
+
+    if (
+      dnComponents['CN'] === trustedDnCn &&
+      dnComponents['O'] === trustedDnO &&
+      dnComponents['C'] === trustedDnC
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
