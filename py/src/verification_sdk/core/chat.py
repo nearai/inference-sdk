@@ -26,33 +26,33 @@ def verify_signing_address(
             return
 
     raise VerificationError(
-        "The signature signing algorithm or address does not match any of the model attestations"
+        'The signature signing algorithm or address does not match any of the model attestations'
     )
 
 
 def verify_chat_signature(signature: ChatSignature):
-    if signature.signing_algo == "ecdsa":
+    if signature.signing_algo == 'ecdsa':
         message = encode_defunct(text=signature.text)
         try:
             recovered = Account.recover_message(message, signature=signature.signature)
         except Exception as e:
-            raise VerificationError("Invalid ECDSA chat signature") from e
+            raise VerificationError('Invalid ECDSA chat signature') from e
 
         recovered_raw = hex_to_bytes(recovered)
         signing_raw = hex_to_bytes(signature.signing_address)
         if recovered_raw != signing_raw:
-            raise VerificationError("Invalid ECDSA chat signature")
+            raise VerificationError('Invalid ECDSA chat signature')
     else:
         public_key = hex_to_bytes(signature.signing_address)
         sig_bytes = hex_to_bytes(signature.signature)
         verify_key = nacl.signing.VerifyKey(public_key)
         try:
-            verify_key.verify(signature.text.encode("utf-8"), sig_bytes)
+            verify_key.verify(signature.text.encode('utf-8'), sig_bytes)
         except Exception as e:
-            raise VerificationError("Invalid ED25519 chat signature") from e
+            raise VerificationError('Invalid ED25519 chat signature') from e
 
 
 def verify_chat_hash(text: str, request_body: bytes, response_body: bytes):
-    expected = f"{sha256(request_body).hexdigest()}:{sha256(response_body).hexdigest()}"
+    expected = f'{sha256(request_body).hexdigest()}:{sha256(response_body).hexdigest()}'
     if text != expected:
-        raise VerificationError("Chat hash mismatching")
+        raise VerificationError('Chat hash mismatching')

@@ -34,13 +34,13 @@ def verify_intel_tdx_for_model(
     request_nonce: str,
     signing_address: str,
 ):
-    if not pydash.get(verification_data, "quote.verified"):
-        raise VerificationError("Intel quote not verified")
+    if not pydash.get(verification_data, 'quote.verified'):
+        raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, "quote.body.reportdata")
+    report_data = pydash.get(verification_data, 'quote.body.reportdata')
 
     if not isinstance(report_data, str):
-        raise VerificationError("Bad report data")
+        raise VerificationError('Bad report data')
 
     verify_intel_quote_report_data_for_attestation_report(
         report_data,
@@ -50,6 +50,6 @@ def verify_intel_tdx_for_model(
 
 
 def verify_nvidia_gpu_for_model(verification_data: dict):
-    result = pydash.get(verification_data, "JWT.x-nvidia-overall-att-result")
+    result = pydash.get(verification_data, 'JWT.x-nvidia-overall-att-result')
     if not result:
-        raise VerificationError("Nvidia GPU not verified")
+        raise VerificationError('Nvidia GPU not verified')

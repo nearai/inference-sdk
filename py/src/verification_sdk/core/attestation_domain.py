@@ -47,13 +47,13 @@ def verify_intel_tdx_for_domain(
     acme_account: str,
     sha256sum: str,
 ):
-    if not pydash.get(verification_data, "quote.verified"):
-        raise VerificationError("Intel quote not verified")
+    if not pydash.get(verification_data, 'quote.verified'):
+        raise VerificationError('Intel quote not verified')
 
-    report_data = pydash.get(verification_data, "quote.body.reportdata")
+    report_data = pydash.get(verification_data, 'quote.body.reportdata')
 
     if not isinstance(report_data, str):
-        raise VerificationError("Bad report data")
+        raise VerificationError('Bad report data')
 
     verify_intel_quote_report_data_for_domain(
         report_data,
@@ -74,7 +74,7 @@ def verify_intel_quote_report_data_for_domain(
     acme_account_hash = hashlib.sha256(acme_account.encode()).hexdigest()
     cert_hash = hashlib.sha256(cert.encode()).hexdigest()
     expected_sha256sum_file = (
-        f"{acme_account_hash}  acme-account.json\n{cert_hash}  cert-{domain}.pem\n"
+        f'{acme_account_hash}  acme-account.json\n{cert_hash}  cert-{domain}.pem\n'
     )
     expected_sha256sum = hashlib.sha256(expected_sha256sum_file.encode()).digest()
 
@@ -99,11 +99,11 @@ def verify_intel_quote_report_data_for_domain(
             f"actual '{embedded_sha256sum.hex()}'"
         )
 
-    embedded_remaining_matched = embedded_remaining == b"\x00" * 32
+    embedded_remaining_matched = embedded_remaining == b'\x00' * 32
 
     if not embedded_remaining_matched:
         raise VerificationError(
-            f"Embedded remaining bytes mismatching: expected all zeros, "
+            f'Embedded remaining bytes mismatching: expected all zeros, '
             f"actual '{embedded_remaining.hex()}'"
         )
 
@@ -115,7 +115,7 @@ def verify_live_certificate(
     cert_chain = parse_certificate_chain(cert)
 
     if len(cert_chain) < 2:
-        raise VerificationError("Unexpected length of certificate chain")
+        raise VerificationError('Unexpected length of certificate chain')
 
     root_cert = cert_chain[-1]
     leaf_cert = cert_chain[0]
@@ -139,15 +139,15 @@ def verify_certificate_chain(cert_chain: list[x509.Certificate]):
 
         if cert_issuer_dn != next_cert_dn:
             raise VerificationError(
-                f"Certificate chain verification failed: Certificate {index} issuer "
+                f'Certificate chain verification failed: Certificate {index} issuer '
                 f"'{cert_issuer_dn}' does not match next certificate subject '{next_cert_dn}'"
             )
 
 
 def verify_certificate_root(cert: x509.Certificate):
     trusted_root_ca_issuer_dns = [
-        "C=US\nO=Internet Security Research Group\nCN=ISRG Root X1",
-        "C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3",
+        'C=US\nO=Internet Security Research Group\nCN=ISRG Root X1',
+        'C=US\nO=Digital Signature Trust Co.\nCN=DST Root CA X3',
     ]
 
     cert_issuer_dn = cert.issuer.rfc4514_string()
@@ -158,7 +158,7 @@ def verify_certificate_root(cert: x509.Certificate):
         verify_certificate_signature(cert, cert.public_key())
     elif not issuer_in_trusted:
         raise VerificationError(
-            f"Certificate verification failed: Root certificate is not trusted (issuer: {cert_issuer_dn})"
+            f'Certificate verification failed: Root certificate is not trusted (issuer: {cert_issuer_dn})'
         )
 
 
@@ -170,14 +170,14 @@ def verify_certificate_leaf(cert: x509.Certificate):
 
     if not_valid_before > current_time:
         raise VerificationError(
-            f"Certificate verification failed: Certificate is not yet valid "
-            f"(valid from: {not_valid_before})"
+            f'Certificate verification failed: Certificate is not yet valid '
+            f'(valid from: {not_valid_before})'
         )
 
     if not_valid_after < current_time:
         raise VerificationError(
-            f"Certificate verification failed: Certificate has expired "
-            f"(valid to: {not_valid_after})"
+            f'Certificate verification failed: Certificate has expired '
+            f'(valid to: {not_valid_after})'
         )
 
 
@@ -186,12 +186,12 @@ def verify_certificate_fingerprint(cert1: x509.Certificate, cert2: x509.Certific
     fingerprint2 = get_certificate_fingerprint(cert2)
 
     if fingerprint1 != fingerprint2:
-        raise VerificationError("Certificate fingerprint mismatching")
+        raise VerificationError('Certificate fingerprint mismatching')
 
 
 def parse_certificate_chain(cert: str) -> list[x509.Certificate]:
     pem_certificate_regex = (
-        r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----"
+        r'-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----'
     )
 
     parsed_certificates = []
@@ -212,7 +212,7 @@ def get_certificate_fingerprint(cert: x509.Certificate) -> str:
     hash_hex = hash_obj.hexdigest().upper()
 
     # Format as colon-separated uppercase hex (OpenSSL format)
-    return ":".join(hash_hex[i : i + 2] for i in range(0, len(hash_hex), 2))
+    return ':'.join(hash_hex[i : i + 2] for i in range(0, len(hash_hex), 2))
 
 
 def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certificate:
@@ -229,14 +229,14 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
 
                 if not cert_der:
                     raise VerificationError(
-                        f"Failed to get certificate from for domain: {domain}"
+                        f'Failed to get certificate from for domain: {domain}'
                     )
 
                 return x509.load_der_x509_certificate(cert_der)
         finally:
             sock.close()
     except Exception as e:
-        raise VerificationError("TLS connection failed") from e
+        raise VerificationError('TLS connection failed') from e
 
 
 def verify_certificate_signature(
@@ -264,7 +264,7 @@ def verify_certificate_signature(
         padding_algorithm = None
     else:
         raise VerificationError(
-            f"Unsupported signature algorithm: {signature_algorithm}"
+            f'Unsupported signature algorithm: {signature_algorithm}'
         )
 
     try:
@@ -282,11 +282,11 @@ def verify_certificate_signature(
                 ec.ECDSA(hash_algorithm),
             )
         else:
-            raise VerificationError("Unsupported public key")
+            raise VerificationError('Unsupported public key')
     except VerificationError:
         raise
     except Exception as e:
-        raise VerificationError("Certificate signature verification failed") from e
+        raise VerificationError('Certificate signature verification failed') from e
 
 
 def is_dn_trusted(trusted_dns: list[str], dn: str) -> bool:
@@ -295,22 +295,22 @@ def is_dn_trusted(trusted_dns: list[str], dn: str) -> bool:
     for trusted_dn in trusted_dns:
         trusted_dn_components = dn_string_to_components(trusted_dn)
 
-        trusted_dn_cn = trusted_dn_components.get("CN")
+        trusted_dn_cn = trusted_dn_components.get('CN')
         if not trusted_dn_cn:
             raise VerificationError("Trusted dn must include 'CN' component")
 
-        trusted_dn_o = trusted_dn_components.get("O")
+        trusted_dn_o = trusted_dn_components.get('O')
         if not trusted_dn_o:
             raise VerificationError("Trusted dn must include 'O' component")
 
-        trusted_dn_c = trusted_dn_components.get("C")
+        trusted_dn_c = trusted_dn_components.get('C')
         if not trusted_dn_c:
             raise VerificationError("Trusted dn must include 'C' component")
 
         if (
-            dn_components.get("CN") == trusted_dn_cn
-            and dn_components.get("O") == trusted_dn_o
-            and dn_components.get("C") == trusted_dn_c
+            dn_components.get('CN') == trusted_dn_cn
+            and dn_components.get('O') == trusted_dn_o
+            and dn_components.get('C') == trusted_dn_c
         ):
             return True
 
@@ -321,15 +321,15 @@ def dn_string_to_components(dn: str) -> dict[str, str]:
     components = {}
 
     # Handle both comma-separated and newline-separated formats
-    if "\n" in dn:
-        parts = dn.split("\n")
+    if '\n' in dn:
+        parts = dn.split('\n')
     else:
-        parts = dn.split(",")
+        parts = dn.split(',')
 
     for part in parts:
         part = part.strip()
-        if "=" in part:
-            key, value = part.split("=", 1)
+        if '=' in part:
+            key, value = part.split('=', 1)
             components[key.strip()] = value.strip()
 
     return components
