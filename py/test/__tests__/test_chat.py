@@ -45,17 +45,17 @@ class TestChat:
         return completions
 
     async def test_chat_signature_ecdsa(
-        self, context: Context, completions: ChatCompletionsResponse
+            self, context: Context, completions: ChatCompletionsResponse
     ):
-        await test_chat_signature(context, completions, 'ecdsa')
+        await _test_chat_signature(context, completions, 'ecdsa')
 
     async def test_chat_signature_ed25519(
-        self, context: Context, completions: ChatCompletionsResponse
+            self, context: Context, completions: ChatCompletionsResponse
     ):
-        await test_chat_signature(context, completions, 'ed25519')
+        await _test_chat_signature(context, completions, 'ed25519')
 
 
-async def test_chat_signature(
+async def _test_chat_signature(
     context: Context,
     completions: ChatCompletionsResponse,
     signing_algo: SigningAlgo,

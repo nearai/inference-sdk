@@ -22,21 +22,21 @@ class TestAttestations:
         return init_context()
 
     async def test_gateway_attestation_and_model_attestations_ecdsa(
-        self, context: Context
+            self, context: Context
     ):
-        await test_gateway_attestation_and_model_attestations(context, 'ecdsa')
+        await _test_gateway_attestation_and_model_attestations(context, 'ecdsa')
 
     async def test_gateway_attestation_and_model_attestations_ed25519(
-        self, context: Context
+            self, context: Context
     ):
-        await test_gateway_attestation_and_model_attestations(context, 'ed25519')
+        await _test_gateway_attestation_and_model_attestations(context, 'ed25519')
 
     async def test_domain_attestation(self, context: Context):
         attestation = await fetch_domain_attestation(context['api_domain'])
         await verify_domain_attestation(attestation)
 
 
-async def test_gateway_attestation_and_model_attestations(
+async def _test_gateway_attestation_and_model_attestations(
     context: Context,
     signing_algo: SigningAlgo,
 ):
