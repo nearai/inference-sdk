@@ -16,4 +16,3 @@ class ModelAttestation(BaseModel):
 
 class ModelInfo(BaseModel):
     tcb_info: TcbInfo | str
-

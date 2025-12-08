@@ -8,4 +8,3 @@ from .attestation_model import ModelAttestation
 class AttestationReport(BaseModel):
     gateway_attestation: GatewayAttestation
     model_attestations: Optional[list[ModelAttestation]] = None
-

@@ -16,4 +16,3 @@ class DomainAttestation(BaseModel):
 
 class DomainInfo(BaseModel):
     tcb_info: TcbInfo | str
-

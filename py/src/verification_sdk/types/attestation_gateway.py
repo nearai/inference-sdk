@@ -22,4 +22,3 @@ class GatewayInfo(BaseModel):
 class VpcInfo(BaseModel):
     vpc_server_app_id: str
     vpc_hostname: str
-

@@ -47,13 +47,13 @@ def verify_intel_tdx_for_domain(
     acme_account: str,
     sha256sum: str,
 ):
-    if not pydash.get(verification_data, 'quote.verified'):
-        raise VerificationError('Intel quote not verified')
+    if not pydash.get(verification_data, "quote.verified"):
+        raise VerificationError("Intel quote not verified")
 
-    report_data = pydash.get(verification_data, 'quote.body.reportdata')
+    report_data = pydash.get(verification_data, "quote.body.reportdata")
 
     if not isinstance(report_data, str):
-        raise VerificationError('Bad report data')
+        raise VerificationError("Bad report data")
 
     verify_intel_quote_report_data_for_domain(
         report_data,
@@ -74,8 +74,7 @@ def verify_intel_quote_report_data_for_domain(
     acme_account_hash = hashlib.sha256(acme_account.encode()).hexdigest()
     cert_hash = hashlib.sha256(cert.encode()).hexdigest()
     expected_sha256sum_file = (
-        f"{acme_account_hash}  acme-account.json\n"
-        f"{cert_hash}  cert-{domain}.pem\n"
+        f"{acme_account_hash}  acme-account.json\n{cert_hash}  cert-{domain}.pem\n"
     )
     expected_sha256sum = hashlib.sha256(expected_sha256sum_file.encode()).digest()
 
@@ -100,7 +99,7 @@ def verify_intel_quote_report_data_for_domain(
             f"actual '{embedded_sha256sum.hex()}'"
         )
 
-    embedded_remaining_matched = embedded_remaining == b'\x00' * 32
+    embedded_remaining_matched = embedded_remaining == b"\x00" * 32
 
     if not embedded_remaining_matched:
         raise VerificationError(
@@ -116,7 +115,7 @@ def verify_live_certificate(
     cert_chain = parse_certificate_chain(cert)
 
     if len(cert_chain) < 2:
-        raise VerificationError('Unexpected length of certificate chain')
+        raise VerificationError("Unexpected length of certificate chain")
 
     root_cert = cert_chain[-1]
     leaf_cert = cert_chain[0]
@@ -187,11 +186,13 @@ def verify_certificate_fingerprint(cert1: x509.Certificate, cert2: x509.Certific
     fingerprint2 = get_certificate_fingerprint(cert2)
 
     if fingerprint1 != fingerprint2:
-        raise VerificationError('Certificate fingerprint mismatching')
+        raise VerificationError("Certificate fingerprint mismatching")
 
 
 def parse_certificate_chain(cert: str) -> list[x509.Certificate]:
-    pem_certificate_regex = r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----"
+    pem_certificate_regex = (
+        r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----"
+    )
 
     parsed_certificates = []
 
@@ -227,7 +228,9 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
                 cert_der = ssl_sock.getpeercert(binary_form=True)
 
                 if not cert_der:
-                    raise VerificationError(f"Failed to get certificate from for domain: {domain}")
+                    raise VerificationError(
+                        f"Failed to get certificate from for domain: {domain}"
+                    )
 
                 return x509.load_der_x509_certificate(cert_der)
         finally:
@@ -236,7 +239,9 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
         raise VerificationError(f"TLS connection failed") from e
 
 
-def verify_certificate_signature(cert: x509.Certificate, public_key: CertificatePublicKeyTypes):
+def verify_certificate_signature(
+    cert: x509.Certificate, public_key: CertificatePublicKeyTypes
+):
     signature_algorithm = cert.signature_algorithm_oid
 
     if signature_algorithm == x509.oid.SignatureAlgorithmOID.RSA_WITH_SHA256:
@@ -258,7 +263,9 @@ def verify_certificate_signature(cert: x509.Certificate, public_key: Certificate
         hash_algorithm = hashes.SHA512()
         padding_algorithm = None
     else:
-        raise VerificationError(f'Unsupported signature algorithm: {signature_algorithm}')
+        raise VerificationError(
+            f"Unsupported signature algorithm: {signature_algorithm}"
+        )
 
     try:
         if isinstance(public_key, rsa.RSAPublicKey):
@@ -301,9 +308,9 @@ def is_dn_trusted(trusted_dns: list[str], dn: str) -> bool:
             raise VerificationError("Trusted dn must include 'C' component")
 
         if (
-                dn_components.get("CN") == trusted_dn_cn and
-                dn_components.get("O") == trusted_dn_o and
-                dn_components.get("C") == trusted_dn_c
+            dn_components.get("CN") == trusted_dn_cn
+            and dn_components.get("O") == trusted_dn_o
+            and dn_components.get("C") == trusted_dn_c
         ):
             return True
 
@@ -326,4 +333,3 @@ def dn_string_to_components(dn: str) -> dict[str, str]:
             components[key.strip()] = value.strip()
 
     return components
-

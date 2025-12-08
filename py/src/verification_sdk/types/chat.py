@@ -13,4 +13,3 @@ class ChatSignature(BaseModel):
     signature: str
     signing_address: str
     signing_algo: SigningAlgo
-

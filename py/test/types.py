@@ -18,4 +18,3 @@ class ChatCompletionsResponse(TypedDict):
     id: str
     request_body_raw: bytes
     response_body_raw: bytes
-

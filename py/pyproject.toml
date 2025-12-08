@@ -2,7 +2,6 @@
 name = "verification_sdk"
 version = "0.1.0"
 description = "Verification SDK"
-readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
@@ -14,10 +13,11 @@ dependencies = [
     "pydash>=8.0.5",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "ruff>=0.14.8",
 ]
 
 [build-system]

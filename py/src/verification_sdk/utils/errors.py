@@ -1,4 +1,2 @@
 class VerificationError(Exception):
     pass
-
-
