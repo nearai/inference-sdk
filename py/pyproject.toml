@@ -5,7 +5,7 @@ description = "Verification SDK"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "requests>=2.31.0",
+    "aiohttp>=3.13.0",
     "eth-account>=0.10.0",
     "cryptography>=42.0.0",
     "dcap-qvl>=0.3.4",

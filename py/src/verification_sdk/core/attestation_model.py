@@ -19,10 +19,10 @@ async def verify_model_attestation(attestation: ModelAttestation):
         attestation.signing_address,
     )
 
-    nvidia_data = fetch_nvidia_gpu_verification_data(attestation.nvidia_payload)
-    verify_nvidia_gpu_for_model(nvidia_data)
+    nvidia_gpu_verification_data = await fetch_nvidia_gpu_verification_data(attestation.nvidia_payload)
+    verify_nvidia_gpu_for_model(nvidia_gpu_verification_data)
 
-    verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
 
 
 def verify_intel_tdx_for_model(

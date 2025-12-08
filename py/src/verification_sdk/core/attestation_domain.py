@@ -34,7 +34,7 @@ async def verify_domain_attestation(attestation: DomainAttestation):
         attestation.sha256sum,
     )
 
-    verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
 
     live_cert = fetch_live_certificate(attestation.domain)
     verify_live_certificate(live_cert, attestation.cert)

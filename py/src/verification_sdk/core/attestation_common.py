@@ -1,4 +1,4 @@
-import requests
+import aiohttp
 import re
 
 from ..types.attestation_common import TcbInfo
@@ -39,11 +39,11 @@ def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
     return tcb_info.app_compose
 
 
-def verify_compose(compose: str):
+async def verify_compose(compose: str):
     links = get_sigstore_links_from_compose(compose)
 
     for link in links:
-        verify_sigstore_link(link)
+        await verify_sigstore_link(link)
 
 
 def get_sigstore_links_from_compose(compose: str) -> list[str]:
@@ -59,14 +59,18 @@ def get_sigstore_links_from_compose(compose: str) -> list[str]:
     return [f'{SIGSTORE_SEARCH_API_URL}/?hash=sha256:{digest}' for digest in digests]
 
 
-def verify_sigstore_link(link: str):
+async def verify_sigstore_link(link: str):
     try:
-        res = requests.head(link, timeout=TIMEOUT)
-    except Exception as e:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=TIMEOUT)
+        ) as session:
+            async with session.head(link) as res:
+                if res.status < 200 or res.status >= 300:
+                    raise VerificationError(
+                        f'Failed to verify sigstore link {link} with status code {res.status}'
+                    )
+    except aiohttp.ServerTimeoutError as e:
         raise VerificationError(f'Verify sigstore link {link} timeout') from e
-
-    if res.status_code < 200 or res.status_code >= 300:
-        raise VerificationError(
-            f'Failed to verify sigstore link {link} with status code {res.status_code}'
-        )
+    except Exception as e:
+        raise VerificationError(f'Failed to verify sigstore link {link}') from e
 

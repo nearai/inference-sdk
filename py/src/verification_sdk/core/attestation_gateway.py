@@ -1,5 +1,5 @@
 import pydash
-import requests
+import aiohttp
 
 from typing import Optional
 
@@ -23,13 +23,13 @@ async def verify_gateway_attestation(attestation: GatewayAttestation, domain: st
         attestation.signing_address,
     )
 
-    verify_vpc_for_gateway(
+    await verify_vpc_for_gateway(
         domain,
         attestation.vpc.vpc_server_app_id,
         attestation.vpc.vpc_hostname,
     )
 
-    verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
 
 
 def verify_intel_tdx_for_gateway(
@@ -52,7 +52,7 @@ def verify_intel_tdx_for_gateway(
     )
 
 
-def verify_vpc_for_gateway(
+async def verify_vpc_for_gateway(
     domain: str,
     vpc_server_app_id: str,
     vpc_hostname: str,
@@ -60,22 +60,22 @@ def verify_vpc_for_gateway(
     url = f'https://{domain}/evidences/vpc.json'
 
     try:
-        res = requests.get(url)
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as res:
+                if not res.ok:
+                    raise VerificationError(
+                        f'Failed to fetch VPC info with status code {res.status}'
+                    )
+
+                vpc_info = await res.json()
+
+                if pydash.get(vpc_info, 'vpc_server_app_id') != vpc_server_app_id:
+                    raise VerificationError('vpc_server_app_id mismatching')
+
+                nodes = pydash.get(vpc_info, 'nodes')
+
+                if not isinstance(nodes, list) or vpc_hostname not in nodes:
+                    raise VerificationError('vpc_hostname mismatching')
     except Exception as e:
         raise VerificationError('Failed to fetch VPC info') from e
-
-    if not res.ok:
-        raise VerificationError(
-            f'Failed to fetch VPC info with status code {res.status_code}'
-        )
-
-    vpc_info = res.json()
-
-    if pydash.get(vpc_info, 'vpc_server_app_id') != vpc_server_app_id:
-        raise VerificationError('vpc_server_app_id mismatching')
-
-    nodes = pydash.get(vpc_info, 'nodes')
-
-    if not isinstance(nodes, list) or vpc_hostname not in nodes:
-        raise VerificationError('vpc_hostname mismatching')
 
