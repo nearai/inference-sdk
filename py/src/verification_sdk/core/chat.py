@@ -34,20 +34,22 @@ def verify_chat_signature(signature: ChatSignature):
     if signature.signing_algo == 'ecdsa':
         message = encode_defunct(text=signature.text)
         try:
-            recovered = Account.recover_message(message, signature=signature.signature)
+            recovered_address = Account.recover_message(
+                message, signature=signature.signature
+            )
         except Exception as e:
             raise VerificationError('Invalid ECDSA chat signature') from e
 
-        recovered_raw = hex_to_bytes(recovered)
-        signing_raw = hex_to_bytes(signature.signing_address)
-        if recovered_raw != signing_raw:
+        recovered_address_raw = hex_to_bytes(recovered_address)
+        signing_address_raw = hex_to_bytes(signature.signing_address)
+        if recovered_address_raw != signing_address_raw:
             raise VerificationError('Invalid ECDSA chat signature')
     else:
         public_key = hex_to_bytes(signature.signing_address)
-        sig_bytes = hex_to_bytes(signature.signature)
-        verify_key = nacl.signing.VerifyKey(public_key)
         try:
-            verify_key.verify(signature.text.encode('utf-8'), sig_bytes)
+            nacl.signing.VerifyKey(public_key).verify(
+                signature.text.encode(), hex_to_bytes(signature.signature)
+            )
         except Exception as e:
             raise VerificationError('Invalid ED25519 chat signature') from e
 
