@@ -236,7 +236,7 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
         finally:
             sock.close()
     except Exception as e:
-        raise VerificationError(f"TLS connection failed") from e
+        raise VerificationError("TLS connection failed") from e
 
 
 def verify_certificate_signature(
@@ -286,7 +286,7 @@ def verify_certificate_signature(
     except VerificationError:
         raise
     except Exception as e:
-        raise VerificationError(f"Certificate signature verification failed") from e
+        raise VerificationError("Certificate signature verification failed") from e
 
 
 def is_dn_trusted(trusted_dns: list[str], dn: str) -> bool:
