@@ -59,7 +59,9 @@ async def fetch_chat_signature(
     )
 
     if not res.ok:
-        raise ValueError(f'Failed to fetch chat signature with status code: {res.status}')
+        raise ValueError(
+            f'Failed to fetch chat signature with status code: {res.status}'
+        )
 
     return ChatSignature.model_validate_json(res.bytes())
 
