@@ -232,8 +232,6 @@ def fetch_live_certificate(domain: str, port: Optional[int] = 443) -> x509.Certi
                 return x509.load_der_x509_certificate(cert_der)
         finally:
             sock.close()
-    except socket.timeout:
-        raise VerificationError("TLS connection timeout")
     except Exception as e:
         raise VerificationError(f"TLS connection failed") from e
 

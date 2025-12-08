@@ -1,10 +1,10 @@
-import aiohttp
 import re
 
 from ..types.attestation_common import TcbInfo
 from ..utils.common import hex_to_bytes
 from ..utils.consts import SIGSTORE_SEARCH_API_URL, TIMEOUT
 from ..utils.errors import VerificationError
+from ..utils.fetch import fetch
 
 
 def verify_intel_quote_report_data_for_attestation_report(
@@ -61,16 +61,12 @@ def get_sigstore_links_from_compose(compose: str) -> list[str]:
 
 async def verify_sigstore_link(link: str):
     try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=TIMEOUT)
-        ) as session:
-            async with session.head(link) as res:
-                if res.status < 200 or res.status >= 300:
-                    raise VerificationError(
-                        f'Failed to verify sigstore link {link} with status code {res.status}'
-                    )
-    except aiohttp.ServerTimeoutError as e:
-        raise VerificationError(f'Verify sigstore link {link} timeout') from e
+        res = await fetch(link, method='HEAD', timeout=TIMEOUT)
+        
+        if not res.ok:
+            raise VerificationError(
+                f'Failed to verify sigstore link {link} with status code {res.status}'
+            )
     except Exception as e:
         raise VerificationError(f'Failed to verify sigstore link {link}') from e
 

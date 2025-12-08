@@ -1,5 +1,4 @@
 import pydash
-import aiohttp
 
 from typing import Optional
 
@@ -11,6 +10,7 @@ from ..core.attestation_common import (
 from ..types.attestation_gateway import GatewayAttestation
 from ..utils.consts import ETHEREUM_ZERO_ADDRESS
 from ..utils.errors import VerificationError
+from ..utils.fetch import fetch
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
@@ -60,22 +60,22 @@ async def verify_vpc_for_gateway(
     url = f'https://{domain}/evidences/vpc.json'
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as res:
-                if not res.ok:
-                    raise VerificationError(
-                        f'Failed to fetch VPC info with status code {res.status}'
-                    )
+        res = await fetch(url)
+        
+        if not res.ok:
+            raise VerificationError(
+                f'Failed to fetch VPC info with status code {res.status}'
+            )
 
-                vpc_info = await res.json()
+        vpc_info = res.json()
 
-                if pydash.get(vpc_info, 'vpc_server_app_id') != vpc_server_app_id:
-                    raise VerificationError('vpc_server_app_id mismatching')
+        if vpc_info.get('vpc_server_app_id') != vpc_server_app_id:
+            raise VerificationError('vpc_server_app_id mismatching')
 
-                nodes = pydash.get(vpc_info, 'nodes')
+        nodes = vpc_info.get('nodes', [])
 
-                if not isinstance(nodes, list) or vpc_hostname not in nodes:
-                    raise VerificationError('vpc_hostname mismatching')
+        if not isinstance(nodes, list) or vpc_hostname not in nodes:
+            raise VerificationError('vpc_hostname mismatching')
     except Exception as e:
         raise VerificationError('Failed to fetch VPC info') from e
 

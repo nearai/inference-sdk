@@ -1,7 +1,6 @@
 import asyncio
 import json
 import secrets
-import aiohttp
 
 from urllib.parse import quote
 from verification_sdk import (
@@ -11,6 +10,7 @@ from verification_sdk import (
     SigningAlgo,
 )
 
+from .fetch import fetch
 from .types import ChatCompletionsResponse
 
 
@@ -31,20 +31,13 @@ async def fetch_attestation_report(
 ) -> AttestationReport:
     url = f'{api_url}/attestation/report?model={quote(model)}&nonce={request_nonce}&signing_algo={signing_algo}'
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url,
-            headers={
-                'authorization': f'Bearer {api_key}',
-            },
-        ) as response:
-            if not response.ok:
-                raise ValueError(
-                    f'Failed to fetch attestation report with status code: {response.status}'
-                )
+    response = await fetch(
+        url,
+        headers={"authorization": f'Bearer {api_key}'},
+        raise_if_not_ok=True
+    )
 
-            content = await response.read()
-            return AttestationReport.model_validate_json(content)
+    return AttestationReport.model_validate_json(response.bytes())
 
 
 async def fetch_chat_signature(
@@ -56,18 +49,13 @@ async def fetch_chat_signature(
 ) -> ChatSignature:
     url = f'{api_url}/signature/{chat_id}?model={quote(model)}&signing_algo={signing_algo}'
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url,
-            headers={
-                'authorization': f'Bearer {api_key}',
-            },
-        ) as response:
-            if not response.ok:
-                raise ValueError(f'Failed to fetch signature with status code: {response.status}')
+    response = await fetch(
+        url,
+        headers={"authorization": f'Bearer {api_key}'},
+        raise_if_not_ok=True
+    )
 
-            content = await response.read()
-            return ChatSignature.model_validate_json(content)
+    return ChatSignature.model_validate_json(response.bytes())
 
 
 async def chat_completions(
@@ -77,33 +65,34 @@ async def chat_completions(
 ) -> ChatCompletionsResponse:
     request_body_raw = json.dumps(request_body).encode()
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            f'{api_url}/chat/completions',
-            headers={
-                'authorization': f'Bearer {api_key}',
-                'content-type': 'application/json',
-            },
-            data=request_body_raw,
-        ) as response:
-            if not response.ok:
-                raise ValueError(f'Failed to chat with status code: {response.status}')
+    response = await fetch(
+        f'{api_url}/chat/completions',
+        method='POST',
+        data=request_body_raw,
+        headers={
+            'authorization': f'Bearer {api_key}',
+            'content-type': 'application/json',
+        },
+    )
 
-            response_body_raw = await response.read()
+    if not response.ok:
+        raise ValueError(f'Failed to chat with status code: {response.status}')
 
-            if request_body.get('stream'):
-                lines = response_body_raw.decode().split('\n')
-                first_chunk = json.loads(lines[0][6:])  # data: {...
-                chat_id = first_chunk['id']
-            else:
-                data = json.loads(response_body_raw.decode())
-                chat_id = data['id']
+    response_body_raw = response.bytes()
 
-            return {
-                'id': chat_id,
-                'request_body_raw': request_body_raw,
-                'response_body_raw': response_body_raw,
-            }
+    if request_body.get('stream'):
+        lines = response_body_raw.decode().split('\n')
+        first_chunk = json.loads(lines[0][6:])  # data: {...
+        chat_id = first_chunk['id']
+    else:
+        data = json.loads(response_body_raw.decode())
+        chat_id = data['id']
+
+    return {
+        'id': chat_id,
+        'request_body_raw': request_body_raw,
+        'response_body_raw': response_body_raw,
+    }
 
 
 async def fetch_domain_attestation(domain: str) -> DomainAttestation:
@@ -115,38 +104,20 @@ async def fetch_domain_attestation(domain: str) -> DomainAttestation:
     sha256sum_url = f'{evidences_url}sha256sum.txt'
     info_url = f'{evidences_url}info.json'
 
-    async def fetch_json(url: str) -> dict:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if not response.ok:
-                    raise ValueError(
-                        f'Failed to fetch {url} with status code: {response.status}'
-                    )
-                return await response.json()
-
-    async def fetch_text(url: str) -> str:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as response:
-                if not response.ok:
-                    raise ValueError(
-                        f'Failed to fetch {url} with status code: {response.status}'
-                    )
-                return await response.text()
-
-    intel_quote_data, cert_text, acme_account_text, sha256sum_text, info_data = await asyncio.gather(
-        fetch_json(intel_quote_url),
-        fetch_text(cert_url),
-        fetch_text(acme_account_url),
-        fetch_text(sha256sum_url),
-        fetch_json(info_url),
+    intel_quote_res, cert_res, acme_account_res, sha256sum_res, info_res = await asyncio.gather(
+        fetch(intel_quote_url, raise_if_not_ok=True),
+        fetch(cert_url, raise_if_not_ok=True),
+        fetch(acme_account_url, raise_if_not_ok=True),
+        fetch(sha256sum_url, raise_if_not_ok=True),
+        fetch(info_url, raise_if_not_ok=True),
     )
 
     return DomainAttestation.model_validate({
-        'intel_quote': intel_quote_data['quote'],
+        'intel_quote': intel_quote_res.json()['quote'],
         'domain': domain,
-        'cert': cert_text,
-        'acme_account': acme_account_text,
-        'sha256sum': sha256sum_text,
-        'info': info_data
+        'cert': cert_res.text(),
+        'acme_account': acme_account_res.text(),
+        'sha256sum': sha256sum_res.text(),
+        'info': info_res.json()
     })
 
