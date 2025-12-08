@@ -41,7 +41,7 @@ class TestChat:
             },
         )
 
-        await sleep(5 * 1000)  # Waiting for signature preparation
+        await sleep(5)  # Waiting for signature preparation
         return completions
 
     async def test_chat_signature_ecdsa(
