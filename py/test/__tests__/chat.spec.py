@@ -1,5 +1,12 @@
 import pytest
 
+from verification_sdk import (
+    Chat,
+    SigningAlgo,
+    verify_chat,
+    verify_signing_address,
+)
+
 from ..common import (
     chat_completions,
     fetch_attestation_report,
@@ -9,12 +16,6 @@ from ..common import (
 )
 from ..context import init_context
 from ..types import ChatCompletionsResponse, Context
-from verification_sdk import (
-    Chat,
-    SigningAlgo,
-    verify_chat,
-    verify_signing_address,
-)
 
 
 class TestChat:

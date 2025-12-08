@@ -1,16 +1,16 @@
 import asyncio
 import json
 import secrets
-from urllib.parse import quote
-
 import aiohttp
 
+from urllib.parse import quote
 from verification_sdk import (
     AttestationReport,
     ChatSignature,
     DomainAttestation,
     SigningAlgo,
 )
+
 from .types import ChatCompletionsResponse
 
 

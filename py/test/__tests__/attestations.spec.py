@@ -1,5 +1,12 @@
 import pytest
 
+from verification_sdk import (
+    SigningAlgo,
+    verify_domain_attestation,
+    verify_gateway_attestation,
+    verify_model_attestation,
+)
+
 from ..common import (
     fetch_attestation_report,
     fetch_domain_attestation,
@@ -7,13 +14,6 @@ from ..common import (
 )
 from ..context import init_context
 from ..types import Context
-from verification_sdk import (
-    DomainAttestation,
-    SigningAlgo,
-    verify_domain_attestation,
-    verify_gateway_attestation,
-    verify_model_attestation,
-)
 
 
 class TestAttestations:
