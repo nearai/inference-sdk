@@ -26,10 +26,10 @@ class TestChat:
     @pytest.fixture(scope='class')
     async def completions(self, context: Context) -> ChatCompletionsResponse:
         completions = await chat_completions(
-            api_url=context['api_url'],
-            api_key=context['api_key'],
+            api_url=context.api_url,
+            api_key=context.api_key,
             request_body={
-                'model': context['model'],
+                'model': context.model,
                 'messages': [
                     {
                         'role': 'user',
@@ -61,10 +61,10 @@ async def _test_chat_signature(
     signing_algo: SigningAlgo,
 ):
     signature = await fetch_chat_signature(
-        api_url=context['api_url'],
-        api_key=context['api_key'],
-        chat_id=completions['id'],
-        model=context['model'],
+        api_url=context.api_url,
+        api_key=context.api_key,
+        chat_id=completions.id,
+        model=context.model,
         signing_algo=signing_algo,
     )
 
@@ -72,17 +72,17 @@ async def _test_chat_signature(
 
     chat = Chat.model_validate(
         {
-            'request_body': completions['request_body_raw'],
-            'response_body': completions['response_body_raw'],
+            'request_body': completions.request_body_raw,
+            'response_body': completions.response_body_raw,
         }
     )
 
     verify_chat(chat, signature)
 
     report = await fetch_attestation_report(
-        api_url=context['api_url'],
-        api_key=context['api_key'],
-        model=context['model'],
+        api_url=context.api_url,
+        api_key=context.api_key,
+        model=context.model,
         request_nonce=generate_request_nonce(),
         signing_algo=signing_algo,
     )

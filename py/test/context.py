@@ -16,9 +16,11 @@ def init_context() -> Context:
     if not model:
         raise ValueError('Missing env MODEL')
 
-    return {
-        'api_domain': api_domain,
-        'api_url': f'https://{api_domain}/v1',
-        'api_key': api_key,
-        'model': model,
-    }
+    return Context.model_validate(
+        {
+            'api_domain': api_domain,
+            'api_url': f'https://{api_domain}/v1',
+            'api_key': api_key,
+            'model': model,
+        }
+    )

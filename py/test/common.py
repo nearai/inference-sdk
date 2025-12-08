@@ -94,11 +94,13 @@ async def chat_completions(
         data = json.loads(response_body_raw.decode())
         chat_id = data['id']
 
-    return {
-        'id': chat_id,
-        'request_body_raw': request_body_raw,
-        'response_body_raw': response_body_raw,
-    }
+    return ChatCompletionsResponse.model_validate(
+        {
+            'id': chat_id,
+            'request_body_raw': request_body_raw,
+            'response_body_raw': response_body_raw,
+        }
+    )
 
 
 async def fetch_domain_attestation(domain: str) -> DomainAttestation:

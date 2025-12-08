@@ -1,20 +1,14 @@
-from typing import TypedDict
+from pydantic import BaseModel
 
 
-class Context(TypedDict):
+class Context(BaseModel):
     api_domain: str
     api_url: str
     api_key: str
     model: str
 
 
-class ChatCompletionsParams(TypedDict):
-    api_url: str
-    api_key: str
-    request_body: dict
-
-
-class ChatCompletionsResponse(TypedDict):
+class ChatCompletionsResponse(BaseModel):
     id: str
     request_body_raw: bytes
     response_body_raw: bytes

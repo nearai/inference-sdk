@@ -32,7 +32,7 @@ class TestAttestations:
         await _test_gateway_attestation_and_model_attestations(context, 'ed25519')
 
     async def test_domain_attestation(self, context: Context):
-        attestation = await fetch_domain_attestation(context['api_domain'])
+        attestation = await fetch_domain_attestation(context.api_domain)
         await verify_domain_attestation(attestation)
 
 
@@ -43,9 +43,9 @@ async def _test_gateway_attestation_and_model_attestations(
     request_nonce = generate_request_nonce()
 
     report = await fetch_attestation_report(
-        api_url=context['api_url'],
-        api_key=context['api_key'],
-        model=context['model'],
+        api_url=context.api_url,
+        api_key=context.api_key,
+        model=context.model,
         request_nonce=request_nonce,
         signing_algo=signing_algo,
     )
@@ -54,7 +54,7 @@ async def _test_gateway_attestation_and_model_attestations(
     assert gateway_attestation.request_nonce == request_nonce
     assert gateway_attestation.signing_algo == signing_algo
 
-    await verify_gateway_attestation(gateway_attestation, context['api_domain'])
+    await verify_gateway_attestation(gateway_attestation, context.api_domain)
 
     for model_attestation in report.model_attestations or []:
         assert model_attestation.request_nonce == request_nonce
