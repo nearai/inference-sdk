@@ -124,7 +124,7 @@ async def fetch_domain_attestation(domain: str) -> DomainAttestation:
 
     if not intel_quote_res.ok:
         raise ValueError(
-            f'Failed to fetch intel quote with status code: {intel_quote_res.status}'
+            f'Failed to fetch Intel quote with status code: {intel_quote_res.status}'
         )
 
     if not cert_res.ok:
