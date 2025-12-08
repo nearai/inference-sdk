@@ -3,6 +3,7 @@ import { VerificationError } from '../utils/errors';
 import { SIGSTORE_SEARCH_API_URL, TIMEOUT } from '../utils/consts';
 import { TcbInfo } from '../types/attestation-common';
 import { Buffer } from 'buffer';
+import { fetchTimeout } from '../utils/fetch';
 
 export function verifyIntelQuoteReportDataForAttestationReport(
   reportData: string,
@@ -70,25 +71,13 @@ function getSigstoreLinksFromCompose(compose: string): string[] {
 }
 
 async function verifySigstoreLink(link: string) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+  const response = await fetchTimeout(link, TIMEOUT, {
+    method: 'HEAD',
+  });
 
-  let res;
-
-  try {
-    res = await fetch(link, {
-      method: 'HEAD',
-      signal: controller.signal,
-    });
-  } catch (e: unknown) {
-    throw new VerificationError(`Verify sigstore link ${link} timeout`, e);
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  if (res.status < 200 || res.status >= 300) {
+  if (response.status < 200 || response.status >= 300) {
     throw new VerificationError(
-      `Failed to verify sigstore link ${link} with status code ${res.status}`,
+      `Failed to verify sigstore link ${link} with status code ${response.status}`,
     );
   }
 }
