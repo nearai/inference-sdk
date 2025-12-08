@@ -7,7 +7,8 @@ import {
 } from './attestation-common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { VerificationError } from '../utils/errors';
-import { ETHEREUM_ZERO_ADDRESS } from '../utils/consts';
+import { ETHEREUM_ZERO_ADDRESS, TIMEOUT } from '../utils/consts';
+import { fetchTimeout } from '../utils/fetch';
 
 export async function verifyGatewayAttestation(
   attestation: GatewayAttestation,
@@ -54,15 +55,15 @@ async function verifyVpcForGateway(
 ) {
   const url = `https://${domain}/evidences/vpc.json`;
 
-  const res = await fetch(url);
+  const response = await fetchTimeout(url, TIMEOUT);
 
-  if (!res.ok) {
+  if (!response.ok) {
     throw new VerificationError(
-      `Failed to fetch VPC info with status code ${res.status}`,
+      `Failed to fetch VPC info with status code ${response.status}`,
     );
   }
 
-  const vpcInfo = await res.json();
+  const vpcInfo = await response.json();
 
   if (vpcInfo.vpc_server_app_id !== vpcServerAppId) {
     throw new VerificationError('vpc_server_app_id mismatching');

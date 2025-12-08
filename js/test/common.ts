@@ -141,7 +141,7 @@ export async function fetchDomainAttestation(
 
   if (!intelQuoteRes.ok) {
     throw Error(
-      `Failed to fetch intel quote with status code: ${intelQuoteRes.status}`,
+      `Failed to fetch Intel quote with status code: ${intelQuoteRes.status}`,
     );
   }
 

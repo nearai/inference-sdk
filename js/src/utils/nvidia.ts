@@ -3,13 +3,14 @@ import {
   NvidiaGpuVerificationData,
 } from '../types/nvidia';
 import { decodeJwt, mapRecord } from './common';
-import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
+import { NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT } from './consts';
 import { VerificationError } from './errors';
+import { fetchTimeout } from './fetch';
 
 export async function fetchNvidiaGpuVerificationData(
   payload: string,
 ): Promise<NvidiaGpuVerificationData> {
-  const response = await fetch(NVIDIA_GPU_VERIFIER_API_URL, {
+  const response = await fetchTimeout(NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

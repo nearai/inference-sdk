@@ -3,6 +3,7 @@ import { IntelTdxVerificationData } from '../types/intel';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { VerificationError } from './errors';
 import { getCollateral, verify } from '@phala/dcap-qvl';
+import { Buffer } from 'buffer';
 
 export async function fetchIntelTdxVerificationData(
   quote: string,
