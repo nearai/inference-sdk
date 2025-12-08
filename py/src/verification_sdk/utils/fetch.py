@@ -34,12 +34,11 @@ Method = Literal['GET', 'POST', 'HEAD']
 
 
 async def fetch(
-        url: str,
-        method: Method = 'GET',
-        data: Optional[Any] = None,
-        headers: Optional[dict[str, str]] = None,
-        timeout: Optional[float] = None,
-        raise_if_not_ok: bool = False
+    url: str,
+    method: Method = 'GET',
+    data: Optional[Any] = None,
+    headers: Optional[dict[str, str]] = None,
+    timeout: Optional[float] = None,
 ) -> FetchResponse:
     timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
 
@@ -57,11 +56,6 @@ async def fetch(
                 fetch_response = FetchResponse(status=response.status)
         else:
             raise ValueError(f'Unsupported method: {method}')
-
-    if raise_if_not_ok and not fetch_response.ok:
-        raise ValueError(
-            f'Failed to fetch {url} with status code: {response.status}'
-        )
 
     return fetch_response
 

@@ -1,5 +1,5 @@
 from .common import decode_jwt
-from .consts import NVIDIA_GPU_VERIFIER_API_URL
+from .consts import NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT
 from .errors import VerificationError
 from .fetch import fetch
 
@@ -11,6 +11,7 @@ async def fetch_nvidia_gpu_verification_data(payload: str) -> dict:
             method='POST',
             data=payload,
             headers={'content-type': 'application/json'},
+            timeout=TIMEOUT
         )
         
         if not response.ok:

@@ -34,8 +34,12 @@ async def fetch_attestation_report(
     response = await fetch(
         url,
         headers={"authorization": f'Bearer {api_key}'},
-        raise_if_not_ok=True
     )
+
+    if not response.ok:
+        raise ValueError(
+            f'Failed to fetch attestation report with status code: {response.status}'
+        )
 
     return AttestationReport.model_validate_json(response.bytes())
 
@@ -52,8 +56,12 @@ async def fetch_chat_signature(
     response = await fetch(
         url,
         headers={"authorization": f'Bearer {api_key}'},
-        raise_if_not_ok=True
     )
+
+    if not response.ok:
+        raise ValueError(
+            f'Failed to fetch signature with status code: {response.status}'
+        )
 
     return ChatSignature.model_validate_json(response.bytes())
 
@@ -76,7 +84,9 @@ async def chat_completions(
     )
 
     if not response.ok:
-        raise ValueError(f'Failed to chat with status code: {response.status}')
+        raise ValueError(
+            f'Failed to chat with status code: {response.status}'
+        )
 
     response_body_raw = response.bytes()
 
@@ -105,12 +115,37 @@ async def fetch_domain_attestation(domain: str) -> DomainAttestation:
     info_url = f'{evidences_url}info.json'
 
     intel_quote_res, cert_res, acme_account_res, sha256sum_res, info_res = await asyncio.gather(
-        fetch(intel_quote_url, raise_if_not_ok=True),
-        fetch(cert_url, raise_if_not_ok=True),
-        fetch(acme_account_url, raise_if_not_ok=True),
-        fetch(sha256sum_url, raise_if_not_ok=True),
-        fetch(info_url, raise_if_not_ok=True),
+        fetch(intel_quote_url),
+        fetch(cert_url),
+        fetch(acme_account_url),
+        fetch(sha256sum_url),
+        fetch(info_url),
     )
+
+    if not intel_quote_res.ok:
+        raise ValueError(
+            f'Failed to fetch intel quote with status code: {intel_quote_res.status}'
+        )
+
+    if not cert_res.ok:
+        raise ValueError(
+            f'Failed to fetch certificate with status code: {cert_res.status}'
+        )
+
+    if not acme_account_res.ok:
+        raise ValueError(
+            f'Failed to fetch ACME account with status code: {acme_account_res.status}'
+        )
+
+    if not sha256sum_res.ok:
+        raise ValueError(
+            f'Failed to fetch sha256 sum with status code: {sha256sum_res.status}'
+        )
+
+    if not info_res.ok:
+        raise ValueError(
+            f'Failed to fetch info with status code: {info_res.status}'
+        )
 
     return DomainAttestation.model_validate({
         'intel_quote': intel_quote_res.json()['quote'],
