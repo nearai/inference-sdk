@@ -3,7 +3,8 @@
   "description": "Code Lint",
   "scripts": {
     "lint:js": "",
-    "lint:py": ""
+    "lint:py": "",
+    "prepare": "husky"
   },
   "devDependencies": {
     "husky": "^9.1.7",
