@@ -9,7 +9,6 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
-    "check": "tsc",
     "lint": "eslint '{src,test}/**/*.ts' '*.mjs' --fix",
     "prettier": "prettier '{src,test}/**/*.ts' '*.mjs' --write --list-different",
     "prepublishOnly": "pnpm build",

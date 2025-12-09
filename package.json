@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "description": "Code Lint",
+  "scripts": {
+    "lint:js": "",
+    "lint:py": ""
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7"
+  }
+}
