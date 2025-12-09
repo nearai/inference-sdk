@@ -9,10 +9,11 @@
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
-    "lint": "eslint '{src,test}/**/*.ts' '*.mjs' --fix",
-    "prettier": "prettier '{src,test}/**/*.ts' '*.mjs' --write --list-different",
-    "prepublishOnly": "pnpm build",
-    "test": "jest"
+    "lint": "pnpm fmt && pnpm check",
+    "fmt": "prettier '{src,test}/**/*.ts' '*.mjs' --write --list-different",
+    "check": "eslint '{src,test}/**/*.ts' '*.mjs' --fix",
+    "test": "jest",
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {
     "@phala/dcap-qvl": "^0.3.0",
