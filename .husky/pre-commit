@@ -1,3 +1,0 @@
-pnpm lint:js
-pnpm lint:py
-git add .
