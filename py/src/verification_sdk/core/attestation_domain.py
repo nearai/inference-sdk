@@ -227,7 +227,7 @@ def fetch_live_certificate(domain: str, port: int = 443) -> x509.Certificate:
 
                 if not cert_der:
                     raise VerificationError(
-                        f'Failed to get certificate from for domain: {domain}'
+                        f'Failed to get certificate for domain: {domain}'
                     )
 
                 return x509.load_der_x509_certificate(cert_der)

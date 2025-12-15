@@ -44,7 +44,7 @@ def verify_chat_signature(signature: ChatSignature):
         signing_address_raw = hex_to_bytes(signature.signing_address)
         if recovered_address_raw != signing_address_raw:
             raise VerificationError('Invalid ECDSA chat signature')
-    else:
+    elif signature.signing_algo == 'ed25519':
         public_key = hex_to_bytes(signature.signing_address)
         try:
             nacl.signing.VerifyKey(public_key).verify(
@@ -52,6 +52,8 @@ def verify_chat_signature(signature: ChatSignature):
             )
         except Exception as e:
             raise VerificationError('Invalid ED25519 chat signature') from e
+    else:
+        raise VerificationError('Unsupported signing algorithm')
 
 
 def verify_chat_hash(text: str, request_body: bytes, response_body: bytes):
