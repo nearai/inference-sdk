@@ -16,7 +16,7 @@ async def fetch_nvidia_gpu_verification_data(payload: str) -> dict:
 
         if not response.ok:
             raise VerificationError(
-                f'Failed to fetch Nvidia GPU verification data with status code {response.status}'
+                f'Failed to fetch NVIDIA GPU verification data with status code {response.status}'
             )
 
         # Raw format is expected to be:
@@ -34,4 +34,4 @@ async def fetch_nvidia_gpu_verification_data(payload: str) -> dict:
             },
         }
     except Exception as e:
-        raise VerificationError('Failed to fetch Nvidia GPU verification data') from e
+        raise VerificationError('Failed to fetch NVIDIA GPU verification data') from e

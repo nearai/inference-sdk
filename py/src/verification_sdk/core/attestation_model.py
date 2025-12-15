@@ -50,4 +50,4 @@ def verify_intel_tdx_for_model(
 def verify_nvidia_gpu_for_model(verification_data: dict):
     result = verification_data.get('JWT', {}).get('x-nvidia-overall-att-result')
     if not result:
-        raise VerificationError('Nvidia GPU not verified')
+        raise VerificationError('NVIDIA GPU not verified')
