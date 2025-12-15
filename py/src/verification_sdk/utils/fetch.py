@@ -40,17 +40,21 @@ async def fetch(
     headers: dict[str, str] | None = None,
     timeout: float | None = None,
 ) -> FetchResponse:
-    timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
+    client_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(timeout=client_timeout) as session:
         if method == 'GET':
             async with session.get(url, headers=headers) as response:
-                data = await response.read()
-                fetch_response = FetchResponse(status=response.status, data=data)
+                response_data = await response.read()
+                fetch_response = FetchResponse(
+                    status=response.status, data=response_data
+                )
         elif method == 'POST':
             async with session.post(url, data=data, headers=headers) as response:
-                data = await response.read()
-                fetch_response = FetchResponse(status=response.status, data=data)
+                response_data = await response.read()
+                fetch_response = FetchResponse(
+                    status=response.status, data=response_data
+                )
         elif method == 'HEAD':
             async with session.head(url, headers=headers) as response:
                 fetch_response = FetchResponse(status=response.status)
