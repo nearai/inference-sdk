@@ -10,3 +10,7 @@ export type ModelAttestation = {
     tcb_info: string | TcbInfo;
   };
 };
+
+export type ModelAttestationReport = {
+  all_attestations: ModelAttestation[]
+}
