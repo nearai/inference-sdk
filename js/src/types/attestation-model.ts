@@ -12,5 +12,5 @@ export type ModelAttestation = {
 };
 
 export type ModelAttestationReport = {
-  all_attestations: ModelAttestation[]
-}
+  all_attestations: ModelAttestation[];
+};

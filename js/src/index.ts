@@ -1,8 +1,14 @@
 export { verifyGatewayAttestation } from './core/attestation-gateway';
-export { GatewayAttestation, GatewayAttestationReport } from './types/attestation-gateway';
+export {
+  GatewayAttestation,
+  GatewayAttestationReport,
+} from './types/attestation-gateway';
 
 export { verifyModelAttestation } from './core/attestation-model';
-export { ModelAttestation, ModelAttestationReport } from './types/attestation-model';
+export {
+  ModelAttestation,
+  ModelAttestationReport,
+} from './types/attestation-model';
 
 export { verifyDomainAttestation } from './core/attestation-domain';
 export { DomainAttestation } from './types/attestation-domain';
