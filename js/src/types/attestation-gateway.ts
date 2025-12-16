@@ -1,4 +1,5 @@
 import { SigningAlgo, TcbInfo } from './attestation-common';
+import { ModelAttestation } from './attestation-model';
 
 export type GatewayAttestation = {
   request_nonce: string;
@@ -12,4 +13,9 @@ export type GatewayAttestation = {
     vpc_server_app_id: string;
     vpc_hostname: string;
   };
+};
+
+export type GatewayAttestationReport = {
+  gateway_attestation: GatewayAttestation;
+  model_attestations?: ModelAttestation[];
 };

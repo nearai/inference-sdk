@@ -1,4 +1,8 @@
-import { ChatSignature, AttestationReport, DomainAttestation } from '../src';
+import {
+  ChatSignature,
+  GatewayAttestationReport,
+  DomainAttestation,
+} from '../src';
 import {
   ChatCompletionsParams,
   ChatCompletionsResponse,
@@ -21,7 +25,7 @@ export async function fetchAttestationReport({
   apiUrl,
   apiKey,
   params: { model, requestNonce, signingAlgo },
-}: FetchAttestationReportParams): Promise<AttestationReport> {
+}: FetchAttestationReportParams): Promise<GatewayAttestationReport> {
   const res = await fetch(
     `${apiUrl}/attestation/report?model=${encodeURIComponent(model)}&nonce=${requestNonce}&signing_algo=${signingAlgo}`,
     {

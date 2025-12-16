@@ -47,6 +47,6 @@ function verifyIntelTdxForModel(
 function verifyNvidiaGpuForModel(verificationData: NvidiaGpuVerificationData) {
   const result = verificationData.JWT['x-nvidia-overall-att-result'];
   if (!result) {
-    throw new VerificationError('Nvidia GPU not verified');
+    throw new VerificationError('NVIDIA GPU not verified');
   }
 }

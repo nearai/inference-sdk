@@ -20,7 +20,7 @@ export async function fetchNvidiaGpuVerificationData(
 
   if (!response.ok) {
     throw new VerificationError(
-      `Failed to fetch Nvidia GPU verification data with status code ${response.status}`,
+      `Failed to fetch NVIDIA GPU verification data with status code ${response.status}`,
     );
   }
 
