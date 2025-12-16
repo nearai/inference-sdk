@@ -16,3 +16,7 @@ class ModelAttestation(BaseModel):
 
 class ModelInfo(BaseModel):
     tcb_info: TcbInfo | str
+
+
+class ModelAttestationReport(BaseModel):
+    all_attestations: list[ModelAttestation]

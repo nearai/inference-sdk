@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from .attestation_common import TcbInfo, SigningAlgo
+from .attestation_model import ModelAttestation
 
 
 class GatewayAttestation(BaseModel):
@@ -21,3 +22,8 @@ class GatewayInfo(BaseModel):
 class VpcInfo(BaseModel):
     vpc_server_app_id: str
     vpc_hostname: str
+
+
+class GatewayAttestationReport(BaseModel):
+    gateway_attestation: GatewayAttestation
+    model_attestations: list[ModelAttestation] | None = None

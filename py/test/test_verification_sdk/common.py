@@ -4,7 +4,7 @@ import secrets
 
 from urllib.parse import quote
 from verification_sdk import (
-    AttestationReport,
+    GatewayAttestationReport,
     ChatSignature,
     DomainAttestation,
     SigningAlgo,
@@ -28,7 +28,7 @@ async def fetch_attestation_report(
     model: str,
     request_nonce: str,
     signing_algo: SigningAlgo,
-) -> AttestationReport:
+) -> GatewayAttestationReport:
     url = f'{api_url}/attestation/report?model={quote(model)}&nonce={request_nonce}&signing_algo={signing_algo}'
 
     res = await fetch(
@@ -41,7 +41,7 @@ async def fetch_attestation_report(
             f'Failed to fetch attestation report with status code: {res.status}'
         )
 
-    return AttestationReport.model_validate_json(res.bytes())
+    return GatewayAttestationReport.model_validate_json(res.bytes())
 
 
 async def fetch_chat_signature(
