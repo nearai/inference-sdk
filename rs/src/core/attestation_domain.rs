@@ -72,7 +72,7 @@ fn verify_intel_quote_report_data_for_domain(
     let report_data_raw = hex_to_bytes(report_data)?;
 
     if report_data_raw.len() < 64 {
-        return Err(Error::verification("Invalid report data length".to_owned()));
+        return Err(Error::verification("invalid report data length".to_owned()));
     }
 
     let embedded_sha256sum = &report_data_raw[0..32];
@@ -88,7 +88,7 @@ fn verify_intel_quote_report_data_for_domain(
 
     if embedded_remaining != vec![0u8; 32].as_slice() {
         return Err(Error::verification(
-            "Embedded remaining bytes mismatching".to_owned(),
+            "embedded remaining bytes mismatching".to_owned(),
         ));
     }
 
@@ -100,7 +100,7 @@ async fn verify_live_certificate(live_cert: &[u8], cert: &str) -> Result<(), Err
 
     if cert_chain.len() < 2 {
         return Err(Error::verification(
-            "Unexpected length of certificate chain".to_owned(),
+            "unexpected length of certificate chain".to_owned(),
         ));
     }
 
@@ -118,7 +118,7 @@ async fn verify_live_certificate(live_cert: &[u8], cert: &str) -> Result<(), Err
 
 fn parse_certificate_chain(cert: &str) -> Result<Vec<X509Certificate>, Error> {
     let re = regex::Regex::new(r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----")
-        .map_err(|e| Error::verification(format!("Failed to create regex: {}", e)))?;
+        .map_err(|e| Error::verification(format!("failed to create regex: {}", e)))?;
 
     let mut parsed_certificates = Vec::new();
 
@@ -126,7 +126,7 @@ fn parse_certificate_chain(cert: &str) -> Result<Vec<X509Certificate>, Error> {
         if let Some(m) = cap.get(0) {
             let pem_bytes = m.as_str().as_bytes();
             let (_, x509_cert) = X509Certificate::from_pem(pem_bytes)
-                .map_err(|e| Error::verification(format!("Failed to parse certificate: {}", e)))?;
+                .map_err(|e| Error::verification(format!("failed to parse certificate: {}", e)))?;
             parsed_certificates.push(x509_cert);
         }
     }
@@ -146,7 +146,7 @@ fn verify_certificate_chain(cert_chain: &[X509Certificate]) -> Result<(), Error>
 
         if cert_issuer != issuer_subject {
             return Err(Error::verification(format!(
-                "Certificate chain verification failed: Certificate {} issuer '{}' does not match next certificate subject '{}'",
+                "certificate chain verification failed: Certificate {} issuer '{}' does not match next certificate subject '{}'",
                 i, cert_issuer, issuer_subject
             )));
         }
@@ -173,7 +173,7 @@ fn verify_certificate_root(cert: &X509Certificate) -> Result<(), Error> {
         let is_trusted = is_dn_trusted(&trusted_root_issuers, &cert_issuer.to_string())?;
         if !is_trusted {
             return Err(Error::verification(format!(
-                "Certificate verification failed: Root certificate is not trusted (issuer: {})",
+                "certificate verification failed: Root certificate is not trusted (issuer: {})",
                 cert_issuer
             )));
         }
@@ -190,14 +190,14 @@ fn verify_certificate_leaf(cert: &X509Certificate) -> Result<(), Error> {
 
     if validity.not_before.timestamp() as u64 > now {
         return Err(Error::verification(format!(
-            "Failed to verify leaf certificate: Certificate is not yet valid (valid from: {})",
+            "failed to verify leaf certificate: Certificate is not yet valid (valid from: {})",
             validity.not_before
         )));
     }
 
     if (validity.not_after.timestamp() as u64) < now {
         return Err(Error::verification(format!(
-            "Failed to verify leaf certificate: Certificate has expired (valid to: {})",
+            "failed to verify leaf certificate: Certificate has expired (valid to: {})",
             validity.not_after
         )));
     }
@@ -208,12 +208,12 @@ fn verify_certificate_leaf(cert: &X509Certificate) -> Result<(), Error> {
 fn verify_certificate_fingerprint(cert: &X509Certificate, live_cert: &[u8]) -> Result<(), Error> {
     let fingerprint1 = get_certificate_fingerprint(cert)?;
     let (_, live_cert_parsed) = X509Certificate::from_der(live_cert)
-        .map_err(|e| Error::verification(format!("Failed to parse live certificate: {}", e)))?;
+        .map_err(|e| Error::verification(format!("failed to parse live certificate: {}", e)))?;
     let fingerprint2 = get_certificate_fingerprint(&live_cert_parsed)?;
 
     if fingerprint1 != fingerprint2 {
         return Err(Error::verification(
-            "Certificate fingerprint mismatching".to_owned(),
+            "certificate fingerprint mismatching".to_owned(),
         ));
     }
 
@@ -243,12 +243,12 @@ async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
     let addr = format!("{}:443", domain);
     let stream = TcpStream::connect(&addr)
         .await
-        .map_err(|e| Error::verification(format!("Failed to connect to {}: {}", domain, e)))?;
+        .map_err(|e| Error::verification(format!("failed to connect to {}: {}", domain, e)))?;
 
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(
         rustls_native_certs::load_native_certs()
-            .map_err(|e| Error::verification(format!("Failed to load root certs: {}", e)))?
+            .map_err(|e| Error::verification(format!("failed to load root certs: {}", e)))?
             .iter()
             .map(|cert| rustls::Certificate(cert.0.clone())),
     );
@@ -263,19 +263,19 @@ async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
         .connect(
             domain
                 .try_into()
-                .map_err(|_| Error::verification(format!("Invalid domain name: {}", domain)))?,
+                .map_err(|_| Error::verification(format!("invalid domain name: {}", domain)))?,
             stream,
         )
         .await
-        .map_err(|e| Error::verification(format!("TLS connection error: {}", e)))?;
+        .map_err(|e| Error::verification(format!("tls connection error: {}", e)))?;
 
     let (_, session) = tls_stream.get_ref();
     let certs = session
         .peer_certificates()
-        .ok_or_else(|| Error::verification("Failed to get peer certificates".to_owned()))?;
+        .ok_or_else(|| Error::verification("failed to get peer certificates".to_owned()))?;
 
     if certs.is_empty() {
-        return Err(Error::verification("No certificates found".to_owned()));
+        return Err(Error::verification("no certificates found".to_owned()));
     }
 
     Ok(certs[0].0.clone())
@@ -288,15 +288,15 @@ fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
         let trusted_dn_components = dn_string_to_components(trusted_dn);
 
         let trusted_dn_cn = trusted_dn_components.get("CN").ok_or_else(|| {
-            Error::verification("Trusted dn must include 'CN' component".to_owned())
+            Error::verification("trusted dn must include 'CN' component".to_owned())
         })?;
 
         let trusted_dn_o = trusted_dn_components.get("O").ok_or_else(|| {
-            Error::verification("Trusted dn must include 'O' component".to_owned())
+            Error::verification("trusted dn must include 'O' component".to_owned())
         })?;
 
         let trusted_dn_c = trusted_dn_components.get("C").ok_or_else(|| {
-            Error::verification("Trusted dn must include 'C' component".to_owned())
+            Error::verification("trusted dn must include 'C' component".to_owned())
         })?;
 
         if dn_components.get("CN") == Some(trusted_dn_cn)

@@ -9,7 +9,7 @@ pub fn decode_jwt(jwt: &str) -> Result<HashMap<String, Value>, Error> {
     let parts: Vec<&str> = jwt.split('.').collect();
 
     if parts.len() != 3 {
-        return Err(Error::other("Invalid JWT format".to_owned()));
+        return Err(Error::other("invalid JWT format".to_owned()));
     }
 
     let payload = parts[1];

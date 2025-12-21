@@ -64,7 +64,7 @@ async fn verify_vpc_for_gateway(
 
     if !response.status().is_success() {
         return Err(Error::verification(format!(
-            "Failed to fetch VPC info with status code {}",
+            "failed to fetch VPC info with status code {}",
             response.status()
         )));
     }
@@ -72,12 +72,12 @@ async fn verify_vpc_for_gateway(
     let vpc_info: Value = response
         .json()
         .await
-        .map_err(|e| Error::verification(format!("Failed to parse VPC info: {}", e)))?;
+        .map_err(|e| Error::verification(format!("failed to parse VPC info: {}", e)))?;
 
     let vpc_server_app_id_value = vpc_info
         .get("vpc_server_app_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::verification("Missing vpc_server_app_id".to_owned()))?;
+        .ok_or_else(|| Error::verification("missing vpc_server_app_id".to_owned()))?;
 
     if vpc_server_app_id_value != vpc_server_app_id {
         return Err(Error::verification(
@@ -88,7 +88,7 @@ async fn verify_vpc_for_gateway(
     let nodes = vpc_info
         .get("nodes")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| Error::verification("Missing or invalid nodes".to_owned()))?;
+        .ok_or_else(|| Error::verification("missing or invalid nodes".to_owned()))?;
 
     let hostname_found = nodes.iter().any(|node| node.as_str() == Some(vpc_hostname));
 

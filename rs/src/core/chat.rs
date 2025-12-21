@@ -32,7 +32,7 @@ pub fn verify_signing_address(
     }
 
     Err(Error::verification(
-        "The signature signing algorithm or address does not match any of the model attestations"
+        "the signature signing algorithm or address does not match any of the model attestations"
             .to_owned(),
     ))
 }
@@ -55,18 +55,18 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let sig_bytes = hex_to_bytes(&signature.signature)?;
 
             if sig_bytes.len() != 65 {
-                return Err(Error::verification("Invalid signature length".to_owned()));
+                return Err(Error::verification("invalid signature length".to_owned()));
             }
 
             let recovery_id = RecoveryId::try_from(sig_bytes[64])
-                .map_err(|_| Error::verification("Invalid recovery ID".to_owned()))?;
+                .map_err(|_| Error::verification("invalid recovery ID".to_owned()))?;
 
             let sig = EcdsaSignature::from_bytes((&sig_bytes[..64]).into())
-                .map_err(|_| Error::verification("Invalid signature format".to_owned()))?;
+                .map_err(|_| Error::verification("invalid signature format".to_owned()))?;
 
             let verifying_key =
                 VerifyingKey::recover_from_prehash(&message_hash, &sig, recovery_id)
-                    .map_err(|_| Error::verification("Failed to recover public key".to_owned()))?;
+                    .map_err(|_| Error::verification("failed to recover public key".to_owned()))?;
 
             // Get address from public key (last 20 bytes of keccak256 hash of public key)
             let public_key_bytes = verifying_key.to_sec1_bytes();
@@ -75,11 +75,11 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
 
             let signing_address_str = signature.signing_address.trim_start_matches("0x");
             let signing_address_bytes = hex::decode(signing_address_str)
-                .map_err(|_| Error::verification("Invalid signing address format".to_owned()))?;
+                .map_err(|_| Error::verification("invalid signing address format".to_owned()))?;
 
             if signing_address_bytes.len() != 20 {
                 return Err(Error::verification(
-                    "Invalid signing address length".to_owned(),
+                    "invalid signing address length".to_owned(),
                 ));
             }
 
@@ -87,7 +87,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
 
             if recovered_address != signing_address {
                 return Err(Error::verification(
-                    "Invalid ECDSA chat signature".to_owned(),
+                    "invalid ECDSA chat signature".to_owned(),
                 ));
             }
         }
@@ -98,19 +98,19 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let verifying_key = VerifyingKey::from_bytes(
                 public_key_bytes[..32]
                     .try_into()
-                    .map_err(|_| Error::verification("Invalid public key length".to_owned()))?,
+                    .map_err(|_| Error::verification("invalid public key length".to_owned()))?,
             )
-            .map_err(|e| Error::verification(format!("Failed to create verifying key: {}", e)))?;
+            .map_err(|e| Error::verification(format!("failed to create verifying key: {}", e)))?;
 
             let sig = Signature::from_bytes(
                 signature_bytes[..64]
                     .try_into()
-                    .map_err(|_| Error::verification("Invalid signature length".to_owned()))?,
+                    .map_err(|_| Error::verification("invalid signature length".to_owned()))?,
             );
 
             verifying_key
                 .verify(signature.text.as_bytes(), &sig)
-                .map_err(|_| Error::verification("Invalid ED25519 chat signature".to_owned()))?;
+                .map_err(|_| Error::verification("invalid ED25519 chat signature".to_owned()))?;
         }
     }
 
@@ -123,7 +123,7 @@ fn verify_chat_hash(text: &str, request_body: &[u8], response_body: &[u8]) -> Re
     let expected = format!("{}:{}", request_hash, response_hash);
 
     if text != expected {
-        return Err(Error::verification("Chat hash mismatching".to_owned()));
+        return Err(Error::verification("chat hash mismatching".to_owned()));
     }
 
     Ok(())

@@ -15,7 +15,7 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     let signing_address_raw = hex_to_bytes(signing_address)?;
 
     if report_raw.len() < 32 {
-        return Err(Error::verification("Invalid report data length".to_owned()));
+        return Err(Error::verification("invalid report data length".to_owned()));
     }
 
     let embedded_address = &report_raw[0..32];
@@ -26,13 +26,13 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
 
     if embedded_address != padded_address.as_slice() {
         return Err(Error::verification(
-            "Signing address mismatching".to_owned(),
+            "signing address mismatching".to_owned(),
         ));
     }
 
     let request_nonce_bytes = hex_to_bytes(request_nonce)?;
     if embedded_nonce != request_nonce_bytes.as_slice() {
-        return Err(Error::verification("Request nonce mismatching".to_owned()));
+        return Err(Error::verification("request nonce mismatching".to_owned()));
     }
 
     Ok(())
@@ -57,19 +57,19 @@ pub async fn verify_compose(compose: &str) -> Result<(), Error> {
 
 fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Error> {
     let re = Regex::new(r"@sha256:([0-9a-f]{64})")
-        .map_err(|e| Error::verification(format!("Failed to create regex: {}", e)))?;
+        .map_err(|e| Error::verification(format!("failed to create regex: {}", e)))?;
 
     let mut digests = std::collections::HashSet::new();
 
     for cap in re.captures_iter(compose) {
         if let Some(digest) = cap.get(1) {
-            digests.insert(digest.as_str().to_string());
+            digests.insert(digest.as_str().to_owned());
         }
     }
 
     if digests.is_empty() {
         return Err(Error::verification(
-            "Failed to get sigstore links from compose".to_owned(),
+            "failed to get sigstore links from compose".to_owned(),
         ));
     }
 
@@ -87,7 +87,7 @@ async fn verify_sigstore_link(link: &str) -> Result<(), Error> {
 
     if !response.status().is_success() {
         return Err(Error::verification(format!(
-            "Failed to verify sigstore link {} with status code {}",
+            "failed to verify sigstore link {} with status code {}",
             link,
             response.status()
         )));

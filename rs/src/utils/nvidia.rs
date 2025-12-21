@@ -14,7 +14,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
         NVIDIA_GPU_VERIFIER_API_URL,
         TIMEOUT,
         Method::POST,
-        Some(payload.to_string()),
+        Some(payload.to_owned()),
     )
     .await
     .map_err(Error::other)?;
@@ -39,36 +39,36 @@ fn parse_nvidia_gpu_verification_data(
 ) -> Result<NvidiaGpuVerificationData, Error> {
     let array = verification_data_raw
         .as_array()
-        .ok_or_else(|| Error::verification("Invalid response format".to_string()))?;
+        .ok_or_else(|| Error::verification("invalid response format".to_owned()))?;
 
     if array.len() < 2 {
-        return Err(Error::verification("Invalid response format".to_string()));
+        return Err(Error::verification("invalid response format".to_owned()));
     }
 
     let jwt_array = array[0]
         .as_array()
-        .ok_or_else(|| Error::verification("Invalid JWT format".to_string()))?;
+        .ok_or_else(|| Error::verification("invalid JWT format".to_owned()))?;
 
     if jwt_array.len() < 2 || jwt_array[0].as_str() != Some("JWT") {
-        return Err(Error::verification("Invalid JWT format".to_string()));
+        return Err(Error::verification("invalid JWT format".to_owned()));
     }
 
     let jwt_str = jwt_array[1]
         .as_str()
-        .ok_or_else(|| Error::verification("Invalid JWT format".to_string()))?;
+        .ok_or_else(|| Error::verification("invalid JWT format".to_owned()))?;
 
     let jwt = decode_jwt(jwt_str)?;
 
     let gpu_obj = array[1]
         .as_object()
-        .ok_or_else(|| Error::verification("Invalid GPU format".to_string()))?;
+        .ok_or_else(|| Error::verification("invalid GPU format".to_owned()))?;
 
     let mut gpu: HashMap<String, HashMap<String, Value>> = HashMap::new();
 
     for (key, value) in gpu_obj {
         let value_str = value
             .as_str()
-            .ok_or_else(|| Error::verification("Invalid GPU JWT format".to_string()))?;
+            .ok_or_else(|| Error::verification("invalid GPU JWT format".to_owned()))?;
         let decoded = decode_jwt(value_str)?;
         gpu.insert(key.clone(), decoded);
     }
