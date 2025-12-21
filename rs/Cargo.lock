@@ -2911,6 +2911,7 @@ name = "verification-sdk"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "anyhow",
  "base64 0.22.1",
  "dcap-qvl",
  "ed25519-dalek",

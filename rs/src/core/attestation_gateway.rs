@@ -4,7 +4,7 @@ use crate::core::attestation_common::{
 };
 use crate::types::attestation_gateway::GatewayAttestation;
 use crate::utils::consts::{ETHEREUM_ZERO_ADDRESS, TIMEOUT};
-use crate::utils::errors::VerificationError;
+use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
 use serde_json::Value;
@@ -12,7 +12,7 @@ use serde_json::Value;
 pub async fn verify_gateway_attestation(
     attestation: &GatewayAttestation,
     domain: &str,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     let verification_data = fetch_intel_tdx_verification_data(&attestation.intel_quote).await?;
 
     verify_intel_tdx_for_gateway(
@@ -31,16 +31,7 @@ pub async fn verify_gateway_attestation(
     )
     .await?;
 
-    let tcb_info_value = match &attestation.info.tcb_info {
-        crate::types::attestation_gateway::TcbInfoOrString::String(s) => {
-            serde_json::Value::String(s.clone())
-        }
-        crate::types::attestation_gateway::TcbInfoOrString::Object(obj) => {
-            serde_json::to_value(obj)
-                .map_err(|e| VerificationError::new(format!("Failed to serialize tcb_info: {}", e)))?
-        }
-    };
-    let compose = get_compose_from_tcb_info(&tcb_info_value)?;
+    let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
     verify_compose(&compose).await?;
 
     Ok(())
@@ -50,9 +41,9 @@ fn verify_intel_tdx_for_gateway(
     verification_data: &crate::types::intel::IntelTdxVerificationData,
     request_nonce: &str,
     signing_address: &str,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(VerificationError::new("Intel quote not verified".to_string()));
+        return Err(Error::verification("Intel quote not verified".to_owned()));
     }
 
     verify_intel_quote_report_data_for_attestation_report(
@@ -66,13 +57,13 @@ async fn verify_vpc_for_gateway(
     domain: &str,
     vpc_server_app_id: &str,
     vpc_hostname: &str,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     let url = format!("https://{}/evidences/vpc.json", domain);
 
-    let response = fetch_timeout(&url, TIMEOUT).await?;
+    let response = fetch_timeout(&url, TIMEOUT).await.map_err(Error::other)?;
 
     if !response.status().is_success() {
-        return Err(VerificationError::new(format!(
+        return Err(Error::verification(format!(
             "Failed to fetch VPC info with status code {}",
             response.status()
         )));
@@ -81,30 +72,29 @@ async fn verify_vpc_for_gateway(
     let vpc_info: Value = response
         .json()
         .await
-        .map_err(|e| VerificationError::new(format!("Failed to parse VPC info: {}", e)))?;
+        .map_err(|e| Error::verification(format!("Failed to parse VPC info: {}", e)))?;
 
     let vpc_server_app_id_value = vpc_info
         .get("vpc_server_app_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| VerificationError::new("Missing vpc_server_app_id".to_string()))?;
+        .ok_or_else(|| Error::verification("Missing vpc_server_app_id".to_owned()))?;
 
     if vpc_server_app_id_value != vpc_server_app_id {
-        return Err(VerificationError::new("vpc_server_app_id mismatching".to_string()));
+        return Err(Error::verification(
+            "vpc_server_app_id mismatching".to_owned(),
+        ));
     }
 
     let nodes = vpc_info
         .get("nodes")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| VerificationError::new("Missing or invalid nodes".to_string()))?;
+        .ok_or_else(|| Error::verification("Missing or invalid nodes".to_owned()))?;
 
-    let hostname_found = nodes
-        .iter()
-        .any(|node| node.as_str() == Some(vpc_hostname));
+    let hostname_found = nodes.iter().any(|node| node.as_str() == Some(vpc_hostname));
 
     if !hostname_found {
-        return Err(VerificationError::new("vpc_hostname mismatching".to_string()));
+        return Err(Error::verification("vpc_hostname mismatching".to_owned()));
     }
 
     Ok(())
 }
-

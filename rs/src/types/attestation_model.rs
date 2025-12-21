@@ -1,5 +1,5 @@
+use crate::types::attestation_common::{SigningAlgo, TcbInfoOrRaw};
 use serde::{Deserialize, Serialize};
-use crate::types::attestation_common::{SigningAlgo, TcbInfo};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelAttestation {
@@ -13,19 +13,10 @@ pub struct ModelAttestation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelAttestationInfo {
-    #[serde(flatten)]
-    pub tcb_info: TcbInfoOrString,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum TcbInfoOrString {
-    String(String),
-    Object(TcbInfo),
+    pub tcb_info: TcbInfoOrRaw,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelAttestationReport {
     pub all_attestations: Vec<ModelAttestation>,
 }
-

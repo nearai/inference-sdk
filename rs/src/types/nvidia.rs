@@ -8,4 +8,3 @@ pub struct NvidiaGpuVerificationData {
     #[serde(rename = "GPU")]
     pub gpu: HashMap<String, HashMap<String, serde_json::Value>>,
 }
-

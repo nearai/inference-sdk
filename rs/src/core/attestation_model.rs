@@ -3,14 +3,12 @@ use crate::core::attestation_common::{
     verify_intel_quote_report_data_for_attestation_report,
 };
 use crate::types::attestation_model::ModelAttestation;
-use crate::utils::errors::VerificationError;
+use crate::utils::errors::Error;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
 use crate::utils::nvidia::fetch_nvidia_gpu_verification_data;
 use serde_json::Value;
 
-pub async fn verify_model_attestation(
-    attestation: &ModelAttestation,
-) -> Result<(), VerificationError> {
+pub async fn verify_model_attestation(attestation: &ModelAttestation) -> Result<(), Error> {
     let intel_tdx_verification_data =
         fetch_intel_tdx_verification_data(&attestation.intel_quote).await?;
 
@@ -25,16 +23,7 @@ pub async fn verify_model_attestation(
 
     verify_nvidia_gpu_for_model(&nvidia_gpu_verification_data)?;
 
-    let tcb_info_value = match &attestation.info.tcb_info {
-        crate::types::attestation_model::TcbInfoOrString::String(s) => {
-            serde_json::Value::String(s.clone())
-        }
-        crate::types::attestation_model::TcbInfoOrString::Object(obj) => {
-            serde_json::to_value(obj)
-                .map_err(|e| VerificationError::new(format!("Failed to serialize tcb_info: {}", e)))?
-        }
-    };
-    let compose = get_compose_from_tcb_info(&tcb_info_value)?;
+    let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
     verify_compose(&compose).await?;
 
     Ok(())
@@ -44,9 +33,9 @@ fn verify_intel_tdx_for_model(
     verification_data: &crate::types::intel::IntelTdxVerificationData,
     request_nonce: &str,
     signing_address: &str,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(VerificationError::new("Intel quote not verified".to_string()));
+        return Err(Error::verification("Intel quote not verified".to_owned()));
     }
 
     verify_intel_quote_report_data_for_attestation_report(
@@ -58,7 +47,7 @@ fn verify_intel_tdx_for_model(
 
 fn verify_nvidia_gpu_for_model(
     verification_data: &crate::types::nvidia::NvidiaGpuVerificationData,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     let result = verification_data
         .jwt
         .get("x-nvidia-overall-att-result")
@@ -66,9 +55,8 @@ fn verify_nvidia_gpu_for_model(
         .unwrap_or(false);
 
     if !result {
-        return Err(VerificationError::new("NVIDIA GPU not verified".to_string()));
+        return Err(Error::verification("NVIDIA GPU not verified".to_owned()));
     }
 
     Ok(())
 }
-

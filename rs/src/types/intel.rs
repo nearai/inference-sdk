@@ -16,4 +16,3 @@ pub struct IntelQuoteBody {
     pub reportdata: String,
     pub mrconfig: String,
 }
-

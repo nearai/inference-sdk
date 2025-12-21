@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
-use crate::types::attestation_common::{SigningAlgo, TcbInfo};
+use crate::types::attestation_common::{SigningAlgo, TcbInfoOrRaw};
 use crate::types::attestation_model::ModelAttestation;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayAttestation {
@@ -16,15 +16,7 @@ pub struct GatewayAttestation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayAttestationInfo {
-    #[serde(flatten)]
-    pub tcb_info: TcbInfoOrString,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum TcbInfoOrString {
-    String(String),
-    Object(TcbInfo),
+    pub tcb_info: TcbInfoOrRaw,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,4 +31,3 @@ pub struct GatewayAttestationReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_attestations: Option<Vec<ModelAttestation>>,
 }
-

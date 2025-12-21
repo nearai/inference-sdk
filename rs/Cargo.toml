@@ -25,6 +25,7 @@ tokio-rustls = "0.25"
 regex = "1"
 base64 = "0.22"
 thiserror = "1"
+anyhow = "1.0.100"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -1,33 +1,23 @@
-use crate::utils::errors::VerificationError;
-use reqwest::Client;
+use reqwest::{Client, Error, Method, Response};
 use std::time::Duration;
 
-pub async fn fetch_timeout(
-    url: &str,
-    timeout_ms: u64,
-) -> Result<reqwest::Response, VerificationError> {
+pub async fn fetch_timeout(url: &str, timeout_ms: u64) -> Result<Response, Error> {
     let client = Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|e| VerificationError::new(format!("Failed to create HTTP client: {}", e)))?;
+        .build()?;
 
-    client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| VerificationError::new(format!("Fetch url {} error: {}", url, e)))
+    client.get(url).send().await
 }
 
 pub async fn fetch_timeout_with_method(
     url: &str,
     timeout_ms: u64,
-    method: reqwest::Method,
+    method: Method,
     body: Option<String>,
-) -> Result<reqwest::Response, VerificationError> {
+) -> Result<Response, Error> {
     let client = Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
-        .build()
-        .map_err(|e| VerificationError::new(format!("Failed to create HTTP client: {}", e)))?;
+        .build()?;
 
     let mut request = client.request(method, url);
 
@@ -37,9 +27,5 @@ pub async fn fetch_timeout_with_method(
             .body(body_str);
     }
 
-    request
-        .send()
-        .await
-        .map_err(|e| VerificationError::new(format!("Fetch url {} error: {}", url, e)))
+    request.send().await
 }
-

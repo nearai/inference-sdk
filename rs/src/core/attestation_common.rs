@@ -1,8 +1,7 @@
-use crate::types::attestation_common::TcbInfo;
+use crate::types::attestation_common::{TcbInfo, TcbInfoOrRaw};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::consts::{SIGSTORE_SEARCH_API_URL, TIMEOUT};
-use crate::utils::errors::VerificationError;
-use crate::utils::fetch::fetch_timeout;
+use crate::utils::errors::Error;
 use regex::Regex;
 use reqwest::Method;
 use serde_json::Value;
@@ -11,12 +10,12 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     report_data: &str,
     request_nonce: &str,
     signing_address: &str,
-) -> Result<(), VerificationError> {
+) -> Result<(), Error> {
     let report_raw = hex_to_bytes(report_data)?;
     let signing_address_raw = hex_to_bytes(signing_address)?;
 
     if report_raw.len() < 32 {
-        return Err(VerificationError::new("Invalid report data length".to_string()));
+        return Err(Error::verification("Invalid report data length".to_owned()));
     }
 
     let embedded_address = &report_raw[0..32];
@@ -26,30 +25,27 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     padded_address.resize(32, 0);
 
     if embedded_address != padded_address.as_slice() {
-        return Err(VerificationError::new("Signing address mismatching".to_string()));
+        return Err(Error::verification(
+            "Signing address mismatching".to_owned(),
+        ));
     }
 
     let request_nonce_bytes = hex_to_bytes(request_nonce)?;
     if embedded_nonce != request_nonce_bytes.as_slice() {
-        return Err(VerificationError::new("Request nonce mismatching".to_string()));
+        return Err(Error::verification("Request nonce mismatching".to_owned()));
     }
 
     Ok(())
 }
 
-pub fn get_compose_from_tcb_info(tcb_info: &Value) -> Result<String, VerificationError> {
-    let tcb_info_obj = if let Value::String(s) = tcb_info {
-        serde_json::from_str::<TcbInfo>(s)
-            .map_err(|_| VerificationError::new("Invalid tcb info".to_string()))?
-    } else {
-        serde_json::from_value::<TcbInfo>(tcb_info.clone())
-            .map_err(|_| VerificationError::new("Invalid tcb info".to_string()))?
-    };
+pub fn get_compose_from_tcb_info(tcb_info: &TcbInfoOrRaw) -> Result<String, Error> {
+    let tcb_info = TcbInfo::try_from(tcb_info.clone())
+        .map_err(|e| Error::verification(format!("invalid tcb info: {}", e)))?;
 
-    Ok(tcb_info_obj.app_compose)
+    Ok(tcb_info.app_compose)
 }
 
-pub async fn verify_compose(compose: &str) -> Result<(), VerificationError> {
+pub async fn verify_compose(compose: &str) -> Result<(), Error> {
     let links = get_sigstore_links_from_compose(compose)?;
 
     for link in links {
@@ -59,9 +55,9 @@ pub async fn verify_compose(compose: &str) -> Result<(), VerificationError> {
     Ok(())
 }
 
-fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, VerificationError> {
+fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Error> {
     let re = Regex::new(r"@sha256:([0-9a-f]{64})")
-        .map_err(|e| VerificationError::new(format!("Failed to create regex: {}", e)))?;
+        .map_err(|e| Error::verification(format!("Failed to create regex: {}", e)))?;
 
     let mut digests = std::collections::HashSet::new();
 
@@ -72,8 +68,8 @@ fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Verific
     }
 
     if digests.is_empty() {
-        return Err(VerificationError::new(
-            "Failed to get sigstore links from compose".to_string(),
+        return Err(Error::verification(
+            "Failed to get sigstore links from compose".to_owned(),
         ));
     }
 
@@ -83,17 +79,14 @@ fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Verific
         .collect())
 }
 
-async fn verify_sigstore_link(link: &str) -> Result<(), VerificationError> {
-    let response = crate::utils::fetch::fetch_timeout_with_method(
-        link,
-        TIMEOUT,
-        Method::HEAD,
-        None,
-    )
-    .await?;
+async fn verify_sigstore_link(link: &str) -> Result<(), Error> {
+    let response =
+        crate::utils::fetch::fetch_timeout_with_method(link, TIMEOUT, Method::HEAD, None)
+            .await
+            .map_err(Error::other)?;
 
     if !response.status().is_success() {
-        return Err(VerificationError::new(format!(
+        return Err(Error::verification(format!(
             "Failed to verify sigstore link {} with status code {}",
             link,
             response.status()
@@ -102,4 +95,3 @@ async fn verify_sigstore_link(link: &str) -> Result<(), VerificationError> {
 
     Ok(())
 }
-

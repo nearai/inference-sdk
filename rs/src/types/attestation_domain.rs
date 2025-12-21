@@ -1,5 +1,5 @@
+use crate::types::attestation_common::TcbInfoOrRaw;
 use serde::{Deserialize, Serialize};
-use crate::types::attestation_common::TcbInfo;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainAttestation {
@@ -13,14 +13,5 @@ pub struct DomainAttestation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DomainAttestationInfo {
-    #[serde(flatten)]
-    pub tcb_info: TcbInfoOrString,
+    pub tcb_info: TcbInfoOrRaw,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum TcbInfoOrString {
-    String(String),
-    Object(TcbInfo),
-}
-
