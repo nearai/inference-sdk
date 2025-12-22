@@ -4,11 +4,11 @@ use crate::types::intel::IntelTdxVerificationData;
 use crate::utils::common::hex_to_bytes;
 use crate::utils::errors::Error;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
+use pem_rfc7468::decode_vec;
 use sha2::{Digest, Sha256};
-use std::ops::Deref;
 use std::time::SystemTime;
-use x509_parser::nom::AsBytes;
-use x509_parser::prelude::*;
+use x509_cert::der::{Decode, Encode};
+use x509_cert::Certificate;
 
 pub async fn verify_domain_attestation(attestation: &DomainAttestation) -> Result<(), Error> {
     let verification_data = fetch_intel_tdx_verification_data(&attestation.intel_quote).await?;
@@ -71,18 +71,20 @@ fn verify_intel_quote_report_data_for_domain(
 
     let report_data_raw = hex_to_bytes(report_data)?;
 
-    if report_data_raw.len() < 64 {
+    // The report data must be exactly 64 bytes: first 32 bytes are the SHA256,
+    // the remaining 32 bytes must all be zero (see JS/Python SDKs).
+    if report_data_raw.len() != 64 {
         return Err(Error::verification("invalid report data length".to_owned()));
     }
 
     let embedded_sha256sum = &report_data_raw[0..32];
-    let embedded_remaining = &report_data_raw[32..64];
+    let embedded_remaining = &report_data_raw[32..];
 
     if expected_sha256sum_file != sha256sum {
         return Err(Error::verification("sha256sum file mismatching".to_owned()));
     }
 
-    if embedded_sha256sum != expected_sha256sum.as_bytes() {
+    if embedded_sha256sum != expected_sha256sum.as_slice() {
         return Err(Error::verification("sha256sum mismatching".to_owned()));
     }
 
@@ -95,7 +97,7 @@ fn verify_intel_quote_report_data_for_domain(
     Ok(())
 }
 
-async fn verify_live_certificate(live_cert: &[u8], cert: &str) -> Result<(), Error> {
+async fn verify_live_certificate(live_cert: &Certificate, cert: &str) -> Result<(), Error> {
     let cert_chain = parse_certificate_chain(cert)?;
 
     if cert_chain.len() < 2 {
@@ -116,7 +118,7 @@ async fn verify_live_certificate(live_cert: &[u8], cert: &str) -> Result<(), Err
     Ok(())
 }
 
-fn parse_certificate_chain(cert: &str) -> Result<Vec<X509Certificate>, Error> {
+fn parse_certificate_chain(cert: &str) -> Result<Vec<Certificate>, Error> {
     let re = regex::Regex::new(r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----")
         .map_err(|e| Error::verification(format!("failed to create regex: {}", e)))?;
 
@@ -125,7 +127,20 @@ fn parse_certificate_chain(cert: &str) -> Result<Vec<X509Certificate>, Error> {
     for cap in re.captures_iter(cert) {
         if let Some(m) = cap.get(0) {
             let pem_bytes = m.as_str().as_bytes();
-            let (_, x509_cert) = X509Certificate::from_pem(pem_bytes)
+
+            // Use pem_rfc7468 to decode PEM into DER
+            let (label, der) = decode_vec(pem_bytes).map_err(|e| {
+                Error::verification(format!("failed to decode PEM certificate: {}", e))
+            })?;
+
+            if label != "CERTIFICATE" {
+                return Err(Error::verification(format!(
+                    "unexpected PEM label: expected 'CERTIFICATE', got '{}'",
+                    label
+                )));
+            }
+
+            let x509_cert = Certificate::from_der(&der)
                 .map_err(|e| Error::verification(format!("failed to parse certificate: {}", e)))?;
             parsed_certificates.push(x509_cert);
         }
@@ -134,15 +149,14 @@ fn parse_certificate_chain(cert: &str) -> Result<Vec<X509Certificate>, Error> {
     Ok(parsed_certificates)
 }
 
-fn verify_certificate_chain(cert_chain: &[X509Certificate]) -> Result<(), Error> {
+fn verify_certificate_chain(cert_chain: &[Certificate]) -> Result<(), Error> {
     for i in 0..cert_chain.len() - 1 {
         let cert = &cert_chain[i];
         let issuer_cert = &cert_chain[i + 1];
 
-        // Note: x509-parser doesn't provide signature verification directly
-        // This is a simplified version - in production, you'd need proper signature verification
-        let cert_issuer = cert.issuer().to_owned();
-        let issuer_subject = issuer_cert.subject().to_owned();
+        // Note: this is still a simplified chain check: we only compare subject/issuer DNs.
+        let cert_issuer = &cert.tbs_certificate.issuer;
+        let issuer_subject = &issuer_cert.tbs_certificate.subject;
 
         if cert_issuer != issuer_subject {
             return Err(Error::verification(format!(
@@ -155,14 +169,14 @@ fn verify_certificate_chain(cert_chain: &[X509Certificate]) -> Result<(), Error>
     Ok(())
 }
 
-fn verify_certificate_root(cert: &X509Certificate) -> Result<(), Error> {
+fn verify_certificate_root(cert: &Certificate) -> Result<(), Error> {
     let trusted_root_issuers = vec![
         "C=US, O=Internet Security Research Group, CN=ISRG Root X1",
         "C=US, O=Digital Signature Trust Co., CN=DST Root CA X3",
     ];
 
-    let cert_issuer = cert.issuer().to_owned();
-    let cert_subject = cert.subject().to_owned();
+    let cert_issuer = &cert.tbs_certificate.issuer;
+    let cert_subject = &cert.tbs_certificate.subject;
 
     let is_self_signed = cert_issuer == cert_subject;
 
@@ -170,7 +184,10 @@ fn verify_certificate_root(cert: &X509Certificate) -> Result<(), Error> {
         // Self-signed certificate - would need signature verification here
         Ok(())
     } else {
-        let is_trusted = is_dn_trusted(&trusted_root_issuers, &cert_issuer.to_string())?;
+        let is_trusted = is_dn_trusted(
+            &trusted_root_issuers,
+            &format!("{}", cert_issuer),
+        )?;
         if !is_trusted {
             return Err(Error::verification(format!(
                 "certificate verification failed: Root certificate is not trusted (issuer: {})",
@@ -181,23 +198,26 @@ fn verify_certificate_root(cert: &X509Certificate) -> Result<(), Error> {
     }
 }
 
-fn verify_certificate_leaf(cert: &X509Certificate) -> Result<(), Error> {
-    let validity = cert.validity();
+fn verify_certificate_leaf(cert: &Certificate) -> Result<(), Error> {
+    let validity = &cert.tbs_certificate.validity;
     let now = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
-    if validity.not_before.timestamp() as u64 > now {
+    let not_before = validity.not_before.to_unix_duration().as_secs();
+    let not_after = validity.not_after.to_unix_duration().as_secs();
+
+    if not_before > now {
         return Err(Error::verification(format!(
-            "failed to verify leaf certificate: Certificate is not yet valid (valid from: {})",
+            "failed to verify leaf certificate: Certificate is not yet valid (valid from: {:?})",
             validity.not_before
         )));
     }
 
-    if (validity.not_after.timestamp() as u64) < now {
+    if not_after < now {
         return Err(Error::verification(format!(
-            "failed to verify leaf certificate: Certificate has expired (valid to: {})",
+            "failed to verify leaf certificate: Certificate has expired (valid to: {:?})",
             validity.not_after
         )));
     }
@@ -205,11 +225,9 @@ fn verify_certificate_leaf(cert: &X509Certificate) -> Result<(), Error> {
     Ok(())
 }
 
-fn verify_certificate_fingerprint(cert: &X509Certificate, live_cert: &[u8]) -> Result<(), Error> {
+fn verify_certificate_fingerprint(cert: &Certificate, live_cert: &Certificate) -> Result<(), Error> {
     let fingerprint1 = get_certificate_fingerprint(cert)?;
-    let (_, live_cert_parsed) = X509Certificate::from_der(live_cert)
-        .map_err(|e| Error::verification(format!("failed to parse live certificate: {}", e)))?;
-    let fingerprint2 = get_certificate_fingerprint(&live_cert_parsed)?;
+    let fingerprint2 = get_certificate_fingerprint(live_cert)?;
 
     if fingerprint1 != fingerprint2 {
         return Err(Error::verification(
@@ -220,9 +238,12 @@ fn verify_certificate_fingerprint(cert: &X509Certificate, live_cert: &[u8]) -> R
     Ok(())
 }
 
-fn get_certificate_fingerprint(cert: &X509Certificate) -> Result<String, Error> {
-    let der = cert.tbs_certificate().as_ref();
-    let hash = Sha256::digest(der);
+fn get_certificate_fingerprint(cert: &Certificate) -> Result<String, Error> {
+    // Use the full certificate DER (not just TBS) to match JS/Python fingerprint behaviour.
+    let der = cert
+        .to_der()
+        .map_err(|e| Error::verification(format!("failed to encode certificate: {}", e)))?;
+    let hash = Sha256::digest(&der);
     let hash_hex = hex::encode(hash).to_uppercase();
     let fingerprint = hash_hex
         .chars()
@@ -235,7 +256,7 @@ fn get_certificate_fingerprint(cert: &X509Certificate) -> Result<String, Error> 
     Ok(fingerprint)
 }
 
-async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
+async fn fetch_live_certificate(domain: &str) -> Result<Certificate, Error> {
     use rustls::ClientConfig;
     use tokio::net::TcpStream;
     use tokio_rustls::TlsConnector;
@@ -245,13 +266,12 @@ async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
         .await
         .map_err(|e| Error::verification(format!("failed to connect to {}: {}", domain, e)))?;
 
+    // Load system root certificates into the Rustls root store so that the TLS
+    // handshake performs normal certificate validation.
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(
-        rustls_native_certs::load_native_certs()
-            .map_err(|e| Error::verification(format!("failed to load root certs: {}", e)))?
-            .iter()
-            .map(|cert| rustls::Certificate(cert.0.clone())),
-    );
+    let native_certs = rustls_native_certs::load_native_certs()
+        .map_err(|e| Error::verification(format!("failed to load root certs: {}", e)))?;
+    root_store.add_parsable_certificates(native_certs);
 
     let config = ClientConfig::builder()
         .with_safe_defaults()
@@ -259,7 +279,7 @@ async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
         .with_no_client_auth();
 
     let connector = TlsConnector::from(std::sync::Arc::new(config));
-    let mut tls_stream = connector
+    let tls_stream = connector
         .connect(
             domain
                 .try_into()
@@ -278,7 +298,11 @@ async fn fetch_live_certificate(domain: &str) -> Result<Vec<u8>, Error> {
         return Err(Error::verification("no certificates found".to_owned()));
     }
 
-    Ok(certs[0].0.clone())
+    let der = certs[0].as_ref();
+    let live_cert = Certificate::from_der(der)
+        .map_err(|e| Error::verification(format!("failed to parse live certificate: {}", e)))?;
+
+    Ok(live_cert)
 }
 
 fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
