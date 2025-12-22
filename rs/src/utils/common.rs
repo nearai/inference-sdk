@@ -1,7 +1,6 @@
 use crate::Error;
 use base64::Engine;
 use hex;
-use hex::FromHexError;
 use serde_json::Value;
 use std::collections::HashMap;
 

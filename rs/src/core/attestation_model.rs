@@ -6,7 +6,6 @@ use crate::types::attestation_model::ModelAttestation;
 use crate::utils::errors::Error;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
 use crate::utils::nvidia::fetch_nvidia_gpu_verification_data;
-use serde_json::Value;
 
 pub async fn verify_model_attestation(attestation: &ModelAttestation) -> Result<(), Error> {
     let intel_tdx_verification_data =

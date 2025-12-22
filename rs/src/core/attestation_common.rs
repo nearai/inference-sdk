@@ -4,7 +4,6 @@ use crate::utils::consts::{SIGSTORE_SEARCH_API_URL, TIMEOUT};
 use crate::utils::errors::Error;
 use regex::Regex;
 use reqwest::Method;
-use serde_json::Value;
 
 pub fn verify_intel_quote_report_data_for_attestation_report(
     report_data: &str,

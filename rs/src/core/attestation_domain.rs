@@ -4,9 +4,13 @@ use crate::types::intel::IntelTdxVerificationData;
 use crate::utils::common::hex_to_bytes;
 use crate::utils::errors::Error;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
-use pem_rfc7468::decode_vec;
+use rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use std::time::SystemTime;
+use tokio::net::TcpStream;
+use tokio_rustls::TlsConnector;
+use x509_cert::der::pem::decode_vec;
 use x509_cert::der::{Decode, Encode};
 use x509_cert::Certificate;
 
@@ -84,7 +88,7 @@ fn verify_intel_quote_report_data_for_domain(
         return Err(Error::verification("sha256sum file mismatching".to_owned()));
     }
 
-    if embedded_sha256sum != expected_sha256sum.as_slice() {
+    if embedded_sha256sum != expected_sha256sum.to_vec() {
         return Err(Error::verification("sha256sum mismatching".to_owned()));
     }
 
@@ -184,10 +188,7 @@ fn verify_certificate_root(cert: &Certificate) -> Result<(), Error> {
         // Self-signed certificate - would need signature verification here
         Ok(())
     } else {
-        let is_trusted = is_dn_trusted(
-            &trusted_root_issuers,
-            &format!("{}", cert_issuer),
-        )?;
+        let is_trusted = is_dn_trusted(&trusted_root_issuers, &format!("{}", cert_issuer))?;
         if !is_trusted {
             return Err(Error::verification(format!(
                 "certificate verification failed: Root certificate is not trusted (issuer: {})",
@@ -225,7 +226,10 @@ fn verify_certificate_leaf(cert: &Certificate) -> Result<(), Error> {
     Ok(())
 }
 
-fn verify_certificate_fingerprint(cert: &Certificate, live_cert: &Certificate) -> Result<(), Error> {
+fn verify_certificate_fingerprint(
+    cert: &Certificate,
+    live_cert: &Certificate,
+) -> Result<(), Error> {
     let fingerprint1 = get_certificate_fingerprint(cert)?;
     let fingerprint2 = get_certificate_fingerprint(live_cert)?;
 
@@ -257,52 +261,37 @@ fn get_certificate_fingerprint(cert: &Certificate) -> Result<String, Error> {
 }
 
 async fn fetch_live_certificate(domain: &str) -> Result<Certificate, Error> {
-    use rustls::ClientConfig;
-    use tokio::net::TcpStream;
-    use tokio_rustls::TlsConnector;
-
-    let addr = format!("{}:443", domain);
-    let stream = TcpStream::connect(&addr)
-        .await
-        .map_err(|e| Error::verification(format!("failed to connect to {}: {}", domain, e)))?;
-
-    // Load system root certificates into the Rustls root store so that the TLS
-    // handshake performs normal certificate validation.
-    let mut root_store = rustls::RootCertStore::empty();
-    let native_certs = rustls_native_certs::load_native_certs()
-        .map_err(|e| Error::verification(format!("failed to load root certs: {}", e)))?;
-    root_store.add_parsable_certificates(native_certs);
+    let mut root_store = RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
     let config = ClientConfig::builder()
-        .with_safe_defaults()
         .with_root_certificates(root_store)
         .with_no_client_auth();
 
-    let connector = TlsConnector::from(std::sync::Arc::new(config));
+    let connector = TlsConnector::from(Arc::new(config));
+
+    let addr = format!("{domain}:443");
+    let tcp = TcpStream::connect(addr).await.map_err(Error::other)?;
+
+    let server_name = ServerName::try_from(domain.to_owned())
+        .map_err(|e| Error::verification(format!("invalid domain: {e:?}")))?;
+
     let tls_stream = connector
-        .connect(
-            domain
-                .try_into()
-                .map_err(|_| Error::verification(format!("invalid domain name: {}", domain)))?,
-            stream,
-        )
+        .connect(server_name, tcp)
         .await
-        .map_err(|e| Error::verification(format!("tls connection error: {}", e)))?;
+        .map_err(|e| Error::verification(format!("failed to create TLS connection: {}", e)))?;
 
     let (_, session) = tls_stream.get_ref();
     let certs = session
         .peer_certificates()
-        .ok_or_else(|| Error::verification("failed to get peer certificates".to_owned()))?;
+        .ok_or_else(|| Error::verification("no peer certificates".into()))?;
 
-    if certs.is_empty() {
-        return Err(Error::verification("no certificates found".to_owned()));
-    }
+    let leaf = certs
+        .first()
+        .ok_or_else(|| Error::verification("empty certificate chain".into()))?;
 
-    let der = certs[0].as_ref();
-    let live_cert = Certificate::from_der(der)
-        .map_err(|e| Error::verification(format!("failed to parse live certificate: {}", e)))?;
-
-    Ok(live_cert)
+    Certificate::from_der(leaf.as_ref())
+        .map_err(|e| Error::verification(format!("invalid DER certificate: {}", e)))
 }
 
 fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
