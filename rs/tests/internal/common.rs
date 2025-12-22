@@ -1,6 +1,6 @@
 use crate::internal::types::ChatCompletionsResponse;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,14 +30,18 @@ pub async fn fetch_attestation_report(
         .append_pair("nonce", request_nonce)
         .append_pair("signing_algo", &signing_algo.to_string());
 
+    let mut headers = HeaderMap::new();
+
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
     let client = reqwest::Client::new();
 
-    let res = client
-        .get(url)
-        .headers(auth_headers(api_key))
-        .send()
-        .await
-        .unwrap();
+    let res = client.get(url).headers(headers).send().await.unwrap();
 
     if !res.status().is_success() {
         panic!(
@@ -62,14 +66,16 @@ pub async fn fetch_chat_signature(
         .append_pair("model", model)
         .append_pair("signing_algo", &signing_algo.to_string());
 
+    let mut headers = HeaderMap::new();
+
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+
     let client = reqwest::Client::new();
 
-    let res = client
-        .get(url)
-        .headers(auth_headers(api_key))
-        .send()
-        .await
-        .unwrap();
+    let res = client.get(url).headers(headers).send().await.unwrap();
 
     if !res.status().is_success() {
         panic!(
@@ -88,11 +94,18 @@ pub async fn chat_completions(
 ) -> ChatCompletionsResponse {
     let request_body_raw = serde_json::to_vec(request_body).unwrap();
 
+    let mut headers = HeaderMap::new();
+
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+
     let client = reqwest::Client::new();
 
     let res = client
         .post(format!("{}/chat/completions", api_url))
-        .headers(auth_headers(api_key))
+        .headers(headers)
         .body(request_body_raw.clone())
         .send()
         .await
@@ -119,7 +132,7 @@ pub async fn chat_completions(
     let id = if with_stream.stream.unwrap_or_default() {
         let text = String::from_utf8(response_body_raw.clone()).unwrap();
         let first_line = text.lines().next().unwrap();
-        let json_part = &first_line[6..];
+        let json_part = &first_line[6..]; // data: {...
         let with_id: WithId = serde_json::from_str(json_part).unwrap();
         with_id.id
     } else {
@@ -212,13 +225,4 @@ pub async fn fetch_domain_attestation(domain: &str) -> DomainAttestation {
         sha256sum,
         info: info_res.json().await.unwrap(),
     }
-}
-
-fn auth_headers(api_key: &str) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
-    );
-    headers
 }
