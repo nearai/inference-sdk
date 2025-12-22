@@ -37,8 +37,6 @@ pub async fn fetch_attestation_report(
         HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
     );
 
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
     let client = reqwest::Client::new();
 
     let res = client.get(url).headers(headers).send().await.unwrap();
@@ -100,6 +98,8 @@ pub async fn chat_completions(
         AUTHORIZATION,
         HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
     );
+
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let client = reqwest::Client::new();
 
