@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct NvidiaGpuVerificationDataRaw(pub (String, String));
+use std::collections::HashMap;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NvidiaGpuVerificationData {
@@ -14,3 +12,16 @@ pub struct NvidiaJwt {
     #[serde(rename = "x-nvidia-overall-att-result")]
     pub x_nvidia_overall_att_result: bool,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NvidiaGpuVerificationDataRawItem {
+    Jwt(String, String),
+    Gpu(HashMap<String, String>),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NvidiaGpuVerificationDataRaw(
+    pub NvidiaGpuVerificationDataRawItem,
+    pub NvidiaGpuVerificationDataRawItem,
+);

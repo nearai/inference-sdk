@@ -1,4 +1,7 @@
-use crate::types::nvidia::{NvidiaGpuVerificationData, NvidiaGpuVerificationDataRaw, NvidiaJwt};
+use crate::types::nvidia::{
+    NvidiaGpuVerificationData, NvidiaGpuVerificationDataRaw, NvidiaGpuVerificationDataRawItem,
+    NvidiaJwt,
+};
 use crate::utils::common::decode_jwt;
 use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT};
 use crate::utils::errors::Error;
@@ -35,13 +38,12 @@ pub async fn fetch_nvidia_gpu_verification_data(
 fn parse_nvidia_gpu_verification_data(
     verification_data_raw: &NvidiaGpuVerificationDataRaw,
 ) -> Result<NvidiaGpuVerificationData, Error> {
-    let jwt_entry = &verification_data_raw.0;
+    let item = &verification_data_raw.0;
 
-    if jwt_entry.0 != "JWT" {
-        return Err(Error::other("invalid JWT format"));
+    if let NvidiaGpuVerificationDataRawItem::Jwt(_, jwt) = item {
+        let jwt: NvidiaJwt = decode_jwt(jwt)?;
+        Ok(NvidiaGpuVerificationData { jwt })
+    } else {
+        Err(Error::other("failed to parse NVIDIA GPU verification data"))
     }
-
-    let jwt: NvidiaJwt = decode_jwt(&jwt_entry.1)?;
-
-    Ok(NvidiaGpuVerificationData { jwt })
 }
