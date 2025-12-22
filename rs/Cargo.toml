@@ -25,6 +25,3 @@ base64 = "0.22"
 thiserror = "2.0.17"
 anyhow = "1.0.100"
 webpki-roots = "1.0.4"
-
-[dev-dependencies]
-tokio-test = "0.4"
