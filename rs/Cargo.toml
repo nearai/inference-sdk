@@ -6,22 +6,33 @@ description = "Verification SDK"
 license = "MIT"
 
 [dependencies]
-dcap-qvl = "0.3"
-tokio = { version = "1", features = ["full"] }
+# Runtime / HTTP
+tokio = "1.48.0"
 reqwest = { version = "0.12.26", features = ["json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-hex = "0.4"
-sha2 = "0.10"
+
+# Serialization / parsing
+serde = "1.0.228"
+serde_json = "1.0.145"
+base64 = "0.22.1"
+hex = "0.4.3"
+regex = "1.12.2"
+
+# Crypto / signatures / hashing
+sha2 = "0.10.9"
+sha3 = "0.10.8"
+k256 = { version = "0.13.4", features = ["ecdsa", "sha256"] }
+ed25519-dalek = "2.2.0"
 alloy-primitives = "1.5.1"
-k256 = { version = "0.13", features = ["ecdsa", "sha256"] }
-sha3 = "0.10"
-ed25519-dalek = "2"
-x509-cert = { version = "0.2", features = ["pem"] }
+
+# Certificates / TLS
+x509-cert = { version = "0.2.5", features = ["pem"] }
 rustls = "0.23.35"
 tokio-rustls = "0.26.4"
-regex = "1"
-base64 = "0.22"
+webpki-roots = "1.0.4"
+
+# Attestation verification
+dcap-qvl = "0.3.4"
+
+# Error handling
 thiserror = "2.0.17"
 anyhow = "1.0.100"
-webpki-roots = "1.0.4"
