@@ -15,7 +15,9 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     let signing_address_raw = hex_to_bytes(signing_address)?;
 
     if report_data_raw.len() < 32 {
-        return Err(Error::verification("invalid report data length".to_owned()));
+        return Err(Error::VerificationError(
+            "invalid report data length".to_owned(),
+        ));
     }
 
     let embedded_address = &report_data_raw[0..32];
@@ -25,7 +27,7 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     padded_address.resize(32, 0);
 
     if embedded_address != padded_address.as_slice() {
-        return Err(Error::verification(
+        return Err(Error::VerificationError(
             "signing address mismatching".to_owned(),
         ));
     }
@@ -33,7 +35,9 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     let request_nonce_raw = hex_to_bytes(request_nonce)?;
 
     if embedded_nonce != request_nonce_raw.as_slice() {
-        return Err(Error::verification("request nonce mismatching".to_owned()));
+        return Err(Error::VerificationError(
+            "request nonce mismatching".to_owned(),
+        ));
     }
 
     Ok(())
@@ -41,7 +45,7 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
 
 pub fn get_compose_from_tcb_info(tcb_info: &TcbInfoOrRaw) -> Result<String, Error> {
     let tcb_info = TcbInfo::try_from(tcb_info.clone())
-        .map_err(|e| Error::verification(format!("invalid tcb info: {}", e)))?;
+        .map_err(|e| Error::VerificationError(format!("invalid tcb info: {}", e)))?;
 
     Ok(tcb_info.app_compose)
 }
@@ -68,7 +72,7 @@ fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Error> 
     }
 
     if digests.is_empty() {
-        return Err(Error::verification(
+        return Err(Error::VerificationError(
             "failed to get sigstore links from compose".to_owned(),
         ));
     }
@@ -84,7 +88,7 @@ async fn verify_sigstore_link(link: &str) -> Result<(), Error> {
         crate::utils::fetch::fetch_timeout_with_method(link, TIMEOUT, Method::HEAD, None).await?;
 
     if !response.status().is_success() {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "failed to verify sigstore link {} with status code {}",
             link,
             response.status()

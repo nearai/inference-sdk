@@ -44,7 +44,7 @@ fn verify_intel_tdx_for_gateway(
     signing_address: &str,
 ) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(Error::verification(
+        return Err(Error::VerificationError(
             "Intel quote not verified: quote.verified=false".to_owned(),
         ));
     }
@@ -66,11 +66,11 @@ async fn verify_vpc_for_gateway(
     let response = fetch_timeout(&url, TIMEOUT).await?;
 
     if !response.status().is_success() {
-        return Err(Error::other(format!(
+        return Err(Error::OtherError(anyhow::Error::msg(format!(
             "failed to fetch VPC info: url={}, status={}",
             url,
             response.status(),
-        )));
+        ))));
     }
 
     #[derive(Deserialize)]
@@ -82,7 +82,7 @@ async fn verify_vpc_for_gateway(
     let vpc_info: VpcInfo = response.json().await.context("failed to parse VPC info")?;
 
     if vpc_server_app_id != vpc_info.vpc_server_app_id {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "vpc_server_app_id mismatching: expected '{}', got '{}'",
             vpc_info.vpc_server_app_id, vpc_server_app_id
         )));
@@ -91,7 +91,7 @@ async fn verify_vpc_for_gateway(
     let hostname_found = vpc_info.nodes.iter().any(|node| node == vpc_hostname);
 
     if !hostname_found {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "vpc_hostname mismatching: expected '{}' to be present in nodes",
             vpc_hostname
         )));

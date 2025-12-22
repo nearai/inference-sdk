@@ -29,7 +29,7 @@ pub fn verify_signing_address(
         }
     }
 
-    Err(Error::verification(
+    Err(Error::VerificationError(
         format!(
             "signature signing algorithm/address does not match any model attestations: signing_algo={}, signing_address={}",
             signature.signing_algo,
@@ -51,7 +51,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let sig_bytes = hex_to_bytes(&signature.signature)?;
 
             if sig_bytes.len() != 65 {
-                return Err(Error::verification(format!(
+                return Err(Error::VerificationError(format!(
                     "invalid signature length: expected 65 bytes, got {}",
                     sig_bytes.len()
                 )));
@@ -69,7 +69,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             }
 
             let recovery_id = k256::ecdsa::RecoveryId::try_from(v).map_err(|_| {
-                Error::verification(format!(
+                Error::VerificationError(format!(
                     "invalid recovery ID: v_raw={}, v_normalized={}",
                     v_raw, v
                 ))
@@ -77,7 +77,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
 
             let sig =
                 k256::ecdsa::Signature::from_bytes((&sig_bytes[..64]).into()).map_err(|_| {
-                    Error::verification(
+                    Error::VerificationError(
                         "invalid signature format: failed to parse 64-byte r||s".to_owned(),
                     )
                 })?;
@@ -85,7 +85,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let verifying_key =
                 k256::ecdsa::VerifyingKey::recover_from_prehash(&message_hash, &sig, recovery_id)
                     .map_err(|_| {
-                    Error::verification(format!(
+                    Error::VerificationError(format!(
                         "failed to recover public key from signature (v_raw={}, v_normalized={})",
                         v_raw, v
                     ))
@@ -96,7 +96,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&public_key_raw[1..]); // Skip 0x04 prefix
 
             let recovered_address: [u8; 20] = pubkey_hash[12..].try_into().map_err(|_| {
-                Error::verification(format!(
+                Error::VerificationError(format!(
                     "invalid recovered address length: expected 20 bytes, got {}",
                     pubkey_hash[12..].len()
                 ))
@@ -105,7 +105,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let signing_address_raw = hex_to_bytes(&signature.signing_address)?;
 
             if signing_address_raw.len() != 20 {
-                return Err(Error::verification(format!(
+                return Err(Error::VerificationError(format!(
                     "invalid signing address length: expected 20 bytes, got {}",
                     signing_address_raw.len()
                 )));
@@ -114,7 +114,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             if recovered_address != signing_address_raw.as_slice() {
                 let recovered_hex = format!("0x{}", hex::encode(recovered_address));
                 let expected_hex = format!("0x{}", hex::encode(&signing_address_raw));
-                return Err(Error::verification(
+                return Err(Error::VerificationError(
                     format!(
                         "invalid ECDSA chat signature: recovered address mismatch (expected={}, recovered={})",
                         expected_hex, recovered_hex
@@ -127,34 +127,32 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let signature_raw = hex_to_bytes(&signature.signature)?;
 
             if public_key_raw.len() < 32 {
-                return Err(Error::verification(format!(
+                return Err(Error::VerificationError(format!(
                     "invalid public key length: expected >=32 bytes, got {}",
                     public_key_raw.len()
                 )));
             }
             if signature_raw.len() < 64 {
-                return Err(Error::verification(format!(
+                return Err(Error::VerificationError(format!(
                     "invalid signature length: expected >=64 bytes, got {}",
                     signature_raw.len()
                 )));
             }
 
-            let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
-                public_key_raw[..32]
-                    .try_into()
-                    .map_err(|_| Error::verification("invalid public key length".to_owned()))?,
-            )
-            .map_err(|e| Error::verification(format!("invalid public key: {}", e)))?;
+            let verifying_key =
+                ed25519_dalek::VerifyingKey::from_bytes(public_key_raw[..32].try_into().map_err(
+                    |_| Error::VerificationError("invalid public key length".to_owned()),
+                )?)
+                .map_err(|e| Error::VerificationError(format!("invalid public key: {}", e)))?;
 
-            let sig = ed25519_dalek::Signature::from_bytes(
-                signature_raw[..64]
-                    .try_into()
-                    .map_err(|_| Error::verification("invalid signature length".to_owned()))?,
-            );
+            let sig =
+                ed25519_dalek::Signature::from_bytes(signature_raw[..64].try_into().map_err(
+                    |_| Error::VerificationError("invalid signature length".to_owned()),
+                )?);
 
             ed25519_dalek::Verifier::verify(&verifying_key, signature.text.as_bytes(), &sig)
                 .map_err(|_| {
-                    Error::verification(
+                    Error::VerificationError(
                         "invalid ED25519 chat signature: signature verification failed".to_owned(),
                     )
                 })?;
@@ -170,7 +168,7 @@ fn verify_chat_hash(text: &str, request_body: &[u8], response_body: &[u8]) -> Re
     let expected = format!("{}:{}", request_hash, response_hash);
 
     if text != expected {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "chat hash mismatching: expected={}, got={}",
             expected, text
         )));

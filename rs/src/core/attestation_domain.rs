@@ -44,7 +44,7 @@ fn verify_intel_tdx_for_domain(
     sha256sum: &str,
 ) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "Intel quote not verified: quote.verified=false (domain={})",
             domain
         )));
@@ -81,7 +81,7 @@ fn verify_intel_quote_report_data_for_domain(
     let report_data_raw = hex_to_bytes(report_data)?;
 
     if report_data_raw.len() != 64 {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "invalid report data length: expected 64 bytes, got {}",
             report_data_raw.len()
         )));
@@ -91,15 +91,17 @@ fn verify_intel_quote_report_data_for_domain(
     let embedded_remaining = &report_data_raw[32..];
 
     if expected_sha256sum_file != sha256sum {
-        return Err(Error::verification("sha256sum file mismatching".to_owned()));
+        return Err(Error::VerificationError(
+            "sha256sum file mismatching".to_owned(),
+        ));
     }
 
     if embedded_sha256sum != expected_sha256sum.to_vec() {
-        return Err(Error::verification("sha256sum mismatching".to_owned()));
+        return Err(Error::VerificationError("sha256sum mismatching".to_owned()));
     }
 
     if embedded_remaining != vec![0u8; 32].as_slice() {
-        return Err(Error::verification(
+        return Err(Error::VerificationError(
             "embedded remaining bytes mismatching".to_owned(),
         ));
     }
@@ -111,7 +113,7 @@ async fn verify_live_certificate(live_cert: &Certificate, cert: &str) -> Result<
     let cert_chain = parse_certificate_chain(cert)?;
 
     if cert_chain.len() < 2 {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "unexpected length of certificate chain: expected >=2 certificates, got {}",
             cert_chain.len()
         )));
@@ -159,7 +161,7 @@ fn verify_certificate_chain(cert_chain: &[Certificate]) -> Result<(), Error> {
         let issuer_subject = &issuer_cert.tbs_certificate.subject;
 
         if cert_issuer != issuer_subject {
-            return Err(Error::verification(format!(
+            return Err(Error::VerificationError(format!(
                 "certificate chain verification failed: Certificate {} issuer '{}' does not match next certificate subject '{}'",
                 i, cert_issuer, issuer_subject
             )));
@@ -186,7 +188,7 @@ fn verify_certificate_root(cert: &Certificate) -> Result<(), Error> {
     } else {
         let is_trusted = is_dn_trusted(&trusted_root_issuers, &format!("{}", cert_issuer))?;
         if !is_trusted {
-            return Err(Error::verification(format!(
+            return Err(Error::VerificationError(format!(
                 "certificate verification failed: Root certificate is not trusted (issuer: {})",
                 cert_issuer
             )));
@@ -206,14 +208,14 @@ fn verify_certificate_leaf(cert: &Certificate) -> Result<(), Error> {
     let not_after = validity.not_after.to_unix_duration().as_secs();
 
     if not_before > now {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "failed to verify leaf certificate: Certificate is not yet valid (valid from: {})",
             validity.not_before
         )));
     }
 
     if not_after < now {
-        return Err(Error::verification(format!(
+        return Err(Error::VerificationError(format!(
             "failed to verify leaf certificate: Certificate has expired (valid to: {})",
             validity.not_after
         )));
@@ -230,7 +232,7 @@ fn verify_certificate_fingerprint(
     let fingerprint2 = get_certificate_fingerprint(live_cert)?;
 
     if fingerprint1 != fingerprint2 {
-        return Err(Error::verification(
+        return Err(Error::VerificationError(
             "certificate fingerprint mismatching".to_owned(),
         ));
     }
