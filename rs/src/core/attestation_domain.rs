@@ -132,7 +132,6 @@ fn parse_certificate_chain(cert: &str) -> Result<Vec<Certificate>, Error> {
         if let Some(m) = cap.get(0) {
             let pem_bytes = m.as_str().as_bytes();
 
-            // Use pem_rfc7468 to decode PEM into DER
             let (label, der) = decode_vec(pem_bytes).map_err(|e| {
                 Error::verification(format!("failed to decode PEM certificate: {}", e))
             })?;
@@ -158,7 +157,6 @@ fn verify_certificate_chain(cert_chain: &[Certificate]) -> Result<(), Error> {
         let cert = &cert_chain[i];
         let issuer_cert = &cert_chain[i + 1];
 
-        // Note: this is still a simplified chain check: we only compare subject/issuer DNs.
         let cert_issuer = &cert.tbs_certificate.issuer;
         let issuer_subject = &issuer_cert.tbs_certificate.subject;
 
@@ -211,14 +209,14 @@ fn verify_certificate_leaf(cert: &Certificate) -> Result<(), Error> {
 
     if not_before > now {
         return Err(Error::verification(format!(
-            "failed to verify leaf certificate: Certificate is not yet valid (valid from: {:?})",
+            "failed to verify leaf certificate: Certificate is not yet valid (valid from: {})",
             validity.not_before
         )));
     }
 
     if not_after < now {
         return Err(Error::verification(format!(
-            "failed to verify leaf certificate: Certificate has expired (valid to: {:?})",
+            "failed to verify leaf certificate: Certificate has expired (valid to: {})",
             validity.not_after
         )));
     }
@@ -243,7 +241,6 @@ fn verify_certificate_fingerprint(
 }
 
 fn get_certificate_fingerprint(cert: &Certificate) -> Result<String, Error> {
-    // Use the full certificate DER (not just TBS) to match JS/Python fingerprint behaviour.
     let der = cert
         .to_der()
         .map_err(|e| Error::verification(format!("failed to encode certificate: {}", e)))?;
@@ -270,8 +267,9 @@ async fn fetch_live_certificate(domain: &str) -> Result<Certificate, Error> {
 
     let connector = TlsConnector::from(Arc::new(config));
 
-    let addr = format!("{domain}:443");
-    let tcp = TcpStream::connect(addr).await.map_err(Error::other)?;
+    let tcp = TcpStream::connect(format!("{domain}:443"))
+        .await
+        .map_err(Error::other)?;
 
     let server_name = ServerName::try_from(domain.to_owned())
         .map_err(|e| Error::verification(format!("invalid domain: {e:?}")))?;

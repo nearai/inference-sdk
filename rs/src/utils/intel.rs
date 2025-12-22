@@ -13,7 +13,7 @@ pub async fn fetch_intel_tdx_verification_data(
 
     let collateral = get_collateral(INTEL_PCCS_API_URL, &quote_raw)
         .await
-        .map_err(|e| Error::verification(format!("failed to get collateral: {}", e)))?;
+        .map_err(|e| Error::other(format!("failed to get collateral: {}", e)))?;
 
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)

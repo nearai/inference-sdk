@@ -10,15 +10,15 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
     request_nonce: &str,
     signing_address: &str,
 ) -> Result<(), Error> {
-    let report_raw = hex_to_bytes(report_data)?;
+    let report_data_raw = hex_to_bytes(report_data)?;
     let signing_address_raw = hex_to_bytes(signing_address)?;
 
-    if report_raw.len() < 32 {
+    if report_data_raw.len() < 32 {
         return Err(Error::verification("invalid report data length".to_owned()));
     }
 
-    let embedded_address = &report_raw[0..32];
-    let embedded_nonce = &report_raw[32..];
+    let embedded_address = &report_data_raw[0..32];
+    let embedded_nonce = &report_data_raw[32..];
 
     let mut padded_address = signing_address_raw.clone();
     padded_address.resize(32, 0);
@@ -29,8 +29,9 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
         ));
     }
 
-    let request_nonce_bytes = hex_to_bytes(request_nonce)?;
-    if embedded_nonce != request_nonce_bytes.as_slice() {
+    let request_nonce_raw = hex_to_bytes(request_nonce)?;
+
+    if embedded_nonce != request_nonce_raw.as_slice() {
         return Err(Error::verification("request nonce mismatching".to_owned()));
     }
 

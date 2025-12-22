@@ -18,7 +18,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
     .map_err(Error::other)?;
 
     if !response.status().is_success() {
-        return Err(Error::verification(format!(
+        return Err(Error::other(format!(
             "failed to fetch NVIDIA GPU verification data with status code {}",
             response.status()
         )));
@@ -27,7 +27,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
     let verification_data_raw: NvidiaGpuVerificationDataRaw = response
         .json()
         .await
-        .map_err(|e| Error::verification(format!("failed to parse response: {}", e)))?;
+        .map_err(|e| Error::other(format!("failed to parse response: {}", e)))?;
 
     parse_nvidia_gpu_verification_data(&verification_data_raw)
 }
@@ -38,7 +38,7 @@ fn parse_nvidia_gpu_verification_data(
     let jwt_entry = &verification_data_raw.0;
 
     if jwt_entry.0 != "JWT" {
-        return Err(Error::verification("invalid JWT format".to_owned()));
+        return Err(Error::other("invalid JWT format"));
     }
 
     let jwt: NvidiaJwt = decode_jwt(&jwt_entry.1)?;
