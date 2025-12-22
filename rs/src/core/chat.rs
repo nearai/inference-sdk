@@ -40,7 +40,6 @@ pub fn verify_signing_address(
 fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
     match signature.signing_algo {
         SigningAlgo::Ecdsa => {
-            use alloy_primitives::Address;
             use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
             use sha3::{Digest, Keccak256};
 
@@ -71,7 +70,9 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             // Get address from public key (last 20 bytes of keccak256 hash of public key)
             let public_key_bytes = verifying_key.to_sec1_bytes();
             let pubkey_hash = Keccak256::digest(&public_key_bytes[1..]); // Skip 0x04 prefix
-            let recovered_address = Address::from_slice(&pubkey_hash[12..]);
+            let recovered_address: [u8; 20] = pubkey_hash[12..]
+                .try_into()
+                .map_err(|_| Error::verification("invalid recovered address length".to_owned()))?;
 
             let signing_address_str = signature.signing_address.trim_start_matches("0x");
             let signing_address_bytes = hex::decode(signing_address_str)
@@ -82,10 +83,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                     "invalid signing address length".to_owned(),
                 ));
             }
-
-            let signing_address = Address::from_slice(&signing_address_bytes);
-
-            if recovered_address != signing_address {
+            if recovered_address != signing_address_bytes.as_slice() {
                 return Err(Error::verification(
                     "invalid ECDSA chat signature".to_owned(),
                 ));
