@@ -1,12 +1,12 @@
-use reqwest::{Client, Error, Method, Response};
+use reqwest::{Client, Method, Response};
 use std::time::Duration;
 
-pub async fn fetch_timeout(url: &str, timeout_ms: u64) -> Result<Response, Error> {
+pub async fn fetch_timeout(url: &str, timeout_ms: u64) -> anyhow::Result<Response> {
     let client = Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
         .build()?;
 
-    client.get(url).send().await
+    Ok(client.get(url).send().await?)
 }
 
 pub async fn fetch_timeout_with_method(
@@ -14,7 +14,7 @@ pub async fn fetch_timeout_with_method(
     timeout_ms: u64,
     method: Method,
     body: Option<String>,
-) -> Result<Response, Error> {
+) -> anyhow::Result<Response> {
     let client = Client::builder()
         .timeout(Duration::from_millis(timeout_ms))
         .build()?;
@@ -27,5 +27,5 @@ pub async fn fetch_timeout_with_method(
             .body(body_str);
     }
 
-    request.send().await
+    Ok(request.send().await?)
 }

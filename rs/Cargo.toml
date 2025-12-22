@@ -21,6 +21,7 @@ k256 = "0.13.4"
 ed25519-dalek = "2.2.0"
 
 x509-cert = "0.2.5"
+pem-rfc7468 = { version = "1.0.0",features = ["std"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }
 webpki-roots = "1.0.4"
 

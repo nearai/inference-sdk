@@ -7,7 +7,8 @@ use crate::utils::consts::{ETHEREUM_ZERO_ADDRESS, TIMEOUT};
 use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
-use serde_json::Value;
+use anyhow::Context;
+use serde::Deserialize;
 
 pub async fn verify_gateway_attestation(
     attestation: &GatewayAttestation,
@@ -62,39 +63,32 @@ async fn verify_vpc_for_gateway(
 ) -> Result<(), Error> {
     let url = format!("https://{}/evidences/vpc.json", domain);
 
-    let response = fetch_timeout(&url, TIMEOUT).await.map_err(Error::other)?;
+    let response = fetch_timeout(&url, TIMEOUT).await?;
 
     if !response.status().is_success() {
-        return Err(Error::verification(format!(
+        return Err(Error::other(format!(
             "failed to fetch VPC info: url={}, status={}",
             url,
             response.status(),
         )));
     }
 
-    let vpc_info: Value = response
-        .json()
-        .await
-        .map_err(|e| Error::verification(format!("failed to parse VPC info: {}", e)))?;
+    #[derive(Deserialize)]
+    struct VpcInfo {
+        vpc_server_app_id: String,
+        nodes: Vec<String>,
+    }
 
-    let vpc_server_app_id_value = vpc_info
-        .get("vpc_server_app_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::verification("missing vpc_server_app_id".to_owned()))?;
+    let vpc_info: VpcInfo = response.json().await.context("failed to parse VPC info")?;
 
-    if vpc_server_app_id_value != vpc_server_app_id {
+    if vpc_server_app_id != vpc_info.vpc_server_app_id {
         return Err(Error::verification(format!(
             "vpc_server_app_id mismatching: expected '{}', got '{}'",
-            vpc_server_app_id, vpc_server_app_id_value
+            vpc_info.vpc_server_app_id, vpc_server_app_id
         )));
     }
 
-    let nodes = vpc_info
-        .get("nodes")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| Error::verification("missing or invalid nodes".to_owned()))?;
-
-    let hostname_found = nodes.iter().any(|node| node.as_str() == Some(vpc_hostname));
+    let hostname_found = vpc_info.nodes.iter().any(|node| node == vpc_hostname);
 
     if !hostname_found {
         return Err(Error::verification(format!(

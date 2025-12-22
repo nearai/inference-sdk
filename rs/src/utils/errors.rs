@@ -14,11 +14,7 @@ impl Error {
         Self::VerificationError(message)
     }
 
-    pub fn common(message: String) -> Self {
+    pub fn other(message: String) -> Self {
         Self::OtherError(anyhow::Error::msg(message))
-    }
-
-    pub fn other<E: std::error::Error + Send + Sync + 'static>(e: E) -> Self {
-        Self::OtherError(anyhow::Error::new(e))
     }
 }

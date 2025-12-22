@@ -4,13 +4,15 @@ use crate::types::intel::IntelTdxVerificationData;
 use crate::utils::common::hex_to_bytes;
 use crate::utils::errors::Error;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
+use anyhow::Context;
+use pem_rfc7468::decode_vec;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
-use x509_cert::der::pem::decode_vec;
 use x509_cert::der::{Decode, Encode};
 use x509_cert::Certificate;
 
@@ -78,8 +80,6 @@ fn verify_intel_quote_report_data_for_domain(
 
     let report_data_raw = hex_to_bytes(report_data)?;
 
-    // The report data must be exactly 64 bytes: first 32 bytes are the SHA256,
-    // the remaining 32 bytes must all be zero (see JS/Python SDKs).
     if report_data_raw.len() != 64 {
         return Err(Error::verification(format!(
             "invalid report data length: expected 64 bytes, got {}",
@@ -131,7 +131,7 @@ async fn verify_live_certificate(live_cert: &Certificate, cert: &str) -> Result<
 
 fn parse_certificate_chain(cert: &str) -> Result<Vec<Certificate>, Error> {
     let re = regex::Regex::new(r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----")
-        .map_err(|e| Error::verification(format!("failed to create regex: {}", e)))?;
+        .context("failed to create regex")?;
 
     let mut parsed_certificates = Vec::new();
 
@@ -139,19 +139,10 @@ fn parse_certificate_chain(cert: &str) -> Result<Vec<Certificate>, Error> {
         if let Some(m) = cap.get(0) {
             let pem_bytes = m.as_str().as_bytes();
 
-            let (label, der) = decode_vec(pem_bytes).map_err(|e| {
-                Error::verification(format!("failed to decode PEM certificate: {}", e))
-            })?;
+            let (_, der) = decode_vec(pem_bytes).context("failed to decode PEM certificate")?;
 
-            if label != "CERTIFICATE" {
-                return Err(Error::verification(format!(
-                    "unexpected PEM label: expected 'CERTIFICATE', got '{}'",
-                    label
-                )));
-            }
+            let x509_cert = Certificate::from_der(&der).context("failed to parse certificate")?;
 
-            let x509_cert = Certificate::from_der(&der)
-                .map_err(|e| Error::verification(format!("failed to parse certificate: {}", e)))?;
             parsed_certificates.push(x509_cert);
         }
     }
@@ -248,17 +239,17 @@ fn verify_certificate_fingerprint(
 }
 
 fn get_certificate_fingerprint(cert: &Certificate) -> Result<String, Error> {
-    let der = cert
-        .to_der()
-        .map_err(|e| Error::verification(format!("failed to encode certificate: {}", e)))?;
+    let der = cert.to_der().context("failed to encode certificate")?;
+
     let hash = Sha256::digest(&der);
     let hash_hex = hex::encode(hash).to_uppercase();
+
     let fingerprint = hash_hex
         .chars()
-        .collect::<Vec<_>>()
+        .collect::<Vec<char>>()
         .chunks(2)
         .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<_>>()
+        .collect::<Vec<String>>()
         .join(":");
 
     Ok(fingerprint)
@@ -276,27 +267,23 @@ async fn fetch_live_certificate(domain: &str) -> Result<Certificate, Error> {
 
     let tcp = TcpStream::connect(format!("{domain}:443"))
         .await
-        .map_err(Error::other)?;
+        .context("failed to create TCP stream")?;
 
-    let server_name = ServerName::try_from(domain.to_owned())
-        .map_err(|e| Error::verification(format!("invalid domain: {e:?}")))?;
+    let server_name = ServerName::try_from(domain.to_owned()).context("invalid domain")?;
 
     let tls_stream = connector
         .connect(server_name, tcp)
         .await
-        .map_err(|e| Error::verification(format!("failed to create TLS connection: {}", e)))?;
+        .context("failed to create TLS stream")?;
 
     let (_, session) = tls_stream.get_ref();
     let certs = session
         .peer_certificates()
-        .ok_or_else(|| Error::verification("no peer certificates".into()))?;
+        .context("no peer certificates")?;
 
-    let leaf = certs
-        .first()
-        .ok_or_else(|| Error::verification("empty certificate chain".into()))?;
+    let leaf = certs.first().context("empty certificate chain")?;
 
-    Certificate::from_der(leaf.as_ref())
-        .map_err(|e| Error::verification(format!("invalid DER certificate: {}", e)))
+    Ok(Certificate::from_der(leaf.as_ref()).context("invalid DER certificate")?)
 }
 
 fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
@@ -305,17 +292,17 @@ fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
     for trusted_dn in trusted_dns {
         let trusted_dn_components = dn_string_to_components(trusted_dn);
 
-        let trusted_dn_cn = trusted_dn_components.get("CN").ok_or_else(|| {
-            Error::verification("trusted dn must include 'CN' component".to_owned())
-        })?;
+        let trusted_dn_cn = trusted_dn_components
+            .get("CN")
+            .context("trusted dn must include 'CN' component")?;
 
-        let trusted_dn_o = trusted_dn_components.get("O").ok_or_else(|| {
-            Error::verification("trusted dn must include 'O' component".to_owned())
-        })?;
+        let trusted_dn_o = trusted_dn_components
+            .get("O")
+            .context("trusted dn must include 'O' component")?;
 
-        let trusted_dn_c = trusted_dn_components.get("C").ok_or_else(|| {
-            Error::verification("trusted dn must include 'C' component".to_owned())
-        })?;
+        let trusted_dn_c = trusted_dn_components
+            .get("C")
+            .context("trusted dn must include 'C' component")?;
 
         if dn_components.get("CN") == Some(trusted_dn_cn)
             && dn_components.get("O") == Some(trusted_dn_o)
@@ -328,8 +315,8 @@ fn is_dn_trusted(trusted_dns: &[&str], dn: &str) -> Result<bool, Error> {
     Ok(false)
 }
 
-fn dn_string_to_components(dn: &str) -> std::collections::HashMap<String, String> {
-    let mut components = std::collections::HashMap::new();
+fn dn_string_to_components(dn: &str) -> HashMap<String, String> {
+    let mut components = HashMap::new();
 
     let parts: Vec<&str> = if dn.contains('\n') {
         dn.split('\n').collect()

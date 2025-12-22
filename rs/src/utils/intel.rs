@@ -1,7 +1,6 @@
 use crate::types::intel::{IntelQuote, IntelQuoteBody, IntelTdxVerificationData};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::consts::INTEL_PCCS_API_URL;
-use crate::utils::errors::Error;
 use anyhow::Context;
 use dcap_qvl::collateral::get_collateral;
 use dcap_qvl::verify::verify;
@@ -9,24 +8,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn fetch_intel_tdx_verification_data(
     quote: &str,
-) -> Result<IntelTdxVerificationData, Error> {
+) -> anyhow::Result<IntelTdxVerificationData> {
     let quote_raw = hex_to_bytes(quote)?;
 
     let collateral = get_collateral(INTEL_PCCS_API_URL, &quote_raw)
         .await
         .context("failed to get collateral")?;
 
-    let current_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let verification_data_raw = verify(&quote_raw, &collateral, current_time)
-        .map_err(|e| Error::verification(format!("failed to verify Intel quote: {}", e)))?;
+    let verification_data_raw =
+        verify(&quote_raw, &collateral, current_time).context("failed to verify Intel quote")?;
 
-    let td10 = verification_data_raw.report.as_td10().ok_or_else(|| {
-        Error::verification("bad report data: expected TD10 report structure".to_owned())
-    })?;
+    let td10 = verification_data_raw
+        .report
+        .as_td10()
+        .context("bad report data: expected TD10 report structure")?;
 
     let verified = verification_data_raw.status == "UpToDate";
     let report_data = td10.report_data;

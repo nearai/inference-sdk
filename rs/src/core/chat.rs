@@ -30,8 +30,11 @@ pub fn verify_signing_address(
     }
 
     Err(Error::verification(
-        "the signature signing algorithm or address does not match any of the model attestations"
-            .to_owned(),
+        format!(
+            "signature signing algorithm/address does not match any model attestations: signing_algo={}, signing_address={}",
+            signature.signing_algo,
+            signature.signing_address
+        ),
     ))
 }
 
@@ -61,7 +64,7 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             if v == 27 || v == 28 {
                 v -= 27;
             } else if v >= 35 {
-                // EIP-155: v = 35 + 2*chain_id + parity
+                // EIP-155: v = 35 + 2 * chain_id + parity
                 v = (v - 35) % 2;
             }
 
@@ -89,47 +92,72 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                 })?;
 
             // Get address from public key (last 20 bytes of keccak256 hash of public key)
-            let public_key_bytes = verifying_key.to_sec1_bytes();
-            let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&public_key_bytes[1..]); // Skip 0x04 prefix
-            let recovered_address: [u8; 20] = pubkey_hash[12..]
-                .try_into()
-                .map_err(|_| Error::verification("invalid recovered address length".to_owned()))?;
+            let public_key_raw = verifying_key.to_sec1_bytes();
+            let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&public_key_raw[1..]); // Skip 0x04 prefix
 
-            let signing_address_str = signature.signing_address.trim_start_matches("0x");
-            let signing_address_bytes = hex::decode(signing_address_str)
-                .map_err(|_| Error::verification("invalid signing address format".to_owned()))?;
+            let recovered_address: [u8; 20] = pubkey_hash[12..].try_into().map_err(|_| {
+                Error::verification(format!(
+                    "invalid recovered address length: expected 20 bytes, got {}",
+                    pubkey_hash[12..].len()
+                ))
+            })?;
 
-            if signing_address_bytes.len() != 20 {
+            let signing_address_raw = hex_to_bytes(&signature.signing_address)?;
+
+            if signing_address_raw.len() != 20 {
                 return Err(Error::verification(format!(
                     "invalid signing address length: expected 20 bytes, got {}",
-                    signing_address_bytes.len()
+                    signing_address_raw.len()
                 )));
             }
-            if recovered_address != signing_address_bytes.as_slice() {
+
+            if recovered_address != signing_address_raw.as_slice() {
+                let recovered_hex = format!("0x{}", hex::encode(recovered_address));
+                let expected_hex = format!("0x{}", hex::encode(&signing_address_raw));
                 return Err(Error::verification(
-                    "invalid ECDSA chat signature: recovered address does not match signing_address".to_owned(),
+                    format!(
+                        "invalid ECDSA chat signature: recovered address mismatch (expected={}, recovered={})",
+                        expected_hex, recovered_hex
+                    ),
                 ));
             }
         }
         SigningAlgo::Ed25519 => {
-            let public_key_bytes = hex_to_bytes(&signature.signing_address)?;
-            let signature_bytes = hex_to_bytes(&signature.signature)?;
+            let public_key_raw = hex_to_bytes(&signature.signing_address)?;
+            let signature_raw = hex_to_bytes(&signature.signature)?;
+
+            if public_key_raw.len() < 32 {
+                return Err(Error::verification(format!(
+                    "invalid public key length: expected >=32 bytes, got {}",
+                    public_key_raw.len()
+                )));
+            }
+            if signature_raw.len() < 64 {
+                return Err(Error::verification(format!(
+                    "invalid signature length: expected >=64 bytes, got {}",
+                    signature_raw.len()
+                )));
+            }
 
             let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
-                public_key_bytes[..32]
+                public_key_raw[..32]
                     .try_into()
                     .map_err(|_| Error::verification("invalid public key length".to_owned()))?,
             )
-            .map_err(|e| Error::verification(format!("failed to create verifying key: {}", e)))?;
+            .map_err(|e| Error::verification(format!("invalid public key: {}", e)))?;
 
             let sig = ed25519_dalek::Signature::from_bytes(
-                signature_bytes[..64]
+                signature_raw[..64]
                     .try_into()
                     .map_err(|_| Error::verification("invalid signature length".to_owned()))?,
             );
 
             ed25519_dalek::Verifier::verify(&verifying_key, signature.text.as_bytes(), &sig)
-                .map_err(|_| Error::verification("invalid ED25519 chat signature".to_owned()))?;
+                .map_err(|_| {
+                    Error::verification(
+                        "invalid ED25519 chat signature: signature verification failed".to_owned(),
+                    )
+                })?;
         }
     }
 
@@ -142,7 +170,10 @@ fn verify_chat_hash(text: &str, request_body: &[u8], response_body: &[u8]) -> Re
     let expected = format!("{}:{}", request_hash, response_hash);
 
     if text != expected {
-        return Err(Error::verification("chat hash mismatching".to_owned()));
+        return Err(Error::verification(format!(
+            "chat hash mismatching: expected={}, got={}",
+            expected, text
+        )));
     }
 
     Ok(())
