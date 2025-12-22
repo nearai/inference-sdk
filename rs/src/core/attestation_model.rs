@@ -47,13 +47,7 @@ fn verify_intel_tdx_for_model(
 fn verify_nvidia_gpu_for_model(
     verification_data: &crate::types::nvidia::NvidiaGpuVerificationData,
 ) -> Result<(), Error> {
-    let result = verification_data
-        .jwt
-        .get("x-nvidia-overall-att-result")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    if !result {
+    if !verification_data.jwt.x_nvidia_overall_att_result {
         return Err(Error::verification("NVIDIA GPU not verified".to_owned()));
     }
 

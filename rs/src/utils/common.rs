@@ -1,10 +1,9 @@
 use crate::Error;
 use base64::Engine;
 use hex;
-use serde_json::Value;
-use std::collections::HashMap;
+use serde::de::DeserializeOwned;
 
-pub fn decode_jwt(jwt: &str) -> Result<HashMap<String, Value>, Error> {
+pub fn decode_jwt<T: DeserializeOwned>(jwt: &str) -> Result<T, Error> {
     let parts: Vec<&str> = jwt.split('.').collect();
 
     if parts.len() != 3 {
@@ -19,9 +18,7 @@ pub fn decode_jwt(jwt: &str) -> Result<HashMap<String, Value>, Error> {
         .decode(padded_payload)
         .map_err(Error::other)?;
 
-    let json: HashMap<String, Value> = serde_json::from_slice(&decoded).map_err(Error::other)?;
-
-    Ok(json)
+    serde_json::from_slice(&decoded).map_err(Error::other)
 }
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, Error> {

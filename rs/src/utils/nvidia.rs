@@ -1,11 +1,9 @@
-use crate::types::nvidia::NvidiaGpuVerificationData;
+use crate::types::nvidia::{NvidiaGpuVerificationData, NvidiaGpuVerificationDataRaw, NvidiaJwt};
 use crate::utils::common::decode_jwt;
 use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT};
 use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout_with_method;
 use reqwest::Method;
-use serde_json::Value;
-use std::collections::HashMap;
 
 pub async fn fetch_nvidia_gpu_verification_data(
     payload: &str,
@@ -26,7 +24,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
         )));
     }
 
-    let verification_data_raw: Value = response
+    let verification_data_raw: NvidiaGpuVerificationDataRaw = response
         .json()
         .await
         .map_err(|e| Error::verification(format!("failed to parse response: {}", e)))?;
@@ -35,43 +33,15 @@ pub async fn fetch_nvidia_gpu_verification_data(
 }
 
 fn parse_nvidia_gpu_verification_data(
-    verification_data_raw: &Value,
+    verification_data_raw: &NvidiaGpuVerificationDataRaw,
 ) -> Result<NvidiaGpuVerificationData, Error> {
-    let array = verification_data_raw
-        .as_array()
-        .ok_or_else(|| Error::verification("invalid response format".to_owned()))?;
+    let jwt_entry = &verification_data_raw.0;
 
-    if array.len() < 2 {
-        return Err(Error::verification("invalid response format".to_owned()));
-    }
-
-    let jwt_array = array[0]
-        .as_array()
-        .ok_or_else(|| Error::verification("invalid JWT format".to_owned()))?;
-
-    if jwt_array.len() < 2 || jwt_array[0].as_str() != Some("JWT") {
+    if jwt_entry.0 != "JWT" {
         return Err(Error::verification("invalid JWT format".to_owned()));
     }
 
-    let jwt_str = jwt_array[1]
-        .as_str()
-        .ok_or_else(|| Error::verification("invalid JWT format".to_owned()))?;
+    let jwt: NvidiaJwt = decode_jwt(&jwt_entry.1)?;
 
-    let jwt = decode_jwt(jwt_str)?;
-
-    let gpu_obj = array[1]
-        .as_object()
-        .ok_or_else(|| Error::verification("invalid GPU format".to_owned()))?;
-
-    let mut gpu: HashMap<String, HashMap<String, Value>> = HashMap::new();
-
-    for (key, value) in gpu_obj {
-        let value_str = value
-            .as_str()
-            .ok_or_else(|| Error::verification("invalid GPU JWT format".to_owned()))?;
-        let decoded = decode_jwt(value_str)?;
-        gpu.insert(key.clone(), decoded);
-    }
-
-    Ok(NvidiaGpuVerificationData { jwt, gpu })
+    Ok(NvidiaGpuVerificationData { jwt })
 }
