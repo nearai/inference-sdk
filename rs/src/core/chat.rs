@@ -3,8 +3,6 @@ use crate::types::attestation_model::ModelAttestation;
 use crate::types::chat::{Chat, ChatSignature};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::errors::Error;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use sha2::{Digest, Sha256};
 
 pub fn verify_chat(message: &Chat, signature: &ChatSignature) -> Result<(), Error> {
     verify_chat_hash(
@@ -40,16 +38,12 @@ pub fn verify_signing_address(
 fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
     match signature.signing_algo {
         SigningAlgo::Ecdsa => {
-            use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
-            use sha3::{Digest, Keccak256};
-
-            // Create Ethereum message hash
             let message = format!(
                 "\x19Ethereum Signed Message:\n{}{}",
                 signature.text.len(),
                 signature.text
             );
-            let message_hash = Keccak256::digest(message.as_bytes());
+            let message_hash = <sha3::Keccak256 as sha3::Digest>::digest(message.as_bytes());
 
             let sig_bytes = hex_to_bytes(&signature.signature)?;
 
@@ -57,19 +51,19 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                 return Err(Error::verification("invalid signature length".to_owned()));
             }
 
-            let recovery_id = RecoveryId::try_from(sig_bytes[64])
+            let recovery_id = k256::ecdsa::RecoveryId::try_from(sig_bytes[64])
                 .map_err(|_| Error::verification("invalid recovery ID".to_owned()))?;
 
-            let sig = EcdsaSignature::from_bytes((&sig_bytes[..64]).into())
+            let sig = k256::ecdsa::Signature::from_bytes((&sig_bytes[..64]).into())
                 .map_err(|_| Error::verification("invalid signature format".to_owned()))?;
 
             let verifying_key =
-                VerifyingKey::recover_from_prehash(&message_hash, &sig, recovery_id)
+                k256::ecdsa::VerifyingKey::recover_from_prehash(&message_hash, &sig, recovery_id)
                     .map_err(|_| Error::verification("failed to recover public key".to_owned()))?;
 
             // Get address from public key (last 20 bytes of keccak256 hash of public key)
             let public_key_bytes = verifying_key.to_sec1_bytes();
-            let pubkey_hash = Keccak256::digest(&public_key_bytes[1..]); // Skip 0x04 prefix
+            let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&public_key_bytes[1..]); // Skip 0x04 prefix
             let recovered_address: [u8; 20] = pubkey_hash[12..]
                 .try_into()
                 .map_err(|_| Error::verification("invalid recovered address length".to_owned()))?;
@@ -93,21 +87,20 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let public_key_bytes = hex_to_bytes(&signature.signing_address)?;
             let signature_bytes = hex_to_bytes(&signature.signature)?;
 
-            let verifying_key = VerifyingKey::from_bytes(
+            let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(
                 public_key_bytes[..32]
                     .try_into()
                     .map_err(|_| Error::verification("invalid public key length".to_owned()))?,
             )
             .map_err(|e| Error::verification(format!("failed to create verifying key: {}", e)))?;
 
-            let sig = Signature::from_bytes(
+            let sig = ed25519_dalek::Signature::from_bytes(
                 signature_bytes[..64]
                     .try_into()
                     .map_err(|_| Error::verification("invalid signature length".to_owned()))?,
             );
 
-            verifying_key
-                .verify(signature.text.as_bytes(), &sig)
+            ed25519_dalek::Verifier::verify(&verifying_key, signature.text.as_bytes(), &sig)
                 .map_err(|_| Error::verification("invalid ED25519 chat signature".to_owned()))?;
         }
     }
@@ -116,8 +109,8 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
 }
 
 fn verify_chat_hash(text: &str, request_body: &[u8], response_body: &[u8]) -> Result<(), Error> {
-    let request_hash = hex::encode(Sha256::digest(request_body));
-    let response_hash = hex::encode(Sha256::digest(response_body));
+    let request_hash = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(request_body));
+    let response_hash = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(response_body));
     let expected = format!("{}:{}", request_hash, response_hash);
 
     if text != expected {
