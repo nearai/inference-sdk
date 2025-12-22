@@ -1,5 +1,3 @@
-use anyhow::anyhow;
-use std::fmt::{Debug, Display};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -16,7 +14,11 @@ impl Error {
         Self::VerificationError(message)
     }
 
-    pub fn other<E: Debug + Display + Sync + Send + 'static>(e: E) -> Self {
-        Self::OtherError(anyhow!(e))
+    pub fn other_message(message: String) -> Self {
+        Self::OtherError(anyhow::Error::msg(message))
+    }
+
+    pub fn other<E: std::error::Error + Send + Sync + 'static>(e: E) -> Self {
+        Self::OtherError(anyhow::Error::new(e))
     }
 }

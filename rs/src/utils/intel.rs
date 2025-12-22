@@ -2,6 +2,7 @@ use crate::types::intel::{IntelQuote, IntelQuoteBody, IntelTdxVerificationData};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::consts::INTEL_PCCS_API_URL;
 use crate::utils::errors::Error;
+use anyhow::Context;
 use dcap_qvl::collateral::get_collateral;
 use dcap_qvl::verify::verify;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -13,7 +14,7 @@ pub async fn fetch_intel_tdx_verification_data(
 
     let collateral = get_collateral(INTEL_PCCS_API_URL, &quote_raw)
         .await
-        .map_err(|e| Error::other(format!("failed to get collateral: {}", e)))?;
+        .context("failed to get collateral")?;
 
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
