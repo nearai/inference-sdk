@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NvidiaGpuVerificationData {
     #[serde(rename = "JWT")]
     pub jwt: HashMap<String, serde_json::Value>,

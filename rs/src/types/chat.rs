@@ -1,13 +1,13 @@
 use crate::types::attestation_common::SigningAlgo;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Chat {
     pub request_body: Vec<u8>,
     pub response_body: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatSignature {
     pub text: String,
     pub signature: String,

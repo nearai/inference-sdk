@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct Context {
     pub api_domain: String,
     pub api_url: String,
@@ -6,7 +6,7 @@ pub struct Context {
     pub model: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct ChatCompletionsResponse {
     pub id: String,
     pub request_body_raw: Vec<u8>,

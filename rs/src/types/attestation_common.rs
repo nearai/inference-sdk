@@ -7,12 +7,12 @@ pub enum SigningAlgo {
     Ed25519,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TcbInfo {
     pub app_compose: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TcbInfoOrRaw {
     Parsed(TcbInfo),
