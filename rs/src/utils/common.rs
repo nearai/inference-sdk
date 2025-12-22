@@ -1,4 +1,3 @@
-use anyhow::Context;
 use base64::Engine;
 use hex;
 use serde::de::DeserializeOwned;
@@ -17,11 +16,9 @@ pub fn decode_jwt<T: DeserializeOwned>(jwt: &str) -> anyhow::Result<T> {
     let padding = (4 - payload.len() % 4) % 4;
     let padded_payload = format!("{}{}", payload, "=".repeat(padding));
 
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(padded_payload)
-        .context("invalid JWT payload base64")?;
+    let decoded = base64::engine::general_purpose::STANDARD.decode(padded_payload)?;
 
-    serde_json::from_slice(&decoded).context("invalid JWT payload JSON")
+    Ok(serde_json::from_slice(&decoded)?)
 }
 
 pub fn hex_to_bytes(hex: &str) -> anyhow::Result<Vec<u8>> {

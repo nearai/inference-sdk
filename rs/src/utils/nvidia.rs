@@ -20,16 +20,10 @@ pub async fn fetch_nvidia_gpu_verification_data(
     .await?;
 
     if !response.status().is_success() {
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<failed to read response body>".to_owned());
         anyhow::bail!(
-            "failed to fetch NVIDIA GPU verification data: url={}, status={}, body={}",
+            "failed to fetch NVIDIA GPU verification data: url={}, status={}",
             NVIDIA_GPU_VERIFIER_API_URL,
-            status,
-            body
+            response.status(),
         );
     }
 

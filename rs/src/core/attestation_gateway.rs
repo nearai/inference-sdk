@@ -66,11 +66,12 @@ async fn verify_vpc_for_gateway(
     let response = fetch_timeout(&url, TIMEOUT).await?;
 
     if !response.status().is_success() {
-        return Err(Error::OtherError(anyhow::Error::msg(format!(
+        let msg = format!(
             "failed to fetch VPC info: url={}, status={}",
             url,
             response.status(),
-        ))));
+        );
+        return Err(anyhow::Error::msg(msg).into());
     }
 
     #[derive(Deserialize)]

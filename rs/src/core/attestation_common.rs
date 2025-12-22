@@ -2,6 +2,7 @@ use crate::types::attestation_common::{TcbInfo, TcbInfoOrRaw};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::consts::{SIGSTORE_SEARCH_API_URL, TIMEOUT};
 use crate::utils::errors::Error;
+use crate::utils::fetch::fetch_timeout_with_method;
 use anyhow::Context;
 use regex::Regex;
 use reqwest::Method;
@@ -84,8 +85,7 @@ fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Error> 
 }
 
 async fn verify_sigstore_link(link: &str) -> Result<(), Error> {
-    let response =
-        crate::utils::fetch::fetch_timeout_with_method(link, TIMEOUT, Method::HEAD, None).await?;
+    let response = fetch_timeout_with_method(link, TIMEOUT, Method::HEAD, None).await?;
 
     if !response.status().is_success() {
         return Err(Error::VerificationError(format!(

@@ -11,14 +11,11 @@ pub async fn fetch_intel_tdx_verification_data(
 ) -> anyhow::Result<IntelTdxVerificationData> {
     let quote_raw = hex_to_bytes(quote)?;
 
-    let collateral = get_collateral(INTEL_PCCS_API_URL, &quote_raw)
-        .await
-        .context("failed to get collateral")?;
+    let collateral = get_collateral(INTEL_PCCS_API_URL, &quote_raw).await?;
 
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-    let verification_data_raw =
-        verify(&quote_raw, &collateral, current_time).context("failed to verify Intel quote")?;
+    let verification_data_raw = verify(&quote_raw, &collateral, current_time)?;
 
     let td10 = verification_data_raw
         .report
