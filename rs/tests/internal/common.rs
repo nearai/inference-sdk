@@ -1,13 +1,13 @@
-use crate::internal::types::{ChatCompletionsResponse, Context};
+use crate::internal::types::ChatCompletionsResponse;
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Url;
+use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 use verification_sdk::{ChatSignature, DomainAttestation, GatewayAttestationReport, SigningAlgo};
 
 pub async fn sleep(ms: u64) {
-    tokio::time::sleep(Duration::from_millis(ms)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
 }
 
 pub fn generate_request_nonce() -> String {
@@ -17,14 +17,16 @@ pub fn generate_request_nonce() -> String {
 }
 
 pub async fn fetch_attestation_report(
-    ctx: &Context,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
     request_nonce: &str,
     signing_algo: SigningAlgo,
 ) -> GatewayAttestationReport {
-    let mut url = Url::parse(&format!("{}/attestation/report", ctx.api_url)).unwrap();
+    let mut url = Url::parse(&format!("{}/attestation/report", api_url)).unwrap();
 
     url.query_pairs_mut()
-        .append_pair("model", &ctx.model)
+        .append_pair("model", model)
         .append_pair("nonce", request_nonce)
         .append_pair("signing_algo", &signing_algo.to_string());
 
@@ -32,7 +34,7 @@ pub async fn fetch_attestation_report(
 
     let res = client
         .get(url)
-        .headers(auth_headers(&ctx.api_key))
+        .headers(auth_headers(api_key))
         .send()
         .await
         .unwrap();
@@ -48,21 +50,23 @@ pub async fn fetch_attestation_report(
 }
 
 pub async fn fetch_chat_signature(
-    ctx: &Context,
+    api_url: &str,
+    api_key: &str,
+    model: &str,
     chat_id: &str,
     signing_algo: SigningAlgo,
 ) -> ChatSignature {
-    let mut url = Url::parse(&format!("{}/signature/{}", ctx.api_url, chat_id)).unwrap();
+    let mut url = Url::parse(&format!("{}/signature/{}", api_url, chat_id)).unwrap();
 
     url.query_pairs_mut()
-        .append_pair("model", &ctx.model)
+        .append_pair("model", model)
         .append_pair("signing_algo", &signing_algo.to_string());
 
     let client = reqwest::Client::new();
 
     let res = client
         .get(url)
-        .headers(auth_headers(&ctx.api_key))
+        .headers(auth_headers(api_key))
         .send()
         .await
         .unwrap();
@@ -77,14 +81,18 @@ pub async fn fetch_chat_signature(
     res.json::<ChatSignature>().await.unwrap()
 }
 
-pub async fn chat_completions(ctx: &Context, request_body: &Value) -> ChatCompletionsResponse {
+pub async fn chat_completions(
+    api_url: &str,
+    api_key: &str,
+    request_body: &Value,
+) -> ChatCompletionsResponse {
     let request_body_raw = serde_json::to_vec(request_body).unwrap();
 
     let client = reqwest::Client::new();
 
     let res = client
-        .post(format!("{}/chat/completions", ctx.api_url))
-        .headers(auth_headers(&ctx.api_key))
+        .post(format!("{}/chat/completions", api_url))
+        .headers(auth_headers(api_key))
         .body(request_body_raw.clone())
         .send()
         .await
@@ -96,29 +104,27 @@ pub async fn chat_completions(ctx: &Context, request_body: &Value) -> ChatComple
 
     let response_body_raw = res.bytes().await.unwrap().to_vec();
 
-    let id = if request_body
-        .get("stream")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-    {
-        // stream response: first line is "data: {...}"
-        let text = String::from_utf8_lossy(&response_body_raw);
-        let first_line = text.lines().next().unwrap_or("");
-        let json_part = first_line
-            .strip_prefix("data: ")
-            .unwrap_or(first_line)
-            .trim();
-        let v: Value = serde_json::from_str(json_part).expect("invalid stream chunk json");
-        v.get("id")
-            .and_then(|v| v.as_str())
-            .expect("missing id")
-            .to_owned()
+    #[derive(Deserialize)]
+    struct WithId {
+        id: String,
+    }
+
+    #[derive(Deserialize)]
+    struct WithStream {
+        stream: Option<bool>,
+    }
+
+    let with_stream: WithStream = serde_json::from_slice(&request_body_raw).unwrap();
+
+    let id = if with_stream.stream.unwrap_or_default() {
+        let text = String::from_utf8(response_body_raw.clone()).unwrap();
+        let first_line = text.lines().next().unwrap();
+        let json_part = &first_line[6..];
+        let with_id: WithId = serde_json::from_str(json_part).unwrap();
+        with_id.id
     } else {
-        let v: Value = serde_json::from_slice(&response_body_raw).expect("invalid json");
-        v.get("id")
-            .and_then(|v| v.as_str())
-            .expect("missing id")
-            .to_owned()
+        let with_id: WithId = serde_json::from_slice(&response_body_raw).unwrap();
+        with_id.id
     };
 
     ChatCompletionsResponse {

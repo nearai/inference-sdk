@@ -1,9 +1,9 @@
 mod internal;
 
-use crate::internal::context::init_context;
 use internal::common::{
     fetch_attestation_report, fetch_domain_attestation, generate_request_nonce,
 };
+use internal::context::init_context;
 use verification_sdk::{
     verify_domain_attestation, verify_gateway_attestation, verify_model_attestation, SigningAlgo,
 };
@@ -29,7 +29,14 @@ async fn test_gateway_attestation_and_model_attestations(signing_algo: SigningAl
     let ctx = init_context();
     let request_nonce = generate_request_nonce();
 
-    let report = fetch_attestation_report(&ctx, &request_nonce, signing_algo).await;
+    let report = fetch_attestation_report(
+        &ctx.api_url,
+        &ctx.api_key,
+        &ctx.model,
+        &request_nonce,
+        signing_algo,
+    )
+    .await;
 
     assert_eq!(report.gateway_attestation.request_nonce, request_nonce);
     assert_eq!(report.gateway_attestation.signing_algo, Some(signing_algo));

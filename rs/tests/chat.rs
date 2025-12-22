@@ -21,7 +21,8 @@ async fn test_chat_signature(signing_algo: SigningAlgo) {
     let ctx = init_context();
 
     let completions = chat_completions(
-        &ctx,
+        &ctx.api_url,
+        &ctx.api_key,
         &json!({
             "model": ctx.model,
             "messages": [{"role": "user", "content": "Hello"}],
@@ -32,7 +33,14 @@ async fn test_chat_signature(signing_algo: SigningAlgo) {
 
     sleep(5_000).await; // Waiting for signature preparation
 
-    let signature = fetch_chat_signature(&ctx, &completions.id, signing_algo).await;
+    let signature = fetch_chat_signature(
+        &ctx.api_url,
+        &ctx.api_key,
+        &ctx.model,
+        &completions.id,
+        signing_algo,
+    )
+    .await;
     assert_eq!(signature.signing_algo, signing_algo);
 
     let chat = Chat {
@@ -42,7 +50,14 @@ async fn test_chat_signature(signing_algo: SigningAlgo) {
 
     verify_chat(&chat, &signature).unwrap();
 
-    let report = fetch_attestation_report(&ctx, &generate_request_nonce(), signing_algo).await;
+    let report = fetch_attestation_report(
+        &ctx.api_url,
+        &ctx.api_key,
+        &ctx.model,
+        &generate_request_nonce(),
+        signing_algo,
+    )
+    .await;
     let attestations = report.model_attestations.unwrap_or_default();
     verify_signing_address(&signature, &attestations).unwrap();
 }
