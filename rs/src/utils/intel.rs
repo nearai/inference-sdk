@@ -23,10 +23,9 @@ pub async fn fetch_intel_tdx_verification_data(
     let verification_data_raw = verify(&quote_raw, &collateral, current_time)
         .map_err(|e| Error::verification(format!("failed to verify Intel quote: {}", e)))?;
 
-    let td10 = verification_data_raw
-        .report
-        .as_td10()
-        .ok_or_else(|| Error::verification("bad report data".to_owned()))?;
+    let td10 = verification_data_raw.report.as_td10().ok_or_else(|| {
+        Error::verification("bad report data: expected TD10 report structure".to_owned())
+    })?;
 
     let verified = verification_data_raw.status == "UpToDate";
     let report_data = td10.report_data;

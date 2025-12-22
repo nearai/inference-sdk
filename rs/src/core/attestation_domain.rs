@@ -42,7 +42,10 @@ fn verify_intel_tdx_for_domain(
     sha256sum: &str,
 ) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(Error::verification("Intel quote not verified".to_owned()));
+        return Err(Error::verification(format!(
+            "Intel quote not verified: quote.verified=false (domain={})",
+            domain
+        )));
     }
 
     verify_intel_quote_report_data_for_domain(
@@ -78,7 +81,10 @@ fn verify_intel_quote_report_data_for_domain(
     // The report data must be exactly 64 bytes: first 32 bytes are the SHA256,
     // the remaining 32 bytes must all be zero (see JS/Python SDKs).
     if report_data_raw.len() != 64 {
-        return Err(Error::verification("invalid report data length".to_owned()));
+        return Err(Error::verification(format!(
+            "invalid report data length: expected 64 bytes, got {}",
+            report_data_raw.len()
+        )));
     }
 
     let embedded_sha256sum = &report_data_raw[0..32];
@@ -105,9 +111,10 @@ async fn verify_live_certificate(live_cert: &Certificate, cert: &str) -> Result<
     let cert_chain = parse_certificate_chain(cert)?;
 
     if cert_chain.len() < 2 {
-        return Err(Error::verification(
-            "unexpected length of certificate chain".to_owned(),
-        ));
+        return Err(Error::verification(format!(
+            "unexpected length of certificate chain: expected >=2 certificates, got {}",
+            cert_chain.len()
+        )));
     }
 
     let root_cert = &cert_chain[cert_chain.len() - 1];

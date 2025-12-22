@@ -48,12 +48,16 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
             let sig_bytes = hex_to_bytes(&signature.signature)?;
 
             if sig_bytes.len() != 65 {
-                return Err(Error::verification("invalid signature length".to_owned()));
+                return Err(Error::verification(format!(
+                    "invalid signature length: expected 65 bytes, got {}",
+                    sig_bytes.len()
+                )));
             }
 
             // Ethereum signatures commonly encode recovery `v` as 27/28 (or EIP-155 values 35+).
             // k256 expects recovery id in 0/1 form (y-parity).
-            let mut v = sig_bytes[64];
+            let v_raw = sig_bytes[64];
+            let mut v = v_raw;
             if v == 27 || v == 28 {
                 v -= 27;
             } else if v >= 35 {
@@ -61,15 +65,28 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                 v = (v - 35) % 2;
             }
 
-            let recovery_id = k256::ecdsa::RecoveryId::try_from(v)
-                .map_err(|_| Error::verification("invalid recovery ID".to_owned()))?;
+            let recovery_id = k256::ecdsa::RecoveryId::try_from(v).map_err(|_| {
+                Error::verification(format!(
+                    "invalid recovery ID: v_raw={}, v_normalized={}",
+                    v_raw, v
+                ))
+            })?;
 
-            let sig = k256::ecdsa::Signature::from_bytes((&sig_bytes[..64]).into())
-                .map_err(|_| Error::verification("invalid signature format".to_owned()))?;
+            let sig =
+                k256::ecdsa::Signature::from_bytes((&sig_bytes[..64]).into()).map_err(|_| {
+                    Error::verification(
+                        "invalid signature format: failed to parse 64-byte r||s".to_owned(),
+                    )
+                })?;
 
             let verifying_key =
                 k256::ecdsa::VerifyingKey::recover_from_prehash(&message_hash, &sig, recovery_id)
-                    .map_err(|_| Error::verification("failed to recover public key".to_owned()))?;
+                    .map_err(|_| {
+                    Error::verification(format!(
+                        "failed to recover public key from signature (v_raw={}, v_normalized={})",
+                        v_raw, v
+                    ))
+                })?;
 
             // Get address from public key (last 20 bytes of keccak256 hash of public key)
             let public_key_bytes = verifying_key.to_sec1_bytes();
@@ -83,13 +100,14 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                 .map_err(|_| Error::verification("invalid signing address format".to_owned()))?;
 
             if signing_address_bytes.len() != 20 {
-                return Err(Error::verification(
-                    "invalid signing address length".to_owned(),
-                ));
+                return Err(Error::verification(format!(
+                    "invalid signing address length: expected 20 bytes, got {}",
+                    signing_address_bytes.len()
+                )));
             }
             if recovered_address != signing_address_bytes.as_slice() {
                 return Err(Error::verification(
-                    "invalid ECDSA chat signature".to_owned(),
+                    "invalid ECDSA chat signature: recovered address does not match signing_address".to_owned(),
                 ));
             }
         }

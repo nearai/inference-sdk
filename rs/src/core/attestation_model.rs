@@ -34,7 +34,10 @@ fn verify_intel_tdx_for_model(
     signing_address: &str,
 ) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(Error::verification("Intel quote not verified".to_owned()));
+        return Err(Error::verification(format!(
+            "Intel quote not verified: quote.verified=false (request_nonce={}, signing_address={})",
+            request_nonce, signing_address
+        )));
     }
 
     verify_intel_quote_report_data_for_attestation_report(
@@ -48,7 +51,9 @@ fn verify_nvidia_gpu_for_model(
     verification_data: &crate::types::nvidia::NvidiaGpuVerificationData,
 ) -> Result<(), Error> {
     if !verification_data.jwt.x_nvidia_overall_att_result {
-        return Err(Error::verification("NVIDIA GPU not verified".to_owned()));
+        return Err(Error::verification(
+            "NVIDIA GPU not verified: x-nvidia-overall-att-result=false".to_owned(),
+        ));
     }
 
     Ok(())

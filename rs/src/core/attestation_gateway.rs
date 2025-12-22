@@ -43,7 +43,9 @@ fn verify_intel_tdx_for_gateway(
     signing_address: &str,
 ) -> Result<(), Error> {
     if !verification_data.quote.verified {
-        return Err(Error::verification("Intel quote not verified".to_owned()));
+        return Err(Error::verification(
+            "Intel quote not verified: quote.verified=false".to_owned(),
+        ));
     }
 
     verify_intel_quote_report_data_for_attestation_report(
@@ -64,8 +66,9 @@ async fn verify_vpc_for_gateway(
 
     if !response.status().is_success() {
         return Err(Error::verification(format!(
-            "failed to fetch VPC info with status code {}",
-            response.status()
+            "failed to fetch VPC info: url={}, status={}",
+            url,
+            response.status(),
         )));
     }
 
@@ -80,9 +83,10 @@ async fn verify_vpc_for_gateway(
         .ok_or_else(|| Error::verification("missing vpc_server_app_id".to_owned()))?;
 
     if vpc_server_app_id_value != vpc_server_app_id {
-        return Err(Error::verification(
-            "vpc_server_app_id mismatching".to_owned(),
-        ));
+        return Err(Error::verification(format!(
+            "vpc_server_app_id mismatching: expected '{}', got '{}'",
+            vpc_server_app_id, vpc_server_app_id_value
+        )));
     }
 
     let nodes = vpc_info
@@ -93,7 +97,10 @@ async fn verify_vpc_for_gateway(
     let hostname_found = nodes.iter().any(|node| node.as_str() == Some(vpc_hostname));
 
     if !hostname_found {
-        return Err(Error::verification("vpc_hostname mismatching".to_owned()));
+        return Err(Error::verification(format!(
+            "vpc_hostname mismatching: expected '{}' to be present in nodes",
+            vpc_hostname
+        )));
     }
 
     Ok(())
