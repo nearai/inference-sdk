@@ -16,13 +16,6 @@ pub fn generate_request_nonce() -> String {
     hex::encode(bytes)
 }
 
-fn signing_algo_as_query_value(signing_algo: SigningAlgo) -> &'static str {
-    match signing_algo {
-        SigningAlgo::Ecdsa => "ecdsa",
-        SigningAlgo::Ed25519 => "ed25519",
-    }
-}
-
 fn auth_headers(api_key: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
@@ -42,7 +35,7 @@ pub async fn fetch_attestation_report(
     url.query_pairs_mut()
         .append_pair("model", &ctx.model)
         .append_pair("nonce", request_nonce)
-        .append_pair("signing_algo", signing_algo_as_query_value(signing_algo));
+        .append_pair("signing_algo", &signing_algo.to_string());
 
     let client = reqwest::Client::new();
     let res = client
@@ -73,7 +66,7 @@ pub async fn fetch_chat_signature(
         Url::parse(&format!("{}/signature/{}", ctx.api_url, chat_id)).expect("invalid API url");
     url.query_pairs_mut()
         .append_pair("model", &ctx.model)
-        .append_pair("signing_algo", signing_algo_as_query_value(signing_algo));
+        .append_pair("signing_algo", &signing_algo.to_string());
 
     let client = reqwest::Client::new();
     let res = client
