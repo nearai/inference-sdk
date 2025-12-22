@@ -111,7 +111,7 @@ pub async fn chat_completions(ctx: &Context, request_body: &Value) -> ChatComple
         .expect("request failed");
 
     if !res.status().is_success() {
-        panic!("Failed to chat with status code: {}", res.status());
+        panic!("failed to chat with status code: {}", res.status());
     }
 
     let response_body_raw = res.bytes().await.expect("failed to read body").to_vec();
