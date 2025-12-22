@@ -26,7 +26,7 @@ async fn test_chat_signature(signing_algo: SigningAlgo) {
         &json!({
             "model": ctx.model,
             "messages": [{"role": "user", "content": "Hello"}],
-            "stream": true
+            "stream": false
         }),
     )
     .await;

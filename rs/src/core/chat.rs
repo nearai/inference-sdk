@@ -51,7 +51,17 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                 return Err(Error::verification("invalid signature length".to_owned()));
             }
 
-            let recovery_id = k256::ecdsa::RecoveryId::try_from(sig_bytes[64])
+            // Ethereum signatures commonly encode recovery `v` as 27/28 (or EIP-155 values 35+).
+            // k256 expects recovery id in 0/1 form (y-parity).
+            let mut v = sig_bytes[64];
+            if v == 27 || v == 28 {
+                v -= 27;
+            } else if v >= 35 {
+                // EIP-155: v = 35 + 2*chain_id + parity
+                v = (v - 35) % 2;
+            }
+
+            let recovery_id = k256::ecdsa::RecoveryId::try_from(v)
                 .map_err(|_| Error::verification("invalid recovery ID".to_owned()))?;
 
             let sig = k256::ecdsa::Signature::from_bytes((&sig_bytes[..64]).into())
