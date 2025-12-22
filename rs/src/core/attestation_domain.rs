@@ -244,13 +244,14 @@ fn get_certificate_fingerprint(cert: &Certificate) -> Result<String, Error> {
     let hash = Sha256::digest(&der);
     let hash_hex = hex::encode(hash).to_uppercase();
 
-    let fingerprint = hash_hex
-        .chars()
-        .collect::<Vec<char>>()
-        .chunks(2)
-        .map(|chunk| chunk.iter().collect::<String>())
-        .collect::<Vec<String>>()
-        .join(":");
+    let mut fingerprint = String::with_capacity(hash_hex.len() + hash_hex.len() / 2);
+
+    for (i, chunk) in hash_hex.as_bytes().chunks(2).enumerate() {
+        if i > 0 {
+            fingerprint.push(':');
+        }
+        fingerprint.push_str(std::str::from_utf8(chunk).unwrap());
+    }
 
     Ok(fingerprint)
 }
