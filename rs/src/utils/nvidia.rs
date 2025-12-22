@@ -27,7 +27,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
             .text()
             .await
             .unwrap_or_else(|_| "<failed to read response body>".to_owned());
-        return Err(Error::other_message(format!(
+        return Err(Error::common(format!(
             "failed to fetch NVIDIA GPU verification data: url={}, status={}, body={}",
             NVIDIA_GPU_VERIFIER_API_URL, status, body
         )));
@@ -48,7 +48,7 @@ fn parse_nvidia_gpu_verification_data(
         let jwt: NvidiaJwt = decode_jwt(jwt).context("failed to decode NVIDIA JWT payload")?;
         Ok(NvidiaGpuVerificationData { jwt })
     } else {
-        Err(Error::other_message(
+        Err(Error::common(
             "invalid NVIDIA GPU verifier response format: expected first item to be JWT".to_owned(),
         ))
     }

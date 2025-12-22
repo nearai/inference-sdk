@@ -8,7 +8,7 @@ pub fn decode_jwt<T: DeserializeOwned>(jwt: &str) -> Result<T, Error> {
     let parts: Vec<&str> = jwt.split('.').collect();
 
     if parts.len() != 3 {
-        return Err(Error::other_message(format!(
+        return Err(Error::common(format!(
             "invalid JWT format: expected 3 segments separated by '.', got {}",
             parts.len()
         )));
@@ -23,7 +23,7 @@ pub fn decode_jwt<T: DeserializeOwned>(jwt: &str) -> Result<T, Error> {
         .context("invalid JWT payload base64")?;
 
     serde_json::from_slice(&decoded)
-        .map_err(|e| Error::other_message(format!("invalid JWT payload JSON: {}", e)))
+        .map_err(|e| Error::common(format!("invalid JWT payload JSON: {}", e)))
 }
 
 pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, Error> {

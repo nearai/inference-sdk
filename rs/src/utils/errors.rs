@@ -14,7 +14,7 @@ impl Error {
         Self::VerificationError(message)
     }
 
-    pub fn other_message(message: String) -> Self {
+    pub fn common(message: String) -> Self {
         Self::OtherError(anyhow::Error::msg(message))
     }
 
