@@ -1,6 +1,6 @@
 use crate::internal::types::{ChatCompletionsResponse, Context};
 use k256::elliptic_curve::rand_core::{OsRng, RngCore};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use reqwest::Url;
 use serde_json::Value;
 use std::time::Duration;
@@ -16,45 +16,35 @@ pub fn generate_request_nonce() -> String {
     hex::encode(bytes)
 }
 
-fn auth_headers(api_key: &str) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).expect("invalid API_KEY"),
-    );
-    headers
-}
-
 pub async fn fetch_attestation_report(
     ctx: &Context,
     request_nonce: &str,
     signing_algo: SigningAlgo,
 ) -> GatewayAttestationReport {
-    let mut url =
-        Url::parse(&format!("{}/attestation/report", ctx.api_url)).expect("invalid API url");
+    let mut url = Url::parse(&format!("{}/attestation/report", ctx.api_url)).unwrap();
+
     url.query_pairs_mut()
         .append_pair("model", &ctx.model)
         .append_pair("nonce", request_nonce)
         .append_pair("signing_algo", &signing_algo.to_string());
 
     let client = reqwest::Client::new();
+
     let res = client
         .get(url)
         .headers(auth_headers(&ctx.api_key))
         .send()
         .await
-        .expect("request failed");
+        .unwrap();
 
     if !res.status().is_success() {
         panic!(
-            "Failed to fetch attestation report with status code: {}",
+            "failed to fetch attestation report with status code: {}",
             res.status()
         );
     }
 
-    res.json::<GatewayAttestationReport>()
-        .await
-        .expect("invalid attestation report JSON")
+    res.json::<GatewayAttestationReport>().await.unwrap()
 }
 
 pub async fn fetch_chat_signature(
@@ -62,52 +52,49 @@ pub async fn fetch_chat_signature(
     chat_id: &str,
     signing_algo: SigningAlgo,
 ) -> ChatSignature {
-    let mut url =
-        Url::parse(&format!("{}/signature/{}", ctx.api_url, chat_id)).expect("invalid API url");
+    let mut url = Url::parse(&format!("{}/signature/{}", ctx.api_url, chat_id)).unwrap();
+
     url.query_pairs_mut()
         .append_pair("model", &ctx.model)
         .append_pair("signing_algo", &signing_algo.to_string());
 
     let client = reqwest::Client::new();
+
     let res = client
         .get(url)
         .headers(auth_headers(&ctx.api_key))
         .send()
         .await
-        .expect("request failed");
+        .unwrap();
 
     if !res.status().is_success() {
         panic!(
-            "Failed to fetch chat signature with status code: {}",
+            "failed to fetch chat signature with status code: {}",
             res.status()
         );
     }
 
-    res.json::<ChatSignature>()
-        .await
-        .expect("invalid chat signature JSON")
+    res.json::<ChatSignature>().await.unwrap()
 }
 
 pub async fn chat_completions(ctx: &Context, request_body: &Value) -> ChatCompletionsResponse {
-    let request_body_raw = serde_json::to_vec(request_body).expect("invalid request body json");
+    let request_body_raw = serde_json::to_vec(request_body).unwrap();
 
     let client = reqwest::Client::new();
-    let mut headers = auth_headers(&ctx.api_key);
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let res = client
         .post(format!("{}/chat/completions", ctx.api_url))
-        .headers(headers)
+        .headers(auth_headers(&ctx.api_key))
         .body(request_body_raw.clone())
         .send()
         .await
-        .expect("request failed");
+        .unwrap();
 
     if !res.status().is_success() {
         panic!("failed to chat with status code: {}", res.status());
     }
 
-    let response_body_raw = res.bytes().await.expect("failed to read body").to_vec();
+    let response_body_raw = res.bytes().await.unwrap().to_vec();
 
     let id = if request_body
         .get("stream")
@@ -160,63 +147,56 @@ pub async fn fetch_domain_attestation(domain: &str) -> DomainAttestation {
         client.get(info_url).send(),
     );
 
-    let intel_quote_res = intel_quote_res.expect("request failed");
-    let cert_res = cert_res.expect("request failed");
-    let acme_account_res = acme_account_res.expect("request failed");
-    let sha256sum_res = sha256sum_res.expect("request failed");
-    let info_res = info_res.expect("request failed");
+    let intel_quote_res = intel_quote_res.unwrap();
+    let cert_res = cert_res.unwrap();
+    let acme_account_res = acme_account_res.unwrap();
+    let sha256sum_res = sha256sum_res.unwrap();
+    let info_res = info_res.unwrap();
 
     if !intel_quote_res.status().is_success() {
         panic!(
-            "Failed to fetch Intel quote with status code: {}",
+            "failed to fetch Intel quote with status code: {}",
             intel_quote_res.status()
         );
     }
+
     if !cert_res.status().is_success() {
         panic!(
-            "Failed to fetch certificate with status code: {}",
+            "failed to fetch certificate with status code: {}",
             cert_res.status()
         );
     }
+
     if !acme_account_res.status().is_success() {
         panic!(
-            "Failed to fetch ACME account with status code: {}",
+            "failed to fetch ACME account with status code: {}",
             acme_account_res.status()
         );
     }
+
     if !sha256sum_res.status().is_success() {
         panic!(
-            "Failed to fetch sha256 sum with status code: {}",
+            "failed to fetch sha256 sum with status code: {}",
             sha256sum_res.status()
         );
     }
+
     if !info_res.status().is_success() {
         panic!(
-            "Failed to fetch info with status code: {}",
+            "failed to fetch info with status code: {}",
             info_res.status()
         );
     }
 
-    let intel_quote_json: Value = intel_quote_res
-        .json()
-        .await
-        .expect("invalid intel quote json");
-    let intel_quote = intel_quote_json
-        .get("quote")
-        .and_then(|v| v.as_str())
-        .expect("missing quote field")
-        .to_owned();
+    let intel_quote_json: Value = intel_quote_res.json().await.unwrap();
 
-    let cert = cert_res.text().await.expect("failed to read cert");
-    let acme_account = acme_account_res
-        .text()
-        .await
-        .expect("failed to read acme account");
-    let sha256sum = sha256sum_res
-        .text()
-        .await
-        .expect("failed to read sha256sum");
-    let info: Value = info_res.json().await.expect("invalid info json");
+    let intel_quote = intel_quote_json["quote"].as_str().unwrap().to_owned();
+
+    let cert = cert_res.text().await.unwrap();
+
+    let acme_account = acme_account_res.text().await.unwrap();
+
+    let sha256sum = sha256sum_res.text().await.unwrap();
 
     DomainAttestation {
         intel_quote,
@@ -224,6 +204,15 @@ pub async fn fetch_domain_attestation(domain: &str) -> DomainAttestation {
         cert,
         acme_account,
         sha256sum,
-        info: serde_json::from_value(info).expect("invalid domain attestation info"),
+        info: info_res.json().await.unwrap(),
     }
+}
+
+fn auth_headers(api_key: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+    headers
 }
