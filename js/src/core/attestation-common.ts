@@ -64,18 +64,31 @@ function getSigstoreHashesFromCompose(
 ): string[] {
   const names = new Set(imageNamesOfSigstoreHash);
 
-  const digestsIter = compose
-    .matchAll(/([^@\s]+)@sha256:([0-9a-f]{64})/g)
-    .filter(([, name]) => names.has(name))
-    .map(([, , digest]) => digest);
+  const foundNames = new Set<string>();
+  const foundDigests: string[] = [];
 
-  const digests = new Set(digestsIter);
+  for (const match of compose.matchAll(/([^@\s]+)@sha256:([0-9a-f]{64})/g)) {
+    const [, name, digest] = match;
 
-  if (digests.size === 0) {
-    throw new VerificationError('No sigstore hash matches in compose');
+    if (!names.has(name)) {
+      continue;
+    }
+
+    foundNames.add(name);
+    foundDigests.push(digest);
   }
 
-  return Array.from(digests);
+  const missingNames = imageNamesOfSigstoreHash.filter(
+    (n) => !foundNames.has(n),
+  );
+
+  if (missingNames.length > 0) {
+    throw new Error(
+      `Missing sigstore hash for image: ${missingNames.join(', ')}`,
+    );
+  }
+
+  return foundDigests;
 }
 
 async function verifySigstoreHash(hash: string) {

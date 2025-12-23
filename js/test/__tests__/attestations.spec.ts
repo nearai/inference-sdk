@@ -17,7 +17,7 @@ const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION: string[] = [
 ];
 
 const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION: string[] = [
-  // TODO: what should be verified?
+  'nearaidev/vllm-proxy',
 ];
 
 const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION: string[] = [
@@ -38,7 +38,8 @@ describe('attestations', () => {
   test('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.apiDomain);
     await verifyDomainAttestation(attestation, {
-      sigStoreImageNames: IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
+      imageNamesOfSigstoreHash:
+        IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
     });
   });
 });
