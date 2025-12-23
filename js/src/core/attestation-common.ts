@@ -46,13 +46,13 @@ export function getComposeFromTcbInfo(tcbInfo: string | TcbInfo): string {
 }
 
 export async function verifyCompose(compose: string) {
-  const links = getSigstoreLinksFromCompose(compose);
-  for (const link of links) {
-    await verifySigstoreLink(link);
+  const hashes = getSigstoreHashesFromCompose(compose);
+  for (const hash of hashes) {
+    await verifySigstoreHash(hash);
   }
 }
 
-function getSigstoreLinksFromCompose(compose: string): string[] {
+function getSigstoreHashesFromCompose(compose: string): string[] {
   const digestsIter = compose
     .matchAll(/@sha256:([0-9a-f]{64})/g)
     .map(([, digest]) => digest);
@@ -63,21 +63,29 @@ function getSigstoreLinksFromCompose(compose: string): string[] {
     throw new VerificationError('Failed to get sigstore links from compose');
   }
 
-  const links = digests
-    .values()
-    .map((digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`);
-
-  return Array.from(links);
+  return Array.from(digests);
 }
 
-async function verifySigstoreLink(link: string) {
-  const response = await fetchTimeout(link, TIMEOUT, {
-    method: 'HEAD',
+async function verifySigstoreHash(hash: string) {
+  const response = await fetchTimeout(SIGSTORE_SEARCH_API_URL, TIMEOUT, {
+    method: 'POST',
+    body: JSON.stringify({
+      hash,
+    }),
+    headers: {
+      'content-type': 'application/json',
+    },
   });
 
-  if (response.status < 200 || response.status >= 300) {
+  if (!response.ok) {
     throw new VerificationError(
-      `Failed to verify sigstore link ${link} with status code ${response.status}`,
+      `Failed to verify sigstore hash with status code ${response.status}`,
     );
+  }
+
+  const outputs: string[] = await response.json();
+
+  if (outputs.length === 0) {
+    throw new VerificationError(`Invalid sigstore hash ${hash}`);
   }
 }
