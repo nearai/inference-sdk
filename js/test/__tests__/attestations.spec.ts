@@ -12,15 +12,15 @@ import {
 } from '../../src';
 import { Context } from '../types';
 
-const SIGSTORE_IMAGE_NAMES_FOR_GATEWAY_ATTESTATION: string[] = [
+const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION: string[] = [
   'nearaidev/cloud-api',
 ];
 
-const SIGSTORE_IMAGE_NAMES_FOR_MODEL_ATTESTATION: string[] = [
+const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION: string[] = [
   // TODO: what should be verified?
 ];
 
-const SIGSTORE_IMAGE_NAMES_FOR_DOMAIN_ATTESTATION: string[] = [
+const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION: string[] = [
   'nearaidev/dstack-ingress-vpc',
 ];
 
@@ -38,7 +38,7 @@ describe('attestations', () => {
   test('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.apiDomain);
     await verifyDomainAttestation(attestation, {
-      sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_DOMAIN_ATTESTATION,
+      sigStoreImageNames: IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
     });
   });
 });
@@ -64,7 +64,8 @@ async function testGatewayAttestationAndModelAttestations(
 
   await verifyGatewayAttestation(report.gateway_attestation, {
     domain: context.apiDomain,
-    sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_GATEWAY_ATTESTATION,
+    imageNamesOfSigstoreHash:
+      IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION,
   });
 
   for (const modelAttestation of report.model_attestations ?? []) {
@@ -72,7 +73,8 @@ async function testGatewayAttestationAndModelAttestations(
     expect(modelAttestation.signing_algo).toEqual(signingAlgo);
 
     await verifyModelAttestation(modelAttestation, {
-      sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_MODEL_ATTESTATION,
+      imageNamesOfSigstoreHash:
+        IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION,
     });
   }
 }

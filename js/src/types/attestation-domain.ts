@@ -12,5 +12,5 @@ export type DomainAttestation = {
 };
 
 export type VerifyDomainAttestationConfig = {
-  sigStoreImageNames: string[];
+  imageNamesOfSigstoreHash: string[];
 };

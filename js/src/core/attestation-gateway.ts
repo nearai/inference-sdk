@@ -32,10 +32,10 @@ export async function verifyGatewayAttestation(
     attestation.vpc.vpc_hostname,
   );
 
-  if (config.sigStoreImageNames.length > 0) {
+  if (config.imageNamesOfSigstoreHash.length > 0) {
     await verifyCompose(
       getComposeFromTcbInfo(attestation.info.tcb_info),
-      config.sigStoreImageNames,
+      config.imageNamesOfSigstoreHash,
     );
   }
 }

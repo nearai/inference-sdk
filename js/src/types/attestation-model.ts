@@ -16,5 +16,5 @@ export type ModelAttestationReport = {
 };
 
 export type VerifyModelAttestationConfig = {
-  sigStoreImageNames: string[];
+  imageNamesOfSigstoreHash: string[];
 };

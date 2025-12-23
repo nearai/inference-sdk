@@ -32,10 +32,10 @@ export async function verifyDomainAttestation(
   const liveCert = await fetchLiveCertificate(attestation.domain);
   await verifyLiveCertificate(liveCert, attestation.cert);
 
-  if (config.sigStoreImageNames.length > 0) {
+  if (config.imageNamesOfSigstoreHash.length > 0) {
     await verifyCompose(
       getComposeFromTcbInfo(attestation.info.tcb_info),
-      config.sigStoreImageNames,
+      config.imageNamesOfSigstoreHash,
     );
   }
 }

@@ -47,9 +47,12 @@ export function getComposeFromTcbInfo(tcbInfo: string | TcbInfo): string {
 
 export async function verifyCompose(
   compose: string,
-  sigStoreImageNames: string[],
+  imageNamesOfSigstoreHash: string[],
 ) {
-  const hashes = getSigstoreHashesFromCompose(compose, sigStoreImageNames);
+  const hashes = getSigstoreHashesFromCompose(
+    compose,
+    imageNamesOfSigstoreHash,
+  );
   for (const hash of hashes) {
     await verifySigstoreHash(hash);
   }
@@ -57,13 +60,13 @@ export async function verifyCompose(
 
 function getSigstoreHashesFromCompose(
   compose: string,
-  sigStoreImageNames: string[],
+  imageNamesOfSigstoreHash: string[],
 ): string[] {
-  const sigStoreImageNamesSet = new Set(sigStoreImageNames);
+  const names = new Set(imageNamesOfSigstoreHash);
 
   const digestsIter = compose
     .matchAll(/([^@\s]+)@sha256:([0-9a-f]{64})/g)
-    .filter(([, name]) => sigStoreImageNamesSet.has(name))
+    .filter(([, name]) => names.has(name))
     .map(([, , digest]) => digest);
 
   const digests = new Set(digestsIter);

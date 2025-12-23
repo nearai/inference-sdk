@@ -31,10 +31,10 @@ export async function verifyModelAttestation(
   );
   verifyNvidiaGpuForModel(nvidiaGpuVerificationData);
 
-  if (config.sigStoreImageNames.length > 0) {
+  if (config.imageNamesOfSigstoreHash.length > 0) {
     await verifyCompose(
       getComposeFromTcbInfo(attestation.info.tcb_info),
-      config.sigStoreImageNames,
+      config.imageNamesOfSigstoreHash,
     );
   }
 }

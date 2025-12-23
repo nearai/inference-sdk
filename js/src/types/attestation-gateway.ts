@@ -22,5 +22,5 @@ export type GatewayAttestationReport = {
 
 export type VerifyGatewayAttestationConfig = {
   domain: string;
-  sigStoreImageNames: string[];
+  imageNamesOfSigstoreHash: string[];
 };
