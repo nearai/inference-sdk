@@ -60,7 +60,7 @@ function getSigstoreHashesFromCompose(compose: string): string[] {
   const digests = new Set(digestsIter);
 
   if (digests.size === 0) {
-    throw new VerificationError('Failed to get sigstore links from compose');
+    throw new VerificationError('Failed to get sigstore hash from compose');
   }
 
   return Array.from(digests);
