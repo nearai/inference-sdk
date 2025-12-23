@@ -91,9 +91,21 @@ fn verify_chat_signature(signature: &ChatSignature) -> Result<(), Error> {
                     ))
                 })?;
 
-            // Get address from public key (last 20 bytes of keccak256 hash of public key)
-            let public_key_raw = verifying_key.to_sec1_bytes();
-            let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&public_key_raw[1..]); // Skip 0x04 prefix
+            // Get address from public key (last 20 bytes of keccak256 hash of uncompressed x||y)
+            // NOTE: `to_sec1_bytes()` returns the *compressed* form by default; hashing that
+            // (including the 0x02/0x03 prefix) yields a wrong address. Ethereum derives the
+            // address from the uncompressed 64-byte x||y.
+            let encoded_point = verifying_key.to_encoded_point(false); // uncompressed (0x04 + x||y)
+            let encoded_bytes = encoded_point.as_bytes();
+            if encoded_bytes.len() != 65 || encoded_bytes[0] != 0x04 {
+                return Err(Error::VerificationError(
+                    "invalid recovered public key encoding: expected uncompressed 65-byte SEC1"
+                        .to_owned(),
+                ));
+            }
+
+            // Strip 0x04 prefix; Ethereum addresses use Keccak256(x||y)
+            let pubkey_hash = <sha3::Keccak256 as sha3::Digest>::digest(&encoded_bytes[1..]);
 
             let recovered_address: [u8; 20] = pubkey_hash[12..].try_into().map_err(|_| {
                 Error::VerificationError(format!(
