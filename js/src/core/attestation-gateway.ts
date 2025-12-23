@@ -1,4 +1,7 @@
-import { GatewayAttestation } from '../types/attestation-gateway';
+import {
+  GatewayAttestation,
+  VerifyGatewayAttestationConfig,
+} from '../types/attestation-gateway';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
 import {
   getComposeFromTcbInfo,
@@ -12,7 +15,7 @@ import { fetchTimeout } from '../utils/fetch';
 
 export async function verifyGatewayAttestation(
   attestation: GatewayAttestation,
-  domain: string,
+  config: VerifyGatewayAttestationConfig,
 ) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
@@ -24,12 +27,17 @@ export async function verifyGatewayAttestation(
   );
 
   await verifyVpcForGateway(
-    domain,
+    config.domain,
     attestation.vpc.vpc_server_app_id,
     attestation.vpc.vpc_hostname,
   );
 
-  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
+  if (config.sigStoreImageNames.length > 0) {
+    await verifyCompose(
+      getComposeFromTcbInfo(attestation.info.tcb_info),
+      config.sigStoreImageNames,
+    );
+  }
 }
 
 function verifyIntelTdxForGateway(

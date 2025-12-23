@@ -45,22 +45,31 @@ export function getComposeFromTcbInfo(tcbInfo: string | TcbInfo): string {
   return (tcbInfo as TcbInfo).app_compose;
 }
 
-export async function verifyCompose(compose: string) {
-  const hashes = getSigstoreHashesFromCompose(compose);
+export async function verifyCompose(
+  compose: string,
+  sigStoreImageNames: string[],
+) {
+  const hashes = getSigstoreHashesFromCompose(compose, sigStoreImageNames);
   for (const hash of hashes) {
     await verifySigstoreHash(hash);
   }
 }
 
-function getSigstoreHashesFromCompose(compose: string): string[] {
+function getSigstoreHashesFromCompose(
+  compose: string,
+  sigStoreImageNames: string[],
+): string[] {
+  const sigStoreImageNamesSet = new Set(sigStoreImageNames);
+
   const digestsIter = compose
-    .matchAll(/@sha256:([0-9a-f]{64})/g)
-    .map(([, digest]) => digest);
+    .matchAll(/([^@\s]+)@sha256:([0-9a-f]{64})/g)
+    .filter(([, name]) => sigStoreImageNamesSet.has(name))
+    .map(([, , digest]) => digest);
 
   const digests = new Set(digestsIter);
 
   if (digests.size === 0) {
-    throw new VerificationError('Failed to get sigstore hash from compose');
+    throw new VerificationError('No sigstore hash matches in compose');
   }
 
   return Array.from(digests);

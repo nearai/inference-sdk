@@ -10,3 +10,7 @@ export type DomainAttestation = {
     tcb_info: string | TcbInfo;
   };
 };
+
+export type VerifyDomainAttestationConfig = {
+  sigStoreImageNames: string[];
+};

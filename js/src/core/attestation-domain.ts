@@ -1,17 +1,23 @@
 import { fetchIntelTdxVerificationData } from '../utils/intel';
-import { DomainAttestation } from '../types/attestation-domain';
+import {
+  DomainAttestation,
+  VerifyDomainAttestationConfig,
+} from '../types/attestation-domain';
 import { VerificationError } from '../utils/errors';
 import { hexToBuffer } from '../utils/common';
 import { IntelTdxVerificationData } from '../types/intel';
 import { type X509Certificate } from 'crypto';
-import { getComposeFromTcbInfo, verifyCompose } from './attestation-common';
 import { TIMEOUT } from '../utils/consts';
+import { getComposeFromTcbInfo, verifyCompose } from './attestation-common';
 
 /**
  * Verify domain attestation.
  * Note: This function is only available in Node.js environment
  */
-export async function verifyDomainAttestation(attestation: DomainAttestation) {
+export async function verifyDomainAttestation(
+  attestation: DomainAttestation,
+  config: VerifyDomainAttestationConfig,
+) {
   const verificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
@@ -23,10 +29,15 @@ export async function verifyDomainAttestation(attestation: DomainAttestation) {
     attestation.sha256sum,
   );
 
-  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
-
   const liveCert = await fetchLiveCertificate(attestation.domain);
   await verifyLiveCertificate(liveCert, attestation.cert);
+
+  if (config.sigStoreImageNames.length > 0) {
+    await verifyCompose(
+      getComposeFromTcbInfo(attestation.info.tcb_info),
+      config.sigStoreImageNames,
+    );
+  }
 }
 
 async function verifyIntelTdxForDomain(

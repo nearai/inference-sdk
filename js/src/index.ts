@@ -2,6 +2,7 @@ export { verifyGatewayAttestation } from './core/attestation-gateway';
 export {
   GatewayAttestation,
   GatewayAttestationReport,
+  VerifyGatewayAttestationConfig,
 } from './types/attestation-gateway';
 
 export { verifyModelAttestation } from './core/attestation-model';

@@ -12,6 +12,18 @@ import {
 } from '../../src';
 import { Context } from '../types';
 
+const SIGSTORE_IMAGE_NAMES_FOR_GATEWAY_ATTESTATION: string[] = [
+  'nearaidev/cloud-api',
+];
+
+const SIGSTORE_IMAGE_NAMES_FOR_MODEL_ATTESTATION: string[] = [
+  // TODO: what should be verified?
+];
+
+const SIGSTORE_IMAGE_NAMES_FOR_DOMAIN_ATTESTATION: string[] = [
+  'nearaidev/dstack-ingress-vpc',
+];
+
 describe('attestations', () => {
   const context = initContext();
 
@@ -25,7 +37,9 @@ describe('attestations', () => {
 
   test('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.apiDomain);
-    await verifyDomainAttestation(attestation);
+    await verifyDomainAttestation(attestation, {
+      sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_DOMAIN_ATTESTATION,
+    });
   });
 });
 
@@ -48,12 +62,17 @@ async function testGatewayAttestationAndModelAttestations(
   expect(report.gateway_attestation.request_nonce).toEqual(requestNonce);
   expect(report.gateway_attestation.signing_algo).toEqual(signingAlgo);
 
-  await verifyGatewayAttestation(report.gateway_attestation, context.apiDomain);
+  await verifyGatewayAttestation(report.gateway_attestation, {
+    domain: context.apiDomain,
+    sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_GATEWAY_ATTESTATION,
+  });
 
   for (const modelAttestation of report.model_attestations ?? []) {
     expect(modelAttestation.request_nonce).toEqual(requestNonce);
     expect(modelAttestation.signing_algo).toEqual(signingAlgo);
 
-    await verifyModelAttestation(modelAttestation);
+    await verifyModelAttestation(modelAttestation, {
+      sigStoreImageNames: SIGSTORE_IMAGE_NAMES_FOR_MODEL_ATTESTATION,
+    });
   }
 }
