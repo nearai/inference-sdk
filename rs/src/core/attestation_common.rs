@@ -45,7 +45,7 @@ pub fn verify_intel_quote_report_data_for_attestation_report(
 }
 
 pub fn get_compose_from_tcb_info(tcb_info: &TcbInfoOrRaw) -> Result<String, Error> {
-    let tcb_info = TcbInfo::try_from(tcb_info.clone())
+    let tcb_info = TcbInfo::try_from(tcb_info.to_owned())
         .map_err(|e| Error::VerificationError(format!("invalid tcb info: {}", e)))?;
 
     Ok(tcb_info.app_compose)
