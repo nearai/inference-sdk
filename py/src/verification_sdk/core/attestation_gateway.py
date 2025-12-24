@@ -10,7 +10,11 @@ from ..utils.fetch import fetch
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-async def verify_gateway_attestation(attestation: GatewayAttestation, domain: str):
+async def verify_gateway_attestation(
+    attestation: GatewayAttestation,
+    domain: str,
+    image_names_of_sigstore_hash: list[str],
+):
     verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
 
     verify_intel_tdx_for_gateway(
@@ -25,7 +29,11 @@ async def verify_gateway_attestation(attestation: GatewayAttestation, domain: st
         attestation.vpc.vpc_hostname,
     )
 
-    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    if image_names_of_sigstore_hash:
+        await verify_compose(
+            get_compose_from_tcb_info(attestation.info.tcb_info),
+            image_names_of_sigstore_hash,
+        )
 
 
 def verify_intel_tdx_for_gateway(

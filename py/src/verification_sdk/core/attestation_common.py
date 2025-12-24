@@ -41,31 +41,57 @@ def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
     return tcb_info.app_compose
 
 
-async def verify_compose(compose: str):
-    links = get_sigstore_links_from_compose(compose)
-
-    for link in links:
-        await verify_sigstore_link(link)
-
-
-def get_sigstore_links_from_compose(compose: str) -> list[str]:
-    digests_iter = (m.group(1) for m in re.finditer(r'@sha256:([0-9a-f]{64})', compose))
-
-    digests = set(digests_iter)
-
-    if not digests:
-        raise VerificationError('Failed to get sigstore links from compose')
-
-    return [f'{SIGSTORE_SEARCH_API_URL}/?hash=sha256:{digest}' for digest in digests]
+async def verify_compose(compose: str, image_names_of_sigstore_hash: list[str]):
+    hashes = get_sigstore_hashes_from_compose(compose, image_names_of_sigstore_hash)
+    for h in hashes:
+        await verify_sigstore_hash(h)
 
 
-async def verify_sigstore_link(link: str):
-    try:
-        response = await fetch(link, method='HEAD', timeout=TIMEOUT)
+def get_sigstore_hashes_from_compose(
+    compose: str,
+    image_names_of_sigstore_hash: list[str],
+) -> list[str]:
+    names = set(image_names_of_sigstore_hash)
 
-        if not response.ok:
-            raise VerificationError(
-                f'Failed to verify sigstore link {link} with status code {response.status}'
-            )
-    except Exception as e:
-        raise VerificationError(f'Failed to verify sigstore link {link}') from e
+    found_names: set[str] = set()
+    found_digests: list[str] = []
+
+    # Match "<image-name>@sha256:<64-hex-digest>"
+    for m in re.finditer(r'([^@\s]+)@sha256:([0-9a-f]{64})', compose):
+        name = m.group(1)
+        digest = m.group(2)
+
+        if name not in names:
+            continue
+
+        found_names.add(name)
+        found_digests.append(digest)
+
+    missing_names = [n for n in image_names_of_sigstore_hash if n not in found_names]
+
+    if missing_names:
+        raise VerificationError(
+            f'Missing sigstore hash for image: {", ".join(missing_names)}'
+        )
+
+    return found_digests
+
+
+async def verify_sigstore_hash(_hash: str):
+    response = await fetch(
+        SIGSTORE_SEARCH_API_URL,
+        method='POST',
+        data={'hash': _hash},
+        headers={'content-type': 'application/json'},
+        timeout=TIMEOUT,
+    )
+
+    if not response.ok:
+        raise VerificationError(
+            f'Failed to verify sigstore hash with status code {response.status}'
+        )
+
+    outputs = response.json()
+
+    if not isinstance(outputs, list) or not outputs:
+        raise VerificationError(f'Invalid sigstore hash {_hash}')

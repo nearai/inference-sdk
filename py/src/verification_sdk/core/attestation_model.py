@@ -9,7 +9,9 @@ from ..utils.intel import fetch_intel_tdx_verification_data
 from ..utils.nvidia import fetch_nvidia_gpu_verification_data
 
 
-async def verify_model_attestation(attestation: ModelAttestation):
+async def verify_model_attestation(
+    attestation: ModelAttestation, image_names_of_sigstore_hash: list[str]
+):
     intel_tdx_verification_data = await fetch_intel_tdx_verification_data(
         attestation.intel_quote
     )
@@ -24,7 +26,11 @@ async def verify_model_attestation(attestation: ModelAttestation):
     )
     verify_nvidia_gpu_for_model(nvidia_gpu_verification_data)
 
-    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    if image_names_of_sigstore_hash:
+        await verify_compose(
+            get_compose_from_tcb_info(attestation.info.tcb_info),
+            image_names_of_sigstore_hash,
+        )
 
 
 def verify_intel_tdx_for_model(
