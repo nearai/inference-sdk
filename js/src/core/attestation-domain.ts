@@ -25,7 +25,7 @@ export async function verifyDomainAttestation(
     verificationData,
     attestation.domain,
     attestation.cert,
-    attestation.acmeAccount,
+    attestation.acme_account,
     attestation.sha256sum,
   );
 
