@@ -12,10 +12,10 @@ pub async fn fetch_timeout(url: &str, timeout_ms: u64) -> anyhow::Result<Respons
 
 pub async fn fetch_timeout_with_method<T: Into<Body>>(
     url: &str,
-    timeout_ms: u64,
     method: Method,
     body: Option<T>,
     headers: Option<HeaderMap>,
+    timeout_ms: u64,
 ) -> anyhow::Result<Response> {
     let client = Client::builder()
         .timeout(Duration::from_millis(timeout_ms))

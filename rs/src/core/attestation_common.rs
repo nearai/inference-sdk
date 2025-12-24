@@ -127,10 +127,10 @@ async fn verify_sigstore_hash(hash: &str) -> Result<(), Error> {
 
     let response = fetch_timeout_with_method(
         SIGSTORE_SEARCH_API_URL,
-        TIMEOUT,
         Method::POST,
         Some(body),
         Some(headers),
+        TIMEOUT,
     )
     .await?;
 
