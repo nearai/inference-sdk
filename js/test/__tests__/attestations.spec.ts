@@ -12,18 +12,6 @@ import {
 } from '../../src';
 import { Context } from '../types';
 
-const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION: string[] = [
-  'nearaidev/cloud-api',
-];
-
-const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION: string[] = [
-  'nearaidev/vllm-proxy',
-];
-
-const IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION: string[] = [
-  'nearaidev/dstack-ingress-vpc',
-];
-
 describe('attestations', () => {
   const context = initContext();
 
@@ -38,8 +26,7 @@ describe('attestations', () => {
   test('domain attestation', async () => {
     const attestation = await fetchDomainAttestation(context.apiDomain);
     await verifyDomainAttestation(attestation, {
-      imageNamesOfSigstoreHash:
-        IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
+      imageNamesOfSigstoreHash: ['nearaidev/dstack-ingress-vpc'],
     });
   });
 });
@@ -65,8 +52,7 @@ async function testGatewayAttestationAndModelAttestations(
 
   await verifyGatewayAttestation(report.gateway_attestation, {
     domain: context.apiDomain,
-    imageNamesOfSigstoreHash:
-      IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION,
+    imageNamesOfSigstoreHash: ['nearaidev/cloud-api'],
   });
 
   for (const modelAttestation of report.model_attestations ?? []) {
@@ -74,8 +60,7 @@ async function testGatewayAttestationAndModelAttestations(
     expect(modelAttestation.signing_algo).toEqual(signingAlgo);
 
     await verifyModelAttestation(modelAttestation, {
-      imageNamesOfSigstoreHash:
-        IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION,
+      imageNamesOfSigstoreHash: ['nearaidev/vllm-proxy'],
     });
   }
 }

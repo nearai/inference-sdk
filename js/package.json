@@ -10,7 +10,7 @@
   "scripts": {
     "build": "rm -rf dist && tsup",
     "lint": "pnpm fmt && pnpm check",
-    "fmt": "prettier '{src,test}/**/*.ts' '*.mjs' --write --list-different",
+    "fmt": "prettier '{src,test}/**/*.ts' '*.mjs' --write",
     "check": "eslint '{src,test}/**/*.ts' '*.mjs' --fix",
     "test": "jest",
     "prepublishOnly": "pnpm build"

@@ -4,4 +4,4 @@ fmt:
 	@cargo fmt
 
 check:
-	@cargo clippy
+	@cargo clippy --fix --allow-dirty

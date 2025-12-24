@@ -19,19 +19,6 @@ from ..context import init_context
 from ..types import Context
 
 
-IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION: list[str] = [
-    'nearaidev/cloud-api',
-]
-
-IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION: list[str] = [
-    'nearaidev/vllm-proxy',
-]
-
-IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION: list[str] = [
-    'nearaidev/dstack-ingress-vpc',
-]
-
-
 class TestAttestations:
     @pytest.fixture(scope='class')
     def context(self) -> Context:
@@ -53,7 +40,7 @@ class TestAttestations:
             attestation,
             VerifyDomainAttestationConfig.model_validate(
                 {
-                    'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
+                    'image_names_of_sigstore_hash': ['nearaidev/dstack-ingress-vpc'],
                 }
             ),
         )
@@ -82,7 +69,7 @@ async def _test_gateway_attestation_and_model_attestations(
         VerifyGatewayAttestationConfig.model_validate(
             {
                 'domain': context.api_domain,
-                'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION,
+                'image_names_of_sigstore_hash': ['nearaidev/cloud-api'],
             }
         ),
     )
@@ -95,7 +82,7 @@ async def _test_gateway_attestation_and_model_attestations(
             model_attestation,
             VerifyModelAttestationConfig.model_validate(
                 {
-                    'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION,
+                    'image_names_of_sigstore_hash': ['nearaidev/vllm-proxy'],
                 }
             ),
         )
