@@ -3,7 +3,7 @@ use crate::types::nvidia::{
     NvidiaJwt,
 };
 use crate::utils::common::decode_jwt;
-use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, SIGSTORE_SEARCH_API_URL, TIMEOUT};
+use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT};
 use anyhow::Context;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
@@ -18,7 +18,7 @@ pub async fn fetch_nvidia_gpu_verification_data(
         .context("failed to build http client")?;
 
     let response = client
-        .post(SIGSTORE_SEARCH_API_URL)
+        .post(NVIDIA_GPU_VERIFIER_API_URL)
         .header(CONTENT_TYPE, "application/json")
         .body(payload.to_owned())
         .send()
