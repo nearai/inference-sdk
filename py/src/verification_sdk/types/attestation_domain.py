@@ -16,3 +16,7 @@ class DomainAttestation(BaseModel):
 
 class DomainInfo(BaseModel):
     tcb_info: TcbInfo | str
+
+
+class VerifyDomainAttestationConfig(BaseModel):
+    image_names_of_sigstore_hash: list[str]

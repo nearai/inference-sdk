@@ -20,3 +20,7 @@ class ModelInfo(BaseModel):
 
 class ModelAttestationReport(BaseModel):
     all_attestations: list[ModelAttestation]
+
+
+class VerifyModelAttestationConfig(BaseModel):
+    image_names_of_sigstore_hash: list[str]

@@ -6,6 +6,9 @@ from verification_sdk import (
     verify_gateway_attestation,
     verify_model_attestation,
 )
+from verification_sdk.types.attestation_domain import VerifyDomainAttestationConfig
+from verification_sdk.types.attestation_gateway import VerifyGatewayAttestationConfig
+from verification_sdk.types.attestation_model import VerifyModelAttestationConfig
 
 from ..common import (
     fetch_attestation_report,
@@ -48,7 +51,11 @@ class TestAttestations:
         attestation = await fetch_domain_attestation(context.api_domain)
         await verify_domain_attestation(
             attestation,
-            image_names_of_sigstore_hash=IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
+            VerifyDomainAttestationConfig.model_validate(
+                {
+                    'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_DOMAIN_ATTESTATION,
+                }
+            ),
         )
 
 
@@ -72,8 +79,12 @@ async def _test_gateway_attestation_and_model_attestations(
 
     await verify_gateway_attestation(
         gateway_attestation,
-        context.api_domain,
-        image_names_of_sigstore_hash=IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION,
+        VerifyGatewayAttestationConfig.model_validate(
+            {
+                'domain': context.api_domain,
+                'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_GATEWAY_ATTESTATION,
+            }
+        ),
     )
 
     for model_attestation in report.model_attestations or []:
@@ -82,5 +93,9 @@ async def _test_gateway_attestation_and_model_attestations(
 
         await verify_model_attestation(
             model_attestation,
-            image_names_of_sigstore_hash=IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION,
+            VerifyModelAttestationConfig.model_validate(
+                {
+                    'image_names_of_sigstore_hash': IMAGE_NAMES_OF_SIGSTORE_HASH_FOR_MODEL_ATTESTATION,
+                }
+            ),
         )
