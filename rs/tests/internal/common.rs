@@ -34,7 +34,7 @@ pub async fn fetch_attestation_report(
 
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+        format!("Bearer {}", api_key).parse().unwrap(),
     );
 
     let client = reqwest::Client::new();
@@ -68,7 +68,7 @@ pub async fn fetch_chat_signature(
 
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+        format!("Bearer {}", api_key).parse().unwrap(),
     );
 
     let client = reqwest::Client::new();
@@ -96,7 +96,7 @@ pub async fn chat_completions(
 
     headers.insert(
         AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+        format!("Bearer {}", api_key).parse().unwrap(),
     );
 
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -208,13 +208,9 @@ pub async fn fetch_domain_attestation(domain: &str) -> DomainAttestation {
     }
 
     let intel_quote_json: Value = intel_quote_res.json().await.unwrap();
-
     let intel_quote = intel_quote_json["quote"].as_str().unwrap().to_owned();
-
     let cert = cert_res.text().await.unwrap();
-
     let acme_account = acme_account_res.text().await.unwrap();
-
     let sha256sum = sha256sum_res.text().await.unwrap();
 
     DomainAttestation {

@@ -5,7 +5,7 @@ use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout_with_method;
 use anyhow::Context;
 use regex::Regex;
-use reqwest::header::{HeaderMap, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::Method;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -123,7 +123,7 @@ async fn verify_sigstore_hash(hash: &str) -> Result<(), Error> {
     let body = serde_json::to_vec(&Body { hash }).unwrap();
 
     let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
     let response = fetch_timeout_with_method(
         SIGSTORE_SEARCH_API_URL,
