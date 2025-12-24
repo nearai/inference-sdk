@@ -3,26 +3,27 @@ use crate::types::nvidia::{
     NvidiaJwt,
 };
 use crate::utils::common::decode_jwt;
-use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT};
-use crate::utils::fetch::fetch_timeout_with_method;
+use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, SIGSTORE_SEARCH_API_URL, TIMEOUT};
 use anyhow::Context;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use reqwest::Method;
+use reqwest::header::CONTENT_TYPE;
+use reqwest::Client;
+use std::time::Duration;
 
 pub async fn fetch_nvidia_gpu_verification_data(
     payload: &str,
 ) -> anyhow::Result<NvidiaGpuVerificationData> {
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    let client = Client::builder()
+        .timeout(Duration::from_millis(TIMEOUT))
+        .build()
+        .context("failed to build http client")?;
 
-    let response = fetch_timeout_with_method(
-        NVIDIA_GPU_VERIFIER_API_URL,
-        Method::POST,
-        Some(payload.to_owned()),
-        Some(headers),
-        TIMEOUT,
-    )
-    .await?;
+    let response = client
+        .post(SIGSTORE_SEARCH_API_URL)
+        .header(CONTENT_TYPE, "application/json")
+        .body(payload.to_owned())
+        .send()
+        .await
+        .context("failed to send request")?;
 
     if !response.status().is_success() {
         anyhow::bail!(

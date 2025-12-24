@@ -5,10 +5,11 @@ use crate::core::attestation_common::{
 use crate::types::attestation_gateway::{GatewayAttestation, VerifyGatewayAttestationConfig};
 use crate::utils::consts::{ETHEREUM_ZERO_ADDRESS, TIMEOUT};
 use crate::utils::errors::Error;
-use crate::utils::fetch::fetch_timeout;
 use crate::utils::intel::fetch_intel_tdx_verification_data;
 use anyhow::Context;
+use reqwest::Client;
 use serde::Deserialize;
+use std::time::Duration;
 
 pub async fn verify_gateway_attestation(
     attestation: &GatewayAttestation,
@@ -65,7 +66,16 @@ async fn verify_vpc_for_gateway(
 ) -> Result<(), Error> {
     let url = format!("https://{}/evidences/vpc.json", domain);
 
-    let response = fetch_timeout(&url, TIMEOUT).await?;
+    let client = Client::builder()
+        .timeout(Duration::from_millis(TIMEOUT))
+        .build()
+        .context("failed to build http client")?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .context("failed to send request")?;
 
     if !response.status().is_success() {
         let msg = format!(

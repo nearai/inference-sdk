@@ -2,13 +2,12 @@ use crate::types::attestation_common::{TcbInfo, TcbInfoOrRaw};
 use crate::utils::common::hex_to_bytes;
 use crate::utils::consts::{SIGSTORE_SEARCH_API_URL, TIMEOUT};
 use crate::utils::errors::Error;
-use crate::utils::fetch::fetch_timeout_with_method;
 use anyhow::Context;
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use reqwest::Method;
+use reqwest::Client;
 use serde::Serialize;
 use std::collections::HashSet;
+use std::time::Duration;
 
 pub fn verify_intel_quote_report_data_for_attestation_report(
     report_data: &str,
@@ -116,23 +115,21 @@ fn get_sigstore_hashes_from_compose(
 
 async fn verify_sigstore_hash(hash: &str) -> Result<(), Error> {
     #[derive(Serialize)]
-    struct Body<'a> {
+    struct Data<'a> {
         hash: &'a str,
     }
 
-    let body = serde_json::to_vec(&Body { hash }).unwrap();
+    let client = Client::builder()
+        .timeout(Duration::from_millis(TIMEOUT))
+        .build()
+        .context("failed to build http client")?;
 
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    let response = fetch_timeout_with_method(
-        SIGSTORE_SEARCH_API_URL,
-        Method::POST,
-        Some(body),
-        Some(headers),
-        TIMEOUT,
-    )
-    .await?;
+    let response = client
+        .post(SIGSTORE_SEARCH_API_URL)
+        .json(&Data { hash })
+        .send()
+        .await
+        .context("failed to send request")?;
 
     if !response.status().is_success() {
         return Err(Error::VerificationError(format!(
