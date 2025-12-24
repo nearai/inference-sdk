@@ -12,11 +12,7 @@ pub fn decode_jwt<T: DeserializeOwned>(jwt: &str) -> anyhow::Result<T> {
         );
     }
 
-    let payload = parts[1];
-    let padding = (4 - payload.len() % 4) % 4;
-    let padded_payload = format!("{}{}", payload, "=".repeat(padding));
-
-    let decoded = base64::engine::general_purpose::STANDARD.decode(padded_payload)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(parts[1])?;
 
     Ok(serde_json::from_slice(&decoded)?)
 }
