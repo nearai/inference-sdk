@@ -6,16 +6,21 @@ use crate::utils::common::decode_jwt;
 use crate::utils::consts::{NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT};
 use crate::utils::fetch::fetch_timeout_with_method;
 use anyhow::Context;
+use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use reqwest::Method;
 
 pub async fn fetch_nvidia_gpu_verification_data(
     payload: &str,
 ) -> anyhow::Result<NvidiaGpuVerificationData> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+
     let response = fetch_timeout_with_method(
         NVIDIA_GPU_VERIFIER_API_URL,
         TIMEOUT,
         Method::POST,
         Some(payload.to_owned()),
+        Some(headers),
     )
     .await?;
 

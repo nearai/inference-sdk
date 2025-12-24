@@ -31,3 +31,9 @@ pub struct GatewayAttestationReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_attestations: Option<Vec<ModelAttestation>>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerifyGatewayAttestationConfig {
+    pub domain: String,
+    pub image_names_of_sigstore_hash: Vec<String>,
+}

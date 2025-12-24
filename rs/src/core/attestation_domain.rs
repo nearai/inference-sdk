@@ -1,5 +1,5 @@
 use crate::core::attestation_common::{get_compose_from_tcb_info, verify_compose};
-use crate::types::attestation_domain::DomainAttestation;
+use crate::types::attestation_domain::{DomainAttestation, VerifyDomainAttestationConfig};
 use crate::types::intel::IntelTdxVerificationData;
 use crate::utils::common::hex_to_bytes;
 use crate::utils::errors::Error;
@@ -16,7 +16,10 @@ use tokio_rustls::TlsConnector;
 use x509_cert::der::{Decode, Encode};
 use x509_cert::Certificate;
 
-pub async fn verify_domain_attestation(attestation: &DomainAttestation) -> Result<(), Error> {
+pub async fn verify_domain_attestation(
+    attestation: &DomainAttestation,
+    config: &VerifyDomainAttestationConfig,
+) -> Result<(), Error> {
     let verification_data = fetch_intel_tdx_verification_data(&attestation.intel_quote).await?;
 
     verify_intel_tdx_for_domain(
@@ -27,11 +30,13 @@ pub async fn verify_domain_attestation(attestation: &DomainAttestation) -> Resul
         &attestation.sha256sum,
     )?;
 
-    let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
-    verify_compose(&compose).await?;
-
     let live_cert = fetch_live_certificate(&attestation.domain).await?;
     verify_live_certificate(&live_cert, &attestation.cert).await?;
+
+    if !config.image_names_of_sigstore_hash.is_empty() {
+        let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
+        verify_compose(&compose, &config.image_names_of_sigstore_hash).await?;
+    }
 
     Ok(())
 }

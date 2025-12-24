@@ -5,7 +5,10 @@ use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout_with_method;
 use anyhow::Context;
 use regex::Regex;
+use reqwest::header::{HeaderMap, CONTENT_TYPE};
 use reqwest::Method;
+use serde::Serialize;
+use std::collections::HashSet;
 
 pub fn verify_intel_quote_report_data_for_attestation_report(
     report_data: &str,
@@ -51,47 +54,102 @@ pub fn get_compose_from_tcb_info(tcb_info: &TcbInfoOrRaw) -> Result<String, Erro
     Ok(tcb_info.app_compose)
 }
 
-pub async fn verify_compose(compose: &str) -> Result<(), Error> {
-    let links = get_sigstore_links_from_compose(compose)?;
+pub async fn verify_compose(
+    compose: &str,
+    image_names_of_sigstore_hash: &[String],
+) -> Result<(), Error> {
+    let hashes = get_sigstore_hashes_from_compose(compose, image_names_of_sigstore_hash)?;
 
-    for link in links {
-        verify_sigstore_link(&link).await?;
+    for hash in hashes {
+        verify_sigstore_hash(&hash).await?;
     }
 
     Ok(())
 }
 
-fn get_sigstore_links_from_compose(compose: &str) -> Result<Vec<String>, Error> {
-    let re = Regex::new(r"@sha256:([0-9a-f]{64})").context("failed to create regex")?;
+fn get_sigstore_hashes_from_compose(
+    compose: &str,
+    image_names_of_sigstore_hash: &[String],
+) -> Result<Vec<String>, Error> {
+    let names: HashSet<&str> = image_names_of_sigstore_hash
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
 
-    let mut digests = std::collections::HashSet::new();
+    let mut found_names: HashSet<&str> = HashSet::new();
+    let mut found_digests: Vec<String> = Vec::new();
+
+    // Match "<image-name>@sha256:<64-hex-digest>"
+    let re = Regex::new(r"([^@\s]+)@sha256:([0-9a-f]{64})").context("failed to create regex")?;
 
     for cap in re.captures_iter(compose) {
-        if let Some(digest) = cap.get(1) {
-            digests.insert(digest.as_str().to_owned());
+        let name = cap.get(1).map(|m| m.as_str());
+        let digest = cap.get(2).map(|m| m.as_str());
+
+        let (Some(name), Some(digest)) = (name, digest) else {
+            continue;
+        };
+
+        if !names.contains(name) {
+            continue;
         }
+
+        found_names.insert(name);
+        found_digests.push(digest.to_owned());
     }
 
-    if digests.is_empty() {
-        return Err(Error::VerificationError(
-            "failed to get sigstore links from compose".to_owned(),
-        ));
-    }
-
-    Ok(digests
+    let missing_names: Vec<&str> = image_names_of_sigstore_hash
         .iter()
-        .map(|digest| format!("{}/?hash=sha256:{}", SIGSTORE_SEARCH_API_URL, digest))
-        .collect())
+        .map(String::as_str)
+        .filter(|&n| !found_names.contains(n))
+        .collect();
+
+    if !missing_names.is_empty() {
+        return Err(Error::VerificationError(format!(
+            "missing sigstore hash for image: {}",
+            missing_names.join(", ")
+        )));
+    }
+
+    Ok(found_digests)
 }
 
-async fn verify_sigstore_link(link: &str) -> Result<(), Error> {
-    let response = fetch_timeout_with_method(link, TIMEOUT, Method::HEAD, None).await?;
+async fn verify_sigstore_hash(hash: &str) -> Result<(), Error> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        hash: &'a str,
+    }
+
+    let body = serde_json::to_vec(&Body { hash }).unwrap();
+
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+
+    let response = fetch_timeout_with_method(
+        SIGSTORE_SEARCH_API_URL,
+        TIMEOUT,
+        Method::POST,
+        Some(body),
+        Some(headers),
+    )
+    .await?;
 
     if !response.status().is_success() {
         return Err(Error::VerificationError(format!(
-            "failed to verify sigstore link {} with status code {}",
-            link,
+            "failed to verify sigstore hash with status code {}",
             response.status()
+        )));
+    }
+
+    let outputs: Vec<String> = response
+        .json()
+        .await
+        .context("failed to parse sigstore outputs")?;
+
+    if outputs.is_empty() {
+        return Err(Error::VerificationError(format!(
+            "invalid sigstore hash {}",
+            hash
         )));
     }
 

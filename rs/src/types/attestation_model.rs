@@ -20,3 +20,8 @@ pub struct ModelAttestationInfo {
 pub struct ModelAttestationReport {
     pub all_attestations: Vec<ModelAttestation>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerifyModelAttestationConfig {
+    pub image_names_of_sigstore_hash: Vec<String>,
+}

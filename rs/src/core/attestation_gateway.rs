@@ -2,7 +2,7 @@ use crate::core::attestation_common::{
     get_compose_from_tcb_info, verify_compose,
     verify_intel_quote_report_data_for_attestation_report,
 };
-use crate::types::attestation_gateway::GatewayAttestation;
+use crate::types::attestation_gateway::{GatewayAttestation, VerifyGatewayAttestationConfig};
 use crate::utils::consts::{ETHEREUM_ZERO_ADDRESS, TIMEOUT};
 use crate::utils::errors::Error;
 use crate::utils::fetch::fetch_timeout;
@@ -12,7 +12,7 @@ use serde::Deserialize;
 
 pub async fn verify_gateway_attestation(
     attestation: &GatewayAttestation,
-    domain: &str,
+    config: &VerifyGatewayAttestationConfig,
 ) -> Result<(), Error> {
     let verification_data = fetch_intel_tdx_verification_data(&attestation.intel_quote).await?;
 
@@ -26,14 +26,16 @@ pub async fn verify_gateway_attestation(
     )?;
 
     verify_vpc_for_gateway(
-        domain,
+        &config.domain,
         &attestation.vpc.vpc_server_app_id,
         &attestation.vpc.vpc_hostname,
     )
     .await?;
 
-    let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
-    verify_compose(&compose).await?;
+    if !config.image_names_of_sigstore_hash.is_empty() {
+        let compose = get_compose_from_tcb_info(&attestation.info.tcb_info)?;
+        verify_compose(&compose, &config.image_names_of_sigstore_hash).await?;
+    }
 
     Ok(())
 }

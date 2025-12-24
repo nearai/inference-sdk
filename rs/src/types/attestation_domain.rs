@@ -15,3 +15,8 @@ pub struct DomainAttestation {
 pub struct DomainAttestationInfo {
     pub tcb_info: TcbInfoOrRaw,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerifyDomainAttestationConfig {
+    pub image_names_of_sigstore_hash: Vec<String>,
+}
