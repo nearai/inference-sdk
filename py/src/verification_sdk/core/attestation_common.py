@@ -1,3 +1,4 @@
+import json
 import re
 
 from ..types.attestation_common import TcbInfo
@@ -81,7 +82,7 @@ async def verify_sigstore_hash(_hash: str):
     response = await fetch(
         SIGSTORE_SEARCH_API_URL,
         method='POST',
-        data={'hash': _hash},
+        data=json.dumps({'hash': _hash}),
         headers={'content-type': 'application/json'},
         timeout=TIMEOUT,
     )

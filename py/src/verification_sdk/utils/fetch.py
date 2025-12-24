@@ -1,7 +1,7 @@
 import json
 import aiohttp
 
-from typing import Literal, Any
+from typing import Any
 from dataclasses import dataclass
 
 
@@ -30,16 +30,18 @@ class FetchResponse:
         return self.data
 
 
-Method = Literal['GET', 'POST', 'HEAD']
-
-
 async def fetch(
     url: str,
-    method: Method = 'GET',
-    data: Any = None,
+    method: str | None = None,
+    data: str | bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout: float | None = None,
 ) -> FetchResponse:
+    if method is None:
+        method = 'GET'
+    else:
+        method = method.upper()
+
     client_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
 
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
