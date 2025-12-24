@@ -9,10 +9,14 @@ export { verifyModelAttestation } from './core/attestation-model';
 export {
   ModelAttestation,
   ModelAttestationReport,
+  VerifyModelAttestationConfig,
 } from './types/attestation-model';
 
 export { verifyDomainAttestation } from './core/attestation-domain';
-export { DomainAttestation } from './types/attestation-domain';
+export {
+  DomainAttestation,
+  VerifyDomainAttestationConfig,
+} from './types/attestation-domain';
 
 export { SigningAlgo } from './types/attestation-common';
 
