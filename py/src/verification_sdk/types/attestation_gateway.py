@@ -27,3 +27,8 @@ class VpcInfo(BaseModel):
 class GatewayAttestationReport(BaseModel):
     gateway_attestation: GatewayAttestation
     model_attestations: list[ModelAttestation] | None = None
+
+
+class VerifyGatewayAttestationConfig(BaseModel):
+    domain: str
+    image_names_of_sigstore_hash: list[str]

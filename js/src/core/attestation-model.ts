@@ -1,4 +1,7 @@
-import { ModelAttestation } from '../types/attestation-model';
+import {
+  ModelAttestation,
+  VerifyModelAttestationConfig,
+} from '../types/attestation-model';
 import { fetchIntelTdxVerificationData } from '../utils/intel';
 import { fetchNvidiaGpuVerificationData } from '../utils/nvidia';
 import {
@@ -10,7 +13,10 @@ import { IntelTdxVerificationData } from '../types/intel';
 import { VerificationError } from '../utils/errors';
 import { NvidiaGpuVerificationData } from '../types/nvidia';
 
-export async function verifyModelAttestation(attestation: ModelAttestation) {
+export async function verifyModelAttestation(
+  attestation: ModelAttestation,
+  config: VerifyModelAttestationConfig,
+) {
   const intelTdxVerificationData = await fetchIntelTdxVerificationData(
     attestation.intel_quote,
   );
@@ -25,7 +31,12 @@ export async function verifyModelAttestation(attestation: ModelAttestation) {
   );
   verifyNvidiaGpuForModel(nvidiaGpuVerificationData);
 
-  await verifyCompose(getComposeFromTcbInfo(attestation.info.tcb_info));
+  if (config.imageNamesOfSigstoreHash.length > 0) {
+    await verifyCompose(
+      getComposeFromTcbInfo(attestation.info.tcb_info),
+      config.imageNamesOfSigstoreHash,
+    );
+  }
 }
 
 function verifyIntelTdxForModel(

@@ -19,3 +19,8 @@ export type GatewayAttestationReport = {
   gateway_attestation: GatewayAttestation;
   model_attestations?: ModelAttestation[];
 };
+
+export type VerifyGatewayAttestationConfig = {
+  domain: string;
+  imageNamesOfSigstoreHash: string[];
+};

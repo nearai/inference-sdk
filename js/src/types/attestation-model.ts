@@ -14,3 +14,7 @@ export type ModelAttestation = {
 export type ModelAttestationReport = {
   all_attestations: ModelAttestation[];
 };
+
+export type VerifyModelAttestationConfig = {
+  imageNamesOfSigstoreHash: string[];
+};

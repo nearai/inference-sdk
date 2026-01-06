@@ -12,7 +12,7 @@ def decode_jwt(jwt: str) -> dict:
     payload = payload + '=' * ((4 - len(payload) % 4) % 4)
 
     try:
-        data = base64.b64decode(payload)
+        data = base64.urlsafe_b64decode(payload)
         return json.loads(data)
     except Exception as e:
         raise ValueError('Invalid JWT payload') from e

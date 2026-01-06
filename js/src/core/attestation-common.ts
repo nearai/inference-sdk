@@ -45,39 +45,72 @@ export function getComposeFromTcbInfo(tcbInfo: string | TcbInfo): string {
   return (tcbInfo as TcbInfo).app_compose;
 }
 
-export async function verifyCompose(compose: string) {
-  const links = getSigstoreLinksFromCompose(compose);
-  for (const link of links) {
-    await verifySigstoreLink(link);
+export async function verifyCompose(
+  compose: string,
+  imageNamesOfSigstoreHash: string[],
+) {
+  const hashes = getSigstoreHashesFromCompose(
+    compose,
+    imageNamesOfSigstoreHash,
+  );
+  for (const hash of hashes) {
+    await verifySigstoreHash(hash);
   }
 }
 
-function getSigstoreLinksFromCompose(compose: string): string[] {
-  const digestsIter = compose
-    .matchAll(/@sha256:([0-9a-f]{64})/g)
-    .map(([, digest]) => digest);
+function getSigstoreHashesFromCompose(
+  compose: string,
+  imageNamesOfSigstoreHash: string[],
+): string[] {
+  const names = new Set(imageNamesOfSigstoreHash);
 
-  const digests = new Set(digestsIter);
+  const foundNames = new Set<string>();
+  const foundDigests: string[] = [];
 
-  if (digests.size === 0) {
-    throw new VerificationError('Failed to get sigstore links from compose');
+  for (const match of compose.matchAll(/([^@\s]+)@sha256:([0-9a-f]{64})/g)) {
+    const [, name, digest] = match;
+
+    if (!names.has(name)) {
+      continue;
+    }
+
+    foundNames.add(name);
+    foundDigests.push(digest);
   }
 
-  const links = digests
-    .values()
-    .map((digest) => `${SIGSTORE_SEARCH_API_URL}/?hash=sha256:${digest}`);
+  const missingNames = imageNamesOfSigstoreHash.filter(
+    (n) => !foundNames.has(n),
+  );
 
-  return Array.from(links);
+  if (missingNames.length > 0) {
+    throw new Error(
+      `Missing sigstore hash for image: ${missingNames.join(', ')}`,
+    );
+  }
+
+  return foundDigests;
 }
 
-async function verifySigstoreLink(link: string) {
-  const response = await fetchTimeout(link, TIMEOUT, {
-    method: 'HEAD',
+async function verifySigstoreHash(hash: string) {
+  const response = await fetchTimeout(SIGSTORE_SEARCH_API_URL, TIMEOUT, {
+    method: 'POST',
+    body: JSON.stringify({
+      hash,
+    }),
+    headers: {
+      'content-type': 'application/json',
+    },
   });
 
-  if (response.status < 200 || response.status >= 300) {
+  if (!response.ok) {
     throw new VerificationError(
-      `Failed to verify sigstore link ${link} with status code ${response.status}`,
+      `Failed to verify sigstore hash with status code ${response.status}`,
     );
+  }
+
+  const outputs: string[] = await response.json();
+
+  if (outputs.length === 0) {
+    throw new VerificationError(`Invalid sigstore hash ${hash}`);
   }
 }

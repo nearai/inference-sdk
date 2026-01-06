@@ -6,6 +6,9 @@ from verification_sdk import (
     verify_gateway_attestation,
     verify_model_attestation,
 )
+from verification_sdk.types.attestation_domain import VerifyDomainAttestationConfig
+from verification_sdk.types.attestation_gateway import VerifyGatewayAttestationConfig
+from verification_sdk.types.attestation_model import VerifyModelAttestationConfig
 
 from ..common import (
     fetch_attestation_report,
@@ -33,7 +36,14 @@ class TestAttestations:
 
     async def test_domain_attestation(self, context: Context):
         attestation = await fetch_domain_attestation(context.api_domain)
-        await verify_domain_attestation(attestation)
+        await verify_domain_attestation(
+            attestation,
+            VerifyDomainAttestationConfig.model_validate(
+                {
+                    'image_names_of_sigstore_hash': ['nearaidev/dstack-ingress-vpc'],
+                }
+            ),
+        )
 
 
 async def _test_gateway_attestation_and_model_attestations(
@@ -54,10 +64,25 @@ async def _test_gateway_attestation_and_model_attestations(
     assert gateway_attestation.request_nonce == request_nonce
     assert gateway_attestation.signing_algo == signing_algo
 
-    await verify_gateway_attestation(gateway_attestation, context.api_domain)
+    await verify_gateway_attestation(
+        gateway_attestation,
+        VerifyGatewayAttestationConfig.model_validate(
+            {
+                'domain': context.api_domain,
+                'image_names_of_sigstore_hash': ['nearaidev/cloud-api'],
+            }
+        ),
+    )
 
     for model_attestation in report.model_attestations or []:
         assert model_attestation.request_nonce == request_nonce
         assert model_attestation.signing_algo == signing_algo
 
-        await verify_model_attestation(model_attestation)
+        await verify_model_attestation(
+            model_attestation,
+            VerifyModelAttestationConfig.model_validate(
+                {
+                    'image_names_of_sigstore_hash': ['nearaidev/vllm-proxy'],
+                }
+            ),
+        )

@@ -3,7 +3,8 @@ export const ETHEREUM_ZERO_ADDRESS =
 
 export const TIMEOUT = 10_000;
 
-export const SIGSTORE_SEARCH_API_URL = 'https://search.sigstore.dev';
+export const SIGSTORE_SEARCH_API_URL =
+  'https://rekor.sigstore.dev/api/v1/index/retrieve';
 
 export const INTEL_PCCS_API_URL_BROWSER = 'https://pccs.phala.network';
 

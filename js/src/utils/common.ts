@@ -9,7 +9,7 @@ export function decodeJwt(jwt: string): Record<string, unknown> {
   }
 
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64').toString());
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
   } catch {
     throw Error('Invalid JWT payload');
   }

@@ -14,14 +14,17 @@ from ..core.attestation_common import (
     get_compose_from_tcb_info,
     verify_compose,
 )
-from ..types.attestation_domain import DomainAttestation
+from ..types.attestation_domain import DomainAttestation, VerifyDomainAttestationConfig
 from ..utils.common import hex_to_bytes
 from ..utils.consts import TIMEOUT
 from ..utils.errors import VerificationError
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-async def verify_domain_attestation(attestation: DomainAttestation):
+async def verify_domain_attestation(
+    attestation: DomainAttestation,
+    config: VerifyDomainAttestationConfig,
+):
     verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
 
     verify_intel_tdx_for_domain(
@@ -32,7 +35,11 @@ async def verify_domain_attestation(attestation: DomainAttestation):
         attestation.sha256sum,
     )
 
-    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    if config.image_names_of_sigstore_hash:
+        await verify_compose(
+            get_compose_from_tcb_info(attestation.info.tcb_info),
+            config.image_names_of_sigstore_hash,
+        )
 
     live_cert = fetch_live_certificate(attestation.domain)
     verify_live_certificate(live_cert, attestation.cert)

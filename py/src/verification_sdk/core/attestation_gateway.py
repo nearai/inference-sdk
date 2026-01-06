@@ -3,14 +3,19 @@ from ..core.attestation_common import (
     verify_compose,
     verify_intel_quote_report_data_for_attestation_report,
 )
-from ..types.attestation_gateway import GatewayAttestation
+from ..types.attestation_gateway import (
+    GatewayAttestation,
+    VerifyGatewayAttestationConfig,
+)
 from ..utils.consts import ETHEREUM_ZERO_ADDRESS, TIMEOUT
 from ..utils.errors import VerificationError
 from ..utils.fetch import fetch
 from ..utils.intel import fetch_intel_tdx_verification_data
 
 
-async def verify_gateway_attestation(attestation: GatewayAttestation, domain: str):
+async def verify_gateway_attestation(
+    attestation: GatewayAttestation, config: VerifyGatewayAttestationConfig
+):
     verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
 
     verify_intel_tdx_for_gateway(
@@ -20,12 +25,16 @@ async def verify_gateway_attestation(attestation: GatewayAttestation, domain: st
     )
 
     await verify_vpc_for_gateway(
-        domain,
+        config.domain,
         attestation.vpc.vpc_server_app_id,
         attestation.vpc.vpc_hostname,
     )
 
-    await verify_compose(get_compose_from_tcb_info(attestation.info.tcb_info))
+    if config.image_names_of_sigstore_hash:
+        await verify_compose(
+            get_compose_from_tcb_info(attestation.info.tcb_info),
+            config.image_names_of_sigstore_hash,
+        )
 
 
 def verify_intel_tdx_for_gateway(
