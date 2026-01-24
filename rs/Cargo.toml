@@ -25,7 +25,7 @@ pem-rfc7468 = { version = "1.0.0",features = ["std"] }
 tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring"] }
 webpki-roots = "1.0.4"
 
-dcap-qvl = "0.3.4"
+dcap-qvl = "0.3.9"
 
 thiserror = "2.0.17"
 anyhow = "1.0.100"
