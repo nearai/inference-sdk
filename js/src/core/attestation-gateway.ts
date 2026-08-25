@@ -1,83 +1,38 @@
 import {
-  GatewayAttestation,
-  VerifyGatewayAttestationConfig,
-} from '../types/attestation-gateway';
-import { fetchIntelTdxVerificationData } from '../utils/intel';
-import {
-  getComposeFromTcbInfo,
-  verifyCompose,
-  verifyIntelQuoteReportDataForAttestationReport,
-} from './attestation-common';
-import { IntelTdxVerificationData } from '../types/intel';
-import { VerificationError } from '../utils/errors';
-import { ETHEREUM_ZERO_ADDRESS, TIMEOUT } from '../utils/consts';
-import { fetchTimeout } from '../utils/fetch';
+  VerifiedGatewayAttestation,
+  VerifyGatewayAttestationInput,
+} from '../types/verification';
+import { verifyStrictReportDataBinding } from './attestation-common';
+import { verifyDstackAttestation } from './dstack-attestation';
 
+/**
+ * Verify gateway evidence and bind it to the client's live gateway TLS
+ * connection. The caller must obtain the peer SPKI on that same connection.
+ */
 export async function verifyGatewayAttestation(
-  attestation: GatewayAttestation,
-  config: VerifyGatewayAttestationConfig,
-) {
-  const verificationData = await fetchIntelTdxVerificationData(
-    attestation.intel_quote,
-  );
-  verifyIntelTdxForGateway(
-    verificationData,
-    attestation.request_nonce,
-    attestation.signing_address,
-  );
+  input: VerifyGatewayAttestationInput,
+): Promise<VerifiedGatewayAttestation> {
+  const { attestation } = input;
+  const evidence = await verifyDstackAttestation({
+    attestation,
+    expectedNonce: input.expectedNonce,
+    quoteVerifier: input.quoteVerifier,
+    provenanceVerifier: input.provenanceVerifier,
+    policy: input.policy,
+    verifyGpu: false,
+    advertisedReportData: attestation.report_data,
+    verifyReportDataBinding: (reportData) =>
+      verifyStrictReportDataBinding({
+        reportData,
+        expectedNonce: input.expectedNonce,
+        signingAddress: attestation.signing_address,
+        reportedTlsCertFingerprint: attestation.tls_cert_fingerprint,
+        peerTlsCertFingerprint: input.peerTlsCertFingerprint,
+      }),
+  });
 
-  await verifyVpcForGateway(
-    config.domain,
-    attestation.vpc.vpc_server_app_id,
-    attestation.vpc.vpc_hostname,
-  );
-
-  if (config.imageNamesOfSigstoreHash.length > 0) {
-    await verifyCompose(
-      getComposeFromTcbInfo(attestation.info.tcb_info),
-      config.imageNamesOfSigstoreHash,
-    );
-  }
-}
-
-function verifyIntelTdxForGateway(
-  verificationData: IntelTdxVerificationData,
-  requestNonce: string,
-  signingAddress = ETHEREUM_ZERO_ADDRESS,
-) {
-  if (!verificationData.quote.verified) {
-    throw new VerificationError('Intel quote not verified');
-  }
-
-  verifyIntelQuoteReportDataForAttestationReport(
-    verificationData.quote.body.reportdata,
-    requestNonce,
-    signingAddress,
-  );
-}
-
-async function verifyVpcForGateway(
-  domain: string,
-  vpcServerAppId: string,
-  vpcHostname: string,
-) {
-  const url = `https://${domain}/evidences/vpc.json`;
-
-  const response = await fetchTimeout(url, TIMEOUT);
-
-  if (!response.ok) {
-    throw new VerificationError(
-      `Failed to fetch VPC info with status code ${response.status}`,
-    );
-  }
-
-  const vpcInfo = await response.json();
-
-  if (vpcInfo.vpc_server_app_id !== vpcServerAppId) {
-    throw new VerificationError('vpc_server_app_id mismatching');
-  }
-
-  if (!vpcInfo.nodes.includes(vpcHostname)) {
-    throw new VerificationError('vpc_hostname mismatching');
-  }
+  return {
+    ...evidence,
+    kind: 'gateway',
+  };
 }

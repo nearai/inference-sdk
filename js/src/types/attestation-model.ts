@@ -1,20 +1,10 @@
-import { SigningAlgo, TcbInfo } from './attestation-common';
+import { DstackAttestation } from './attestation-common';
 
-export type ModelAttestation = {
-  request_nonce: string;
-  signing_algo: SigningAlgo;
-  signing_address: string;
-  intel_quote: string;
-  nvidia_payload: string;
-  info: {
-    tcb_info: string | TcbInfo;
-  };
-};
-
-export type ModelAttestationReport = {
-  all_attestations: ModelAttestation[];
-};
-
-export type VerifyModelAttestationConfig = {
-  imageNamesOfSigstoreHash: string[];
+/**
+ * A model-serving report returned by the Cloud API only when queried with
+ * `provider=near`. It must not be used to parse third-party provider reports.
+ */
+export type NearModelAttestation = DstackAttestation & {
+  /** Omitted for a CPU-only CVM; malformed present values are rejected. */
+  nvidia_payload?: string | null;
 };

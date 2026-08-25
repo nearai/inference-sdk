@@ -1,79 +1,48 @@
-import { INTEL_TDX_VERIFIER_API_URL } from './consts';
-import { IntelTdxVerificationData } from '../types/intel';
+import { getCollateral, verify } from '@phala/dcap-qvl';
+import { VerifiedTdxQuote } from '../types/verification';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { VerificationError } from './errors';
-import { getCollateral, verify } from '@phala/dcap-qvl';
-import { Buffer } from 'buffer';
 
-export async function fetchIntelTdxVerificationData(
+/**
+ * Verify an Intel TDX quote using DCAP and expose only the measurements needed
+ * by the provider-agnostic verification core.
+ */
+export async function verifyDcapQuote(
   quote: string,
-): Promise<IntelTdxVerificationData> {
-  return fetchIntelTdxVerificationDataFromPccs(quote);
-}
-
-async function fetchIntelTdxVerificationDataFromPccs(
-  quote: string,
-): Promise<IntelTdxVerificationData> {
-  const quoteRaw = hexToBuffer(quote);
+): Promise<VerifiedTdxQuote> {
+  const quoteBytes = hexToBuffer(quote);
 
   let collateral;
-
   try {
-    collateral = await getCollateral(getIntelPccsApiUrl(), quoteRaw);
-  } catch (e: unknown) {
-    throw new VerificationError('Failed to get collateral', e);
+    collateral = await getCollateral(getIntelPccsApiUrl(), quoteBytes);
+  } catch (cause) {
+    throw new VerificationError('Failed to get Intel collateral', cause);
   }
 
-  let verificationDataRaw;
-
+  let verifiedReport;
   try {
-    verificationDataRaw = verify(
-      quoteRaw,
+    verifiedReport = verify(
+      quoteBytes,
       collateral,
       Math.floor(Date.now() / 1000),
     );
-  } catch (e: unknown) {
-    throw new VerificationError('Failed to verify Intel quote', e);
+  } catch (cause) {
+    throw new VerificationError('Failed to verify Intel TDX quote', cause);
   }
 
-  const td10 = verificationDataRaw.report.asTd10();
-
+  const td10 = verifiedReport.report.asTd10();
   if (!td10) {
-    throw new VerificationError('Bad report data');
-  }
-
-  const verified = verificationDataRaw.status === 'UpToDate';
-  const reportData = Buffer.from(td10.reportData);
-  const mrConfig = Buffer.from(td10.mrConfigId);
-
-  return {
-    quote: {
-      verified,
-      body: {
-        reportdata: `0x${reportData.toString('hex')}`,
-        mrconfig: `0x${mrConfig.toString('hex')}`,
-      },
-    },
-  };
-}
-
-/* eslint-disable-next-line @typescript-eslint/no-unused-vars */
-async function fetchIntelTdxVerificationDataFromVerifier(
-  quote: string,
-): Promise<IntelTdxVerificationData> {
-  const response = await fetch(INTEL_TDX_VERIFIER_API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ hex: quote }),
-  });
-
-  if (!response.ok) {
     throw new VerificationError(
-      `Failed to fetch Intel TDX verification data with status code ${response.status}`,
+      'Verified quote does not contain a TD10 report',
     );
   }
 
-  return response.json();
+  return {
+    tcbStatus: verifiedReport.status,
+    advisoryIds: [...verifiedReport.advisory_ids],
+    debugEnabled: (td10.tdAttributes[0] & 0x01) !== 0,
+    reportData: td10.reportData,
+    mrConfigId: td10.mrConfigId,
+    rtMr3: td10.rtMr3,
+  };
 }

@@ -1,26 +1,22 @@
-import { SigningAlgo, TcbInfo } from './attestation-common';
-import { ModelAttestation } from './attestation-model';
+import { DstackAttestation } from './attestation-common';
+import { NearModelAttestation } from './attestation-model';
 
-export type GatewayAttestation = {
-  request_nonce: string;
-  signing_algo?: SigningAlgo;
-  signing_address?: string;
-  intel_quote: string;
-  info: {
-    tcb_info: string | TcbInfo;
-  };
-  vpc: {
-    vpc_server_app_id: string;
-    vpc_hostname: string;
-  };
+export type VpcInfo = {
+  vpc_server_app_id?: string;
+  vpc_hostname?: string;
 };
 
-export type GatewayAttestationReport = {
+/** Cloud API gateway evidence. VPC data is intentionally optional. */
+export type GatewayAttestation = DstackAttestation & {
+  report_data: string;
+  vpc?: VpcInfo;
+};
+
+/** Wire response from `/v1/attestation/report`. */
+export type NearAiCloudAttestationReport = {
   gateway_attestation: GatewayAttestation;
-  model_attestations?: ModelAttestation[];
-};
-
-export type VerifyGatewayAttestationConfig = {
-  domain: string;
-  imageNamesOfSigstoreHash: string[];
+  model_attestations?: NearModelAttestation[];
+  tls_certificate?: string;
+  ohttp_key_config?: string;
+  ohttp_attestation?: unknown;
 };

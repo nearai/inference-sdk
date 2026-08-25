@@ -1,63 +1,37 @@
 import {
-  ModelAttestation,
-  VerifyModelAttestationConfig,
-} from '../types/attestation-model';
-import { fetchIntelTdxVerificationData } from '../utils/intel';
-import { fetchNvidiaGpuVerificationData } from '../utils/nvidia';
-import {
-  getComposeFromTcbInfo,
-  verifyCompose,
-  verifyIntelQuoteReportDataForAttestationReport,
-} from './attestation-common';
-import { IntelTdxVerificationData } from '../types/intel';
-import { VerificationError } from '../utils/errors';
-import { NvidiaGpuVerificationData } from '../types/nvidia';
+  VerifiedNearModelAttestation,
+  VerifyNearModelAttestationInput,
+} from '../types/verification';
+import { verifyCloudModelReportDataBinding } from './attestation-common';
+import { verifyDstackAttestation } from './dstack-attestation';
 
-export async function verifyModelAttestation(
-  attestation: ModelAttestation,
-  config: VerifyModelAttestationConfig,
-) {
-  const intelTdxVerificationData = await fetchIntelTdxVerificationData(
-    attestation.intel_quote,
-  );
-  verifyIntelTdxForModel(
-    intelTdxVerificationData,
-    attestation.request_nonce,
-    attestation.signing_address,
-  );
+/**
+ * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
+ * and the model signing identity but does not claim a client-to-model TLS
+ * binding; the client's TLS connection terminates at the gateway.
+ */
+export async function verifyNearModelAttestation(
+  input: VerifyNearModelAttestationInput,
+): Promise<VerifiedNearModelAttestation> {
+  const { attestation } = input;
+  const evidence = await verifyDstackAttestation({
+    attestation,
+    expectedNonce: input.expectedNonce,
+    quoteVerifier: input.quoteVerifier,
+    gpuVerifier: input.gpuVerifier,
+    provenanceVerifier: input.provenanceVerifier,
+    policy: input.policy,
+    nvidiaPayload: attestation.nvidia_payload,
+    verifyGpu: true,
+    advertisedReportData: attestation.report_data,
+    verifyReportDataBinding: (reportData) =>
+      verifyCloudModelReportDataBinding({
+        reportData,
+        expectedNonce: input.expectedNonce,
+        signingAddress: attestation.signing_address,
+        reportedTlsCertFingerprint: attestation.tls_cert_fingerprint,
+      }),
+  });
 
-  const nvidiaGpuVerificationData = await fetchNvidiaGpuVerificationData(
-    attestation.nvidia_payload,
-  );
-  verifyNvidiaGpuForModel(nvidiaGpuVerificationData);
-
-  if (config.imageNamesOfSigstoreHash.length > 0) {
-    await verifyCompose(
-      getComposeFromTcbInfo(attestation.info.tcb_info),
-      config.imageNamesOfSigstoreHash,
-    );
-  }
-}
-
-function verifyIntelTdxForModel(
-  verificationData: IntelTdxVerificationData,
-  requestNonce: string,
-  signingAddress: string,
-) {
-  if (!verificationData.quote.verified) {
-    throw new VerificationError('Intel quote not verified');
-  }
-
-  verifyIntelQuoteReportDataForAttestationReport(
-    verificationData.quote.body.reportdata,
-    requestNonce,
-    signingAddress,
-  );
-}
-
-function verifyNvidiaGpuForModel(verificationData: NvidiaGpuVerificationData) {
-  const result = verificationData.JWT['x-nvidia-overall-att-result'];
-  if (!result) {
-    throw new VerificationError('NVIDIA GPU not verified');
-  }
+  return { ...evidence, kind: 'near_model' };
 }

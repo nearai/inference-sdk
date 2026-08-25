@@ -1,39 +1,57 @@
-import {
-  NvidiaGpuVerificationDataRaw,
-  NvidiaGpuVerificationData,
-} from '../types/nvidia';
-import { decodeJwt, mapRecord } from './common';
+import { GpuVerifier } from '../types/verification';
 import { NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT } from './consts';
+import { decodeJwt } from './common';
 import { VerificationError } from './errors';
 import { fetchTimeout } from './fetch';
 
-export async function fetchNvidiaGpuVerificationData(
-  payload: string,
-): Promise<NvidiaGpuVerificationData> {
-  const response = await fetchTimeout(NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: payload,
-  });
+/**
+ * Default NVIDIA NRAS adapter. It verifies through the NRAS HTTPS service and
+ * accepts only the documented boolean overall JWT claim. It does not
+ * independently verify that JWT's signature. Supply a custom GpuVerifier when
+ * local JWT/EAT validation is required. The caller verifies payload freshness
+ * before this adapter runs.
+ */
+export const nvidiaNrasVerifier: GpuVerifier = {
+  async verify(nvidiaPayload: string): Promise<void> {
+    const response = await fetchTimeout(NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: nvidiaPayload,
+    });
 
-  if (!response.ok) {
+    if (!response.ok) {
+      throw new VerificationError(
+        `NVIDIA NRAS returned HTTP ${response.status}`,
+      );
+    }
+
+    const raw: unknown = await response.json();
+    const jwt = getOverallJwt(raw);
+    const claims = decodeJwt(jwt);
+    const rawVerdict = claims['x-nvidia-overall-att-result'];
+    if (rawVerdict === true) {
+      return;
+    }
+    if (rawVerdict === false) {
+      throw new VerificationError(
+        'NVIDIA NRAS reported a failed overall attestation result',
+      );
+    }
     throw new VerificationError(
-      `Failed to fetch NVIDIA GPU verification data with status code ${response.status}`,
+      'NVIDIA NRAS overall attestation result must be a boolean',
     );
+  },
+};
+
+function getOverallJwt(value: unknown): string {
+  if (!Array.isArray(value) || !Array.isArray(value[0])) {
+    throw new VerificationError('Unexpected NVIDIA NRAS response format');
   }
-
-  const verificationDataRaw = await response.json();
-
-  return parseNvidiaGpuVerificationData(verificationDataRaw);
-}
-
-function parseNvidiaGpuVerificationData(
-  verificationDataRaw: NvidiaGpuVerificationDataRaw,
-): NvidiaGpuVerificationData {
-  return {
-    JWT: decodeJwt(verificationDataRaw[0][1]),
-    GPU: mapRecord(verificationDataRaw[1], (key, value) => decodeJwt(value)),
-  };
+  const [label, jwt] = value[0];
+  if (label !== 'JWT' || typeof jwt !== 'string') {
+    throw new VerificationError('Unexpected NVIDIA NRAS overall evidence');
+  }
+  return jwt;
 }

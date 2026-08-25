@@ -1,18 +1,40 @@
 {
   "name": "verification-sdk",
   "version": "0.0.1",
+  "description": "Verify NEAR AI Cloud attestation evidence in TypeScript",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearai/verifiable-ai-sdk.git"
+  },
+  "homepage": "https://github.com/nearai/verifiable-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/nearai/verifiable-ai-sdk/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "packageManager": "pnpm@11.19.0",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsup",
-    "lint": "pnpm fmt && pnpm check",
-    "fmt": "prettier '{src,test}/**/*.ts' '*.mjs' --write --list-different",
-    "check": "eslint '{src,test}/**/*.ts' '*.mjs' --fix",
-    "test": "jest",
+    "build": "tsup --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "jest --runInBand",
+    "format": "prettier '{src,test}/**/*.ts' '*.mjs' --write",
+    "format:check": "prettier '{src,test}/**/*.ts' '*.mjs' --check",
+    "lint": "eslint '{src,test}/**/*.ts' '*.mjs'",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
