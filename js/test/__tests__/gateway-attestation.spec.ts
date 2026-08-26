@@ -55,7 +55,13 @@ describe('verifyGatewayAttestation', () => {
         peerTlsCertFingerprint: '44'.repeat(32),
         quoteVerifier: { verify: async () => quote },
       }),
-    ).rejects.toThrow('TLS fingerprint does not match the peer TLS connection');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.tls_fingerprint_mismatch',
+        details: { source: 'peer_tls_connection' },
+      },
+    });
   });
 
   test('rejects a gateway report_data field that contradicts the quote', async () => {
@@ -68,7 +74,13 @@ describe('verifyGatewayAttestation', () => {
         peerTlsCertFingerprint: tlsFingerprint,
         quoteVerifier: { verify: async () => createQuote() },
       }),
-    ).rejects.toThrow('reported report_data does not match');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_mismatch',
+        details: { source: 'advertised_report_data' },
+      },
+    });
   });
 
   test('does not treat an empty gateway report_data field as absent', async () => {
@@ -79,6 +91,16 @@ describe('verifyGatewayAttestation', () => {
         peerTlsCertFingerprint: tlsFingerprint,
         quoteVerifier: { verify: async () => createQuote() },
       }),
-    ).rejects.toThrow('reported report_data must be a 64-byte hex string');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_invalid',
+        details: {
+          source: 'advertised_report_data',
+          reason: 'invalid_hex',
+          expectedBytes: 64,
+        },
+      },
+    });
   });
 });

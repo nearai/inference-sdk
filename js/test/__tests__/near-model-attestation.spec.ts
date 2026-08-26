@@ -40,7 +40,13 @@ describe('verifyNearModelAttestation', () => {
         expectedNonce: nonce,
         quoteVerifier,
       }),
-    ).rejects.toThrow('request_nonce does not match expectedNonce');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.nonce_mismatch',
+        details: { source: 'request_nonce' },
+      },
+    });
   });
 
   test('rejects a NEAR model report without the strict TLS fingerprint binding', async () => {
@@ -60,7 +66,13 @@ describe('verifyNearModelAttestation', () => {
         expectedNonce: nonce,
         quoteVerifier: { verify: async () => quote },
       }),
-    ).rejects.toThrow('strict NEAR binding is required');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.tls_fingerprint_missing',
+        details: { target: 'near_model' },
+      },
+    });
   });
 
   test('rejects a debug-enabled TDX quote', async () => {
@@ -72,7 +84,53 @@ describe('verifyNearModelAttestation', () => {
           verify: async () => createQuote({ debugEnabled: true }),
         },
       }),
-    ).rejects.toThrow('TDX debug mode is enabled');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.debug_enabled',
+        details: { target: 'near_model' },
+      },
+    });
+  });
+
+  test('normalizes a custom quote verifier failure', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: {
+          verify: async () => {
+            throw new Error('verifier implementation detail');
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'quote',
+        code: 'quote.verification_failed',
+        details: { reason: 'verifier_error' },
+      },
+    });
+  });
+
+  test('normalizes an invalid custom quote verifier result', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: { verify: async () => undefined as never },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'quote',
+        code: 'quote.invalid_result',
+        details: {
+          path: 'quote',
+          expected: 'object',
+          actual: 'undefined',
+        },
+      },
+    });
   });
 
   test('accepts OutOfDate by default and permits a stricter TCB policy', async () => {
@@ -95,7 +153,13 @@ describe('verifyNearModelAttestation', () => {
         },
         policy: { allowedTcbStatuses: ['UpToDate'] },
       }),
-    ).rejects.toThrow("TDX TCB status 'OutOfDate' is not allowed");
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.tcb_status_not_allowed',
+        details: { actual: 'OutOfDate', allowed: ['UpToDate'] },
+      },
+    });
   });
 
   test('rejects a TCB status outside the default allowlist', async () => {
@@ -107,7 +171,39 @@ describe('verifyNearModelAttestation', () => {
           verify: async () => createQuote({ tcbStatus: 'Revoked' }),
         },
       }),
-    ).rejects.toThrow("TDX TCB status 'Revoked' is not allowed");
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.tcb_status_not_allowed',
+        details: {
+          actual: 'Revoked',
+          allowed: ['UpToDate', 'OutOfDate'],
+        },
+      },
+    });
+  });
+
+  test('identifies malformed Intel-verified quote report data', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: {
+          verify: async () => createQuote({ reportData: Buffer.alloc(63) }),
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_invalid',
+        details: {
+          source: 'quote_report_data',
+          reason: 'wrong_length',
+          expectedBytes: 64,
+          actualBytes: 63,
+        },
+      },
+    });
   });
 
   test('rejects an event log that cannot replay the quoted RTMR3', async () => {
@@ -127,7 +223,13 @@ describe('verifyNearModelAttestation', () => {
         expectedNonce: nonce,
         quoteVerifier,
       }),
-    ).rejects.toThrow('event log RTMR3 replay does not match quote');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'measurement',
+        code: 'measurement.rtmr3_mismatch',
+        details: { reason: 'replay_mismatch' },
+      },
+    });
   });
 
   test('accepts defaulted optional fields in a non-runtime event', async () => {
@@ -188,7 +290,12 @@ describe('verifyNearModelAttestation', () => {
         expectedNonce: nonce,
         quoteVerifier,
       }),
-    ).rejects.toThrow('raw app_compose does not match quote MRCONFIGID');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'measurement',
+        code: 'measurement.app_compose_mrconfigid_mismatch',
+      },
+    });
   });
 
   test('checks the GPU payload nonce before calling the GPU verifier', async () => {
@@ -202,7 +309,13 @@ describe('verifyNearModelAttestation', () => {
         quoteVerifier,
         gpuVerifier,
       }),
-    ).rejects.toThrow('request_nonce does not match expectedNonce');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.nonce_mismatch',
+        details: { source: 'nvidia_payload' },
+      },
+    });
     expect(gpuVerifier.verify).not.toHaveBeenCalled();
   });
 
@@ -214,7 +327,12 @@ describe('verifyNearModelAttestation', () => {
         quoteVerifier,
         policy: { requireGpuEvidence: true },
       }),
-    ).rejects.toThrow('GPU evidence is required by policy');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.gpu_evidence_required',
+      },
+    });
 
     await expect(
       verifyNearModelAttestation({
@@ -242,7 +360,13 @@ describe('verifyNearModelAttestation', () => {
           },
         },
       }),
-    ).rejects.toThrow('GPU evidence was rejected');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'gpu',
+        code: 'gpu.attestation_rejected',
+        details: { source: 'custom_verifier' },
+      },
+    });
   });
 
   test('rejects model report_data that contradicts the verified quote', async () => {
@@ -254,7 +378,13 @@ describe('verifyNearModelAttestation', () => {
         expectedNonce: nonce,
         quoteVerifier,
       }),
-    ).rejects.toThrow('reported report_data does not match');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_mismatch',
+        details: { source: 'advertised_report_data' },
+      },
+    });
   });
 
   test('requires a provenance verifier when the policy requires deployment provenance', async () => {
@@ -265,7 +395,12 @@ describe('verifyNearModelAttestation', () => {
         quoteVerifier,
         policy: { requireDeploymentProvenance: true },
       }),
-    ).rejects.toThrow('deployment provenance is required by policy');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.provenance_verifier_required',
+      },
+    });
   });
 
   test('passes verified measurements to a required provenance verifier', async () => {
@@ -315,5 +450,25 @@ describe('verifyNearModelAttestation', () => {
       },
     });
     expect(result.provenanceVerified).toBe(true);
+  });
+
+  test('normalizes a custom provenance verifier failure', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier,
+        provenanceVerifier: {
+          verify: async () => {
+            throw new Error('verifier implementation detail');
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'provenance',
+        code: 'provenance.verification_failed',
+      },
+    });
   });
 });

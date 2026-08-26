@@ -15,6 +15,7 @@ export async function verifyNearModelAttestation(
 ): Promise<VerifiedNearModelAttestation> {
   const { attestation } = input;
   const evidence = await verifyDstackAttestation({
+    target: 'near_model',
     attestation,
     expectedNonce: input.expectedNonce,
     quoteVerifier: input.quoteVerifier,

@@ -24,6 +24,44 @@ Set `allowedTcbStatuses` to use a stricter policy:
 const policy = { allowedTcbStatuses: ['UpToDate'] };
 ```
 
+## Handling verification failures
+
+SDK-defined verification and Cloud API failures are `VerificationError`s. The
+`failure` field is a discriminated, machine-readable contract; do not branch
+on `message`.
+`failure.code` identifies the failed check, `failure.phase` identifies the
+verification stage, and `failure.details` carries safe context such as a TCB
+status, field path, byte length, or HTTP status. It never includes API keys,
+nonces, quotes, prompts, or completion bytes.
+
+```ts
+import { isVerificationError, verifyNearModelAttestation } from 'verification-sdk';
+
+try {
+  await verifyNearModelAttestation(input);
+} catch (error) {
+  if (!isVerificationError(error)) throw error;
+
+  switch (error.failure.code) {
+    case 'policy.tcb_status_not_allowed':
+      console.log(error.failure.details.actual);
+      break;
+    case 'cloud_api.http_status':
+      console.log(error.failure.details.status);
+      break;
+    default:
+      console.log(error.failure.code, error.failure.details);
+  }
+}
+```
+
+Codes are grouped by phase: `input.*`, `cloud_api.*`, `quote.*`, `binding.*`,
+`measurement.*`, `policy.*`, `gpu.*`, `provenance.*`, `signature.*`, and
+`runtime.*`. `error.retryable` is `true` only for a transient remote-service
+failure; a verification or policy failure is never retried automatically.
+The underlying implementation error remains available as `error.cause` for
+debugging, but is not part of the SDK contract.
+
 ## Model response flow
 
 Use the exact bytes sent to and received from the completion endpoint. The

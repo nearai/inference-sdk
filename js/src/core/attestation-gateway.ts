@@ -14,6 +14,7 @@ export async function verifyGatewayAttestation(
 ): Promise<VerifiedGatewayAttestation> {
   const { attestation } = input;
   const evidence = await verifyDstackAttestation({
+    target: 'gateway',
     attestation,
     expectedNonce: input.expectedNonce,
     quoteVerifier: input.quoteVerifier,

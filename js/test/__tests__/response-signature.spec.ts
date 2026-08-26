@@ -15,6 +15,19 @@ import {
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
 
+function expectVerificationFailure(
+  action: () => unknown,
+  failure: Record<string, unknown>,
+): void {
+  try {
+    action();
+  } catch (error) {
+    expect(error).toMatchObject({ failure });
+    return;
+  }
+  throw new Error('Expected verification to fail');
+}
+
 describe('response signature verification', () => {
   test('binds a provider_tee ECDSA signature to the verified model signer', async () => {
     const wallet = new ethers.Wallet(
@@ -78,20 +91,26 @@ describe('response signature verification', () => {
       provenanceVerified: false,
     };
 
-    expect(() =>
-      verifyProviderTeeResponse({
-        requestBody: Buffer.from('{"model":"alias"}'),
-        responseBody,
-        signature: {
-          text,
-          signature,
-          signing_address: wallet.address,
-          signing_algo: 'ecdsa',
-          signature_kind: 'provider_tee',
-        },
-        verifiedModelAttestation: attestation,
-      }),
-    ).toThrow('Signature text does not match');
+    expectVerificationFailure(
+      () =>
+        verifyProviderTeeResponse({
+          requestBody: Buffer.from('{"model":"alias"}'),
+          responseBody,
+          signature: {
+            text,
+            signature,
+            signing_address: wallet.address,
+            signing_algo: 'ecdsa',
+            signature_kind: 'provider_tee',
+          },
+          verifiedModelAttestation: attestation,
+        }),
+      {
+        phase: 'signature',
+        code: 'signature.payload_mismatch',
+        details: { source: 'signed_payload', reason: 'text_mismatch' },
+      },
+    );
   });
 
   test('accepts an Ed25519 gateway signature but labels it gateway-only', () => {
@@ -130,26 +149,37 @@ describe('response signature verification', () => {
   });
 
   test('does not treat unavailable or missing signature kinds as evidence', () => {
-    expect(() =>
-      requireKnownSignature({
-        status: 'unavailable',
-        unavailable: {
-          error_code: 'SIGNATURE_UNSUPPORTED',
-          message: 'unsupported',
-        },
-      }),
-    ).toThrow('unavailable');
+    expectVerificationFailure(
+      () =>
+        requireKnownSignature({
+          status: 'unavailable',
+          unavailable: {
+            error_code: 'SIGNATURE_UNSUPPORTED',
+            message: 'unsupported',
+          },
+        }),
+      {
+        phase: 'signature',
+        code: 'signature.unavailable',
+        details: { providerErrorCode: 'SIGNATURE_UNSUPPORTED' },
+      },
+    );
 
-    expect(() =>
-      requireKnownSignature({
-        status: 'unknown_kind',
-        signature: {
-          text: 'x',
-          signature: 'aa',
-          signing_address: '11'.repeat(20),
-          signing_algo: 'ecdsa',
-        },
-      }),
-    ).toThrow('missing or unsupported');
+    expectVerificationFailure(
+      () =>
+        requireKnownSignature({
+          status: 'unknown_kind',
+          signature: {
+            text: 'x',
+            signature: 'aa',
+            signing_address: '11'.repeat(20),
+            signing_algo: 'ecdsa',
+          },
+        }),
+      {
+        phase: 'signature',
+        code: 'signature.unknown_kind',
+      },
+    );
   });
 });

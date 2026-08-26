@@ -6,12 +6,24 @@ import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 export function verifyReportedNonce(
   reportedNonce: string,
   expectedNonce: string,
+  source:
+    | 'request_nonce'
+    | 'quote_report_data'
+    | 'nvidia_payload' = 'request_nonce',
 ): void {
   const expected = requireByteLength(expectedNonce, 32, 'expectedNonce');
-  const reported = requireByteLength(reportedNonce, 32, 'request_nonce');
+  const reported = requireByteLength(
+    reportedNonce,
+    32,
+    source === 'nvidia_payload' ? 'nvidia_payload.nonce' : 'request_nonce',
+  );
 
   if (!reported.equals(expected)) {
-    throw new VerificationError('request_nonce does not match expectedNonce');
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.nonce_mismatch',
+      details: { source },
+    });
   }
 }
 
@@ -30,9 +42,16 @@ export async function verifyStrictReportDataBinding(input: {
 }): Promise<string> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
-    throw new VerificationError(
-      `quote report_data must be 64 bytes, got ${reportData.length}`,
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_invalid',
+      details: {
+        source: 'quote_report_data',
+        reason: 'wrong_length',
+        expectedBytes: 64,
+        actualBytes: reportData.length,
+      },
+    });
   }
 
   const expectedNonce = requireByteLength(
@@ -41,13 +60,19 @@ export async function verifyStrictReportDataBinding(input: {
     'expectedNonce',
   );
   if (!reportData.subarray(32, 64).equals(expectedNonce)) {
-    throw new VerificationError('quote report_data nonce mismatch');
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.nonce_mismatch',
+      details: { source: 'quote_report_data' },
+    });
   }
 
   if (!input.reportedTlsCertFingerprint) {
-    throw new VerificationError(
-      'attestation is missing tls_cert_fingerprint; strict TLS binding is required',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.tls_fingerprint_missing',
+      details: { target: 'gateway' },
+    });
   }
 
   const reportedFingerprint = requireByteLength(
@@ -61,19 +86,23 @@ export async function verifyStrictReportDataBinding(input: {
     'peerTlsCertFingerprint',
   );
   if (!reportedFingerprint.equals(peerFingerprint)) {
-    throw new VerificationError(
-      'attestation TLS fingerprint does not match the peer TLS connection',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.tls_fingerprint_mismatch',
+      details: { source: 'peer_tls_connection' },
+    });
   }
 
-  const signingAddress = hexToBuffer(input.signingAddress);
+  const signingAddress = hexToBuffer(input.signingAddress, 'signing_address');
   const expectedBinding = await sha256(
     Buffer.concat([signingAddress, reportedFingerprint]),
   );
   if (!reportData.subarray(0, 32).equals(expectedBinding)) {
-    throw new VerificationError(
-      'quote report_data signing/TLS binding mismatch',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_mismatch',
+      details: { source: 'signer_tls_binding' },
+    });
   }
 
   return reportedFingerprint.toString('hex');
@@ -95,9 +124,16 @@ export async function verifyCloudModelReportDataBinding(input: {
 }): Promise<string> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
-    throw new VerificationError(
-      `quote report_data must be 64 bytes, got ${reportData.length}`,
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_invalid',
+      details: {
+        source: 'quote_report_data',
+        reason: 'wrong_length',
+        expectedBytes: 64,
+        actualBytes: reportData.length,
+      },
+    });
   }
   const expectedNonce = requireByteLength(
     input.expectedNonce,
@@ -105,15 +141,21 @@ export async function verifyCloudModelReportDataBinding(input: {
     'expectedNonce',
   );
   if (!reportData.subarray(32, 64).equals(expectedNonce)) {
-    throw new VerificationError('quote report_data nonce mismatch');
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.nonce_mismatch',
+      details: { source: 'quote_report_data' },
+    });
   }
 
   if (!input.reportedTlsCertFingerprint) {
-    throw new VerificationError(
-      'attestation is missing tls_cert_fingerprint; strict NEAR binding is required',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.tls_fingerprint_missing',
+      details: { target: 'near_model' },
+    });
   }
-  const signingAddress = hexToBuffer(input.signingAddress);
+  const signingAddress = hexToBuffer(input.signingAddress, 'signing_address');
   const fingerprint = requireByteLength(
     input.reportedTlsCertFingerprint,
     32,
@@ -123,9 +165,11 @@ export async function verifyCloudModelReportDataBinding(input: {
     Buffer.concat([signingAddress, fingerprint]),
   );
   if (!reportData.subarray(0, 32).equals(expectedBinding)) {
-    throw new VerificationError(
-      'quote report_data signing/TLS binding mismatch',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_mismatch',
+      details: { source: 'signer_tls_binding' },
+    });
   }
   return fingerprint.toString('hex');
 }
@@ -137,7 +181,14 @@ export function getRawAppCompose(tcbInfo: string | TcbInfo): string {
     try {
       parsed = JSON.parse(parsed);
     } catch (cause) {
-      throw new VerificationError('info.tcb_info is not valid JSON', cause);
+      throw new VerificationError(
+        {
+          phase: 'measurement',
+          code: 'measurement.app_compose_invalid',
+          details: { reason: 'invalid_json' },
+        },
+        { cause },
+      );
     }
   }
 
@@ -147,7 +198,11 @@ export function getRawAppCompose(tcbInfo: string | TcbInfo): string {
     !('app_compose' in parsed) ||
     typeof parsed.app_compose !== 'string'
   ) {
-    throw new VerificationError('info.tcb_info.app_compose is missing');
+    throw new VerificationError({
+      phase: 'measurement',
+      code: 'measurement.app_compose_invalid',
+      details: { reason: 'missing' },
+    });
   }
 
   return parsed.app_compose;
@@ -163,19 +218,31 @@ export async function verifyAppComposeMrConfigBinding(
 ): Promise<void> {
   const mrConfig = Buffer.from(mrConfigId);
   if (mrConfig.length < 33) {
-    throw new VerificationError(
-      `quote MRCONFIGID must contain a version byte and SHA-256, got ${mrConfig.length} bytes`,
-    );
+    throw new VerificationError({
+      phase: 'measurement',
+      code: 'measurement.mrconfigid_invalid',
+      details: {
+        reason: 'wrong_length',
+        minimumBytes: 33,
+        actualBytes: mrConfig.length,
+      },
+    });
   }
   if (mrConfig[0] !== 0x01) {
-    throw new VerificationError('quote MRCONFIGID has an unsupported version');
+    throw new VerificationError({
+      phase: 'measurement',
+      code: 'measurement.mrconfigid_invalid',
+      details: { reason: 'unsupported_version', version: mrConfig[0] },
+    });
   }
 
   const composeHash = await sha256(utf8(appCompose));
   if (!mrConfig.subarray(1, 33).equals(composeHash)) {
-    throw new VerificationError(
-      'raw app_compose does not match quote MRCONFIGID',
-    );
+    throw new VerificationError({
+      phase: 'measurement',
+      code: 'measurement.app_compose_mrconfigid_mismatch',
+      details: {},
+    });
   }
 }
 
@@ -197,20 +264,38 @@ export function verifyAdvertisedReportData(
   }
   let advertised: Buffer;
   try {
-    advertised = requireByteLength(
-      advertisedReportData,
-      64,
-      'reported report_data',
-    );
+    advertised = hexToBuffer(advertisedReportData, 'reported report_data');
   } catch (cause) {
     throw new VerificationError(
-      'reported report_data must be a 64-byte hex string',
-      cause,
+      {
+        phase: 'binding',
+        code: 'binding.report_data_invalid',
+        details: {
+          source: 'advertised_report_data',
+          reason: 'invalid_hex',
+          expectedBytes: 64,
+        },
+      },
+      { cause },
     );
   }
+  if (advertised.length !== 64) {
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_invalid',
+      details: {
+        source: 'advertised_report_data',
+        reason: 'wrong_length',
+        expectedBytes: 64,
+        actualBytes: advertised.length,
+      },
+    });
+  }
   if (!advertised.equals(Buffer.from(quoteReportData))) {
-    throw new VerificationError(
-      'reported report_data does not match the Intel-verified quote',
-    );
+    throw new VerificationError({
+      phase: 'binding',
+      code: 'binding.report_data_mismatch',
+      details: { source: 'advertised_report_data' },
+    });
   }
 }

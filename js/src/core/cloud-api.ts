@@ -62,8 +62,14 @@ export type FetchCompletionSignatureInput = {
  */
 export class NearAiCloudClient {
   private readonly fetchImpl: FetchLike;
+  private readonly options: NearAiCloudClientOptions;
 
-  constructor(private readonly options: NearAiCloudClientOptions) {
+  constructor(options: NearAiCloudClientOptions) {
+    this.options = {
+      ...options,
+      baseUrl: validateBaseUrl(options.baseUrl),
+      apiKey: validateApiKey(options.apiKey),
+    };
     this.fetchImpl = options.fetch ?? fetch;
   }
 
@@ -94,9 +100,11 @@ export class NearAiCloudClient {
     const report = await this.fetchNearAiCloudAttestationReport(input);
     const attestations = report.model_attestations ?? [];
     if (attestations.length !== 1) {
-      throw new CloudApiError(
-        `Expected exactly one NEAR model attestation, received ${attestations.length}`,
-      );
+      throw new CloudApiError({
+        phase: 'cloud_api',
+        code: 'cloud_api.unexpected_model_attestation_count',
+        details: { expectedCount: 1, actualCount: attestations.length },
+      });
     }
     return attestations[0];
   }
@@ -122,9 +130,8 @@ export class NearAiCloudClient {
   async fetchCompletionSignature(
     input: FetchCompletionSignatureInput,
   ): Promise<SignatureLookup> {
-    if (!input.chatId) {
-      throw new VerificationError('chatId is required');
-    }
+    requireNonEmptyString(input.chatId, 'chatId');
+    validateSigningAlgo(input.signingAlgo);
     const url = this.endpoint(`signature/${encodeURIComponent(input.chatId)}`);
     url.searchParams.set('signing_algo', input.signingAlgo);
     return parseSignatureLookup(
@@ -133,10 +140,7 @@ export class NearAiCloudClient {
   }
 
   private endpoint(path: string): URL {
-    const baseUrl = this.options.baseUrl.endsWith('/')
-      ? this.options.baseUrl
-      : `${this.options.baseUrl}/`;
-    return new URL(path, baseUrl);
+    return new URL(path, this.options.baseUrl);
   }
 
   private async getJson(
@@ -152,23 +156,49 @@ export class NearAiCloudClient {
         headers,
       });
     } catch (cause) {
-      throw new CloudApiError(`Failed to fetch ${label}`, undefined, cause);
+      throw new CloudApiError(
+        {
+          phase: 'cloud_api',
+          code: 'cloud_api.transport_failed',
+          details: { operation: label, reason: 'request' },
+          retryable: true,
+        },
+        { cause },
+      );
     }
 
-    const body = await response.text();
-    if (!response.ok) {
+    let body: string;
+    try {
+      body = await response.text();
+    } catch (cause) {
       throw new CloudApiError(
-        `Failed to fetch ${label}: HTTP ${response.status}${body ? `: ${body}` : ''}`,
-        response.status,
+        {
+          phase: 'cloud_api',
+          code: 'cloud_api.transport_failed',
+          details: { operation: label, reason: 'response_body' },
+          retryable: true,
+        },
+        { cause },
       );
+    }
+    if (!response.ok) {
+      throw new CloudApiError({
+        phase: 'cloud_api',
+        code: 'cloud_api.http_status',
+        details: { operation: label, status: response.status },
+        retryable: isRetryableHttpStatus(response.status),
+      });
     }
     try {
       return JSON.parse(body);
     } catch (cause) {
       throw new CloudApiError(
-        `Invalid JSON in ${label} response`,
-        response.status,
-        cause,
+        {
+          phase: 'cloud_api',
+          code: 'cloud_api.invalid_json',
+          details: { operation: label },
+        },
+        { cause },
       );
     }
   }
@@ -177,21 +207,110 @@ export class NearAiCloudClient {
 function validateNearModelAttestationRequest(
   input: FetchNearModelAttestationInput,
 ): void {
-  if (!input.model) {
-    throw new VerificationError('model is required');
-  }
+  requireNonEmptyString(input.model, 'model');
   validateAttestationRequest(input);
 }
 
 function validateAttestationRequest(input: FetchAttestationInput): void {
+  validateSigningAlgo(input.signingAlgo);
   requireByteLength(input.nonce, 32, 'nonce');
-  if (input.signingAddress) {
+  if (input.signingAddress !== undefined) {
     requireByteLength(
       input.signingAddress,
       input.signingAlgo === 'ecdsa' ? 20 : 32,
       'signingAddress',
     );
   }
+}
+
+function validateBaseUrl(baseUrl: unknown): string {
+  if (typeof baseUrl !== 'string') {
+    throw invalidInput('baseUrl', 'invalid_url', {
+      expected: 'absolute HTTP(S) URL',
+    });
+  }
+
+  try {
+    const parsed = new URL(baseUrl);
+    if (
+      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      parsed.search ||
+      parsed.hash
+    ) {
+      throw new TypeError('invalid base URL');
+    }
+  } catch {
+    throw invalidInput('baseUrl', 'invalid_url', {
+      expected: 'absolute HTTP(S) URL without a query or fragment',
+    });
+  }
+
+  return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+}
+
+function validateApiKey(apiKey: unknown): string {
+  if (
+    typeof apiKey !== 'string' ||
+    apiKey.length === 0 ||
+    containsHttpHeaderControl(apiKey)
+  ) {
+    throw invalidInput(
+      'apiKey',
+      typeof apiKey === 'string' && apiKey.length === 0
+        ? 'missing'
+        : 'invalid_header',
+      { expected: 'non-empty HTTP header value' },
+    );
+  }
+  return apiKey;
+}
+
+function containsHttpHeaderControl(value: string): boolean {
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateSigningAlgo(value: unknown): asserts value is SigningAlgo {
+  if (value !== 'ecdsa' && value !== 'ed25519') {
+    throw invalidInput('signingAlgo', 'unsupported_value', {
+      expected: "'ecdsa' or 'ed25519'",
+    });
+  }
+}
+
+function requireNonEmptyString(
+  value: unknown,
+  field: string,
+): asserts value is string {
+  if (typeof value === 'string' && value.length > 0) {
+    return;
+  }
+  throw invalidInput(
+    field,
+    typeof value === 'string' ? 'missing' : 'unsupported_value',
+    { expected: 'non-empty string' },
+  );
+}
+
+function invalidInput(
+  field: string,
+  reason: 'missing' | 'invalid_url' | 'invalid_header' | 'unsupported_value',
+  details: { expected?: string } = {},
+): VerificationError {
+  return new VerificationError({
+    phase: 'input',
+    code: 'input.invalid',
+    details: { field, reason, ...details },
+  });
+}
+
+function isRetryableHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function setAttestationQuery(url: URL, input: FetchAttestationInput): void {
@@ -212,7 +331,11 @@ function parseNearAiCloudAttestationReport(
   let modelAttestations: NearModelAttestation[] | undefined;
   if (rawModelAttestations !== undefined) {
     if (!Array.isArray(rawModelAttestations)) {
-      throw new CloudApiError('model_attestations must be an array');
+      throw invalidResponse(
+        'model_attestations',
+        'array',
+        rawModelAttestations,
+      );
     }
     modelAttestations = rawModelAttestations.map((item, index) =>
       parseNearModelAttestation(item, `model_attestations[${index}]`),
@@ -288,8 +411,10 @@ function parseDstackAttestation(
   );
   const eventLog = requireJsonValue(record.event_log, `${label}.event_log`);
   if (typeof eventLog !== 'string' && !Array.isArray(eventLog)) {
-    throw new CloudApiError(
-      `${label}.event_log must be a JSON string or array`,
+    throw invalidResponse(
+      `${label}.event_log`,
+      'JSON string or array',
+      eventLog,
     );
   }
 
@@ -377,7 +502,7 @@ function parseTcbInfo(value: unknown, label: string): string | TcbInfo {
   }
   const record = requireObject(value, label);
   if (typeof record.app_compose !== 'string') {
-    throw new CloudApiError(`${label}.app_compose must be a string`);
+    throw invalidResponse(`${label}.app_compose`, 'string', record.app_compose);
   }
   return record as TcbInfo;
 }
@@ -405,19 +530,19 @@ function parseSigningAlgo(value: unknown, label: string): SigningAlgo {
   if (value === 'ecdsa' || value === 'ed25519') {
     return value;
   }
-  throw new CloudApiError(`${label} must be 'ecdsa' or 'ed25519'`);
+  throw invalidResponse(label, "'ecdsa' or 'ed25519'", value);
 }
 
 function requireObject(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new CloudApiError(`${label} must be an object`);
+    throw invalidResponse(label, 'object', value);
   }
   return value as Record<string, unknown>;
 }
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== 'string') {
-    throw new CloudApiError(`${label} must be a string`);
+    throw invalidResponse(label, 'string', value);
   }
   return value;
 }
@@ -460,5 +585,27 @@ function requireJsonValue(value: unknown, label: string): JsonValue {
     }
     return result;
   }
-  throw new CloudApiError(`${label} is not JSON`);
+  throw invalidResponse(label, 'JSON value', value);
+}
+
+function invalidResponse(
+  path: string,
+  expected: string,
+  value: unknown,
+): CloudApiError {
+  return new CloudApiError({
+    phase: 'cloud_api',
+    code: 'cloud_api.invalid_response',
+    details: { path, expected, actual: describeValue(value) },
+  });
+}
+
+function describeValue(value: unknown): string {
+  if (value === null) {
+    return 'null';
+  }
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  return typeof value;
 }

@@ -60,4 +60,15 @@ export type {
   VerifyProviderTeeResponseInput,
 } from './types/verification';
 
-export { CloudApiError, VerificationError } from './utils/errors';
+export {
+  CloudApiError,
+  isVerificationError,
+  VerificationError,
+} from './utils/errors';
+export type {
+  CloudApiFailure,
+  VerificationErrorCode,
+  VerificationErrorOptions,
+  VerificationFailure,
+  VerificationPhase,
+} from './utils/errors';

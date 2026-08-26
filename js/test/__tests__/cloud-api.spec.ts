@@ -1,4 +1,4 @@
-import { NearAiCloudClient } from '../../src';
+import { CloudApiError, NearAiCloudClient } from '../../src';
 import { nonce } from '../fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -141,6 +141,65 @@ describe('NearAiCloudClient', () => {
         nonce,
         signingAlgo: 'ecdsa',
       }),
-    ).rejects.toThrow('model_attestations[0].info');
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'cloud_api',
+        code: 'cloud_api.invalid_response',
+        details: {
+          path: 'model_attestations[0].info',
+          expected: 'object',
+          actual: 'undefined',
+        },
+      },
+    });
+  });
+
+  test('reports HTTP failures with status and retry guidance, not response text', async () => {
+    const client = new NearAiCloudClient({
+      baseUrl,
+      apiKey: 'test',
+      fetch: async () =>
+        new Response('private upstream response', { status: 503 }),
+    });
+
+    try {
+      await client.fetchGatewayAttestation({ nonce, signingAlgo: 'ecdsa' });
+      throw new Error('Expected the Cloud API request to fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(CloudApiError);
+      expect(error).toMatchObject({
+        failure: {
+          phase: 'cloud_api',
+          code: 'cloud_api.http_status',
+          details: { operation: 'gateway attestation report', status: 503 },
+          retryable: true,
+        },
+        status: 503,
+        retryable: true,
+      });
+      expect(JSON.stringify(error)).not.toContain('private upstream response');
+    }
+  });
+
+  test('rejects an API key that cannot be sent as an HTTP header', () => {
+    expect(
+      () =>
+        new NearAiCloudClient({
+          baseUrl,
+          apiKey: 'invalid\nheader',
+        }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          phase: 'input',
+          code: 'input.invalid',
+          details: {
+            field: 'apiKey',
+            reason: 'invalid_header',
+            expected: 'non-empty HTTP header value',
+          },
+        },
+      }),
+    );
   });
 });

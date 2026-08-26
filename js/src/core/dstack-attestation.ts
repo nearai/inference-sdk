@@ -5,10 +5,11 @@ import {
   ProvenanceVerifier,
   QuoteVerifier,
   VerifiedDstackAttestation,
+  VerifiedTdxQuote,
 } from '../types/verification';
 import { requireByteLength } from '../utils/common';
-import { VerificationError } from '../utils/errors';
-import { verifyDcapQuote } from '../utils/intel';
+import { VerificationError, wrapVerificationError } from '../utils/errors';
+import { normalizeVerifiedTdxQuote, verifyDcapQuote } from '../utils/intel';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
   extractImageDigests,
@@ -26,6 +27,7 @@ const DEFAULT_POLICY: Required<NearVerificationPolicy> = {
 };
 
 export type VerifyDstackAttestationInput = {
+  target: 'near_model' | 'gateway';
   attestation: DstackAttestation;
   expectedNonce: string;
   quoteVerifier?: QuoteVerifier;
@@ -55,17 +57,29 @@ export async function verifyDstackAttestation(
     attestation.signing_address,
   );
 
-  const quote = await (
-    input.quoteVerifier ?? { verify: verifyDcapQuote }
-  ).verify(attestation.intel_quote);
+  const quote = await verifyQuote(
+    input.quoteVerifier ?? { verify: verifyDcapQuote },
+    attestation.intel_quote,
+  );
   verifyAdvertisedReportData(input.advertisedReportData, quote.reportData);
   if (quote.debugEnabled) {
-    throw new VerificationError('TDX debug mode is enabled');
+    throw new VerificationError({
+      phase: 'policy',
+      code: 'policy.debug_enabled',
+      details: { target: input.target },
+    });
   }
   if (!policy.allowedTcbStatuses.includes(quote.tcbStatus)) {
-    throw new VerificationError(
-      `TDX TCB status '${quote.tcbStatus}' is not allowed by policy`,
-    );
+    throw new VerificationError({
+      phase: 'policy',
+      code: 'policy.tcb_status_not_allowed',
+      details: {
+        target: input.target,
+        actual: quote.tcbStatus,
+        allowed: policy.allowedTcbStatuses,
+        advisoryIds: quote.advisoryIds,
+      },
+    });
   }
 
   const tlsCertFingerprint = await input.verifyReportDataBinding(
@@ -80,18 +94,31 @@ export async function verifyDstackAttestation(
   const imageDigests = extractImageDigests(appCompose);
 
   if (policy.requireDeploymentProvenance && !input.provenanceVerifier) {
-    throw new VerificationError(
-      'deployment provenance is required by policy but no provenanceVerifier was provided',
-    );
+    throw new VerificationError({
+      phase: 'policy',
+      code: 'policy.provenance_verifier_required',
+      details: {},
+    });
   }
 
   const provenanceVerified = Boolean(input.provenanceVerifier);
   if (input.provenanceVerifier) {
-    await input.provenanceVerifier.verify({
-      appCompose,
-      imageDigests,
-      runtimeMeasurements,
-    });
+    try {
+      await input.provenanceVerifier.verify({
+        appCompose,
+        imageDigests,
+        runtimeMeasurements,
+      });
+    } catch (cause) {
+      throw wrapVerificationError(
+        {
+          phase: 'provenance',
+          code: 'provenance.verification_failed',
+          details: {},
+        },
+        cause,
+      );
+    }
   }
 
   const gpuVerified = input.verifyGpu
@@ -125,9 +152,11 @@ async function verifyGpuEvidence(
 ): Promise<true | undefined> {
   if (payload === undefined || payload === null || payload === '') {
     if (required) {
-      throw new VerificationError(
-        'GPU evidence is required by policy but absent',
-      );
+      throw new VerificationError({
+        phase: 'policy',
+        code: 'policy.gpu_evidence_required',
+        details: {},
+      });
     }
     return undefined;
   }
@@ -136,7 +165,14 @@ async function verifyGpuEvidence(
   try {
     parsed = JSON.parse(payload);
   } catch (cause) {
-    throw new VerificationError('nvidia_payload is not valid JSON', cause);
+    throw new VerificationError(
+      {
+        phase: 'gpu',
+        code: 'gpu.payload_invalid',
+        details: { reason: 'invalid_json' },
+      },
+      { cause },
+    );
   }
   if (
     !parsed ||
@@ -144,19 +180,66 @@ async function verifyGpuEvidence(
     Array.isArray(parsed) ||
     typeof (parsed as Record<string, unknown>).nonce !== 'string'
   ) {
-    throw new VerificationError('nvidia_payload is missing its nonce');
+    throw new VerificationError({
+      phase: 'gpu',
+      code: 'gpu.payload_invalid',
+      details: { reason: 'nonce_missing' },
+    });
   }
   const payloadNonce = (parsed as Record<string, string>).nonce;
-  verifyReportedNonce(payloadNonce, expectedNonce);
+  verifyReportedNonce(payloadNonce, expectedNonce, 'nvidia_payload');
 
-  await verifier.verify(payload);
+  try {
+    await verifier.verify(payload);
+  } catch (cause) {
+    throw wrapVerificationError(
+      {
+        phase: 'gpu',
+        code: 'gpu.attestation_rejected',
+        details: { source: 'custom_verifier' },
+      },
+      cause,
+    );
+  }
   return true;
+}
+
+async function verifyQuote(
+  verifier: QuoteVerifier,
+  intelQuote: string,
+): Promise<VerifiedTdxQuote> {
+  let quote: unknown;
+  try {
+    quote = await verifier.verify(intelQuote);
+  } catch (cause) {
+    throw wrapVerificationError(
+      {
+        phase: 'quote',
+        code: 'quote.verification_failed',
+        details: { reason: 'verifier_error' },
+      },
+      cause,
+    );
+  }
+
+  return normalizeVerifiedTdxQuote(quote);
 }
 
 function verifySigningAddressLength(
   signingAlgo: DstackAttestation['signing_algo'],
   signingAddress: string,
 ): void {
+  if (signingAlgo !== 'ecdsa' && signingAlgo !== 'ed25519') {
+    throw new VerificationError({
+      phase: 'input',
+      code: 'input.invalid',
+      details: {
+        field: 'signing_algo',
+        reason: 'unsupported_value',
+        expected: "'ecdsa' or 'ed25519'",
+      },
+    });
+  }
   requireByteLength(
     signingAddress,
     signingAlgo === 'ecdsa' ? 20 : 32,

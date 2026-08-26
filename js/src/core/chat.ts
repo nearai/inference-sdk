@@ -22,9 +22,11 @@ export function providerTeeSignatureText(
   responseBody: Uint8Array,
 ): string {
   if (!canonicalModelId) {
-    throw new VerificationError(
-      'canonicalModelId is required for provider_tee',
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.payload_mismatch',
+      details: { source: 'request_model', reason: 'missing_model' },
+    });
   }
   return `${canonicalModelId}:${hashBytes(requestBody)}:${hashBytes(responseBody)}`;
 }
@@ -90,14 +92,18 @@ export function requireKnownSignature(
   lookup: SignatureLookup,
 ): KnownChatSignature {
   if (lookup.status === 'unavailable') {
-    throw new VerificationError(
-      `Completion signature is unavailable: ${lookup.unavailable.error_code}`,
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.unavailable',
+      details: { providerErrorCode: lookup.unavailable.error_code },
+    });
   }
   if (lookup.status === 'unknown_kind') {
-    throw new VerificationError(
-      'Completion signature kind is missing or unsupported; no verification claim can be made',
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.unknown_kind',
+      details: {},
+    });
   }
   return lookup.signature;
 }
@@ -107,9 +113,11 @@ function verifySignatureTextAndBytes(
   expectedText: string,
 ): void {
   if (signature.text !== expectedText) {
-    throw new VerificationError(
-      'Signature text does not match the exact response bytes',
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.payload_mismatch',
+      details: { source: 'signed_payload', reason: 'text_mismatch' },
+    });
   }
   verifySignatureBytes(signature);
 }
@@ -123,62 +131,90 @@ function verifySignatureMatchesAttestation(
 ): void {
   if (
     signature.signing_algo !== attestation.signingAlgo ||
-    normalizeHex(signature.signing_address) !==
-      normalizeHex(attestation.signingAddress)
+    normalizeSignatureAddress(signature.signing_address) !==
+      normalizeVerifiedSignerAddress(attestation.signingAddress)
   ) {
-    throw new VerificationError(
-      'Signature signer does not match the verified attestation signer',
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.signer_mismatch',
+      details: {},
+    });
   }
 }
 
 function verifySignatureBytes(signature: KnownChatSignature): void {
   if (signature.signing_algo === 'ecdsa') {
-    const signatureBytes = hexToBuffer(signature.signature);
-    const address = hexToBuffer(signature.signing_address);
+    const signatureBytes = parseSignatureHex(signature.signature, 'signature');
+    const address = parseSignatureHex(
+      signature.signing_address,
+      'signing_address',
+    );
     if (signatureBytes.length !== 65) {
-      throw new VerificationError('ECDSA signature must be 65 bytes');
+      throw invalidSignatureLength('signature', 65, signatureBytes.length);
     }
     if (address.length !== 20) {
-      throw new VerificationError('ECDSA signing_address must be 20 bytes');
+      throw invalidSignatureLength('signing_address', 20, address.length);
     }
 
     let recovered: string;
     try {
       recovered = ethers.verifyMessage(signature.text, signature.signature);
     } catch (cause) {
-      throw new VerificationError('Invalid ECDSA completion signature', cause);
+      throw invalidSignature('ecdsa', cause);
     }
-    if (normalizeHex(recovered) !== normalizeHex(signature.signing_address)) {
-      throw new VerificationError(
-        'ECDSA signature recovered a different address',
-      );
+    if (
+      normalizeRecoveredAddress(recovered) !==
+      normalizeSignatureAddress(signature.signing_address)
+    ) {
+      throw new VerificationError({
+        phase: 'signature',
+        code: 'signature.invalid',
+        details: { algorithm: 'ecdsa' },
+      });
     }
     return;
   }
 
   if (signature.signing_algo === 'ed25519') {
-    const publicKey = hexToBuffer(signature.signing_address);
-    const signed = hexToBuffer(signature.signature);
+    const publicKey = parseSignatureHex(
+      signature.signing_address,
+      'signing_address',
+    );
+    const signed = parseSignatureHex(signature.signature, 'signature');
     if (publicKey.length !== 32) {
-      throw new VerificationError('Ed25519 signing_address must be 32 bytes');
+      throw invalidSignatureLength('signing_address', 32, publicKey.length);
     }
     if (signed.length !== 64) {
-      throw new VerificationError('Ed25519 signature must be 64 bytes');
+      throw invalidSignatureLength('signature', 64, signed.length);
     }
-    if (
-      !nacl.sign.detached.verify(
+    let valid: boolean;
+    try {
+      valid = nacl.sign.detached.verify(
         Buffer.from(signature.text, 'utf8'),
         signed,
         publicKey,
-      )
-    ) {
-      throw new VerificationError('Invalid Ed25519 completion signature');
+      );
+    } catch (cause) {
+      throw invalidSignature('ed25519', cause);
+    }
+    if (!valid) {
+      throw new VerificationError({
+        phase: 'signature',
+        code: 'signature.invalid',
+        details: { algorithm: 'ed25519' },
+      });
     }
     return;
   }
 
-  throw new VerificationError('Unsupported completion signing algorithm');
+  throw new VerificationError({
+    phase: 'signature',
+    code: 'signature.format_invalid',
+    details: {
+      field: 'signing_algo',
+      reason: 'unsupported_algorithm',
+    },
+  });
 }
 
 function hashBytes(value: Uint8Array): string {
@@ -196,8 +232,12 @@ function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
     parsed = JSON.parse(Buffer.from(requestBody).toString('utf8'));
   } catch (cause) {
     throw new VerificationError(
-      'provider_tee verification requires a JSON request with a canonical model field',
-      cause,
+      {
+        phase: 'signature',
+        code: 'signature.payload_mismatch',
+        details: { source: 'request_model', reason: 'invalid_json' },
+      },
+      { cause },
     );
   }
   if (
@@ -207,11 +247,80 @@ function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
     typeof (parsed as Record<string, unknown>).model !== 'string' ||
     !(parsed as Record<string, string>).model
   ) {
-    throw new VerificationError(
-      'provider_tee verification requires a non-empty canonical request model',
-    );
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.payload_mismatch',
+      details: { source: 'request_model', reason: 'missing_model' },
+    });
   }
   return (parsed as Record<string, string>).model;
+}
+
+function parseSignatureHex(
+  value: string,
+  field: 'signature' | 'signing_address',
+): Buffer {
+  try {
+    return hexToBuffer(value);
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        phase: 'signature',
+        code: 'signature.format_invalid',
+        details: { field, reason: 'invalid_hex' },
+      },
+      { cause },
+    );
+  }
+}
+
+function invalidSignatureLength(
+  field: 'signature' | 'signing_address',
+  expectedBytes: number,
+  actualBytes: number,
+): VerificationError {
+  return new VerificationError({
+    phase: 'signature',
+    code: 'signature.format_invalid',
+    details: { field, reason: 'wrong_length', expectedBytes, actualBytes },
+  });
+}
+
+function invalidSignature(
+  algorithm: 'ecdsa' | 'ed25519',
+  cause: unknown,
+): VerificationError {
+  return new VerificationError(
+    {
+      phase: 'signature',
+      code: 'signature.invalid',
+      details: { algorithm },
+    },
+    { cause },
+  );
+}
+
+function normalizeSignatureAddress(address: string): string {
+  return parseSignatureHex(address, 'signing_address').toString('hex');
+}
+
+function normalizeRecoveredAddress(address: string): string {
+  return parseSignatureHex(address, 'signing_address').toString('hex');
+}
+
+function normalizeVerifiedSignerAddress(address: string): string {
+  try {
+    return normalizeHex(address);
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        phase: 'signature',
+        code: 'signature.signer_mismatch',
+        details: {},
+      },
+      { cause },
+    );
+  }
 }
 
 export type { GatewaySignature, ProviderTeeSignature };

@@ -3,27 +3,33 @@ import { INTEL_PCCS_API_URL_BROWSER, INTEL_PCCS_API_URL_NODE } from './consts';
 import { VerificationError } from './errors';
 
 export function decodeJwt(jwt: string): Record<string, unknown> {
+  if (typeof jwt !== 'string') {
+    throw invalidInput('jwt', 'invalid_jwt');
+  }
   const parts = jwt.split('.');
 
   if (parts.length !== 3) {
-    throw new VerificationError('Invalid JWT format');
+    throw invalidInput('jwt', 'invalid_jwt');
   }
 
   try {
     return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
   } catch {
-    throw new VerificationError('Invalid JWT payload');
+    throw invalidInput('jwt', 'invalid_jwt');
   }
 }
 
-export function hexToBuffer(hex: string): Buffer {
+export function hexToBuffer(hex: string, field = 'hex'): Buffer {
+  if (typeof hex !== 'string') {
+    throw invalidInput(field, 'invalid_hex');
+  }
   const normalized = trimHexPrefix(hex);
   if (
     normalized.length === 0 ||
     normalized.length % 2 !== 0 ||
     !/^[0-9a-fA-F]+$/.test(normalized)
   ) {
-    throw new VerificationError('Invalid hex string');
+    throw invalidInput(field, 'invalid_hex');
   }
   return Buffer.from(normalized, 'hex');
 }
@@ -44,11 +50,12 @@ export function requireByteLength(
   byteLength: number,
   label: string,
 ): Buffer {
-  const bytes = hexToBuffer(value);
+  const bytes = hexToBuffer(value, label);
   if (bytes.length !== byteLength) {
-    throw new VerificationError(
-      `${label} must be ${byteLength} bytes, got ${bytes.length}`,
-    );
+    throw invalidInput(label, 'wrong_length', {
+      expectedBytes: byteLength,
+      actualBytes: bytes.length,
+    });
   }
   return bytes;
 }
@@ -58,9 +65,11 @@ export async function digest(
   value: Uint8Array,
 ): Promise<Buffer> {
   if (!globalThis.crypto?.subtle) {
-    throw new VerificationError(
-      'Web Crypto is unavailable; use a runtime with SubtleCrypto support',
-    );
+    throw new VerificationError({
+      phase: 'runtime',
+      code: 'runtime.crypto_unavailable',
+      details: { capability: 'subtle_digest' },
+    });
   }
 
   const bytes = value.buffer.slice(
@@ -84,9 +93,11 @@ export function utf8(value: string): Uint8Array {
 
 export function generateNonce(): string {
   if (!globalThis.crypto?.getRandomValues) {
-    throw new VerificationError(
-      'Web Crypto is unavailable; cannot generate a secure nonce',
-    );
+    throw new VerificationError({
+      phase: 'runtime',
+      code: 'runtime.crypto_unavailable',
+      details: { capability: 'secure_random' },
+    });
   }
   const nonce = new Uint8Array(32);
   globalThis.crypto.getRandomValues(nonce);
@@ -99,4 +110,19 @@ function isBrowser(): boolean {
 
 export function getIntelPccsApiUrl(): string {
   return isBrowser() ? INTEL_PCCS_API_URL_BROWSER : INTEL_PCCS_API_URL_NODE;
+}
+
+function invalidInput(
+  field: string,
+  reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt',
+  details: {
+    expectedBytes?: number;
+    actualBytes?: number;
+  } = {},
+): VerificationError {
+  return new VerificationError({
+    phase: 'input',
+    code: 'input.invalid',
+    details: { field, reason, ...details },
+  });
 }

@@ -14,9 +14,13 @@ describe('nvidiaNrasVerifier', () => {
   test('rejects a false overall NRAS result', async () => {
     mockNrasOverallResult(false);
 
-    await expect(nvidiaNrasVerifier.verify('{}')).rejects.toThrow(
-      'NVIDIA NRAS reported a failed overall attestation result',
-    );
+    await expect(nvidiaNrasVerifier.verify('{}')).rejects.toMatchObject({
+      failure: {
+        phase: 'gpu',
+        code: 'gpu.attestation_rejected',
+        details: { source: 'nras' },
+      },
+    });
   });
 
   test.each(['PASS', 'FAIL'])(
@@ -24,9 +28,13 @@ describe('nvidiaNrasVerifier', () => {
     async (result) => {
       mockNrasOverallResult(result);
 
-      await expect(nvidiaNrasVerifier.verify('{}')).rejects.toThrow(
-        'NVIDIA NRAS overall attestation result must be a boolean',
-      );
+      await expect(nvidiaNrasVerifier.verify('{}')).rejects.toMatchObject({
+        failure: {
+          phase: 'gpu',
+          code: 'gpu.nras_response_invalid',
+          details: { reason: 'invalid_verdict_type' },
+        },
+      });
     },
   );
 });

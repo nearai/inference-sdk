@@ -1,3 +1,12 @@
+/** Internal timeout marker for adapters that need a stable retry policy. */
+export class FetchTimeoutError extends Error {
+  readonly name = 'FetchTimeoutError';
+
+  constructor(cause?: unknown) {
+    super('Fetch timed out', { cause });
+  }
+}
+
 export async function fetchTimeout(
   input: string | URL | Request,
   timeout: number,
@@ -11,11 +20,11 @@ export async function fetchTimeout(
       ...init,
       signal: controller.signal,
     });
-  } catch (e: unknown) {
+  } catch (cause: unknown) {
     if (controller.signal.aborted) {
-      throw new Error(`Fetch url ${input} timeout`);
+      throw new FetchTimeoutError(cause);
     }
-    throw e;
+    throw cause;
   } finally {
     clearTimeout(timeoutId);
   }
