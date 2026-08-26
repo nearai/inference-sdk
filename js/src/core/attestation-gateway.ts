@@ -2,18 +2,11 @@ import type {
   VerifiedGatewayAttestation,
   VerifyGatewayAttestationInput,
 } from '../types/verification';
-import {
-  inputError,
-  optionalInputObject,
-  rejectUnknownInputKeys,
-  requireInputFunction,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
+import { VerifyGatewayAttestationInputSchema } from '../schemas';
+import { parsePublicInput } from '../utils/schema';
 import { verifyGatewayReportDataBinding } from './attestation-common';
 import {
   requireAttestationEvidence,
-  parseAttestationPolicy,
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
@@ -38,8 +31,8 @@ export async function verifyGatewayAttestation(
   const tlsBinding = await verifyGatewayReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
     nonce,
-    signingAddress: attestation.signer.address,
-    reportedSpkiFingerprint: attestation.declaredSpkiFingerprint,
+    signingAddress: verifiedQuote.signer.address,
+    reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
     peerSpkiFingerprint,
   });
   const evidence = await verifyDstackDeployment(
@@ -50,70 +43,23 @@ export async function verifyGatewayAttestation(
   return markVerifiedGatewayAttestation({ ...evidence, tlsBinding });
 }
 
-function parseGatewayAttestationInput(input: unknown): {
-  attestation: VerifyGatewayAttestationInput['attestation'];
-  nonce: string;
-  peerSpkiFingerprint: string;
-  policy: VerifyGatewayAttestationInput['policy'];
-  verifiers: VerifyGatewayAttestationInput['verifiers'];
-} {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', [
-    'attestation',
-    'nonce',
-    'peerSpkiFingerprint',
-    'policy',
-    'verifiers',
-  ]);
-  const attestation = requireAttestationEvidence(
-    record.attestation,
-  ) as VerifyGatewayAttestationInput['attestation'];
-  if (typeof attestation.reportedQuoteData !== 'string') {
-    throw inputError(
-      'attestation.reportedQuoteData',
-      attestation.reportedQuoteData === undefined
-        ? 'missing'
-        : 'unsupported_value',
-      { expected: 'string' },
-    );
-  }
+type ParsedGatewayAttestationInput = VerifyGatewayAttestationInput;
+
+function parseGatewayAttestationInput(
+  input: unknown,
+): ParsedGatewayAttestationInput {
+  const parsed = parsePublicInput(
+    VerifyGatewayAttestationInputSchema,
+    input,
+    'input',
+  );
+  const baseAttestation = requireAttestationEvidence(parsed.attestation);
+
   return {
-    attestation,
-    nonce: requireInputString(record.nonce, 'nonce'),
-    peerSpkiFingerprint: requireInputString(
-      record.peerSpkiFingerprint,
-      'peerSpkiFingerprint',
-    ),
-    policy: parseGatewayAttestationPolicy(record.policy),
-    verifiers: parseGatewayAttestationVerifiers(record.verifiers),
+    ...parsed,
+    attestation: Object.freeze({
+      ...baseAttestation,
+      reportedQuoteData: parsed.attestation.reportedQuoteData,
+    }),
   };
-}
-
-function parseGatewayAttestationPolicy(
-  value: unknown,
-): VerifyGatewayAttestationInput['policy'] {
-  const policy = optionalInputObject(value, 'policy');
-  if (!policy) {
-    return undefined;
-  }
-  rejectUnknownInputKeys(policy, 'policy', ['acceptedTcbStatuses']);
-  parseAttestationPolicy(policy);
-  return policy as VerifyGatewayAttestationInput['policy'];
-}
-
-function parseGatewayAttestationVerifiers(
-  value: unknown,
-): VerifyGatewayAttestationInput['verifiers'] {
-  const verifiers = optionalInputObject(value, 'verifiers');
-  if (!verifiers) {
-    return undefined;
-  }
-  rejectUnknownInputKeys(verifiers, 'verifiers', ['quote', 'deployment']);
-  if (verifiers.quote !== undefined) {
-    requireInputFunction(verifiers.quote, 'verifiers.quote');
-  }
-  if (verifiers.deployment !== undefined) {
-    requireInputFunction(verifiers.deployment, 'verifiers.deployment');
-  }
-  return verifiers as VerifyGatewayAttestationInput['verifiers'];
 }

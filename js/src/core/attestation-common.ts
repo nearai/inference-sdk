@@ -237,19 +237,6 @@ export async function verifyAppComposeMrConfigBinding(
 }
 
 /**
- * Extract syntactically present image digests for a caller-supplied provenance
- * verifier. This does not query registries, verify published attestations, or
- * independently establish image provenance.
- */
-export function extractImageDigests(appCompose: string): string[] {
-  const digests = new Set<string>();
-  for (const match of appCompose.matchAll(/@sha256:([0-9a-fA-F]{64})/g)) {
-    digests.add(`sha256:${match[1].toLowerCase()}`);
-  }
-  return [...digests];
-}
-
-/**
  * Cross-check the optional JSON `report_data` copy against the authenticated
  * Intel quote. The quote remains the trust source; this rejects incoherent
  * wire evidence without treating the JSON field as independently trusted.

@@ -1,4 +1,7 @@
-import type { AttestationEvidence } from '../types/attestation-common';
+import type {
+  AttestationEventLog,
+  AttestationEvidence,
+} from '../types/attestation-common';
 import type {
   AttestationPolicy,
   DeploymentProvenanceStatus,
@@ -9,17 +12,16 @@ import type {
   VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
+import {
+  AttestationEvidenceBaseSchema,
+  AttestationPolicyBaseSchema,
+} from '../schemas';
 import { requireByteLength } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
-import {
-  inputError,
-  optionalInputObject,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
+import { inputError } from '../utils/input';
+import { parsePublicInput } from '../utils/schema';
 import { normalizeVerifiedTdxQuote, verifyDcapQuote } from '../utils/intel';
 import {
-  extractImageDigests,
   verifyAdvertisedReportData,
   verifyAppComposeMrConfigBinding,
   verifyReportedNonce,
@@ -29,17 +31,6 @@ import { verifyAndReplayRtmr3 } from './event-log';
 const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
   'OutOfDate',
-];
-
-const TCB_STATUSES: readonly TcbStatus[] = [
-  'UpToDate',
-  'SWHardeningNeeded',
-  'ConfigurationNeeded',
-  'ConfigurationAndSWHardeningNeeded',
-  'OutOfDate',
-  'OutOfDateConfigurationNeeded',
-  'Revoked',
-  'Unknown',
 ];
 
 /** Quote facts shared by model and gateway evidence. Internal to the SDK. */
@@ -53,70 +44,72 @@ export type VerifiedDstackQuote = {
 export function requireAttestationEvidence(
   value: unknown,
 ): AttestationEvidence {
-  const attestation = requireInputObject(value, 'attestation');
-  const signer = requireInputObject(attestation.signer, 'attestation.signer');
-  requireInputString(attestation.nonce, 'attestation.nonce');
-  requireInputString(attestation.intelQuote, 'attestation.intelQuote');
-  requireInputString(attestation.appCompose, 'attestation.appCompose');
-  requireInputString(signer.algorithm, 'attestation.signer.algorithm');
-  requireInputString(signer.address, 'attestation.signer.address');
+  const attestation = parsePublicInput(
+    AttestationEvidenceBaseSchema,
+    value,
+    'attestation',
+  );
+  const eventLog = snapshotEventLog(attestation.eventLog);
 
-  if (
-    typeof attestation.eventLog !== 'string' &&
-    !Array.isArray(attestation.eventLog)
-  ) {
-    throw inputError(
-      'attestation.eventLog',
-      attestation.eventLog === undefined ? 'missing' : 'unsupported_value',
-      { expected: 'JSON string or array' },
+  return Object.freeze({
+    nonce: attestation.nonce,
+    signer: Object.freeze({
+      algorithm: attestation.signer.algorithm,
+      address: attestation.signer.address,
+    }),
+    intelQuote: attestation.intelQuote,
+    eventLog,
+    appCompose: attestation.appCompose,
+    ...(attestation.declaredSpkiFingerprint !== undefined
+      ? { declaredSpkiFingerprint: attestation.declaredSpkiFingerprint }
+      : {}),
+    ...(attestation.reportedQuoteData !== undefined
+      ? { reportedQuoteData: attestation.reportedQuoteData }
+      : {}),
+  });
+}
+
+/**
+ * Capture array-form evidence before any asynchronous verification begins.
+ * Event-log entries are JSON data, so normalizing an array to JSON preserves
+ * the accepted wire representation while preventing later caller mutation.
+ */
+function snapshotEventLog(eventLog: AttestationEventLog): string {
+  if (typeof eventLog === 'string') {
+    return eventLog;
+  }
+  try {
+    const serialized = JSON.stringify(eventLog);
+    if (typeof serialized === 'string') {
+      return serialized;
+    }
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        phase: 'input',
+        code: 'input.invalid',
+        details: {
+          field: 'attestation.eventLog',
+          reason: 'unsupported_value',
+          expected: 'a JSON-serializable array',
+        },
+      },
+      { cause },
     );
   }
-  if (
-    attestation.declaredSpkiFingerprint !== undefined &&
-    attestation.declaredSpkiFingerprint !== null &&
-    typeof attestation.declaredSpkiFingerprint !== 'string'
-  ) {
-    throw inputError(
-      'attestation.declaredSpkiFingerprint',
-      'unsupported_value',
-      { expected: 'string or null' },
-    );
-  }
-  if (
-    attestation.reportedQuoteData !== undefined &&
-    typeof attestation.reportedQuoteData !== 'string'
-  ) {
-    throw inputError('attestation.reportedQuoteData', 'unsupported_value', {
-      expected: 'string',
-    });
-  }
-
-  return value as AttestationEvidence;
+  throw inputError('attestation.eventLog', 'unsupported_value', {
+    expected: 'a JSON-serializable array',
+  });
 }
 
 /** Validate policy once at the public boundary before quote verification runs. */
 export function parseAttestationPolicy(
   value: unknown,
 ): AttestationPolicy | undefined {
-  const policy = optionalInputObject(value, 'policy');
-  if (!policy) {
+  if (value === undefined) {
     return undefined;
   }
-  const statuses = policy.acceptedTcbStatuses;
-  if (
-    statuses !== undefined &&
-    (!Array.isArray(statuses) ||
-      !statuses.every(
-        (status): status is TcbStatus =>
-          typeof status === 'string' &&
-          TCB_STATUSES.includes(status as TcbStatus),
-      ))
-  ) {
-    throw inputError('policy.acceptedTcbStatuses', 'unsupported_value', {
-      expected: 'an array of known TDX TCB statuses',
-    });
-  }
-  return policy as AttestationPolicy;
+  return parsePublicInput(AttestationPolicyBaseSchema, value, 'policy');
 }
 
 /**
@@ -184,7 +177,6 @@ export async function verifyDstackDeployment(
   await verifyAppComposeMrConfigBinding(appCompose, quote.mrConfigId);
   const deployment: MeasuredDeployment = {
     appCompose,
-    imageDigests: extractImageDigests(appCompose),
     runtimeMeasurements,
   };
 
@@ -218,7 +210,6 @@ function copyMeasuredDeployment(
 ): MeasuredDeployment {
   return {
     appCompose: deployment.appCompose,
-    imageDigests: [...deployment.imageDigests],
     runtimeMeasurements: { ...deployment.runtimeMeasurements },
   };
 }

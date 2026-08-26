@@ -20,7 +20,9 @@ type EventLogEntry = {
 /**
  * Replay RTMR3 from the dstack event log. Runtime event payloads are hashed
  * again before extending the register, preventing payload substitution with a
- * copied digest.
+ * copied digest. Other event types remain replayable for compatibility, but
+ * cannot supply runtime metadata because their name and payload are not bound
+ * by this verifier.
  */
 export async function verifyAndReplayRtmr3(
   eventLog: AttestationEventLog,
@@ -53,10 +55,16 @@ export async function verifyAndReplayRtmr3(
     const digest = await eventDigest(entry);
     replayed = await sha384(Buffer.concat([replayed, digest]));
 
-    if (entry.event === 'os-image-hash') {
-      osImageHash = entry.event_payload;
-    } else if (entry.event === 'compose-hash') {
-      composeHash = entry.event_payload;
+    // Only dstack runtime events authenticate the event name and payload: the
+    // digest is recomputed from both values in eventDigest(). A legacy or
+    // other event type contributes to RTMR3 replay, but its JSON metadata is
+    // not authenticated and must not be exposed as a measured value.
+    if (entry.event_type === DSTACK_RUNTIME_EVENT_TYPE) {
+      if (entry.event === 'os-image-hash') {
+        osImageHash = entry.event_payload;
+      } else if (entry.event === 'compose-hash') {
+        composeHash = entry.event_payload;
+      }
     }
   }
 

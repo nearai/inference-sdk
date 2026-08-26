@@ -1,7 +1,6 @@
 import type { GatewayAttestation } from '../types/attestation-gateway';
 import type { ModelAttestation } from '../types/attestation-model';
 import type {
-  AttestationEventLog,
   AttestationEvidence,
   SigningAlgorithm,
   SigningIdentity,
@@ -11,60 +10,52 @@ import type {
   CompletionSignatureLookup,
   SignatureUnavailable,
 } from '../types/chat';
+import {
+  CloudApiCompletionSignatureResponseSchema,
+  CloudApiAttestationInfoEnvelopeSchema,
+  CloudApiGatewayAttestationResponseSchema,
+  CloudApiGatewayAttestationSchema,
+  CloudApiInfoSchema,
+  CloudApiModelAttestationResponseSchema,
+  CloudApiModelAttestationSchema,
+  CloudApiTcbInfoSchema,
+  CloudApiUnavailableSignatureResponseSchema,
+  FetchCompletionSignatureInputSchema,
+  FetchGatewayAttestationInputSchema,
+  FetchModelAttestationInputSchema,
+  NearAiCloudClientOptionsSchema,
+  ResponseBodySchema,
+  ResponseLikeSchema,
+} from '../schemas';
+import type {
+  CloudApiGatewayAttestation,
+  CloudApiInfo,
+  CloudApiModelAttestation,
+  FetchCompletionSignatureInput,
+  FetchGatewayAttestationInput,
+  FetchModelAttestationInput,
+  NearAiCloudClientOptions,
+  NearAiCloudFetch,
+  ResponseLike,
+} from '../schemas';
 import { normalizeHex, requireByteLength } from '../utils/common';
 import { ApiError, type ApiFailure, VerificationError } from '../utils/errors';
-import {
-  inputError,
-  rejectUnknownInputKeys,
-  requireInputFunction,
-  requireInputObject,
-} from '../utils/input';
+import { inputError } from '../utils/input';
+import { parseApiResponse, parsePublicInput, tryParse } from '../utils/schema';
 
-/** Fetch implementation used for Cloud API signature and evidence requests. */
-export type NearAiCloudFetch = (
-  input: string | URL | Request,
-  init?: RequestInit,
-) => Promise<Response>;
+export type {
+  FetchCompletionSignatureInput,
+  FetchGatewayAttestationInput,
+  FetchModelAttestationInput,
+  NearAiCloudClientOptions,
+  NearAiCloudFetch,
+} from '../schemas';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
 
 /** Default production endpoint used when a client does not select another one. */
 export const DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1';
-
-export type NearAiCloudClientOptions = {
-  /** Cloud API base including its version. Defaults to the production endpoint. */
-  baseUrl?: string;
-  /** Used only for authorized Cloud API evidence and signature requests. */
-  apiKey: string;
-  /** Injectable transport, including a connection-owning gateway transport. */
-  fetch?: NearAiCloudFetch;
-};
-
-/** Fetch model evidence for the signer recorded in a completion signature. */
-export type FetchModelAttestationInput = {
-  /** Canonical model ID from the exact completion request. */
-  model: string;
-  /** Fresh caller-generated nonce; retain it for attestation verification. */
-  nonce: string;
-  /** Completion signature whose signer selects the model evidence. */
-  signature: CompletionSignature;
-};
-
-/** Fetch gateway evidence for the signer recorded in a completion signature. */
-export type FetchGatewayAttestationInput = {
-  /** Fresh caller-generated nonce; retain it for attestation verification. */
-  nonce: string;
-  /** Completion signature whose signer selects the gateway evidence. */
-  signature: CompletionSignature;
-};
-
-export type FetchCompletionSignatureInput = {
-  /** Completion ID returned by the completion endpoint. */
-  completionId: string;
-  /** Defaults to `ecdsa`; choose `ed25519` only when the completion uses it. */
-  algorithm?: SigningAlgorithm;
-};
 
 type ApiResource = Extract<
   ApiFailure,
@@ -126,11 +117,12 @@ export class NearAiCloudClient {
     const request = parseGatewayAttestationRequest(input);
     const url = this.endpoint('attestation/report');
     setAttestationQuery(url, request.nonce, request.signature.signer, true);
-    const record = requireObject(
+    const report = parseApiResponse(
+      CloudApiGatewayAttestationResponseSchema,
       await this.getJson(url, 'gateway_attestation'),
       'gateway attestation report',
     );
-    const attestation = parseGatewayAttestation(record.gateway_attestation);
+    const attestation = parseGatewayAttestation(report.gateway_attestation);
     requireMatchingAttestationSigner(
       attestation,
       request.signature,
@@ -182,11 +174,11 @@ export class NearAiCloudClient {
     resource: ApiResource,
     extraHeaders: HeadersInit = {},
   ): Promise<unknown> {
-    let response: Response;
+    let rawResponse: unknown;
     try {
       const headers = new Headers(extraHeaders);
       headers.set('authorization', `Bearer ${this.options.apiKey}`);
-      response = await this.fetchImpl(url, { headers });
+      rawResponse = await this.fetchImpl(url, { headers });
     } catch (cause) {
       throw new ApiError(
         {
@@ -198,10 +190,11 @@ export class NearAiCloudClient {
         { cause },
       );
     }
+    const response = parseResponseLike(rawResponse, `${resource} response`);
 
-    let body: string;
+    let rawBody: unknown;
     try {
-      body = await response.text();
+      rawBody = await response.text();
     } catch (cause) {
       throw new ApiError(
         {
@@ -213,6 +206,11 @@ export class NearAiCloudClient {
         { cause },
       );
     }
+    const body = parseApiResponse(
+      ResponseBodySchema,
+      rawBody,
+      `${resource} response body`,
+    );
     if (!response.ok) {
       throw new ApiError({
         phase: 'api',
@@ -236,95 +234,96 @@ export class NearAiCloudClient {
   }
 }
 
-function parseClientOptions(options: unknown): {
+type ParsedClientOptions = {
   baseUrl: string;
   apiKey: string;
   fetch: NearAiCloudFetch;
-} {
-  const record = requireInputObject(options, 'options');
-  rejectUnknownInputKeys(record, 'options', ['baseUrl', 'apiKey', 'fetch']);
-  const suppliedFetch = record.fetch;
+};
+
+function parseClientOptions(options: unknown): ParsedClientOptions {
+  const parsed = parsePublicInput(
+    NearAiCloudClientOptionsSchema,
+    options,
+    'options',
+  );
+
   return {
     baseUrl: validateBaseUrl(
-      record.baseUrl === undefined
+      parsed.baseUrl === undefined
         ? DEFAULT_NEAR_AI_CLOUD_BASE_URL
-        : record.baseUrl,
+        : parsed.baseUrl,
     ),
-    apiKey: validateApiKey(record.apiKey),
-    fetch:
-      suppliedFetch === undefined
-        ? fetch
-        : (requireInputFunction(
-            suppliedFetch,
-            'options.fetch',
-          ) as NearAiCloudFetch),
+    apiKey: validateApiKey(parsed.apiKey),
+    fetch: parsed.fetch ?? fetch,
   };
 }
+
+type ParsedModelAttestationRequest = FetchModelAttestationInput;
 
 function parseModelAttestationRequest(
   input: unknown,
-): FetchModelAttestationInput {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', ['model', 'nonce', 'signature']);
+): ParsedModelAttestationRequest {
+  const parsed = parsePublicInput(
+    FetchModelAttestationInputSchema,
+    input,
+    'input',
+  );
+
   return {
-    model: requireNonEmptyString(record.model, 'model'),
-    nonce: validateNonce(record.nonce),
-    signature: parseSignatureSigner(record.signature, 'model_tee'),
+    model: requireNonEmptyString(parsed.model, 'model'),
+    nonce: validateNonce(parsed.nonce),
+    signature: parseSignatureSigner(parsed.signature, 'provider_tee'),
   };
 }
+
+type ParsedGatewayAttestationRequest = FetchGatewayAttestationInput;
 
 function parseGatewayAttestationRequest(
   input: unknown,
-): FetchGatewayAttestationInput {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', ['nonce', 'signature']);
+): ParsedGatewayAttestationRequest {
+  const parsed = parsePublicInput(
+    FetchGatewayAttestationInputSchema,
+    input,
+    'input',
+  );
+
   return {
-    nonce: validateNonce(record.nonce),
-    signature: parseSignatureSigner(record.signature, 'gateway'),
+    nonce: validateNonce(parsed.nonce),
+    signature: parseSignatureSigner(parsed.signature, 'gateway'),
   };
 }
 
+type ParsedCompletionSignatureRequest = FetchCompletionSignatureInput;
+
 function parseCompletionSignatureRequest(
   input: unknown,
-): FetchCompletionSignatureInput {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', ['completionId', 'algorithm']);
-  const algorithm = record.algorithm;
-  if (algorithm !== undefined) {
-    validateSigningAlgorithm(algorithm);
-  }
+): ParsedCompletionSignatureRequest {
+  const parsed = parsePublicInput(
+    FetchCompletionSignatureInputSchema,
+    input,
+    'input',
+  );
+
   return {
-    completionId: requireNonEmptyString(record.completionId, 'completionId'),
-    ...(algorithm === undefined ? {} : { algorithm }),
+    completionId: requireNonEmptyString(parsed.completionId, 'completionId'),
+    ...(parsed.algorithm === undefined ? {} : { algorithm: parsed.algorithm }),
   };
 }
 
 function parseSignatureSigner(
-  value: unknown,
-  expectedSource: 'model_tee' | 'gateway',
+  signature: CompletionSignature,
+  expectedKind: CompletionSignature['kind'],
 ): CompletionSignature {
-  const signature = requireInputObject(value, 'signature');
-  rejectUnknownInputKeys(signature, 'signature', [
-    'source',
-    'signedText',
-    'signature',
-    'signer',
-  ]);
-  const source = signature.source;
-  if (source !== 'model_tee' && source !== 'gateway' && source !== 'unknown') {
-    throw inputError('signature.source', 'unsupported_value', {
-      expected: "'model_tee', 'gateway', or 'unknown'",
-    });
-  }
-  if (source !== 'unknown' && source !== expectedSource) {
+  const kind = signature.kind;
+  if (kind !== expectedKind) {
     throw new VerificationError({
       phase: 'signature',
-      code: 'signature.source_mismatch',
-      details: { expected: expectedSource, actual: source },
+      code: 'signature.kind_mismatch',
+      details: { expected: expectedKind, actual: kind },
     });
   }
   return {
-    source,
+    kind,
     signedText: requireNonEmptyString(
       signature.signedText,
       'signature.signedText',
@@ -337,15 +336,7 @@ function parseSignatureSigner(
   };
 }
 
-function parseSigningIdentity(value: unknown): SigningIdentity {
-  const signer = requireInputObject(value, 'signature.signer');
-  rejectUnknownInputKeys(signer, 'signature.signer', ['algorithm', 'address']);
-  validateSigningAlgorithm(signer.algorithm, 'signature.signer.algorithm');
-  if (typeof signer.address !== 'string') {
-    throw inputError('signature.signer.address', 'unsupported_value', {
-      expected: 'a hexadecimal signing address',
-    });
-  }
+function parseSigningIdentity(signer: SigningIdentity): SigningIdentity {
   requireByteLength(
     signer.address,
     signer.algorithm === 'ecdsa' ? 20 : 32,
@@ -354,22 +345,11 @@ function parseSigningIdentity(value: unknown): SigningIdentity {
   return { algorithm: signer.algorithm, address: signer.address };
 }
 
-function validateNonce(nonce: unknown): string {
-  if (typeof nonce !== 'string') {
-    throw inputError('nonce', 'unsupported_value', {
-      expected: 'a 32-byte hexadecimal nonce',
-    });
-  }
+function validateNonce(nonce: string): string {
   return requireByteLength(nonce, 32, 'nonce').toString('hex');
 }
 
-function validateBaseUrl(baseUrl: unknown): string {
-  if (typeof baseUrl !== 'string') {
-    throw inputError('baseUrl', 'invalid_url', {
-      expected: 'absolute HTTPS URL',
-    });
-  }
-
+function validateBaseUrl(baseUrl: string): string {
   try {
     const parsed = new URL(baseUrl);
     if (
@@ -390,21 +370,11 @@ function validateBaseUrl(baseUrl: unknown): string {
   return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
 }
 
-function validateApiKey(apiKey: unknown): string {
-  if (
-    typeof apiKey !== 'string' ||
-    apiKey.length === 0 ||
-    containsHttpHeaderControl(apiKey)
-  ) {
+function validateApiKey(apiKey: string): string {
+  if (apiKey.length === 0 || containsHttpHeaderControl(apiKey)) {
     throw inputError(
       'apiKey',
-      apiKey === undefined
-        ? 'missing'
-        : typeof apiKey === 'string' && apiKey.length === 0
-          ? 'missing'
-          : typeof apiKey === 'string'
-            ? 'invalid_header'
-            : 'unsupported_value',
+      apiKey.length === 0 ? 'missing' : 'invalid_header',
       { expected: 'non-empty HTTP header value' },
     );
   }
@@ -421,26 +391,11 @@ function containsHttpHeaderControl(value: string): boolean {
   return false;
 }
 
-function validateSigningAlgorithm(
-  value: unknown,
-  field = 'algorithm',
-): asserts value is SigningAlgorithm {
-  if (value !== 'ecdsa' && value !== 'ed25519') {
-    throw inputError(field, 'unsupported_value', {
-      expected: "'ecdsa' or 'ed25519'",
-    });
-  }
-}
-
-function requireNonEmptyString(value: unknown, field: string): string {
-  if (typeof value === 'string' && value.length > 0) {
+function requireNonEmptyString(value: string, field: string): string {
+  if (value.length > 0) {
     return value;
   }
-  throw inputError(
-    field,
-    typeof value === 'string' ? 'missing' : 'unsupported_value',
-    { expected: 'non-empty string' },
-  );
+  throw inputError(field, 'missing', { expected: 'non-empty string' });
 }
 
 function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
@@ -451,6 +406,15 @@ function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
     status === 429 ||
     status >= 500
   );
+}
+
+function parseResponseLike(value: unknown, root: string): ResponseLike {
+  const parsed = parseApiResponse(ResponseLikeSchema, value, root);
+  return {
+    ok: parsed.ok,
+    status: parsed.status,
+    text: () => parsed.text.call(value),
+  };
 }
 
 function setAttestationQuery(
@@ -468,11 +432,12 @@ function setAttestationQuery(
 }
 
 function parseSingleModelAttestation(value: unknown): ModelAttestation {
-  const record = requireObject(value, 'model attestation report');
-  const rawAttestations = record.model_attestations;
-  if (!Array.isArray(rawAttestations)) {
-    throw invalidResponse('model_attestations', 'array', rawAttestations);
-  }
+  const report = parseApiResponse(
+    CloudApiModelAttestationResponseSchema,
+    value,
+    'model attestation report',
+  );
+  const rawAttestations = report.model_attestations;
   if (rawAttestations.length !== 1) {
     throw new ApiError({
       phase: 'api',
@@ -484,123 +449,121 @@ function parseSingleModelAttestation(value: unknown): ModelAttestation {
 }
 
 function parseGatewayAttestation(value: unknown): GatewayAttestation {
-  const base = parseAttestationEvidence(value, 'gateway_attestation');
-  const record = requireObject(value, 'gateway_attestation');
-  const reportData = requireString(
-    record.report_data,
-    'gateway_attestation.report_data',
+  const info = parseCloudApiInfo(value, 'gateway_attestation');
+  const parsed = parseApiResponse(
+    CloudApiGatewayAttestationSchema,
+    value,
+    'gateway_attestation',
   );
-  return { ...base, reportedQuoteData: reportData };
+  const base = parseAttestationEvidence(parsed, 'gateway_attestation', info);
+  return { ...base, reportedQuoteData: parsed.report_data };
 }
 
 function parseModelAttestation(
   value: unknown,
   label: string,
 ): ModelAttestation {
-  const base = parseAttestationEvidence(value, label);
-  const record = requireObject(value, label);
-  const nvidiaPayload = optionalStringOrNull(
-    record.nvidia_payload,
-    `${label}.nvidia_payload`,
-  );
+  const info = parseCloudApiInfo(value, label);
+  const parsed = parseApiResponse(CloudApiModelAttestationSchema, value, label);
+  const base = parseAttestationEvidence(parsed, label, info);
+
   return {
     ...base,
-    ...(nvidiaPayload !== undefined ? { nvidiaPayload } : {}),
+    ...(parsed.nvidia_payload !== undefined
+      ? { nvidiaPayload: parsed.nvidia_payload }
+      : {}),
   };
 }
 
+type CloudApiAttestation =
+  | CloudApiGatewayAttestation
+  | CloudApiModelAttestation;
+type CloudApiTcbInfoValue = CloudApiInfo['tcb_info'];
+
 function parseAttestationEvidence(
-  value: unknown,
+  value: CloudApiAttestation,
   label: string,
+  info: CloudApiInfo,
 ): AttestationEvidence {
-  const record = requireObject(value, label);
-  const info = requireObject(record.info, `${label}.info`);
   const appCompose = parseAppCompose(info.tcb_info, `${label}.info.tcb_info`);
-  const signingAlgorithm = parseSigningAlgorithm(
-    record.signing_algo,
-    `${label}.signing_algo`,
-  );
-  const signingAddress = requireString(
-    record.signing_address,
-    `${label}.signing_address`,
-  );
+  const signingAlgorithm = value.signing_algo;
+  const signingAddress = value.signing_address;
   validateApiSigningAddress(
     signingAddress,
     signingAlgorithm,
     `${label}.signing_address`,
   );
-  const eventLog = parseEventLog(record.event_log, `${label}.event_log`);
-
-  const tlsFingerprint = optionalStringOrNull(
-    record.tls_cert_fingerprint,
-    `${label}.tls_cert_fingerprint`,
-  );
-  const reportData = optionalString(record.report_data, `${label}.report_data`);
-
   return {
-    nonce: requireString(record.request_nonce, `${label}.request_nonce`),
+    nonce: value.request_nonce,
     signer: {
       algorithm: signingAlgorithm,
       address: signingAddress,
     },
-    intelQuote: requireString(record.intel_quote, `${label}.intel_quote`),
-    eventLog,
+    intelQuote: value.intel_quote,
+    eventLog: value.event_log,
     appCompose,
-    ...(tlsFingerprint !== undefined
-      ? { declaredSpkiFingerprint: tlsFingerprint }
+    ...(value.tls_cert_fingerprint !== undefined
+      ? { declaredSpkiFingerprint: value.tls_cert_fingerprint }
       : {}),
-    ...(reportData !== undefined ? { reportedQuoteData: reportData } : {}),
+    ...(value.report_data !== undefined
+      ? { reportedQuoteData: value.report_data }
+      : {}),
   };
+}
+
+function parseCloudApiInfo(value: unknown, label: string): CloudApiInfo {
+  const envelope = parseApiResponse(
+    CloudApiAttestationInfoEnvelopeSchema,
+    value,
+    label,
+  );
+  return parseApiResponse(CloudApiInfoSchema, envelope.info, `${label}.info`);
 }
 
 function parseCompletionSignatureLookup(
   value: unknown,
 ): CompletionSignatureLookup {
-  const record = requireObject(value, 'signature response');
-  if (
-    typeof record.error_code === 'string' &&
-    typeof record.message === 'string'
-  ) {
+  const unavailableResponse = tryParse(
+    CloudApiUnavailableSignatureResponseSchema,
+    value,
+  );
+  if (unavailableResponse) {
     const unavailable: SignatureUnavailable = {
-      errorCode: record.error_code,
-      message: record.message,
+      errorCode: unavailableResponse.error_code,
+      message: unavailableResponse.message,
     };
     return { status: 'unavailable', unavailable };
   }
 
-  const signingAlgorithm = parseSigningAlgorithm(
-    record.signing_algo,
-    'signature.signing_algo',
+  const response = parseApiResponse(
+    CloudApiCompletionSignatureResponseSchema,
+    value,
+    'signature',
   );
-  const signingAddress = requireString(
-    record.signing_address,
-    'signature.signing_address',
-  );
+  const signingAlgorithm = response.signing_algo;
+  const signingAddress = response.signing_address;
   validateApiSigningAddress(
     signingAddress,
     signingAlgorithm,
     'signature.signing_address',
   );
   const base = {
-    signedText: requireString(record.text, 'signature.text'),
-    signature: requireString(record.signature, 'signature.signature'),
+    signedText: response.text,
+    signature: response.signature,
     signer: { address: signingAddress, algorithm: signingAlgorithm },
   };
   return {
     status: 'found',
     signature: {
       ...base,
-      source: parseSignatureSource(record.signature_kind),
+      kind: parseSignatureKind(response.signature_kind),
     },
   };
 }
 
-function parseSignatureSource(value: unknown): CompletionSignature['source'] {
-  if (value === undefined) {
-    return 'unknown';
-  }
+function parseSignatureKind(value: unknown): CompletionSignature['kind'] {
   if (value === 'provider_tee') {
-    return 'model_tee';
+    return value;
   }
   if (value === 'gateway') {
     return 'gateway';
@@ -612,34 +575,17 @@ function parseSignatureSource(value: unknown): CompletionSignature['source'] {
   );
 }
 
-function parseAppCompose(value: unknown, label: string): string {
-  let parsed = value;
-  if (typeof parsed === 'string') {
+function parseAppCompose(value: CloudApiTcbInfoValue, label: string): string {
+  if (typeof value === 'string') {
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(parsed);
+      parsed = JSON.parse(value);
     } catch {
       throw invalidResponse(label, 'JSON object', value);
     }
+    return parseApiResponse(CloudApiTcbInfoSchema, parsed, label).app_compose;
   }
-  const record = requireObject(parsed, label);
-  return requireString(record.app_compose, `${label}.app_compose`);
-}
-
-function parseEventLog(value: unknown, label: string): AttestationEventLog {
-  if (typeof value === 'string' || Array.isArray(value)) {
-    return value;
-  }
-  throw invalidResponse(label, 'JSON string or array', value);
-}
-
-function parseSigningAlgorithm(
-  value: unknown,
-  label: string,
-): SigningAlgorithm {
-  if (value === 'ecdsa' || value === 'ed25519') {
-    return value;
-  }
-  throw invalidResponse(label, "'ecdsa' or 'ed25519'", value);
+  return value.app_compose;
 }
 
 function requireMatchingAttestationSigner(
@@ -678,37 +624,6 @@ function validateApiSigningAddress(
       value,
     );
   }
-}
-
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw invalidResponse(label, 'object', value);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== 'string') {
-    throw invalidResponse(label, 'string', value);
-  }
-  return value;
-}
-
-function optionalString(value: unknown, label: string): string | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  return requireString(value, label);
-}
-
-function optionalStringOrNull(
-  value: unknown,
-  label: string,
-): string | null | undefined {
-  if (value === undefined || value === null) {
-    return value as undefined | null;
-  }
-  return requireString(value, label);
 }
 
 function invalidResponse(

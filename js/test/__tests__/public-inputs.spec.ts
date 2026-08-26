@@ -1,10 +1,17 @@
+import * as v from 'valibot';
 import {
+  isVerificationError,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
   verifyModelResponse,
 } from '../../src';
-import { createModelAttestation, nonce, tlsFingerprint } from '../fixtures';
+import {
+  createModelAttestation,
+  createQuote,
+  nonce,
+  tlsFingerprint,
+} from '../fixtures';
 
 const invalidInput = {} as never;
 const inputFailure = {
@@ -16,7 +23,8 @@ const inputFailure = {
 
 describe('public input validation', () => {
   test('returns structured errors for malformed attestation inputs', async () => {
-    await expect(verifyModelAttestation(invalidInput)).rejects.toMatchObject(
+    await expectSdkVerificationFailure(
+      verifyModelAttestation(invalidInput),
       inputFailure,
     );
     await expect(verifyGatewayAttestation(invalidInput)).rejects.toMatchObject(
@@ -112,6 +120,80 @@ describe('public input validation', () => {
       },
     });
   });
+
+  test('rejects unknown fields in normalized attestation input', async () => {
+    await expect(
+      verifyModelAttestation({
+        attestation: {
+          ...createModelAttestation(),
+          appComose: '{}',
+        },
+        nonce,
+      } as never),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: {
+          field: 'attestation.appComose',
+          reason: 'unsupported_value',
+        },
+      },
+    });
+  });
+
+  test('accepts synchronous verifier callbacks', async () => {
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        nvidiaPayload: JSON.stringify({ nonce }),
+      }),
+      nonce,
+      verifiers: {
+        quote: () => createQuote(),
+        deployment: () => undefined,
+        nvidia: () => undefined,
+      },
+    });
+
+    expect(result).toMatchObject({
+      deploymentProvenance: 'verified',
+      gpuEvidence: 'verified',
+    });
+  });
+
+  test('normalizes an invalid custom quote result into the SDK error contract', async () => {
+    await expectSdkVerificationFailure(
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: { quote: () => ({}) as never },
+      }),
+      {
+        failure: {
+          phase: 'quote',
+          code: 'quote.invalid_result',
+        },
+      },
+    );
+  });
+
+  test('rejects an array disguised as a custom quote result', async () => {
+    const arrayQuote = Object.assign([], createQuote());
+
+    await expectSdkVerificationFailure(
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: { quote: () => arrayQuote as never },
+      }),
+      {
+        failure: {
+          phase: 'quote',
+          code: 'quote.invalid_result',
+        },
+      },
+    );
+  });
 });
 
 function expectInputFailure(action: () => void): void {
@@ -119,6 +201,21 @@ function expectInputFailure(action: () => void): void {
     action();
   } catch (error) {
     expect(error).toMatchObject(inputFailure);
+    return;
+  }
+  throw new Error('Expected verification to fail');
+}
+
+async function expectSdkVerificationFailure(
+  action: Promise<unknown>,
+  expected: object,
+): Promise<void> {
+  try {
+    await action;
+  } catch (error) {
+    expect(v.isValiError(error)).toBe(false);
+    expect(isVerificationError(error)).toBe(true);
+    expect(error).toMatchObject(expected);
     return;
   }
   throw new Error('Expected verification to fail');

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
 import {
   isVerificationError,
+  NearAiCloudClient,
   VerificationError,
   verifyGatewayAttestation,
   verifyGatewayResponse,
@@ -68,7 +69,7 @@ assert.equal(
     requestBody,
     responseBody,
     signature: {
-      source: 'gateway',
+      kind: 'gateway',
       signedText,
       signature,
       signer: { algorithm: 'ed25519', address: signerAddress },
@@ -90,6 +91,29 @@ const error = new VerificationError({
 
 assert.equal(isVerificationError(error), true);
 assert.equal(error.failure.code, 'policy.tcb_status_not_allowed');
+
+const cloudClient = new NearAiCloudClient({
+  apiKey: 'test',
+  fetch: () => ({
+    ok: true,
+    status: 200,
+    text: () =>
+      JSON.stringify({
+        error_code: 'SIGNATURE_UNSUPPORTED',
+        message: 'No provider signature',
+      }),
+  }),
+});
+assert.deepEqual(
+  await cloudClient.lookupCompletionSignature({ completionId: 'chat-1' }),
+  {
+    status: 'unavailable',
+    unavailable: {
+      errorCode: 'SIGNATURE_UNSUPPORTED',
+      message: 'No provider signature',
+    },
+  },
+);
 
 function gatewaySignedText(request, response) {
   return `${hashBytes(request)}:${hashBytes(response)}`;

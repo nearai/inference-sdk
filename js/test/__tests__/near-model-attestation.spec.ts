@@ -7,10 +7,43 @@ import {
   createModelAttestation,
   createQuote,
   nonce,
+  sha256,
   sha384,
   signingAddress,
   tlsFingerprint,
 } from '../fixtures';
+
+const DSTACK_RUNTIME_EVENT_TYPE = 0x08000001;
+
+function createRuntimeEvent(event: string, eventPayload: string) {
+  const eventType = Buffer.alloc(4);
+  eventType.writeUInt32LE(DSTACK_RUNTIME_EVENT_TYPE);
+  const digest = sha384(
+    Buffer.concat([
+      eventType,
+      Buffer.from(':'),
+      Buffer.from(event),
+      Buffer.from(':'),
+      Buffer.from(eventPayload, 'hex'),
+    ]),
+  );
+
+  return {
+    digest: digest.toString('hex'),
+    event_type: DSTACK_RUNTIME_EVENT_TYPE,
+    event,
+    event_payload: eventPayload,
+    imr: 3,
+  };
+}
+
+function createQuoteForEventLog(events: readonly { digest: string }[]) {
+  let rtmr3: Uint8Array = Buffer.alloc(48);
+  for (const event of events) {
+    rtmr3 = sha384(Buffer.concat([rtmr3, Buffer.from(event.digest, 'hex')]));
+  }
+  return createQuote({ rtMr3: Buffer.from(rtmr3) });
+}
 
 describe('model attestation verification', () => {
   const quoteVerifier: QuoteVerifier = async () => createQuote();
@@ -28,14 +61,8 @@ describe('model attestation verification', () => {
       tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
       gpuEvidence: 'not_provided',
       deploymentProvenance: 'not_checked',
-      deployment: {
-        appCompose,
-        runtimeMeasurements: { composeHash: 'beef' },
-      },
     });
-    expect(result.deployment.imageDigests).toEqual([
-      `sha256:${'a'.repeat(64)}`,
-    ]);
+    expect(result.deployment).toEqual({ appCompose, runtimeMeasurements: {} });
   });
 
   test('rejects a report whose echoed nonce is not the caller nonce', async () => {
@@ -52,6 +79,44 @@ describe('model attestation verification', () => {
         phase: 'binding',
         code: 'binding.nonce_mismatch',
         details: { source: 'attestationNonce' },
+      },
+    });
+  });
+
+  test('uses the signer snapshot captured before an async quote verifier runs', async () => {
+    const laterAddress = `0x${'44'.repeat(20)}`;
+    const attestation = createModelAttestation();
+    const quote = createQuote({
+      reportData: Buffer.concat([
+        sha256(
+          Buffer.concat([
+            Buffer.from(laterAddress.slice(2), 'hex'),
+            Buffer.from(tlsFingerprint, 'hex'),
+          ]),
+        ),
+        Buffer.from(nonce, 'hex'),
+      ]),
+    });
+
+    await expect(
+      verifyModelAttestation({
+        attestation,
+        nonce,
+        verifiers: {
+          quote: async () => {
+            attestation.signer = {
+              algorithm: 'ecdsa',
+              address: laterAddress,
+            };
+            return quote;
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_mismatch',
+        details: { source: 'signerTlsBinding' },
       },
     });
   });
@@ -307,6 +372,32 @@ describe('model attestation verification', () => {
     ).resolves.toMatchObject({ gpuEvidence: 'not_provided' });
   });
 
+  test('does not expose metadata from replay-only legacy events', async () => {
+    const digest = Buffer.alloc(48, 7);
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        eventLog: [
+          {
+            digest: digest.toString('hex'),
+            event_type: 0,
+            event: 'compose-hash',
+            event_payload: 'forged',
+            imr: 3,
+          },
+        ],
+      }),
+      nonce,
+      verifiers: {
+        quote: async () =>
+          createQuote({
+            rtMr3: sha384(Buffer.concat([Buffer.alloc(48), digest])),
+          }),
+      },
+    });
+
+    expect(result.deployment.runtimeMeasurements).toEqual({});
+  });
+
   test('rejects app compose data that is not bound to MRCONFIGID', async () => {
     await expect(
       verifyModelAttestation({
@@ -424,37 +515,15 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('runs a supplied deployment verifier and records that result', async () => {
-    const osImageDigest = Buffer.alloc(48, 1);
-    const composeDigest = Buffer.alloc(48, 2);
-    const quote = createQuote({
-      rtMr3: sha384(
-        Buffer.concat([
-          sha384(Buffer.concat([Buffer.alloc(48), osImageDigest])),
-          composeDigest,
-        ]),
-      ),
-    });
+  test('passes raw measured configuration to a deployment verifier', async () => {
+    const osImageEvent = createRuntimeEvent('os-image-hash', 'cafe');
+    const composeEvent = createRuntimeEvent('compose-hash', 'beef');
+    const quote = createQuoteForEventLog([osImageEvent, composeEvent]);
     const deployment = jest.fn(async () => undefined);
 
     const result = await verifyModelAttestation({
       attestation: createModelAttestation({
-        eventLog: [
-          {
-            digest: osImageDigest.toString('hex'),
-            event_type: 0,
-            event: 'os-image-hash',
-            event_payload: 'cafe',
-            imr: 3,
-          },
-          {
-            digest: composeDigest.toString('hex'),
-            event_type: 0,
-            event: 'compose-hash',
-            event_payload: 'beef',
-            imr: 3,
-          },
-        ],
+        eventLog: [osImageEvent, composeEvent],
       }),
       nonce,
       verifiers: { quote: async () => quote, deployment },
@@ -462,7 +531,6 @@ describe('model attestation verification', () => {
 
     expect(deployment).toHaveBeenCalledWith({
       appCompose,
-      imageDigests: [`sha256:${'a'.repeat(64)}`],
       runtimeMeasurements: {
         osImageHash: 'cafe',
         composeHash: 'beef',
@@ -472,11 +540,12 @@ describe('model attestation verification', () => {
   });
 
   test('keeps verified deployment measurements independent from the verifier input', async () => {
+    const composeEvent = createRuntimeEvent('compose-hash', 'beef');
     const result = await verifyModelAttestation({
-      attestation: createModelAttestation(),
+      attestation: createModelAttestation({ eventLog: [composeEvent] }),
       nonce,
       verifiers: {
-        quote: quoteVerifier,
+        quote: async () => createQuoteForEventLog([composeEvent]),
         deployment: async (deployment) => {
           const mutable = deployment as {
             runtimeMeasurements: { composeHash?: string };

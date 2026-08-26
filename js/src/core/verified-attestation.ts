@@ -86,7 +86,6 @@ function freezeVerifiedAttestation<T extends UnbrandedVerifiedAttestation>(
     advisoryIds: Object.freeze([...attestation.advisoryIds]),
     deployment: Object.freeze({
       ...attestation.deployment,
-      imageDigests: Object.freeze([...attestation.deployment.imageDigests]),
       runtimeMeasurements: Object.freeze({
         ...attestation.deployment.runtimeMeasurements,
       }),

@@ -5,6 +5,9 @@ The usual goal is a **model response** claim: a model-serving TEE signed the
 exact request and response bytes, and that signer is bound to fresh, verified
 model evidence.
 
+For every exported function, input field, result type, and error type, see the
+[API reference](./api-reference.md).
+
 The SDK also supports a separate, advanced **gateway response** claim. It has
 different requirements and does not prove that a model-serving TEE produced the
 response. Start with the model-response flow below unless you specifically need
@@ -115,8 +118,8 @@ measurements, and the model signing identity. Its result includes:
 
 - `signer`, the identity that must match the completion signature;
 - `tcbStatus` and `advisoryIds` from quote verification;
-- `deployment`, containing the measured compose text, image digests, and
-  runtime measurements;
+- `deployment`, containing the measured configuration text and runtime
+  measurements;
 - `gpuEvidence`, either `verified` or `not_provided`; and
 - `deploymentProvenance`, either `verified` when your deployment verifier ran
   successfully or `not_checked` when none was supplied.
@@ -157,7 +160,9 @@ const verifiedAttestation = await verifyModelAttestation({
 
 Here `verifyDeploymentRelease` is an application function. It receives the
 measured deployment and must throw or reject for every deployment that your
-release policy does not approve.
+release policy does not approve. The SDK provides the raw measured
+configuration text; your policy should interpret it according to the
+configuration format it expects rather than relying on a derived image list.
 
 Supplying `verifiers.deployment` makes deployment acceptance a required check:
 it must resolve for verification to succeed. The SDK authenticates the measured
@@ -182,11 +187,12 @@ states itself. It returns one of:
 - `found`, with a completion signature; or
 - `unavailable`, with the service's error code and message.
 
-For a found signature, `source` is `model_tee`, `gateway`, or `unknown` for a
-legacy record that did not store its source. Most applications simply pass the
-signature unchanged to the chosen response verifier. That verifier checks the
-complete signed payload, signature, and attested signer; it rejects an
-explicitly incompatible source.
+For a found signature, `kind` is `provider_tee` or `gateway`, matching Cloud
+API's `signature_kind`. A response without a recognized `signature_kind` is
+rejected; the SDK never infers a kind from the signed text. Most applications
+simply pass the signature unchanged to the matching response verifier, which
+checks the complete signed payload,
+signature, and attested signer.
 
 All SDK failures are `VerificationError` instances, including Cloud API
 failures. Branch on `failure.code`, rather than parsing a human-readable error
@@ -274,11 +280,3 @@ Never use a fingerprint declared inside the attestation as
 `peerSpkiFingerprint`; that would compare the evidence with itself rather than
 with a TLS peer you observed. Gateway verification accepts the same quote and
 deployment policy options as model verification, except it has no GPU option.
-
-## Runtime notes
-
-The package publishes ESM. It is developed with Node.js 24, while browser
-applications can bundle the same package. Public byte inputs use `Uint8Array`.
-The default Intel verifier may need `crypto`, `buffer`, and `stream` polyfills
-in a browser bundler. Use a custom quote verifier when your runtime or trust
-model requires a different implementation.

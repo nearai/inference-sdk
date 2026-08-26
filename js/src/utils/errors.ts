@@ -236,10 +236,10 @@ export type VerificationFailure =
     }
   | {
       phase: 'signature';
-      code: 'signature.source_mismatch';
+      code: 'signature.kind_mismatch';
       details: {
-        expected: 'model_tee' | 'gateway';
-        actual: 'model_tee' | 'gateway';
+        expected: 'provider_tee' | 'gateway';
+        actual: 'provider_tee' | 'gateway';
       };
     }
   | {
@@ -422,7 +422,7 @@ function formatFailureMessage(failure: VerificationFailure): string {
       return 'Deployment provenance verification failed';
     case 'signature.unavailable':
       return 'Completion signature is unavailable';
-    case 'signature.source_mismatch':
+    case 'signature.kind_mismatch':
       return 'Completion signature does not support this verification claim';
     case 'signature.payload_mismatch':
       return 'Completion signature does not match the request or response';

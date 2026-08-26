@@ -44,7 +44,8 @@
     "@phala/dcap-qvl": "0.6.2",
     "buffer": "^6.0.3",
     "ethers": "^6.17.0",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "valibot": "1.4.2"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.10",

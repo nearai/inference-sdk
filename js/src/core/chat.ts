@@ -7,15 +7,10 @@ import type {
   VerifyGatewayResponseInput,
   VerifyModelResponseInput,
 } from '../types/verification';
+import { VerifyModelResponseFieldsSchema } from '../schemas';
 import { hexToBuffer, normalizeHex } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import {
-  inputError,
-  rejectUnknownInputKeys,
-  requireInputBytes,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
+import { parsePublicInput } from '../utils/schema';
 import {
   requireVerifiedGatewaySigner,
   requireVerifiedModelSigner,
@@ -24,12 +19,11 @@ import {
 /**
  * Verify a model-serving signature over the exact completion bytes and bind it
  * to verified model evidence. Resolves only when the model-response claim is
- * valid. A legacy signature with an unknown source must still match the full
- * model payload, valid signature, and attested signer.
+ * valid.
  */
 export function verifyModelResponse(input: VerifyModelResponseInput): void {
   const parsed = parseResponseInput(input, requireVerifiedModelSigner);
-  assertSignatureSource(parsed.signature, 'model_tee');
+  assertSignatureKind(parsed.signature, 'provider_tee');
   const canonicalModelId = getCanonicalModelIdFromRequest(parsed.requestBody);
   const expectedText = modelSignatureText(
     canonicalModelId,
@@ -43,12 +37,11 @@ export function verifyModelResponse(input: VerifyModelResponseInput): void {
 /**
  * Verify a gateway signature over the exact completion bytes. Resolves only
  * when the gateway-response claim is valid; it does not establish model
- * execution. A legacy signature with an unknown source must still match the
- * full gateway payload, valid signature, and attested signer.
+ * execution.
  */
 export function verifyGatewayResponse(input: VerifyGatewayResponseInput): void {
   const parsed = parseResponseInput(input, requireVerifiedGatewaySigner);
-  assertSignatureSource(parsed.signature, 'gateway');
+  assertSignatureKind(parsed.signature, 'gateway');
   const expectedText = gatewaySignatureText(
     parsed.requestBody,
     parsed.responseBody,
@@ -57,71 +50,31 @@ export function verifyGatewayResponse(input: VerifyGatewayResponseInput): void {
   verifySignatureMatchesAttestation(parsed.signature, parsed.attestation);
 }
 
-function parseResponseInput(
-  input: unknown,
-  requireVerifiedSigner: (attestation: unknown) => SigningIdentity,
-): {
+type ParsedResponseInput = {
   requestBody: Uint8Array;
   responseBody: Uint8Array;
   signature: CompletionSignature;
-  attestation: { signer: { algorithm: string; address: string } };
-} {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', [
-    'requestBody',
-    'responseBody',
-    'signature',
-    'attestation',
-  ]);
-  const signatureRecord = requireInputObject(record.signature, 'signature');
-  rejectUnknownInputKeys(signatureRecord, 'signature', [
-    'signedText',
-    'signature',
-    'signer',
-    'source',
-  ]);
-  const signer = requireSigner(signatureRecord.signer, 'signature.signer');
-  const source = requireInputString(signatureRecord.source, 'signature.source');
-  if (source !== 'model_tee' && source !== 'gateway' && source !== 'unknown') {
-    throw inputError('signature.source', 'unsupported_value', {
-      expected: "'model_tee', 'gateway', or 'unknown'",
-    });
-  }
-  const attestationSigner = requireVerifiedSigner(record.attestation);
+  attestation: { signer: SigningIdentity };
+};
+
+function parseResponseInput(
+  input: unknown,
+  requireVerifiedSigner: (attestation: unknown) => SigningIdentity,
+): ParsedResponseInput {
+  const parsed = parsePublicInput(
+    VerifyModelResponseFieldsSchema,
+    input,
+    'input',
+  );
+  const attestationSigner = requireVerifiedSigner(parsed.attestation);
 
   return {
-    requestBody: requireInputBytes(record.requestBody, 'requestBody'),
-    responseBody: requireInputBytes(record.responseBody, 'responseBody'),
-    signature: {
-      signedText: requireInputString(
-        signatureRecord.signedText,
-        'signature.signedText',
-      ),
-      signature: requireInputString(
-        signatureRecord.signature,
-        'signature.signature',
-      ),
-      signer,
-      source,
-    },
+    requestBody: parsed.requestBody,
+    responseBody: parsed.responseBody,
+    signature: parsed.signature,
     attestation: {
       signer: attestationSigner,
     },
-  };
-}
-
-function requireSigner(value: unknown, field: string): SigningIdentity {
-  const signer = requireInputObject(value, field);
-  rejectUnknownInputKeys(signer, field, ['algorithm', 'address']);
-  const algorithm = requireInputString(signer.algorithm, `${field}.algorithm`);
-  if (algorithm !== 'ecdsa' && algorithm !== 'ed25519') {
-    throw inputError(`${field}.algorithm`, 'unsupported_value', {
-      expected: "'ecdsa' or 'ed25519'",
-    });
-  }
-  return {
-    algorithm,
-    address: requireInputString(signer.address, `${field}.address`),
   };
 }
 
@@ -149,15 +102,15 @@ export function gatewaySignatureText(
   return `${hashBytes(requestBody)}:${hashBytes(responseBody)}`;
 }
 
-function assertSignatureSource(
+function assertSignatureKind(
   signature: CompletionSignature,
-  expected: 'model_tee' | 'gateway',
+  expected: CompletionSignature['kind'],
 ): void {
-  if (signature.source !== 'unknown' && signature.source !== expected) {
+  if (signature.kind !== expected) {
     throw new VerificationError({
       phase: 'signature',
-      code: 'signature.source_mismatch',
-      details: { expected, actual: signature.source },
+      code: 'signature.kind_mismatch',
+      details: { expected, actual: signature.kind },
     });
   }
 }

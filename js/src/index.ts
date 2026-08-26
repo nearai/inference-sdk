@@ -28,13 +28,14 @@ export type { ModelAttestation } from './types/attestation-model';
 export type {
   CompletionBytes,
   CompletionSignature,
+  CompletionSignatureKind,
   CompletionSignatureLookup,
-  CompletionSignatureSource,
   SignatureUnavailable,
 } from './types/chat';
 export type {
   AttestationPolicy,
   AttestationVerifiers,
+  Awaitable,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayTlsBinding,
@@ -63,7 +64,9 @@ export {
   VerificationError,
 } from './utils/errors';
 export type {
+  ApiFailure,
   VerificationErrorCode,
   VerificationFailure,
+  VerificationErrorOptions,
   VerificationPhase,
 } from './utils/errors';

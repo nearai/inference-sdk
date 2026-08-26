@@ -33,21 +33,15 @@ Keep the exact `verifiedAttestation` object in memory and pass it directly to
 `verifyModelResponse`; re-verify raw evidence after a process or serialization
 boundary.
 
-See the [TypeScript verification guide](./docs/verification-guide.md) for a
-complete example, policy and verifier configuration, structured error handling,
-and the separate gateway-verification flow.
+Read the [TypeScript verification guide](./docs/verification-guide.md) for the
+standard flow and the [API reference](./docs/api-reference.md) for every public
+function, parameter, result type, and error type.
 
 ## Public API
 
-- `NearAiCloudClient` fetches completion signatures and attestation evidence.
-- `fetchCompletionSignature`, `fetchModelAttestation`, `verifyModelAttestation`, and
-  `verifyModelResponse` implement the standard model-response flow.
-- `fetchGatewayAttestation`, `verifyGatewayAttestation`, and
-  `verifyGatewayResponse` support the distinct gateway claim.
-- `generateNonce` creates the fresh nonce used when requesting and verifying
-  evidence.
-- `VerificationError` and `isVerificationError` expose stable, structured
-  failures.
+The [API reference](./docs/api-reference.md) is the complete contract. It
+includes all public functions, parameters, return values, callback types,
+constants, and structured errors.
 
 `NearAiCloudClient` does not send completion requests or retain their bytes.
 Send completion requests with `NO_ALIASING_HEADER` set to `true` and use a

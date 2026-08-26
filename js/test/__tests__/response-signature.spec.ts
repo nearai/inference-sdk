@@ -102,7 +102,7 @@ describe('response signature verification', () => {
       responseBody,
     );
     const signature: CompletionSignature = {
-      source: 'model_tee',
+      kind: 'provider_tee',
       signedText,
       signature: await wallet.signMessage(signedText),
       signer: { algorithm: 'ecdsa', address: wallet.address },
@@ -129,7 +129,7 @@ describe('response signature verification', () => {
       responseBody,
     );
     const signature: CompletionSignature = {
-      source: 'model_tee',
+      kind: 'provider_tee',
       signedText,
       signature: await wallet.signMessage(signedText),
       signer: { algorithm: 'ecdsa', address: wallet.address },
@@ -157,7 +157,7 @@ describe('response signature verification', () => {
     const signedText = gatewaySignedText(requestBody, responseBody);
     const signerAddress = Buffer.from(keyPair.publicKey).toString('hex');
     const signature: CompletionSignature = {
-      source: 'gateway',
+      kind: 'gateway',
       signedText,
       signature: Buffer.from(
         nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
@@ -175,58 +175,9 @@ describe('response signature verification', () => {
     ).toBeUndefined();
   });
 
-  test('verifies a legacy signature only after the model claim fully matches', async () => {
-    const wallet = new ethers.Wallet(
-      '0x0123456789012345678901234567890123456789012345678901234567890123',
-    );
-    const signedText = modelSignedText(
-      'canonical-model',
-      requestBody,
-      responseBody,
-    );
+  test('rejects an explicit signature kind for the other claim', async () => {
     const signature: CompletionSignature = {
-      source: 'unknown',
-      signedText,
-      signature: await wallet.signMessage(signedText),
-      signer: { algorithm: 'ecdsa', address: wallet.address },
-    };
-
-    expect(
-      verifyModelResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation: await verifiedModelAttestation(wallet.address),
-      }),
-    ).toBeUndefined();
-  });
-
-  test('verifies a legacy signature only after the gateway claim fully matches', async () => {
-    const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
-    const signedText = gatewaySignedText(requestBody, responseBody);
-    const signerAddress = Buffer.from(keyPair.publicKey).toString('hex');
-    const signature: CompletionSignature = {
-      source: 'unknown',
-      signedText,
-      signature: Buffer.from(
-        nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
-      ).toString('hex'),
-      signer: { algorithm: 'ed25519', address: signerAddress },
-    };
-
-    expect(
-      verifyGatewayResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation: await verifiedGatewayAttestation(signerAddress),
-      }),
-    ).toBeUndefined();
-  });
-
-  test('rejects an explicit signature source for the other claim', async () => {
-    const signature: CompletionSignature = {
-      source: 'gateway',
+      kind: 'gateway',
       signedText: 'request:response',
       signature: 'aa',
       signer: { algorithm: 'ecdsa', address: '11'.repeat(20) },
@@ -245,8 +196,8 @@ describe('response signature verification', () => {
         }),
       {
         phase: 'signature',
-        code: 'signature.source_mismatch',
-        details: { expected: 'model_tee', actual: 'gateway' },
+        code: 'signature.kind_mismatch',
+        details: { expected: 'provider_tee', actual: 'gateway' },
       },
     );
   });
@@ -261,7 +212,7 @@ describe('response signature verification', () => {
       responseBody,
     );
     const signature: CompletionSignature = {
-      source: 'model_tee',
+      kind: 'provider_tee',
       signedText,
       signature: await wallet.signMessage(signedText),
       signer: { algorithm: 'ecdsa', address: wallet.address },
@@ -301,7 +252,7 @@ describe('response signature verification', () => {
       responseBody,
     );
     const signature: CompletionSignature = {
-      source: 'model_tee',
+      kind: 'provider_tee',
       signedText,
       signature: await wallet.signMessage(signedText),
       signer: { algorithm: 'ecdsa', address: wallet.address },

@@ -6,6 +6,9 @@ import { build } from 'esbuild';
 
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
 const entry = [
+  `export { NearAiCloudClient } from ${JSON.stringify(
+    join(packageDirectory, 'src/core/cloud-api.ts'),
+  )};`,
   `export { verifyModelResponse } from ${JSON.stringify(
     join(packageDirectory, 'src/core/chat.ts'),
   )};`,
@@ -54,6 +57,29 @@ globalThis.Buffer = undefined;
 try {
   const sdk = await import(moduleUrl);
   assert.equal(typeof sdk.verifyDcapQuote, 'function');
+
+  const cloudClient = new sdk.NearAiCloudClient({
+    apiKey: 'test',
+    fetch: () => ({
+      ok: true,
+      status: 200,
+      text: () =>
+        JSON.stringify({
+          error_code: 'SIGNATURE_UNSUPPORTED',
+          message: 'No provider signature',
+        }),
+    }),
+  });
+  assert.deepEqual(
+    await cloudClient.lookupCompletionSignature({ completionId: 'chat-1' }),
+    {
+      status: 'unavailable',
+      unavailable: {
+        errorCode: 'SIGNATURE_UNSUPPORTED',
+        message: 'No provider signature',
+      },
+    },
+  );
 
   const normalizedQuote = sdk.normalizeVerifiedTdxQuote({
     advisoryIds: [],
@@ -140,7 +166,7 @@ try {
         requestBody,
         responseBody,
         signature: {
-          source: 'model_tee',
+          kind: 'provider_tee',
           signature: '00',
           signer: {
             algorithm: 'ed25519',

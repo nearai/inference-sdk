@@ -5,16 +5,10 @@ import type {
   VerifiedModelAttestation,
   VerifyModelAttestationInput,
 } from '../types/verification';
+import { VerifyModelAttestationInputSchema } from '../schemas';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
-import {
-  inputError,
-  optionalInputObject,
-  rejectUnknownInputKeys,
-  requireInputFunction,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
+import { parsePublicInput } from '../utils/schema';
 import {
   verifyCloudModelReportDataBinding,
   verifyReportedNonce,
@@ -22,7 +16,6 @@ import {
 import {
   verifyDstackDeployment,
   verifyDstackQuote,
-  parseAttestationPolicy,
   requireAttestationEvidence,
 } from './dstack-attestation';
 import { markVerifiedModelAttestation } from './verified-attestation';
@@ -47,8 +40,8 @@ export async function verifyModelAttestation(
   const tlsBinding = await verifyCloudModelReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
     nonce,
-    signingAddress: attestation.signer.address,
-    reportedSpkiFingerprint: attestation.declaredSpkiFingerprint,
+    signingAddress: verifiedQuote.signer.address,
+    reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
   });
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
@@ -64,87 +57,27 @@ export async function verifyModelAttestation(
   return markVerifiedModelAttestation({ ...evidence, tlsBinding, gpuEvidence });
 }
 
-function parseModelAttestationInput(input: unknown): {
-  attestation: VerifyModelAttestationInput['attestation'];
-  nonce: string;
-  policy: ModelAttestationPolicy | undefined;
-  verifiers: VerifyModelAttestationInput['verifiers'];
-} {
-  const record = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(record, 'input', [
-    'attestation',
-    'nonce',
-    'policy',
-    'verifiers',
-  ]);
-  const attestation = requireAttestationEvidence(
-    record.attestation,
-  ) as VerifyModelAttestationInput['attestation'];
-  if (
-    attestation.nvidiaPayload !== undefined &&
-    attestation.nvidiaPayload !== null &&
-    typeof attestation.nvidiaPayload !== 'string'
-  ) {
-    throw inputError('attestation.nvidiaPayload', 'unsupported_value', {
-      expected: 'string or null',
-    });
-  }
+type ParsedModelAttestationInput = VerifyModelAttestationInput;
+
+function parseModelAttestationInput(
+  input: unknown,
+): ParsedModelAttestationInput {
+  const parsed = parsePublicInput(
+    VerifyModelAttestationInputSchema,
+    input,
+    'input',
+  );
+  const baseAttestation = requireAttestationEvidence(parsed.attestation);
+
   return {
-    attestation,
-    nonce: requireInputString(record.nonce, 'nonce'),
-    policy: parseModelAttestationPolicy(record.policy),
-    verifiers: parseModelAttestationVerifiers(record.verifiers),
+    ...parsed,
+    attestation: Object.freeze({
+      ...baseAttestation,
+      ...(parsed.attestation.nvidiaPayload !== undefined
+        ? { nvidiaPayload: parsed.attestation.nvidiaPayload }
+        : {}),
+    }),
   };
-}
-
-function parseModelAttestationPolicy(
-  value: unknown,
-): ModelAttestationPolicy | undefined {
-  const policy = optionalInputObject(value, 'policy');
-  if (!policy) {
-    return undefined;
-  }
-  rejectUnknownInputKeys(policy, 'policy', [
-    'acceptedTcbStatuses',
-    'gpuEvidence',
-  ]);
-  parseAttestationPolicy(policy);
-
-  const gpuEvidence = policy.gpuEvidence;
-  if (
-    gpuEvidence !== undefined &&
-    gpuEvidence !== 'if-present' &&
-    gpuEvidence !== 'required'
-  ) {
-    throw inputError('policy.gpuEvidence', 'unsupported_value', {
-      expected: "'if-present' or 'required'",
-    });
-  }
-  return policy as ModelAttestationPolicy;
-}
-
-function parseModelAttestationVerifiers(
-  value: unknown,
-): VerifyModelAttestationInput['verifiers'] {
-  const verifiers = optionalInputObject(value, 'verifiers');
-  if (!verifiers) {
-    return undefined;
-  }
-  rejectUnknownInputKeys(verifiers, 'verifiers', [
-    'quote',
-    'deployment',
-    'nvidia',
-  ]);
-  if (verifiers.quote !== undefined) {
-    requireInputFunction(verifiers.quote, 'verifiers.quote');
-  }
-  if (verifiers.deployment !== undefined) {
-    requireInputFunction(verifiers.deployment, 'verifiers.deployment');
-  }
-  if (verifiers.nvidia !== undefined) {
-    requireInputFunction(verifiers.nvidia, 'verifiers.nvidia');
-  }
-  return verifiers as VerifyModelAttestationInput['verifiers'];
 }
 
 async function verifyNvidiaEvidence(input: {
@@ -214,20 +147,5 @@ async function verifyNvidiaEvidence(input: {
 function getGpuEvidenceRequirement(
   policy: ModelAttestationPolicy | undefined,
 ): 'if-present' | 'required' {
-  const requirement = policy?.gpuEvidence;
-  if (requirement === undefined) {
-    return 'if-present';
-  }
-  if (requirement === 'if-present' || requirement === 'required') {
-    return requirement;
-  }
-  throw new VerificationError({
-    phase: 'input',
-    code: 'input.invalid',
-    details: {
-      field: 'policy.gpuEvidence',
-      reason: 'unsupported_value',
-      expected: "'if-present' or 'required'",
-    },
-  });
+  return policy?.gpuEvidence ?? 'if-present';
 }

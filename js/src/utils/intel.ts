@@ -5,20 +5,11 @@ import {
   type VerifiedReport,
   verify,
 } from '@phala/dcap-qvl';
-import type { TcbStatus, VerifiedTdxQuote } from '../types/verification';
+import type { VerifiedTdxQuote } from '../types/verification';
+import { QuoteVerificationResultSchema } from '../schemas';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { isVerificationError, VerificationError } from './errors';
-
-const TCB_STATUSES: readonly TcbStatus[] = [
-  'UpToDate',
-  'SWHardeningNeeded',
-  'ConfigurationNeeded',
-  'ConfigurationAndSWHardeningNeeded',
-  'OutOfDate',
-  'OutOfDateConfigurationNeeded',
-  'Revoked',
-  'Unknown',
-];
+import { parseQuoteResult } from './schema';
 
 /**
  * Verify an Intel TDX quote using DCAP and expose only the measurements needed
@@ -107,76 +98,42 @@ export async function verifyDcapQuote(
 
 /** Validate quote-adapter output and normalize its byte fields to Buffers. */
 export function normalizeVerifiedTdxQuote(value: unknown): VerifiedTdxQuote {
-  try {
-    const record = requireQuoteObject(value);
-    return {
-      tcbStatus: requireTcbStatus(record.tcbStatus, 'tcbStatus'),
-      advisoryIds: requireStringArray(record.advisoryIds, 'advisoryIds'),
-      debugEnabled: requireBoolean(record.debugEnabled, 'debugEnabled'),
-      reportData: requireBytes(record.reportData, 'reportData'),
-      mrConfigId: requireBytes(record.mrConfigId, 'mrConfigId'),
-      rtMr3: requireBytes(record.rtMr3, 'rtMr3'),
-    };
-  } catch (cause) {
-    if (isVerificationError(cause)) {
-      throw cause;
-    }
-    throw new VerificationError(
-      {
-        phase: 'quote',
-        code: 'quote.invalid_result',
-        details: {
-          path: 'quote',
-          expected: 'VerifiedTdxQuote',
-          actual: 'unreadable',
-        },
-      },
-      { cause },
-    );
-  }
+  const quote = parseQuoteResult(QuoteVerificationResultSchema, value);
+  return {
+    tcbStatus: quote.tcbStatus,
+    advisoryIds: [...quote.advisoryIds],
+    debugEnabled: quote.debugEnabled,
+    reportData: Buffer.from(quote.reportData),
+    mrConfigId: Buffer.from(quote.mrConfigId),
+    rtMr3: Buffer.from(quote.rtMr3),
+  };
 }
 
 function getDebugEnabled(value: unknown): boolean {
   const attributes = requireBytes(value, 'tdAttributes');
   if (attributes.length < 1) {
-    throw invalidQuoteResult('tdAttributes', 'at least one byte', value);
+    throw new VerificationError({
+      phase: 'quote',
+      code: 'quote.invalid_result',
+      details: {
+        path: 'tdAttributes',
+        expected: 'at least one byte',
+        actual: describeValue(value),
+      },
+    });
   }
   return (attributes[0] & 0x01) !== 0;
-}
-
-function requireQuoteObject(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw invalidQuoteResult('quote', 'object', value);
-  }
-  return value as Record<string, unknown>;
-}
-
-function requireTcbStatus(value: unknown, path: string): TcbStatus {
-  if (typeof value === 'string' && TCB_STATUSES.includes(value as TcbStatus)) {
-    return value as TcbStatus;
-  }
-  throw invalidQuoteResult(path, 'known TDX TCB status', value);
-}
-
-function requireStringArray(value: unknown, path: string): string[] {
-  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-    return [...value];
-  }
-  throw invalidQuoteResult(path, 'array of strings', value);
-}
-
-function requireBoolean(value: unknown, path: string): boolean {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  throw invalidQuoteResult(path, 'boolean', value);
 }
 
 function requireBytes(value: unknown, path: string): Buffer {
   if (value instanceof Uint8Array) {
     return Buffer.from(value);
   }
-  throw invalidQuoteResult(path, 'Uint8Array', value);
+  throw new VerificationError({
+    phase: 'quote',
+    code: 'quote.invalid_result',
+    details: { path, expected: 'Uint8Array', actual: describeValue(value) },
+  });
 }
 
 function invalidDcapResult(cause: unknown): VerificationError {
@@ -195,18 +152,6 @@ function invalidDcapResult(cause: unknown): VerificationError {
     },
     { cause },
   );
-}
-
-function invalidQuoteResult(
-  path: string,
-  expected: string,
-  value: unknown,
-): VerificationError {
-  return new VerificationError({
-    phase: 'quote',
-    code: 'quote.invalid_result',
-    details: { path, expected, actual: describeValue(value) },
-  });
 }
 
 function describeValue(value: unknown): string {
