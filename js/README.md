@@ -17,11 +17,13 @@ result exposes `provenanceVerified` so this distinction is explicit.
 
 ## TCB policy
 
-The default policy accepts Intel TCB statuses `UpToDate` and `OutOfDate`.
+The default policy accepts `TcbStatus.UpToDate` and `TcbStatus.OutOfDate`.
 Set `allowedTcbStatuses` to use a stricter policy:
 
 ```ts
-policy: { allowedTcbStatuses: ['UpToDate'] }
+import { TcbStatus } from 'verification-sdk';
+
+const policy = { allowedTcbStatuses: [TcbStatus.UpToDate] };
 ```
 
 ## Model response flow

@@ -1,4 +1,4 @@
-import { verifyGatewayAttestation } from '../../src';
+import { TcbStatus, verifyGatewayAttestation } from '../../src';
 import { GatewayAttestation } from '../../src/types/attestation-gateway';
 import {
   createNearModelAttestation,
@@ -35,7 +35,7 @@ describe('verifyGatewayAttestation', () => {
   });
 
   test('accepts an OutOfDate gateway TCB status by default', async () => {
-    const quote = createQuote({ tcbStatus: 'OutOfDate' });
+    const quote = createQuote({ tcbStatus: TcbStatus.OutOfDate });
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
@@ -43,7 +43,7 @@ describe('verifyGatewayAttestation', () => {
         peerTlsCertFingerprint: tlsFingerprint,
         quoteVerifier: { verify: async () => quote },
       }),
-    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
+    ).resolves.toMatchObject({ tcbStatus: TcbStatus.OutOfDate });
   });
 
   test('rejects a gateway quote when the live TLS peer differs', async () => {

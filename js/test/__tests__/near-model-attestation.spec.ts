@@ -1,4 +1,4 @@
-import { verifyNearModelAttestation } from '../../src';
+import { TcbStatus, verifyNearModelAttestation } from '../../src';
 import { QuoteVerifier } from '../../src/types/verification';
 import {
   appCompose,
@@ -23,7 +23,7 @@ describe('verifyNearModelAttestation', () => {
 
     expect(result).toMatchObject({
       kind: 'near_model',
-      tcbStatus: 'UpToDate',
+      tcbStatus: TcbStatus.UpToDate,
       appCompose,
       provenanceVerified: false,
       runtimeMeasurements: { composeHash: 'beef' },
@@ -81,19 +81,19 @@ describe('verifyNearModelAttestation', () => {
         attestation: createNearModelAttestation(),
         expectedNonce: nonce,
         quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+          verify: async () => createQuote({ tcbStatus: TcbStatus.OutOfDate }),
         },
       }),
-    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
+    ).resolves.toMatchObject({ tcbStatus: TcbStatus.OutOfDate });
 
     await expect(
       verifyNearModelAttestation({
         attestation: createNearModelAttestation(),
         expectedNonce: nonce,
         quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+          verify: async () => createQuote({ tcbStatus: TcbStatus.OutOfDate }),
         },
-        policy: { allowedTcbStatuses: ['UpToDate'] },
+        policy: { allowedTcbStatuses: [TcbStatus.UpToDate] },
       }),
     ).rejects.toThrow("TDX TCB status 'OutOfDate' is not allowed");
   });
@@ -104,7 +104,7 @@ describe('verifyNearModelAttestation', () => {
         attestation: createNearModelAttestation(),
         expectedNonce: nonce,
         quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'Revoked' }),
+          verify: async () => createQuote({ tcbStatus: TcbStatus.Revoked }),
         },
       }),
     ).rejects.toThrow("TDX TCB status 'Revoked' is not allowed");

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { NearModelAttestation } from '../src/types/attestation-model';
-import { VerifiedTdxQuote } from '../src/types/verification';
+import { TcbStatus, VerifiedTdxQuote } from '../src/types/verification';
 
 export const nonce = '11'.repeat(32);
 export const signingAddress = `0x${'22'.repeat(20)}`;
@@ -37,7 +37,7 @@ export function createQuote(
   ]);
 
   return {
-    tcbStatus: 'UpToDate',
+    tcbStatus: TcbStatus.UpToDate,
     advisoryIds: [],
     debugEnabled: false,
     reportData,

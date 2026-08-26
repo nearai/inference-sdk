@@ -4,6 +4,7 @@ import {
   NearVerificationPolicy,
   ProvenanceVerifier,
   QuoteVerifier,
+  TcbStatus,
   VerifiedDstackAttestation,
 } from '../types/verification';
 import { requireByteLength } from '../utils/common';
@@ -20,7 +21,7 @@ import {
 import { verifyAndReplayRtmr3 } from './event-log';
 
 const DEFAULT_POLICY: Required<NearVerificationPolicy> = {
-  allowedTcbStatuses: ['UpToDate', 'OutOfDate'],
+  allowedTcbStatuses: [TcbStatus.UpToDate, TcbStatus.OutOfDate],
   requireGpuEvidence: false,
   requireDeploymentProvenance: false,
 };

@@ -7,9 +7,21 @@ import {
   ProviderTeeSignature,
 } from './chat';
 
+/** Intel TDX TCB statuses returned by DCAP verification. */
+export enum TcbStatus {
+  UpToDate = 'UpToDate',
+  SWHardeningNeeded = 'SWHardeningNeeded',
+  ConfigurationNeeded = 'ConfigurationNeeded',
+  ConfigurationAndSWHardeningNeeded = 'ConfigurationAndSWHardeningNeeded',
+  OutOfDate = 'OutOfDate',
+  OutOfDateConfigurationNeeded = 'OutOfDateConfigurationNeeded',
+  Revoked = 'Revoked',
+  Unknown = 'Unknown',
+}
+
 /** Measurements extracted from an Intel-verified TDX quote. */
 export type VerifiedTdxQuote = {
-  tcbStatus: string;
+  tcbStatus: TcbStatus;
   advisoryIds: string[];
   debugEnabled: boolean;
   reportData: Uint8Array;
@@ -48,7 +60,7 @@ export type ProvenanceVerifier = {
 
 export type NearVerificationPolicy = {
   /** Defaults to `UpToDate` and `OutOfDate`. */
-  allowedTcbStatuses?: readonly string[];
+  allowedTcbStatuses?: readonly TcbStatus[];
   /** Defaults to false so CPU-only CVMs remain verifiable. */
   requireGpuEvidence?: boolean;
   /**
@@ -86,7 +98,7 @@ export type VerifiedDstackAttestation = {
   signingAlgo: SigningAlgo;
   /** TLS SPKI fingerprint bound inside the verified quote. */
   tlsCertFingerprint: string;
-  tcbStatus: string;
+  tcbStatus: TcbStatus;
   advisoryIds: string[];
   appCompose: string;
   imageDigests: string[];

@@ -19,6 +19,7 @@ export {
 export { generateNonce } from './utils/common';
 export { verifyDcapQuote } from './utils/intel';
 export { nvidiaNrasVerifier } from './utils/nvidia';
+export { TcbStatus } from './types/verification';
 
 export type {
   GatewayAttestation,
