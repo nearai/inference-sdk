@@ -1,25 +1,27 @@
+import type { GatewayAttestation } from '../types/attestation-gateway';
+import type { ModelAttestation } from '../types/attestation-model';
 import type {
-  GatewayAttestation,
-  NearAiCloudAttestationReport,
-  VpcInfo,
-} from '../types/attestation-gateway';
-import type { NearModelAttestation } from '../types/attestation-model';
-import type {
-  JsonObject,
-  JsonValue,
-  SigningAlgo,
-  TcbInfo,
+  AttestationEventLog,
+  AttestationEvidence,
+  SigningAlgorithm,
+  SigningIdentity,
 } from '../types/attestation-common';
 import type {
-  KnownChatSignature,
-  SignatureLookup,
+  CompletionSignature,
+  CompletionSignatureLookup,
   SignatureUnavailable,
-  UnknownChatSignature,
 } from '../types/chat';
-import { requireByteLength } from '../utils/common';
-import { ApiError, VerificationError } from '../utils/errors';
+import { normalizeHex, requireByteLength } from '../utils/common';
+import { ApiError, type ApiFailure, VerificationError } from '../utils/errors';
+import {
+  inputError,
+  rejectUnknownInputKeys,
+  requireInputFunction,
+  requireInputObject,
+} from '../utils/input';
 
-type FetchLike = (
+/** Fetch implementation used for Cloud API signature and evidence requests. */
+export type NearAiCloudFetch = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
@@ -27,157 +29,148 @@ type FetchLike = (
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
 
+/** Default production endpoint used when a client does not select another one. */
+export const DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1';
+
 export type NearAiCloudClientOptions = {
-  /**
-   * Cloud API base including its version, for example
-   * `https://cloud-api.near.ai/v1`.
-   */
-  baseUrl: string;
+  /** Cloud API base including its version. Defaults to the production endpoint. */
+  baseUrl?: string;
   /** Used only for authorized Cloud API evidence and signature requests. */
   apiKey: string;
-  /**
-   * Injectable transport for tests. A plain fetch implementation cannot prove
-   * that a later gateway response reused the report's TLS connection.
-   */
-  fetch?: FetchLike;
+  /** Injectable transport, including a connection-owning gateway transport. */
+  fetch?: NearAiCloudFetch;
 };
 
-/** Common inputs for a Cloud API attestation-report request. */
-export type FetchAttestationInput = {
-  /** Fresh caller-generated 32-byte hex nonce; retain it for verification. */
-  nonce: string;
-  /** Signature representation requested from the Cloud API. */
-  signingAlgo: SigningAlgo;
-  /**
-   * Optional report signer filter. For a model response, use the signer from
-   * its `provider_tee` signature to fetch matching evidence.
-   */
-  signingAddress?: string;
-};
-
-export type FetchNearModelAttestationInput = FetchAttestationInput & {
-  /**
-   * Canonical model ID from the exact completion request, sent with
-   * `x-no-aliasing: true`.
-   */
+/** Fetch model evidence for the signer recorded in a completion signature. */
+export type FetchModelAttestationInput = {
+  /** Canonical model ID from the exact completion request. */
   model: string;
-  /**
-   * Opt in to a quote-bound, server-declared TLS fingerprint. Defaults to
-   * false and does not create a client-to-model peer TLS proof when enabled.
-   */
-  includeTlsFingerprint?: boolean;
+  /** Fresh caller-generated nonce; retain it for attestation verification. */
+  nonce: string;
+  /** Completion signature whose signer selects the model evidence. */
+  signature: CompletionSignature;
 };
 
-export type FetchGatewayAttestationInput = FetchAttestationInput;
+/** Fetch gateway evidence for the signer recorded in a completion signature. */
+export type FetchGatewayAttestationInput = {
+  /** Fresh caller-generated nonce; retain it for attestation verification. */
+  nonce: string;
+  /** Completion signature whose signer selects the gateway evidence. */
+  signature: CompletionSignature;
+};
 
 export type FetchCompletionSignatureInput = {
   /** Completion ID returned by the completion endpoint. */
-  chatId: string;
-  /** Signature representation to request; the client does not probe both. */
-  signingAlgo: SigningAlgo;
+  completionId: string;
+  /** Defaults to `ecdsa`; choose `ed25519` only when the completion uses it. */
+  algorithm?: SigningAlgorithm;
 };
 
+type ApiResource = Extract<
+  ApiFailure,
+  { code: 'api.transport_failed' }
+>['details']['resource'];
+type AttestationResource = Exclude<ApiResource, 'completion_signature'>;
+
 /**
- * A narrow Cloud API client for attestation evidence and response signatures.
- * Its model methods request `provider=near`; that selects evidence only and
- * does not pin a later inference request to the NEAR fleet.
+ * A narrow NEAR AI Cloud client for attestation evidence and response
+ * signatures. It does not send completion requests or retain completion bytes.
  */
 export class NearAiCloudClient {
-  private readonly fetchImpl: FetchLike;
-  private readonly options: NearAiCloudClientOptions;
+  private readonly fetchImpl: NearAiCloudFetch;
+  private readonly options: {
+    baseUrl: string;
+    apiKey: string;
+  };
 
   constructor(options: NearAiCloudClientOptions) {
-    this.options = {
-      ...options,
-      baseUrl: validateBaseUrl(options.baseUrl),
-      apiKey: validateApiKey(options.apiKey),
-    };
-    this.fetchImpl = options.fetch ?? fetch;
+    const parsed = parseClientOptions(options);
+    this.options = { baseUrl: parsed.baseUrl, apiKey: parsed.apiKey };
+    this.fetchImpl = parsed.fetch;
   }
 
   /**
-   * Fetch the parsed gateway and NEAR model wire evidence returned by one
-   * provider-filtered report request. Model aliases are rejected before the
-   * request is served. This is a model-evidence convenience method: its
-   * gateway entry is not a same-connection gateway TLS proof, especially when
-   * the default model request omits the TLS fingerprint.
+   * Fetch the one NEAR model report selected by the model-serving signature.
+   * The client rejects model aliases before the request is dispatched.
    */
-  async fetchNearAiCloudAttestationReport(
-    input: FetchNearModelAttestationInput,
-  ): Promise<NearAiCloudAttestationReport> {
-    validateNearModelAttestationRequest(input);
+  async fetchModelAttestation(
+    input: FetchModelAttestationInput,
+  ): Promise<ModelAttestation> {
+    const request = parseModelAttestationRequest(input);
     const url = this.endpoint('attestation/report');
-    // Model evidence uses signer + nonce by default. A declared TLS
-    // fingerprint is opt-in because it is not a client-observed peer binding.
-    setAttestationQuery(url, input, input.includeTlsFingerprint === true);
-    url.searchParams.set('model', input.model);
+    setAttestationQuery(url, request.nonce, request.signature.signer, false);
+    url.searchParams.set('model', request.model);
     url.searchParams.set('provider', 'near');
 
-    return parseNearAiCloudAttestationReport(
-      await this.getJson(url, 'attestation report', {
+    const attestation = parseSingleModelAttestation(
+      await this.getJson(url, 'model_attestation', {
         [NO_ALIASING_HEADER]: 'true',
       }),
     );
+    requireMatchingAttestationSigner(
+      attestation,
+      request.signature,
+      'model_attestation',
+    );
+    return attestation;
   }
 
   /**
-   * Fetch the one NEAR model report selected by a provider-filtered query.
-   * Throws a structured API error if the server returns zero or multiple model
-   * reports instead of the one report expected after filtering by a
-   * `provider_tee` signer. Call `verifyProviderTeeResponse` separately to
-   * establish the cryptographic response-to-signer binding.
-   */
-  async fetchNearModelAttestation(
-    input: FetchNearModelAttestationInput,
-  ): Promise<NearModelAttestation> {
-    const report = await this.fetchNearAiCloudAttestationReport(input);
-    const attestations = report.model_attestations ?? [];
-    if (attestations.length !== 1) {
-      throw new ApiError({
-        phase: 'api',
-        code: 'api.unexpected_model_attestation_count',
-        details: { expectedCount: 1, actualCount: attestations.length },
-      });
-    }
-    return attestations[0];
-  }
-
-  /**
-   * Fetch gateway evidence without selecting a model provider. This requests
-   * the fingerprint needed by gateway verification, but ordinary `fetch`
-   * cannot capture a TLS peer or prove connection reuse. The caller must still
-   * collect the peer SPKI from the report connection it controls.
+   * Fetch gateway evidence with the TLS fingerprint required for gateway
+   * verification. The caller must still observe that fingerprint on the same
+   * TLS connection it controls.
    */
   async fetchGatewayAttestation(
     input: FetchGatewayAttestationInput,
   ): Promise<GatewayAttestation> {
-    validateAttestationRequest(input);
+    const request = parseGatewayAttestationRequest(input);
     const url = this.endpoint('attestation/report');
-    // Gateway verification always needs the quote-bound fingerprint to compare
-    // with the caller-observed peer SPKI.
-    setAttestationQuery(url, input, true);
+    setAttestationQuery(url, request.nonce, request.signature.signer, true);
     const record = requireObject(
-      await this.getJson(url, 'gateway attestation report'),
+      await this.getJson(url, 'gateway_attestation'),
       'gateway attestation report',
     );
-    return parseGatewayAttestation(record.gateway_attestation);
+    const attestation = parseGatewayAttestation(record.gateway_attestation);
+    requireMatchingAttestationSigner(
+      attestation,
+      request.signature,
+      'gateway_attestation',
+    );
+    return attestation;
   }
 
   /**
-   * Fetch a response signature. An unavailable or unrecognized signature is
-   * represented explicitly rather than coerced into a successful signature.
-   * This method performs one lookup and never polls.
+   * Look up one completion signature without polling. Use this when an
+   * application needs to handle an unavailable signature itself.
    */
+  async lookupCompletionSignature(
+    input: FetchCompletionSignatureInput,
+  ): Promise<CompletionSignatureLookup> {
+    const request = parseCompletionSignatureRequest(input);
+    const url = this.endpoint(
+      `signature/${encodeURIComponent(request.completionId)}`,
+    );
+    if (request.algorithm !== undefined) {
+      url.searchParams.set('signing_algo', request.algorithm);
+    }
+    return parseCompletionSignatureLookup(
+      await this.getJson(url, 'completion_signature'),
+    );
+  }
+
+  /** Fetch one completion signature or throw when it is unavailable. */
   async fetchCompletionSignature(
     input: FetchCompletionSignatureInput,
-  ): Promise<SignatureLookup> {
-    requireNonEmptyString(input.chatId, 'chatId');
-    validateSigningAlgo(input.signingAlgo);
-    const url = this.endpoint(`signature/${encodeURIComponent(input.chatId)}`);
-    url.searchParams.set('signing_algo', input.signingAlgo);
-    return parseSignatureLookup(
-      await this.getJson(url, 'completion signature'),
-    );
+  ): Promise<CompletionSignature> {
+    const lookup = await this.lookupCompletionSignature(input);
+    if (lookup.status === 'found') {
+      return lookup.signature;
+    }
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.unavailable',
+      details: { providerErrorCode: lookup.unavailable.errorCode },
+    });
   }
 
   private endpoint(path: string): URL {
@@ -186,22 +179,20 @@ export class NearAiCloudClient {
 
   private async getJson(
     url: URL,
-    label: string,
+    resource: ApiResource,
     extraHeaders: HeadersInit = {},
   ): Promise<unknown> {
     let response: Response;
     try {
       const headers = new Headers(extraHeaders);
       headers.set('authorization', `Bearer ${this.options.apiKey}`);
-      response = await this.fetchImpl(url, {
-        headers,
-      });
+      response = await this.fetchImpl(url, { headers });
     } catch (cause) {
       throw new ApiError(
         {
           phase: 'api',
           code: 'api.transport_failed',
-          details: { operation: label, reason: 'request' },
+          details: { resource, reason: 'request' },
           retryable: true,
         },
         { cause },
@@ -216,7 +207,7 @@ export class NearAiCloudClient {
         {
           phase: 'api',
           code: 'api.transport_failed',
-          details: { operation: label, reason: 'response_body' },
+          details: { resource, reason: 'response_body' },
           retryable: true,
         },
         { cause },
@@ -226,8 +217,8 @@ export class NearAiCloudClient {
       throw new ApiError({
         phase: 'api',
         code: 'api.http_status',
-        details: { operation: label, status: response.status },
-        retryable: isRetryableHttpStatus(response.status),
+        details: { resource, status: response.status },
+        retryable: isRetryableHttpStatus(response.status, resource),
       });
     }
     try {
@@ -237,7 +228,7 @@ export class NearAiCloudClient {
         {
           phase: 'api',
           code: 'api.invalid_json',
-          details: { operation: label },
+          details: { resource },
         },
         { cause },
       );
@@ -245,52 +236,154 @@ export class NearAiCloudClient {
   }
 }
 
-function validateNearModelAttestationRequest(
-  input: FetchNearModelAttestationInput,
-): void {
-  requireNonEmptyString(input.model, 'model');
-  if (
-    input.includeTlsFingerprint !== undefined &&
-    typeof input.includeTlsFingerprint !== 'boolean'
-  ) {
-    throw invalidInput('includeTlsFingerprint', 'unsupported_value', {
-      expected: 'boolean',
-    });
-  }
-  validateAttestationRequest(input);
+function parseClientOptions(options: unknown): {
+  baseUrl: string;
+  apiKey: string;
+  fetch: NearAiCloudFetch;
+} {
+  const record = requireInputObject(options, 'options');
+  rejectUnknownInputKeys(record, 'options', ['baseUrl', 'apiKey', 'fetch']);
+  const suppliedFetch = record.fetch;
+  return {
+    baseUrl: validateBaseUrl(
+      record.baseUrl === undefined
+        ? DEFAULT_NEAR_AI_CLOUD_BASE_URL
+        : record.baseUrl,
+    ),
+    apiKey: validateApiKey(record.apiKey),
+    fetch:
+      suppliedFetch === undefined
+        ? fetch
+        : (requireInputFunction(
+            suppliedFetch,
+            'options.fetch',
+          ) as NearAiCloudFetch),
+  };
 }
 
-function validateAttestationRequest(input: FetchAttestationInput): void {
-  validateSigningAlgo(input.signingAlgo);
-  requireByteLength(input.nonce, 32, 'nonce');
-  if (input.signingAddress !== undefined) {
-    requireByteLength(
-      input.signingAddress,
-      input.signingAlgo === 'ecdsa' ? 20 : 32,
-      'signingAddress',
-    );
+function parseModelAttestationRequest(
+  input: unknown,
+): FetchModelAttestationInput {
+  const record = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(record, 'input', ['model', 'nonce', 'signature']);
+  return {
+    model: requireNonEmptyString(record.model, 'model'),
+    nonce: validateNonce(record.nonce),
+    signature: parseSignatureSigner(record.signature, 'model_tee'),
+  };
+}
+
+function parseGatewayAttestationRequest(
+  input: unknown,
+): FetchGatewayAttestationInput {
+  const record = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(record, 'input', ['nonce', 'signature']);
+  return {
+    nonce: validateNonce(record.nonce),
+    signature: parseSignatureSigner(record.signature, 'gateway'),
+  };
+}
+
+function parseCompletionSignatureRequest(
+  input: unknown,
+): FetchCompletionSignatureInput {
+  const record = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(record, 'input', ['completionId', 'algorithm']);
+  const algorithm = record.algorithm;
+  if (algorithm !== undefined) {
+    validateSigningAlgorithm(algorithm);
   }
+  return {
+    completionId: requireNonEmptyString(record.completionId, 'completionId'),
+    ...(algorithm === undefined ? {} : { algorithm }),
+  };
+}
+
+function parseSignatureSigner(
+  value: unknown,
+  expectedSource: 'model_tee' | 'gateway',
+): CompletionSignature {
+  const signature = requireInputObject(value, 'signature');
+  rejectUnknownInputKeys(signature, 'signature', [
+    'source',
+    'signedText',
+    'signature',
+    'signer',
+  ]);
+  const source = signature.source;
+  if (source !== 'model_tee' && source !== 'gateway' && source !== 'unknown') {
+    throw inputError('signature.source', 'unsupported_value', {
+      expected: "'model_tee', 'gateway', or 'unknown'",
+    });
+  }
+  if (source !== 'unknown' && source !== expectedSource) {
+    throw new VerificationError({
+      phase: 'signature',
+      code: 'signature.source_mismatch',
+      details: { expected: expectedSource, actual: source },
+    });
+  }
+  return {
+    source,
+    signedText: requireNonEmptyString(
+      signature.signedText,
+      'signature.signedText',
+    ),
+    signature: requireNonEmptyString(
+      signature.signature,
+      'signature.signature',
+    ),
+    signer: parseSigningIdentity(signature.signer),
+  };
+}
+
+function parseSigningIdentity(value: unknown): SigningIdentity {
+  const signer = requireInputObject(value, 'signature.signer');
+  rejectUnknownInputKeys(signer, 'signature.signer', ['algorithm', 'address']);
+  validateSigningAlgorithm(signer.algorithm, 'signature.signer.algorithm');
+  if (typeof signer.address !== 'string') {
+    throw inputError('signature.signer.address', 'unsupported_value', {
+      expected: 'a hexadecimal signing address',
+    });
+  }
+  requireByteLength(
+    signer.address,
+    signer.algorithm === 'ecdsa' ? 20 : 32,
+    'signature.signer.address',
+  );
+  return { algorithm: signer.algorithm, address: signer.address };
+}
+
+function validateNonce(nonce: unknown): string {
+  if (typeof nonce !== 'string') {
+    throw inputError('nonce', 'unsupported_value', {
+      expected: 'a 32-byte hexadecimal nonce',
+    });
+  }
+  return requireByteLength(nonce, 32, 'nonce').toString('hex');
 }
 
 function validateBaseUrl(baseUrl: unknown): string {
   if (typeof baseUrl !== 'string') {
-    throw invalidInput('baseUrl', 'invalid_url', {
-      expected: 'absolute HTTP(S) URL',
+    throw inputError('baseUrl', 'invalid_url', {
+      expected: 'absolute HTTPS URL',
     });
   }
 
   try {
     const parsed = new URL(baseUrl);
     if (
-      (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+      parsed.protocol !== 'https:' ||
       parsed.search ||
-      parsed.hash
+      parsed.hash ||
+      parsed.username ||
+      parsed.password
     ) {
       throw new TypeError('invalid base URL');
     }
   } catch {
-    throw invalidInput('baseUrl', 'invalid_url', {
-      expected: 'absolute HTTP(S) URL without a query or fragment',
+    throw inputError('baseUrl', 'invalid_url', {
+      expected: 'absolute HTTPS URL without credentials, query, or fragment',
     });
   }
 
@@ -303,11 +396,15 @@ function validateApiKey(apiKey: unknown): string {
     apiKey.length === 0 ||
     containsHttpHeaderControl(apiKey)
   ) {
-    throw invalidInput(
+    throw inputError(
       'apiKey',
-      typeof apiKey === 'string' && apiKey.length === 0
+      apiKey === undefined
         ? 'missing'
-        : 'invalid_header',
+        : typeof apiKey === 'string' && apiKey.length === 0
+          ? 'missing'
+          : typeof apiKey === 'string'
+            ? 'invalid_header'
+            : 'unsupported_value',
       { expected: 'non-empty HTTP header value' },
     );
   }
@@ -324,126 +421,83 @@ function containsHttpHeaderControl(value: string): boolean {
   return false;
 }
 
-function validateSigningAlgo(value: unknown): asserts value is SigningAlgo {
+function validateSigningAlgorithm(
+  value: unknown,
+  field = 'algorithm',
+): asserts value is SigningAlgorithm {
   if (value !== 'ecdsa' && value !== 'ed25519') {
-    throw invalidInput('signingAlgo', 'unsupported_value', {
+    throw inputError(field, 'unsupported_value', {
       expected: "'ecdsa' or 'ed25519'",
     });
   }
 }
 
-function requireNonEmptyString(
-  value: unknown,
-  field: string,
-): asserts value is string {
+function requireNonEmptyString(value: unknown, field: string): string {
   if (typeof value === 'string' && value.length > 0) {
-    return;
+    return value;
   }
-  throw invalidInput(
+  throw inputError(
     field,
     typeof value === 'string' ? 'missing' : 'unsupported_value',
     { expected: 'non-empty string' },
   );
 }
 
-function invalidInput(
-  field: string,
-  reason: 'missing' | 'invalid_url' | 'invalid_header' | 'unsupported_value',
-  details: { expected?: string } = {},
-): VerificationError {
-  return new VerificationError({
-    phase: 'input',
-    code: 'input.invalid',
-    details: { field, reason, ...details },
-  });
-}
-
-function isRetryableHttpStatus(status: number): boolean {
-  return status === 408 || status === 425 || status === 429 || status >= 500;
+function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
+  return (
+    (resource === 'completion_signature' && status === 404) ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
 }
 
 function setAttestationQuery(
   url: URL,
-  input: FetchAttestationInput,
+  nonce: string,
+  signer: SigningIdentity,
   includeTlsFingerprint: boolean,
 ): void {
-  url.searchParams.set('nonce', input.nonce);
-  url.searchParams.set('signing_algo', input.signingAlgo);
+  url.searchParams.set('nonce', nonce);
+  url.searchParams.set('signing_algo', signer.algorithm);
+  url.searchParams.set('signing_address', signer.address);
   if (includeTlsFingerprint) {
     url.searchParams.set('include_tls_fingerprint', 'true');
   }
-  if (input.signingAddress) {
-    url.searchParams.set('signing_address', input.signingAddress);
-  }
 }
 
-function parseNearAiCloudAttestationReport(
-  value: unknown,
-): NearAiCloudAttestationReport {
-  // These parsers validate only untrusted wire JSON shape. Quote verification
-  // is the separate trust boundary that follows parsing.
-  const record = requireObject(value, 'attestation report');
-  const gateway = parseGatewayAttestation(record.gateway_attestation);
-  const rawModelAttestations = record.model_attestations;
-  let modelAttestations: NearModelAttestation[] | undefined;
-  if (rawModelAttestations !== undefined) {
-    if (!Array.isArray(rawModelAttestations)) {
-      throw invalidResponse(
-        'model_attestations',
-        'array',
-        rawModelAttestations,
-      );
-    }
-    modelAttestations = rawModelAttestations.map((item, index) =>
-      parseNearModelAttestation(item, `model_attestations[${index}]`),
-    );
+function parseSingleModelAttestation(value: unknown): ModelAttestation {
+  const record = requireObject(value, 'model attestation report');
+  const rawAttestations = record.model_attestations;
+  if (!Array.isArray(rawAttestations)) {
+    throw invalidResponse('model_attestations', 'array', rawAttestations);
   }
-  const tlsCertificate = optionalString(
-    record.tls_certificate,
-    'tls_certificate',
-  );
-  const ohttpKeyConfig = optionalString(
-    record.ohttp_key_config,
-    'ohttp_key_config',
-  );
-
-  return {
-    gateway_attestation: gateway,
-    ...(modelAttestations !== undefined
-      ? { model_attestations: modelAttestations }
-      : {}),
-    ...(tlsCertificate !== undefined
-      ? { tls_certificate: tlsCertificate }
-      : {}),
-    ...(ohttpKeyConfig !== undefined
-      ? { ohttp_key_config: ohttpKeyConfig }
-      : {}),
-    ...(record.ohttp_attestation !== undefined
-      ? { ohttp_attestation: record.ohttp_attestation }
-      : {}),
-  };
+  if (rawAttestations.length !== 1) {
+    throw new ApiError({
+      phase: 'api',
+      code: 'api.unexpected_model_attestation_count',
+      details: { expectedCount: 1, actualCount: rawAttestations.length },
+    });
+  }
+  return parseModelAttestation(rawAttestations[0], 'model_attestations[0]');
 }
 
 function parseGatewayAttestation(value: unknown): GatewayAttestation {
-  const base = parseDstackAttestation(value, 'gateway_attestation');
+  const base = parseAttestationEvidence(value, 'gateway_attestation');
   const record = requireObject(value, 'gateway_attestation');
   const reportData = requireString(
     record.report_data,
     'gateway_attestation.report_data',
   );
-  const vpc = parseVpcInfo(record.vpc);
-  return {
-    ...base,
-    report_data: reportData,
-    ...(vpc ? { vpc } : {}),
-  };
+  return { ...base, reportedQuoteData: reportData };
 }
 
-function parseNearModelAttestation(
+function parseModelAttestation(
   value: unknown,
   label: string,
-): NearModelAttestation {
-  const base = parseDstackAttestation(value, label);
+): ModelAttestation {
+  const base = parseAttestationEvidence(value, label);
   const record = requireObject(value, label);
   const nvidiaPayload = optionalStringOrNull(
     record.nvidia_payload,
@@ -451,143 +505,179 @@ function parseNearModelAttestation(
   );
   return {
     ...base,
-    ...(nvidiaPayload !== undefined ? { nvidia_payload: nvidiaPayload } : {}),
+    ...(nvidiaPayload !== undefined ? { nvidiaPayload } : {}),
   };
 }
 
-function parseDstackAttestation(
+function parseAttestationEvidence(
   value: unknown,
   label: string,
-): Omit<NearModelAttestation, 'nvidia_payload'> {
+): AttestationEvidence {
   const record = requireObject(value, label);
   const info = requireObject(record.info, `${label}.info`);
-  const tcbInfo = parseTcbInfo(info.tcb_info, `${label}.info.tcb_info`);
-  const signingAlgo = parseSigningAlgo(
+  const appCompose = parseAppCompose(info.tcb_info, `${label}.info.tcb_info`);
+  const signingAlgorithm = parseSigningAlgorithm(
     record.signing_algo,
     `${label}.signing_algo`,
   );
-  const eventLog = requireJsonValue(record.event_log, `${label}.event_log`);
-  if (typeof eventLog !== 'string' && !Array.isArray(eventLog)) {
-    throw invalidResponse(
-      `${label}.event_log`,
-      'JSON string or array',
-      eventLog,
-    );
-  }
+  const signingAddress = requireString(
+    record.signing_address,
+    `${label}.signing_address`,
+  );
+  validateApiSigningAddress(
+    signingAddress,
+    signingAlgorithm,
+    `${label}.signing_address`,
+  );
+  const eventLog = parseEventLog(record.event_log, `${label}.event_log`);
 
   const tlsFingerprint = optionalStringOrNull(
     record.tls_cert_fingerprint,
     `${label}.tls_cert_fingerprint`,
   );
-  const signingPublicKey = optionalStringOrNull(
-    record.signing_public_key,
-    `${label}.signing_public_key`,
-  );
   const reportData = optionalString(record.report_data, `${label}.report_data`);
 
   return {
-    request_nonce: requireString(
-      record.request_nonce,
-      `${label}.request_nonce`,
-    ),
-    signing_algo: signingAlgo,
-    signing_address: requireString(
-      record.signing_address,
-      `${label}.signing_address`,
-    ),
-    intel_quote: requireString(record.intel_quote, `${label}.intel_quote`),
-    event_log: eventLog,
-    info: { tcb_info: tcbInfo },
+    nonce: requireString(record.request_nonce, `${label}.request_nonce`),
+    signer: {
+      algorithm: signingAlgorithm,
+      address: signingAddress,
+    },
+    intelQuote: requireString(record.intel_quote, `${label}.intel_quote`),
+    eventLog,
+    appCompose,
     ...(tlsFingerprint !== undefined
-      ? { tls_cert_fingerprint: tlsFingerprint }
+      ? { declaredSpkiFingerprint: tlsFingerprint }
       : {}),
-    ...(signingPublicKey !== undefined
-      ? { signing_public_key: signingPublicKey }
-      : {}),
-    ...(reportData !== undefined ? { report_data: reportData } : {}),
+    ...(reportData !== undefined ? { reportedQuoteData: reportData } : {}),
   };
 }
 
-function parseSignatureLookup(value: unknown): SignatureLookup {
+function parseCompletionSignatureLookup(
+  value: unknown,
+): CompletionSignatureLookup {
   const record = requireObject(value, 'signature response');
   if (
     typeof record.error_code === 'string' &&
     typeof record.message === 'string'
   ) {
     const unavailable: SignatureUnavailable = {
-      error_code: record.error_code,
+      errorCode: record.error_code,
       message: record.message,
     };
     return { status: 'unavailable', unavailable };
   }
 
+  const signingAlgorithm = parseSigningAlgorithm(
+    record.signing_algo,
+    'signature.signing_algo',
+  );
+  const signingAddress = requireString(
+    record.signing_address,
+    'signature.signing_address',
+  );
+  validateApiSigningAddress(
+    signingAddress,
+    signingAlgorithm,
+    'signature.signing_address',
+  );
   const base = {
-    text: requireString(record.text, 'signature.text'),
+    signedText: requireString(record.text, 'signature.text'),
     signature: requireString(record.signature, 'signature.signature'),
-    signing_address: requireString(
-      record.signing_address,
-      'signature.signing_address',
-    ),
-    signing_algo: parseSigningAlgo(
-      record.signing_algo,
-      'signature.signing_algo',
-    ),
+    signer: { address: signingAddress, algorithm: signingAlgorithm },
   };
-  if (
-    record.signature_kind === 'provider_tee' ||
-    record.signature_kind === 'gateway'
-  ) {
-    const signature: KnownChatSignature = {
+  return {
+    status: 'found',
+    signature: {
       ...base,
-      signature_kind: record.signature_kind,
-    } as KnownChatSignature;
-    return { status: 'found', signature };
-  }
-
-  const signature: UnknownChatSignature = {
-    ...base,
-    ...(typeof record.signature_kind === 'string'
-      ? { signature_kind: record.signature_kind }
-      : {}),
+      source: parseSignatureSource(record.signature_kind),
+    },
   };
-  return { status: 'unknown_kind', signature };
 }
 
-function parseTcbInfo(value: unknown, label: string): string | TcbInfo {
-  if (typeof value === 'string') {
+function parseSignatureSource(value: unknown): CompletionSignature['source'] {
+  if (value === undefined) {
+    return 'unknown';
+  }
+  if (value === 'provider_tee') {
+    return 'model_tee';
+  }
+  if (value === 'gateway') {
+    return 'gateway';
+  }
+  throw invalidResponse(
+    'signature.signature_kind',
+    "'provider_tee' or 'gateway'",
+    value,
+  );
+}
+
+function parseAppCompose(value: unknown, label: string): string {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      throw invalidResponse(label, 'JSON object', value);
+    }
+  }
+  const record = requireObject(parsed, label);
+  return requireString(record.app_compose, `${label}.app_compose`);
+}
+
+function parseEventLog(value: unknown, label: string): AttestationEventLog {
+  if (typeof value === 'string' || Array.isArray(value)) {
     return value;
   }
-  const record = requireObject(value, label);
-  if (typeof record.app_compose !== 'string') {
-    throw invalidResponse(`${label}.app_compose`, 'string', record.app_compose);
-  }
-  return record as TcbInfo;
+  throw invalidResponse(label, 'JSON string or array', value);
 }
 
-function parseVpcInfo(value: unknown): VpcInfo | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  const record = requireObject(value, 'gateway_attestation.vpc');
-  const appId = optionalString(
-    record.vpc_server_app_id,
-    'gateway_attestation.vpc.vpc_server_app_id',
-  );
-  const hostname = optionalString(
-    record.vpc_hostname,
-    'gateway_attestation.vpc.vpc_hostname',
-  );
-  return {
-    ...(appId ? { vpc_server_app_id: appId } : {}),
-    ...(hostname ? { vpc_hostname: hostname } : {}),
-  };
-}
-
-function parseSigningAlgo(value: unknown, label: string): SigningAlgo {
+function parseSigningAlgorithm(
+  value: unknown,
+  label: string,
+): SigningAlgorithm {
   if (value === 'ecdsa' || value === 'ed25519') {
     return value;
   }
   throw invalidResponse(label, "'ecdsa' or 'ed25519'", value);
+}
+
+function requireMatchingAttestationSigner(
+  attestation: AttestationEvidence,
+  signature: CompletionSignature,
+  resource: AttestationResource,
+): void {
+  if (
+    attestation.signer.algorithm !== signature.signer.algorithm ||
+    normalizeHex(attestation.signer.address) !==
+      normalizeHex(signature.signer.address)
+  ) {
+    throw new ApiError({
+      phase: 'api',
+      code: 'api.attestation_signer_mismatch',
+      details: { resource },
+    });
+  }
+}
+
+function validateApiSigningAddress(
+  value: string,
+  algorithm: SigningAlgorithm,
+  label: string,
+): void {
+  const normalized =
+    value.startsWith('0x') || value.startsWith('0X') ? value.slice(2) : value;
+  const expectedBytes = algorithm === 'ecdsa' ? 20 : 32;
+  if (
+    normalized.length !== expectedBytes * 2 ||
+    !/^[0-9a-fA-F]+$/.test(normalized)
+  ) {
+    throw invalidResponse(
+      label,
+      `${expectedBytes}-byte hexadecimal signing address`,
+      value,
+    );
+  }
 }
 
 function requireObject(value: unknown, label: string): Record<string, unknown> {
@@ -619,30 +709,6 @@ function optionalStringOrNull(
     return value as undefined | null;
   }
   return requireString(value, label);
-}
-
-function requireJsonValue(value: unknown, label: string): JsonValue {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item, index) =>
-      requireJsonValue(item, `${label}[${index}]`),
-    );
-  }
-  if (value && typeof value === 'object') {
-    const result: JsonObject = {};
-    for (const [key, item] of Object.entries(value)) {
-      result[key] = requireJsonValue(item, `${label}.${key}`);
-    }
-    return result;
-  }
-  throw invalidResponse(label, 'JSON value', value);
 }
 
 function invalidResponse(

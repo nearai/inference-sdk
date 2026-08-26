@@ -8,9 +8,8 @@ describe('verification errors', () => {
         phase: 'policy',
         code: 'policy.tcb_status_not_allowed',
         details: {
-          target: 'near_model',
           actual: 'Revoked',
-          allowed: ['UpToDate', 'OutOfDate'],
+          accepted: ['UpToDate', 'OutOfDate'],
           advisoryIds: ['INTEL-SA-00000'],
         },
       },
@@ -25,7 +24,7 @@ describe('verification errors', () => {
       failure: {
         details: {
           actual: 'Revoked',
-          allowed: ['UpToDate', 'OutOfDate'],
+          accepted: ['UpToDate', 'OutOfDate'],
         },
       },
     });
@@ -34,6 +33,7 @@ describe('verification errors', () => {
       throw new Error('Expected a TCB policy failure');
     }
     expect(error.failure.details.actual).toBe('Revoked');
+    expect(error.failure.details.accepted).toEqual(['UpToDate', 'OutOfDate']);
     expect(error.toJSON()).toMatchObject({
       name: 'VerificationError',
       failure: error.failure,
@@ -46,7 +46,7 @@ describe('verification errors', () => {
     const error = new ApiError({
       phase: 'api',
       code: 'api.http_status',
-      details: { operation: 'attestation report', status: 503 },
+      details: { resource: 'model_attestation', status: 503 },
       retryable: true,
     });
 
@@ -55,7 +55,7 @@ describe('verification errors', () => {
       phase: 'api',
       status: 503,
       retryable: true,
-      failure: { details: { operation: 'attestation report', status: 503 } },
+      failure: { details: { resource: 'model_attestation', status: 503 } },
     });
   });
 });

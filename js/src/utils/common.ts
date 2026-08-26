@@ -1,27 +1,28 @@
 import { Buffer } from 'buffer';
 import { INTEL_PCCS_API_URL_BROWSER, INTEL_PCCS_API_URL_NODE } from './consts';
 import { VerificationError } from './errors';
+import { inputError } from './input';
 
 export function decodeJwt(jwt: string): Record<string, unknown> {
   if (typeof jwt !== 'string') {
-    throw invalidInput('jwt', 'invalid_jwt');
+    throw inputError('jwt', 'invalid_jwt');
   }
   const parts = jwt.split('.');
 
   if (parts.length !== 3) {
-    throw invalidInput('jwt', 'invalid_jwt');
+    throw inputError('jwt', 'invalid_jwt');
   }
 
   try {
     return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
   } catch {
-    throw invalidInput('jwt', 'invalid_jwt');
+    throw inputError('jwt', 'invalid_jwt');
   }
 }
 
 export function hexToBuffer(hex: string, field = 'hex'): Buffer {
   if (typeof hex !== 'string') {
-    throw invalidInput(field, 'invalid_hex');
+    throw inputError(field, 'invalid_hex');
   }
   const normalized = trimHexPrefix(hex);
   if (
@@ -29,7 +30,7 @@ export function hexToBuffer(hex: string, field = 'hex'): Buffer {
     normalized.length % 2 !== 0 ||
     !/^[0-9a-fA-F]+$/.test(normalized)
   ) {
-    throw invalidInput(field, 'invalid_hex');
+    throw inputError(field, 'invalid_hex');
   }
   return Buffer.from(normalized, 'hex');
 }
@@ -52,7 +53,7 @@ export function requireByteLength(
 ): Buffer {
   const bytes = hexToBuffer(value, label);
   if (bytes.length !== byteLength) {
-    throw invalidInput(label, 'wrong_length', {
+    throw inputError(label, 'wrong_length', {
       expectedBytes: byteLength,
       actualBytes: bytes.length,
     });
@@ -104,25 +105,15 @@ export function generateNonce(): string {
   return Buffer.from(nonce).toString('hex');
 }
 
-function isBrowser(): boolean {
-  return typeof window !== 'undefined';
-}
-
 export function getIntelPccsApiUrl(): string {
-  return isBrowser() ? INTEL_PCCS_API_URL_BROWSER : INTEL_PCCS_API_URL_NODE;
+  return hasNodeRuntime()
+    ? INTEL_PCCS_API_URL_NODE
+    : INTEL_PCCS_API_URL_BROWSER;
 }
 
-function invalidInput(
-  field: string,
-  reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt',
-  details: {
-    expectedBytes?: number;
-    actualBytes?: number;
-  } = {},
-): VerificationError {
-  return new VerificationError({
-    phase: 'input',
-    code: 'input.invalid',
-    details: { field, reason, ...details },
-  });
+function hasNodeRuntime(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    process?: { versions?: { node?: unknown } };
+  };
+  return typeof runtime.process?.versions?.node === 'string';
 }

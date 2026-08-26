@@ -1,4 +1,4 @@
-import type { DstackAttestation } from './attestation-common';
+import type { AttestationEvidence } from './attestation-common';
 
 /**
  * A model-serving report returned by the Cloud API only when queried with
@@ -6,7 +6,7 @@ import type { DstackAttestation } from './attestation-common';
  * quote-bound server declaration rather than a client-observed model TLS
  * peer. It must not be used to parse third-party provider reports.
  */
-export type NearModelAttestation = DstackAttestation & {
+export type ModelAttestation = AttestationEvidence & {
   /** Omitted for a CPU-only CVM; malformed present values are rejected. */
-  nvidia_payload?: string | null;
+  nvidiaPayload?: string | null;
 };

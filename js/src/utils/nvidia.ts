@@ -1,4 +1,4 @@
-import type { GpuVerifier } from '../types/verification';
+import type { NvidiaEvidenceVerifier } from '../types/verification';
 import { NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT } from './consts';
 import { decodeJwt } from './common';
 import { VerificationError } from './errors';
@@ -7,43 +7,43 @@ import { FetchTimeoutError, fetchTimeout } from './fetch';
 /**
  * Default NVIDIA NRAS adapter. It verifies through the NRAS HTTPS service and
  * accepts only the documented boolean overall JWT claim. It does not
- * independently verify that JWT's signature. Supply a custom GpuVerifier when
+ * independently verify that JWT's signature. Supply a custom verifier when
  * local JWT/EAT validation is required. The caller verifies payload freshness
  * before this adapter runs.
  */
-export const nvidiaNrasVerifier: GpuVerifier = {
-  async verify(nvidiaPayload: string): Promise<void> {
-    const response = await fetchNras(nvidiaPayload);
+export const nvidiaNrasVerifier: NvidiaEvidenceVerifier = async (
+  nvidiaPayload,
+): Promise<void> => {
+  const response = await fetchNras(nvidiaPayload);
 
-    if (!response.ok) {
-      throw new VerificationError({
-        phase: 'gpu',
-        code: 'gpu.nras_request_failed',
-        details: { reason: 'http_status', status: response.status },
-        retryable: isRetryableNrasStatus(response.status),
-      });
-    }
-
-    const raw = await getNrasJson(response);
-    const jwt = getOverallJwt(raw);
-    const claims = decodeOverallJwt(jwt);
-    const rawVerdict = claims['x-nvidia-overall-att-result'];
-    if (rawVerdict === true) {
-      return;
-    }
-    if (rawVerdict === false) {
-      throw new VerificationError({
-        phase: 'gpu',
-        code: 'gpu.attestation_rejected',
-        details: { source: 'nras' },
-      });
-    }
+  if (!response.ok) {
     throw new VerificationError({
       phase: 'gpu',
-      code: 'gpu.nras_response_invalid',
-      details: { reason: 'invalid_verdict_type' },
+      code: 'gpu.nras_request_failed',
+      details: { reason: 'http_status', status: response.status },
+      retryable: isRetryableNrasStatus(response.status),
     });
-  },
+  }
+
+  const raw = await getNrasJson(response);
+  const jwt = getOverallJwt(raw);
+  const claims = decodeOverallJwt(jwt);
+  const rawVerdict = claims['x-nvidia-overall-att-result'];
+  if (rawVerdict === true) {
+    return;
+  }
+  if (rawVerdict === false) {
+    throw new VerificationError({
+      phase: 'gpu',
+      code: 'gpu.attestation_rejected',
+      details: { source: 'nras' },
+    });
+  }
+  throw new VerificationError({
+    phase: 'gpu',
+    code: 'gpu.nras_response_invalid',
+    details: { reason: 'invalid_verdict_type' },
+  });
 };
 
 function getOverallJwt(value: unknown): string {

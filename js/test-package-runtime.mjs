@@ -1,60 +1,100 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
 import {
-  gatewaySignatureText,
   isVerificationError,
   VerificationError,
+  verifyGatewayAttestation,
   verifyGatewayResponse,
 } from './dist/index.js';
 
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
 const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
-const text = gatewaySignatureText(requestBody, responseBody);
+const signerAddress = Buffer.from(keyPair.publicKey).toString('hex');
+const signedText = gatewaySignedText(requestBody, responseBody);
 const signature = Buffer.from(
-  nacl.sign.detached(Buffer.from(text), keyPair.secretKey),
+  nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
 ).toString('hex');
-
-const result = verifyGatewayResponse({
-  requestBody,
-  responseBody,
-  signature: {
-    text,
-    signature,
-    signing_address: Buffer.from(keyPair.publicKey).toString('hex'),
-    signing_algo: 'ed25519',
-    signature_kind: 'gateway',
+const nonce = '11'.repeat(32);
+const peerSpkiFingerprint = '33'.repeat(32);
+const appCompose = '{}';
+const reportData = Buffer.concat([
+  createHash('sha256')
+    .update(
+      Buffer.concat([
+        Buffer.from(signerAddress, 'hex'),
+        Buffer.from(peerSpkiFingerprint, 'hex'),
+      ]),
+    )
+    .digest(),
+  Buffer.from(nonce, 'hex'),
+]);
+const rtMr3 = createHash('sha384')
+  .update(Buffer.concat([Buffer.alloc(48), Buffer.alloc(48)]))
+  .digest();
+const mrConfigId = Buffer.concat([
+  Buffer.from([1]),
+  createHash('sha256').update(appCompose).digest(),
+  Buffer.alloc(15),
+]);
+const attestation = await verifyGatewayAttestation({
+  attestation: {
+    nonce,
+    signer: { algorithm: 'ed25519', address: signerAddress },
+    intelQuote: 'aa',
+    eventLog: [{ digest: '00'.repeat(48), imr: 3 }],
+    appCompose,
+    declaredSpkiFingerprint: peerSpkiFingerprint,
+    reportedQuoteData: reportData.toString('hex'),
   },
-  verifiedGatewayAttestation: {
-    kind: 'gateway',
-    signingAddress: Buffer.from(keyPair.publicKey).toString('hex'),
-    signingAlgo: 'ed25519',
-    reportDataBinding: {
-      kind: 'signer_peer_tls_nonce',
-      tlsCertFingerprint: '11'.repeat(32),
-    },
-    tcbStatus: 'UpToDate',
-    advisoryIds: [],
-    appCompose: '{}',
-    imageDigests: [],
-    runtimeMeasurements: {},
-    provenanceVerified: false,
+  nonce,
+  peerSpkiFingerprint,
+  verifiers: {
+    quote: async () => ({
+      tcbStatus: 'UpToDate',
+      advisoryIds: [],
+      debugEnabled: false,
+      reportData,
+      mrConfigId,
+      rtMr3,
+    }),
   },
 });
 
-assert.equal(result.scope, 'gateway');
+assert.equal(
+  verifyGatewayResponse({
+    requestBody,
+    responseBody,
+    signature: {
+      source: 'gateway',
+      signedText,
+      signature,
+      signer: { algorithm: 'ed25519', address: signerAddress },
+    },
+    attestation,
+  }),
+  undefined,
+);
 
 const error = new VerificationError({
   phase: 'policy',
   code: 'policy.tcb_status_not_allowed',
   details: {
-    target: 'near_model',
     actual: 'Revoked',
-    allowed: ['UpToDate'],
+    accepted: ['UpToDate'],
     advisoryIds: [],
   },
 });
 
 assert.equal(isVerificationError(error), true);
 assert.equal(error.failure.code, 'policy.tcb_status_not_allowed');
+
+function gatewaySignedText(request, response) {
+  return `${hashBytes(request)}:${hashBytes(response)}`;
+}
+
+function hashBytes(value) {
+  return createHash('sha256').update(value).digest('hex');
+}

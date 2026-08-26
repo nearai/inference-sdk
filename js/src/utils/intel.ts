@@ -49,7 +49,6 @@ export async function verifyDcapQuote(
       {
         phase: 'quote',
         code: 'quote.collateral_unavailable',
-        details: {},
         retryable: true,
       },
       { cause },

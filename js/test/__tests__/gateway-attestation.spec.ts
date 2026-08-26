@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer';
 import { verifyGatewayAttestation } from '../../src';
-import type { GatewayAttestation } from '../../src';
+import type { GatewayAttestation } from '../../src/types/attestation-gateway';
+import type { VerifyGatewayAttestationInput } from '../../src/types/verification';
 import {
-  createNearModelAttestation,
+  createModelAttestation,
   createQuote,
   nonce,
   tlsFingerprint,
@@ -13,111 +14,107 @@ function createGatewayAttestation(
 ): GatewayAttestation {
   const quote = createQuote();
   return {
-    ...createNearModelAttestation(),
-    report_data: Buffer.from(quote.reportData).toString('hex'),
+    ...createModelAttestation(),
+    reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     ...overrides,
   };
 }
 
 describe('gateway attestation verification', () => {
-  test('requires the gateway TLS peer fingerprint to match the quote binding', async () => {
-    const quote = createQuote();
+  test('binds gateway evidence to the caller-observed peer SPKI', async () => {
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
-      expectedNonce: nonce,
-      peerTlsCertFingerprint: tlsFingerprint,
-      quoteVerifier: { verify: async () => quote },
+      nonce,
+      peerSpkiFingerprint: tlsFingerprint,
+      verifiers: { quote: async () => createQuote() },
     });
 
     expect(result).toMatchObject({
-      kind: 'gateway',
-      reportDataBinding: {
-        kind: 'signer_peer_tls_nonce',
-        tlsCertFingerprint: tlsFingerprint,
-      },
+      tcbStatus: 'UpToDate',
+      tlsBinding: { kind: 'peer', spkiFingerprint: tlsFingerprint },
+      deploymentProvenance: 'not_checked',
     });
+    expect('gpuEvidence' in result).toBe(false);
   });
 
   test('accepts an OutOfDate gateway TCB status by default', async () => {
-    const quote = createQuote({ tcbStatus: 'OutOfDate' });
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
-        expectedNonce: nonce,
-        peerTlsCertFingerprint: tlsFingerprint,
-        quoteVerifier: { verify: async () => quote },
+        nonce,
+        peerSpkiFingerprint: tlsFingerprint,
+        verifiers: {
+          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+        },
       }),
     ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
   });
 
-  test('rejects a gateway quote when the live TLS peer differs', async () => {
-    const quote = createQuote();
+  test('rejects gateway evidence when the live TLS peer differs', async () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
-        expectedNonce: nonce,
-        peerTlsCertFingerprint: '44'.repeat(32),
-        quoteVerifier: { verify: async () => quote },
+        nonce,
+        peerSpkiFingerprint: '44'.repeat(32),
+        verifiers: { quote: async () => createQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
-        code: 'binding.tls_fingerprint_mismatch',
+        code: 'binding.spki_fingerprint_mismatch',
         details: { source: 'peer_tls_connection' },
       },
     });
   });
 
-  test('requires a TLS fingerprint on gateway evidence', async () => {
-    await expect(
-      verifyGatewayAttestation({
-        attestation: createGatewayAttestation({ tls_cert_fingerprint: null }),
-        expectedNonce: nonce,
-        peerTlsCertFingerprint: tlsFingerprint,
-        quoteVerifier: { verify: async () => createQuote() },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'binding',
-        code: 'binding.tls_fingerprint_missing',
-        details: { target: 'gateway' },
-      },
-    });
-  });
-
-  test('rejects a gateway report_data field that contradicts the quote', async () => {
+  test('requires a declared SPKI fingerprint on gateway evidence', async () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation({
-          report_data: 'ff'.repeat(64),
+          declaredSpkiFingerprint: null,
         }),
-        expectedNonce: nonce,
-        peerTlsCertFingerprint: tlsFingerprint,
-        quoteVerifier: { verify: async () => createQuote() },
+        nonce,
+        peerSpkiFingerprint: tlsFingerprint,
+        verifiers: { quote: async () => createQuote() },
+      }),
+    ).rejects.toMatchObject({
+      failure: { phase: 'binding', code: 'binding.spki_fingerprint_missing' },
+    });
+  });
+
+  test('rejects gateway report data that contradicts the verified quote', async () => {
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation({
+          reportedQuoteData: 'ff'.repeat(64),
+        }),
+        nonce,
+        peerSpkiFingerprint: tlsFingerprint,
+        verifiers: { quote: async () => createQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.report_data_mismatch',
-        details: { source: 'advertised_report_data' },
+        details: { source: 'reportedQuoteData' },
       },
     });
   });
 
-  test('does not treat an empty gateway report_data field as absent', async () => {
+  test('does not treat an empty gateway report data field as absent', async () => {
     await expect(
       verifyGatewayAttestation({
-        attestation: createGatewayAttestation({ report_data: '' }),
-        expectedNonce: nonce,
-        peerTlsCertFingerprint: tlsFingerprint,
-        quoteVerifier: { verify: async () => createQuote() },
+        attestation: createGatewayAttestation({ reportedQuoteData: '' }),
+        nonce,
+        peerSpkiFingerprint: tlsFingerprint,
+        verifiers: { quote: async () => createQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.report_data_invalid',
         details: {
-          source: 'advertised_report_data',
+          source: 'reportedQuoteData',
           reason: 'invalid_hex',
           expectedBytes: 64,
         },
@@ -125,3 +122,17 @@ describe('gateway attestation verification', () => {
     });
   });
 });
+
+// A gateway policy cannot express a model-only GPU requirement.
+function assertGatewayPolicyType(): void {
+  const gatewayInput: VerifyGatewayAttestationInput = {
+    attestation: createGatewayAttestation(),
+    nonce,
+    peerSpkiFingerprint: tlsFingerprint,
+  };
+
+  // @ts-expect-error GPU policy belongs only to verifyModelAttestation.
+  gatewayInput.policy = { gpuEvidence: 'required' };
+}
+
+void assertGatewayPolicyType;

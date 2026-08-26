@@ -1,9 +1,5 @@
 import { Buffer } from 'buffer';
-import type { TcbInfo } from '../types/attestation-common';
-import type {
-  GatewayReportDataBinding,
-  ModelReportDataBinding,
-} from '../types/verification';
+import type { GatewayTlsBinding, ModelTlsBinding } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 
@@ -14,17 +10,17 @@ import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
  */
 export function verifyReportedNonce(
   reportedNonce: string,
-  expectedNonce: string,
+  nonce: string,
   source:
-    | 'request_nonce'
-    | 'quote_report_data'
-    | 'nvidia_payload' = 'request_nonce',
+    | 'attestationNonce'
+    | 'quoteReportData'
+    | 'nvidiaPayload' = 'attestationNonce',
 ): void {
-  const expected = requireByteLength(expectedNonce, 32, 'expectedNonce');
+  const expected = requireByteLength(nonce, 32, 'nonce');
   const reported = requireByteLength(
     reportedNonce,
     32,
-    source === 'nvidia_payload' ? 'nvidia_payload.nonce' : 'request_nonce',
+    source === 'nvidiaPayload' ? 'nvidiaPayload.nonce' : 'attestation.nonce',
   );
 
   if (!reported.equals(expected)) {
@@ -39,7 +35,7 @@ export function verifyReportedNonce(
 /**
  * Verify the strict NEAR report-data layout held inside an Intel-signed quote:
  *
- * - bytes [0, 32): SHA-256(signing_address_bytes || TLS SPKI fingerprint)
+ * - bytes [0, 32): SHA-256(signer address bytes || TLS SPKI fingerprint)
  * - bytes [32, 64): caller's 32-byte nonce
  *
  * The first half becomes a gateway endpoint binding only after the report's
@@ -48,18 +44,18 @@ export function verifyReportedNonce(
  */
 export async function verifyGatewayReportDataBinding(input: {
   reportData: Uint8Array;
-  expectedNonce: string;
+  nonce: string;
   signingAddress: string;
-  reportedTlsCertFingerprint: string | null | undefined;
-  peerTlsCertFingerprint: string;
-}): Promise<GatewayReportDataBinding> {
+  reportedSpkiFingerprint: string | null | undefined;
+  peerSpkiFingerprint: string;
+}): Promise<GatewayTlsBinding> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_invalid',
       details: {
-        source: 'quote_report_data',
+        source: 'quoteReportData',
         reason: 'wrong_length',
         expectedBytes: 64,
         actualBytes: reportData.length,
@@ -67,46 +63,41 @@ export async function verifyGatewayReportDataBinding(input: {
     });
   }
 
-  const expectedNonce = requireByteLength(
-    input.expectedNonce,
-    32,
-    'expectedNonce',
-  );
+  const expectedNonce = requireByteLength(input.nonce, 32, 'nonce');
   if (!reportData.subarray(32, 64).equals(expectedNonce)) {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.nonce_mismatch',
-      details: { source: 'quote_report_data' },
+      details: { source: 'quoteReportData' },
     });
   }
 
-  if (!input.reportedTlsCertFingerprint) {
+  if (!input.reportedSpkiFingerprint) {
     throw new VerificationError({
       phase: 'binding',
-      code: 'binding.tls_fingerprint_missing',
-      details: { target: 'gateway' },
+      code: 'binding.spki_fingerprint_missing',
     });
   }
 
   const reportedFingerprint = requireByteLength(
-    input.reportedTlsCertFingerprint,
+    input.reportedSpkiFingerprint,
     32,
-    'tls_cert_fingerprint',
+    'attestation.declaredSpkiFingerprint',
   );
   const peerFingerprint = requireByteLength(
-    input.peerTlsCertFingerprint,
+    input.peerSpkiFingerprint,
     32,
-    'peerTlsCertFingerprint',
+    'peerSpkiFingerprint',
   );
   if (!reportedFingerprint.equals(peerFingerprint)) {
     throw new VerificationError({
       phase: 'binding',
-      code: 'binding.tls_fingerprint_mismatch',
+      code: 'binding.spki_fingerprint_mismatch',
       details: { source: 'peer_tls_connection' },
     });
   }
 
-  const signingAddress = hexToBuffer(input.signingAddress, 'signing_address');
+  const signingAddress = hexToBuffer(input.signingAddress, 'signer.address');
   const expectedBinding = await sha256(
     Buffer.concat([signingAddress, reportedFingerprint]),
   );
@@ -114,13 +105,13 @@ export async function verifyGatewayReportDataBinding(input: {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_mismatch',
-      details: { source: 'signer_tls_binding' },
+      details: { source: 'signerTlsBinding' },
     });
   }
 
   return {
-    kind: 'signer_peer_tls_nonce',
-    tlsCertFingerprint: reportedFingerprint.toString('hex'),
+    kind: 'peer',
+    spkiFingerprint: reportedFingerprint.toString('hex'),
   };
 }
 
@@ -132,9 +123,9 @@ export async function verifyGatewayReportDataBinding(input: {
  * inside the quote but is not a client-observed peer certificate.
  *
  * - bytes [32, 64) always contain the caller nonce.
- * - Without `tls_cert_fingerprint`, bytes [0, 32) are the signing address
+ * - Without `declaredSpkiFingerprint`, bytes [0, 32) are the signing address
  *   zero-padded to 32 bytes.
- * - With `tls_cert_fingerprint`, bytes [0, 32) are
+ * - With `declaredSpkiFingerprint`, bytes [0, 32) are
  *   SHA-256(signing address || declared fingerprint).
  *
  * Presence of the fingerprint selects the latter layout. Never downgrade a
@@ -142,45 +133,41 @@ export async function verifyGatewayReportDataBinding(input: {
  */
 export async function verifyCloudModelReportDataBinding(input: {
   reportData: Uint8Array;
-  expectedNonce: string;
+  nonce: string;
   signingAddress: string;
-  reportedTlsCertFingerprint: string | null | undefined;
-}): Promise<ModelReportDataBinding> {
+  reportedSpkiFingerprint: string | null | undefined;
+}): Promise<ModelTlsBinding> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_invalid',
       details: {
-        source: 'quote_report_data',
+        source: 'quoteReportData',
         reason: 'wrong_length',
         expectedBytes: 64,
         actualBytes: reportData.length,
       },
     });
   }
-  const expectedNonce = requireByteLength(
-    input.expectedNonce,
-    32,
-    'expectedNonce',
-  );
+  const expectedNonce = requireByteLength(input.nonce, 32, 'nonce');
   if (!reportData.subarray(32, 64).equals(expectedNonce)) {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.nonce_mismatch',
-      details: { source: 'quote_report_data' },
+      details: { source: 'quoteReportData' },
     });
   }
 
-  const signingAddress = hexToBuffer(input.signingAddress, 'signing_address');
+  const signingAddress = hexToBuffer(input.signingAddress, 'signer.address');
   if (
-    input.reportedTlsCertFingerprint !== undefined &&
-    input.reportedTlsCertFingerprint !== null
+    input.reportedSpkiFingerprint !== undefined &&
+    input.reportedSpkiFingerprint !== null
   ) {
     const fingerprint = requireByteLength(
-      input.reportedTlsCertFingerprint,
+      input.reportedSpkiFingerprint,
       32,
-      'tls_cert_fingerprint',
+      'attestation.declaredSpkiFingerprint',
     );
     const expectedBinding = await sha256(
       Buffer.concat([signingAddress, fingerprint]),
@@ -189,12 +176,12 @@ export async function verifyCloudModelReportDataBinding(input: {
       throw new VerificationError({
         phase: 'binding',
         code: 'binding.report_data_mismatch',
-        details: { source: 'signer_tls_binding' },
+        details: { source: 'signerTlsBinding' },
       });
     }
     return {
-      kind: 'signer_declared_tls_nonce',
-      tlsCertFingerprint: fingerprint.toString('hex'),
+      kind: 'declared',
+      spkiFingerprint: fingerprint.toString('hex'),
     };
   }
 
@@ -206,44 +193,10 @@ export async function verifyCloudModelReportDataBinding(input: {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_mismatch',
-      details: { source: 'signer_binding' },
+      details: { source: 'signerBinding' },
     });
   }
-  return { kind: 'signer_nonce' };
-}
-
-/** Pull the raw compose string without normalizing or serializing it again. */
-export function getRawAppCompose(tcbInfo: string | TcbInfo): string {
-  let parsed: unknown = tcbInfo;
-  if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch (cause) {
-      throw new VerificationError(
-        {
-          phase: 'measurement',
-          code: 'measurement.app_compose_invalid',
-          details: { reason: 'invalid_json' },
-        },
-        { cause },
-      );
-    }
-  }
-
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    !('app_compose' in parsed) ||
-    typeof parsed.app_compose !== 'string'
-  ) {
-    throw new VerificationError({
-      phase: 'measurement',
-      code: 'measurement.app_compose_invalid',
-      details: { reason: 'missing' },
-    });
-  }
-
-  return parsed.app_compose;
+  return { kind: 'none' };
 }
 
 /**
@@ -279,7 +232,6 @@ export async function verifyAppComposeMrConfigBinding(
     throw new VerificationError({
       phase: 'measurement',
       code: 'measurement.app_compose_mrconfigid_mismatch',
-      details: {},
     });
   }
 }
@@ -292,7 +244,7 @@ export async function verifyAppComposeMrConfigBinding(
 export function extractImageDigests(appCompose: string): string[] {
   const digests = new Set<string>();
   for (const match of appCompose.matchAll(/@sha256:([0-9a-fA-F]{64})/g)) {
-    digests.add(match[1].toLowerCase());
+    digests.add(`sha256:${match[1].toLowerCase()}`);
   }
   return [...digests];
 }
@@ -311,14 +263,17 @@ export function verifyAdvertisedReportData(
   }
   let advertised: Buffer;
   try {
-    advertised = hexToBuffer(advertisedReportData, 'reported report_data');
+    advertised = hexToBuffer(
+      advertisedReportData,
+      'attestation.reportedQuoteData',
+    );
   } catch (cause) {
     throw new VerificationError(
       {
         phase: 'binding',
         code: 'binding.report_data_invalid',
         details: {
-          source: 'advertised_report_data',
+          source: 'reportedQuoteData',
           reason: 'invalid_hex',
           expectedBytes: 64,
         },
@@ -331,7 +286,7 @@ export function verifyAdvertisedReportData(
       phase: 'binding',
       code: 'binding.report_data_invalid',
       details: {
-        source: 'advertised_report_data',
+        source: 'reportedQuoteData',
         reason: 'wrong_length',
         expectedBytes: 64,
         actualBytes: advertised.length,
@@ -342,7 +297,7 @@ export function verifyAdvertisedReportData(
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_mismatch',
-      details: { source: 'advertised_report_data' },
+      details: { source: 'reportedQuoteData' },
     });
   }
 }

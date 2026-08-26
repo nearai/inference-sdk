@@ -1,12 +1,11 @@
 import type { Buffer } from 'buffer';
 import type { GatewayAttestation } from './attestation-gateway';
-import type { NearModelAttestation } from './attestation-model';
-import type { SigningAlgo } from './attestation-common';
-import type {
-  CompletionBytes,
-  GatewaySignature,
-  ProviderTeeSignature,
-} from './chat';
+import type { ModelAttestation } from './attestation-model';
+import type { SigningIdentity } from './attestation-common';
+import type { CompletionBytes, CompletionSignature } from './chat';
+
+declare const verifiedModelAttestationBrand: unique symbol;
+declare const verifiedGatewayAttestationBrand: unique symbol;
 
 /** Intel TDX TCB statuses returned by DCAP verification. */
 export type TcbStatus =
@@ -19,8 +18,8 @@ export type TcbStatus =
   | 'Revoked'
   | 'Unknown';
 
-/** Measurements extracted from an Intel-verified TDX quote, normalized to Buffers. */
-export type VerifiedTdxQuote = {
+/** Measurements an Intel quote verifier derives from an authenticated quote. */
+export type QuoteVerificationResult = {
   /** TCB status produced by Intel quote verification. */
   tcbStatus: TcbStatus;
   /** Intel advisory IDs accompanying `tcbStatus`. */
@@ -28,208 +27,187 @@ export type VerifiedTdxQuote = {
   /** Whether the authenticated quote has debug enabled. */
   debugEnabled: boolean;
   /** Intel-signed 64-byte report-data field. */
-  reportData: Buffer;
+  reportData: Uint8Array;
   /** Intel MRCONFIGID measurement. */
-  mrConfigId: Buffer;
+  mrConfigId: Uint8Array;
   /** Intel RTMR3 measurement replayed against the dstack event log. */
+  rtMr3: Uint8Array;
+};
+
+/** Measurements extracted from an authenticated quote and normalized to Buffers. */
+export type VerifiedTdxQuote = Omit<
+  QuoteVerificationResult,
+  'reportData' | 'mrConfigId' | 'rtMr3'
+> & {
+  reportData: Buffer;
+  mrConfigId: Buffer;
   rtMr3: Buffer;
 };
 
 /**
  * Trust boundary for Intel TDX quote verification. An implementation must
  * authenticate the quote and derive every returned measurement from that
- * authenticated quote. Byte fields in the result are Buffers. Resolving means
- * the quote is trusted; reject or throw for every other outcome.
+ * authenticated quote. Byte fields accept `Uint8Array` and are normalized to
+ * `Buffer` inside the SDK. Resolving means the quote is trusted; reject or
+ * throw for every other outcome.
  */
-export type QuoteVerifier = {
-  verify(quote: string): Promise<VerifiedTdxQuote>;
-};
+export type QuoteVerifier = (quote: string) => Promise<QuoteVerificationResult>;
 
 /**
  * Trust boundary for NVIDIA GPU evidence. Resolve only after the supplied
  * payload satisfies the verifier's complete acceptance policy; reject or
  * throw for malformed, unavailable, or rejected evidence.
  */
-export type GpuVerifier = {
-  verify(nvidiaPayload: string): Promise<void>;
-};
+export type NvidiaEvidenceVerifier = (payload: string) => Promise<void>;
 
 /** Runtime values extracted while replaying the Intel-verified RTMR3 log. */
-export type VerifiedRuntimeMeasurements = {
+export type RuntimeMeasurements = {
   /** Runtime `os-image-hash` event payload, when present. */
-  osImageHash?: string;
+  readonly osImageHash?: string;
   /** Runtime `compose-hash` event payload, when present. */
-  composeHash?: string;
+  readonly composeHash?: string;
+};
+
+/** Deployment data authenticated by the quote and measured event log. */
+export type MeasuredDeployment = {
+  /** Original compose text whose UTF-8 bytes were bound to MRCONFIGID. */
+  readonly appCompose: string;
+  /** Canonical image digests such as `sha256:<64 lowercase hex characters>`. */
+  readonly imageDigests: readonly string[];
+  /** Measurements extracted while replaying the verified RTMR3 log. */
+  readonly runtimeMeasurements: RuntimeMeasurements;
 };
 
 /**
- * Caller-defined deployment provenance policy. The SDK supplies the measured
- * compose bytes, image digests, and RTMR3 values, but never turns a registry
- * lookup into a provenance verdict. Resolve only when the supplied deployment
- * satisfies the caller's policy; reject or throw otherwise.
+ * Caller-defined deployment acceptance policy. Resolve only when the supplied
+ * measured deployment is acceptable; reject or throw otherwise.
  */
-export type ProvenanceVerifier = {
-  verify(input: {
-    appCompose: string;
-    imageDigests: string[];
-    runtimeMeasurements: VerifiedRuntimeMeasurements;
-  }): Promise<void>;
-};
+export type DeploymentVerifier = (
+  deployment: MeasuredDeployment,
+) => Promise<void>;
 
-export type NearVerificationPolicy = {
+/** Policy shared by model and gateway attestation verification. */
+export type AttestationPolicy = {
   /** Defaults to `UpToDate` and `OutOfDate`. */
-  allowedTcbStatuses?: readonly TcbStatus[];
-  /** Rejects missing GPU evidence; defaults to false for CPU-only CVMs. */
-  requireGpuEvidence?: boolean;
-  /**
-   * Require a caller-supplied provenance verifier before reporting a successful
-   * result. Defaults to false because the SDK has no embedded allowlist for a
-   * particular NEAR deployment.
-   */
-  requireDeploymentProvenance?: boolean;
+  acceptedTcbStatuses?: readonly TcbStatus[];
 };
 
-type BaseVerificationInput = {
+/** Extra policy available only while verifying model evidence. */
+export type ModelAttestationPolicy = AttestationPolicy & {
+  /** Require NVIDIA evidence, or verify it when present (the default). */
+  gpuEvidence?: 'if-present' | 'required';
+};
+
+/** Custom trust roots shared by model and gateway verification. */
+export type AttestationVerifiers = {
+  /** Uses the built-in Intel DCAP verifier when omitted. */
+  quote?: QuoteVerifier;
+  /** Supplying this verifier makes deployment acceptance a required check. */
+  deployment?: DeploymentVerifier;
+};
+
+/** Custom trust roots available only while verifying model evidence. */
+export type ModelAttestationVerifiers = AttestationVerifiers & {
+  /** Uses NVIDIA NRAS for present evidence when omitted. */
+  nvidia?: NvidiaEvidenceVerifier;
+};
+
+/** Verify NEAR model evidence returned through the Cloud API. */
+export type VerifyModelAttestationInput = {
+  attestation: ModelAttestation;
   /**
    * A fresh caller-generated, caller-retained 32-byte hex nonce. It is bound
    * into the verified Intel quote and prevents replay of an older report.
    */
-  expectedNonce: string;
-  /** Uses Intel DCAP verification when omitted. */
-  quoteVerifier?: QuoteVerifier;
-  /** Applies deployment policy after quote and measurement verification. */
-  provenanceVerifier?: ProvenanceVerifier;
-  /** Narrows the default acceptance policy where required by the caller. */
-  policy?: NearVerificationPolicy;
-};
-
-/** Verify NEAR model evidence returned through the Cloud API. */
-export type VerifyNearModelAttestationInput = BaseVerificationInput & {
-  attestation: NearModelAttestation;
-  /** Uses NVIDIA NRAS when model GPU evidence is present and this is omitted. */
-  gpuVerifier?: GpuVerifier;
+  nonce: string;
+  policy?: ModelAttestationPolicy;
+  verifiers?: ModelAttestationVerifiers;
 };
 
 /** Verify gateway evidence and its binding to a client-observed TLS peer. */
-export type VerifyGatewayAttestationInput = BaseVerificationInput & {
+export type VerifyGatewayAttestationInput = {
   attestation: GatewayAttestation;
+  /** Fresh caller-generated, caller-retained nonce for this report request. */
+  nonce: string;
+  policy?: AttestationPolicy;
+  verifiers?: AttestationVerifiers;
   /**
    * SHA-256 SPKI fingerprint observed from the same TLS connection used for
    * the report and the client-visible gateway response. Do not copy
-   * `attestation.tls_cert_fingerprint` here: that would only compare the
+   * `attestation.declaredSpkiFingerprint` here: that would only compare the
    * report with itself. Browser `fetch` cannot provide this peer certificate.
    */
-  peerTlsCertFingerprint: string;
+  peerSpkiFingerprint: string;
 };
 
-/**
- * How the Intel-signed report data binds the verified signer and nonce. Any
- * fingerprint in a successful result is normalized 32-byte SHA-256 SPKI hex.
- */
-export type ReportDataBinding =
+/** TLS information authenticated for a model report. */
+export type ModelTlsBinding =
+  | { readonly kind: 'none' }
   | {
-      /** Quote binds the signer and fresh nonce, with no TLS claim. */
-      kind: 'signer_nonce';
-    }
-  | {
-      /** Quote additionally binds a TLS fingerprint declared in the report. */
-      kind: 'signer_declared_tls_nonce';
-      tlsCertFingerprint: string;
-    }
-  | {
-      /**
-       * The quote-bound TLS fingerprint matched a fingerprint observed on the
-       * same peer connection.
-       */
-      kind: 'signer_peer_tls_nonce';
-      tlsCertFingerprint: string;
+      /** This is server-declared evidence, not a client-observed model peer. */
+      readonly kind: 'declared';
+      readonly spkiFingerprint: string;
     };
 
-/**
- * Report-data layouts a model verifier can return. Neither variant is a
- * client-observed model TLS peer binding.
- */
-export type ModelReportDataBinding = Extract<
-  ReportDataBinding,
-  { kind: 'signer_nonce' | 'signer_declared_tls_nonce' }
->;
-
-/** The only report-data layout a gateway verifier can return. */
-export type GatewayReportDataBinding = Extract<
-  ReportDataBinding,
-  { kind: 'signer_peer_tls_nonce' }
->;
-
-/**
- * Measurements returned after quote, nonce, report-data, RTMR3, and policy
- * checks succeed. This common shape does not on its own claim expected NEAR
- * deployment provenance; see `provenanceVerified`.
- */
-export type VerifiedDstackAttestation<
-  TReportDataBinding extends ReportDataBinding = ReportDataBinding,
-> = {
-  /** Verified signer that a later response signature must match. */
-  signingAddress: string;
-  /** Algorithm used by the verified signer and a later response signature. */
-  signingAlgo: SigningAlgo;
-  /** The quote report-data layout that was verified for this evidence. */
-  reportDataBinding: TReportDataBinding;
-  /** Intel TDX TCB status accepted under the applied policy. */
-  tcbStatus: TcbStatus;
-  advisoryIds: string[];
-  /** Original compose string whose UTF-8 bytes were bound to MRCONFIGID. */
-  appCompose: string;
-  /**
-   * Digests syntactically extracted from the verified compose string. They are
-   * input to caller provenance policy, not registry or image provenance
-   * verdicts from this SDK.
-   */
-  imageDigests: string[];
-  /** Measurements extracted from replay of the verified RTMR3 event log. */
-  runtimeMeasurements: VerifiedRuntimeMeasurements;
-  /**
-   * Whether a caller-supplied deployment provenance policy was applied and
-   * satisfied. `false` means no such verifier ran; it is not a rejection.
-   */
-  provenanceVerified: boolean;
-  /**
-   * Present only when GPU evidence was supplied and successfully verified;
-   * absence is not a `false` GPU verdict.
-   */
-  gpuVerified?: true;
+/** TLS information authenticated for gateway evidence. */
+export type GatewayTlsBinding = {
+  /** The declared fingerprint matched the client-observed peer. */
+  readonly kind: 'peer';
+  readonly spkiFingerprint: string;
 };
 
-export type VerifiedNearModelAttestation =
-  VerifiedDstackAttestation<ModelReportDataBinding> & {
-    kind: 'near_model';
-  };
+export type GpuEvidenceStatus = 'not_provided' | 'verified';
+export type DeploymentProvenanceStatus = 'not_checked' | 'verified';
 
-export type VerifiedGatewayAttestation =
-  VerifiedDstackAttestation<GatewayReportDataBinding> & {
-    kind: 'gateway';
-  };
-
-export type VerifyProviderTeeResponseInput = CompletionBytes & {
+/** Measurements and identity established by a successful attestation check. */
+export type VerifiedAttestationEvidence = {
+  /** Verified signer that a later response signature must match. */
+  readonly signer: SigningIdentity;
+  /** Intel TDX TCB status accepted under the applied policy. */
+  readonly tcbStatus: TcbStatus;
+  readonly advisoryIds: readonly string[];
+  /** Deployment measurements authenticated by MRCONFIGID and RTMR3. */
+  readonly deployment: MeasuredDeployment;
   /**
-   * Must be the `provider_tee` signature for the exact completion bytes. The
-   * request body must be UTF-8 JSON with a non-empty top-level `model` field.
+   * `verified` only when a caller-supplied deployment verifier ran and
+   * accepted the measured deployment. A failed verifier always throws.
    */
-  signature: ProviderTeeSignature;
+  readonly deploymentProvenance: DeploymentProvenanceStatus;
+};
+
+/**
+ * Immutable in-memory result of `verifyModelAttestation`. Pass this exact
+ * object to `verifyModelResponse`; re-verify raw evidence after a process or
+ * serialization boundary.
+ */
+export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
+  readonly [verifiedModelAttestationBrand]: true;
+  readonly tlsBinding: ModelTlsBinding;
+  /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
+  readonly gpuEvidence: GpuEvidenceStatus;
+};
+
+/**
+ * Immutable in-memory result of `verifyGatewayAttestation`. Pass this exact
+ * object to `verifyGatewayResponse`; re-verify raw evidence after a process
+ * or serialization boundary.
+ */
+export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
+  readonly [verifiedGatewayAttestationBrand]: true;
+  /** The quote-bound fingerprint matched a peer on the caller's TLS socket. */
+  readonly tlsBinding: GatewayTlsBinding;
+};
+
+export type VerifyModelResponseInput = CompletionBytes & {
+  /** Signature for the exact completion bytes. */
+  signature: CompletionSignature;
   /** Model evidence whose verified signer must match `signature`. */
-  verifiedModelAttestation: VerifiedNearModelAttestation;
+  attestation: VerifiedModelAttestation;
 };
 
 export type VerifyGatewayResponseInput = CompletionBytes & {
-  /** Must be the `gateway` signature for the exact completion bytes. */
-  signature: GatewaySignature;
+  /** Gateway signature for the exact completion bytes. */
+  signature: CompletionSignature;
   /** Gateway evidence whose verified signer must match `signature`. */
-  verifiedGatewayAttestation: VerifiedGatewayAttestation;
-};
-
-/** Scope of a successfully verified response signature. */
-export type VerifiedResponseSignature = {
-  /** `model_tee` identifies model-serving evidence; `gateway` does not. */
-  scope: 'model_tee' | 'gateway';
-  signingAddress: string;
-  signingAlgo: SigningAlgo;
+  attestation: VerifiedGatewayAttestation;
 };

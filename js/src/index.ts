@@ -1,67 +1,60 @@
-export { NearAiCloudClient, NO_ALIASING_HEADER } from './core/cloud-api';
+export {
+  DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+  NearAiCloudClient,
+  NO_ALIASING_HEADER,
+} from './core/cloud-api';
 export type {
-  FetchAttestationInput,
   FetchCompletionSignatureInput,
   FetchGatewayAttestationInput,
-  FetchNearModelAttestationInput,
+  FetchModelAttestationInput,
+  NearAiCloudFetch,
   NearAiCloudClientOptions,
 } from './core/cloud-api';
 
-export { verifyNearModelAttestation } from './core/attestation-model';
+export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
-export {
-  gatewaySignatureText,
-  providerTeeSignatureText,
-  requireKnownSignature,
-  verifyGatewayResponse,
-  verifyProviderTeeResponse,
-} from './core/chat';
+export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 
 export { generateNonce } from './utils/common';
-export { verifyDcapQuote } from './utils/intel';
-export { nvidiaNrasVerifier } from './utils/nvidia';
 
 export type {
-  GatewayAttestation,
-  NearAiCloudAttestationReport,
-  VpcInfo,
-} from './types/attestation-gateway';
-export type { NearModelAttestation } from './types/attestation-model';
-export type {
-  DstackAttestation,
-  JsonObject,
-  JsonValue,
-  SigningAlgo,
-  TcbInfo,
+  AttestationEventLog,
+  AttestationEvidence,
+  SigningAlgorithm,
+  SigningIdentity,
 } from './types/attestation-common';
+export type { GatewayAttestation } from './types/attestation-gateway';
+export type { ModelAttestation } from './types/attestation-model';
 export type {
   CompletionBytes,
-  GatewaySignature,
-  KnownChatSignature,
-  ProviderTeeSignature,
-  SignatureLookup,
+  CompletionSignature,
+  CompletionSignatureLookup,
+  CompletionSignatureSource,
   SignatureUnavailable,
-  UnknownChatSignature,
 } from './types/chat';
 export type {
-  GpuVerifier,
-  GatewayReportDataBinding,
-  ModelReportDataBinding,
-  NearVerificationPolicy,
-  ProvenanceVerifier,
+  AttestationPolicy,
+  AttestationVerifiers,
+  DeploymentProvenanceStatus,
+  DeploymentVerifier,
+  GatewayTlsBinding,
+  GpuEvidenceStatus,
+  MeasuredDeployment,
+  ModelAttestationPolicy,
+  ModelAttestationVerifiers,
+  ModelTlsBinding,
+  NvidiaEvidenceVerifier,
   QuoteVerifier,
-  ReportDataBinding,
+  QuoteVerificationResult,
+  RuntimeMeasurements,
   TcbStatus,
-  VerifiedDstackAttestation,
+  VerifiedAttestationEvidence,
   VerifiedGatewayAttestation,
-  VerifiedNearModelAttestation,
-  VerifiedResponseSignature,
-  VerifiedRuntimeMeasurements,
-  VerifiedTdxQuote,
+  VerifiedModelAttestation,
   VerifyGatewayAttestationInput,
   VerifyGatewayResponseInput,
-  VerifyNearModelAttestationInput,
-  VerifyProviderTeeResponseInput,
+  VerifyModelAttestationInput,
+  VerifyModelResponseInput,
 } from './types/verification';
 
 export {
@@ -70,9 +63,7 @@ export {
   VerificationError,
 } from './utils/errors';
 export type {
-  ApiFailure,
   VerificationErrorCode,
-  VerificationErrorOptions,
   VerificationFailure,
   VerificationPhase,
 } from './utils/errors';

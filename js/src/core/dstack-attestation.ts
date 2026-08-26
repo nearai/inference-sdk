@@ -1,215 +1,226 @@
-import type { DstackAttestation } from '../types/attestation-common';
+import type { AttestationEvidence } from '../types/attestation-common';
 import type {
-  GpuVerifier,
-  NearVerificationPolicy,
-  ProvenanceVerifier,
+  AttestationPolicy,
+  DeploymentProvenanceStatus,
+  DeploymentVerifier,
+  MeasuredDeployment,
   QuoteVerifier,
-  ReportDataBinding,
-  VerifiedDstackAttestation,
+  TcbStatus,
+  VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
 import { requireByteLength } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
+import {
+  inputError,
+  optionalInputObject,
+  requireInputObject,
+  requireInputString,
+} from '../utils/input';
 import { normalizeVerifiedTdxQuote, verifyDcapQuote } from '../utils/intel';
-import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
   extractImageDigests,
-  getRawAppCompose,
   verifyAdvertisedReportData,
   verifyAppComposeMrConfigBinding,
   verifyReportedNonce,
 } from './attestation-common';
 import { verifyAndReplayRtmr3 } from './event-log';
 
-const DEFAULT_POLICY: Required<NearVerificationPolicy> = {
-  allowedTcbStatuses: ['UpToDate', 'OutOfDate'],
-  requireGpuEvidence: false,
-  requireDeploymentProvenance: false,
+const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
+  'UpToDate',
+  'OutOfDate',
+];
+
+const TCB_STATUSES: readonly TcbStatus[] = [
+  'UpToDate',
+  'SWHardeningNeeded',
+  'ConfigurationNeeded',
+  'ConfigurationAndSWHardeningNeeded',
+  'OutOfDate',
+  'OutOfDateConfigurationNeeded',
+  'Revoked',
+  'Unknown',
+];
+
+/** Quote facts shared by model and gateway evidence. Internal to the SDK. */
+export type VerifiedDstackQuote = {
+  attestation: AttestationEvidence;
+  quote: VerifiedTdxQuote;
+  signer: AttestationEvidence['signer'];
 };
 
-export type VerifyDstackAttestationInput<
-  TReportDataBinding extends ReportDataBinding,
-> = {
-  target: 'near_model' | 'gateway';
-  attestation: DstackAttestation;
-  expectedNonce: string;
-  quoteVerifier?: QuoteVerifier;
-  gpuVerifier?: GpuVerifier;
-  provenanceVerifier?: ProvenanceVerifier;
-  policy?: NearVerificationPolicy;
-  nvidiaPayload?: string | null;
-  verifyGpu: boolean;
-  advertisedReportData?: string;
-  verifyReportDataBinding(reportData: Uint8Array): Promise<TReportDataBinding>;
-};
+/** Validate the parsed SDK evidence before it reaches measurement logic. */
+export function requireAttestationEvidence(
+  value: unknown,
+): AttestationEvidence {
+  const attestation = requireInputObject(value, 'attestation');
+  const signer = requireInputObject(attestation.signer, 'attestation.signer');
+  requireInputString(attestation.nonce, 'attestation.nonce');
+  requireInputString(attestation.intelQuote, 'attestation.intelQuote');
+  requireInputString(attestation.appCompose, 'attestation.appCompose');
+  requireInputString(signer.algorithm, 'attestation.signer.algorithm');
+  requireInputString(signer.address, 'attestation.signer.address');
+
+  if (
+    typeof attestation.eventLog !== 'string' &&
+    !Array.isArray(attestation.eventLog)
+  ) {
+    throw inputError(
+      'attestation.eventLog',
+      attestation.eventLog === undefined ? 'missing' : 'unsupported_value',
+      { expected: 'JSON string or array' },
+    );
+  }
+  if (
+    attestation.declaredSpkiFingerprint !== undefined &&
+    attestation.declaredSpkiFingerprint !== null &&
+    typeof attestation.declaredSpkiFingerprint !== 'string'
+  ) {
+    throw inputError(
+      'attestation.declaredSpkiFingerprint',
+      'unsupported_value',
+      { expected: 'string or null' },
+    );
+  }
+  if (
+    attestation.reportedQuoteData !== undefined &&
+    typeof attestation.reportedQuoteData !== 'string'
+  ) {
+    throw inputError('attestation.reportedQuoteData', 'unsupported_value', {
+      expected: 'string',
+    });
+  }
+
+  return value as AttestationEvidence;
+}
+
+/** Validate policy once at the public boundary before quote verification runs. */
+export function parseAttestationPolicy(
+  value: unknown,
+): AttestationPolicy | undefined {
+  const policy = optionalInputObject(value, 'policy');
+  if (!policy) {
+    return undefined;
+  }
+  const statuses = policy.acceptedTcbStatuses;
+  if (
+    statuses !== undefined &&
+    (!Array.isArray(statuses) ||
+      !statuses.every(
+        (status): status is TcbStatus =>
+          typeof status === 'string' &&
+          TCB_STATUSES.includes(status as TcbStatus),
+      ))
+  ) {
+    throw inputError('policy.acceptedTcbStatuses', 'unsupported_value', {
+      expected: 'an array of known TDX TCB statuses',
+    });
+  }
+  return policy as AttestationPolicy;
+}
 
 /**
- * Shared quote/measurement orchestration. Endpoint-specific callers supply
- * the report-data binding rule: Cloud model evidence and gateway TLS evidence
- * intentionally have different trust boundaries. The quote is authenticated
- * before its report data, measurements, and caller policy are evaluated.
+ * Authenticate shared dstack quote facts before an endpoint-specific report
+ * data binding is checked. Model and gateway callers deliberately apply their
+ * own binding rules afterwards; neither path controls the other with flags.
  */
-export async function verifyDstackAttestation<
-  TReportDataBinding extends ReportDataBinding,
->(
-  input: VerifyDstackAttestationInput<TReportDataBinding>,
-): Promise<VerifiedDstackAttestation<TReportDataBinding>> {
-  const policy = { ...DEFAULT_POLICY, ...input.policy };
-  const { attestation } = input;
+export async function verifyDstackQuote(input: {
+  attestation: AttestationEvidence;
+  nonce: string;
+  policy?: AttestationPolicy;
+  quoteVerifier?: QuoteVerifier;
+  advertisedReportData?: string;
+}): Promise<VerifiedDstackQuote> {
+  const attestation = requireAttestationEvidence(input.attestation);
+  const acceptedTcbStatuses = getAcceptedTcbStatuses(input.policy);
 
-  verifyReportedNonce(attestation.request_nonce, input.expectedNonce);
-  verifySigningAddressLength(
-    attestation.signing_algo,
-    attestation.signing_address,
+  verifyReportedNonce(attestation.nonce, input.nonce);
+  const signer = verifySigningAddressLength(
+    attestation.signer.algorithm,
+    attestation.signer.address,
   );
 
   const quote = await verifyQuote(
-    input.quoteVerifier ?? { verify: verifyDcapQuote },
-    attestation.intel_quote,
+    input.quoteVerifier ?? verifyDcapQuote,
+    attestation.intelQuote,
   );
   verifyAdvertisedReportData(input.advertisedReportData, quote.reportData);
   if (quote.debugEnabled) {
     throw new VerificationError({
       phase: 'policy',
       code: 'policy.debug_enabled',
-      details: { target: input.target },
     });
   }
-  if (!policy.allowedTcbStatuses.includes(quote.tcbStatus)) {
+  if (!acceptedTcbStatuses.includes(quote.tcbStatus)) {
     throw new VerificationError({
       phase: 'policy',
       code: 'policy.tcb_status_not_allowed',
       details: {
-        target: input.target,
         actual: quote.tcbStatus,
-        allowed: policy.allowedTcbStatuses,
+        accepted: acceptedTcbStatuses,
         advisoryIds: quote.advisoryIds,
       },
     });
   }
 
-  const reportDataBinding = await input.verifyReportDataBinding(
-    quote.reportData,
-  );
+  return { attestation, quote, signer };
+}
+
+/**
+ * Replay measurements and optionally apply caller-owned deployment policy.
+ * A supplied verifier is required to resolve successfully; there is no second
+ * boolean that can silently change that requirement.
+ */
+export async function verifyDstackDeployment(
+  verifiedQuote: VerifiedDstackQuote,
+  deploymentVerifier?: DeploymentVerifier,
+): Promise<VerifiedAttestationEvidence> {
+  const { attestation, quote, signer } = verifiedQuote;
   const runtimeMeasurements = await verifyAndReplayRtmr3(
-    attestation.event_log,
+    attestation.eventLog,
     quote.rtMr3,
   );
-  const appCompose = getRawAppCompose(attestation.info.tcb_info);
+  const { appCompose } = attestation;
   await verifyAppComposeMrConfigBinding(appCompose, quote.mrConfigId);
-  const imageDigests = extractImageDigests(appCompose);
+  const deployment: MeasuredDeployment = {
+    appCompose,
+    imageDigests: extractImageDigests(appCompose),
+    runtimeMeasurements,
+  };
 
-  if (policy.requireDeploymentProvenance && !input.provenanceVerifier) {
-    throw new VerificationError({
-      phase: 'policy',
-      code: 'policy.provenance_verifier_required',
-      details: {},
-    });
-  }
-
-  const provenanceVerified = Boolean(input.provenanceVerifier);
-  if (input.provenanceVerifier) {
+  let deploymentProvenance: DeploymentProvenanceStatus = 'not_checked';
+  if (deploymentVerifier) {
     try {
-      await input.provenanceVerifier.verify({
-        appCompose,
-        imageDigests,
-        runtimeMeasurements,
-      });
+      await deploymentVerifier(copyMeasuredDeployment(deployment));
+      deploymentProvenance = 'verified';
     } catch (cause) {
       throw wrapVerificationError(
         {
           phase: 'provenance',
           code: 'provenance.verification_failed',
-          details: {},
         },
         cause,
       );
     }
   }
 
-  const gpuVerified = input.verifyGpu
-    ? await verifyGpuEvidence(
-        input.nvidiaPayload,
-        input.expectedNonce,
-        policy.requireGpuEvidence,
-        input.gpuVerifier ?? nvidiaNrasVerifier,
-      )
-    : undefined;
-
   return {
-    signingAddress: attestation.signing_address,
-    signingAlgo: attestation.signing_algo,
-    reportDataBinding,
+    signer,
     tcbStatus: quote.tcbStatus,
     advisoryIds: quote.advisoryIds,
-    appCompose,
-    imageDigests,
-    runtimeMeasurements,
-    provenanceVerified,
-    ...(gpuVerified ? { gpuVerified } : {}),
+    deployment,
+    deploymentProvenance,
   };
 }
 
-async function verifyGpuEvidence(
-  payload: string | null | undefined,
-  expectedNonce: string,
-  requireGpuEvidence: boolean,
-  verifier: GpuVerifier,
-): Promise<true | undefined> {
-  if (payload === undefined || payload === null || payload === '') {
-    if (requireGpuEvidence) {
-      throw new VerificationError({
-        phase: 'policy',
-        code: 'policy.gpu_evidence_required',
-        details: {},
-      });
-    }
-    return undefined;
-  }
-
-  // Bind the provider payload to the same nonce before handing it to either
-  // the default NRAS verifier or a caller-supplied GPU trust implementation.
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch (cause) {
-    throw new VerificationError(
-      {
-        phase: 'gpu',
-        code: 'gpu.payload_invalid',
-        details: { reason: 'invalid_json' },
-      },
-      { cause },
-    );
-  }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    typeof (parsed as Record<string, unknown>).nonce !== 'string'
-  ) {
-    throw new VerificationError({
-      phase: 'gpu',
-      code: 'gpu.payload_invalid',
-      details: { reason: 'nonce_missing' },
-    });
-  }
-  const payloadNonce = (parsed as Record<string, string>).nonce;
-  verifyReportedNonce(payloadNonce, expectedNonce, 'nvidia_payload');
-
-  try {
-    await verifier.verify(payload);
-  } catch (cause) {
-    throw wrapVerificationError(
-      {
-        phase: 'gpu',
-        code: 'gpu.attestation_rejected',
-        details: { source: 'custom_verifier' },
-      },
-      cause,
-    );
-  }
-  return true;
+function copyMeasuredDeployment(
+  deployment: MeasuredDeployment,
+): MeasuredDeployment {
+  return {
+    appCompose: deployment.appCompose,
+    imageDigests: [...deployment.imageDigests],
+    runtimeMeasurements: { ...deployment.runtimeMeasurements },
+  };
 }
 
 async function verifyQuote(
@@ -218,7 +229,7 @@ async function verifyQuote(
 ): Promise<VerifiedTdxQuote> {
   let quote: unknown;
   try {
-    quote = await verifier.verify(intelQuote);
+    quote = await verifier(intelQuote);
   } catch (cause) {
     throw wrapVerificationError(
       {
@@ -233,16 +244,26 @@ async function verifyQuote(
   return normalizeVerifiedTdxQuote(quote);
 }
 
+function getAcceptedTcbStatuses(
+  policy: AttestationPolicy | undefined,
+): readonly TcbStatus[] {
+  const value = parseAttestationPolicy(policy)?.acceptedTcbStatuses;
+  if (value === undefined) {
+    return DEFAULT_ACCEPTED_TCB_STATUSES;
+  }
+  return value;
+}
+
 function verifySigningAddressLength(
-  signingAlgo: DstackAttestation['signing_algo'],
+  signingAlgorithm: AttestationEvidence['signer']['algorithm'],
   signingAddress: string,
-): void {
-  if (signingAlgo !== 'ecdsa' && signingAlgo !== 'ed25519') {
+): VerifiedDstackQuote['signer'] {
+  if (signingAlgorithm !== 'ecdsa' && signingAlgorithm !== 'ed25519') {
     throw new VerificationError({
       phase: 'input',
       code: 'input.invalid',
       details: {
-        field: 'signing_algo',
+        field: 'attestation.signer.algorithm',
         reason: 'unsupported_value',
         expected: "'ecdsa' or 'ed25519'",
       },
@@ -250,7 +271,8 @@ function verifySigningAddressLength(
   }
   requireByteLength(
     signingAddress,
-    signingAlgo === 'ecdsa' ? 20 : 32,
-    'signing_address',
+    signingAlgorithm === 'ecdsa' ? 20 : 32,
+    'attestation.signer.address',
   );
+  return { algorithm: signingAlgorithm, address: signingAddress };
 }

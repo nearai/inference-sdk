@@ -1,91 +1,58 @@
 # TypeScript verification guide
 
-This guide explains how to use the TypeScript SDK to make a specific claim.
-Start with the claim, because model evidence and gateway evidence have different
-trust boundaries.
+Use this SDK when your application needs to verify a NEAR AI Cloud completion.
+The usual goal is a **model response** claim: a model-serving TEE signed the
+exact request and response bytes, and that signer is bound to fresh, verified
+model evidence.
 
-- A verified model response establishes that a `provider_tee` signed the exact
-  completion bytes and that signer is bound to verified NEAR model evidence.
-- A verified gateway response establishes that a gateway report is bound to a
-  TLS peer observed by the caller on the same connection. It does not establish
-  that a model-serving TEE produced the response.
-- Deployment provenance is a separate caller policy. Quote and measurement
-  verification alone do not say that a deployment is an expected NEAR release.
-
-The SDK publishes ESM. Node.js 24 is used for development (see `.nvmrc`), while
-browser consumers bundle the same package. Public byte inputs use `Uint8Array`,
-so Node `Buffer` values work without becoming part of the browser-facing API.
-Normalized quote byte values returned by the SDK use `Buffer`. The default Intel
-DCAP adapter may require `crypto`, `buffer`, and `stream` polyfills in a browser
-bundler. Supply a `QuoteVerifier` when your application uses different trust
-roots, bundler configuration, or network controls. If a model report contains
-GPU evidence, its default GPU verifier contacts NVIDIA NRAS.
-
-## Develop from this repository
-
-```bash
-cd js
-pnpm install
-pnpm check
-```
-
-Biome formats and lints the TypeScript and project configuration files.
-Markdown files are intentionally outside `pnpm format` and `pnpm format:check`.
+The SDK also supports a separate, advanced **gateway response** claim. It has
+different requirements and does not prove that a model-serving TEE produced the
+response. Start with the model-response flow below unless you specifically need
+to authenticate the Cloud API gateway's TLS connection.
 
 ## Verify a model response
 
-Use this flow for an application-visible model response. It is important that
-`requestBody` and `responseBody` are the original bytes on the wire. Parsing
-and serializing them again can change whitespace, ordering, framing, or
-encoding, invalidating the signature.
+Keep the exact bytes sent to and received from the completion endpoint. Do not
+parse and serialize them again before verification: changing JSON whitespace,
+key ordering, framing, or encoding changes the signed bytes.
 
-`verifyProviderTeeResponse` parses `requestBody` to obtain the canonical model
-ID. It therefore requires UTF-8 JSON with a non-empty top-level `model` field.
-The SDK can verify that body, but cannot prove that your completion client sent
-the `x-no-aliasing` header; set that header on the actual request as shown.
-
-1. Send a completion request with `x-no-aliasing: true` and keep its raw bytes.
-2. Fetch the completion signature and require `provider_tee`.
-3. Fetch a NEAR model report using a fresh nonce and the response signature's
-   signer and algorithm.
-4. Verify the report.
-5. Verify the `provider_tee` signature over the same raw completion bytes.
-
-The example below is for a non-streaming completion. A streaming client follows
-the same rule: retain the exact raw SSE bytes rather than reconstructing them
-from parsed events.
+Send the completion with `x-no-aliasing: true` and use a canonical model ID.
+The SDK uses the `model` field in the original request bytes when it verifies
+the model signature.
 
 ```ts
 import {
   NO_ALIASING_HEADER,
   NearAiCloudClient,
   generateNonce,
-  requireKnownSignature,
-  verifyNearModelAttestation,
-  verifyProviderTeeResponse,
+  verifyModelAttestation,
+  verifyModelResponse,
 } from 'verification-sdk';
-import type { NearVerificationPolicy } from 'verification-sdk';
 
-const baseUrl = 'https://cloud-api.near.ai/v1';
-const apiKey = process.env.NEARAI_API_KEY!;
+const apiKey = process.env.NEARAI_API_KEY;
+if (!apiKey) {
+  throw new Error('NEARAI_API_KEY is required');
+}
 const model = 'your-canonical-model-id';
 
 const request = {
   model,
   messages: [{ role: 'user', content: 'Hello' }],
 };
-const requestText = JSON.stringify(request);
-const requestBody = new TextEncoder().encode(requestText);
+const requestBody = new TextEncoder().encode(JSON.stringify(request));
 
-const completionResponse = await fetch(`${baseUrl}/chat/completions`, {
-  method: 'POST',
-  headers: {
-    authorization: `Bearer ${apiKey}`,
-    'content-type': 'application/json',
-    [NO_ALIASING_HEADER]: 'true',
+const completionResponse = await fetch(
+  'https://cloud-api.near.ai/v1/chat/completions',
+  {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+      [NO_ALIASING_HEADER]: 'true',
+    },
+    body: requestBody,
   },
-  body: requestBody,
-});
+);
 if (!completionResponse.ok) {
   throw new Error(`Completion failed: ${completionResponse.status}`);
 }
@@ -93,276 +60,225 @@ if (!completionResponse.ok) {
 const responseBytes = await completionResponse.arrayBuffer();
 const responseBody = new Uint8Array(responseBytes);
 const responseText = new TextDecoder().decode(responseBody);
-const completionJson = JSON.parse(responseText);
-if (typeof completionJson?.id !== 'string') {
+const completion = JSON.parse(responseText);
+if (typeof completion.id !== 'string') {
   throw new Error('Completion response did not contain an id');
 }
-const chatId = completionJson.id;
 
-const client = new NearAiCloudClient({ baseUrl, apiKey });
-const signatureLookup = await client.fetchCompletionSignature({
-  chatId,
-  signingAlgo: 'ed25519',
+const client = new NearAiCloudClient({ apiKey });
+
+const signature = await client.fetchCompletionSignature({
+  completionId: completion.id,
 });
-const signature = requireKnownSignature(signatureLookup);
-if (signature.signature_kind !== 'provider_tee') {
-  throw new Error('The completion has no model-serving TEE signature');
-}
 
 const nonce = generateNonce();
-const modelAttestation = await client.fetchNearModelAttestation({
+const attestation = await client.fetchModelAttestation({
   model,
   nonce,
-  signingAlgo: signature.signing_algo,
-  signingAddress: signature.signing_address,
-});
-const verifiedModelAttestation = await verifyNearModelAttestation({
-  attestation: modelAttestation,
-  expectedNonce: nonce,
+  signature,
 });
 
-const verifiedResponse = verifyProviderTeeResponse({
+const verifiedAttestation = await verifyModelAttestation({
+  attestation,
+  nonce,
+});
+
+verifyModelResponse({
   requestBody,
   responseBody,
   signature,
-  verifiedModelAttestation,
+  attestation: verifiedAttestation,
 });
-
-console.log(verifiedResponse.scope); // "model_tee"
 ```
 
-The signature lookup's `signingAlgo` selects the representation requested from
-the Cloud API. This example requests `ed25519`; use `ecdsa` when that is the
-representation your integration requests. Once a signature is returned, use
-its `signing_algo` and `signing_address` unchanged in the model-attestation
-request.
+When `verifyModelResponse` returns, the model signature is valid for those
+exact bytes and its signing identity matches the verified model attestation.
+The nonce makes the attestation fresh for this verification attempt.
 
-`NearAiCloudClient` does not send the completion request and does not poll the
-signature endpoint. Keep retry and delivery policy in your application, where
-you know whether the completion is still pending, expired, or safe to retry.
+Keep the exact `verifiedAttestation` object returned by
+`verifyModelAttestation` in memory and pass it directly to
+`verifyModelResponse`. Do not serialize, clone, or reconstruct it: after a
+process or serialization boundary, verify the raw attestation again.
 
-## Handle signature lookup states
+`NearAiCloudClient` fetches signatures and evidence only. Your application
+sends the completion request, retains its raw bytes, and decides whether or
+when to retry a completion or signature lookup.
 
-`fetchCompletionSignature` returns one of three explicit states:
+The client defaults to `https://cloud-api.near.ai/v1`, so `{ apiKey }` is
+enough for production. Pass `baseUrl` only when you need another Cloud API
+environment.
 
-- `found` contains an SDK-recognized `provider_tee` or `gateway` signature.
-- `unavailable` carries the Cloud API's error code and message for an absent
-  usable signature.
-- `unknown_kind` carries a signature type that this SDK cannot use for a
-  security claim.
+### What the model-attestation result contains
 
-`requireKnownSignature` turns `unavailable` and `unknown_kind` into structured
-verification errors. It does not decide which recognized signature scope is
-sufficient: require `provider_tee` for model-response verification. A
-`gateway` signature remains gateway-only evidence.
+`verifyModelAttestation` checks the nonce, Intel TDX quote, TCB policy, runtime
+measurements, and the model signing identity. Its result includes:
 
-Cloud API and verifier errors use `VerificationError`. Branch on
-`error.failure.code`, not on `error.message`. `error.retryable` is true only
-for transient remote-service failures; a binding, policy, quote, measurement,
-GPU, provenance, or signature error is not automatically retryable.
+- `signer`, the identity that must match the completion signature;
+- `tcbStatus` and `advisoryIds` from quote verification;
+- `deployment`, containing the measured compose text, image digests, and
+  runtime measurements;
+- `gpuEvidence`, either `verified` or `not_provided`; and
+- `deploymentProvenance`, either `verified` when your deployment verifier ran
+  successfully or `not_checked` when none was supplied.
+
+`tlsBinding` is `none` when no model TLS data was supplied, or `declared` when
+the service declared an SPKI fingerprint. A model declaration is not proof that
+the client connected directly to the model CVM.
+
+## Set policy and trust roots
+
+The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU
+evidence is verified when the report provides it; a report without GPU evidence
+is accepted by default. Require GPU evidence when your application needs it:
+
+```ts
+import type {
+  ModelAttestationPolicy,
+  ModelAttestationVerifiers,
+} from 'verification-sdk';
+
+const policy: ModelAttestationPolicy = {
+  acceptedTcbStatuses: ['UpToDate'],
+  gpuEvidence: 'required',
+};
+
+const verifiers: ModelAttestationVerifiers = {
+  // An application function that resolves only for approved deployments.
+  deployment: verifyDeploymentRelease,
+};
+
+const verifiedAttestation = await verifyModelAttestation({
+  attestation,
+  nonce,
+  policy,
+  verifiers,
+});
+```
+
+Here `verifyDeploymentRelease` is an application function. It receives the
+measured deployment and must throw or reject for every deployment that your
+release policy does not approve.
+
+Supplying `verifiers.deployment` makes deployment acceptance a required check:
+it must resolve for verification to succeed. The SDK authenticates the measured
+values, but your verifier decides which deployments are acceptable.
+
+`verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
+evidence, `verifiers.nvidia` replaces the default NVIDIA NRAS verifier. Supply
+either when your application uses its own trust roots or verification service.
+Each verifier must resolve only for evidence it accepts and throw or reject for
+all other outcomes.
+
+## Handle signature lookup and verification errors
+
+`fetchCompletionSignature` is the simple path: it returns one completion
+signature or throws a structured error when the signature is unavailable.
+It requests the service default (`ecdsa`) unless you explicitly pass
+`algorithm: 'ed25519'`.
+
+Use `lookupCompletionSignature` when the application needs to handle those
+states itself. It returns one of:
+
+- `found`, with a completion signature; or
+- `unavailable`, with the service's error code and message.
+
+For a found signature, `source` is `model_tee`, `gateway`, or `unknown` for a
+legacy record that did not store its source. Most applications simply pass the
+signature unchanged to the chosen response verifier. That verifier checks the
+complete signed payload, signature, and attested signer; it rejects an
+explicitly incompatible source.
+
+All SDK failures are `VerificationError` instances, including Cloud API
+failures. Branch on `failure.code`, rather than parsing a human-readable error
+message:
 
 ```ts
 import { isVerificationError } from 'verification-sdk';
 
 try {
-  await verifyNearModelAttestation(input);
+  await verifyModelAttestation({ attestation, nonce });
 } catch (error) {
   if (!isVerificationError(error)) throw error;
 
   if (error.failure.code === 'policy.tcb_status_not_allowed') {
-    console.log(error.failure.details.actual);
+    console.log('TCB status:', error.failure.details.actual);
   } else if (error.failure.code === 'api.http_status') {
-    console.log(error.failure.details.status, error.retryable);
+    console.log('HTTP status:', error.failure.details.status);
   } else {
-    console.log(error.failure.code, error.failure.details);
+    console.log(error.failure.code);
   }
 }
 ```
 
-The error contract intentionally excludes API keys, nonces, quotes, prompts,
-and completion bytes. The underlying exception remains available as `cause`
-for debugging, but is not part of the SDK compatibility contract.
+`error.retryable` is true only for remote failures that the SDK considers
+transient. A failed signature, binding, quote, measurement, GPU, deployment,
+or policy check is not automatically safe to retry.
+In particular, a `completion_signature` HTTP 404 is retryable because the
+signature may still be being recorded.
 
-## Interpret verified model evidence
+## Verify a gateway response (advanced)
 
-`verifyNearModelAttestation` checks the caller nonce, Intel quote, TCB policy,
-report-data binding, RTMR3 event-log replay, raw `app_compose` to MRCONFIGID
-binding, and any supplied GPU evidence. A successful result contains:
+Gateway verification makes a different claim: the gateway evidence is bound to
+a TLS peer that your application observed. It does not establish that a
+model-serving TEE produced the completion.
 
-- `signingAddress` and `signingAlgo`, which must match the response signature.
-- `appCompose`, the original compose string whose UTF-8 bytes were measured in
-  MRCONFIGID. Do not reserialize it before applying provenance policy.
-- `runtimeMeasurements`, extracted during RTMR3 replay.
-- `imageDigests`, syntactically extracted from the verified compose text. They
-  are inputs to provenance policy, not registry or image-attestation verdicts
-  produced by the SDK.
-- `provenanceVerified`, which is `true` only when a caller provenance verifier
-  ran and accepted the deployment. `false` means no provenance policy ran.
-- `gpuVerified`, which is present only when GPU evidence was supplied and
-  verified. Its absence is not a negative GPU verdict.
+This flow requires a TLS transport that your application controls. It must:
 
-### Report-data bindings
+1. receive the completion response, retain its exact bytes, record the
+   SHA-256 SPKI fingerprint of its TLS peer, and keep that connection open;
+2. use that same connection to fetch gateway evidence after obtaining the
+   completion signature; and
+3. pass the recorded fingerprint to `verifyGatewayAttestation`.
 
-The `reportDataBinding` field records which Intel quote layout was verified.
-
-```ts
-switch (verifiedModelAttestation.reportDataBinding.kind) {
-  case 'signer_nonce':
-    // Default model layout: the quote binds the signer and the fresh nonce.
-    break;
-  case 'signer_declared_tls_nonce':
-    // The quote also binds a server-declared TLS fingerprint. This is not a
-    // client-observed TLS connection to the model CVM.
-    console.log(verifiedModelAttestation.reportDataBinding.tlsCertFingerprint);
-    break;
-}
-```
-
-Model evidence defaults to `signer_nonce`. Pass `includeTlsFingerprint: true`
-to `fetchNearModelAttestation` to ask the Cloud API for a fingerprint. Inspect
-the returned `reportDataBinding.kind` if your application requires
-`signer_declared_tls_nonce`: the SDK selects the layout from the evidence it
-actually receives. When a model report declares a TLS fingerprint, the SDK
-requires its signer-and-fingerprint layout and never downgrades it to the
-legacy signer-only layout.
-
-A model result never produces `signer_peer_tls_nonce`, because the client TLS
-connection terminates at the Cloud API gateway rather than the model CVM.
-
-## Apply a policy and custom trust roots
-
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses, accepts
-CPU-only CVMs, and leaves deployment provenance optional. Tighten all three
-when your application needs them:
+Ordinary browser `fetch`, and most ordinary Node `fetch` usage, cannot expose
+the peer certificate or prove that a later request reused the connection. In
+those environments, do not make the gateway claim. A custom connection-owning
+transport must retain that relationship and pass its observed fingerprint to
+`verifyGatewayAttestation`.
 
 ```ts
-const policy: NearVerificationPolicy = {
-  allowedTcbStatuses: ['UpToDate'],
-  requireGpuEvidence: true,
-  requireDeploymentProvenance: true,
-};
-```
+// `connection` owns the TLS connection used for this completion. It keeps the
+// connection open, exposes its peer SPKI fingerprint, and supplies `fetch`
+// for later requests on that same connection.
+const completion = await connection.complete(request);
 
-`requireGpuEvidence` rejects a model report with no GPU evidence. It does not
-make invalid GPU evidence optional: a supplied GPU payload must always verify.
+const client = new NearAiCloudClient({
+  apiKey,
+  fetch: connection.fetch.bind(connection),
+});
+const signature = await client.fetchCompletionSignature({
+  completionId: completion.id,
+});
 
-Do not use `requireDeploymentProvenance: true` by itself. Pass a
-`provenanceVerifier` with that policy; otherwise verification rejects with
-`policy.provenance_verifier_required`.
-
-The SDK exposes three verification hooks. Each is a trust boundary: resolve
-only for a fully accepted input and reject or throw for failed or indeterminate
-inputs.
-
-- `QuoteVerifier` authenticates the Intel quote and derives its measurements.
-  Without one, the SDK uses its Intel DCAP verifier.
-- `GpuVerifier` validates NVIDIA evidence. Without one, model GPU evidence is
-  sent to the default NVIDIA NRAS verifier.
-- `ProvenanceVerifier` receives the verified raw compose string, extracted
-  image digests, and replayed runtime measurements. It is where an application
-  enforces expected image or deployment provenance.
-
-The SDK deliberately does not embed a deployment allowlist or turn a registry
-lookup into a provenance verdict. Set `requireDeploymentProvenance: true` when
-a successful model check must include your deployment acceptance policy.
-
-## Verify gateway evidence
-
-Gateway verification is a different claim from model response verification. It
-requires a TLS transport you control:
-
-1. Request `/attestation/report` with `include_tls_fingerprint=true`.
-2. Read the SHA-256 SPKI fingerprint from the exact live TLS peer that served
-   that report.
-3. Pass the returned `gateway_attestation`, the same request nonce, and that
-   observed fingerprint to `verifyGatewayAttestation`.
-4. Establish that the application-visible gateway response you are checking
-   used that same TLS connection.
-
-For a Node transport that owns the socket, derive the fingerprint from the
-certificate presented on that socket. Call this while handling the same TLS
-connection that fetched the report; it does not establish connection reuse on
-its own.
-
-```ts
-import { createHash, X509Certificate } from 'node:crypto';
-
-function spkiFingerprint(certificateDer: Buffer): string {
-  const certificate = new X509Certificate(certificateDer);
-  const spki = certificate.publicKey.export({ type: 'spki', format: 'der' });
-  const hash = createHash('sha256');
-  hash.update(spki);
-  return hash.digest('hex');
-}
-
-// For example: spkiFingerprint(tlsSocket.getPeerCertificate(true).raw)
-```
-
-In the following snippets, `gatewayAttestation` and
-`peerFingerprintFromTheSameTlsSocket` come from that controlled report request.
-`requestBody`, `responseBody`, and `chatId` are the exact values retained from
-the completion flow.
-
-```ts
-import {
-  verifyGatewayAttestation,
-  verifyGatewayResponse,
-} from 'verification-sdk';
+const gatewayNonce = generateNonce();
+const gatewayAttestation = await client.fetchGatewayAttestation({
+  nonce: gatewayNonce,
+  signature,
+});
 
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
   attestation: gatewayAttestation,
-  expectedNonce: nonce,
-  peerTlsCertFingerprint: peerFingerprintFromTheSameTlsSocket,
+  nonce: gatewayNonce,
+  peerSpkiFingerprint: connection.peerSpkiFingerprint,
 });
 
-console.log(verifiedGatewayAttestation.reportDataBinding.kind);
-// "signer_peer_tls_nonce"
+verifyGatewayResponse({
+  requestBody: completion.requestBody,
+  responseBody: completion.responseBody,
+  signature,
+  attestation: verifiedGatewayAttestation,
+});
 ```
 
-If the application also needs to authenticate the exact response bytes at
-gateway scope, require a `gateway` signature and verify it against the gateway
-attestation. This still does not produce a model-serving claim.
+Never use a fingerprint declared inside the attestation as
+`peerSpkiFingerprint`; that would compare the evidence with itself rather than
+with a TLS peer you observed. Gateway verification accepts the same quote and
+deployment policy options as model verification, except it has no GPU option.
 
-```ts
-const gatewaySignatureLookup = await client.fetchCompletionSignature({
-  chatId,
-  signingAlgo: 'ed25519',
-});
-const gatewaySignature = requireKnownSignature(gatewaySignatureLookup);
-if (gatewaySignature.signature_kind !== 'gateway') {
-  throw new Error('The completion has no gateway signature');
-}
+## Runtime notes
 
-const verifiedGatewayResponse = verifyGatewayResponse({
-  requestBody,
-  responseBody,
-  signature: gatewaySignature,
-  verifiedGatewayAttestation,
-});
-
-console.log(verifiedGatewayResponse.scope); // "gateway"
-```
-
-`fetchGatewayAttestation` requests the report fingerprint automatically, but a
-normal browser or Node `fetch` API cannot expose the peer certificate or prove
-connection reuse. Use a connection-owning TLS transport when making this claim.
-
-Do not pass `gatewayAttestation.tls_cert_fingerprint` as
-`peerTlsCertFingerprint`. That would compare the report's declared value with
-itself instead of comparing it with a TLS peer you observed.
-
-`fetchNearAiCloudAttestationReport` returns a parsed model-report envelope for
-inspection. Its `gateway_attestation` entry is not a substitute for the
-same-connection gateway flow: model evidence omits the TLS fingerprint by
-default, and `NearAiCloudClient` does not collect a peer certificate.
-
-## Provider scope
-
-Model convenience methods set `provider=near` and send `x-no-aliasing: true`.
-This selects NEAR model evidence and keeps the model ID used in the signature
-payload canonical. It does not pin a separate future completion request to a
-particular CVM. The `provider_tee` signature and signer-filtered attestation
-are what bind a completed request to verified model evidence.
-
-The SDK intentionally does not parse third-party provider evidence as a NEAR
-model report.
+The package publishes ESM. It is developed with Node.js 24, while browser
+applications can bundle the same package. Public byte inputs use `Uint8Array`.
+The default Intel verifier may need `crypto`, `buffer`, and `stream` polyfills
+in a browser bundler. Use a custom quote verifier when your runtime or trust
+model requires a different implementation.

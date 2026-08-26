@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { nvidiaNrasVerifier } from '../../src';
+import { nvidiaNrasVerifier } from '../../src/utils/nvidia';
 
 describe('NVIDIA NRAS verification', () => {
   afterEach(() => {
@@ -9,13 +9,13 @@ describe('NVIDIA NRAS verification', () => {
   test('accepts a true overall NRAS result', async () => {
     mockNrasOverallResult(true);
 
-    await expect(nvidiaNrasVerifier.verify('{}')).resolves.toBeUndefined();
+    await expect(nvidiaNrasVerifier('{}')).resolves.toBeUndefined();
   });
 
   test('rejects a false overall NRAS result', async () => {
     mockNrasOverallResult(false);
 
-    await expect(nvidiaNrasVerifier.verify('{}')).rejects.toMatchObject({
+    await expect(nvidiaNrasVerifier('{}')).rejects.toMatchObject({
       failure: {
         phase: 'gpu',
         code: 'gpu.attestation_rejected',
@@ -29,7 +29,7 @@ describe('NVIDIA NRAS verification', () => {
     async (result) => {
       mockNrasOverallResult(result);
 
-      await expect(nvidiaNrasVerifier.verify('{}')).rejects.toMatchObject({
+      await expect(nvidiaNrasVerifier('{}')).rejects.toMatchObject({
         failure: {
           phase: 'gpu',
           code: 'gpu.nras_response_invalid',

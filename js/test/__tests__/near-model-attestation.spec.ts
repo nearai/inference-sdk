@@ -1,101 +1,93 @@
 import { Buffer } from 'node:buffer';
-import { verifyNearModelAttestation } from '../../src';
+import { verifyModelAttestation } from '../../src';
 import type { QuoteVerifier } from '../../src';
 import {
   appCompose,
   createLegacyModelQuote,
-  createNearModelAttestation,
+  createModelAttestation,
   createQuote,
   nonce,
   sha384,
+  signingAddress,
   tlsFingerprint,
 } from '../fixtures';
 
-describe('NEAR model attestation verification', () => {
-  const quoteVerifier: QuoteVerifier = {
-    verify: async () => createQuote(),
-  };
+describe('model attestation verification', () => {
+  const quoteVerifier: QuoteVerifier = async () => createQuote();
 
-  test('verifies quote bindings, RTMR3, and raw app_compose as separate checks', async () => {
-    const result = await verifyNearModelAttestation({
-      attestation: createNearModelAttestation(),
-      expectedNonce: nonce,
-      quoteVerifier,
+  test('returns verified model evidence with explicit verification states', async () => {
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation(),
+      nonce,
+      verifiers: { quote: quoteVerifier },
     });
 
     expect(result).toMatchObject({
-      kind: 'near_model',
+      signer: { algorithm: 'ecdsa', address: signingAddress },
       tcbStatus: 'UpToDate',
-      appCompose,
-      reportDataBinding: {
-        kind: 'signer_declared_tls_nonce',
-        tlsCertFingerprint: tlsFingerprint,
+      tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
+      gpuEvidence: 'not_provided',
+      deploymentProvenance: 'not_checked',
+      deployment: {
+        appCompose,
+        runtimeMeasurements: { composeHash: 'beef' },
       },
-      provenanceVerified: false,
-      runtimeMeasurements: { composeHash: 'beef' },
     });
-    expect(result.imageDigests).toEqual(['a'.repeat(64)]);
+    expect(result.deployment.imageDigests).toEqual([
+      `sha256:${'a'.repeat(64)}`,
+    ]);
   });
 
   test('rejects a report whose echoed nonce is not the caller nonce', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          request_nonce: '44'.repeat(32),
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nonce: '44'.repeat(32),
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.nonce_mismatch',
-        details: { source: 'request_nonce' },
+        details: { source: 'attestationNonce' },
       },
     });
   });
 
-  test('accepts the legacy signer + nonce model binding without a TLS fingerprint', async () => {
-    const result = await verifyNearModelAttestation({
-      attestation: createNearModelAttestation({
-        tls_cert_fingerprint: undefined,
-      }),
-      expectedNonce: nonce,
-      quoteVerifier: { verify: async () => createLegacyModelQuote() },
-    });
+  test.each([undefined, null])(
+    'accepts the legacy signer-and-nonce model binding without a declared SPKI (%p)',
+    async (fingerprint) => {
+      const result = await verifyModelAttestation({
+        attestation: createModelAttestation({
+          declaredSpkiFingerprint: fingerprint,
+        }),
+        nonce,
+        verifiers: { quote: async () => createLegacyModelQuote() },
+      });
 
-    expect(result.reportDataBinding).toEqual({ kind: 'signer_nonce' });
-  });
+      expect(result.tlsBinding).toEqual({ kind: 'none' });
+    },
+  );
 
-  test('accepts the legacy signer + nonce model binding when the TLS fingerprint is null', async () => {
-    const result = await verifyNearModelAttestation({
-      attestation: createNearModelAttestation({
-        tls_cert_fingerprint: null,
-      }),
-      expectedNonce: nonce,
-      quoteVerifier: { verify: async () => createLegacyModelQuote() },
-    });
-
-    expect(result.reportDataBinding).toEqual({ kind: 'signer_nonce' });
-  });
-
-  test('does not fall back to signer + nonce when a reported TLS fingerprint is present', async () => {
+  test('does not downgrade a declared-SPKI report to the legacy layout', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: { verify: async () => createLegacyModelQuote() },
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: { quote: async () => createLegacyModelQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.report_data_mismatch',
-        details: { source: 'signer_tls_binding' },
+        details: { source: 'signerTlsBinding' },
       },
     });
   });
 
-  test('rejects a legacy model binding whose padded signer does not match', async () => {
+  test('rejects a legacy report whose padded signer does not match', async () => {
     const quote = createLegacyModelQuote({
       reportData: Buffer.concat([
         Buffer.alloc(32, 0x44),
@@ -104,47 +96,43 @@ describe('NEAR model attestation verification', () => {
     });
 
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          tls_cert_fingerprint: undefined,
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          declaredSpkiFingerprint: undefined,
         }),
-        expectedNonce: nonce,
-        quoteVerifier: { verify: async () => quote },
+        nonce,
+        verifiers: { quote: async () => quote },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.report_data_mismatch',
-        details: { source: 'signer_binding' },
+        details: { source: 'signerBinding' },
       },
     });
   });
 
-  test('rejects a debug-enabled TDX quote', async () => {
+  test('rejects debug-enabled TDX quotes before accepting measurements', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => createQuote({ debugEnabled: true }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: async () => createQuote({ debugEnabled: true }),
         },
       }),
     ).rejects.toMatchObject({
-      failure: {
-        phase: 'policy',
-        code: 'policy.debug_enabled',
-        details: { target: 'near_model' },
-      },
+      failure: { phase: 'policy', code: 'policy.debug_enabled' },
     });
   });
 
-  test('normalizes a custom quote verifier failure', async () => {
+  test('normalizes custom quote verifier failures', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => {
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: async () => {
             throw new Error('verifier implementation detail');
           },
         },
@@ -158,12 +146,12 @@ describe('NEAR model attestation verification', () => {
     });
   });
 
-  test('normalizes an invalid custom quote verifier result', async () => {
+  test('rejects invalid quote verifier output', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: { verify: async () => undefined as never },
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: { quote: async () => undefined as never },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -178,42 +166,42 @@ describe('NEAR model attestation verification', () => {
     });
   });
 
-  test('accepts OutOfDate by default and permits a stricter TCB policy', async () => {
+  test('accepts OutOfDate by default and supports an explicit TCB policy', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
         },
       }),
     ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
 
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        policy: { acceptedTcbStatuses: ['UpToDate'] },
+        verifiers: {
+          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
         },
-        policy: { allowedTcbStatuses: ['UpToDate'] },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'policy',
         code: 'policy.tcb_status_not_allowed',
-        details: { actual: 'OutOfDate', allowed: ['UpToDate'] },
+        details: { actual: 'OutOfDate', accepted: ['UpToDate'] },
       },
     });
   });
 
-  test('rejects a TCB status outside the default allowlist', async () => {
+  test('rejects a TCB status outside the default policy', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => createQuote({ tcbStatus: 'Revoked' }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: async () => createQuote({ tcbStatus: 'Revoked' }),
         },
       }),
     ).rejects.toMatchObject({
@@ -222,19 +210,19 @@ describe('NEAR model attestation verification', () => {
         code: 'policy.tcb_status_not_allowed',
         details: {
           actual: 'Revoked',
-          allowed: ['UpToDate', 'OutOfDate'],
+          accepted: ['UpToDate', 'OutOfDate'],
         },
       },
     });
   });
 
-  test('identifies malformed Intel-verified quote report data', async () => {
+  test('rejects malformed Intel-verified report data', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier: {
-          verify: async () => createQuote({ reportData: Buffer.alloc(63) }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: async () => createQuote({ reportData: Buffer.alloc(63) }),
         },
       }),
     ).rejects.toMatchObject({
@@ -242,7 +230,7 @@ describe('NEAR model attestation verification', () => {
         phase: 'binding',
         code: 'binding.report_data_invalid',
         details: {
-          source: 'quote_report_data',
+          source: 'quoteReportData',
           reason: 'wrong_length',
           expectedBytes: 64,
           actualBytes: 63,
@@ -253,9 +241,9 @@ describe('NEAR model attestation verification', () => {
 
   test('rejects an event log that cannot replay the quoted RTMR3', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          event_log: [
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          eventLog: [
             {
               digest: 'ff'.repeat(48),
               event_type: 0,
@@ -265,8 +253,8 @@ describe('NEAR model attestation verification', () => {
             },
           ],
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -277,24 +265,17 @@ describe('NEAR model attestation verification', () => {
     });
   });
 
-  test('accepts defaulted optional fields in a non-runtime event', async () => {
+  test('accepts defaulted optional event fields and an empty runtime payload', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          event_log: JSON.stringify([
-            {
-              digest: '00'.repeat(48),
-              imr: 3,
-            },
-          ]),
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          eventLog: JSON.stringify([{ digest: '00'.repeat(48), imr: 3 }]),
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
-    ).resolves.toMatchObject({ kind: 'near_model' });
-  });
+    ).resolves.toMatchObject({ gpuEvidence: 'not_provided' });
 
-  test('accepts an empty payload in a valid runtime event', async () => {
     const runtimeDigest = sha384(
       Buffer.concat([
         Buffer.from([0x01, 0x00, 0x00, 0x08]),
@@ -308,9 +289,9 @@ describe('NEAR model attestation verification', () => {
     });
 
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          event_log: [
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          eventLog: [
             {
               digest: runtimeDigest.toString('hex'),
               event_type: 0x08000001,
@@ -320,20 +301,20 @@ describe('NEAR model attestation verification', () => {
             },
           ],
         }),
-        expectedNonce: nonce,
-        quoteVerifier: { verify: async () => quote },
+        nonce,
+        verifiers: { quote: async () => quote },
       }),
-    ).resolves.toMatchObject({ kind: 'near_model' });
+    ).resolves.toMatchObject({ gpuEvidence: 'not_provided' });
   });
 
-  test('rejects app_compose that is not bound to MRCONFIGID', async () => {
+  test('rejects app compose data that is not bound to MRCONFIGID', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          info: { tcb_info: { app_compose: '{"changed":true}' } },
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          appCompose: '{"changed":true}',
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -343,64 +324,75 @@ describe('NEAR model attestation verification', () => {
     });
   });
 
-  test('checks the GPU payload nonce before calling the GPU verifier', async () => {
-    const gpuVerifier = { verify: jest.fn(async () => undefined) };
+  test('checks the NVIDIA payload nonce before calling a custom verifier', async () => {
+    const nvidia = jest.fn(async () => undefined);
+
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          nvidia_payload: JSON.stringify({ nonce: '55'.repeat(32) }),
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce: '55'.repeat(32) }),
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
-        gpuVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier, nvidia },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.nonce_mismatch',
-        details: { source: 'nvidia_payload' },
+        details: { source: 'nvidiaPayload' },
       },
     });
-    expect(gpuVerifier.verify).not.toHaveBeenCalled();
+    expect(nvidia).not.toHaveBeenCalled();
   });
 
-  test('enforces required GPU evidence and records successful GPU verification', async () => {
+  test('rejects an empty NVIDIA payload instead of treating it as absent', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier,
-        policy: { requireGpuEvidence: true },
+      verifyModelAttestation({
+        attestation: createModelAttestation({ nvidiaPayload: '' }),
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
-        phase: 'policy',
-        code: 'policy.gpu_evidence_required',
+        phase: 'gpu',
+        code: 'gpu.payload_invalid',
+        details: { reason: 'invalid_json' },
       },
     });
-
-    await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          nvidia_payload: JSON.stringify({ nonce }),
-        }),
-        expectedNonce: nonce,
-        quoteVerifier,
-        gpuVerifier: { verify: async () => undefined },
-      }),
-    ).resolves.toMatchObject({ gpuVerified: true });
   });
 
-  test('rejects GPU evidence rejected by its verifier', async () => {
+  test('models GPU evidence as an explicit status', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          nvidia_payload: JSON.stringify({ nonce }),
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        policy: { gpuEvidence: 'required' },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: { phase: 'policy', code: 'policy.gpu_evidence_required' },
+    });
+
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        nvidiaPayload: JSON.stringify({ nonce }),
+      }),
+      nonce,
+      verifiers: { quote: quoteVerifier, nvidia: async () => undefined },
+    });
+    expect(result.gpuEvidence).toBe('verified');
+  });
+
+  test('normalizes NVIDIA verifier failures', async () => {
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
-        gpuVerifier: {
-          verify: async () => {
+        nonce,
+        verifiers: {
+          quote: quoteVerifier,
+          nvidia: async () => {
             throw new Error('GPU evidence was rejected');
           },
         },
@@ -414,42 +406,25 @@ describe('NEAR model attestation verification', () => {
     });
   });
 
-  test('rejects model report_data that contradicts the verified quote', async () => {
+  test('rejects model report data that contradicts the verified quote', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation({
-          report_data: 'ff'.repeat(64),
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          reportedQuoteData: 'ff'.repeat(64),
         }),
-        expectedNonce: nonce,
-        quoteVerifier,
+        nonce,
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
         code: 'binding.report_data_mismatch',
-        details: { source: 'advertised_report_data' },
+        details: { source: 'reportedQuoteData' },
       },
     });
   });
 
-  test('requires a provenance verifier when the policy requires deployment provenance', async () => {
-    await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier,
-        policy: { requireDeploymentProvenance: true },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'policy',
-        code: 'policy.provenance_verifier_required',
-      },
-    });
-  });
-
-  test('passes verified measurements to a required provenance verifier', async () => {
-    const provenanceVerifier = { verify: jest.fn(async () => undefined) };
+  test('runs a supplied deployment verifier and records that result', async () => {
     const osImageDigest = Buffer.alloc(48, 1);
     const composeDigest = Buffer.alloc(48, 2);
     const quote = createQuote({
@@ -460,10 +435,11 @@ describe('NEAR model attestation verification', () => {
         ]),
       ),
     });
+    const deployment = jest.fn(async () => undefined);
 
-    const result = await verifyNearModelAttestation({
-      attestation: createNearModelAttestation({
-        event_log: [
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        eventLog: [
           {
             digest: osImageDigest.toString('hex'),
             event_type: 0,
@@ -480,40 +456,53 @@ describe('NEAR model attestation verification', () => {
           },
         ],
       }),
-      expectedNonce: nonce,
-      quoteVerifier: { verify: async () => quote },
-      policy: { requireDeploymentProvenance: true },
-      provenanceVerifier,
+      nonce,
+      verifiers: { quote: async () => quote, deployment },
     });
 
-    expect(provenanceVerifier.verify).toHaveBeenCalledWith({
+    expect(deployment).toHaveBeenCalledWith({
       appCompose,
-      imageDigests: ['a'.repeat(64)],
+      imageDigests: [`sha256:${'a'.repeat(64)}`],
       runtimeMeasurements: {
         osImageHash: 'cafe',
         composeHash: 'beef',
       },
     });
-    expect(result.provenanceVerified).toBe(true);
+    expect(result.deploymentProvenance).toBe('verified');
   });
 
-  test('normalizes a custom provenance verifier failure', async () => {
+  test('keeps verified deployment measurements independent from the verifier input', async () => {
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation(),
+      nonce,
+      verifiers: {
+        quote: quoteVerifier,
+        deployment: async (deployment) => {
+          const mutable = deployment as {
+            runtimeMeasurements: { composeHash?: string };
+          };
+          mutable.runtimeMeasurements.composeHash = 'changed';
+        },
+      },
+    });
+
+    expect(result.deployment.runtimeMeasurements.composeHash).toBe('beef');
+  });
+
+  test('normalizes deployment verifier failures', async () => {
     await expect(
-      verifyNearModelAttestation({
-        attestation: createNearModelAttestation(),
-        expectedNonce: nonce,
-        quoteVerifier,
-        provenanceVerifier: {
-          verify: async () => {
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        verifiers: {
+          quote: quoteVerifier,
+          deployment: async () => {
             throw new Error('verifier implementation detail');
           },
         },
       }),
     ).rejects.toMatchObject({
-      failure: {
-        phase: 'provenance',
-        code: 'provenance.verification_failed',
-      },
+      failure: { phase: 'provenance', code: 'provenance.verification_failed' },
     });
   });
 });

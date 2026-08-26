@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import type { NearModelAttestation } from '../src/types/attestation-model';
+import type { ModelAttestation } from '../src';
 import type { VerifiedTdxQuote } from '../src/types/verification';
 
 export const nonce = '11'.repeat(32);
@@ -62,15 +62,14 @@ export function createLegacyModelQuote(
   });
 }
 
-export function createNearModelAttestation(
-  overrides: Partial<NearModelAttestation> = {},
-): NearModelAttestation {
+export function createModelAttestation(
+  overrides: Partial<ModelAttestation> = {},
+): ModelAttestation {
   return {
-    request_nonce: nonce,
-    signing_algo: 'ecdsa',
-    signing_address: signingAddress,
-    intel_quote: 'aa',
-    event_log: [
+    nonce,
+    signer: { algorithm: 'ecdsa', address: signingAddress },
+    intelQuote: 'aa',
+    eventLog: [
       {
         digest: '00'.repeat(48),
         event_type: 0,
@@ -79,12 +78,8 @@ export function createNearModelAttestation(
         imr: 3,
       },
     ],
-    info: {
-      tcb_info: {
-        app_compose: appCompose,
-      },
-    },
-    tls_cert_fingerprint: tlsFingerprint,
+    appCompose,
+    declaredSpkiFingerprint: tlsFingerprint,
     ...overrides,
   };
 }

@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer';
-import type { JsonValue } from '../types/attestation-common';
-import type { VerifiedRuntimeMeasurements } from '../types/verification';
+import type { AttestationEventLog } from '../types/attestation-common';
+import type { RuntimeMeasurements } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import { sha384, trimHexPrefix, utf8 } from '../utils/common';
 
@@ -23,9 +23,9 @@ type EventLogEntry = {
  * copied digest.
  */
 export async function verifyAndReplayRtmr3(
-  eventLog: JsonValue,
+  eventLog: AttestationEventLog,
   quotedRtmr3: Uint8Array,
-): Promise<VerifiedRuntimeMeasurements> {
+): Promise<RuntimeMeasurements> {
   const events = parseEventLog(eventLog);
   const expected = Buffer.from(quotedRtmr3);
   if (expected.length !== 48) {
@@ -78,7 +78,7 @@ export async function verifyAndReplayRtmr3(
   return { osImageHash, composeHash };
 }
 
-function parseEventLog(eventLog: JsonValue): EventLogEntry[] {
+function parseEventLog(eventLog: AttestationEventLog): EventLogEntry[] {
   let parsed: unknown = eventLog;
   if (typeof parsed === 'string') {
     try {
@@ -88,7 +88,7 @@ function parseEventLog(eventLog: JsonValue): EventLogEntry[] {
         {
           phase: 'measurement',
           code: 'measurement.event_log_invalid',
-          details: { path: 'event_log', reason: 'invalid_json' },
+          details: { path: 'eventLog', reason: 'invalid_json' },
         },
         { cause },
       );
@@ -99,7 +99,7 @@ function parseEventLog(eventLog: JsonValue): EventLogEntry[] {
       phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
-        path: 'event_log',
+        path: 'eventLog',
         reason: 'invalid_type',
         expected: 'array',
       },
@@ -110,7 +110,7 @@ function parseEventLog(eventLog: JsonValue): EventLogEntry[] {
 }
 
 function parseEventLogEntry(value: unknown, index: number): EventLogEntry {
-  const path = `event_log[${index}]`;
+  const path = `eventLog[${index}]`;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new VerificationError({
       phase: 'measurement',
@@ -237,7 +237,7 @@ function requireString(
       phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
-        path: `event_log[${index}].${field}`,
+        path: `eventLog[${index}].${field}`,
         reason: 'invalid_type',
         expected: 'string',
       },
@@ -260,7 +260,7 @@ function optionalString(
       phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
-        path: `event_log[${index}].${field}`,
+        path: `eventLog[${index}].${field}`,
         reason: 'invalid_type',
         expected: 'string',
       },
@@ -280,7 +280,7 @@ function requireNumber(
       phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
-        path: `event_log[${index}].${field}`,
+        path: `eventLog[${index}].${field}`,
         reason: 'invalid_type',
         expected: 'unsigned 32-bit integer',
       },

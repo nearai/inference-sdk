@@ -6,8 +6,11 @@ import { build } from 'esbuild';
 
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
 const entry = [
-  `export { providerTeeSignatureText, verifyProviderTeeResponse } from ${JSON.stringify(
+  `export { verifyModelResponse } from ${JSON.stringify(
     join(packageDirectory, 'src/core/chat.ts'),
+  )};`,
+  `export { verifyModelAttestation } from ${JSON.stringify(
+    join(packageDirectory, 'src/core/attestation-model.ts'),
   )};`,
   `export { verifyCloudModelReportDataBinding } from ${JSON.stringify(
     join(packageDirectory, 'src/core/attestation-common.ts'),
@@ -64,9 +67,10 @@ try {
 
   const requestBody = new TextEncoder().encode('{"model":"canonical-model"}');
   const responseBody = new TextEncoder().encode('data: hello\n\n');
-  assert.match(
-    sdk.providerTeeSignatureText('canonical-model', requestBody, responseBody),
-    /^canonical-model:[0-9a-f]{64}:[0-9a-f]{64}$/,
+  const signedText = await modelSignedText(
+    'canonical-model',
+    requestBody,
+    responseBody,
   );
 
   const nonce = '11'.repeat(32);
@@ -76,12 +80,12 @@ try {
   reportData.set(bytesFromHex(nonce), 32);
   assert.deepEqual(
     await sdk.verifyCloudModelReportDataBinding({
-      expectedNonce: nonce,
+      nonce,
       reportData,
-      reportedTlsCertFingerprint: undefined,
+      reportedSpkiFingerprint: undefined,
       signingAddress,
     }),
-    { kind: 'signer_nonce' },
+    { kind: 'none' },
   );
 
   const expectedRtmr3 = new Uint8Array(
@@ -95,27 +99,56 @@ try {
     { composeHash: undefined, osImageHash: undefined },
   );
 
-  const signatureText = sdk.providerTeeSignatureText(
-    'canonical-model',
-    requestBody,
-    responseBody,
+  const modelSigningAddress = '33'.repeat(32);
+  const modelReportData = new Uint8Array(64);
+  modelReportData.set(bytesFromHex(modelSigningAddress));
+  modelReportData.set(bytesFromHex(nonce), 32);
+  const appCompose = '{}';
+  const appComposeHash = new Uint8Array(
+    await globalThis.crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(appCompose),
+    ),
   );
+  const mrConfigId = new Uint8Array(48);
+  mrConfigId[0] = 1;
+  mrConfigId.set(appComposeHash, 1);
+  const verifiedAttestation = await sdk.verifyModelAttestation({
+    attestation: {
+      nonce,
+      signer: { algorithm: 'ed25519', address: modelSigningAddress },
+      intelQuote: 'aa',
+      eventLog: [{ digest: '00'.repeat(48), imr: 3 }],
+      appCompose,
+    },
+    nonce,
+    verifiers: {
+      quote: async () => ({
+        tcbStatus: 'UpToDate',
+        advisoryIds: [],
+        debugEnabled: false,
+        reportData: modelReportData,
+        mrConfigId,
+        rtMr3: expectedRtmr3,
+      }),
+    },
+  });
+
   assert.throws(
     () =>
-      sdk.verifyProviderTeeResponse({
+      sdk.verifyModelResponse({
         requestBody,
         responseBody,
         signature: {
+          source: 'model_tee',
           signature: '00',
-          signature_kind: 'provider_tee',
-          signing_address: '33'.repeat(32),
-          signing_algo: 'ed25519',
-          text: signatureText,
+          signer: {
+            algorithm: 'ed25519',
+            address: modelSigningAddress,
+          },
+          signedText,
         },
-        verifiedModelAttestation: {
-          signingAddress: '33'.repeat(32),
-          signingAlgo: 'ed25519',
-        },
+        attestation: verifiedAttestation,
       }),
     (error) => {
       if (
@@ -135,6 +168,19 @@ try {
   assert.equal(globalThis.Buffer, undefined);
 } finally {
   globalThis.Buffer = originalBuffer;
+}
+
+async function modelSignedText(model, request, response) {
+  return `${model}:${await sha256Hex(request)}:${await sha256Hex(response)}`;
+}
+
+async function sha256Hex(value) {
+  const digest = new Uint8Array(
+    await globalThis.crypto.subtle.digest('SHA-256', value),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(
+    '',
+  );
 }
 
 function bytesFromHex(value) {

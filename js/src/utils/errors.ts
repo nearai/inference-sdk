@@ -1,8 +1,13 @@
 import type { TcbStatus } from '../types/verification';
 
+type ApiResource =
+  | 'model_attestation'
+  | 'gateway_attestation'
+  | 'completion_signature';
+
 /** A JSON-safe description of a verification failure.
  *
- * `code`, `phase`, and the fields in `details` are the public error contract.
+ * `code`, `phase`, and any fields in `details` are the public error contract.
  * `message` is only for people; consumers must not parse it. The shape is kept
  * deliberately free of API keys, nonces, quotes, prompts, and response bytes.
  * Future language SDKs should preserve these codes and detail field names.
@@ -21,6 +26,7 @@ export type VerificationFailure =
           | 'invalid_jwt'
           | 'invalid_url'
           | 'invalid_header'
+          | 'unverified_attestation'
           | 'unsupported_value';
         expected?: string;
         expectedBytes?: number;
@@ -31,7 +37,7 @@ export type VerificationFailure =
       phase: 'api';
       code: 'api.transport_failed';
       details: {
-        operation: string;
+        resource: ApiResource;
         reason: 'request' | 'response_body';
       };
       retryable: true;
@@ -40,7 +46,7 @@ export type VerificationFailure =
       phase: 'api';
       code: 'api.http_status';
       details: {
-        operation: string;
+        resource: ApiResource;
         status: number;
       };
       retryable: boolean;
@@ -48,7 +54,7 @@ export type VerificationFailure =
   | {
       phase: 'api';
       code: 'api.invalid_json';
-      details: { operation: string };
+      details: { resource: ApiResource };
     }
   | {
       phase: 'api';
@@ -65,9 +71,15 @@ export type VerificationFailure =
       details: { expectedCount: 1; actualCount: number };
     }
   | {
+      phase: 'api';
+      code: 'api.attestation_signer_mismatch';
+      details: {
+        resource: 'model_attestation' | 'gateway_attestation';
+      };
+    }
+  | {
       phase: 'quote';
       code: 'quote.collateral_unavailable';
-      details: Record<never, never>;
       retryable: true;
     }
   | {
@@ -92,40 +104,32 @@ export type VerificationFailure =
   | {
       phase: 'policy';
       code: 'policy.debug_enabled';
-      details: { target: 'near_model' | 'gateway' };
     }
   | {
       phase: 'policy';
       code: 'policy.tcb_status_not_allowed';
       details: {
-        target: 'near_model' | 'gateway';
         actual: TcbStatus;
-        allowed: readonly TcbStatus[];
+        accepted: readonly TcbStatus[];
         advisoryIds: readonly string[];
       };
     }
   | {
       phase: 'policy';
       code: 'policy.gpu_evidence_required';
-      details: Record<never, never>;
-    }
-  | {
-      phase: 'policy';
-      code: 'policy.provenance_verifier_required';
-      details: Record<never, never>;
     }
   | {
       phase: 'binding';
       code: 'binding.nonce_mismatch';
       details: {
-        source: 'request_nonce' | 'quote_report_data' | 'nvidia_payload';
+        source: 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
       };
     }
   | {
       phase: 'binding';
       code: 'binding.report_data_invalid';
       details: {
-        source: 'quote_report_data' | 'advertised_report_data';
+        source: 'quoteReportData' | 'reportedQuoteData';
         reason: 'invalid_hex' | 'wrong_length';
         expectedBytes: 64;
         actualBytes?: number;
@@ -135,20 +139,16 @@ export type VerificationFailure =
       phase: 'binding';
       code: 'binding.report_data_mismatch';
       details: {
-        source:
-          | 'advertised_report_data'
-          | 'signer_binding'
-          | 'signer_tls_binding';
+        source: 'reportedQuoteData' | 'signerBinding' | 'signerTlsBinding';
       };
     }
   | {
       phase: 'binding';
-      code: 'binding.tls_fingerprint_missing';
-      details: { target: 'gateway' };
+      code: 'binding.spki_fingerprint_missing';
     }
   | {
       phase: 'binding';
-      code: 'binding.tls_fingerprint_mismatch';
+      code: 'binding.spki_fingerprint_mismatch';
       details: { source: 'peer_tls_connection' };
     }
   | {
@@ -194,7 +194,6 @@ export type VerificationFailure =
   | {
       phase: 'measurement';
       code: 'measurement.app_compose_mrconfigid_mismatch';
-      details: Record<never, never>;
     }
   | {
       phase: 'gpu';
@@ -229,7 +228,6 @@ export type VerificationFailure =
   | {
       phase: 'provenance';
       code: 'provenance.verification_failed';
-      details: Record<never, never>;
     }
   | {
       phase: 'signature';
@@ -238,8 +236,11 @@ export type VerificationFailure =
     }
   | {
       phase: 'signature';
-      code: 'signature.unknown_kind';
-      details: Record<never, never>;
+      code: 'signature.source_mismatch';
+      details: {
+        expected: 'model_tee' | 'gateway';
+        actual: 'model_tee' | 'gateway';
+      };
     }
   | {
       phase: 'signature';
@@ -253,7 +254,7 @@ export type VerificationFailure =
       phase: 'signature';
       code: 'signature.format_invalid';
       details: {
-        field: 'signature' | 'signing_address' | 'signing_algo';
+        field: 'signature' | 'signer.address' | 'signer.algorithm';
         reason: 'invalid_hex' | 'wrong_length' | 'unsupported_algorithm';
         expectedBytes?: number;
         actualBytes?: number;
@@ -267,7 +268,6 @@ export type VerificationFailure =
   | {
       phase: 'signature';
       code: 'signature.signer_mismatch';
-      details: Record<never, never>;
     }
   | {
       phase: 'runtime';
@@ -305,10 +305,6 @@ export class VerificationError extends Error {
 
   get phase(): VerificationPhase {
     return this.failure.phase;
-  }
-
-  get details(): VerificationFailure['details'] {
-    return this.failure.details;
   }
 
   get retryable(): boolean {
@@ -378,6 +374,8 @@ function formatFailureMessage(failure: VerificationFailure): string {
       return `API response has an invalid ${failure.details.path} field`;
     case 'api.unexpected_model_attestation_count':
       return 'API returned an unexpected number of model attestations';
+    case 'api.attestation_signer_mismatch':
+      return 'Attestation signer does not match the completion signature';
     case 'quote.collateral_unavailable':
       return 'Intel collateral is unavailable';
     case 'quote.verification_failed':
@@ -392,18 +390,16 @@ function formatFailureMessage(failure: VerificationFailure): string {
       return 'TDX TCB status is not allowed by policy';
     case 'policy.gpu_evidence_required':
       return 'GPU evidence is required by policy';
-    case 'policy.provenance_verifier_required':
-      return 'Deployment provenance verification is required by policy';
     case 'binding.nonce_mismatch':
       return 'Attestation nonce does not match';
     case 'binding.report_data_invalid':
       return 'Attestation report data is invalid';
     case 'binding.report_data_mismatch':
       return 'Attestation report data does not match the verified quote';
-    case 'binding.tls_fingerprint_missing':
-      return 'Attestation is missing its TLS fingerprint';
-    case 'binding.tls_fingerprint_mismatch':
-      return 'Attestation TLS fingerprint does not match the peer connection';
+    case 'binding.spki_fingerprint_missing':
+      return 'Attestation is missing its SPKI fingerprint';
+    case 'binding.spki_fingerprint_mismatch':
+      return 'Attestation SPKI fingerprint does not match the peer connection';
     case 'measurement.event_log_invalid':
       return 'Attestation event log is invalid';
     case 'measurement.rtmr3_mismatch':
@@ -421,13 +417,13 @@ function formatFailureMessage(failure: VerificationFailure): string {
     case 'gpu.nras_response_invalid':
       return 'NVIDIA NRAS response is invalid';
     case 'gpu.attestation_rejected':
-      return 'NVIDIA NRAS rejected GPU attestation';
+      return 'GPU evidence was rejected';
     case 'provenance.verification_failed':
       return 'Deployment provenance verification failed';
     case 'signature.unavailable':
       return 'Completion signature is unavailable';
-    case 'signature.unknown_kind':
-      return 'Completion signature kind is missing or unsupported';
+    case 'signature.source_mismatch':
+      return 'Completion signature does not support this verification claim';
     case 'signature.payload_mismatch':
       return 'Completion signature does not match the request or response';
     case 'signature.format_invalid':
