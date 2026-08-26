@@ -39,8 +39,8 @@ export function verifyReportedNonce(
  * - bytes [32, 64): caller's 32-byte nonce
  *
  * The first half becomes a gateway endpoint binding only after the report's
- * fingerprint is compared with the peer SPKI observed by the caller on that
- * same TLS connection.
+ * fingerprint is compared with the peer SPKI independently observed by the
+ * caller while receiving the completion.
  */
 export async function verifyGatewayReportDataBinding(input: {
   reportData: Uint8Array;

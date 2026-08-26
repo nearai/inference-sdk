@@ -92,7 +92,7 @@ export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
  */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
   readonly [verifiedGatewayAttestationBrand]: true;
-  /** The quote-bound fingerprint matched a peer on the caller's TLS socket. */
+  /** The quote-bound fingerprint matched the completion's observed TLS peer. */
   readonly tlsBinding: GatewayTlsBinding;
 };
 

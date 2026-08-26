@@ -8,7 +8,7 @@ model evidence.
 For every exported function, input field, result type, and error type, see the
 [API reference](./api-reference.md).
 
-The SDK also supports a separate, advanced **gateway response** claim. It has
+The SDK also supports a separate **gateway response** claim. It has
 different requirements and does not prove that a model-serving TEE produced the
 response. Start with the model-response flow below unless you specifically need
 to authenticate the Cloud API gateway's TLS connection.
@@ -222,31 +222,29 @@ or policy check is not automatically safe to retry.
 In particular, a `completion_signature` HTTP 404 is retryable because the
 signature may still be being recorded.
 
-## Verify a gateway response (advanced)
+## Verify a gateway response
 
-Gateway verification makes a different claim: the gateway evidence is bound to
-a TLS peer that your application observed. It does not establish that a
-model-serving TEE produced the completion.
+Gateway verification verifies the gateway signature over the exact completion
+bytes and binds its signer to evidence whose SPKI fingerprint matches the TLS
+peer your application observed. It does not establish that a model-serving TEE
+produced the completion.
 
-This flow requires a TLS transport that your application controls. It must:
+Your completion transport must expose the SHA-256 SPKI fingerprint of its TLS
+peer. Pass that independently observed value to `verifyGatewayAttestation`.
+A normal keep-alive transport usually reuses an eligible connection for the
+later signature and evidence requests. Reusing its transport is also useful
+when a deployment can route requests to different gateways.
 
-1. receive the completion response, retain its exact bytes, record the
-   SHA-256 SPKI fingerprint of its TLS peer, and keep that connection open;
-2. use that same connection to fetch gateway evidence after obtaining the
-   completion signature; and
-3. pass the recorded fingerprint to `verifyGatewayAttestation`.
-
-Ordinary browser `fetch`, and most ordinary Node `fetch` usage, cannot expose
-the peer certificate or prove that a later request reused the connection. In
-those environments, do not make the gateway claim. A custom connection-owning
-transport must retain that relationship and pass its observed fingerprint to
-`verifyGatewayAttestation`.
+The SDK compares the peer fingerprint, not a TLS session identifier: it does
+not require or prove connection reuse. Browser `fetch` and most ordinary Node
+`fetch` APIs do not expose the peer certificate, so use a TLS-aware backend
+transport for this flow. Otherwise, use model-response verification.
 
 ```ts
-// `connection` owns the TLS connection used for this completion. It keeps the
-// connection open, exposes its peer SPKI fingerprint, and supplies `fetch`
-// for later requests on that same connection.
+// `connection` exposes the peer SPKI fingerprint for this completion.
+// Reusing its transport preserves normal connection affinity when available.
 const completion = await connection.complete(request);
+const peerSpkiFingerprint = connection.peerSpkiFingerprint;
 
 const client = new NearAiCloudClient({
   apiKey,
@@ -265,7 +263,7 @@ const gatewayAttestation = await client.fetchGatewayAttestation({
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
   attestation: gatewayAttestation,
   nonce: gatewayNonce,
-  peerSpkiFingerprint: connection.peerSpkiFingerprint,
+  peerSpkiFingerprint,
 });
 
 verifyGatewayResponse({

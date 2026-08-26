@@ -51,11 +51,12 @@ API environment.
 
 ## Gateway verification
 
-Gateway verification is not a substitute for model-response verification. It
-binds gateway evidence to a SHA-256 SPKI fingerprint observed by your client on
-the same TLS connection as the response. A normal browser or `fetch` client
-cannot usually make that claim because it cannot expose the peer certificate or
-prove connection reuse. See the guide before using this path.
+Gateway verification is an optional complement to model-response verification.
+It verifies that gateway evidence matches the SHA-256 SPKI fingerprint your
+application observed for the TLS peer that served the completion. Standard
+browser `fetch` and most Node `fetch` clients do not expose that fingerprint,
+so this flow normally uses a TLS-aware backend transport. See the guide before
+using this path.
 
 ## Runtime
 

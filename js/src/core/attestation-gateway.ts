@@ -13,8 +13,8 @@ import {
 import { markVerifiedGatewayAttestation } from './verified-attestation';
 
 /**
- * Verify gateway evidence and bind it to the client's live gateway TLS
- * connection. The caller must obtain the peer SPKI on that same connection.
+ * Verify gateway evidence and bind it to the TLS peer fingerprint independently
+ * observed by the client while receiving the completion.
  */
 export async function verifyGatewayAttestation(
   input: VerifyGatewayAttestationInput,

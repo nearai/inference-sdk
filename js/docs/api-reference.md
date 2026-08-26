@@ -79,12 +79,14 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
 | `VerifyGatewayAttestationInput` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
 |  | `nonce` | `string` | Yes | Nonce sent in the attestation request and required to match the evidence. |
-|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint observed on the TLS connection controlled by the caller. |
+|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint independently observed for the TLS peer that served the completion. |
 |  | `policy?` | `AttestationPolicy` | No | TCB requirements. |
 |  | `verifiers?` | `AttestationVerifiers` | No | Quote and deployment verifier overrides. |
 
 `peerSpkiFingerprint` must be independently observed by the caller. Do not use
-`declaredSpkiFingerprint` from the attestation as this field.
+`declaredSpkiFingerprint` from the attestation as this field. The SDK compares
+the peer fingerprint with quote-bound evidence; it does not prove TLS
+connection reuse.
 
 ### Response verification inputs
 

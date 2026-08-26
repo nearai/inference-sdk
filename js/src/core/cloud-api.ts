@@ -108,8 +108,8 @@ export class NearAiCloudClient {
 
   /**
    * Fetch gateway evidence with the TLS fingerprint required for gateway
-   * verification. The caller must still observe that fingerprint on the same
-   * TLS connection it controls.
+   * verification. The caller must independently observe that fingerprint for
+   * the TLS peer that served the completion.
    */
   async fetchGatewayAttestation(
     input: FetchGatewayAttestationInput,
