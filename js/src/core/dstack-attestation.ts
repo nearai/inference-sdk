@@ -4,6 +4,7 @@ import {
   NearVerificationPolicy,
   ProvenanceVerifier,
   QuoteVerifier,
+  ReportDataBinding,
   VerifiedDstackAttestation,
   VerifiedTdxQuote,
 } from '../types/verification';
@@ -26,7 +27,9 @@ const DEFAULT_POLICY: Required<NearVerificationPolicy> = {
   requireDeploymentProvenance: false,
 };
 
-export type VerifyDstackAttestationInput = {
+export type VerifyDstackAttestationInput<
+  TReportDataBinding extends ReportDataBinding,
+> = {
   target: 'near_model' | 'gateway';
   attestation: DstackAttestation;
   expectedNonce: string;
@@ -37,7 +40,7 @@ export type VerifyDstackAttestationInput = {
   nvidiaPayload?: string | null;
   verifyGpu: boolean;
   advertisedReportData?: string;
-  verifyReportDataBinding(reportData: Uint8Array): Promise<string>;
+  verifyReportDataBinding(reportData: Uint8Array): Promise<TReportDataBinding>;
 };
 
 /**
@@ -45,9 +48,11 @@ export type VerifyDstackAttestationInput = {
  * the report-data binding rule: Cloud model evidence and gateway TLS evidence
  * intentionally have different trust boundaries.
  */
-export async function verifyDstackAttestation(
-  input: VerifyDstackAttestationInput,
-): Promise<VerifiedDstackAttestation> {
+export async function verifyDstackAttestation<
+  TReportDataBinding extends ReportDataBinding,
+>(
+  input: VerifyDstackAttestationInput<TReportDataBinding>,
+): Promise<VerifiedDstackAttestation<TReportDataBinding>> {
   const policy = { ...DEFAULT_POLICY, ...input.policy };
   const { attestation } = input;
 
@@ -82,7 +87,7 @@ export async function verifyDstackAttestation(
     });
   }
 
-  const tlsCertFingerprint = await input.verifyReportDataBinding(
+  const reportDataBinding = await input.verifyReportDataBinding(
     quote.reportData,
   );
   const runtimeMeasurements = await verifyAndReplayRtmr3(
@@ -133,7 +138,7 @@ export async function verifyDstackAttestation(
   return {
     signingAddress: attestation.signing_address,
     signingAlgo: attestation.signing_algo,
-    tlsCertFingerprint,
+    reportDataBinding,
     tcbStatus: quote.tcbStatus,
     advisoryIds: quote.advisoryIds,
     appCompose,

@@ -15,6 +15,23 @@ deployment. Set `requireDeploymentProvenance: true` and supply a
 `provenanceVerifier` to apply your own allowlist or provenance policy. The
 result exposes `provenanceVerified` so this distinction is explicit.
 
+## Report-data bindings
+
+The `reportDataBinding` on a verified model result records the layout that
+passed. By default, `NearAiCloudClient.fetchNearModelAttestation` does not
+request a TLS fingerprint, and a successful result has
+`kind: 'signer_nonce'`: the Intel quote binds the model signer and the caller
+nonce.
+
+Pass `includeTlsFingerprint: true` when fetching model evidence to request the
+fingerprint layout. Its successful result has
+`kind: 'signer_declared_tls_nonce'` and exposes the quote-bound
+`tlsCertFingerprint`. That fingerprint is declared in the Cloud API report;
+because the client TLS connection terminates at the NEAR AI Cloud gateway, it
+does not establish a client-to-model TLS connection. When a model report
+contains a fingerprint, verification requires the signer-and-fingerprint
+layout and never falls back to `signer_nonce`.
+
 ## TCB policy
 
 The default policy accepts `UpToDate` and `OutOfDate`.
@@ -138,6 +155,11 @@ fingerprint from the same live TLS connection that retrieved the report and
 served the response you are checking. A normal browser `fetch` cannot expose
 that peer certificate or guarantee connection reuse, so `NearAiCloudClient`
 does not make this claim for you.
+
+A successful gateway result has
+`reportDataBinding.kind === 'signer_peer_tls_nonce'`: the SDK has compared the
+quote-bound fingerprint with the fingerprint observed on that same peer
+connection.
 
 ## GPU evidence
 

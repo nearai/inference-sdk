@@ -69,10 +69,29 @@ describe('NearAiCloudClient', () => {
       nonce,
       signing_algo: 'ecdsa',
       provider: 'near',
-      include_tls_fingerprint: 'true',
     });
     expect(request.headers.get('authorization')).toBe('Bearer test');
     expect(request.headers.get('x-no-aliasing')).toBe('true');
+  });
+
+  test('lets a NEAR model caller opt in to a reported TLS fingerprint', async () => {
+    const api = clientReplyingWith(nearReport());
+
+    await api.client.fetchNearAiCloudAttestationReport({
+      model: 'canonical-model',
+      nonce,
+      signingAlgo: 'ecdsa',
+      includeTlsFingerprint: true,
+    });
+
+    const url = new URL(api.request().url);
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      model: 'canonical-model',
+      nonce,
+      signing_algo: 'ecdsa',
+      provider: 'near',
+      include_tls_fingerprint: 'true',
+    });
   });
 
   test('fetches gateway evidence without selecting a model provider', async () => {

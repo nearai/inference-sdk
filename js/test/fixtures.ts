@@ -47,6 +47,20 @@ export function createQuote(
   };
 }
 
+/** A Cloud model quote using the signer + nonce report-data layout. */
+export function createLegacyModelQuote(
+  overrides: Partial<VerifiedTdxQuote> = {},
+): VerifiedTdxQuote {
+  return createQuote({
+    reportData: Buffer.concat([
+      Buffer.from(signingAddress.slice(2), 'hex'),
+      Buffer.alloc(12),
+      Buffer.from(nonce, 'hex'),
+    ]),
+    ...overrides,
+  });
+}
+
 export function createNearModelAttestation(
   overrides: Partial<NearModelAttestation> = {},
 ): NearModelAttestation {

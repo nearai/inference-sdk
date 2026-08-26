@@ -30,7 +30,10 @@ describe('verifyGatewayAttestation', () => {
 
     expect(result).toMatchObject({
       kind: 'gateway',
-      tlsCertFingerprint: tlsFingerprint,
+      reportDataBinding: {
+        kind: 'signer_peer_tls_nonce',
+        tlsCertFingerprint: tlsFingerprint,
+      },
     });
   });
 
@@ -60,6 +63,23 @@ describe('verifyGatewayAttestation', () => {
         phase: 'binding',
         code: 'binding.tls_fingerprint_mismatch',
         details: { source: 'peer_tls_connection' },
+      },
+    });
+  });
+
+  test('requires a TLS fingerprint on gateway evidence', async () => {
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation({ tls_cert_fingerprint: null }),
+        expectedNonce: nonce,
+        peerTlsCertFingerprint: tlsFingerprint,
+        quoteVerifier: { verify: async () => createQuote() },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.tls_fingerprint_missing',
+        details: { target: 'gateway' },
       },
     });
   });

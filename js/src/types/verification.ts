@@ -92,11 +92,42 @@ export type VerifyGatewayAttestationInput = BaseVerificationInput & {
   peerTlsCertFingerprint: string;
 };
 
-export type VerifiedDstackAttestation = {
+/** How the Intel-signed report data binds the verified signer and nonce. */
+export type ReportDataBinding =
+  | {
+      /** Quote binds the signer and fresh nonce, with no TLS claim. */
+      kind: 'signer_nonce';
+    }
+  | {
+      /** Quote additionally binds a TLS fingerprint declared in the report. */
+      kind: 'signer_declared_tls_nonce';
+      tlsCertFingerprint: string;
+    }
+  | {
+      /**
+       * The quote-bound TLS fingerprint matched a fingerprint observed on the
+       * same peer connection.
+       */
+      kind: 'signer_peer_tls_nonce';
+      tlsCertFingerprint: string;
+    };
+
+export type ModelReportDataBinding = Extract<
+  ReportDataBinding,
+  { kind: 'signer_nonce' | 'signer_declared_tls_nonce' }
+>;
+
+export type GatewayReportDataBinding = Extract<
+  ReportDataBinding,
+  { kind: 'signer_peer_tls_nonce' }
+>;
+
+export type VerifiedDstackAttestation<
+  TReportDataBinding extends ReportDataBinding = ReportDataBinding,
+> = {
   signingAddress: string;
   signingAlgo: SigningAlgo;
-  /** TLS SPKI fingerprint bound inside the verified quote. */
-  tlsCertFingerprint: string;
+  reportDataBinding: TReportDataBinding;
   tcbStatus: TcbStatus;
   advisoryIds: string[];
   appCompose: string;
@@ -108,13 +139,15 @@ export type VerifiedDstackAttestation = {
   gpuVerified?: true;
 };
 
-export type VerifiedNearModelAttestation = VerifiedDstackAttestation & {
-  kind: 'near_model';
-};
+export type VerifiedNearModelAttestation =
+  VerifiedDstackAttestation<ModelReportDataBinding> & {
+    kind: 'near_model';
+  };
 
-export type VerifiedGatewayAttestation = VerifiedDstackAttestation & {
-  kind: 'gateway';
-};
+export type VerifiedGatewayAttestation =
+  VerifiedDstackAttestation<GatewayReportDataBinding> & {
+    kind: 'gateway';
+  };
 
 export type VerifyProviderTeeResponseInput = CompletionBytes & {
   signature: ProviderTeeSignature;

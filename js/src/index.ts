@@ -44,9 +44,12 @@ export type {
 } from './types/chat';
 export type {
   GpuVerifier,
+  GatewayReportDataBinding,
+  ModelReportDataBinding,
   NearVerificationPolicy,
   ProvenanceVerifier,
   QuoteVerifier,
+  ReportDataBinding,
   TcbStatus,
   VerifiedDstackAttestation,
   VerifiedGatewayAttestation,

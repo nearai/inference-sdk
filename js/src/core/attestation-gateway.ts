@@ -2,7 +2,7 @@ import {
   VerifiedGatewayAttestation,
   VerifyGatewayAttestationInput,
 } from '../types/verification';
-import { verifyStrictReportDataBinding } from './attestation-common';
+import { verifyGatewayReportDataBinding } from './attestation-common';
 import { verifyDstackAttestation } from './dstack-attestation';
 
 /**
@@ -23,7 +23,7 @@ export async function verifyGatewayAttestation(
     verifyGpu: false,
     advertisedReportData: attestation.report_data,
     verifyReportDataBinding: (reportData) =>
-      verifyStrictReportDataBinding({
+      verifyGatewayReportDataBinding({
         reportData,
         expectedNonce: input.expectedNonce,
         signingAddress: attestation.signing_address,

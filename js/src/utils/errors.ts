@@ -134,12 +134,17 @@ export type VerificationFailure =
   | {
       phase: 'binding';
       code: 'binding.report_data_mismatch';
-      details: { source: 'advertised_report_data' | 'signer_tls_binding' };
+      details: {
+        source:
+          | 'advertised_report_data'
+          | 'signer_binding'
+          | 'signer_tls_binding';
+      };
     }
   | {
       phase: 'binding';
       code: 'binding.tls_fingerprint_missing';
-      details: { target: 'near_model' | 'gateway' };
+      details: { target: 'gateway' };
     }
   | {
       phase: 'binding';

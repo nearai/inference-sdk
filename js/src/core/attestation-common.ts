@@ -1,4 +1,8 @@
 import { TcbInfo } from '../types/attestation-common';
+import {
+  GatewayReportDataBinding,
+  ModelReportDataBinding,
+} from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 
@@ -33,13 +37,13 @@ export function verifyReportedNonce(
  * - bytes 0..32: SHA-256(signing_address_bytes || TLS SPKI fingerprint bytes)
  * - bytes 32..64: caller's 32-byte nonce
  */
-export async function verifyStrictReportDataBinding(input: {
+export async function verifyGatewayReportDataBinding(input: {
   reportData: Uint8Array;
   expectedNonce: string;
   signingAddress: string;
   reportedTlsCertFingerprint: string | null | undefined;
   peerTlsCertFingerprint: string;
-}): Promise<string> {
+}): Promise<GatewayReportDataBinding> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
     throw new VerificationError({
@@ -105,23 +109,25 @@ export async function verifyStrictReportDataBinding(input: {
     });
   }
 
-  return reportedFingerprint.toString('hex');
+  return {
+    kind: 'signer_peer_tls_nonce',
+    tlsCertFingerprint: reportedFingerprint.toString('hex'),
+  };
 }
 
 /**
  * Verify the model-report binding returned through the Cloud API. A client is
- * not connected to the upstream model endpoint, so this checks the quote's
- * signer/fingerprint/nonce binding but deliberately does not claim a
- * client-to-model TLS connection binding. NEAR reports use the strict
- * fingerprint form even when the client cannot observe that upstream
- * connection itself.
+ * not connected to the upstream model endpoint, so a successful check never
+ * claims client-to-model TLS binding. Both model layouts bind the signer and
+ * nonce; when the report declares a TLS fingerprint, it is additionally bound
+ * inside the quote but is not a client-observed peer certificate.
  */
 export async function verifyCloudModelReportDataBinding(input: {
   reportData: Uint8Array;
   expectedNonce: string;
   signingAddress: string;
   reportedTlsCertFingerprint: string | null | undefined;
-}): Promise<string> {
+}): Promise<ModelReportDataBinding> {
   const reportData = Buffer.from(input.reportData);
   if (reportData.length !== 64) {
     throw new VerificationError({
@@ -148,30 +154,42 @@ export async function verifyCloudModelReportDataBinding(input: {
     });
   }
 
-  if (!input.reportedTlsCertFingerprint) {
-    throw new VerificationError({
-      phase: 'binding',
-      code: 'binding.tls_fingerprint_missing',
-      details: { target: 'near_model' },
-    });
-  }
   const signingAddress = hexToBuffer(input.signingAddress, 'signing_address');
-  const fingerprint = requireByteLength(
-    input.reportedTlsCertFingerprint,
-    32,
-    'tls_cert_fingerprint',
-  );
-  const expectedBinding = await sha256(
-    Buffer.concat([signingAddress, fingerprint]),
-  );
+  if (
+    input.reportedTlsCertFingerprint !== undefined &&
+    input.reportedTlsCertFingerprint !== null
+  ) {
+    const fingerprint = requireByteLength(
+      input.reportedTlsCertFingerprint,
+      32,
+      'tls_cert_fingerprint',
+    );
+    const expectedBinding = await sha256(
+      Buffer.concat([signingAddress, fingerprint]),
+    );
+    if (!reportData.subarray(0, 32).equals(expectedBinding)) {
+      throw new VerificationError({
+        phase: 'binding',
+        code: 'binding.report_data_mismatch',
+        details: { source: 'signer_tls_binding' },
+      });
+    }
+    return {
+      kind: 'signer_declared_tls_nonce',
+      tlsCertFingerprint: fingerprint.toString('hex'),
+    };
+  }
+
+  const expectedBinding = Buffer.alloc(32);
+  signingAddress.copy(expectedBinding);
   if (!reportData.subarray(0, 32).equals(expectedBinding)) {
     throw new VerificationError({
       phase: 'binding',
       code: 'binding.report_data_mismatch',
-      details: { source: 'signer_tls_binding' },
+      details: { source: 'signer_binding' },
     });
   }
-  return fingerprint.toString('hex');
+  return { kind: 'signer_nonce' };
 }
 
 /** Pull the raw compose string without normalizing or serializing it again. */

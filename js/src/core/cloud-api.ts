@@ -46,6 +46,8 @@ type FetchAttestationInput = {
 
 export type FetchNearModelAttestationInput = FetchAttestationInput & {
   model: string;
+  /** Request a quote-bound, server-declared TLS fingerprint for model evidence. */
+  includeTlsFingerprint?: boolean;
 };
 
 export type FetchGatewayAttestationInput = FetchAttestationInput;
@@ -82,7 +84,7 @@ export class NearAiCloudClient {
   ): Promise<NearAiCloudAttestationReport> {
     validateNearModelAttestationRequest(input);
     const url = this.endpoint('attestation/report');
-    setAttestationQuery(url, input);
+    setAttestationQuery(url, input, input.includeTlsFingerprint === true);
     url.searchParams.set('model', input.model);
     url.searchParams.set('provider', 'near');
 
@@ -115,7 +117,7 @@ export class NearAiCloudClient {
   ): Promise<GatewayAttestation> {
     validateAttestationRequest(input);
     const url = this.endpoint('attestation/report');
-    setAttestationQuery(url, input);
+    setAttestationQuery(url, input, true);
     const record = requireObject(
       await this.getJson(url, 'gateway attestation report'),
       'gateway attestation report',
@@ -208,6 +210,14 @@ function validateNearModelAttestationRequest(
   input: FetchNearModelAttestationInput,
 ): void {
   requireNonEmptyString(input.model, 'model');
+  if (
+    input.includeTlsFingerprint !== undefined &&
+    typeof input.includeTlsFingerprint !== 'boolean'
+  ) {
+    throw invalidInput('includeTlsFingerprint', 'unsupported_value', {
+      expected: 'boolean',
+    });
+  }
   validateAttestationRequest(input);
 }
 
@@ -313,10 +323,16 @@ function isRetryableHttpStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
-function setAttestationQuery(url: URL, input: FetchAttestationInput): void {
+function setAttestationQuery(
+  url: URL,
+  input: FetchAttestationInput,
+  includeTlsFingerprint: boolean,
+): void {
   url.searchParams.set('nonce', input.nonce);
   url.searchParams.set('signing_algo', input.signingAlgo);
-  url.searchParams.set('include_tls_fingerprint', 'true');
+  if (includeTlsFingerprint) {
+    url.searchParams.set('include_tls_fingerprint', 'true');
+  }
   if (input.signingAddress) {
     url.searchParams.set('signing_address', input.signingAddress);
   }

@@ -10,7 +10,7 @@ import {
 import {
   VerifiedGatewayAttestation,
   VerifiedNearModelAttestation,
-} from '../../src/types/verification';
+} from '../../src';
 
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
@@ -43,7 +43,7 @@ describe('response signature verification', () => {
       kind: 'near_model',
       signingAddress: wallet.address,
       signingAlgo: 'ecdsa',
-      tlsCertFingerprint: '11'.repeat(32),
+      reportDataBinding: { kind: 'signer_nonce' },
       tcbStatus: 'UpToDate',
       advisoryIds: [],
       appCompose: '{}',
@@ -82,7 +82,7 @@ describe('response signature verification', () => {
       kind: 'near_model',
       signingAddress: wallet.address,
       signingAlgo: 'ecdsa',
-      tlsCertFingerprint: '11'.repeat(32),
+      reportDataBinding: { kind: 'signer_nonce' },
       tcbStatus: 'UpToDate',
       advisoryIds: [],
       appCompose: '{}',
@@ -123,7 +123,10 @@ describe('response signature verification', () => {
       kind: 'gateway',
       signingAddress: Buffer.from(keyPair.publicKey).toString('hex'),
       signingAlgo: 'ed25519',
-      tlsCertFingerprint: '11'.repeat(32),
+      reportDataBinding: {
+        kind: 'signer_peer_tls_nonce',
+        tlsCertFingerprint: '11'.repeat(32),
+      },
       tcbStatus: 'UpToDate',
       advisoryIds: [],
       appCompose: '{}',

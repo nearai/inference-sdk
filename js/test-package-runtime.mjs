@@ -30,7 +30,10 @@ const result = verifyGatewayResponse({
     kind: 'gateway',
     signingAddress: Buffer.from(keyPair.publicKey).toString('hex'),
     signingAlgo: 'ed25519',
-    tlsCertFingerprint: '11'.repeat(32),
+    reportDataBinding: {
+      kind: 'signer_peer_tls_nonce',
+      tlsCertFingerprint: '11'.repeat(32),
+    },
     tcbStatus: 'UpToDate',
     advisoryIds: [],
     appCompose: '{}',

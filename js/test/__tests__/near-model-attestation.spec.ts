@@ -2,11 +2,12 @@ import { verifyNearModelAttestation } from '../../src';
 import { QuoteVerifier } from '../../src/types/verification';
 import {
   appCompose,
+  createLegacyModelQuote,
   createNearModelAttestation,
   createQuote,
   nonce,
   sha384,
-  signingAddress,
+  tlsFingerprint,
 } from '../fixtures';
 
 describe('verifyNearModelAttestation', () => {
@@ -25,6 +26,10 @@ describe('verifyNearModelAttestation', () => {
       kind: 'near_model',
       tcbStatus: 'UpToDate',
       appCompose,
+      reportDataBinding: {
+        kind: 'signer_declared_tls_nonce',
+        tlsCertFingerprint: tlsFingerprint,
+      },
       provenanceVerified: false,
       runtimeMeasurements: { composeHash: 'beef' },
     });
@@ -49,11 +54,50 @@ describe('verifyNearModelAttestation', () => {
     });
   });
 
-  test('rejects a NEAR model report without the strict TLS fingerprint binding', async () => {
-    const quote = createQuote({
+  test('accepts the legacy signer + nonce model binding without a TLS fingerprint', async () => {
+    const result = await verifyNearModelAttestation({
+      attestation: createNearModelAttestation({
+        tls_cert_fingerprint: undefined,
+      }),
+      expectedNonce: nonce,
+      quoteVerifier: { verify: async () => createLegacyModelQuote() },
+    });
+
+    expect(result.reportDataBinding).toEqual({ kind: 'signer_nonce' });
+  });
+
+  test('accepts the legacy signer + nonce model binding when the TLS fingerprint is null', async () => {
+    const result = await verifyNearModelAttestation({
+      attestation: createNearModelAttestation({
+        tls_cert_fingerprint: null,
+      }),
+      expectedNonce: nonce,
+      quoteVerifier: { verify: async () => createLegacyModelQuote() },
+    });
+
+    expect(result.reportDataBinding).toEqual({ kind: 'signer_nonce' });
+  });
+
+  test('does not fall back to signer + nonce when a reported TLS fingerprint is present', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: { verify: async () => createLegacyModelQuote() },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'binding',
+        code: 'binding.report_data_mismatch',
+        details: { source: 'signer_tls_binding' },
+      },
+    });
+  });
+
+  test('rejects a legacy model binding whose padded signer does not match', async () => {
+    const quote = createLegacyModelQuote({
       reportData: Buffer.concat([
-        Buffer.from(signingAddress.slice(2), 'hex'),
-        Buffer.alloc(12),
+        Buffer.alloc(32, 0x44),
         Buffer.from(nonce, 'hex'),
       ]),
     });
@@ -69,8 +113,8 @@ describe('verifyNearModelAttestation', () => {
     ).rejects.toMatchObject({
       failure: {
         phase: 'binding',
-        code: 'binding.tls_fingerprint_missing',
-        details: { target: 'near_model' },
+        code: 'binding.report_data_mismatch',
+        details: { source: 'signer_binding' },
       },
     });
   });
