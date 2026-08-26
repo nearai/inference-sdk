@@ -6,7 +6,11 @@ import {
 import { VerificationError } from '../utils/errors';
 import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 
-/** Validate freshness at the untrusted JSON layer before inspecting the quote. */
+/**
+ * Reject an inconsistent wire report early. This JSON field is untrusted;
+ * freshness is established only when the Intel-signed report data contains the
+ * same caller nonce.
+ */
 export function verifyReportedNonce(
   reportedNonce: string,
   expectedNonce: string,
@@ -34,8 +38,12 @@ export function verifyReportedNonce(
 /**
  * Verify the strict NEAR report-data layout held inside an Intel-signed quote:
  *
- * - bytes 0..32: SHA-256(signing_address_bytes || TLS SPKI fingerprint bytes)
- * - bytes 32..64: caller's 32-byte nonce
+ * - bytes [0, 32): SHA-256(signing_address_bytes || TLS SPKI fingerprint)
+ * - bytes [32, 64): caller's 32-byte nonce
+ *
+ * The first half becomes a gateway endpoint binding only after the report's
+ * fingerprint is compared with the peer SPKI observed by the caller on that
+ * same TLS connection.
  */
 export async function verifyGatewayReportDataBinding(input: {
   reportData: Uint8Array;
@@ -121,6 +129,15 @@ export async function verifyGatewayReportDataBinding(input: {
  * claims client-to-model TLS binding. Both model layouts bind the signer and
  * nonce; when the report declares a TLS fingerprint, it is additionally bound
  * inside the quote but is not a client-observed peer certificate.
+ *
+ * - bytes [32, 64) always contain the caller nonce.
+ * - Without `tls_cert_fingerprint`, bytes [0, 32) are the signing address
+ *   zero-padded to 32 bytes.
+ * - With `tls_cert_fingerprint`, bytes [0, 32) are
+ *   SHA-256(signing address || declared fingerprint).
+ *
+ * Presence of the fingerprint selects the latter layout. Never downgrade a
+ * report that declares a fingerprint to the legacy signer-only layout.
  */
 export async function verifyCloudModelReportDataBinding(input: {
   reportData: Uint8Array;
@@ -180,6 +197,8 @@ export async function verifyCloudModelReportDataBinding(input: {
     };
   }
 
+  // Legacy Cloud model layout is a zero-padded signer, not a hash. Keep it
+  // separate from the declared-fingerprint layout above.
   const expectedBinding = Buffer.alloc(32);
   signingAddress.copy(expectedBinding);
   if (!reportData.subarray(0, 32).equals(expectedBinding)) {
@@ -264,7 +283,11 @@ export async function verifyAppComposeMrConfigBinding(
   }
 }
 
-/** Extract image digests for an optional caller-supplied provenance verifier. */
+/**
+ * Extract syntactically present image digests for a caller-supplied provenance
+ * verifier. This does not query registries, verify published attestations, or
+ * independently establish image provenance.
+ */
 export function extractImageDigests(appCompose: string): string[] {
   const digests = new Set<string>();
   for (const match of appCompose.matchAll(/@sha256:([0-9a-fA-F]{64})/g)) {
@@ -273,6 +296,11 @@ export function extractImageDigests(appCompose: string): string[] {
   return [...digests];
 }
 
+/**
+ * Cross-check the optional JSON `report_data` copy against the authenticated
+ * Intel quote. The quote remains the trust source; this rejects incoherent
+ * wire evidence without treating the JSON field as independently trusted.
+ */
 export function verifyAdvertisedReportData(
   advertisedReportData: string | undefined,
   quoteReportData: Uint8Array,

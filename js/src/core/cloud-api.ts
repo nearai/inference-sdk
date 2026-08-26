@@ -28,8 +28,12 @@ type FetchLike = (
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
 
 export type NearAiCloudClientOptions = {
-  /** API base including its version, for example https://cloud-api.near.ai/v1. */
+  /**
+   * Cloud API base including its version, for example
+   * `https://cloud-api.near.ai/v1`.
+   */
   baseUrl: string;
+  /** Used only for authorized Cloud API evidence and signature requests. */
   apiKey: string;
   /**
    * Injectable transport for tests. A plain fetch implementation cannot prove
@@ -38,22 +42,38 @@ export type NearAiCloudClientOptions = {
   fetch?: FetchLike;
 };
 
-type FetchAttestationInput = {
+/** Common inputs for a Cloud API attestation-report request. */
+export type FetchAttestationInput = {
+  /** Fresh caller-generated 32-byte hex nonce; retain it for verification. */
   nonce: string;
+  /** Signature representation requested from the Cloud API. */
   signingAlgo: SigningAlgo;
+  /**
+   * Optional report signer filter. For a model response, use the signer from
+   * its `provider_tee` signature to fetch matching evidence.
+   */
   signingAddress?: string;
 };
 
 export type FetchNearModelAttestationInput = FetchAttestationInput & {
+  /**
+   * Canonical model ID from the exact completion request, sent with
+   * `x-no-aliasing: true`.
+   */
   model: string;
-  /** Request a quote-bound, server-declared TLS fingerprint for model evidence. */
+  /**
+   * Opt in to a quote-bound, server-declared TLS fingerprint. Defaults to
+   * false and does not create a client-to-model peer TLS proof when enabled.
+   */
   includeTlsFingerprint?: boolean;
 };
 
 export type FetchGatewayAttestationInput = FetchAttestationInput;
 
 export type FetchCompletionSignatureInput = {
+  /** Completion ID returned by the completion endpoint. */
   chatId: string;
+  /** Signature representation to request; the client does not probe both. */
   signingAlgo: SigningAlgo;
 };
 
@@ -76,14 +96,19 @@ export class NearAiCloudClient {
   }
 
   /**
-   * Fetch the gateway and NEAR model evidence returned by one provider-filtered
-   * report request. Model aliases are rejected before the request is served.
+   * Fetch the parsed gateway and NEAR model wire evidence returned by one
+   * provider-filtered report request. Model aliases are rejected before the
+   * request is served. This is a model-evidence convenience method: its
+   * gateway entry is not a same-connection gateway TLS proof, especially when
+   * the default model request omits the TLS fingerprint.
    */
   async fetchNearAiCloudAttestationReport(
     input: FetchNearModelAttestationInput,
   ): Promise<NearAiCloudAttestationReport> {
     validateNearModelAttestationRequest(input);
     const url = this.endpoint('attestation/report');
+    // Model evidence uses signer + nonce by default. A declared TLS
+    // fingerprint is opt-in because it is not a client-observed peer binding.
     setAttestationQuery(url, input, input.includeTlsFingerprint === true);
     url.searchParams.set('model', input.model);
     url.searchParams.set('provider', 'near');
@@ -95,7 +120,13 @@ export class NearAiCloudClient {
     );
   }
 
-  /** Fetch the one NEAR model report selected by a provider-filtered query. */
+  /**
+   * Fetch the one NEAR model report selected by a provider-filtered query.
+   * Throws a structured API error if the server returns zero or multiple model
+   * reports instead of the one report expected after filtering by a
+   * `provider_tee` signer. Call `verifyProviderTeeResponse` separately to
+   * establish the cryptographic response-to-signer binding.
+   */
   async fetchNearModelAttestation(
     input: FetchNearModelAttestationInput,
   ): Promise<NearModelAttestation> {
@@ -111,12 +142,19 @@ export class NearAiCloudClient {
     return attestations[0];
   }
 
-  /** Fetch gateway evidence without selecting a model provider. */
+  /**
+   * Fetch gateway evidence without selecting a model provider. This requests
+   * the fingerprint needed by gateway verification, but ordinary `fetch`
+   * cannot capture a TLS peer or prove connection reuse. The caller must still
+   * collect the peer SPKI from the report connection it controls.
+   */
   async fetchGatewayAttestation(
     input: FetchGatewayAttestationInput,
   ): Promise<GatewayAttestation> {
     validateAttestationRequest(input);
     const url = this.endpoint('attestation/report');
+    // Gateway verification always needs the quote-bound fingerprint to compare
+    // with the caller-observed peer SPKI.
     setAttestationQuery(url, input, true);
     const record = requireObject(
       await this.getJson(url, 'gateway attestation report'),
@@ -126,8 +164,9 @@ export class NearAiCloudClient {
   }
 
   /**
-   * Fetch a response signature. An unavailable or historical signature is
+   * Fetch a response signature. An unavailable or unrecognized signature is
    * represented explicitly rather than coerced into a successful signature.
+   * This method performs one lookup and never polls.
    */
   async fetchCompletionSignature(
     input: FetchCompletionSignatureInput,
@@ -341,6 +380,8 @@ function setAttestationQuery(
 function parseNearAiCloudAttestationReport(
   value: unknown,
 ): NearAiCloudAttestationReport {
+  // These parsers validate only untrusted wire JSON shape. Quote verification
+  // is the separate trust boundary that follows parsing.
   const record = requireObject(value, 'attestation report');
   const gateway = parseGatewayAttestation(record.gateway_attestation);
   const rawModelAttestations = record.model_attestations;

@@ -6,13 +6,22 @@ export type VpcInfo = {
   vpc_hostname?: string;
 };
 
-/** Cloud API gateway evidence. VPC data is intentionally optional. */
+/**
+ * Decoded gateway wire evidence. Pass this to `verifyGatewayAttestation`
+ * together with a TLS peer fingerprint observed on the same connection.
+ * VPC data is intentionally optional.
+ */
 export type GatewayAttestation = DstackAttestation & {
   report_data: string;
   vpc?: VpcInfo;
 };
 
-/** Wire response from `/v1/attestation/report`. */
+/**
+ * Decoded wire response from `/v1/attestation/report`. Its contents are not
+ * verified by parsing. `tls_certificate`, `ohttp_key_config`, and
+ * `ohttp_attestation` are retained for callers, but are outside the SDK's
+ * current model and gateway verification claims.
+ */
 export type NearAiCloudAttestationReport = {
   gateway_attestation: GatewayAttestation;
   model_attestations?: NearModelAttestation[];

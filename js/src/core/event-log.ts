@@ -3,6 +3,8 @@ import { VerifiedRuntimeMeasurements } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import { sha384, trimHexPrefix, utf8 } from '../utils/common';
 
+// dstack reserves this event type for runtime payloads, whose digest must be
+// recomputed from the payload rather than trusted from the event log.
 const DSTACK_RUNTIME_EVENT_TYPE = 0x08000001;
 
 type EventLogEntry = {

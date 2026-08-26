@@ -15,7 +15,10 @@ import { hexToBuffer, normalizeHex } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import sha256 from 'sha256';
 
-/** Build the exact text signed by a model-serving TEE. */
+/**
+ * Build the exact model-serving TEE payload:
+ * `<canonical-model>:sha256(request-bytes):sha256(response-bytes)`.
+ */
 export function providerTeeSignatureText(
   canonicalModelId: string,
   requestBody: Uint8Array,
@@ -31,7 +34,10 @@ export function providerTeeSignatureText(
   return `${canonicalModelId}:${hashBytes(requestBody)}:${hashBytes(responseBody)}`;
 }
 
-/** Build the exact text signed by the Cloud API gateway TEE. */
+/**
+ * Build the exact Cloud API gateway payload:
+ * `sha256(request-bytes):sha256(response-bytes)`.
+ */
 export function gatewaySignatureText(
   requestBody: Uint8Array,
   responseBody: Uint8Array,
@@ -87,7 +93,11 @@ export function verifyGatewayResponse(
   };
 }
 
-/** Reject unavailable, historical, and unknown signature kinds explicitly. */
+/**
+ * Narrow a successful lookup to an SDK-recognized signature. This does not
+ * establish model execution by itself: callers must still require
+ * `signature_kind === 'provider_tee'` before calling the model verifier.
+ */
 export function requireKnownSignature(
   lookup: SignatureLookup,
 ): KnownChatSignature {

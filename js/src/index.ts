@@ -1,5 +1,6 @@
 export { NearAiCloudClient, NO_ALIASING_HEADER } from './core/cloud-api';
 export type {
+  FetchAttestationInput,
   FetchCompletionSignatureInput,
   FetchGatewayAttestationInput,
   FetchNearModelAttestationInput,

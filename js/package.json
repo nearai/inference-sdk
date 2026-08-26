@@ -25,15 +25,16 @@
   },
   "packageManager": "pnpm@11.19.0",
   "files": [
-    "dist"
+    "dist",
+    "docs"
   ],
   "scripts": {
     "build": "tsup --clean",
     "typecheck": "tsc --noEmit",
     "test": "jest --runInBand",
     "test:package-runtime": "pnpm build && node test-package-runtime.mjs",
-    "format": "prettier '{src,test}/**/*.ts' '*.mjs' --write",
-    "format:check": "prettier '{src,test}/**/*.ts' '*.mjs' --check",
+    "format": "prettier '{src,test}/**/*.ts' '*.mjs' '*.md' 'docs/**/*.md' package.json --write",
+    "format:check": "prettier '{src,test}/**/*.ts' '*.mjs' '*.md' 'docs/**/*.md' package.json --check",
     "lint": "eslint '{src,test}/**/*.ts' '*.mjs'",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:package-runtime",
     "prepublishOnly": "pnpm build"

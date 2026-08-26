@@ -46,7 +46,8 @@ export type VerifyDstackAttestationInput<
 /**
  * Shared quote/measurement orchestration. Endpoint-specific callers supply
  * the report-data binding rule: Cloud model evidence and gateway TLS evidence
- * intentionally have different trust boundaries.
+ * intentionally have different trust boundaries. The quote is authenticated
+ * before its report data, measurements, and caller policy are evaluated.
  */
 export async function verifyDstackAttestation<
   TReportDataBinding extends ReportDataBinding,
@@ -166,6 +167,8 @@ async function verifyGpuEvidence(
     return undefined;
   }
 
+  // Bind the provider payload to the same nonce before handing it to either
+  // the default NRAS verifier or a caller-supplied GPU trust implementation.
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);

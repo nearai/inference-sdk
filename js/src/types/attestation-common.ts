@@ -14,7 +14,12 @@ export type TcbInfo = JsonObject & {
   app_compose: string;
 };
 
-/** Fields common to NEAR dstack gateway and model reports. */
+/**
+ * Decoded Cloud API wire data common to NEAR dstack gateway and model reports.
+ * Parsing this shape only validates JSON types; none of its fields is trusted
+ * until a verification function has authenticated the Intel quote and its
+ * bindings.
+ */
 export type DstackAttestation = {
   request_nonce: string;
   signing_algo: SigningAlgo;
@@ -24,10 +29,17 @@ export type DstackAttestation = {
   info: {
     tcb_info: string | TcbInfo;
   };
-  /** SHA-256 of the serving TLS certificate SPKI when requested. */
+  /**
+   * SHA-256 SPKI fingerprint supplied by the report when requested. For a
+   * model report it is a server declaration; only gateway verification can
+   * compare it with a client-observed TLS peer.
+   */
   tls_cert_fingerprint?: string | null;
   /** Present for signing schemes that expose a separate public key. */
   signing_public_key?: string | null;
-  /** Optional JSON copy of quote report_data; compare it when present. */
+  /**
+   * Optional JSON copy of the Intel quote's report data. The verifier only
+   * cross-checks it against the authenticated quote; it is not a trust root.
+   */
   report_data?: string;
 };

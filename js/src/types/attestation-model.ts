@@ -2,7 +2,9 @@ import { DstackAttestation } from './attestation-common';
 
 /**
  * A model-serving report returned by the Cloud API only when queried with
- * `provider=near`. It must not be used to parse third-party provider reports.
+ * `provider=near`. Its inherited TLS fingerprint, when present, is a
+ * quote-bound server declaration rather than a client-observed model TLS
+ * peer. It must not be used to parse third-party provider reports.
  */
 export type NearModelAttestation = DstackAttestation & {
   /** Omitted for a CPU-only CVM; malformed present values are rejected. */
