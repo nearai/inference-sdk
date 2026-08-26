@@ -1,62 +1,72 @@
 # Verifiable AI SDK for TypeScript
 
-Verify NEAR AI Cloud completion signatures and attestation evidence in a
-TypeScript application.
+Verify NEAR AI Cloud completion signatures and attestation evidence. The SDK
+fetches and verifies evidence; your application sends the completion request and
+retains its exact request and response bytes.
 
-The main flow is deliberately small:
+## What the SDK verifies
 
-```ts
-const signature = await client.fetchCompletionSignature({ completionId });
-const nonce = generateNonce();
-const attestation = await client.fetchModelAttestation({
-  model,
-  nonce,
-  signature,
-});
-const verifiedAttestation = await verifyModelAttestation({
-  attestation,
-  nonce,
-});
-verifyModelResponse({
-  requestBody,
-  responseBody,
-  signature,
-  attestation: verifiedAttestation,
-});
-```
+A successful verification establishes, for the selected flow:
 
-This proves that a model-serving TEE signed the exact request and response
-bytes, and that its signing identity is bound to fresh, verified model evidence.
-Your application must preserve the original bytes; do not parse and serialize
-the request or response again before calling `verifyModelResponse`.
-Keep the exact `verifiedAttestation` object in memory and pass it directly to
-`verifyModelResponse`; re-verify raw evidence after a process or serialization
-boundary.
+- a signature covers the exact completion request and response bytes;
+- the signature's signer matches fresh attested evidence;
+- the Intel TDX quote, nonce, accepted TCB status, measured compose
+  configuration, and runtime measurements are valid;
+- supplied NVIDIA GPU evidence is verified for model attestations, or can be
+  required by policy; and
+- gateway evidence, when used, is bound to the TLS peer fingerprint
+  independently observed by the client.
 
-Read the [TypeScript verification guide](./docs/verification-guide.md) for the
-standard flow and the [API reference](./docs/api-reference.md) for every public
-function, parameter, result type, and error type.
+The SDK does not send inference requests, choose retry behavior, or turn model
+evidence into a client-to-model TLS claim.
 
-## Public API
+## Choose the claim you need
 
-The [API reference](./docs/api-reference.md) is the complete contract. It
-includes all public functions, parameters, return values, callback types,
-constants, and structured errors.
+The completion signature's explicit `kind` selects exactly one verification
+flow and its matching attestation. Do not infer the kind from the signed text
+or mix the two flows.
 
-`NearAiCloudClient` does not send completion requests or retain their bytes.
-Send completion requests with `NO_ALIASING_HEADER` set to `true` and use a
-canonical model ID. `new NearAiCloudClient({ apiKey })` uses the production
-endpoint, `https://cloud-api.near.ai/v1`; set `baseUrl` only for another Cloud
-API environment.
+### Verify a model response
 
-## Gateway verification
+Use a `provider_tee` signature with model attestation to verify that a
+model-serving TEE signed the exact completion bytes. This is the normal
+completion-verification flow. Keep the original bytes, use a canonical model ID
+with `x-no-aliasing: true`, fetch a fresh nonce and matching model attestation,
+then verify the response. A model attestation does not prove that the client
+connected directly to the model CVM.
 
-Gateway verification is an optional complement to model-response verification.
-It verifies that gateway evidence matches the SHA-256 SPKI fingerprint your
-application observed for the TLS peer that served the completion. Standard
-browser `fetch` and most Node `fetch` clients do not expose that fingerprint,
-so this flow normally uses a TLS-aware backend transport. See the guide before
-using this path.
+[Follow the model-response guide](./docs/verification-guide.md#verify-a-model-response).
+
+### Verify a gateway response
+
+Use a `gateway` signature with gateway attestation when you need to bind gateway
+evidence to the TLS peer that served the completion. The application must
+independently obtain that peer's SHA-256 SPKI fingerprint. This verifies a
+gateway claim, not that a model-serving TEE produced the response. Standard
+browser `fetch` and most Node `fetch` APIs do not expose the required peer
+certificate data.
+
+[Follow the gateway-response guide](./docs/verification-guide.md#verify-a-gateway-response).
+
+## Requirements common to both flows
+
+- Preserve the exact request and response bytes; do not parse and serialize
+  them before response verification.
+- Generate a fresh nonce for each evidence request.
+- Use the signature's explicit kind and matching attestation and response
+  verifier.
+- Keep the SDK's verified attestation result in memory and pass that exact
+  object to response verification. Re-verify raw evidence after serialization
+  or a process boundary.
+- Supply a deployment verifier when the application must restrict acceptable
+  measured deployments.
+
+## Documentation
+
+- [Verification guide](./docs/verification-guide.md) for complete model and
+  gateway workflows, policy configuration, and error handling.
+- [API reference](./docs/api-reference.md) for exported APIs, types, fields,
+  and structured error codes.
 
 ## Runtime
 
