@@ -15,6 +15,15 @@ deployment. Set `requireDeploymentProvenance: true` and supply a
 `provenanceVerifier` to apply your own allowlist or provenance policy. The
 result exposes `provenanceVerified` so this distinction is explicit.
 
+## TCB policy
+
+The default policy accepts Intel TCB statuses `UpToDate` and `OutOfDate`.
+Set `allowedTcbStatuses` to use a stricter policy:
+
+```ts
+policy: { allowedTcbStatuses: ['UpToDate'] }
+```
+
 ## Model response flow
 
 Use the exact bytes sent to and received from the completion endpoint. The

@@ -47,7 +47,7 @@ export type ProvenanceVerifier = {
 };
 
 export type NearVerificationPolicy = {
-  /** Defaults to only `UpToDate`. */
+  /** Defaults to `UpToDate` and `OutOfDate`. */
   allowedTcbStatuses?: readonly string[];
   /** Defaults to false so CPU-only CVMs remain verifiable. */
   requireGpuEvidence?: boolean;

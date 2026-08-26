@@ -75,7 +75,7 @@ describe('verifyNearModelAttestation', () => {
     ).rejects.toThrow('TDX debug mode is enabled');
   });
 
-  test('applies the configured TCB policy', async () => {
+  test('accepts OutOfDate by default and permits a stricter TCB policy', async () => {
     await expect(
       verifyNearModelAttestation({
         attestation: createNearModelAttestation(),
@@ -84,7 +84,30 @@ describe('verifyNearModelAttestation', () => {
           verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
         },
       }),
+    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
+
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: {
+          verify: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+        },
+        policy: { allowedTcbStatuses: ['UpToDate'] },
+      }),
     ).rejects.toThrow("TDX TCB status 'OutOfDate' is not allowed");
+  });
+
+  test('rejects a TCB status outside the default allowlist', async () => {
+    await expect(
+      verifyNearModelAttestation({
+        attestation: createNearModelAttestation(),
+        expectedNonce: nonce,
+        quoteVerifier: {
+          verify: async () => createQuote({ tcbStatus: 'Revoked' }),
+        },
+      }),
+    ).rejects.toThrow("TDX TCB status 'Revoked' is not allowed");
   });
 
   test('rejects an event log that cannot replay the quoted RTMR3', async () => {

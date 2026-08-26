@@ -20,7 +20,7 @@ import {
 import { verifyAndReplayRtmr3 } from './event-log';
 
 const DEFAULT_POLICY: Required<NearVerificationPolicy> = {
-  allowedTcbStatuses: ['UpToDate'],
+  allowedTcbStatuses: ['UpToDate', 'OutOfDate'],
   requireGpuEvidence: false,
   requireDeploymentProvenance: false,
 };

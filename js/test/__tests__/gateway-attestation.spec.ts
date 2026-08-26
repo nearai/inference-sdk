@@ -34,6 +34,18 @@ describe('verifyGatewayAttestation', () => {
     });
   });
 
+  test('accepts an OutOfDate gateway TCB status by default', async () => {
+    const quote = createQuote({ tcbStatus: 'OutOfDate' });
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation(),
+        expectedNonce: nonce,
+        peerTlsCertFingerprint: tlsFingerprint,
+        quoteVerifier: { verify: async () => quote },
+      }),
+    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
+  });
+
   test('rejects a gateway quote when the live TLS peer differs', async () => {
     const quote = createQuote();
     await expect(
