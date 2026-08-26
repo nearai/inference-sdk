@@ -1,17 +1,15 @@
 # TypeScript verification guide
 
 Use this SDK when your application needs to verify a NEAR AI Cloud completion.
-The usual goal is a **model response** claim: a model-serving TEE signed the
-exact request and response bytes, and that signer is bound to fresh, verified
-model evidence.
+The completion signature selects one of two claims: a **model response**, signed
+by a model-serving TEE, or a **gateway response**, signed by the Cloud API
+gateway. The two flows use different attestations and are verified separately.
 
 For every exported function, input field, result type, and error type, see the
 [API reference](./api-reference.md).
 
-The SDK also supports a separate **gateway response** claim. It has
-different requirements and does not prove that a model-serving TEE produced the
-response. Start with the model-response flow below unless you specifically need
-to authenticate the Cloud API gateway's TLS connection.
+Start with model-response verification unless you specifically need to
+authenticate the Cloud API gateway's TLS peer.
 
 ## Verify a model response
 
@@ -128,6 +126,63 @@ measurements, and the model signing identity. Its result includes:
 the service declared an SPKI fingerprint. A model declaration is not proof that
 the client connected directly to the model CVM.
 
+## Verify a gateway response
+
+Gateway verification verifies the gateway signature over the exact completion
+bytes and binds its signer to evidence whose SPKI fingerprint matches the TLS
+peer your application observed. It does not establish that a model-serving TEE
+produced the completion.
+
+Your completion transport must expose the SHA-256 SPKI fingerprint of its TLS
+peer. Pass that independently observed value to `verifyGatewayAttestation`.
+A normal keep-alive transport usually reuses an eligible connection for the
+later signature and evidence requests. Reusing its transport is also useful
+when a deployment can route requests to different gateways.
+
+The SDK compares the peer fingerprint, not a TLS session identifier: it does
+not require or prove connection reuse. Browser `fetch` and most ordinary Node
+`fetch` APIs do not expose the peer certificate, so use a TLS-aware backend
+transport for this flow. Otherwise, use model-response verification.
+
+```ts
+// `connection` exposes the peer SPKI fingerprint for this completion.
+// Reusing its transport preserves normal connection affinity when available.
+const completion = await connection.complete(request);
+const peerSpkiFingerprint = connection.peerSpkiFingerprint;
+
+const client = new NearAiCloudClient({
+  apiKey,
+  fetch: connection.fetch.bind(connection),
+});
+const signature = await client.fetchCompletionSignature({
+  completionId: completion.id,
+});
+
+const gatewayNonce = generateNonce();
+const gatewayAttestation = await client.fetchGatewayAttestation({
+  nonce: gatewayNonce,
+  signature,
+});
+
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation: gatewayAttestation,
+  nonce: gatewayNonce,
+  peerSpkiFingerprint,
+});
+
+verifyGatewayResponse({
+  requestBody: completion.requestBody,
+  responseBody: completion.responseBody,
+  signature,
+  attestation: verifiedGatewayAttestation,
+});
+```
+
+Never use a fingerprint declared inside the attestation as
+`peerSpkiFingerprint`; that would compare the evidence with itself rather than
+with a TLS peer you observed. Gateway verification accepts the same quote and
+deployment policy options as model verification, except it has no GPU option.
+
 ## Set policy and trust roots
 
 The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU
@@ -221,60 +276,3 @@ transient. A failed signature, binding, quote, measurement, GPU, deployment,
 or policy check is not automatically safe to retry.
 In particular, a `completion_signature` HTTP 404 is retryable because the
 signature may still be being recorded.
-
-## Verify a gateway response
-
-Gateway verification verifies the gateway signature over the exact completion
-bytes and binds its signer to evidence whose SPKI fingerprint matches the TLS
-peer your application observed. It does not establish that a model-serving TEE
-produced the completion.
-
-Your completion transport must expose the SHA-256 SPKI fingerprint of its TLS
-peer. Pass that independently observed value to `verifyGatewayAttestation`.
-A normal keep-alive transport usually reuses an eligible connection for the
-later signature and evidence requests. Reusing its transport is also useful
-when a deployment can route requests to different gateways.
-
-The SDK compares the peer fingerprint, not a TLS session identifier: it does
-not require or prove connection reuse. Browser `fetch` and most ordinary Node
-`fetch` APIs do not expose the peer certificate, so use a TLS-aware backend
-transport for this flow. Otherwise, use model-response verification.
-
-```ts
-// `connection` exposes the peer SPKI fingerprint for this completion.
-// Reusing its transport preserves normal connection affinity when available.
-const completion = await connection.complete(request);
-const peerSpkiFingerprint = connection.peerSpkiFingerprint;
-
-const client = new NearAiCloudClient({
-  apiKey,
-  fetch: connection.fetch.bind(connection),
-});
-const signature = await client.fetchCompletionSignature({
-  completionId: completion.id,
-});
-
-const gatewayNonce = generateNonce();
-const gatewayAttestation = await client.fetchGatewayAttestation({
-  nonce: gatewayNonce,
-  signature,
-});
-
-const verifiedGatewayAttestation = await verifyGatewayAttestation({
-  attestation: gatewayAttestation,
-  nonce: gatewayNonce,
-  peerSpkiFingerprint,
-});
-
-verifyGatewayResponse({
-  requestBody: completion.requestBody,
-  responseBody: completion.responseBody,
-  signature,
-  attestation: verifiedGatewayAttestation,
-});
-```
-
-Never use a fingerprint declared inside the attestation as
-`peerSpkiFingerprint`; that would compare the evidence with itself rather than
-with a TLS peer you observed. Gateway verification accepts the same quote and
-deployment policy options as model verification, except it has no GPU option.
