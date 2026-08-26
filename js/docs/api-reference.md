@@ -30,7 +30,7 @@ workflows and complete code examples, see the [verification guide](./verificatio
 #### `NearAiCloudClientOptions`
 
 | Field | Type | Required | Default | Description |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTPS Cloud API base URL. Credentials, query parameters, and fragments are rejected. |
 | `fetch?` | `NearAiCloudFetch` | No | Global `fetch` | Fetch-compatible transport used for the client's requests. |
