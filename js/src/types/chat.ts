@@ -1,4 +1,4 @@
-import { SigningAlgo } from './attestation-common';
+import type { SigningAlgo } from './attestation-common';
 
 /** Exact bytes sent to and received from the completion endpoint. */
 export type CompletionBytes = {

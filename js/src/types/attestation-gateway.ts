@@ -1,5 +1,5 @@
-import { DstackAttestation } from './attestation-common';
-import { NearModelAttestation } from './attestation-model';
+import type { DstackAttestation } from './attestation-common';
+import type { NearModelAttestation } from './attestation-model';
 
 export type VpcInfo = {
   vpc_server_app_id?: string;

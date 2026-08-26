@@ -1,4 +1,4 @@
-import { DstackAttestation } from './attestation-common';
+import type { DstackAttestation } from './attestation-common';
 
 /**
  * A model-serving report returned by the Cloud API only when queried with

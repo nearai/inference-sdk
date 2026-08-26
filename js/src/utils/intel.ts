@@ -1,5 +1,11 @@
-import { getCollateral, verify } from '@phala/dcap-qvl';
-import { TcbStatus, VerifiedTdxQuote } from '../types/verification';
+import { Buffer } from 'buffer';
+import {
+  getCollateral,
+  type Collateral,
+  type VerifiedReport,
+  verify,
+} from '@phala/dcap-qvl';
+import type { TcbStatus, VerifiedTdxQuote } from '../types/verification';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { isVerificationError, VerificationError } from './errors';
 
@@ -21,7 +27,7 @@ const TCB_STATUSES: readonly TcbStatus[] = [
 export async function verifyDcapQuote(
   quote: string,
 ): Promise<VerifiedTdxQuote> {
-  let quoteBytes;
+  let quoteBytes: Uint8Array;
   try {
     quoteBytes = hexToBuffer(quote);
   } catch (cause) {
@@ -35,7 +41,7 @@ export async function verifyDcapQuote(
     );
   }
 
-  let collateral;
+  let collateral: Collateral;
   try {
     collateral = await getCollateral(getIntelPccsApiUrl(), quoteBytes);
   } catch (cause) {
@@ -50,7 +56,7 @@ export async function verifyDcapQuote(
     );
   }
 
-  let verifiedReport;
+  let verifiedReport: VerifiedReport;
   try {
     verifiedReport = verify(
       quoteBytes,
@@ -100,7 +106,7 @@ export async function verifyDcapQuote(
   return normalizeVerifiedTdxQuote(result);
 }
 
-/** Validate the result from any quote-verification adapter at its boundary. */
+/** Validate quote-adapter output and normalize its byte fields to Buffers. */
 export function normalizeVerifiedTdxQuote(value: unknown): VerifiedTdxQuote {
   try {
     const record = requireQuoteObject(value);
@@ -167,9 +173,9 @@ function requireBoolean(value: unknown, path: string): boolean {
   throw invalidQuoteResult(path, 'boolean', value);
 }
 
-function requireBytes(value: unknown, path: string): Uint8Array {
+function requireBytes(value: unknown, path: string): Buffer {
   if (value instanceof Uint8Array) {
-    return value;
+    return Buffer.from(value);
   }
   throw invalidQuoteResult(path, 'Uint8Array', value);
 }

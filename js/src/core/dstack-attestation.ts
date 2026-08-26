@@ -1,5 +1,5 @@
-import { DstackAttestation } from '../types/attestation-common';
-import {
+import type { DstackAttestation } from '../types/attestation-common';
+import type {
   GpuVerifier,
   NearVerificationPolicy,
   ProvenanceVerifier,

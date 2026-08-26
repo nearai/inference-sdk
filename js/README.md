@@ -50,9 +50,11 @@ from a TLS connection controlled by the caller. Do not copy
 
 ## Runtime requirements
 
-The package targets Node.js 22.13 or later. The default quote verifier uses
-Intel DCAP verification. If model evidence includes GPU evidence, the default
-GPU verifier contacts NVIDIA NRAS. Use custom verifiers when your deployment
-needs different trust roots or network behavior.
+The package publishes ESM and is developed and tested with Node.js 24. Browser
+consumers are not constrained by a package-level Node engine. The default Intel
+DCAP adapter may require `crypto`, `buffer`, and `stream` polyfills in a browser
+bundler; supply a `QuoteVerifier` when your deployment needs different trust
+roots, bundler configuration, or network behavior. If model evidence includes
+GPU evidence, the default GPU verifier contacts NVIDIA NRAS.
 
 The package ships its detailed guide in `docs/` alongside the built output.

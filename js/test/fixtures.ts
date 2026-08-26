@@ -1,6 +1,7 @@
-import { createHash } from 'crypto';
-import { NearModelAttestation } from '../src/types/attestation-model';
-import { VerifiedTdxQuote } from '../src/types/verification';
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
+import type { NearModelAttestation } from '../src/types/attestation-model';
+import type { VerifiedTdxQuote } from '../src/types/verification';
 
 export const nonce = '11'.repeat(32);
 export const signingAddress = `0x${'22'.repeat(20)}`;

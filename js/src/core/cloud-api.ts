@@ -1,16 +1,16 @@
-import {
+import type {
   GatewayAttestation,
   NearAiCloudAttestationReport,
   VpcInfo,
 } from '../types/attestation-gateway';
-import { NearModelAttestation } from '../types/attestation-model';
-import {
+import type { NearModelAttestation } from '../types/attestation-model';
+import type {
   JsonObject,
   JsonValue,
   SigningAlgo,
   TcbInfo,
 } from '../types/attestation-common';
-import {
+import type {
   KnownChatSignature,
   SignatureLookup,
   SignatureUnavailable,

@@ -1,19 +1,19 @@
+import { Buffer } from 'buffer';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
-import {
+import type {
   GatewaySignature,
   KnownChatSignature,
   ProviderTeeSignature,
   SignatureLookup,
 } from '../types/chat';
-import {
+import type {
   VerifiedResponseSignature,
   VerifyGatewayResponseInput,
   VerifyProviderTeeResponseInput,
 } from '../types/verification';
 import { hexToBuffer, normalizeHex } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import sha256 from 'sha256';
 
 /**
  * Build the exact model-serving TEE payload:
@@ -228,7 +228,7 @@ function verifySignatureBytes(signature: KnownChatSignature): void {
 }
 
 function hashBytes(value: Uint8Array): string {
-  return sha256(Buffer.from(value));
+  return ethers.sha256(value).slice(2);
 }
 
 /**

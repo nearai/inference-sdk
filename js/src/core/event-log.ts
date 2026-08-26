@@ -1,5 +1,6 @@
-import { JsonValue } from '../types/attestation-common';
-import { VerifiedRuntimeMeasurements } from '../types/verification';
+import { Buffer } from 'buffer';
+import type { JsonValue } from '../types/attestation-common';
+import type { VerifiedRuntimeMeasurements } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import { sha384, trimHexPrefix, utf8 } from '../utils/common';
 

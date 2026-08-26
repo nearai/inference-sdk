@@ -12,10 +12,14 @@ trust boundaries.
 - Deployment provenance is a separate caller policy. Quote and measurement
   verification alone do not say that a deployment is an expected NEAR release.
 
-The SDK targets Node.js 22.13 or later. Its default quote verifier uses Intel
-DCAP verification. If a model report contains GPU evidence, its default GPU
-verifier contacts NVIDIA NRAS. Supply custom verifiers when your application
-uses different trust roots or network controls.
+The SDK publishes ESM. Node.js 24 is used for development (see `.nvmrc`), while
+browser consumers bundle the same package. Public byte inputs use `Uint8Array`,
+so Node `Buffer` values work without becoming part of the browser-facing API.
+Normalized quote byte values returned by the SDK use `Buffer`. The default Intel
+DCAP adapter may require `crypto`, `buffer`, and `stream` polyfills in a browser
+bundler. Supply a `QuoteVerifier` when your application uses different trust
+roots, bundler configuration, or network controls. If a model report contains
+GPU evidence, its default GPU verifier contacts NVIDIA NRAS.
 
 ## Develop from this repository
 
@@ -24,6 +28,9 @@ cd js
 pnpm install
 pnpm check
 ```
+
+Biome formats and lints the TypeScript and project configuration files.
+Markdown files are intentionally outside `pnpm format` and `pnpm format:check`.
 
 ## Verify a model response
 

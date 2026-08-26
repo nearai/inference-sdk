@@ -1,6 +1,7 @@
+import { Buffer } from 'node:buffer';
 import { nvidiaNrasVerifier } from '../../src';
 
-describe('nvidiaNrasVerifier', () => {
+describe('NVIDIA NRAS verification', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });

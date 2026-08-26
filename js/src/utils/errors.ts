@@ -335,6 +335,7 @@ export class VerificationError extends Error {
 export class ApiError extends VerificationError {
   readonly name: string = 'ApiError';
 
+  // biome-ignore lint/complexity/noUselessConstructor: Narrows the public input to API failures.
   constructor(failure: ApiFailure, options?: VerificationErrorOptions) {
     super(failure, options);
   }

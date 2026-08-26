@@ -1,5 +1,6 @@
-import { TcbInfo } from '../types/attestation-common';
-import {
+import { Buffer } from 'buffer';
+import type { TcbInfo } from '../types/attestation-common';
+import type {
   GatewayReportDataBinding,
   ModelReportDataBinding,
 } from '../types/verification';

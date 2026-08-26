@@ -1,4 +1,4 @@
-import {
+import type {
   VerifiedGatewayAttestation,
   VerifyGatewayAttestationInput,
 } from '../types/verification';

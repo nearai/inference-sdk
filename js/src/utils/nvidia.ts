@@ -1,4 +1,4 @@
-import { GpuVerifier } from '../types/verification';
+import type { GpuVerifier } from '../types/verification';
 import { NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT } from './consts';
 import { decodeJwt } from './common';
 import { VerificationError } from './errors';

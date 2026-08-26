@@ -1,7 +1,8 @@
-import { GatewayAttestation } from './attestation-gateway';
-import { NearModelAttestation } from './attestation-model';
-import { SigningAlgo } from './attestation-common';
-import {
+import type { Buffer } from 'buffer';
+import type { GatewayAttestation } from './attestation-gateway';
+import type { NearModelAttestation } from './attestation-model';
+import type { SigningAlgo } from './attestation-common';
+import type {
   CompletionBytes,
   GatewaySignature,
   ProviderTeeSignature,
@@ -18,7 +19,7 @@ export type TcbStatus =
   | 'Revoked'
   | 'Unknown';
 
-/** Measurements extracted from an Intel-verified TDX quote. */
+/** Measurements extracted from an Intel-verified TDX quote, normalized to Buffers. */
 export type VerifiedTdxQuote = {
   /** TCB status produced by Intel quote verification. */
   tcbStatus: TcbStatus;
@@ -27,18 +28,18 @@ export type VerifiedTdxQuote = {
   /** Whether the authenticated quote has debug enabled. */
   debugEnabled: boolean;
   /** Intel-signed 64-byte report-data field. */
-  reportData: Uint8Array;
+  reportData: Buffer;
   /** Intel MRCONFIGID measurement. */
-  mrConfigId: Uint8Array;
+  mrConfigId: Buffer;
   /** Intel RTMR3 measurement replayed against the dstack event log. */
-  rtMr3: Uint8Array;
+  rtMr3: Buffer;
 };
 
 /**
  * Trust boundary for Intel TDX quote verification. An implementation must
  * authenticate the quote and derive every returned measurement from that
- * authenticated quote. Resolving means the quote is trusted; reject or throw
- * for every other outcome.
+ * authenticated quote. Byte fields in the result are Buffers. Resolving means
+ * the quote is trusted; reject or throw for every other outcome.
  */
 export type QuoteVerifier = {
   verify(quote: string): Promise<VerifiedTdxQuote>;

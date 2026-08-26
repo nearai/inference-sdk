@@ -1,5 +1,6 @@
+import { Buffer } from 'node:buffer';
 import { verifyNearModelAttestation } from '../../src';
-import { QuoteVerifier } from '../../src/types/verification';
+import type { QuoteVerifier } from '../../src';
 import {
   appCompose,
   createLegacyModelQuote,
@@ -10,7 +11,7 @@ import {
   tlsFingerprint,
 } from '../fixtures';
 
-describe('verifyNearModelAttestation', () => {
+describe('NEAR model attestation verification', () => {
   const quoteVerifier: QuoteVerifier = {
     verify: async () => createQuote(),
   };

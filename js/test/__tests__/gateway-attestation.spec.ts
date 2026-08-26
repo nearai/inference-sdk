@@ -1,5 +1,6 @@
+import { Buffer } from 'node:buffer';
 import { verifyGatewayAttestation } from '../../src';
-import { GatewayAttestation } from '../../src/types/attestation-gateway';
+import type { GatewayAttestation } from '../../src';
 import {
   createNearModelAttestation,
   createQuote,
@@ -18,7 +19,7 @@ function createGatewayAttestation(
   };
 }
 
-describe('verifyGatewayAttestation', () => {
+describe('gateway attestation verification', () => {
   test('requires the gateway TLS peer fingerprint to match the quote binding', async () => {
     const quote = createQuote();
     const result = await verifyGatewayAttestation({

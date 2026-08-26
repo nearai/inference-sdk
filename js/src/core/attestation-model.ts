@@ -1,4 +1,4 @@
-import {
+import type {
   VerifiedNearModelAttestation,
   VerifyNearModelAttestationInput,
 } from '../types/verification';

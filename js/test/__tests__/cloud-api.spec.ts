@@ -49,7 +49,7 @@ function clientReplyingWith(response: unknown) {
   };
 }
 
-describe('NearAiCloudClient', () => {
+describe('NEAR AI Cloud client', () => {
   test('fetches NEAR model evidence with strict alias handling', async () => {
     const api = clientReplyingWith(nearReport());
 

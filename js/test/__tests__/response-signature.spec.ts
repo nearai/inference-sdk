@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
 import {
@@ -7,7 +9,7 @@ import {
   verifyGatewayResponse,
   verifyProviderTeeResponse,
 } from '../../src';
-import {
+import type {
   VerifiedGatewayAttestation,
   VerifiedNearModelAttestation,
 } from '../../src';
@@ -29,6 +31,20 @@ function expectVerificationFailure(
 }
 
 describe('response signature verification', () => {
+  test('uses canonical SHA-256 hex when constructing signature payloads', () => {
+    const requestHash = createHash('sha256').update(requestBody).digest('hex');
+    const responseHash = createHash('sha256')
+      .update(responseBody)
+      .digest('hex');
+
+    expect(
+      providerTeeSignatureText('canonical-model', requestBody, responseBody),
+    ).toBe(`canonical-model:${requestHash}:${responseHash}`);
+    expect(gatewaySignatureText(requestBody, responseBody)).toBe(
+      `${requestHash}:${responseHash}`,
+    );
+  });
+
   test('binds a provider_tee ECDSA signature to the verified model signer', async () => {
     const wallet = new ethers.Wallet(
       '0x0123456789012345678901234567890123456789012345678901234567890123',
