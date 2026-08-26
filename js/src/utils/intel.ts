@@ -1,5 +1,5 @@
 import { getCollateral, verify } from '@phala/dcap-qvl';
-import { TcbStatus, VerifiedTdxQuote } from '../types/verification';
+import { VerifiedTdxQuote } from '../types/verification';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { VerificationError } from './errors';
 
@@ -38,17 +38,11 @@ export async function verifyDcapQuote(
   }
 
   return {
-    tcbStatus: parseTcbStatus(verifiedReport.status),
+    tcbStatus: verifiedReport.status,
     advisoryIds: [...verifiedReport.advisory_ids],
     debugEnabled: (td10.tdAttributes[0] & 0x01) !== 0,
     reportData: td10.reportData,
     mrConfigId: td10.mrConfigId,
     rtMr3: td10.rtMr3,
   };
-}
-
-function parseTcbStatus(status: string): TcbStatus {
-  return Object.values(TcbStatus).includes(status as TcbStatus)
-    ? (status as TcbStatus)
-    : TcbStatus.Unknown;
 }

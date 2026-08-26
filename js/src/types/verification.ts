@@ -8,16 +8,15 @@ import {
 } from './chat';
 
 /** Intel TDX TCB statuses returned by DCAP verification. */
-export enum TcbStatus {
-  UpToDate = 'UpToDate',
-  SWHardeningNeeded = 'SWHardeningNeeded',
-  ConfigurationNeeded = 'ConfigurationNeeded',
-  ConfigurationAndSWHardeningNeeded = 'ConfigurationAndSWHardeningNeeded',
-  OutOfDate = 'OutOfDate',
-  OutOfDateConfigurationNeeded = 'OutOfDateConfigurationNeeded',
-  Revoked = 'Revoked',
-  Unknown = 'Unknown',
-}
+export type TcbStatus =
+  | 'UpToDate'
+  | 'SWHardeningNeeded'
+  | 'ConfigurationNeeded'
+  | 'ConfigurationAndSWHardeningNeeded'
+  | 'OutOfDate'
+  | 'OutOfDateConfigurationNeeded'
+  | 'Revoked'
+  | 'Unknown';
 
 /** Measurements extracted from an Intel-verified TDX quote. */
 export type VerifiedTdxQuote = {

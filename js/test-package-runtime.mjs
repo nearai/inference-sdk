@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import nacl from 'tweetnacl';
-import {
-  TcbStatus,
-  gatewaySignatureText,
-  verifyGatewayResponse,
-} from './dist/index.js';
+import { gatewaySignatureText, verifyGatewayResponse } from './dist/index.js';
 
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
@@ -30,7 +26,7 @@ const result = verifyGatewayResponse({
     signingAddress: Buffer.from(keyPair.publicKey).toString('hex'),
     signingAlgo: 'ed25519',
     tlsCertFingerprint: '11'.repeat(32),
-    tcbStatus: TcbStatus.UpToDate,
+    tcbStatus: 'UpToDate',
     advisoryIds: [],
     appCompose: '{}',
     imageDigests: [],

@@ -17,13 +17,11 @@ result exposes `provenanceVerified` so this distinction is explicit.
 
 ## TCB policy
 
-The default policy accepts `TcbStatus.UpToDate` and `TcbStatus.OutOfDate`.
+The default policy accepts `UpToDate` and `OutOfDate`.
 Set `allowedTcbStatuses` to use a stricter policy:
 
 ```ts
-import { TcbStatus } from 'verification-sdk';
-
-const policy = { allowedTcbStatuses: [TcbStatus.UpToDate] };
+const policy = { allowedTcbStatuses: ['UpToDate'] };
 ```
 
 ## Model response flow
