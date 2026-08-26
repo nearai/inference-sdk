@@ -1,4 +1,4 @@
-import { CloudApiError, NearAiCloudClient } from '../../src';
+import { ApiError, NearAiCloudClient } from '../../src';
 import { nonce } from '../fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -143,8 +143,8 @@ describe('NearAiCloudClient', () => {
       }),
     ).rejects.toMatchObject({
       failure: {
-        phase: 'cloud_api',
-        code: 'cloud_api.invalid_response',
+        phase: 'api',
+        code: 'api.invalid_response',
         details: {
           path: 'model_attestations[0].info',
           expected: 'object',
@@ -166,11 +166,11 @@ describe('NearAiCloudClient', () => {
       await client.fetchGatewayAttestation({ nonce, signingAlgo: 'ecdsa' });
       throw new Error('Expected the Cloud API request to fail');
     } catch (error) {
-      expect(error).toBeInstanceOf(CloudApiError);
+      expect(error).toBeInstanceOf(ApiError);
       expect(error).toMatchObject({
         failure: {
-          phase: 'cloud_api',
-          code: 'cloud_api.http_status',
+          phase: 'api',
+          code: 'api.http_status',
           details: { operation: 'gateway attestation report', status: 503 },
           retryable: true,
         },

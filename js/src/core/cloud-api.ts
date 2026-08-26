@@ -17,7 +17,7 @@ import {
   UnknownChatSignature,
 } from '../types/chat';
 import { requireByteLength } from '../utils/common';
-import { CloudApiError, VerificationError } from '../utils/errors';
+import { ApiError, VerificationError } from '../utils/errors';
 
 type FetchLike = (
   input: string | URL | Request,
@@ -100,9 +100,9 @@ export class NearAiCloudClient {
     const report = await this.fetchNearAiCloudAttestationReport(input);
     const attestations = report.model_attestations ?? [];
     if (attestations.length !== 1) {
-      throw new CloudApiError({
-        phase: 'cloud_api',
-        code: 'cloud_api.unexpected_model_attestation_count',
+      throw new ApiError({
+        phase: 'api',
+        code: 'api.unexpected_model_attestation_count',
         details: { expectedCount: 1, actualCount: attestations.length },
       });
     }
@@ -156,10 +156,10 @@ export class NearAiCloudClient {
         headers,
       });
     } catch (cause) {
-      throw new CloudApiError(
+      throw new ApiError(
         {
-          phase: 'cloud_api',
-          code: 'cloud_api.transport_failed',
+          phase: 'api',
+          code: 'api.transport_failed',
           details: { operation: label, reason: 'request' },
           retryable: true,
         },
@@ -171,10 +171,10 @@ export class NearAiCloudClient {
     try {
       body = await response.text();
     } catch (cause) {
-      throw new CloudApiError(
+      throw new ApiError(
         {
-          phase: 'cloud_api',
-          code: 'cloud_api.transport_failed',
+          phase: 'api',
+          code: 'api.transport_failed',
           details: { operation: label, reason: 'response_body' },
           retryable: true,
         },
@@ -182,9 +182,9 @@ export class NearAiCloudClient {
       );
     }
     if (!response.ok) {
-      throw new CloudApiError({
-        phase: 'cloud_api',
-        code: 'cloud_api.http_status',
+      throw new ApiError({
+        phase: 'api',
+        code: 'api.http_status',
         details: { operation: label, status: response.status },
         retryable: isRetryableHttpStatus(response.status),
       });
@@ -192,10 +192,10 @@ export class NearAiCloudClient {
     try {
       return JSON.parse(body);
     } catch (cause) {
-      throw new CloudApiError(
+      throw new ApiError(
         {
-          phase: 'cloud_api',
-          code: 'cloud_api.invalid_json',
+          phase: 'api',
+          code: 'api.invalid_json',
           details: { operation: label },
         },
         { cause },
@@ -592,10 +592,10 @@ function invalidResponse(
   path: string,
   expected: string,
   value: unknown,
-): CloudApiError {
-  return new CloudApiError({
-    phase: 'cloud_api',
-    code: 'cloud_api.invalid_response',
+): ApiError {
+  return new ApiError({
+    phase: 'api',
+    code: 'api.invalid_response',
     details: { path, expected, actual: describeValue(value) },
   });
 }

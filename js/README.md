@@ -35,7 +35,10 @@ status, field path, byte length, or HTTP status. It never includes API keys,
 nonces, quotes, prompts, or completion bytes.
 
 ```ts
-import { isVerificationError, verifyNearModelAttestation } from 'verification-sdk';
+import {
+  isVerificationError,
+  verifyNearModelAttestation,
+} from 'verification-sdk';
 
 try {
   await verifyNearModelAttestation(input);
@@ -46,7 +49,7 @@ try {
     case 'policy.tcb_status_not_allowed':
       console.log(error.failure.details.actual);
       break;
-    case 'cloud_api.http_status':
+    case 'api.http_status':
       console.log(error.failure.details.status);
       break;
     default:
@@ -55,7 +58,7 @@ try {
 }
 ```
 
-Codes are grouped by phase: `input.*`, `cloud_api.*`, `quote.*`, `binding.*`,
+Codes are grouped by phase: `input.*`, `api.*`, `quote.*`, `binding.*`,
 `measurement.*`, `policy.*`, `gpu.*`, `provenance.*`, `signature.*`, and
 `runtime.*`. `error.retryable` is `true` only for a transient remote-service
 failure; a verification or policy failure is never retried automatically.

@@ -28,8 +28,8 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'cloud_api';
-      code: 'cloud_api.transport_failed';
+      phase: 'api';
+      code: 'api.transport_failed';
       details: {
         operation: string;
         reason: 'request' | 'response_body';
@@ -37,8 +37,8 @@ export type VerificationFailure =
       retryable: true;
     }
   | {
-      phase: 'cloud_api';
-      code: 'cloud_api.http_status';
+      phase: 'api';
+      code: 'api.http_status';
       details: {
         operation: string;
         status: number;
@@ -46,13 +46,13 @@ export type VerificationFailure =
       retryable: boolean;
     }
   | {
-      phase: 'cloud_api';
-      code: 'cloud_api.invalid_json';
+      phase: 'api';
+      code: 'api.invalid_json';
       details: { operation: string };
     }
   | {
-      phase: 'cloud_api';
-      code: 'cloud_api.invalid_response';
+      phase: 'api';
+      code: 'api.invalid_response';
       details: {
         path: string;
         expected: string;
@@ -60,8 +60,8 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'cloud_api';
-      code: 'cloud_api.unexpected_model_attestation_count';
+      phase: 'api';
+      code: 'api.unexpected_model_attestation_count';
       details: { expectedCount: 1; actualCount: number };
     }
   | {
@@ -272,10 +272,7 @@ export type VerificationFailure =
 
 export type VerificationErrorCode = VerificationFailure['code'];
 export type VerificationPhase = VerificationFailure['phase'];
-export type CloudApiFailure = Extract<
-  VerificationFailure,
-  { phase: 'cloud_api' }
->;
+export type ApiFailure = Extract<VerificationFailure, { phase: 'api' }>;
 
 export type VerificationErrorOptions = { cause?: unknown };
 
@@ -329,17 +326,17 @@ export class VerificationError extends Error {
   }
 }
 
-/** Cloud API transport or response failure; inspect `failure.code` as usual. */
-export class CloudApiError extends VerificationError {
-  readonly name: string = 'CloudApiError';
+/** API transport or response failure; inspect `failure.code` as usual. */
+export class ApiError extends VerificationError {
+  readonly name: string = 'ApiError';
 
-  constructor(failure: CloudApiFailure, options?: VerificationErrorOptions) {
+  constructor(failure: ApiFailure, options?: VerificationErrorOptions) {
     super(failure, options);
   }
 
   /** Kept as a convenience for HTTP callers; `failure.details.status` is canonical. */
   get status(): number | undefined {
-    return this.failure.code === 'cloud_api.http_status'
+    return this.failure.code === 'api.http_status'
       ? this.failure.details.status
       : undefined;
   }
@@ -365,16 +362,16 @@ function formatFailureMessage(failure: VerificationFailure): string {
   switch (failure.code) {
     case 'input.invalid':
       return `Invalid ${failure.details.field}`;
-    case 'cloud_api.transport_failed':
-      return 'Cloud API request failed';
-    case 'cloud_api.http_status':
-      return `Cloud API returned HTTP ${failure.details.status}`;
-    case 'cloud_api.invalid_json':
-      return 'Cloud API returned invalid JSON';
-    case 'cloud_api.invalid_response':
-      return `Cloud API response has an invalid ${failure.details.path} field`;
-    case 'cloud_api.unexpected_model_attestation_count':
-      return 'Cloud API returned an unexpected number of model attestations';
+    case 'api.transport_failed':
+      return 'API request failed';
+    case 'api.http_status':
+      return `API returned HTTP ${failure.details.status}`;
+    case 'api.invalid_json':
+      return 'API returned invalid JSON';
+    case 'api.invalid_response':
+      return `API response has an invalid ${failure.details.path} field`;
+    case 'api.unexpected_model_attestation_count':
+      return 'API returned an unexpected number of model attestations';
     case 'quote.collateral_unavailable':
       return 'Intel collateral is unavailable';
     case 'quote.verification_failed':

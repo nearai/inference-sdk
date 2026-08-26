@@ -1,8 +1,4 @@
-import {
-  CloudApiError,
-  isVerificationError,
-  VerificationError,
-} from '../../src';
+import { ApiError, isVerificationError, VerificationError } from '../../src';
 
 describe('verification errors', () => {
   test('exposes a stable discriminated failure instead of requiring message parsing', () => {
@@ -47,16 +43,16 @@ describe('verification errors', () => {
   });
 
   test('retains HTTP status as structured Cloud API context', () => {
-    const error = new CloudApiError({
-      phase: 'cloud_api',
-      code: 'cloud_api.http_status',
+    const error = new ApiError({
+      phase: 'api',
+      code: 'api.http_status',
       details: { operation: 'attestation report', status: 503 },
       retryable: true,
     });
 
     expect(error).toMatchObject({
-      code: 'cloud_api.http_status',
-      phase: 'cloud_api',
+      code: 'api.http_status',
+      phase: 'api',
       status: 503,
       retryable: true,
       failure: { details: { operation: 'attestation report', status: 503 } },

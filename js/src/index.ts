@@ -61,12 +61,12 @@ export type {
 } from './types/verification';
 
 export {
-  CloudApiError,
+  ApiError,
   isVerificationError,
   VerificationError,
 } from './utils/errors';
 export type {
-  CloudApiFailure,
+  ApiFailure,
   VerificationErrorCode,
   VerificationErrorOptions,
   VerificationFailure,
