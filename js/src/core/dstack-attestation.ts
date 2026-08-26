@@ -153,11 +153,11 @@ export async function verifyDstackAttestation<
 async function verifyGpuEvidence(
   payload: string | null | undefined,
   expectedNonce: string,
-  required: boolean,
+  requireGpuEvidence: boolean,
   verifier: GpuVerifier,
 ): Promise<true | undefined> {
   if (payload === undefined || payload === null || payload === '') {
-    if (required) {
+    if (requireGpuEvidence) {
       throw new VerificationError({
         phase: 'policy',
         code: 'policy.gpu_evidence_required',

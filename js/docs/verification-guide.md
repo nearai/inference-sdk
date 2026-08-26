@@ -64,19 +64,20 @@ import {
   verifyNearModelAttestation,
   verifyProviderTeeResponse,
 } from 'verification-sdk';
+import type { NearVerificationPolicy } from 'verification-sdk';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const apiKey = process.env.NEARAI_API_KEY!;
 const model = 'your-canonical-model-id';
 
-const requestBody = new TextEncoder().encode(
-  JSON.stringify({
-    model,
-    messages: [{ role: 'user', content: 'Hello' }],
-  }),
-);
+const request = {
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+};
+const requestText = JSON.stringify(request);
+const requestBody = new TextEncoder().encode(requestText);
 
-const completion = await fetch(`${baseUrl}/chat/completions`, {
+const completionResponse = await fetch(`${baseUrl}/chat/completions`, {
   method: 'POST',
   headers: {
     authorization: `Bearer ${apiKey}`,
@@ -85,24 +86,25 @@ const completion = await fetch(`${baseUrl}/chat/completions`, {
   },
   body: requestBody,
 });
-if (!completion.ok) throw new Error(`Completion failed: ${completion.status}`);
+if (!completionResponse.ok) {
+  throw new Error(`Completion failed: ${completionResponse.status}`);
+}
 
-const responseBody = new Uint8Array(await completion.arrayBuffer());
-const completionJson = JSON.parse(new TextDecoder().decode(responseBody)) as {
-  id?: unknown;
-};
-if (typeof completionJson.id !== 'string') {
+const responseBytes = await completionResponse.arrayBuffer();
+const responseBody = new Uint8Array(responseBytes);
+const responseText = new TextDecoder().decode(responseBody);
+const completionJson = JSON.parse(responseText);
+if (typeof completionJson?.id !== 'string') {
   throw new Error('Completion response did not contain an id');
 }
 const chatId = completionJson.id;
 
 const client = new NearAiCloudClient({ baseUrl, apiKey });
-const signature = requireKnownSignature(
-  await client.fetchCompletionSignature({
-    chatId,
-    signingAlgo: 'ed25519',
-  }),
-);
+const signatureLookup = await client.fetchCompletionSignature({
+  chatId,
+  signingAlgo: 'ed25519',
+});
+const signature = requireKnownSignature(signatureLookup);
 if (signature.signature_kind !== 'provider_tee') {
   throw new Error('The completion has no model-serving TEE signature');
 }
@@ -234,12 +236,15 @@ CPU-only CVMs, and leaves deployment provenance optional. Tighten all three
 when your application needs them:
 
 ```ts
-const policy = {
-  allowedTcbStatuses: ['UpToDate'] as const,
+const policy: NearVerificationPolicy = {
+  allowedTcbStatuses: ['UpToDate'],
   requireGpuEvidence: true,
   requireDeploymentProvenance: true,
 };
 ```
+
+`requireGpuEvidence` rejects a model report with no GPU evidence. It does not
+make invalid GPU evidence optional: a supplied GPU payload must always verify.
 
 Do not use `requireDeploymentProvenance: true` by itself. Pass a
 `provenanceVerifier` with that policy; otherwise verification rejects with
@@ -285,7 +290,9 @@ import { createHash, X509Certificate } from 'node:crypto';
 function spkiFingerprint(certificateDer: Buffer): string {
   const certificate = new X509Certificate(certificateDer);
   const spki = certificate.publicKey.export({ type: 'spki', format: 'der' });
-  return createHash('sha256').update(spki).digest('hex');
+  const hash = createHash('sha256');
+  hash.update(spki);
+  return hash.digest('hex');
 }
 
 // For example: spkiFingerprint(tlsSocket.getPeerCertificate(true).raw)
@@ -317,9 +324,11 @@ gateway scope, require a `gateway` signature and verify it against the gateway
 attestation. This still does not produce a model-serving claim.
 
 ```ts
-const gatewaySignature = requireKnownSignature(
-  await client.fetchCompletionSignature({ chatId, signingAlgo: 'ed25519' }),
-);
+const gatewaySignatureLookup = await client.fetchCompletionSignature({
+  chatId,
+  signingAlgo: 'ed25519',
+});
+const gatewaySignature = requireKnownSignature(gatewaySignatureLookup);
 if (gatewaySignature.signature_kind !== 'gateway') {
   throw new Error('The completion has no gateway signature');
 }
