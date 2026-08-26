@@ -31,10 +31,11 @@
     "build": "tsup --clean",
     "typecheck": "tsc --noEmit",
     "test": "jest --runInBand",
+    "test:package-runtime": "pnpm build && node test-package-runtime.mjs",
     "format": "prettier '{src,test}/**/*.ts' '*.mjs' --write",
     "format:check": "prettier '{src,test}/**/*.ts' '*.mjs' --check",
     "lint": "eslint '{src,test}/**/*.ts' '*.mjs'",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm test:package-runtime",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {

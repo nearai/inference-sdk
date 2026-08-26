@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import * as nacl from 'tweetnacl';
+import nacl from 'tweetnacl';
 import {
   gatewaySignatureText,
   providerTeeSignatureText,
