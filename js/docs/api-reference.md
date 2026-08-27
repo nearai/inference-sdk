@@ -13,6 +13,7 @@ workflows and complete code examples, see the [verification guide](./verificatio
 | `verifyModelResponse` | `(input: VerifyModelResponseInput) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(input: VerifyGatewayAttestationInput) => Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and a caller-observed TLS peer binding. |
 | `verifyGatewayResponse` | `(input: VerifyGatewayResponseInput) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
+| `findModelAttestationForSigner` | `(input: FindModelAttestationForSignerInput) => ModelAttestation` | Selects the single model attestation matching a signer. It does not verify evidence. |
 | `VerificationError` | `class VerificationError extends Error` | Structured base class for SDK failures. |
 | `ApiError` | `class ApiError extends VerificationError` | Structured Cloud API transport or response failure. |
 | `isVerificationError` | `(value: unknown) => value is VerificationError` | Type guard for SDK failures. |
@@ -44,8 +45,9 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | --- | --- | --- | --- |
 | `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns the `unavailable` variant instead of throwing when no signature is available. |
 | `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Throws `signature.unavailable` when the lookup result is unavailable. |
-| `fetchModelAttestation(input)` | `FetchModelAttestationInput` | `ModelAttestation` | Requires a `provider_tee` signature, exactly one NEAR model report, and a matching signer. |
-| `fetchGatewayAttestation(input)` | `FetchGatewayAttestationInput` | `GatewayAttestation` | Fetches standalone gateway evidence and always requests its TLS fingerprint. |
+| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `readonly ModelAttestation[]` | Fetches NEAR model evidence for one model, optionally filtered by signing algorithm and address. Rejects a report whose echoed nonce differs from the request. Cloud API currently returns exactly one item; the SDK enforces that contract. |
+| `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `ModelAttestation` | Requires a `provider_tee` signature, requests its signer, then confirms the returned evidence matches it. |
+| `fetchGatewayAttestation(input)` | `FetchGatewayAttestationInput` | `GatewayAttestation` | Fetches standalone gateway evidence, rejects a mismatched echoed nonce, and always requests its TLS fingerprint. |
 
 #### Client input types
 
@@ -53,11 +55,22 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | --- | --- | --- | --- | --- |
 | `FetchCompletionSignatureInput` | `completionId` | `string` | Yes | Non-empty completion ID. |
 |  | `algorithm?` | `SigningAlgorithm` | No | Algorithm to request. Omitting it requests the service default, `ecdsa`. |
-| `FetchModelAttestationInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
+| `FetchModelAttestationsInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
 |  | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
-|  | `signature` | `CompletionSignature` | Yes | Completion signature with `kind: 'provider_tee'`. |
+|  | `algorithm?` | `SigningAlgorithm` | No | Optional signing-algorithm filter. Omit it to use the service default. |
+|  | `signingAddress?` | `string` | No | Optional signing-address filter. Supply it when requesting evidence for a `provider_tee` response signature. |
+| `FetchModelAttestationForSignatureInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
+|  | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
+|  | `signature` | `CompletionSignature` | Yes | Completion signature with `kind: 'provider_tee'`; its signer selects the result. |
 | `FetchGatewayAttestationInput` | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
 |  | `algorithm?` | `SigningAlgorithm` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature algorithm. This does not select a gateway instance. |
+
+#### `FindModelAttestationForSignerInput`
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `attestations` | `readonly ModelAttestation[]` | Yes | Candidate model evidence. Exactly one item must match `signer`. |
+| `signer` | `SigningIdentity` | Yes | Signing identity to match by algorithm and hexadecimal address. |
 
 ## Verification functions
 
@@ -257,8 +270,10 @@ The stable error contract is `failure.code` and its typed `failure.details`.
 | `api.http_status` | `resource`, `status` | Depends on status |
 | `api.invalid_json` | `resource` | No |
 | `api.invalid_response` | `path`, `expected`, `actual` | No |
+| `api.nonce_mismatch` | `resource` (`model_attestation` or `gateway_attestation`) | No |
 | `api.unexpected_model_attestation_count` | `expectedCount`, `actualCount` | No |
-| `api.attestation_signer_mismatch` | `resource` (`model_attestation` or `gateway_attestation`) | No |
+| `api.ambiguous_model_attestation_signer` | `matchingCount`, `totalCount` | No |
+| `api.attestation_signer_mismatch` | `resource: 'model_attestation'` | No |
 
 `api.http_status` is retryable for 408, 425, 429, status `>= 500`, and a
 `completion_signature` 404.

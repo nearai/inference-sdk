@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
 import {
+  findModelAttestationForSigner,
   isVerificationError,
   NearAiCloudClient,
   VerificationError,
@@ -113,6 +114,21 @@ assert.deepEqual(
       message: 'No provider signature',
     },
   },
+);
+
+const modelAttestation = {
+  nonce,
+  signer: { algorithm: 'ecdsa', address: '22'.repeat(20) },
+  intelQuote: 'aa',
+  eventLog: [],
+  appCompose: '{}',
+};
+assert.deepEqual(
+  findModelAttestationForSigner({
+    attestations: [modelAttestation],
+    signer: modelAttestation.signer,
+  }),
+  modelAttestation,
 );
 
 function gatewaySignedText(request, response) {

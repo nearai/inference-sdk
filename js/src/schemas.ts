@@ -335,15 +335,35 @@ export type NearAiCloudClientOptionsSchema =
 export type NearAiCloudClientOptions =
   v.InferInput<NearAiCloudClientOptionsSchema>;
 
-export const FetchModelAttestationInputSchema = strictObjectSchema({
+export const FetchModelAttestationsInputSchema = strictObjectSchema({
+  model: v.string(),
+  nonce: v.string(),
+  algorithm: v.optional(SigningAlgorithmSchema),
+  signingAddress: v.optional(v.string()),
+});
+export type FetchModelAttestationsInputSchema =
+  typeof FetchModelAttestationsInputSchema;
+export type FetchModelAttestationsInput =
+  v.InferOutput<FetchModelAttestationsInputSchema>;
+
+export const FetchModelAttestationForSignatureInputSchema = strictObjectSchema({
   model: v.string(),
   nonce: v.string(),
   signature: CompletionSignatureSchema,
 });
-export type FetchModelAttestationInputSchema =
-  typeof FetchModelAttestationInputSchema;
-export type FetchModelAttestationInput =
-  v.InferOutput<FetchModelAttestationInputSchema>;
+export type FetchModelAttestationForSignatureInputSchema =
+  typeof FetchModelAttestationForSignatureInputSchema;
+export type FetchModelAttestationForSignatureInput =
+  v.InferOutput<FetchModelAttestationForSignatureInputSchema>;
+
+export const FindModelAttestationForSignerInputSchema = strictObjectSchema({
+  attestations: v.pipe(v.array(ModelAttestationSchema), v.readonly()),
+  signer: SigningIdentitySchema,
+});
+export type FindModelAttestationForSignerInputSchema =
+  typeof FindModelAttestationForSignerInputSchema;
+export type FindModelAttestationForSignerInput =
+  v.InferOutput<FindModelAttestationForSignerInputSchema>;
 
 export const FetchGatewayAttestationInputSchema = strictObjectSchema({
   nonce: v.string(),

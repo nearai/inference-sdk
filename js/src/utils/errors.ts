@@ -67,8 +67,20 @@ export type VerificationFailure =
     }
   | {
       phase: 'api';
+      code: 'api.nonce_mismatch';
+      details: {
+        resource: 'model_attestation' | 'gateway_attestation';
+      };
+    }
+  | {
+      phase: 'api';
       code: 'api.unexpected_model_attestation_count';
       details: { expectedCount: 1; actualCount: number };
+    }
+  | {
+      phase: 'api';
+      code: 'api.ambiguous_model_attestation_signer';
+      details: { matchingCount: number; totalCount: number };
     }
   | {
       phase: 'api';
@@ -372,10 +384,14 @@ function formatFailureMessage(failure: VerificationFailure): string {
       return 'API returned invalid JSON';
     case 'api.invalid_response':
       return `API response has an invalid ${failure.details.path} field`;
+    case 'api.nonce_mismatch':
+      return 'API attestation nonce does not match the request';
     case 'api.unexpected_model_attestation_count':
       return 'API returned an unexpected number of model attestations';
+    case 'api.ambiguous_model_attestation_signer':
+      return 'More than one model attestation matches the requested signer';
     case 'api.attestation_signer_mismatch':
-      return 'Attestation signer does not match the completion signature';
+      return 'Attestation signer does not match the requested signer';
     case 'quote.collateral_unavailable':
       return 'Intel collateral is unavailable';
     case 'quote.verification_failed':

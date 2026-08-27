@@ -19,10 +19,12 @@ import {
   CloudApiModelAttestationResponseSchema,
   CloudApiModelAttestationSchema,
   CloudApiTcbInfoSchema,
+  FetchModelAttestationForSignatureInputSchema,
+  FetchModelAttestationsInputSchema,
   CloudApiUnavailableSignatureResponseSchema,
   FetchCompletionSignatureInputSchema,
   FetchGatewayAttestationInputSchema,
-  FetchModelAttestationInputSchema,
+  FindModelAttestationForSignerInputSchema,
   NearAiCloudClientOptionsSchema,
   ResponseBodySchema,
   ResponseLikeSchema,
@@ -33,7 +35,9 @@ import type {
   CloudApiModelAttestation,
   FetchCompletionSignatureInput,
   FetchGatewayAttestationInput,
-  FetchModelAttestationInput,
+  FetchModelAttestationForSignatureInput,
+  FetchModelAttestationsInput,
+  FindModelAttestationForSignerInput,
   NearAiCloudClientOptions,
   NearAiCloudFetch,
   ResponseLike,
@@ -46,7 +50,9 @@ import { parseApiResponse, parsePublicInput, tryParse } from '../utils/schema';
 export type {
   FetchCompletionSignatureInput,
   FetchGatewayAttestationInput,
-  FetchModelAttestationInput,
+  FetchModelAttestationForSignatureInput,
+  FetchModelAttestationsInput,
+  FindModelAttestationForSignerInput,
   NearAiCloudClientOptions,
   NearAiCloudFetch,
 } from '../schemas';
@@ -61,7 +67,7 @@ type ApiResource = Extract<
   ApiFailure,
   { code: 'api.transport_failed' }
 >['details']['resource'];
-type AttestationResource = 'model_attestation';
+type AttestationResource = 'model_attestation' | 'gateway_attestation';
 
 /**
  * A narrow NEAR AI Cloud client for attestation evidence and response
@@ -81,29 +87,57 @@ export class NearAiCloudClient {
   }
 
   /**
-   * Fetch the one NEAR model report selected by the model-serving signature.
-   * The client rejects model aliases before the request is dispatched.
+   * Fetch NEAR model attestation candidates for one model and signing
+   * algorithm. Optionally narrow the report to a signing address. Cloud API
+   * currently returns exactly one candidate.
    */
-  async fetchModelAttestation(
-    input: FetchModelAttestationInput,
-  ): Promise<ModelAttestation> {
-    const request = parseModelAttestationRequest(input);
+  async fetchModelAttestations(
+    input: FetchModelAttestationsInput,
+  ): Promise<readonly ModelAttestation[]> {
+    const request = parseModelAttestationsRequest(input);
     const url = this.endpoint('attestation/report');
-    setAttestationQuery(url, request.nonce, request.signature.signer, false);
+    setModelAttestationQuery(
+      url,
+      request.nonce,
+      request.algorithm,
+      request.signingAddress,
+    );
     url.searchParams.set('model', request.model);
     url.searchParams.set('provider', 'near');
 
-    const attestation = parseSingleModelAttestation(
+    const attestations = parseModelAttestations(
       await this.getJson(url, 'model_attestation', {
         [NO_ALIASING_HEADER]: 'true',
       }),
     );
-    requireMatchingAttestationSigner(
-      attestation,
-      request.signature,
-      'model_attestation',
-    );
-    return attestation;
+    for (const attestation of attestations) {
+      requireMatchingApiNonce(
+        attestation.nonce,
+        request.nonce,
+        'model_attestation',
+      );
+    }
+    return attestations;
+  }
+
+  /**
+   * Fetch model attestation candidates for a provider_tee signature, then
+   * select the one whose advertised signer matches the signature signer.
+   */
+  async fetchModelAttestationForSignature(
+    input: FetchModelAttestationForSignatureInput,
+  ): Promise<ModelAttestation> {
+    const request = parseModelAttestationForSignatureRequest(input);
+    const attestations = await this.fetchModelAttestations({
+      model: request.model,
+      nonce: request.nonce,
+      algorithm: request.signature.signer.algorithm,
+      signingAddress: request.signature.signer.address,
+    });
+    return findModelAttestationForSigner({
+      attestations,
+      signer: request.signature.signer,
+    });
   }
 
   /**
@@ -121,7 +155,13 @@ export class NearAiCloudClient {
       await this.getJson(url, 'gateway_attestation'),
       'gateway attestation report',
     );
-    return parseGatewayAttestation(report.gateway_attestation);
+    const attestation = parseGatewayAttestation(report.gateway_attestation);
+    requireMatchingApiNonce(
+      attestation.nonce,
+      request.nonce,
+      'gateway_attestation',
+    );
+    return attestation;
   }
 
   /**
@@ -227,6 +267,54 @@ export class NearAiCloudClient {
   }
 }
 
+/**
+ * Select the single model attestation whose advertised signer matches a
+ * requested signer. It does not verify the quote or completion signature.
+ */
+export function findModelAttestationForSigner(
+  input: FindModelAttestationForSignerInput,
+): ModelAttestation {
+  const parsed = parsePublicInput(
+    FindModelAttestationForSignerInputSchema,
+    input,
+    'input',
+  );
+  const signer = parseSigningIdentity(parsed.signer, 'signer');
+  const matches = parsed.attestations
+    .map((attestation, index) => ({
+      ...attestation,
+      signer: parseSigningIdentity(
+        attestation.signer,
+        `attestations[${index}].signer`,
+      ),
+    }))
+    .filter(
+      (attestation) =>
+        attestation.signer.algorithm === signer.algorithm &&
+        normalizeHex(attestation.signer.address) ===
+          normalizeHex(signer.address),
+    );
+
+  if (matches.length === 0) {
+    throw new ApiError({
+      phase: 'api',
+      code: 'api.attestation_signer_mismatch',
+      details: { resource: 'model_attestation' },
+    });
+  }
+  if (matches.length !== 1) {
+    throw new ApiError({
+      phase: 'api',
+      code: 'api.ambiguous_model_attestation_signer',
+      details: {
+        matchingCount: matches.length,
+        totalCount: parsed.attestations.length,
+      },
+    });
+  }
+  return matches[0];
+}
+
 type ParsedClientOptions = {
   baseUrl: string;
   apiKey: string;
@@ -251,13 +339,50 @@ function parseClientOptions(options: unknown): ParsedClientOptions {
   };
 }
 
-type ParsedModelAttestationRequest = FetchModelAttestationInput;
+type ParsedModelAttestationsRequest = {
+  model: string;
+  nonce: string;
+  algorithm?: SigningAlgorithm;
+  signingAddress?: string;
+};
 
-function parseModelAttestationRequest(
+function parseModelAttestationsRequest(
   input: unknown,
-): ParsedModelAttestationRequest {
+): ParsedModelAttestationsRequest {
   const parsed = parsePublicInput(
-    FetchModelAttestationInputSchema,
+    FetchModelAttestationsInputSchema,
+    input,
+    'input',
+  );
+
+  const signingAddress =
+    parsed.signingAddress === undefined
+      ? undefined
+      : validateModelAttestationSigningAddress(
+          parsed.signingAddress,
+          parsed.algorithm,
+          'signingAddress',
+        );
+
+  return {
+    model: requireNonEmptyString(parsed.model, 'model'),
+    nonce: validateNonce(parsed.nonce),
+    ...(parsed.algorithm === undefined ? {} : { algorithm: parsed.algorithm }),
+    ...(signingAddress === undefined ? {} : { signingAddress }),
+  };
+}
+
+type ParsedModelAttestationForSignatureRequest = {
+  model: string;
+  nonce: string;
+  signature: CompletionSignature;
+};
+
+function parseModelAttestationForSignatureRequest(
+  input: unknown,
+): ParsedModelAttestationForSignatureRequest {
+  const parsed = parsePublicInput(
+    FetchModelAttestationForSignatureInputSchema,
     input,
     'input',
   );
@@ -332,13 +457,46 @@ function parseSignatureSigner(
   };
 }
 
-function parseSigningIdentity(signer: SigningIdentity): SigningIdentity {
-  requireByteLength(
-    signer.address,
-    signer.algorithm === 'ecdsa' ? 20 : 32,
-    'signature.signer.address',
-  );
-  return { algorithm: signer.algorithm, address: signer.address };
+function parseSigningIdentity(
+  signer: SigningIdentity,
+  field = 'signature.signer',
+): SigningIdentity {
+  return {
+    algorithm: signer.algorithm,
+    address: validateSigningAddress(
+      signer.address,
+      signer.algorithm,
+      `${field}.address`,
+    ),
+  };
+}
+
+function validateSigningAddress(
+  address: string,
+  algorithm: SigningAlgorithm,
+  field: string,
+): string {
+  requireByteLength(address, algorithm === 'ecdsa' ? 20 : 32, field);
+  return address;
+}
+
+function validateModelAttestationSigningAddress(
+  address: string,
+  algorithm: SigningAlgorithm | undefined,
+  field: string,
+): string {
+  if (algorithm !== undefined) {
+    return validateSigningAddress(address, algorithm, field);
+  }
+
+  const actualBytes = normalizeHex(address).length / 2;
+  if (actualBytes === 20 || actualBytes === 32) {
+    return address;
+  }
+  throw inputError(field, 'wrong_length', {
+    expected: '20-byte ECDSA or 32-byte Ed25519 hexadecimal signing address',
+    actualBytes,
+  });
 }
 
 function validateNonce(nonce: string): string {
@@ -413,17 +571,18 @@ function parseResponseLike(value: unknown, root: string): ResponseLike {
   };
 }
 
-function setAttestationQuery(
+function setModelAttestationQuery(
   url: URL,
   nonce: string,
-  signer: SigningIdentity,
-  includeTlsFingerprint: boolean,
+  algorithm: SigningAlgorithm | undefined,
+  signingAddress: string | undefined,
 ): void {
   url.searchParams.set('nonce', nonce);
-  url.searchParams.set('signing_algo', signer.algorithm);
-  url.searchParams.set('signing_address', signer.address);
-  if (includeTlsFingerprint) {
-    url.searchParams.set('include_tls_fingerprint', 'true');
+  if (algorithm !== undefined) {
+    url.searchParams.set('signing_algo', algorithm);
+  }
+  if (signingAddress !== undefined) {
+    url.searchParams.set('signing_address', signingAddress);
   }
 }
 
@@ -437,7 +596,7 @@ function setGatewayAttestationQuery(
   url.searchParams.set('include_tls_fingerprint', 'true');
 }
 
-function parseSingleModelAttestation(value: unknown): ModelAttestation {
+function parseModelAttestations(value: unknown): readonly ModelAttestation[] {
   const report = parseApiResponse(
     CloudApiModelAttestationResponseSchema,
     value,
@@ -451,7 +610,9 @@ function parseSingleModelAttestation(value: unknown): ModelAttestation {
       details: { expectedCount: 1, actualCount: rawAttestations.length },
     });
   }
-  return parseModelAttestation(rawAttestations[0], 'model_attestations[0]');
+  return rawAttestations.map((attestation, index) =>
+    parseModelAttestation(attestation, `model_attestations[${index}]`),
+  );
 }
 
 function parseGatewayAttestation(value: unknown): GatewayAttestation {
@@ -500,7 +661,7 @@ function parseAttestationEvidence(
     `${label}.signing_address`,
   );
   return {
-    nonce: value.request_nonce,
+    nonce: validateApiNonce(value.request_nonce, `${label}.request_nonce`),
     signer: {
       algorithm: signingAlgorithm,
       address: signingAddress,
@@ -594,24 +755,6 @@ function parseAppCompose(value: CloudApiTcbInfoValue, label: string): string {
   return value.app_compose;
 }
 
-function requireMatchingAttestationSigner(
-  attestation: AttestationEvidence,
-  signature: CompletionSignature,
-  resource: AttestationResource,
-): void {
-  if (
-    attestation.signer.algorithm !== signature.signer.algorithm ||
-    normalizeHex(attestation.signer.address) !==
-      normalizeHex(signature.signer.address)
-  ) {
-    throw new ApiError({
-      phase: 'api',
-      code: 'api.attestation_signer_mismatch',
-      details: { resource },
-    });
-  }
-}
-
 function validateApiSigningAddress(
   value: string,
   algorithm: SigningAlgorithm,
@@ -630,6 +773,31 @@ function validateApiSigningAddress(
       value,
     );
   }
+}
+
+function validateApiNonce(value: string, label: string): string {
+  const normalized =
+    value.startsWith('0x') || value.startsWith('0X') ? value.slice(2) : value;
+  if (normalized.length !== 64 || !/^[0-9a-fA-F]+$/.test(normalized)) {
+    throw invalidResponse(label, '32-byte hexadecimal nonce', value);
+  }
+  return value;
+}
+
+/** Reject a response that does not echo the nonce sent in its request. */
+function requireMatchingApiNonce(
+  reportedNonce: string,
+  requestedNonce: string,
+  resource: AttestationResource,
+): void {
+  if (normalizeHex(reportedNonce) === requestedNonce) {
+    return;
+  }
+  throw new ApiError({
+    phase: 'api',
+    code: 'api.nonce_mismatch',
+    details: { resource },
+  });
 }
 
 function invalidResponse(

@@ -82,7 +82,7 @@ const signature = await client.fetchCompletionSignature({
 });
 
 const nonce = generateNonce();
-const attestation = await client.fetchModelAttestation({
+const attestation = await client.fetchModelAttestationForSignature({
   model,
   nonce,
   signature,

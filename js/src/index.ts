@@ -1,12 +1,15 @@
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+  findModelAttestationForSigner,
   NearAiCloudClient,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export type {
   FetchCompletionSignatureInput,
   FetchGatewayAttestationInput,
-  FetchModelAttestationInput,
+  FetchModelAttestationForSignatureInput,
+  FetchModelAttestationsInput,
+  FindModelAttestationForSignerInput,
   NearAiCloudFetch,
   NearAiCloudClientOptions,
 } from './core/cloud-api';
