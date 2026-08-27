@@ -2,7 +2,7 @@ import type { GatewayAttestation } from '../types/attestation-gateway';
 import type { ModelAttestation } from '../types/attestation-model';
 import type {
   AttestationEvidence,
-  SigningAlgorithm,
+  SigningAlgo,
   SigningIdentity,
 } from '../types/attestation-common';
 import type {
@@ -88,7 +88,7 @@ export class NearAiCloudClient {
 
   /**
    * Fetch NEAR model attestation candidates with a fresh client nonce.
-   * Optionally narrow the report to a signing algorithm and address. Cloud API
+   * Optionally narrow the report to a signing algorithm and signing address.
    * currently returns exactly one candidate.
    */
   async fetchModelAttestations(
@@ -100,7 +100,7 @@ export class NearAiCloudClient {
     setModelAttestationQuery(
       url,
       clientNonce,
-      request.algorithm,
+      request.signingAlgo,
       request.signingAddress,
     );
     url.searchParams.set('model', request.model);
@@ -131,8 +131,8 @@ export class NearAiCloudClient {
     const request = parseModelAttestationForSignatureRequest(input);
     const fetched = await this.fetchModelAttestations({
       model: request.model,
-      algorithm: request.signature.signer.algorithm,
-      signingAddress: request.signature.signer.address,
+      signingAlgo: request.signature.signer.signingAlgo,
+      signingAddress: request.signature.signer.signingAddress,
     });
     return {
       attestation: selectModelAttestationForSigner(
@@ -153,7 +153,7 @@ export class NearAiCloudClient {
     const request = parseGatewayAttestationRequest(input);
     const clientNonce = generateNonce();
     const url = this.endpoint('attestation/report');
-    setGatewayAttestationQuery(url, clientNonce, request.algorithm);
+    setGatewayAttestationQuery(url, clientNonce, request.signingAlgo);
     const report = parseApiResponse(
       CloudApiGatewayAttestationResponseSchema,
       await this.getJson(url, 'gateway_attestation'),
@@ -179,8 +179,8 @@ export class NearAiCloudClient {
     const url = this.endpoint(
       `signature/${encodeURIComponent(request.completionId)}`,
     );
-    if (request.algorithm !== undefined) {
-      url.searchParams.set('signing_algo', request.algorithm);
+    if (request.signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', request.signingAlgo);
     }
     return parseCompletionSignatureLookup(
       await this.getJson(url, 'completion_signature'),
@@ -301,8 +301,9 @@ function selectModelAttestationForSigner(
       `attestations[${index}].signer`,
     );
     if (
-      candidateSigner.algorithm === signer.algorithm &&
-      normalizeHex(candidateSigner.address) === normalizeHex(signer.address)
+      candidateSigner.signingAlgo === signer.signingAlgo &&
+      normalizeHex(candidateSigner.signingAddress) ===
+        normalizeHex(signer.signingAddress)
     ) {
       matches.push(attestation);
     }
@@ -354,7 +355,7 @@ function parseClientOptions(options: unknown): ParsedClientOptions {
 
 type ParsedModelAttestationsRequest = {
   model: string;
-  algorithm?: SigningAlgorithm;
+  signingAlgo?: SigningAlgo;
   signingAddress?: string;
 };
 
@@ -364,10 +365,10 @@ function parseModelAttestationsRequest(
   const value = requireInputObject(input, 'input');
   rejectUnknownInputKeys(value, 'input', [
     'model',
-    'algorithm',
+    'signingAlgo',
     'signingAddress',
   ]);
-  const algorithm = optionalSigningAlgorithm(value.algorithm, 'algorithm');
+  const signingAlgo = optionalSigningAlgo(value.signingAlgo, 'signingAlgo');
   const signingAddress = optionalInputString(
     value.signingAddress,
     'signingAddress',
@@ -378,13 +379,13 @@ function parseModelAttestationsRequest(
       requireInputString(value.model, 'model'),
       'model',
     ),
-    ...(algorithm === undefined ? {} : { algorithm }),
+    ...(signingAlgo === undefined ? {} : { signingAlgo }),
     ...(signingAddress === undefined
       ? {}
       : {
           signingAddress: validateModelAttestationSigningAddress(
             signingAddress,
-            algorithm,
+            signingAlgo,
             'signingAddress',
           ),
         }),
@@ -412,18 +413,18 @@ function parseModelAttestationForSignatureRequest(
 }
 
 type ParsedGatewayAttestationRequest = {
-  algorithm: SigningAlgorithm;
+  signingAlgo: SigningAlgo;
 };
 
 function parseGatewayAttestationRequest(
   input: unknown,
 ): ParsedGatewayAttestationRequest {
   const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['algorithm']);
+  rejectUnknownInputKeys(value, 'input', ['signingAlgo']);
 
   return {
-    algorithm:
-      optionalSigningAlgorithm(value.algorithm, 'algorithm') ?? 'ed25519',
+    signingAlgo:
+      optionalSigningAlgo(value.signingAlgo, 'signingAlgo') ?? 'ed25519',
   };
 }
 
@@ -433,15 +434,15 @@ function parseCompletionSignatureRequest(
   input: unknown,
 ): ParsedCompletionSignatureRequest {
   const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['completionId', 'algorithm']);
-  const algorithm = optionalSigningAlgorithm(value.algorithm, 'algorithm');
+  rejectUnknownInputKeys(value, 'input', ['completionId', 'signingAlgo']);
+  const signingAlgo = optionalSigningAlgo(value.signingAlgo, 'signingAlgo');
 
   return {
     completionId: requireNonEmptyString(
       requireInputString(value.completionId, 'completionId'),
       'completionId',
     ),
-    ...(algorithm === undefined ? {} : { algorithm }),
+    ...(signingAlgo === undefined ? {} : { signingAlgo }),
   };
 }
 
@@ -474,17 +475,17 @@ function requireSignatureSigner(
 
 function parseSigningIdentity(value: unknown, field: string): SigningIdentity {
   const signer = requireInputObject(value, field);
-  rejectUnknownInputKeys(signer, field, ['algorithm', 'address']);
-  const algorithm = requireSigningAlgorithm(
-    signer.algorithm,
-    `${field}.algorithm`,
+  rejectUnknownInputKeys(signer, field, ['signingAlgo', 'signingAddress']);
+  const signingAlgo = requireSigningAlgo(
+    signer.signingAlgo,
+    `${field}.signingAlgo`,
   );
   return {
-    algorithm,
-    address: validateSigningAddress(
-      requireInputString(signer.address, `${field}.address`),
-      algorithm,
-      `${field}.address`,
+    signingAlgo,
+    signingAddress: validateSigningAddress(
+      requireInputString(signer.signingAddress, `${field}.signingAddress`),
+      signingAlgo,
+      `${field}.signingAddress`,
     ),
   };
 }
@@ -505,10 +506,7 @@ function requireSignatureKind(
   );
 }
 
-function requireSigningAlgorithm(
-  value: unknown,
-  field: string,
-): SigningAlgorithm {
+function requireSigningAlgo(value: unknown, field: string): SigningAlgo {
   if (value === 'ecdsa' || value === 'ed25519') {
     return value;
   }
@@ -521,36 +519,34 @@ function requireSigningAlgorithm(
   );
 }
 
-function optionalSigningAlgorithm(
+function optionalSigningAlgo(
   value: unknown,
   field: string,
-): SigningAlgorithm | undefined {
-  return value === undefined
-    ? undefined
-    : requireSigningAlgorithm(value, field);
+): SigningAlgo | undefined {
+  return value === undefined ? undefined : requireSigningAlgo(value, field);
 }
 
 function validateSigningAddress(
-  address: string,
-  algorithm: SigningAlgorithm,
+  signingAddress: string,
+  signingAlgo: SigningAlgo,
   field: string,
 ): string {
-  requireByteLength(address, algorithm === 'ecdsa' ? 20 : 32, field);
-  return address;
+  requireByteLength(signingAddress, signingAlgo === 'ecdsa' ? 20 : 32, field);
+  return signingAddress;
 }
 
 function validateModelAttestationSigningAddress(
-  address: string,
-  algorithm: SigningAlgorithm | undefined,
+  signingAddress: string,
+  signingAlgo: SigningAlgo | undefined,
   field: string,
 ): string {
-  if (algorithm !== undefined) {
-    return validateSigningAddress(address, algorithm, field);
+  if (signingAlgo !== undefined) {
+    return validateSigningAddress(signingAddress, signingAlgo, field);
   }
 
-  const actualBytes = normalizeHex(address).length / 2;
+  const actualBytes = normalizeHex(signingAddress).length / 2;
   if (actualBytes === 20 || actualBytes === 32) {
-    return address;
+    return signingAddress;
   }
   throw inputError(field, 'wrong_length', {
     expected: '20-byte ECDSA or 32-byte Ed25519 hexadecimal signing address',
@@ -629,12 +625,12 @@ function parseResponseLike(value: unknown, root: string): ResponseLike {
 function setModelAttestationQuery(
   url: URL,
   nonce: string,
-  algorithm: SigningAlgorithm | undefined,
+  signingAlgo: SigningAlgo | undefined,
   signingAddress: string | undefined,
 ): void {
   url.searchParams.set('nonce', nonce);
-  if (algorithm !== undefined) {
-    url.searchParams.set('signing_algo', algorithm);
+  if (signingAlgo !== undefined) {
+    url.searchParams.set('signing_algo', signingAlgo);
   }
   if (signingAddress !== undefined) {
     url.searchParams.set('signing_address', signingAddress);
@@ -644,10 +640,10 @@ function setModelAttestationQuery(
 function setGatewayAttestationQuery(
   url: URL,
   nonce: string,
-  algorithm: SigningAlgorithm,
+  signingAlgo: SigningAlgo,
 ): void {
   url.searchParams.set('nonce', nonce);
-  url.searchParams.set('signing_algo', algorithm);
+  url.searchParams.set('signing_algo', signingAlgo);
   url.searchParams.set('include_tls_fingerprint', 'true');
 }
 
@@ -708,18 +704,18 @@ function parseAttestationEvidence(
   info: CloudApiInfo,
 ): AttestationEvidence {
   const appCompose = parseAppCompose(info.tcb_info, `${label}.info.tcb_info`);
-  const signingAlgorithm = value.signing_algo;
+  const signingAlgo = value.signing_algo;
   const signingAddress = value.signing_address;
   validateApiSigningAddress(
     signingAddress,
-    signingAlgorithm,
+    signingAlgo,
     `${label}.signing_address`,
   );
   return {
     nonce: validateApiNonce(value.request_nonce, `${label}.request_nonce`),
     signer: {
-      algorithm: signingAlgorithm,
-      address: signingAddress,
+      signingAlgo,
+      signingAddress,
     },
     intelQuote: value.intel_quote,
     eventLog: value.event_log,
@@ -762,17 +758,17 @@ function parseCompletionSignatureLookup(
     value,
     'signature',
   );
-  const signingAlgorithm = response.signing_algo;
+  const signingAlgo = response.signing_algo;
   const signingAddress = response.signing_address;
   validateApiSigningAddress(
     signingAddress,
-    signingAlgorithm,
+    signingAlgo,
     'signature.signing_address',
   );
   const base = {
     signedText: response.text,
     signature: response.signature,
-    signer: { address: signingAddress, algorithm: signingAlgorithm },
+    signer: { signingAlgo, signingAddress },
   };
   return {
     status: 'found',
@@ -797,13 +793,15 @@ function parseAppCompose(value: CloudApiTcbInfoValue, label: string): string {
 }
 
 function validateApiSigningAddress(
-  value: string,
-  algorithm: SigningAlgorithm,
+  signingAddress: string,
+  signingAlgo: SigningAlgo,
   label: string,
 ): void {
   const normalized =
-    value.startsWith('0x') || value.startsWith('0X') ? value.slice(2) : value;
-  const expectedBytes = algorithm === 'ecdsa' ? 20 : 32;
+    signingAddress.startsWith('0x') || signingAddress.startsWith('0X')
+      ? signingAddress.slice(2)
+      : signingAddress;
+  const expectedBytes = signingAlgo === 'ecdsa' ? 20 : 32;
   if (
     normalized.length !== expectedBytes * 2 ||
     !/^[0-9a-fA-F]+$/.test(normalized)
@@ -811,7 +809,7 @@ function validateApiSigningAddress(
     throw invalidResponse(
       label,
       `${expectedBytes}-byte hexadecimal signing address`,
-      value,
+      signingAddress,
     );
   }
 }

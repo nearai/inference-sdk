@@ -67,7 +67,7 @@ export function createModelAttestation(
 ): ModelAttestation {
   return {
     nonce,
-    signer: { algorithm: 'ecdsa', address: signingAddress },
+    signer: { signingAlgo: 'ecdsa', signingAddress },
     intelQuote: 'aa',
     eventLog: [
       {

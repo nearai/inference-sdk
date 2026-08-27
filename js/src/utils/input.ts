@@ -13,38 +13,11 @@ export function requireInputObject(
     throw inputError(
       field,
       value === undefined ? 'missing' : 'unsupported_value',
-      { expected: 'plain object' },
+      { expected: 'object' },
     );
   }
 
-  let descriptors: Record<string, PropertyDescriptor>;
-  try {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw new TypeError('non-plain object');
-    }
-    descriptors = Object.getOwnPropertyDescriptors(value);
-  } catch {
-    throw inputError(field, 'unsupported_value', { expected: 'plain object' });
-  }
-
-  const snapshot: Record<string, unknown> = Object.create(null) as Record<
-    string,
-    unknown
-  >;
-  for (const key of Object.keys(descriptors)) {
-    const descriptor = descriptors[key];
-    if (!descriptor.enumerable) {
-      continue;
-    }
-    if (!('value' in descriptor)) {
-      throw inputError(`${field}.${key}`, 'unsupported_value', {
-        expected: 'data property',
-      });
-    }
-    snapshot[key] = descriptor.value;
-  }
-  return snapshot;
+  return { ...value };
 }
 
 export function requireInputString(value: unknown, field: string): string {
@@ -101,13 +74,7 @@ export function requireInputArray(
   value: unknown,
   field: string,
 ): readonly unknown[] {
-  let descriptors: Record<string, PropertyDescriptor>;
-  try {
-    if (!Array.isArray(value)) {
-      throw new TypeError('not an array');
-    }
-    descriptors = Object.getOwnPropertyDescriptors(value);
-  } catch {
+  if (!Array.isArray(value)) {
     throw inputError(
       field,
       value === undefined ? 'missing' : 'unsupported_value',
@@ -115,32 +82,7 @@ export function requireInputArray(
     );
   }
 
-  const length = descriptors.length?.value;
-  if (
-    typeof length !== 'number' ||
-    !Number.isSafeInteger(length) ||
-    length < 0
-  ) {
-    throw inputError(field, 'unsupported_value', { expected: 'array' });
-  }
-
-  const snapshot: unknown[] = [];
-  for (let index = 0; index < length; index += 1) {
-    const descriptor = descriptors[String(index)];
-    if (descriptor === undefined) {
-      // Preserve a sparse slot as an explicit undefined value so a later
-      // element validator rejects it rather than skipping it via Array#map.
-      snapshot.push(undefined);
-      continue;
-    }
-    if (!('value' in descriptor)) {
-      throw inputError(`${field}.${index}`, 'unsupported_value', {
-        expected: 'data property',
-      });
-    }
-    snapshot.push(descriptor.value);
-  }
-  return snapshot;
+  return value;
 }
 
 /** Reject misspelled security options instead of silently weakening a policy. */

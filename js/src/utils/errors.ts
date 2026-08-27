@@ -26,7 +26,6 @@ export type VerificationFailure =
           | 'invalid_jwt'
           | 'invalid_url'
           | 'invalid_header'
-          | 'unverified_attestation'
           | 'unsupported_value';
         expected?: string;
         expectedBytes?: number;
@@ -266,8 +265,8 @@ export type VerificationFailure =
       phase: 'signature';
       code: 'signature.format_invalid';
       details: {
-        field: 'signature' | 'signer.address' | 'signer.algorithm';
-        reason: 'invalid_hex' | 'wrong_length' | 'unsupported_algorithm';
+        field: 'signature' | 'signer.signingAddress' | 'signer.signingAlgo';
+        reason: 'invalid_hex' | 'wrong_length' | 'unsupported_signing_algo';
         expectedBytes?: number;
         actualBytes?: number;
       };
@@ -275,7 +274,7 @@ export type VerificationFailure =
   | {
       phase: 'signature';
       code: 'signature.invalid';
-      details: { algorithm: 'ecdsa' | 'ed25519' };
+      details: { signingAlgo: 'ecdsa' | 'ed25519' };
     }
   | {
       phase: 'signature';

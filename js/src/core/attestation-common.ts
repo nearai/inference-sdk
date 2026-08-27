@@ -35,7 +35,7 @@ export function verifyReportedNonce(
 /**
  * Verify the strict NEAR report-data layout held inside an Intel-signed quote:
  *
- * - bytes [0, 32): SHA-256(signer address bytes || TLS SPKI fingerprint)
+ * - bytes [0, 32): SHA-256(signing-address bytes || TLS SPKI fingerprint)
  * - bytes [32, 64): caller's 32-byte nonce
  *
  * The first half becomes a gateway endpoint binding only after the report's
@@ -97,7 +97,10 @@ export async function verifyGatewayReportDataBinding(input: {
     });
   }
 
-  const signingAddress = hexToBuffer(input.signingAddress, 'signer.address');
+  const signingAddress = hexToBuffer(
+    input.signingAddress,
+    'signer.signingAddress',
+  );
   const expectedBinding = await sha256(
     Buffer.concat([signingAddress, reportedFingerprint]),
   );
@@ -159,7 +162,10 @@ export async function verifyCloudModelReportDataBinding(input: {
     });
   }
 
-  const signingAddress = hexToBuffer(input.signingAddress, 'signer.address');
+  const signingAddress = hexToBuffer(
+    input.signingAddress,
+    'signer.signingAddress',
+  );
   if (
     input.reportedSpkiFingerprint !== undefined &&
     input.reportedSpkiFingerprint !== null

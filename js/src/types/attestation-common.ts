@@ -1,10 +1,10 @@
 /** Signing algorithms exposed by NEAR AI Cloud. */
-export type SigningAlgorithm = 'ecdsa' | 'ed25519';
+export type SigningAlgo = 'ecdsa' | 'ed25519';
 
 /** Public identity of the key that signs a completion or attestation. */
 export type SigningIdentity = {
-  algorithm: SigningAlgorithm;
-  address: string;
+  signingAlgo: SigningAlgo;
+  signingAddress: string;
 };
 
 /** dstack event log as returned by the attestation endpoint. */

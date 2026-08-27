@@ -27,12 +27,12 @@ import {
 } from './attestation-common';
 import { verifyAndReplayRtmr3 } from './event-log';
 
-const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = Object.freeze([
+const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
   'OutOfDate',
-]);
+];
 
-const TCB_STATUSES: readonly TcbStatus[] = Object.freeze([
+const TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
   'SWHardeningNeeded',
   'ConfigurationNeeded',
@@ -41,7 +41,7 @@ const TCB_STATUSES: readonly TcbStatus[] = Object.freeze([
   'OutOfDateConfigurationNeeded',
   'Revoked',
   'Unknown',
-]);
+];
 
 /** Quote facts shared by model and gateway evidence. Internal to the SDK. */
 export type VerifiedDstackQuote = {
@@ -79,7 +79,7 @@ export function requireAttestationEvidence(
     'attestation.reportedQuoteData',
   );
 
-  return Object.freeze({
+  return {
     nonce,
     signer,
     intelQuote,
@@ -89,7 +89,7 @@ export function requireAttestationEvidence(
       ? { declaredSpkiFingerprint }
       : {}),
     ...(reportedQuoteData !== undefined ? { reportedQuoteData } : {}),
-  });
+  };
 }
 
 /**
@@ -137,9 +137,9 @@ export function parseAttestationPolicy(
   const acceptedTcbStatuses = parseAcceptedTcbStatuses(
     policy.acceptedTcbStatuses,
   );
-  return Object.freeze({
+  return {
     ...(acceptedTcbStatuses !== undefined ? { acceptedTcbStatuses } : {}),
-  });
+  };
 }
 
 /** Validate and snapshot the shared TCB-status policy field. */
@@ -157,7 +157,7 @@ export function parseAcceptedTcbStatuses(
       requireTcbStatus(values[index], `policy.acceptedTcbStatuses.${index}`),
     );
   }
-  return Object.freeze(acceptedTcbStatuses);
+  return acceptedTcbStatuses;
 }
 
 /**
@@ -180,8 +180,8 @@ export async function verifyDstackQuote(input: {
 
   verifyReportedNonce(attestation.nonce, input.nonce);
   const signer = verifySigningAddressLength(
-    attestation.signer.algorithm,
-    attestation.signer.address,
+    attestation.signer.signingAlgo,
+    attestation.signer.signingAddress,
   );
 
   const quote = await verifyQuote(quoteVerifier, attestation.intelQuote);
@@ -298,19 +298,19 @@ function snapshotSigningIdentity(
 ): AttestationEvidence['signer'] {
   const signer = requireInputObject(value, 'attestation.signer');
   rejectUnknownInputKeys(signer, 'attestation.signer', [
-    'algorithm',
-    'address',
+    'signingAlgo',
+    'signingAddress',
   ]);
-  const algorithm = requireSigningAlgorithm(
-    signer.algorithm,
-    'attestation.signer.algorithm',
+  const signingAlgo = requireSigningAlgo(
+    signer.signingAlgo,
+    'attestation.signer.signingAlgo',
   );
-  const address = requireInputString(
-    signer.address,
-    'attestation.signer.address',
+  const signingAddress = requireInputString(
+    signer.signingAddress,
+    'attestation.signer.signingAddress',
   );
 
-  return Object.freeze({ algorithm, address });
+  return { signingAlgo, signingAddress };
 }
 
 function optionalNullableInputString(
@@ -340,10 +340,10 @@ function isTcbStatus(value: unknown): value is TcbStatus {
   );
 }
 
-function requireSigningAlgorithm(
+function requireSigningAlgo(
   value: unknown,
   field: string,
-): AttestationEvidence['signer']['algorithm'] {
+): AttestationEvidence['signer']['signingAlgo'] {
   if (value === 'ecdsa' || value === 'ed25519') {
     return value;
   }
@@ -355,15 +355,15 @@ function requireSigningAlgorithm(
 }
 
 function verifySigningAddressLength(
-  signingAlgorithm: AttestationEvidence['signer']['algorithm'],
+  signingAlgo: AttestationEvidence['signer']['signingAlgo'],
   signingAddress: string,
 ): VerifiedDstackQuote['signer'] {
-  if (signingAlgorithm !== 'ecdsa' && signingAlgorithm !== 'ed25519') {
+  if (signingAlgo !== 'ecdsa' && signingAlgo !== 'ed25519') {
     throw new VerificationError({
       phase: 'input',
       code: 'input.invalid',
       details: {
-        field: 'attestation.signer.algorithm',
+        field: 'attestation.signer.signingAlgo',
         reason: 'unsupported_value',
         expected: "'ecdsa' or 'ed25519'",
       },
@@ -371,11 +371,11 @@ function verifySigningAddressLength(
   }
   requireByteLength(
     signingAddress,
-    signingAlgorithm === 'ecdsa' ? 20 : 32,
-    'attestation.signer.address',
+    signingAlgo === 'ecdsa' ? 20 : 32,
+    'attestation.signer.signingAddress',
   );
-  return Object.freeze({
-    algorithm: signingAlgorithm,
-    address: signingAddress,
-  });
+  return {
+    signingAlgo,
+    signingAddress,
+  };
 }

@@ -56,7 +56,7 @@ describe('model attestation verification', () => {
     });
 
     expect(result).toMatchObject({
-      signer: { algorithm: 'ecdsa', address: signingAddress },
+      signer: { signingAlgo: 'ecdsa', signingAddress },
       tcbStatus: 'UpToDate',
       tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
       gpuEvidence: 'not_provided',
@@ -84,13 +84,13 @@ describe('model attestation verification', () => {
   });
 
   test('uses the signer snapshot captured before an async quote verifier runs', async () => {
-    const laterAddress = `0x${'44'.repeat(20)}`;
+    const laterSigningAddress = `0x${'44'.repeat(20)}`;
     const attestation = createModelAttestation();
     const quote = createQuote({
       reportData: Buffer.concat([
         sha256(
           Buffer.concat([
-            Buffer.from(laterAddress.slice(2), 'hex'),
+            Buffer.from(laterSigningAddress.slice(2), 'hex'),
             Buffer.from(tlsFingerprint, 'hex'),
           ]),
         ),
@@ -105,8 +105,8 @@ describe('model attestation verification', () => {
         verifiers: {
           quote: async () => {
             attestation.signer = {
-              algorithm: 'ecdsa',
-              address: laterAddress,
+              signingAlgo: 'ecdsa',
+              signingAddress: laterSigningAddress,
             };
             return quote;
           },
@@ -224,7 +224,6 @@ describe('model attestation verification', () => {
         code: 'quote.invalid_result',
         details: {
           path: 'quote',
-          expected: 'object',
           actual: 'undefined',
         },
       },

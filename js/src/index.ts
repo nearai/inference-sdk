@@ -25,7 +25,7 @@ export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export type {
   AttestationEventLog,
   AttestationEvidence,
-  SigningAlgorithm,
+  SigningAlgo,
   SigningIdentity,
 } from './types/attestation-common';
 export type { GatewayAttestation } from './types/attestation-gateway';

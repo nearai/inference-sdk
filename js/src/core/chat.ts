@@ -1,10 +1,7 @@
 import { Buffer } from 'buffer';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
-import type {
-  SigningAlgorithm,
-  SigningIdentity,
-} from '../types/attestation-common';
+import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type { CompletionSignature } from '../types/chat';
 import type {
   VerifyGatewayResponseInput,
@@ -19,18 +16,13 @@ import {
   requireInputObject,
   requireInputString,
 } from '../utils/input';
-import {
-  requireVerifiedGatewaySigner,
-  requireVerifiedModelSigner,
-} from './verified-attestation';
 
 /**
- * Verify a model-serving signature over the exact completion bytes and bind it
- * to verified model evidence. Resolves only when the model-response claim is
- * valid.
+ * Verify a model-serving signature over the exact completion bytes against the
+ * signer in a caller-supplied model-attestation result.
  */
 export function verifyModelResponse(input: VerifyModelResponseInput): void {
-  const parsed = parseResponseInput(input, requireVerifiedModelSigner);
+  const parsed = parseResponseInput(input);
   assertSignatureKind(parsed.signature, 'provider_tee');
   const canonicalModelId = getCanonicalModelIdFromRequest(parsed.requestBody);
   const expectedText = modelSignatureText(
@@ -44,11 +36,11 @@ export function verifyModelResponse(input: VerifyModelResponseInput): void {
 
 /**
  * Verify gateway-service provenance and integrity for the exact completion
- * bytes. The signature must match a signer bound to verified gateway evidence;
- * this does not establish model execution.
+ * bytes. The signature must match the signer in a caller-supplied
+ * gateway-attestation result; this does not establish model execution.
  */
 export function verifyGatewayResponse(input: VerifyGatewayResponseInput): void {
-  const parsed = parseResponseInput(input, requireVerifiedGatewaySigner);
+  const parsed = parseResponseInput(input);
   assertSignatureKind(parsed.signature, 'gateway');
   const expectedText = gatewaySignatureText(
     parsed.requestBody,
@@ -65,10 +57,7 @@ type ParsedResponseInput = {
   attestation: { signer: SigningIdentity };
 };
 
-function parseResponseInput(
-  input: unknown,
-  requireVerifiedSigner: (attestation: unknown) => SigningIdentity,
-): ParsedResponseInput {
+function parseResponseInput(input: unknown): ParsedResponseInput {
   const value = requireInputObject(input, 'input');
   rejectUnknownInputKeys(value, 'input', [
     'requestBody',
@@ -80,7 +69,7 @@ function parseResponseInput(
   const requestBody = requireInputBytes(value.requestBody, 'requestBody');
   const responseBody = requireInputBytes(value.responseBody, 'responseBody');
   const signature = parseCompletionSignature(value.signature);
-  const attestationSigner = requireVerifiedSigner(value.attestation);
+  const attestationSigner = parseAttestationSigner(value.attestation);
 
   return {
     requestBody,
@@ -90,6 +79,11 @@ function parseResponseInput(
       signer: attestationSigner,
     },
   };
+}
+
+function parseAttestationSigner(value: unknown): SigningIdentity {
+  const attestation = requireInputObject(value, 'attestation');
+  return parseSigningIdentity(attestation.signer, 'attestation.signer');
 }
 
 function parseCompletionSignature(value: unknown): CompletionSignature {
@@ -114,18 +108,18 @@ function parseCompletionSignature(value: unknown): CompletionSignature {
 
 function parseSigningIdentity(value: unknown, field: string): SigningIdentity {
   const signer = requireInputObject(value, field);
-  rejectUnknownInputKeys(signer, field, ['algorithm', 'address']);
+  rejectUnknownInputKeys(signer, field, ['signingAlgo', 'signingAddress']);
 
   return {
-    algorithm: requireSigningAlgorithm(signer.algorithm, `${field}.algorithm`),
-    address: requireInputString(signer.address, `${field}.address`),
+    signingAlgo: requireSigningAlgo(signer.signingAlgo, `${field}.signingAlgo`),
+    signingAddress: requireInputString(
+      signer.signingAddress,
+      `${field}.signingAddress`,
+    ),
   };
 }
 
-function requireSigningAlgorithm(
-  value: unknown,
-  field: string,
-): SigningAlgorithm {
+function requireSigningAlgo(value: unknown, field: string): SigningAlgo {
   if (value === 'ecdsa' || value === 'ed25519') {
     return value;
   }
@@ -207,12 +201,12 @@ function verifySignatureTextAndBytes(
 
 function verifySignatureMatchesAttestation(
   signature: CompletionSignature,
-  attestation: { signer: { algorithm: string; address: string } },
+  attestation: { signer: SigningIdentity },
 ): void {
   if (
-    signature.signer.algorithm !== attestation.signer.algorithm ||
-    normalizeSignatureAddress(signature.signer.address) !==
-      normalizeVerifiedSignerAddress(attestation.signer.address)
+    signature.signer.signingAlgo !== attestation.signer.signingAlgo ||
+    normalizeSigningAddress(signature.signer.signingAddress) !==
+      normalizeVerifiedSigningAddress(attestation.signer.signingAddress)
   ) {
     throw new VerificationError({
       phase: 'signature',
@@ -222,22 +216,26 @@ function verifySignatureMatchesAttestation(
 }
 
 function verifySignatureBytes(signature: CompletionSignature): void {
-  if (signature.signer.algorithm === 'ecdsa') {
+  if (signature.signer.signingAlgo === 'ecdsa') {
     const signatureBytes = parseSignatureHex(signature.signature, 'signature');
-    const address = parseSignatureHex(
-      signature.signer.address,
-      'signer.address',
+    const signingAddress = parseSignatureHex(
+      signature.signer.signingAddress,
+      'signer.signingAddress',
     );
     if (signatureBytes.length !== 65) {
       throw invalidSignatureLength('signature', 65, signatureBytes.length);
     }
-    if (address.length !== 20) {
-      throw invalidSignatureLength('signer.address', 20, address.length);
+    if (signingAddress.length !== 20) {
+      throw invalidSignatureLength(
+        'signer.signingAddress',
+        20,
+        signingAddress.length,
+      );
     }
 
-    let recovered: string;
+    let recoveredSigningAddress: string;
     try {
-      recovered = ethers.verifyMessage(
+      recoveredSigningAddress = ethers.verifyMessage(
         signature.signedText,
         signature.signature,
       );
@@ -245,26 +243,30 @@ function verifySignatureBytes(signature: CompletionSignature): void {
       throw invalidSignature('ecdsa', cause);
     }
     if (
-      normalizeRecoveredAddress(recovered) !==
-      normalizeSignatureAddress(signature.signer.address)
+      normalizeRecoveredSigningAddress(recoveredSigningAddress) !==
+      normalizeSigningAddress(signature.signer.signingAddress)
     ) {
       throw new VerificationError({
         phase: 'signature',
         code: 'signature.invalid',
-        details: { algorithm: 'ecdsa' },
+        details: { signingAlgo: 'ecdsa' },
       });
     }
     return;
   }
 
-  if (signature.signer.algorithm === 'ed25519') {
+  if (signature.signer.signingAlgo === 'ed25519') {
     const publicKey = parseSignatureHex(
-      signature.signer.address,
-      'signer.address',
+      signature.signer.signingAddress,
+      'signer.signingAddress',
     );
     const signed = parseSignatureHex(signature.signature, 'signature');
     if (publicKey.length !== 32) {
-      throw invalidSignatureLength('signer.address', 32, publicKey.length);
+      throw invalidSignatureLength(
+        'signer.signingAddress',
+        32,
+        publicKey.length,
+      );
     }
     if (signed.length !== 64) {
       throw invalidSignatureLength('signature', 64, signed.length);
@@ -283,7 +285,7 @@ function verifySignatureBytes(signature: CompletionSignature): void {
       throw new VerificationError({
         phase: 'signature',
         code: 'signature.invalid',
-        details: { algorithm: 'ed25519' },
+        details: { signingAlgo: 'ed25519' },
       });
     }
     return;
@@ -293,8 +295,8 @@ function verifySignatureBytes(signature: CompletionSignature): void {
     phase: 'signature',
     code: 'signature.format_invalid',
     details: {
-      field: 'signer.algorithm',
-      reason: 'unsupported_algorithm',
+      field: 'signer.signingAlgo',
+      reason: 'unsupported_signing_algo',
     },
   });
 }
@@ -340,7 +342,7 @@ function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
 
 function parseSignatureHex(
   value: string,
-  field: 'signature' | 'signer.address',
+  field: 'signature' | 'signer.signingAddress',
 ): Buffer {
   try {
     return hexToBuffer(value);
@@ -357,7 +359,7 @@ function parseSignatureHex(
 }
 
 function invalidSignatureLength(
-  field: 'signature' | 'signer.address',
+  field: 'signature' | 'signer.signingAddress',
   expectedBytes: number,
   actualBytes: number,
 ): VerificationError {
@@ -369,30 +371,34 @@ function invalidSignatureLength(
 }
 
 function invalidSignature(
-  algorithm: 'ecdsa' | 'ed25519',
+  signingAlgo: SigningAlgo,
   cause: unknown,
 ): VerificationError {
   return new VerificationError(
     {
       phase: 'signature',
       code: 'signature.invalid',
-      details: { algorithm },
+      details: { signingAlgo },
     },
     { cause },
   );
 }
 
-function normalizeSignatureAddress(address: string): string {
-  return parseSignatureHex(address, 'signer.address').toString('hex');
+function normalizeSigningAddress(signingAddress: string): string {
+  return parseSignatureHex(signingAddress, 'signer.signingAddress').toString(
+    'hex',
+  );
 }
 
-function normalizeRecoveredAddress(address: string): string {
-  return parseSignatureHex(address, 'signer.address').toString('hex');
+function normalizeRecoveredSigningAddress(signingAddress: string): string {
+  return parseSignatureHex(signingAddress, 'signer.signingAddress').toString(
+    'hex',
+  );
 }
 
-function normalizeVerifiedSignerAddress(address: string): string {
+function normalizeVerifiedSigningAddress(signingAddress: string): string {
   try {
-    return normalizeHex(address);
+    return normalizeHex(signingAddress);
   } catch (cause) {
     throw new VerificationError(
       {

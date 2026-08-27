@@ -2,7 +2,7 @@ import * as v from 'valibot';
 import type { Awaitable } from './types/shared';
 
 /** Values accepted by external NEAR AI and quote-verifier responses. */
-const SigningAlgorithmValues = ['ecdsa', 'ed25519'] as const;
+const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
 const CompletionSignatureKindValues = ['provider_tee', 'gateway'] as const;
 const CompletionSignatureResponseFields = [
   'text',
@@ -22,7 +22,7 @@ const TcbStatusValues = [
   'Unknown',
 ] as const;
 
-export const SigningAlgorithmSchema = v.picklist(SigningAlgorithmValues);
+export const SigningAlgoSchema = v.picklist(SigningAlgoValues);
 
 export const TcbStatusSchema = v.picklist(TcbStatusValues);
 
@@ -34,24 +34,21 @@ function isUint8Array(value: unknown): boolean {
   return value instanceof Uint8Array;
 }
 
-function isPlainObject(value: unknown): value is object {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
 function isNonArrayObject(value: unknown): value is object {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 const Uint8ArraySchema = v.custom<Uint8Array>(isUint8Array);
-const PlainObjectSchema = v.custom<object>(isPlainObject);
 const NonArrayObjectSchema = v.custom<object>(isNonArrayObject);
 
 function objectSchema<TEntries extends v.ObjectEntries>(entries: TEntries) {
-  return v.intersect([v.object(entries), PlainObjectSchema] as const);
+  return v.pipe(NonArrayObjectSchema, v.object(entries));
+}
+
+function looseObjectSchema<TEntries extends v.ObjectEntries>(
+  entries: TEntries,
+) {
+  return v.pipe(NonArrayObjectSchema, v.looseObject(entries));
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +99,7 @@ export const CloudApiAttestationInfoEnvelopeSchema = objectSchema({
 
 const CloudApiAttestationEntries = {
   request_nonce: v.string(),
-  signing_algo: SigningAlgorithmSchema,
+  signing_algo: SigningAlgoSchema,
   signing_address: v.string(),
   intel_quote: v.string(),
   event_log: AttestationEventLogSchema,
@@ -133,7 +130,7 @@ export const CloudApiGatewayAttestationResponseSchema = objectSchema({
 });
 
 export const CloudApiUnavailableSignatureResponseSchema = v.pipe(
-  objectSchema({
+  looseObjectSchema({
     error_code: v.string(),
     message: v.string(),
   }),
@@ -152,6 +149,6 @@ export const CloudApiCompletionSignatureResponseSchema = objectSchema({
   text: v.string(),
   signature: v.string(),
   signing_address: v.string(),
-  signing_algo: SigningAlgorithmSchema,
+  signing_algo: SigningAlgoSchema,
   signature_kind: v.picklist(CompletionSignatureKindValues),
 });

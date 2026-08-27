@@ -25,7 +25,6 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
-import { markVerifiedModelAttestation } from './verified-attestation';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
@@ -47,7 +46,7 @@ export async function verifyModelAttestation(
   const tlsBinding = await verifyCloudModelReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
     nonce,
-    signingAddress: verifiedQuote.signer.address,
+    signingAddress: verifiedQuote.signer.signingAddress,
     reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
   });
   const evidence = await verifyDstackDeployment(
@@ -61,7 +60,7 @@ export async function verifyModelAttestation(
     verifier: verifiers?.nvidia ?? nvidiaNrasVerifier,
   });
 
-  return markVerifiedModelAttestation({ ...evidence, tlsBinding, gpuEvidence });
+  return { ...evidence, tlsBinding, gpuEvidence };
 }
 
 type ParsedModelAttestationInput = VerifyModelAttestationInput;
@@ -93,17 +92,17 @@ function parseModelAttestationInput(
     'attestation.signer',
   );
   rejectUnknownInputKeys(signerInput, 'attestation.signer', [
-    'algorithm',
-    'address',
+    'signingAlgo',
+    'signingAddress',
   ]);
   const baseAttestation = requireAttestationEvidence(attestationInput);
   const nvidiaPayload = parseNvidiaPayload(attestationInput.nvidiaPayload);
 
-  return Object.freeze({
-    attestation: Object.freeze({
+  return {
+    attestation: {
       ...baseAttestation,
       ...(nvidiaPayload !== undefined ? { nvidiaPayload } : {}),
-    }),
+    },
     nonce: requireInputString(value.nonce, 'nonce'),
     ...(value.policy !== undefined
       ? { policy: parseModelAttestationPolicy(value.policy) }
@@ -111,7 +110,7 @@ function parseModelAttestationInput(
     ...(value.verifiers !== undefined
       ? { verifiers: parseModelAttestationVerifiers(value.verifiers) }
       : {}),
-  });
+  };
 }
 
 function parseNvidiaPayload(value: unknown): string | null | undefined {
@@ -135,10 +134,10 @@ function parseModelAttestationPolicy(value: unknown): ModelAttestationPolicy {
   );
   const gpuEvidence = parseGpuEvidenceRequirement(policy.gpuEvidence);
 
-  return Object.freeze({
+  return {
     ...(acceptedTcbStatuses !== undefined ? { acceptedTcbStatuses } : {}),
     ...(gpuEvidence !== undefined ? { gpuEvidence } : {}),
-  });
+  };
 }
 
 function parseGpuEvidenceRequirement(
@@ -172,7 +171,7 @@ function parseModelAttestationVerifiers(
   );
   const nvidia = optionalInputFunction(verifiers.nvidia, 'verifiers.nvidia');
 
-  return Object.freeze({
+  return {
     ...(quote !== undefined
       ? { quote: quote as ModelAttestationVerifiers['quote'] }
       : {}),
@@ -182,7 +181,7 @@ function parseModelAttestationVerifiers(
     ...(nvidia !== undefined
       ? { nvidia: nvidia as ModelAttestationVerifiers['nvidia'] }
       : {}),
-  });
+  };
 }
 
 async function verifyNvidiaEvidence(input: {

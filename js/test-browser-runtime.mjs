@@ -173,7 +173,7 @@ try {
   const verifiedAttestation = await sdk.verifyModelAttestation({
     attestation: {
       nonce,
-      signer: { algorithm: 'ed25519', address: modelSigningAddress },
+      signer: { signingAlgo: 'ed25519', signingAddress: modelSigningAddress },
       intelQuote: 'aa',
       eventLog: [{ digest: '00'.repeat(48), imr: 3 }],
       appCompose,
@@ -200,8 +200,8 @@ try {
           kind: 'provider_tee',
           signature: '00',
           signer: {
-            algorithm: 'ed25519',
-            address: modelSigningAddress,
+            signingAlgo: 'ed25519',
+            signingAddress: modelSigningAddress,
           },
           signedText,
         },

@@ -91,8 +91,8 @@ const signature = await client.fetchCompletionSignature({
 
 const { attestations, nonce } = await client.fetchModelAttestations({
   model,
-  algorithm: signature.signer.algorithm,
-  signingAddress: signature.signer.address,
+  signingAlgo: signature.signer.signingAlgo,
+  signingAddress: signature.signer.signingAddress,
 });
 const attestation = findModelAttestationForSignature({
   attestations,
@@ -113,15 +113,16 @@ verifyModelResponse({
 ```
 
 When `verifyModelResponse` returns, the model signature is valid for those
-exact bytes and its signing identity matches the verified model attestation.
+exact bytes and its signing identity matches `verifiedAttestation.signer`.
 `fetchModelAttestations` creates a fresh client nonce, checks the service's
 echo, and returns that nonce with the evidence. `findModelAttestationForSignature`
 requires exactly one returned attestation to match the signature's signer.
 
-Keep the exact `verifiedAttestation` object returned by
-`verifyModelAttestation` in memory and pass it directly to
-`verifyModelResponse`. Do not serialize, clone, or reconstruct it: after a
-process or serialization boundary, verify the raw attestation again.
+`verifyModelResponse` verifies the response bytes and matches the signature to
+`verifiedAttestation.signer`; it does not repeat quote, policy, or deployment
+verification. Call `verifyModelAttestation` first. The result is ordinary data,
+so your application decides when raw evidence must be verified again after
+storage or transfer.
 
 `NearAiCloudClient` fetches signatures and evidence only. Your application
 sends the completion request, retains its raw bytes, and decides whether or
@@ -181,7 +182,7 @@ use the fingerprint declared inside the attestation as
 with a TLS peer you observed.
 
 When `signature.kind` is `gateway`, fetch fresh evidence for the signature's
-algorithm, verify it with the TLS peer fingerprint observed for that fetch,
+signing algorithm, verify it with the TLS peer fingerprint observed for that fetch,
 then verify the response:
 
 ```ts
@@ -191,7 +192,7 @@ import {
 } from 'verification-sdk';
 
 const { attestation, nonce } = await client.fetchGatewayAttestation({
-  algorithm: signature.signer.algorithm,
+  signingAlgo: signature.signer.signingAlgo,
 });
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
   attestation,
@@ -268,7 +269,7 @@ all other outcomes.
 `fetchCompletionSignature` is the simple path: it returns one completion
 signature or throws a structured error when the signature is unavailable.
 It requests the service default (`ecdsa`) unless you explicitly pass
-`algorithm: 'ed25519'`.
+`signingAlgo: 'ed25519'`.
 
 Use `lookupCompletionSignature` when the application needs to handle those
 states itself. It returns one of:

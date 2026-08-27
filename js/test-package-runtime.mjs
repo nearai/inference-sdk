@@ -18,7 +18,7 @@ assert.equal('generateNonce' in sdk, false);
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
 const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
-const signerAddress = Buffer.from(keyPair.publicKey).toString('hex');
+const signingAddress = Buffer.from(keyPair.publicKey).toString('hex');
 const signedText = gatewaySignedText(requestBody, responseBody);
 const signature = Buffer.from(
   nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
@@ -30,7 +30,7 @@ const reportData = Buffer.concat([
   createHash('sha256')
     .update(
       Buffer.concat([
-        Buffer.from(signerAddress, 'hex'),
+        Buffer.from(signingAddress, 'hex'),
         Buffer.from(peerSpkiFingerprint, 'hex'),
       ]),
     )
@@ -48,7 +48,7 @@ const mrConfigId = Buffer.concat([
 const attestation = await verifyGatewayAttestation({
   attestation: {
     nonce,
-    signer: { algorithm: 'ed25519', address: signerAddress },
+    signer: { signingAlgo: 'ed25519', signingAddress },
     intelQuote: 'aa',
     eventLog: [{ digest: '00'.repeat(48), imr: 3 }],
     appCompose,
@@ -77,7 +77,7 @@ assert.equal(
       kind: 'gateway',
       signedText,
       signature,
-      signer: { algorithm: 'ed25519', address: signerAddress },
+      signer: { signingAlgo: 'ed25519', signingAddress },
     },
     attestation,
   }),
@@ -153,7 +153,7 @@ assert.equal(
 
 const modelAttestation = {
   nonce,
-  signer: { algorithm: 'ecdsa', address: '22'.repeat(20) },
+  signer: { signingAlgo: 'ecdsa', signingAddress: '22'.repeat(20) },
   intelQuote: 'aa',
   eventLog: [],
   appCompose: '{}',
@@ -183,7 +183,7 @@ function gatewayAttestationResponse(requestNonce) {
   return {
     request_nonce: requestNonce,
     signing_algo: 'ed25519',
-    signing_address: signerAddress,
+    signing_address: signingAddress,
     intel_quote: 'aa',
     event_log: [],
     info: { tcb_info: { app_compose: '{}' } },

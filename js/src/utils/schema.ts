@@ -15,24 +15,9 @@ export function parseApiResponse<TSchema extends ValidationSchema>(
   value: unknown,
   root: string,
 ): SchemaOutput<TSchema> {
-  const result = safeParse(schema, value);
+  const result = v.safeParse(schema, value);
   if (result.success) {
     return result.output;
-  }
-
-  if ('cause' in result) {
-    throw new ApiError(
-      {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: root,
-          expected: 'a readable value matching the documented response shape',
-          actual: describeValue(value),
-        },
-      },
-      { cause: result.cause },
-    );
   }
 
   const issue = selectIssue(result.issues);
@@ -56,7 +41,7 @@ export function tryParse<TSchema extends ValidationSchema>(
   schema: TSchema,
   value: unknown,
 ): SchemaOutput<TSchema> | undefined {
-  const result = safeParse(schema, value);
+  const result = v.safeParse(schema, value);
   return result.success ? result.output : undefined;
 }
 
@@ -65,25 +50,9 @@ export function parseQuoteResult<TSchema extends ValidationSchema>(
   schema: TSchema,
   value: unknown,
 ): SchemaOutput<TSchema> {
-  const result = safeParse(schema, value);
+  const result = v.safeParse(schema, value);
   if (result.success) {
     return result.output;
-  }
-
-  if ('cause' in result) {
-    throw new VerificationError(
-      {
-        phase: 'quote',
-        code: 'quote.invalid_result',
-        details: {
-          path: 'quote',
-          expected:
-            'a readable value matching the documented quote result shape',
-          actual: describeValue(value),
-        },
-      },
-      { cause: result.cause },
-    );
   }
 
   const issue = selectIssue(result.issues);
@@ -96,29 +65,6 @@ export function parseQuoteResult<TSchema extends ValidationSchema>(
       actual: describeValue(issue.input),
     },
   });
-}
-
-type SafeValidationResult<TSchema extends ValidationSchema> =
-  | { success: true; output: SchemaOutput<TSchema> }
-  | { success: false; issues: readonly ValidationIssue[] }
-  | { success: false; cause: unknown };
-
-function safeParse<TSchema extends ValidationSchema>(
-  schema: TSchema,
-  value: unknown,
-): SafeValidationResult<TSchema> {
-  try {
-    const result = v.safeParse(schema, value);
-    if (result.success) {
-      return { success: true, output: result.output };
-    }
-    return { success: false, issues: result.issues };
-  } catch (cause) {
-    // `safeParse` normally represents schema failures as issues. This branch
-    // protects the SDK boundary from exceptional values such as throwing
-    // property accessors, and lets each caller choose its public error code.
-    return { success: false, cause };
-  }
 }
 
 function selectIssue(issues: readonly ValidationIssue[]): ValidationIssue {
@@ -154,15 +100,11 @@ function describeExpected(expected: string | null): string {
 }
 
 function describeValue(value: unknown): string {
-  try {
-    if (value === null) {
-      return 'null';
-    }
-    if (Array.isArray(value)) {
-      return 'array';
-    }
-    return typeof value;
-  } catch {
-    return 'unreadable';
+  if (value === null) {
+    return 'null';
   }
+  if (Array.isArray(value)) {
+    return 'array';
+  }
+  return typeof value;
 }

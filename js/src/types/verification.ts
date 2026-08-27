@@ -77,9 +77,6 @@ export type VerifyGatewayAttestationInput = {
   readonly verifiers?: AttestationVerifiers;
 };
 
-declare const verifiedModelAttestationBrand: unique symbol;
-declare const verifiedGatewayAttestationBrand: unique symbol;
-
 /** Measurements extracted from an authenticated quote and normalized to Buffers. */
 export type VerifiedTdxQuote = Omit<
   QuoteVerificationResult,
@@ -125,26 +122,15 @@ export type VerifiedAttestationEvidence = {
   readonly deploymentProvenance: DeploymentProvenanceStatus;
 };
 
-/**
- * Immutable in-memory result of `verifyModelAttestation`. Pass this exact
- * object to `verifyModelResponse`; re-verify raw evidence after a process or
- * serialization boundary.
- */
+/** Result returned by a successful `verifyModelAttestation` call. */
 export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
-  readonly [verifiedModelAttestationBrand]: true;
   readonly tlsBinding: ModelTlsBinding;
   /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
   readonly gpuEvidence: GpuEvidenceStatus;
 };
 
-/**
- * Immutable in-memory result of `verifyGatewayAttestation`. It may be passed
- * to `verifyGatewayResponse` to verify gateway-service provenance for exact
- * completion bytes; re-verify raw evidence after a process or serialization
- * boundary.
- */
+/** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
-  readonly [verifiedGatewayAttestationBrand]: true;
   /** The quote-bound fingerprint matched the caller-supplied TLS peer. */
   readonly tlsBinding: GatewayTlsBinding;
 };
@@ -153,7 +139,7 @@ export type VerifyModelResponseInput = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
-  /** Model evidence whose verified signer must match `signature`. */
+  /** Model-attestation result whose signer must match `signature`. */
   readonly attestation: VerifiedModelAttestation;
 };
 
@@ -161,6 +147,6 @@ export type VerifyGatewayResponseInput = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
-  /** Gateway evidence whose verified service signer must match `signature`. */
+  /** Gateway-attestation result whose signer must match `signature`. */
   readonly attestation: VerifiedGatewayAttestation;
 };

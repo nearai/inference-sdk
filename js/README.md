@@ -66,8 +66,8 @@ model execution.
   verifier.
 - For gateway attestation, independently observe the TLS peer fingerprint of
   the attestation request.
-- Keep a verified attestation in memory when passing it to a response verifier.
-  Re-verify raw evidence after serialization or a process boundary.
+- Verify raw evidence before using its result for response verification. Decide
+  where to verify it again after storage or transfer.
 - Supply a deployment verifier when the application must restrict acceptable
   measured deployments.
 

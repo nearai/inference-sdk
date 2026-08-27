@@ -12,14 +12,16 @@ import {
 import { nonce } from '../fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
-const signerAddress = `0x${'22'.repeat(20)}`;
+const signingAddress = `0x${'22'.repeat(20)}`;
 
-function modelSignature(address = signerAddress): CompletionSignature {
+function modelSignature(
+  modelSigningAddress = signingAddress,
+): CompletionSignature {
   return {
     kind: 'provider_tee',
     signedText: 'canonical-model:request:response',
     signature: '00',
-    signer: { algorithm: 'ecdsa', address },
+    signer: { signingAlgo: 'ecdsa', signingAddress: modelSigningAddress },
   };
 }
 
@@ -28,7 +30,7 @@ function gatewaySignature(): CompletionSignature {
     kind: 'gateway',
     signedText: 'request:response',
     signature: '00',
-    signer: { algorithm: 'ecdsa', address: signerAddress },
+    signer: { signingAlgo: 'ecdsa', signingAddress },
   };
 }
 
@@ -36,7 +38,7 @@ function dstackAttestation(overrides: Record<string, unknown> = {}) {
   return {
     request_nonce: nonce,
     signing_algo: 'ecdsa',
-    signing_address: signerAddress,
+    signing_address: signingAddress,
     intel_quote: 'aa',
     event_log: [],
     info: { tcb_info: { app_compose: '{}' } },
@@ -64,7 +66,7 @@ function modelAttestation(
 ): ModelAttestation {
   return {
     nonce,
-    signer: { algorithm: 'ecdsa', address: signerAddress },
+    signer: { signingAlgo: 'ecdsa', signingAddress },
     intelQuote: 'aa',
     eventLog: [],
     appCompose: '{}',
@@ -123,16 +125,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 describe('NEAR AI Cloud client', () => {
   test('fetches and selects a NEAR model attestation for a model signature', async () => {
-    const selectedSignerAddress = `0x${'44'.repeat(20)}`;
+    const selectedSigningAddress = `0x${'44'.repeat(20)}`;
     const selectedSignature: CompletionSignatureReference = {
       kind: 'provider_tee',
-      signer: { algorithm: 'ecdsa', address: selectedSignerAddress },
+      signer: {
+        signingAlgo: 'ecdsa',
+        signingAddress: selectedSigningAddress,
+      },
     };
     const api = clientReplyingWith({
       gateway_attestation: { this: 'is unrelated to model parsing' },
       model_attestations: [
         dstackAttestation({
-          signing_address: selectedSignerAddress,
+          signing_address: selectedSigningAddress,
           report_data: '44'.repeat(64),
         }),
       ],
@@ -146,7 +151,10 @@ describe('NEAR AI Cloud client', () => {
     expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
     expect(fetched.attestation).toMatchObject({
       nonce: fetched.nonce,
-      signer: { algorithm: 'ecdsa', address: selectedSignerAddress },
+      signer: {
+        signingAlgo: 'ecdsa',
+        signingAddress: selectedSigningAddress,
+      },
       intelQuote: 'aa',
       eventLog: [],
       appCompose: '{}',
@@ -162,7 +170,7 @@ describe('NEAR AI Cloud client', () => {
       model: 'canonical-model',
       nonce: fetched.nonce,
       signing_algo: 'ecdsa',
-      signing_address: selectedSignerAddress,
+      signing_address: selectedSigningAddress,
       provider: 'near',
     });
     expect(request.headers.get('authorization')).toBe('Bearer test');
@@ -180,7 +188,7 @@ describe('NEAR AI Cloud client', () => {
     expect(fetched.attestations).toHaveLength(1);
     expect(fetched.attestations[0]).toMatchObject({
       nonce: fetched.nonce,
-      signer: { algorithm: 'ecdsa', address: signerAddress },
+      signer: { signingAlgo: 'ecdsa', signingAddress },
       reportedQuoteData: '44'.repeat(64),
     });
     expect(Object.fromEntries(new URL(api.request().url).searchParams)).toEqual(
@@ -215,25 +223,25 @@ describe('NEAR AI Cloud client', () => {
 
     await api.client.fetchModelAttestations({
       model: 'canonical-model',
-      algorithm: 'ecdsa',
-      signingAddress: signerAddress,
+      signingAlgo: 'ecdsa',
+      signingAddress,
     });
 
     expect(new URL(api.request().url).searchParams.get('signing_address')).toBe(
-      signerAddress,
+      signingAddress,
     );
   });
 
-  test('allows an address filter without an algorithm filter', async () => {
+  test('allows a signing-address filter without a signing-algorithm filter', async () => {
     const api = clientReplyingWith(nearReport());
 
     await api.client.fetchModelAttestations({
       model: 'canonical-model',
-      signingAddress: signerAddress,
+      signingAddress,
     });
 
     const query = new URL(api.request().url).searchParams;
-    expect(query.get('signing_address')).toBe(signerAddress);
+    expect(query.get('signing_address')).toBe(signingAddress);
     expect(query.has('signing_algo')).toBe(false);
   });
 
@@ -264,7 +272,10 @@ describe('NEAR AI Cloud client', () => {
 
   test('finds the one model attestation for a matching provider signature', () => {
     const attestation = modelAttestation({
-      signer: { algorithm: 'ecdsa', address: `0x${'44'.repeat(20)}` },
+      signer: {
+        signingAlgo: 'ecdsa',
+        signingAddress: `0x${'44'.repeat(20)}`,
+      },
     });
 
     expect(
@@ -336,9 +347,9 @@ describe('NEAR AI Cloud client', () => {
         signature: {
           kind: 'provider_tee',
           signer: {
-            algorithm: 'ecdsa',
-            address: signerAddress,
-            signingAddres: signerAddress,
+            signingAlgo: 'ecdsa',
+            signingAddress,
+            signingAddres: signingAddress,
           },
         },
       } as never),
@@ -349,6 +360,32 @@ describe('NEAR AI Cloud client', () => {
           code: 'input.invalid',
           details: expect.objectContaining({
             field: 'signature.signer.signingAddres',
+            reason: 'unsupported_value',
+          }),
+        }),
+      }),
+    );
+  });
+
+  test('rejects legacy signer field names', () => {
+    expect(() =>
+      findModelAttestationForSignature({
+        attestations: [modelAttestation()],
+        signature: {
+          kind: 'provider_tee',
+          signer: {
+            algorithm: 'ecdsa',
+            address: signingAddress,
+          },
+        },
+      } as never),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          phase: 'input',
+          code: 'input.invalid',
+          details: expect.objectContaining({
+            field: 'signature.signer.algorithm',
             reason: 'unsupported_value',
           }),
         }),
@@ -399,7 +436,7 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith(nearReport());
 
     await api.client.fetchGatewayAttestation({
-      algorithm: 'ecdsa',
+      signingAlgo: 'ecdsa',
     });
 
     expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
@@ -466,7 +503,7 @@ describe('NEAR AI Cloud client', () => {
 
     const lookup = await api.client.lookupCompletionSignature({
       completionId: 'chat-1',
-      algorithm: 'ed25519',
+      signingAlgo: 'ed25519',
     });
 
     expect(lookup).toEqual({
@@ -492,7 +529,7 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       api.client.fetchCompletionSignature({
         completionId: 'chat-1',
-        algorithm: 'ed25519',
+        signingAlgo: 'ed25519',
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -507,7 +544,7 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith({
       text: 'canonical-model:request:response',
       signature: '00',
-      signing_address: signerAddress,
+      signing_address: signingAddress,
       signing_algo: 'ecdsa',
       signature_kind: 'provider_tee',
     });
@@ -526,14 +563,14 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith({
       text: 'request:response',
       signature: '00',
-      signing_address: signerAddress,
+      signing_address: signingAddress,
       signing_algo: 'ecdsa',
       signature_kind: 'gateway',
     });
 
     const signature = await api.client.fetchCompletionSignature({
       completionId: 'chat-1',
-      algorithm: 'ecdsa',
+      signingAlgo: 'ecdsa',
     });
 
     expect(signature).toEqual(gatewaySignature());
@@ -543,14 +580,14 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith({
       text: 'old-format',
       signature: 'aa',
-      signing_address: signerAddress,
+      signing_address: signingAddress,
       signing_algo: 'ecdsa',
     });
 
     await expect(
       api.client.lookupCompletionSignature({
         completionId: 'chat-1',
-        algorithm: 'ecdsa',
+        signingAlgo: 'ecdsa',
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -575,7 +612,7 @@ describe('NEAR AI Cloud client', () => {
       const api = clientReplyingWith({
         text: 'old-format',
         signature: 'aa',
-        signing_address: signerAddress,
+        signing_address: signingAddress,
         signing_algo: 'ecdsa',
         signature_kind: value,
       });
@@ -583,7 +620,7 @@ describe('NEAR AI Cloud client', () => {
       await expect(
         api.client.fetchCompletionSignature({
           completionId: 'chat-1',
-          algorithm: 'ecdsa',
+          signingAlgo: 'ecdsa',
         }),
       ).rejects.toMatchObject({
         failure: {
@@ -602,7 +639,7 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith({
       text: 'old-format',
       signature: 'aa',
-      signing_address: signerAddress,
+      signing_address: signingAddress,
       signing_algo: 'ecdsa',
       signature_kind: null,
     });
@@ -629,7 +666,7 @@ describe('NEAR AI Cloud client', () => {
       message: 'No provider signature',
       text: 'old-format',
       signature: 'aa',
-      signing_address: signerAddress,
+      signing_address: signingAddress,
       signing_algo: 'ecdsa',
       signature_kind: 'other',
     });
@@ -663,7 +700,6 @@ describe('NEAR AI Cloud client', () => {
         code: 'api.invalid_response',
         details: {
           path: 'model_attestations[0].info',
-          expected: 'object',
           actual: 'undefined',
         },
       },
@@ -686,37 +722,6 @@ describe('NEAR AI Cloud client', () => {
       return;
     }
     throw new Error('Expected malformed API JSON to fail');
-  });
-
-  test('normalizes an unreadable transport response into ApiError', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: (() => {
-        const response = Proxy.revocable({}, {});
-        const promise = new Promise((resolve) => {
-          resolve(response.proxy);
-          response.revoke();
-        });
-        return promise;
-      }) as never,
-    });
-
-    try {
-      await client.fetchGatewayAttestation();
-    } catch (error) {
-      expect(error).toBeInstanceOf(ApiError);
-      expect(isVerificationError(error)).toBe(true);
-      expect(error).toMatchObject({
-        failure: {
-          phase: 'api',
-          code: 'api.invalid_response',
-          details: { actual: 'unreadable' },
-        },
-      });
-      return;
-    }
-    throw new Error('Expected unreadable transport response to fail');
   });
 
   test('rejects evidence whose signer differs from the selected signature', async () => {

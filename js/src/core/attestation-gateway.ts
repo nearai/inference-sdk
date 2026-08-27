@@ -17,7 +17,6 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
-import { markVerifiedGatewayAttestation } from './verified-attestation';
 
 /**
  * Verify gateway evidence and bind it to a TLS peer fingerprint independently
@@ -38,7 +37,7 @@ export async function verifyGatewayAttestation(
   const tlsBinding = await verifyGatewayReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
     nonce,
-    signingAddress: verifiedQuote.signer.address,
+    signingAddress: verifiedQuote.signer.signingAddress,
     reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
     peerSpkiFingerprint,
   });
@@ -47,7 +46,7 @@ export async function verifyGatewayAttestation(
     verifiers?.deployment,
   );
 
-  return markVerifiedGatewayAttestation({ ...evidence, tlsBinding });
+  return { ...evidence, tlsBinding };
 }
 
 type ParsedGatewayAttestationInput = VerifyGatewayAttestationInput;
@@ -79,8 +78,8 @@ function parseGatewayAttestationInput(
     'attestation.signer',
   );
   rejectUnknownInputKeys(signerInput, 'attestation.signer', [
-    'algorithm',
-    'address',
+    'signingAlgo',
+    'signingAddress',
   ]);
   const baseAttestation = requireAttestationEvidence(attestationInput);
   const reportedQuoteData = requireInputString(
@@ -88,11 +87,11 @@ function parseGatewayAttestationInput(
     'attestation.reportedQuoteData',
   );
 
-  return Object.freeze({
-    attestation: Object.freeze({
+  return {
+    attestation: {
       ...baseAttestation,
       reportedQuoteData,
-    }),
+    },
     nonce: requireInputString(value.nonce, 'nonce'),
     peerSpkiFingerprint: requireInputString(
       value.peerSpkiFingerprint,
@@ -104,7 +103,7 @@ function parseGatewayAttestationInput(
     ...(value.verifiers !== undefined
       ? { verifiers: parseGatewayAttestationVerifiers(value.verifiers) }
       : {}),
-  });
+  };
 }
 
 function parseGatewayAttestationPolicy(value: unknown): AttestationPolicy {
@@ -114,9 +113,9 @@ function parseGatewayAttestationPolicy(value: unknown): AttestationPolicy {
   const acceptedTcbStatuses = parseAcceptedTcbStatuses(
     policy.acceptedTcbStatuses,
   );
-  return Object.freeze({
+  return {
     ...(acceptedTcbStatuses !== undefined ? { acceptedTcbStatuses } : {}),
-  });
+  };
 }
 
 function parseGatewayAttestationVerifiers(
@@ -131,12 +130,12 @@ function parseGatewayAttestationVerifiers(
     'verifiers.deployment',
   );
 
-  return Object.freeze({
+  return {
     ...(quote !== undefined
       ? { quote: quote as AttestationVerifiers['quote'] }
       : {}),
     ...(deployment !== undefined
       ? { deployment: deployment as AttestationVerifiers['deployment'] }
       : {}),
-  });
+  };
 }

@@ -44,7 +44,7 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | --- | --- | --- | --- |
 | `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns the `unavailable` variant instead of throwing when no signature is available. |
 | `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Throws `signature.unavailable` when the lookup result is unavailable. |
-| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and address. It rejects a mismatched echoed nonce and a response count other than one. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
+| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. It rejects a mismatched echoed nonce and a response count other than one. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(input?)` | `FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
 
@@ -53,13 +53,13 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `FetchCompletionSignatureInput` | `completionId` | `string` | Yes | Non-empty completion ID. |
-|  | `algorithm?` | `SigningAlgorithm` | No | Algorithm to request. Omitting it requests the service default, `ecdsa`. |
+|  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it requests the service default, `ecdsa`. |
 | `FetchModelAttestationsInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
-|  | `algorithm?` | `SigningAlgorithm` | No | Optional signing-algorithm filter. Omit it to use the service default. |
+|  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter. Omit it to use the service default. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter. Supply it when requesting evidence for a `provider_tee` response signature. |
 | `FetchModelAttestationForSignatureInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
-| `FetchGatewayAttestationInput` | `algorithm?` | `SigningAlgorithm` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature algorithm. This does not select a gateway instance. |
+| `FetchGatewayAttestationInput` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature's signing algorithm. This does not select a gateway instance. |
 
 #### Attestation fetch result types
 
@@ -97,9 +97,9 @@ form of these two operations.
 | Function | Input | Returns | Description |
 | --- | --- | --- | --- |
 | `verifyModelAttestation(input)` | `VerifyModelAttestationInput` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
-| `verifyModelResponse(input)` | `VerifyModelResponseInput` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and its model attestation. |
+| `verifyModelResponse(input)` | `VerifyModelResponseInput` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
 | `verifyGatewayAttestation(input)` | `VerifyGatewayAttestationInput` | `Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and binds it to the TLS peer observed for its request. |
-| `verifyGatewayResponse(input)` | `VerifyGatewayResponseInput` | `void` | Verifies the exact completion bytes, a `gateway` signature, and its verified gateway-service signer. |
+| `verifyGatewayResponse(input)` | `VerifyGatewayResponseInput` | `void` | Verifies the exact completion bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
 
 ### Attestation verification inputs
 
@@ -130,11 +130,15 @@ verified gateway deployment evidence; it does not establish model execution.
 | `VerifyModelResponseInput` | `requestBody` | `Uint8Array` | Yes | Exact bytes sent to the completion endpoint. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'provider_tee'`. |
-|  | `attestation` | `VerifiedModelAttestation` | Yes | Exact object returned by `verifyModelAttestation` in the current process. |
+|  | `attestation` | `VerifiedModelAttestation` | Yes | Successful model-attestation result whose signer must match the signature. |
 | `VerifyGatewayResponseInput` | `requestBody` | `Uint8Array` | Yes | Exact bytes sent to the completion endpoint. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'gateway'`. |
-|  | `attestation` | `VerifiedGatewayAttestation` | Yes | Exact object returned by `verifyGatewayAttestation` in the current process. |
+|  | `attestation` | `VerifiedGatewayAttestation` | Yes | Successful gateway-attestation result whose signer must match the signature. |
+
+Call the matching attestation verifier before response verification. Results are
+ordinary data, so callers decide when raw evidence must be verified again after
+storage, transfer, or reconstruction in another language.
 
 ## Signatures and raw evidence
 
@@ -142,8 +146,8 @@ verified gateway deployment evidence; it does not establish model execution.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `SigningIdentity` | `algorithm` | `'ecdsa' \| 'ed25519'` | Signing algorithm. |
-|  | `address` | `string` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
+| `SigningIdentity` | `signingAlgo` | `SigningAlgo` | Signing algorithm. |
+|  | `signingAddress` | `string` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
 | `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Cloud API signature kind. The SDK never infers it from `signedText`. |
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
@@ -154,7 +158,7 @@ verified gateway deployment evidence; it does not establish model execution.
 |  | `responseBody` | `Uint8Array` | Exact completion response bytes. |
 
 `CompletionSignatureKind` is the union `'provider_tee' | 'gateway'`.
-`SigningAlgorithm` is the union `'ecdsa' | 'ed25519'`.
+`SigningAlgo` is the union `'ecdsa' | 'ed25519'`.
 
 ### Completion signature lookup
 
@@ -233,7 +237,6 @@ verified gateway deployment evidence; it does not establish model execution.
 ## Verified results
 
 `VerifiedAttestationEvidence` is shared by both verified attestation results.
-All fields in verified results are readonly.
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -255,9 +258,6 @@ All fields in verified results are readonly.
 | `GatewayTlsBinding` | `{ kind: 'peer'; spkiFingerprint: string }` |
 | `GpuEvidenceStatus` | `'not_provided' \| 'verified'` |
 | `DeploymentProvenanceStatus` | `'not_checked' \| 'verified'` |
-
-`VerifiedModelAttestation` and `VerifiedGatewayAttestation` are branded,
-in-memory SDK results. They cannot be reconstructed from serialized data.
 
 ## Errors
 
@@ -285,7 +285,7 @@ The stable error contract is `failure.code` and its typed `failure.details`.
 
 | Code | `failure.details` | Retryable |
 | --- | --- | --- |
-| `input.invalid` | `field`, `reason` (`missing`, `invalid_hex`, `wrong_length`, `invalid_json`, `invalid_jwt`, `invalid_url`, `invalid_header`, `unverified_attestation`, or `unsupported_value`); may include `expected`, `expectedBytes`, `actualBytes` | No |
+| `input.invalid` | `field`, `reason` (`missing`, `invalid_hex`, `wrong_length`, `invalid_json`, `invalid_jwt`, `invalid_url`, `invalid_header`, or `unsupported_value`); may include `expected`, `expectedBytes`, `actualBytes` | No |
 | `api.transport_failed` | `resource` (`model_attestation`, `gateway_attestation`, or `completion_signature`), `reason` (`request` or `response_body`) | Yes |
 | `api.http_status` | `resource`, `status` | Depends on status |
 | `api.invalid_json` | `resource` | No |
@@ -332,7 +332,7 @@ The stable error contract is `failure.code` and its typed `failure.details`.
 | `signature.unavailable` | `providerErrorCode` | No |
 | `signature.kind_mismatch` | `expected`, `actual` (`provider_tee` or `gateway`) | No |
 | `signature.payload_mismatch` | `source` (`request_model` or `signed_payload`), `reason` (`invalid_json`, `missing_model`, or `text_mismatch`) | No |
-| `signature.format_invalid` | `field` (`signature`, `signer.address`, or `signer.algorithm`), `reason` (`invalid_hex`, `wrong_length`, or `unsupported_algorithm`); may include `expectedBytes`, `actualBytes` | No |
-| `signature.invalid` | `algorithm` (`ecdsa` or `ed25519`) | No |
+| `signature.format_invalid` | `field` (`signature`, `signer.signingAddress`, or `signer.signingAlgo`), `reason` (`invalid_hex`, `wrong_length`, or `unsupported_signing_algo`); may include `expectedBytes`, `actualBytes` | No |
+| `signature.invalid` | `signingAlgo` (`ecdsa` or `ed25519`) | No |
 | `signature.signer_mismatch` | — | No |
 | `runtime.crypto_unavailable` | `capability` (`subtle_digest` or `secure_random`) | No |

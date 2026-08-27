@@ -11,7 +11,7 @@ import type {
   CloudApiUnavailableSignatureResponseSchema,
   ResponseLikeSchema,
 } from '../schemas';
-import type { SigningAlgorithm } from './attestation-common';
+import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
@@ -30,7 +30,7 @@ export type NearAiCloudClientOptions = {
 
 export type FetchModelAttestationsInput = {
   readonly model: string;
-  readonly algorithm?: SigningAlgorithm;
+  readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
 };
 
@@ -45,12 +45,12 @@ export type FindModelAttestationForSignatureInput = {
 };
 
 export type FetchGatewayAttestationInput = {
-  readonly algorithm?: SigningAlgorithm;
+  readonly signingAlgo?: SigningAlgo;
 };
 
 export type FetchCompletionSignatureInput = {
   readonly completionId: string;
-  readonly algorithm?: SigningAlgorithm;
+  readonly signingAlgo?: SigningAlgo;
 };
 export type ResponseLike = v.InferOutput<typeof ResponseLikeSchema>;
 
