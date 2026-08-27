@@ -33,11 +33,11 @@
     "typecheck:test": "tsc --project tsconfig.test.json",
     "test": "jest --runInBand",
     "test:browser": "node test-browser-runtime.mjs",
-    "test:package-runtime": "pnpm build && node test-package-runtime.mjs",
+    "test:node": "pnpm build && node test-node-runtime.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm typecheck:test && pnpm test && pnpm test:browser && pnpm test:package-runtime",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm typecheck:test && pnpm test && pnpm test:browser && pnpm test:node",
     "prepublishOnly": "pnpm build"
   },
   "dependencies": {
