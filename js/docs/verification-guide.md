@@ -2,24 +2,45 @@
 
 Use this SDK to verify NEAR AI Cloud attestations and completion signatures.
 
-## Choose what to verify
+## Completion signature kinds
 
-An attestation establishes properties of a deployment. A response signature is
-the separate proof that binds the exact request and response bytes to that
-deployment's signer.
+`fetchCompletionSignature` exposes Cloud API's `signature_kind` as
+`signature.kind`. Cloud API selects one of two kinds for each returned
+signature. The kind selects a verification path: it changes the trust boundary
+and what a successful verification establishes, not only which key signed.
+
+| `signature.kind` | Trust boundary | A successful response verification establishes | It does not establish |
+| --- | --- | --- | --- |
+| `provider_tee` | The model-serving TEE | A verified model TEE signer signed the exact request and response bytes. | The Cloud API Gateway's deployment or TLS identity. |
+| `gateway` | The NEAR AI Cloud Gateway TEE | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
+
+Cloud API may rewrite a response before returning it—for example, when it
+normalizes a stream for OpenAI compatibility. Rewriting changes the
+client-visible bytes, so a byte-exact provider signature cannot verify them.
+For that case, Cloud API can return a `gateway` signature for the rewritten
+bytes. Use the signature kind returned for that completion; a `gateway`
+signature is not evidence of model execution.
+
+Use `provider_tee` with the model-response flow below, and `gateway` with the
+Gateway-response flow.
+
+## Choose what to verify
 
 Both model and gateway attestations can be verified independently. You need a
 completion signature only when the claim is about a particular response.
 
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
-| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
+| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetchModelAttestations` → `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
 | Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are quote-verified, and the attestation request's observed TLS peer is bound to that evidence. | That any particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `fetchCompletionSignature` → `fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `fetchCompletionSignature` → `fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
-Never infer `kind` from signed text. Pair a `provider_tee` signature with model
-evidence, and a `gateway` signature with Gateway evidence.
+`fetchModelAttestations` preserves the Cloud API's `model_attestations` array.
+The SDK currently requires exactly one returned attestation. For a deployment
+audit, verify that sole item with the returned `nonce`; use
+`findModelAttestationForSignature` only when selecting evidence for a
+`provider_tee` response signature.
 
 For Cloud request and verification functions, their input fields, and result
 types, see the [API reference](./api-reference.md).
@@ -29,6 +50,8 @@ independent attestation flow when deployment evidence itself is the claim you
 need to establish.
 
 ## Verify a model response
+
+Use this flow only when the completion signature has `kind: 'provider_tee'`.
 
 Keep the exact bytes sent to and received from the completion endpoint. Do not
 parse and serialize them again before verification: changing JSON whitespace,
@@ -89,6 +112,9 @@ const cloud = { apiKey };
 const signature = await fetchCompletionSignature(cloud, {
   completionId: completion.id,
 });
+if (signature.kind !== 'provider_tee') {
+  throw new Error('This completion has a Gateway signature; use the Gateway flow.');
+}
 
 const { attestations, nonce } = await fetchModelAttestations(cloud, {
   model,
@@ -182,9 +208,9 @@ use the fingerprint declared inside the attestation as
 `peerSpkiFingerprint`; that would compare the evidence with itself rather than
 with a TLS peer you observed.
 
-When `signature.kind` is `gateway`, fetch fresh evidence for the signature's
-signing algorithm, verify it with the TLS peer fingerprint observed for that fetch,
-then verify the response:
+For a signature with `kind: 'gateway'`, fetch fresh evidence for the
+signature's signing algorithm, verify it with the TLS peer fingerprint observed
+for that fetch, then verify the response:
 
 ```ts
 import {
@@ -285,11 +311,9 @@ A pending or unknown signature can instead produce an HTTP 404. That remains a
 retryable `api.http_status` error; it is not an `unavailable` result.
 
 For a found signature, `kind` is `provider_tee` or `gateway`, matching Cloud
-API's `signature_kind`. A response without a recognized `signature_kind` is
-rejected; the SDK never infers a kind from the signed text. Most applications
-simply pass the signature unchanged to the matching response verifier, which
-checks the complete signed payload,
-signature, and attested signer.
+API's `signature_kind`. A response without a recognized kind is rejected: the
+SDK cannot select a trust boundary or response-verification path for it. Pass
+the signature unchanged to the verifier that matches its kind.
 
 Cloud API evidence retrieval and selection can throw `ApiError` for transport,
 HTTP, response-format, nonce, or candidate-selection failures. Verification

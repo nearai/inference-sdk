@@ -140,17 +140,31 @@ storage, transfer, or reconstruction in another language.
 
 ## Signatures and raw evidence
 
+### Signature kinds
+
+`CompletionSignature.kind` is Cloud API's explicit verification-path
+discriminant. The two values represent different trust boundaries and produce
+different guarantees after response verification.
+
+| Kind | Signed at | Required verified evidence | A successful response verification establishes |
+| --- | --- | --- | --- |
+| `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response bytes. |
+| `gateway` | NEAR AI Cloud Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response bytes. It does not establish model execution. |
+
+Cloud API can return `gateway` when it rewrites the client-visible response,
+because a byte-exact provider signature would no longer match those bytes.
+
 ### Completion signatures
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `SigningIdentity` | `signingAlgo` | `SigningAlgo` | Signing algorithm. |
 |  | `signingAddress` | `string` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
-| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Cloud API signature kind. The SDK never infers it from `signedText`. |
+| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Cloud API signature kind that selects the matching evidence and response verifier. |
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |
-| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind used when selecting evidence. |
+| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind. `findModelAttestationForSignature` accepts only `provider_tee`. |
 |  | `signer` | `SigningIdentity` | Signing identity used when selecting evidence. |
 | `CompletionBytes` | `requestBody` | `Uint8Array` | Exact completion request bytes. |
 |  | `responseBody` | `Uint8Array` | Exact completion response bytes. |
