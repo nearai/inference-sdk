@@ -205,6 +205,14 @@ describe('NEAR AI Cloud fetch helpers', () => {
         nonce: fetched.attestation.nonce,
         attestation: { signer: signature.signer },
       });
+
+      const query = new URL(api.request().url).searchParams;
+      expect(query.get('model')).toBe('canonical-model');
+      expect(query.get('provider')).toBe('near');
+      expect(query.get('signing_algo')).toBe(signature.signer.signingAlgo);
+      expect(query.get('signing_address')).toBe(
+        signature.signer.signingAddress,
+      );
     });
 
     test('fetches model evidence without signer filters', async () => {

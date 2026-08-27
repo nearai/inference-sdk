@@ -30,9 +30,10 @@ evidence into a client-to-model TLS claim.
 
 ## Choose the claim you need
 
-The completion signature's explicit `kind` selects the matching response
-verification flow. Do not infer a signature kind from signed text or mix model
-and gateway evidence.
+The completion signature's explicit `kind` identifies the trust boundary that
+signed the completion and selects its verification flow. A `provider_tee`
+signature comes from the model-serving TEE; a `gateway` signature comes from
+the NEAR AI Cloud Gateway for the client-visible response.
 
 ### Verify a model response
 

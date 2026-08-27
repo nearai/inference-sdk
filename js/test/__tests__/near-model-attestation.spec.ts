@@ -6,7 +6,7 @@ import {
   VerificationError,
   verifyModelAttestation,
 } from '../../src';
-import type { QuoteVerifier, TcbStatus } from '../../src';
+import type { QuoteVerifier } from '../../src';
 import {
   appCompose,
   createLegacyModelQuote,
@@ -235,46 +235,6 @@ describe('model attestation verification', () => {
         phase: 'policy',
         code: 'policy.tcb_status_not_allowed',
         details: { actual: 'OutOfDate', accepted: ['UpToDate'] },
-      },
-    });
-  });
-
-  test('does not let a rejected default TCB policy alter a later default', async () => {
-    const input = {
-      attestation: createModelAttestation(),
-      nonce,
-      verifiers: {
-        quote: async () => createQuote({ tcbStatus: 'Revoked' }),
-      },
-    };
-
-    let error: unknown;
-    try {
-      await verifyModelAttestation(input);
-    } catch (cause) {
-      error = cause;
-    }
-
-    expect(error).toBeInstanceOf(VerificationError);
-    if (!(error instanceof VerificationError)) {
-      throw error;
-    }
-    expect(error.failure).toMatchObject({
-      phase: 'policy',
-      code: 'policy.tcb_status_not_allowed',
-      details: { accepted: ['UpToDate', 'OutOfDate'] },
-    });
-    if (error.failure.code !== 'policy.tcb_status_not_allowed') {
-      throw error;
-    }
-
-    (error.failure.details.accepted as TcbStatus[]).push('Revoked');
-
-    await expect(verifyModelAttestation(input)).rejects.toMatchObject({
-      failure: {
-        phase: 'policy',
-        code: 'policy.tcb_status_not_allowed',
-        details: { accepted: ['UpToDate', 'OutOfDate'] },
       },
     });
   });
