@@ -31,7 +31,7 @@ globalThis.Buffer = undefined;
 
 try {
   const sdk = await import(moduleUrl);
-  const client = new sdk.NearAiCloudClient({
+  const cloud = {
     apiKey: 'test',
     fetch: () => ({
       ok: true,
@@ -45,9 +45,9 @@ try {
           signature_kind: 'provider_tee',
         }),
     }),
-  });
+  };
 
-  const fetchedSignature = await client.fetchCompletionSignature({
+  const fetchedSignature = await sdk.fetchCompletionSignature(cloud, {
     completionId: 'chat-1',
   });
   assert.equal(fetchedSignature.kind, 'provider_tee');

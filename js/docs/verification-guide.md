@@ -21,8 +21,8 @@ completion signature only when the claim is about a particular response.
 Never infer `kind` from signed text. Pair a `provider_tee` signature with model
 evidence, and a `gateway` signature with Gateway evidence.
 
-For every exported function, input field, result type, and error type, see the
-[API reference](./api-reference.md).
+For Cloud request and verification functions, their input fields, and result
+types, see the [API reference](./api-reference.md).
 
 For normal inference verification, use the model-response flow. Use an
 independent attestation flow when deployment evidence itself is the claim you
@@ -40,9 +40,10 @@ the model signature.
 
 ```ts
 import {
+  fetchCompletionSignature,
+  fetchModelAttestations,
   findModelAttestationForSignature,
   NO_ALIASING_HEADER,
-  NearAiCloudClient,
   verifyModelAttestation,
   verifyModelResponse,
 } from 'verification-sdk';
@@ -83,13 +84,13 @@ if (typeof completion.id !== 'string') {
   throw new Error('Completion response did not contain an id');
 }
 
-const client = new NearAiCloudClient({ apiKey });
+const cloud = { apiKey };
 
-const signature = await client.fetchCompletionSignature({
+const signature = await fetchCompletionSignature(cloud, {
   completionId: completion.id,
 });
 
-const { attestations, nonce } = await client.fetchModelAttestations({
+const { attestations, nonce } = await fetchModelAttestations(cloud, {
   model,
   signingAlgo: signature.signer.signingAlgo,
   signingAddress: signature.signer.signingAddress,
@@ -124,13 +125,13 @@ verification. Call `verifyModelAttestation` first. The result is ordinary data,
 so your application decides when raw evidence must be verified again after
 storage or transfer.
 
-`NearAiCloudClient` fetches signatures and evidence only. Your application
+The Cloud fetch helpers retrieve signatures and evidence only. Your application
 sends the completion request, retains its raw bytes, and decides whether or
 when to retry a completion or signature lookup.
 
-The client defaults to `https://cloud-api.near.ai/v1`, so `{ apiKey }` is
-enough for production. Pass `baseUrl` only when you need another Cloud API
-environment.
+The helpers default to `https://cloud-api.near.ai/v1`, so `{ apiKey }` is
+enough for production. Pass `baseUrl` in `cloud` only when you need another
+Cloud API environment.
 
 ### What the model-attestation result contains
 
@@ -160,13 +161,13 @@ certificate, so this flow needs a backend transport that does. In the example,
 
 ```ts
 import {
-  NearAiCloudClient,
+  fetchGatewayAttestation,
   verifyGatewayAttestation,
 } from 'verification-sdk';
 
-const client = new NearAiCloudClient({ apiKey, fetch: tlsAwareFetch });
+const cloud = { apiKey, fetch: tlsAwareFetch };
 
-const { attestation, nonce } = await client.fetchGatewayAttestation();
+const { attestation, nonce } = await fetchGatewayAttestation(cloud);
 
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
   attestation,
@@ -187,11 +188,12 @@ then verify the response:
 
 ```ts
 import {
+  fetchGatewayAttestation,
   verifyGatewayAttestation,
   verifyGatewayResponse,
 } from 'verification-sdk';
 
-const { attestation, nonce } = await client.fetchGatewayAttestation({
+const { attestation, nonce } = await fetchGatewayAttestation(cloud, {
   signingAlgo: signature.signer.signingAlgo,
 });
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
@@ -301,10 +303,14 @@ output, so it becomes a `VerificationError` with `signature.unavailable`, not
 an `ApiError`.
 
 ```ts
-import { isApiError, isVerificationError } from 'verification-sdk';
+import {
+  fetchCompletionSignature,
+  isApiError,
+  isVerificationError,
+} from 'verification-sdk';
 
 try {
-  await client.fetchCompletionSignature({ completionId });
+  await fetchCompletionSignature(cloud, { completionId });
 } catch (error) {
   if (isApiError(error)) {
     if (error.retryable) {

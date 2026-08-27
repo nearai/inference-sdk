@@ -1,7 +1,11 @@
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+  fetchCompletionSignature,
+  fetchGatewayAttestation,
+  fetchModelAttestationForSignature,
+  fetchModelAttestations,
   findModelAttestationForSignature,
-  NearAiCloudClient,
+  lookupCompletionSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export type {
@@ -14,7 +18,7 @@ export type {
   FetchModelAttestationsInput,
   FindModelAttestationForSignatureInput,
   NearAiCloudFetch,
-  NearAiCloudClientOptions,
+  NearAiCloudOptions,
 } from './types/cloud-api';
 export type { Awaitable } from './types/shared';
 

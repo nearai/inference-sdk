@@ -23,7 +23,7 @@ import type {
   FetchModelAttestationForSignatureInput,
   FetchModelAttestationsInput,
   FindModelAttestationForSignatureInput,
-  NearAiCloudClientOptions,
+  NearAiCloudOptions,
   NearAiCloudFetch,
   ResponseLike,
 } from '../types/cloud-api';
@@ -60,7 +60,7 @@ import { parseApiResponse, tryParse } from '../utils/schema';
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
 
-/** Default production endpoint used when a client does not select another one. */
+/** Default production endpoint used when a helper does not select another one. */
 export const DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1';
 
 type ApiResource = Extract<
@@ -68,209 +68,222 @@ type ApiResource = Extract<
   { code: 'api.transport_failed' }
 >['details']['resource'];
 type AttestationResource = 'model_attestation' | 'gateway_attestation';
+type ParsedNearAiCloudOptions = {
+  baseUrl: string;
+  apiKey: string;
+  fetch: NearAiCloudFetch;
+};
 
 /**
- * A narrow NEAR AI Cloud client for attestation evidence and response
- * signatures. It does not send completion requests or retain completion bytes.
+ * Fetch NEAR model attestation candidates with a fresh client nonce.
+ * Optionally narrow the report to a signing algorithm and signing address.
+ * Currently returns exactly one candidate.
  */
-export class NearAiCloudClient {
-  private readonly fetchImpl: NearAiCloudFetch;
-  private readonly options: {
-    baseUrl: string;
-    apiKey: string;
+export async function fetchModelAttestations(
+  cloud: NearAiCloudOptions,
+  input: FetchModelAttestationsInput,
+): Promise<FetchedModelAttestations> {
+  return fetchModelAttestationsWithOptions(
+    parseNearAiCloudOptions(cloud),
+    parseModelAttestationsRequest(input),
+  );
+}
+
+/**
+ * Fetch model attestation candidates for a provider_tee signature, then
+ * select the one whose advertised signer matches the signature signer.
+ */
+export async function fetchModelAttestationForSignature(
+  cloud: NearAiCloudOptions,
+  input: FetchModelAttestationForSignatureInput,
+): Promise<FetchedModelAttestation> {
+  const options = parseNearAiCloudOptions(cloud);
+  const request = parseModelAttestationForSignatureRequest(input);
+  const fetched = await fetchModelAttestationsWithOptions(options, {
+    model: request.model,
+    signingAlgo: request.signature.signer.signingAlgo,
+    signingAddress: request.signature.signer.signingAddress,
+  });
+  return {
+    attestation: selectModelAttestationForSigner(
+      fetched.attestations,
+      request.signature.signer,
+    ),
+    nonce: fetched.nonce,
   };
+}
 
-  constructor(options: NearAiCloudClientOptions) {
-    const parsed = parseClientOptions(options);
-    this.options = { baseUrl: parsed.baseUrl, apiKey: parsed.apiKey };
-    this.fetchImpl = parsed.fetch;
+/**
+ * Fetch standalone gateway evidence. The caller must independently observe
+ * the TLS peer fingerprint for this attestation request.
+ */
+export async function fetchGatewayAttestation(
+  cloud: NearAiCloudOptions,
+  input: FetchGatewayAttestationInput = {},
+): Promise<FetchedGatewayAttestation> {
+  const options = parseNearAiCloudOptions(cloud);
+  const request = parseGatewayAttestationRequest(input);
+  const clientNonce = generateNonce();
+  const url = new URL('attestation/report', options.baseUrl);
+  url.searchParams.set('nonce', clientNonce);
+  url.searchParams.set('signing_algo', request.signingAlgo);
+  url.searchParams.set('include_tls_fingerprint', 'true');
+  const report = parseApiResponse(
+    CloudApiGatewayAttestationResponseSchema,
+    await getCloudApiJson(options, url, 'gateway_attestation'),
+    'gateway attestation report',
+  );
+  const attestation = parseGatewayAttestation(report.gateway_attestation);
+  requireMatchingApiNonce(
+    attestation.nonce,
+    clientNonce,
+    'gateway_attestation',
+  );
+  return { attestation, nonce: clientNonce };
+}
+
+/**
+ * Look up one completion signature without polling. Use this when an
+ * application needs to handle an unavailable signature itself.
+ */
+export async function lookupCompletionSignature(
+  cloud: NearAiCloudOptions,
+  input: FetchCompletionSignatureInput,
+): Promise<CompletionSignatureLookup> {
+  return lookupCompletionSignatureWithOptions(
+    parseNearAiCloudOptions(cloud),
+    parseCompletionSignatureRequest(input),
+  );
+}
+
+/** Fetch one completion signature or throw when it is unavailable. */
+export async function fetchCompletionSignature(
+  cloud: NearAiCloudOptions,
+  input: FetchCompletionSignatureInput,
+): Promise<CompletionSignature> {
+  const lookup = await lookupCompletionSignatureWithOptions(
+    parseNearAiCloudOptions(cloud),
+    parseCompletionSignatureRequest(input),
+  );
+  if (lookup.status === 'found') {
+    return lookup.signature;
   }
+  throw new VerificationError({
+    phase: 'signature',
+    code: 'signature.unavailable',
+    details: { providerErrorCode: lookup.unavailable.errorCode },
+  });
+}
 
-  /**
-   * Fetch NEAR model attestation candidates with a fresh client nonce.
-   * Optionally narrow the report to a signing algorithm and signing address.
-   * Currently returns exactly one candidate.
-   */
-  async fetchModelAttestations(
-    input: FetchModelAttestationsInput,
-  ): Promise<FetchedModelAttestations> {
-    const request = parseModelAttestationsRequest(input);
-    const clientNonce = generateNonce();
-    const url = this.endpoint('attestation/report');
-    url.searchParams.set('model', request.model);
-    url.searchParams.set('provider', 'near');
-    url.searchParams.set('nonce', clientNonce);
-    if (request.signingAlgo !== undefined) {
-      url.searchParams.set('signing_algo', request.signingAlgo);
-    }
-    if (request.signingAddress !== undefined) {
-      url.searchParams.set('signing_address', request.signingAddress);
-    }
-
-    const attestations = parseModelAttestations(
-      await this.getJson(url, 'model_attestation', {
-        [NO_ALIASING_HEADER]: 'true',
-      }),
-    );
-    for (const attestation of attestations) {
-      requireMatchingApiNonce(
-        attestation.nonce,
-        clientNonce,
-        'model_attestation',
-      );
-    }
-    return { attestations, nonce: clientNonce };
-  }
-
-  /**
-   * Fetch model attestation candidates for a provider_tee signature, then
-   * select the one whose advertised signer matches the signature signer.
-   */
-  async fetchModelAttestationForSignature(
-    input: FetchModelAttestationForSignatureInput,
-  ): Promise<FetchedModelAttestation> {
-    const request = parseModelAttestationForSignatureRequest(input);
-    const fetched = await this.fetchModelAttestations({
-      model: request.model,
-      signingAlgo: request.signature.signer.signingAlgo,
-      signingAddress: request.signature.signer.signingAddress,
-    });
-    return {
-      attestation: selectModelAttestationForSigner(
-        fetched.attestations,
-        request.signature.signer,
-      ),
-      nonce: fetched.nonce,
-    };
-  }
-
-  /**
-   * Fetch standalone gateway evidence. The caller must independently observe
-   * the TLS peer fingerprint for this attestation request.
-   */
-  async fetchGatewayAttestation(
-    input: FetchGatewayAttestationInput = {},
-  ): Promise<FetchedGatewayAttestation> {
-    const request = parseGatewayAttestationRequest(input);
-    const clientNonce = generateNonce();
-    const url = this.endpoint('attestation/report');
-    url.searchParams.set('nonce', clientNonce);
+async function fetchModelAttestationsWithOptions(
+  cloud: ParsedNearAiCloudOptions,
+  request: ParsedModelAttestationsRequest,
+): Promise<FetchedModelAttestations> {
+  const clientNonce = generateNonce();
+  const url = new URL('attestation/report', cloud.baseUrl);
+  url.searchParams.set('model', request.model);
+  url.searchParams.set('provider', 'near');
+  url.searchParams.set('nonce', clientNonce);
+  if (request.signingAlgo !== undefined) {
     url.searchParams.set('signing_algo', request.signingAlgo);
-    url.searchParams.set('include_tls_fingerprint', 'true');
-    const report = parseApiResponse(
-      CloudApiGatewayAttestationResponseSchema,
-      await this.getJson(url, 'gateway_attestation'),
-      'gateway attestation report',
-    );
-    const attestation = parseGatewayAttestation(report.gateway_attestation);
+  }
+  if (request.signingAddress !== undefined) {
+    url.searchParams.set('signing_address', request.signingAddress);
+  }
+
+  const attestations = parseModelAttestations(
+    await getCloudApiJson(cloud, url, 'model_attestation', {
+      [NO_ALIASING_HEADER]: 'true',
+    }),
+  );
+  for (const attestation of attestations) {
     requireMatchingApiNonce(
       attestation.nonce,
       clientNonce,
-      'gateway_attestation',
-    );
-    return { attestation, nonce: clientNonce };
-  }
-
-  /**
-   * Look up one completion signature without polling. Use this when an
-   * application needs to handle an unavailable signature itself.
-   */
-  async lookupCompletionSignature(
-    input: FetchCompletionSignatureInput,
-  ): Promise<CompletionSignatureLookup> {
-    const request = parseCompletionSignatureRequest(input);
-    const url = this.endpoint(
-      `signature/${encodeURIComponent(request.completionId)}`,
-    );
-    if (request.signingAlgo !== undefined) {
-      url.searchParams.set('signing_algo', request.signingAlgo);
-    }
-    return parseCompletionSignatureLookup(
-      await this.getJson(url, 'completion_signature'),
+      'model_attestation',
     );
   }
+  return { attestations, nonce: clientNonce };
+}
 
-  /** Fetch one completion signature or throw when it is unavailable. */
-  async fetchCompletionSignature(
-    input: FetchCompletionSignatureInput,
-  ): Promise<CompletionSignature> {
-    const lookup = await this.lookupCompletionSignature(input);
-    if (lookup.status === 'found') {
-      return lookup.signature;
-    }
-    throw new VerificationError({
-      phase: 'signature',
-      code: 'signature.unavailable',
-      details: { providerErrorCode: lookup.unavailable.errorCode },
+async function lookupCompletionSignatureWithOptions(
+  cloud: ParsedNearAiCloudOptions,
+  request: ParsedCompletionSignatureRequest,
+): Promise<CompletionSignatureLookup> {
+  const url = new URL(
+    `signature/${encodeURIComponent(request.completionId)}`,
+    cloud.baseUrl,
+  );
+  if (request.signingAlgo !== undefined) {
+    url.searchParams.set('signing_algo', request.signingAlgo);
+  }
+  return parseCompletionSignatureLookup(
+    await getCloudApiJson(cloud, url, 'completion_signature'),
+  );
+}
+
+async function getCloudApiJson(
+  cloud: ParsedNearAiCloudOptions,
+  url: URL,
+  resource: ApiResource,
+  extraHeaders: HeadersInit = {},
+): Promise<unknown> {
+  let rawResponse: unknown;
+  try {
+    const headers = new Headers(extraHeaders);
+    headers.set('authorization', `Bearer ${cloud.apiKey}`);
+    rawResponse = await cloud.fetch(url, { headers });
+  } catch (cause) {
+    throw new ApiError(
+      {
+        phase: 'api',
+        code: 'api.transport_failed',
+        details: { resource, reason: 'request' },
+        retryable: true,
+      },
+      { cause },
+    );
+  }
+  const response = parseResponseLike(rawResponse, `${resource} response`);
+
+  let rawBody: unknown;
+  try {
+    rawBody = await response.text();
+  } catch (cause) {
+    throw new ApiError(
+      {
+        phase: 'api',
+        code: 'api.transport_failed',
+        details: { resource, reason: 'response_body' },
+        retryable: true,
+      },
+      { cause },
+    );
+  }
+  const body = parseApiResponse(
+    ResponseBodySchema,
+    rawBody,
+    `${resource} response body`,
+  );
+  if (!response.ok) {
+    throw new ApiError({
+      phase: 'api',
+      code: 'api.http_status',
+      details: { resource, status: response.status },
+      retryable: isRetryableHttpStatus(response.status, resource),
     });
   }
-
-  private endpoint(path: string): URL {
-    return new URL(path, this.options.baseUrl);
-  }
-
-  private async getJson(
-    url: URL,
-    resource: ApiResource,
-    extraHeaders: HeadersInit = {},
-  ): Promise<unknown> {
-    let rawResponse: unknown;
-    try {
-      const headers = new Headers(extraHeaders);
-      headers.set('authorization', `Bearer ${this.options.apiKey}`);
-      rawResponse = await this.fetchImpl(url, { headers });
-    } catch (cause) {
-      throw new ApiError(
-        {
-          phase: 'api',
-          code: 'api.transport_failed',
-          details: { resource, reason: 'request' },
-          retryable: true,
-        },
-        { cause },
-      );
-    }
-    const response = parseResponseLike(rawResponse, `${resource} response`);
-
-    let rawBody: unknown;
-    try {
-      rawBody = await response.text();
-    } catch (cause) {
-      throw new ApiError(
-        {
-          phase: 'api',
-          code: 'api.transport_failed',
-          details: { resource, reason: 'response_body' },
-          retryable: true,
-        },
-        { cause },
-      );
-    }
-    const body = parseApiResponse(
-      ResponseBodySchema,
-      rawBody,
-      `${resource} response body`,
-    );
-    if (!response.ok) {
-      throw new ApiError({
+  try {
+    return JSON.parse(body);
+  } catch (cause) {
+    throw new ApiError(
+      {
         phase: 'api',
-        code: 'api.http_status',
-        details: { resource, status: response.status },
-        retryable: isRetryableHttpStatus(response.status, resource),
-      });
-    }
-    try {
-      return JSON.parse(body);
-    } catch (cause) {
-      throw new ApiError(
-        {
-          phase: 'api',
-          code: 'api.invalid_json',
-          details: { resource },
-        },
-        { cause },
-      );
-    }
+        code: 'api.invalid_json',
+        details: { resource },
+      },
+      { cause },
+    );
   }
 }
 
@@ -332,13 +345,7 @@ function selectModelAttestationForSigner(
   return matches[0];
 }
 
-type ParsedClientOptions = {
-  baseUrl: string;
-  apiKey: string;
-  fetch: NearAiCloudFetch;
-};
-
-function parseClientOptions(options: unknown): ParsedClientOptions {
+function parseNearAiCloudOptions(options: unknown): ParsedNearAiCloudOptions {
   const value = requireInputObject(options, 'options');
   rejectUnknownInputKeys(value, 'options', ['baseUrl', 'apiKey', 'fetch']);
   const baseUrl = optionalInputString(value.baseUrl, 'baseUrl');

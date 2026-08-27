@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { NearAiCloudClient } from './dist/index.js';
+import { fetchCompletionSignature } from './dist/index.js';
 
-const client = new NearAiCloudClient({
+const cloud = {
   apiKey: 'test',
   fetch: () => ({
     ok: true,
@@ -15,9 +15,9 @@ const client = new NearAiCloudClient({
         signature_kind: 'provider_tee',
       }),
   }),
-});
+};
 
-const signature = await client.fetchCompletionSignature({
+const signature = await fetchCompletionSignature(cloud, {
   completionId: 'chat-1',
 });
 

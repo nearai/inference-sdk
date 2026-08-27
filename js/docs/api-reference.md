@@ -1,49 +1,52 @@
 # TypeScript SDK API reference
 
-This page describes the public API exported by `verification-sdk`. For
-workflows and complete code examples, see the [verification guide](./verification-guide.md).
+This page describes the Cloud request and verification APIs exported by
+`verification-sdk`. For workflows and complete code examples, see the
+[verification guide](./verification-guide.md).
 
 ## Runtime exports
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `NearAiCloudClient` | `new NearAiCloudClient(options)` | Fetches completion signatures and attestation evidence. It does not send completion requests. |
+| `fetchCompletionSignature` | `(cloud: NearAiCloudOptions, input: FetchCompletionSignatureInput) => Promise<CompletionSignature>` | Fetches a completion signature. |
+| `lookupCompletionSignature` | `(cloud: NearAiCloudOptions, input: FetchCompletionSignatureInput) => Promise<CompletionSignatureLookup>` | Fetches a completion signature or an unavailable state. |
+| `fetchModelAttestations` | `(cloud: NearAiCloudOptions, input: FetchModelAttestationsInput) => Promise<FetchedModelAttestations>` | Fetches model-attestation evidence. |
+| `fetchModelAttestationForSignature` | `(cloud: NearAiCloudOptions, input: FetchModelAttestationForSignatureInput) => Promise<FetchedModelAttestation>` | Fetches model evidence selected for a `provider_tee` signer. |
+| `fetchGatewayAttestation` | `(cloud: NearAiCloudOptions, input?: FetchGatewayAttestationInput) => Promise<FetchedGatewayAttestation>` | Fetches gateway-attestation evidence. |
 | `verifyModelAttestation` | `(input: VerifyModelAttestationInput) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(input: VerifyModelResponseInput) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(input: VerifyGatewayAttestationInput) => Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and a caller-observed TLS peer binding. |
 | `verifyGatewayResponse` | `(input: VerifyGatewayResponseInput) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(input: FindModelAttestationForSignatureInput) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
 
-## Client
+## NEAR AI Cloud request functions
 
-### `NearAiCloudClient`
+The request helpers do not send completion requests or retain completion
+bytes. Each takes `cloud: NearAiCloudOptions` first; pass the same configuration
+object to whichever helpers the application needs.
 
-| Constructor parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `options` | `NearAiCloudClientOptions` | Yes | Client configuration. |
-
-#### `NearAiCloudClientOptions`
+### `NearAiCloudOptions`
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTPS Cloud API base URL. Credentials, query parameters, and fragments are rejected. |
-| `fetch?` | `NearAiCloudFetch` | No | Global `fetch` | Fetch-compatible transport used for the client's requests. |
+| `fetch?` | `NearAiCloudFetch` | No | Global `fetch` | Fetch-compatible transport used for these helpers' Cloud API requests. |
 
 `NearAiCloudFetch` accepts `(input: string | URL | Request, init?: RequestInit)`
 and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 
-#### Methods
+### Functions
 
-| Method | Input | Resolves to | Behavior |
+| Function | Input | Resolves to | Behavior |
 | --- | --- | --- | --- |
-| `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns either a signature or a service-provided unavailable state. |
-| `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
-| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
-| `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
-| `fetchGatewayAttestation(input?)` | `FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
+| `lookupCompletionSignature(cloud, input)` | `cloud: NearAiCloudOptions`, `input: FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns either a signature or a service-provided unavailable state. |
+| `fetchCompletionSignature(cloud, input)` | `cloud: NearAiCloudOptions`, `input: FetchCompletionSignatureInput` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
+| `fetchModelAttestations(cloud, input)` | `cloud: NearAiCloudOptions`, `input: FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
+| `fetchModelAttestationForSignature(cloud, input)` | `cloud: NearAiCloudOptions`, `input: FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
+| `fetchGatewayAttestation(cloud, input?)` | `cloud: NearAiCloudOptions`, `input?: FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
 
-#### Client input types
+### Request input types
 
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -56,7 +59,7 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 |  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
 | `FetchGatewayAttestationInput` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature's signing algorithm. This does not select a gateway instance. |
 
-#### Attestation fetch result types
+### Attestation fetch result types
 
 Every attestation fetch helper generates and sends a fresh 32-byte client nonce,
 checks the service's echoed nonce, and returns the client nonce with the raw

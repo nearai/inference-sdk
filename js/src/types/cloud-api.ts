@@ -22,7 +22,8 @@ export type NearAiCloudFetch = (
   init?: RequestInit,
 ) => Awaitable<Response>;
 
-export type NearAiCloudClientOptions = {
+/** Transport configuration shared by NEAR AI Cloud fetch helpers. */
+export type NearAiCloudOptions = {
   readonly apiKey: string;
   readonly baseUrl?: string;
   readonly fetch?: NearAiCloudFetch;

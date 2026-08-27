@@ -81,7 +81,7 @@ model execution.
 
 - [Verification guide](./docs/verification-guide.md) for complete model and
   gateway workflows, policy configuration, and error handling.
-- [API reference](./docs/api-reference.md) for client and verification APIs,
+- [API reference](./docs/api-reference.md) for Cloud request and verification APIs,
   types, and fields.
 
 ## Runtime
