@@ -288,7 +288,11 @@ function getAcceptedTcbStatuses(
 ): readonly TcbStatus[] {
   const value = policy?.acceptedTcbStatuses;
   if (value === undefined) {
-    return DEFAULT_ACCEPTED_TCB_STATUSES;
+    // Use a fresh default-policy snapshot for every verification. The
+    // accepted statuses are included in a public error on policy failure, so
+    // returning the module-level array here would let a caller mutate a later
+    // verification's default policy through a caught error.
+    return [...DEFAULT_ACCEPTED_TCB_STATUSES];
   }
   return value;
 }

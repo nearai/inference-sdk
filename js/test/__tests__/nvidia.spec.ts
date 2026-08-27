@@ -38,16 +38,35 @@ describe('NVIDIA NRAS verification', () => {
       });
     },
   );
+
+  test.each([null, [], true, 'claims'])(
+    'rejects a non-object JWT payload (%p) as an invalid NRAS response',
+    async (payload) => {
+      mockNrasJwtPayload(payload);
+
+      await expect(nvidiaNrasVerifier('{}')).rejects.toMatchObject({
+        failure: {
+          phase: 'gpu',
+          code: 'gpu.nras_response_invalid',
+          details: { reason: 'invalid_jwt' },
+        },
+      });
+    },
+  );
 });
 
 function mockNrasOverallResult(result: boolean | string): void {
+  mockNrasJwtPayload({ 'x-nvidia-overall-att-result': result });
+}
+
+function mockNrasJwtPayload(payload: unknown): void {
   const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
     'base64url',
   );
-  const payload = Buffer.from(
-    JSON.stringify({ 'x-nvidia-overall-att-result': result }),
-  ).toString('base64url');
-  const jwt = `${header}.${payload}.signature`;
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+    'base64url',
+  );
+  const jwt = `${header}.${encodedPayload}.signature`;
 
   jest.spyOn(globalThis, 'fetch').mockResolvedValue({
     ok: true,

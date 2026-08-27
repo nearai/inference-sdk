@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
-import { verifyModelAttestation } from '../../src';
-import type { QuoteVerifier } from '../../src';
+import { VerificationError, verifyModelAttestation } from '../../src';
+import type { QuoteVerifier, TcbStatus } from '../../src';
 import {
   appCompose,
   createLegacyModelQuote,
@@ -280,6 +280,46 @@ describe('model attestation verification', () => {
     });
   });
 
+  test('does not let a rejected default TCB policy alter a later default', async () => {
+    const input = {
+      attestation: createModelAttestation(),
+      nonce,
+      verifiers: {
+        quote: async () => createQuote({ tcbStatus: 'Revoked' }),
+      },
+    };
+
+    let error: unknown;
+    try {
+      await verifyModelAttestation(input);
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(VerificationError);
+    if (!(error instanceof VerificationError)) {
+      throw error;
+    }
+    expect(error.failure).toMatchObject({
+      phase: 'policy',
+      code: 'policy.tcb_status_not_allowed',
+      details: { accepted: ['UpToDate', 'OutOfDate'] },
+    });
+    if (error.failure.code !== 'policy.tcb_status_not_allowed') {
+      throw error;
+    }
+
+    (error.failure.details.accepted as TcbStatus[]).push('Revoked');
+
+    await expect(verifyModelAttestation(input)).rejects.toMatchObject({
+      failure: {
+        phase: 'policy',
+        code: 'policy.tcb_status_not_allowed',
+        details: { accepted: ['UpToDate', 'OutOfDate'] },
+      },
+    });
+  });
+
   test('rejects malformed Intel-verified report data', async () => {
     await expect(
       verifyModelAttestation({
@@ -494,6 +534,38 @@ describe('model attestation verification', () => {
         details: { source: 'custom_verifier' },
       },
     });
+  });
+
+  test('preserves an invalid NRAS response from the default NVIDIA verifier', async () => {
+    const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
+      'base64url',
+    );
+    const payload = Buffer.from('null').toString('base64url');
+    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [['JWT', `${header}.${payload}.signature`]],
+    } as Response);
+
+    try {
+      await expect(
+        verifyModelAttestation({
+          attestation: createModelAttestation({
+            nvidiaPayload: JSON.stringify({ nonce }),
+          }),
+          nonce,
+          verifiers: { quote: quoteVerifier },
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          phase: 'gpu',
+          code: 'gpu.nras_response_invalid',
+          details: { reason: 'invalid_jwt' },
+        },
+      });
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   test('rejects model report data that contradicts the verified quote', async () => {

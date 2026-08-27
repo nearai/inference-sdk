@@ -556,6 +556,12 @@ function validateModelAttestationSigningAddress(
 
 function validateBaseUrl(baseUrl: string): string {
   try {
+    // WHATWG URL normalizes a trailing bare `?` or `#` to an empty search/hash.
+    // Reject the raw delimiters before that normalization so appending a path
+    // separator cannot accidentally turn the query or fragment into the base.
+    if (baseUrl.includes('?') || baseUrl.includes('#')) {
+      throw new TypeError('invalid base URL');
+    }
     const parsed = new URL(baseUrl);
     if (
       parsed.protocol !== 'https:' ||

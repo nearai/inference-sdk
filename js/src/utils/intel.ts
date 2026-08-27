@@ -1,5 +1,6 @@
 import { Buffer } from 'buffer';
 import {
+  Quote,
   getCollateral,
   type Collateral,
   type VerifiedReport,
@@ -27,6 +28,19 @@ export async function verifyDcapQuote(
         phase: 'quote',
         code: 'quote.verification_failed',
         details: { reason: 'invalid_encoding' },
+      },
+      { cause },
+    );
+  }
+
+  try {
+    Quote.parse(quoteBytes);
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        phase: 'quote',
+        code: 'quote.verification_failed',
+        details: { reason: 'invalid_quote' },
       },
       { cause },
     );

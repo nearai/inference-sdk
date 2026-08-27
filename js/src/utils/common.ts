@@ -14,7 +14,17 @@ export function decodeJwt(jwt: string): Record<string, unknown> {
   }
 
   try {
-    return JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+    const payload: unknown = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString(),
+    );
+    if (
+      payload === null ||
+      typeof payload !== 'object' ||
+      Array.isArray(payload)
+    ) {
+      throw inputError('jwt', 'invalid_jwt');
+    }
+    return payload as Record<string, unknown>;
   } catch {
     throw inputError('jwt', 'invalid_jwt');
   }

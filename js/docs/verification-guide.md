@@ -259,23 +259,28 @@ it must resolve for verification to succeed. The SDK authenticates the measured
 values, but your verifier decides which deployments are acceptable.
 
 `verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
-evidence, `verifiers.nvidia` replaces the default NVIDIA NRAS verifier. Supply
-either when your application uses its own trust roots or verification service.
-Each verifier must resolve only for evidence it accepts and throw or reject for
-all other outcomes.
+evidence, the default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and
+accepts its documented boolean overall result. It does not locally validate the
+returned JWT/EAT signature. `verifiers.nvidia` replaces that verifier; supply
+it when your application needs local JWT/EAT validation, different trust roots,
+or another verification service. Each verifier must resolve only for evidence
+it accepts and throw or reject for all other outcomes.
 
 ## Handle signature lookup and verification errors
 
 `fetchCompletionSignature` is the simple path: it returns one completion
-signature or throws a structured error when the signature is unavailable.
-It requests the service default (`ecdsa`) unless you explicitly pass
-`signingAlgo: 'ed25519'`.
+signature or turns a 2xx unavailable envelope into a structured
+`signature.unavailable` error. It requests the service default (`ecdsa`) unless
+you explicitly pass `signingAlgo: 'ed25519'`.
 
 Use `lookupCompletionSignature` when the application needs to handle those
-states itself. It returns one of:
+2xx unavailable envelopes itself. It returns one of:
 
 - `found`, with a completion signature; or
 - `unavailable`, with the service's error code and message.
+
+A pending or unknown signature can instead produce an HTTP 404. That remains a
+retryable `api.http_status` error; it is not an `unavailable` result.
 
 For a found signature, `kind` is `provider_tee` or `gateway`, matching Cloud
 API's `signature_kind`. A response without a recognized `signature_kind` is
@@ -309,5 +314,5 @@ try {
 `error.retryable` is true only for remote failures that the SDK considers
 transient. A failed signature, binding, quote, measurement, GPU, deployment,
 or policy check is not automatically safe to retry.
-In particular, a `completion_signature` HTTP 404 is retryable because the
-signature may still be being recorded.
+In particular, a `completion_signature` HTTP 404 is retryable, including when
+the signature is still being recorded or is unknown.

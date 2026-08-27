@@ -10,14 +10,20 @@ A successful attestation establishes:
 
 - the Intel TDX quote, nonce, accepted TCB status, measured compose
   configuration, and runtime measurements are valid;
-- supplied NVIDIA GPU evidence is verified for model attestations, or can be
-  required by policy; and
+- supplied NVIDIA GPU evidence is accepted by the configured verifier for
+  model attestations, or can be required by policy; and
 - gateway evidence is bound to a TLS peer fingerprint independently observed
   by the client.
 
 When verifying a response, the SDK additionally establishes that a signature
 covers the exact request and response bytes and its signer is bound to the
 matching verified evidence.
+
+The default NVIDIA verifier sends GPU evidence to NVIDIA NRAS over HTTPS and
+accepts its documented boolean overall result. It does not locally validate the
+returned JWT/EAT signature. Supply `verifiers.nvidia` when your trust model
+requires local JWT/EAT validation, different trust roots, or another
+verification service.
 
 The SDK does not send inference requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.

@@ -992,6 +992,20 @@ describe('NEAR AI Cloud client', () => {
     }
   });
 
+  test.each(['https://cloud-api.near.ai/v1?', 'https://cloud-api.near.ai/v1#'])(
+    'rejects a base URL with a bare query or fragment delimiter: %s',
+    (invalidBaseUrl) => {
+      expectClientInputFailure(
+        () =>
+          new NearAiCloudClient({
+            baseUrl: invalidBaseUrl,
+            apiKey: 'test',
+          }),
+        { field: 'baseUrl', reason: 'invalid_url' },
+      );
+    },
+  );
+
   test('rejects an API key that cannot be sent as an HTTP header', () => {
     expect(
       () =>

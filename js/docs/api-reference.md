@@ -42,8 +42,8 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 
 | Method | Input | Resolves to | Notable failure or behavior |
 | --- | --- | --- | --- |
-| `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns the `unavailable` variant instead of throwing when no signature is available. |
-| `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Throws `signature.unavailable` when the lookup result is unavailable. |
+| `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns `unavailable` for a 2xx unavailable envelope. A 404 throws retryable `api.http_status`. |
+| `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Turns a 2xx unavailable envelope into `signature.unavailable`. A 404 remains retryable `api.http_status`. |
 | `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. It rejects a mismatched echoed nonce and a response count other than one. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(input?)` | `FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
@@ -166,7 +166,7 @@ storage, transfer, or reconstruction in another language.
 | --- | --- | --- | --- |
 | `CompletionSignatureLookup` | `status` | `'found' \| 'unavailable'` | Discriminant. |
 | `CompletionSignatureLookup` when `status === 'found'` | `signature` | `CompletionSignature` | Returned completion signature. |
-| `CompletionSignatureLookup` when `status === 'unavailable'` | `unavailable` | `SignatureUnavailable` | Service-provided unavailable state. |
+| `CompletionSignatureLookup` when `status === 'unavailable'` | `unavailable` | `SignatureUnavailable` | Service-provided unavailable state from a 2xx response. |
 | `SignatureUnavailable` | `errorCode` | `string` | Service error code. |
 |  | `message` | `string` | Service message. |
 
@@ -214,10 +214,15 @@ storage, transfer, or reconstruction in another language.
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
 | `ModelAttestationVerifiers` | `quote?: QuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-|  | `nvidia?: NvidiaEvidenceVerifier` | Replaces the built-in NVIDIA verifier. |
+|  | `nvidia?: NvidiaEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
 | `QuoteVerifier` | `(quote: string) => Awaitable<QuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
 | `NvidiaEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
+
+The default NVIDIA verifier submits GPU evidence to NVIDIA NRAS over HTTPS and
+accepts its documented boolean overall result. It does not locally validate the
+returned JWT/EAT signature. Provide `nvidia` when the application needs local
+JWT/EAT validation, different trust roots, or another verification service.
 
 ### Quote and deployment values
 
@@ -296,14 +301,15 @@ The stable error contract is `failure.code` and its typed `failure.details`.
 | `api.attestation_signer_mismatch` | `resource: 'model_attestation'` | No |
 
 `api.http_status` is retryable for 408, 425, 429, status `>= 500`, and a
-`completion_signature` 404.
+`completion_signature` 404. The latter includes pending or unknown signatures;
+it does not produce an `unavailable` lookup result.
 
 ### Quote, policy, and binding failures
 
 | Code | `failure.details` | Retryable |
 | --- | --- | --- |
 | `quote.collateral_unavailable` | — | Yes |
-| `quote.verification_failed` | `reason` (`invalid_encoding` or `verifier_error`) | No |
+| `quote.verification_failed` | `reason` (`invalid_encoding`, `invalid_quote`, or `verifier_error`) | No |
 | `quote.invalid_result` | `path`, `expected`, `actual` | No |
 | `quote.unsupported_report_type` | `expected: 'TD10'` | No |
 | `policy.debug_enabled` | — | No |

@@ -96,7 +96,9 @@ export type VerificationFailure =
   | {
       phase: 'quote';
       code: 'quote.verification_failed';
-      details: { reason: 'invalid_encoding' | 'verifier_error' };
+      details: {
+        reason: 'invalid_encoding' | 'invalid_quote' | 'verifier_error';
+      };
     }
   | {
       phase: 'quote';
