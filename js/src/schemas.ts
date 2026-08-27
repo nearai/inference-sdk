@@ -3,6 +3,14 @@ import type { Awaitable } from './types/shared';
 
 /** Values accepted by external NEAR AI and quote-verifier responses. */
 const SigningAlgorithmValues = ['ecdsa', 'ed25519'] as const;
+const CompletionSignatureKindValues = ['provider_tee', 'gateway'] as const;
+const CompletionSignatureResponseFields = [
+  'text',
+  'signature',
+  'signing_address',
+  'signing_algo',
+  'signature_kind',
+] as const;
 const TcbStatusValues = [
   'UpToDate',
   'SWHardeningNeeded',
@@ -52,6 +60,8 @@ function objectSchema<TEntries extends v.ObjectEntries>(entries: TEntries) {
 
 export const AttestationEventLogSchema = v.union([
   v.string(),
+  // The event log is opaque JSON at the wire boundary. Its event-specific
+  // structure is validated while replaying measurements.
   v.pipe(v.array(v.unknown()), v.readonly()),
 ]);
 
@@ -85,13 +95,12 @@ export const CloudApiInfoSchema = objectSchema({
 });
 
 export const CloudApiAttestationInfoEnvelopeSchema = objectSchema({
+  // Decode this separately so a malformed nested value reports the stable
+  // public `…info` path rather than an implementation-specific envelope path.
   info: v.optional(v.unknown()),
 });
 
 const CloudApiAttestationEntries = {
-  // Parse this nested object separately so error paths remain tied to the
-  // public Cloud API field rather than an implementation-specific envelope.
-  info: v.optional(v.unknown()),
   request_nonce: v.string(),
   signing_algo: SigningAlgorithmSchema,
   signing_address: v.string(),
@@ -112,24 +121,37 @@ export const CloudApiGatewayAttestationSchema = objectSchema({
 });
 
 export const CloudApiModelAttestationResponseSchema = objectSchema({
+  // Each item is decoded separately to retain its `model_attestations[index]`
+  // error path and validate the nested `info` envelope once.
   model_attestations: v.array(v.unknown()),
 });
 
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({
+  // Decode the nested report separately to retain the public
+  // `gateway_attestation` error path.
   gateway_attestation: v.unknown(),
 });
 
-export const CloudApiUnavailableSignatureResponseSchema = objectSchema({
-  error_code: v.string(),
-  message: v.string(),
-});
+export const CloudApiUnavailableSignatureResponseSchema = v.pipe(
+  objectSchema({
+    error_code: v.string(),
+    message: v.string(),
+  }),
+  // An error envelope must not hide a malformed signature response just
+  // because it also contains error metadata. The success parser will then
+  // produce the relevant `api.invalid_response` error instead.
+  v.check(
+    (value) =>
+      !CompletionSignatureResponseFields.some((field) =>
+        Object.hasOwn(value, field),
+      ),
+  ),
+);
 
 export const CloudApiCompletionSignatureResponseSchema = objectSchema({
   text: v.string(),
   signature: v.string(),
   signing_address: v.string(),
   signing_algo: SigningAlgorithmSchema,
-  // A strict parser below preserves the API's dedicated signature-kind error
-  // contract instead of collapsing it into a generic wire-schema error.
-  signature_kind: v.optional(v.unknown()),
+  signature_kind: v.picklist(CompletionSignatureKindValues),
 });

@@ -778,23 +778,9 @@ function parseCompletionSignatureLookup(
     status: 'found',
     signature: {
       ...base,
-      kind: parseSignatureKind(response.signature_kind),
+      kind: response.signature_kind,
     },
   };
-}
-
-function parseSignatureKind(value: unknown): CompletionSignature['kind'] {
-  if (value === 'provider_tee') {
-    return value;
-  }
-  if (value === 'gateway') {
-    return 'gateway';
-  }
-  throw invalidResponse(
-    'signature.signature_kind',
-    "'provider_tee' or 'gateway'",
-    value,
-  );
 }
 
 function parseAppCompose(value: CloudApiTcbInfoValue, label: string): string {

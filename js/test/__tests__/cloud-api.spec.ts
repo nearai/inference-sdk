@@ -558,39 +558,45 @@ describe('NEAR AI Cloud client', () => {
         code: 'api.invalid_response',
         details: {
           path: 'signature.signature_kind',
-          expected: "'provider_tee' or 'gateway'",
           actual: 'undefined',
         },
       },
     });
   });
 
-  test('rejects an unrecognized explicit signature source', async () => {
-    const api = clientReplyingWith({
-      text: 'old-format',
-      signature: 'aa',
-      signing_address: signerAddress,
-      signing_algo: 'ecdsa',
-      signature_kind: 'other',
-    });
+  test.each([
+    { value: 'other', actual: 'string' },
+    { value: 0, actual: 'number' },
+    { value: [], actual: 'array' },
+    { value: {}, actual: 'object' },
+  ])(
+    'rejects an unrecognized signature source with $actual input',
+    async ({ value, actual }) => {
+      const api = clientReplyingWith({
+        text: 'old-format',
+        signature: 'aa',
+        signing_address: signerAddress,
+        signing_algo: 'ecdsa',
+        signature_kind: value,
+      });
 
-    await expect(
-      api.client.fetchCompletionSignature({
-        completionId: 'chat-1',
-        algorithm: 'ecdsa',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'signature.signature_kind',
-          expected: "'provider_tee' or 'gateway'",
-          actual: 'string',
+      await expect(
+        api.client.fetchCompletionSignature({
+          completionId: 'chat-1',
+          algorithm: 'ecdsa',
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          phase: 'api',
+          code: 'api.invalid_response',
+          details: {
+            path: 'signature.signature_kind',
+            actual,
+          },
         },
-      },
-    });
-  });
+      });
+    },
+  );
 
   test('rejects a null signature source instead of treating it as legacy', async () => {
     const api = clientReplyingWith({
@@ -611,8 +617,34 @@ describe('NEAR AI Cloud client', () => {
         code: 'api.invalid_response',
         details: {
           path: 'signature.signature_kind',
-          expected: "'provider_tee' or 'gateway'",
           actual: 'null',
+        },
+      },
+    });
+  });
+
+  test('does not classify a malformed signature payload as unavailable', async () => {
+    const api = clientReplyingWith({
+      error_code: 'SIGNATURE_UNSUPPORTED',
+      message: 'No provider signature',
+      text: 'old-format',
+      signature: 'aa',
+      signing_address: signerAddress,
+      signing_algo: 'ecdsa',
+      signature_kind: 'other',
+    });
+
+    await expect(
+      api.client.lookupCompletionSignature({
+        completionId: 'chat-1',
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'api',
+        code: 'api.invalid_response',
+        details: {
+          path: 'signature.signature_kind',
+          actual: 'string',
         },
       },
     });

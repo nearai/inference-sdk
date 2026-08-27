@@ -1,23 +1,32 @@
 # TypeScript verification guide
 
 Use this SDK to verify NEAR AI Cloud attestations and completion signatures.
-The completion signature's explicit `kind` selects the response-verification
-flow:
 
-| Signature kind | Verify | Establishes |
-| --- | --- | --- |
-| `provider_tee` | `verifyModelAttestation` then `verifyModelResponse` | A model-serving TEE signed the exact completion bytes. |
-| `gateway` | `verifyGatewayAttestation` then `verifyGatewayResponse` | The attested NEAR AI Cloud Gateway service key signed the exact completion bytes. |
+## Choose what to verify
 
-Never infer the signature kind from its signed text or use model evidence for a
-gateway signature, or vice versa.
+An attestation establishes properties of a deployment. A response signature is
+the separate proof that binds the exact request and response bytes to that
+deployment's signer.
+
+Both model and gateway attestations can be verified independently. You need a
+completion signature only when the claim is about a particular response.
+
+| Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
+| --- | --- | --- | --- | --- |
+| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are quote-verified, and the attestation request's observed TLS peer is bound to that evidence. | That any particular completion was served by the Gateway, or that a model executed the request. |
+| Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `fetchCompletionSignature` → `fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
+| Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `fetchCompletionSignature` → `fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
+
+Never infer `kind` from signed text. Pair a `provider_tee` signature with model
+evidence, and a `gateway` signature with Gateway evidence.
 
 For every exported function, input field, result type, and error type, see the
 [API reference](./api-reference.md).
 
-Start with model-response verification when you need to verify an inference
-result. Use gateway attestation when you need to authenticate a Cloud API
-gateway endpoint.
+For normal inference verification, use the model-response flow. Use an
+independent attestation flow when deployment evidence itself is the claim you
+need to establish.
 
 ## Verify a model response
 
