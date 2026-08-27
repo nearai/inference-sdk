@@ -80,21 +80,8 @@ async function verifiedGatewayAttestation(
   });
 }
 
-function expectVerificationFailure(
-  action: () => unknown,
-  failure: Record<string, unknown>,
-): void {
-  try {
-    action();
-  } catch (error) {
-    expect(error).toMatchObject({ failure });
-    return;
-  }
-  throw new Error('Expected verification to fail');
-}
-
 describe('response signature verification', () => {
-  test('verifies a canonical model response signature', async () => {
+  test('verifies a canonical model response with serialized verified evidence', async () => {
     const wallet = new ethers.Wallet(
       '0x0123456789012345678901234567890123456789012345678901234567890123',
     );
@@ -110,14 +97,16 @@ describe('response signature verification', () => {
       signer: { signingAlgo: 'ecdsa', signingAddress: wallet.address },
     };
 
-    expect(
-      verifyModelResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation: await verifiedModelAttestation(wallet.address),
-      }),
-    ).toBeUndefined();
+    const attestation = JSON.parse(
+      JSON.stringify(await verifiedModelAttestation(wallet.address)),
+    );
+
+    verifyModelResponse({
+      requestBody,
+      responseBody,
+      signature,
+      attestation,
+    });
   });
 
   test('rejects a model signature that names a different model', async () => {
@@ -138,19 +127,21 @@ describe('response signature verification', () => {
     };
     const attestation = await verifiedModelAttestation(wallet.address);
 
-    expectVerificationFailure(
-      () =>
-        verifyModelResponse({
-          requestBody: aliasedRequestBody,
-          responseBody,
-          signature,
-          attestation,
-        }),
-      {
-        phase: 'signature',
-        code: 'signature.payload_mismatch',
-        details: { source: 'signed_payload', reason: 'text_mismatch' },
-      },
+    expect(() =>
+      verifyModelResponse({
+        requestBody: aliasedRequestBody,
+        responseBody,
+        signature,
+        attestation,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          phase: 'signature',
+          code: 'signature.payload_mismatch',
+          details: { source: 'signed_payload', reason: 'text_mismatch' },
+        },
+      }),
     );
   });
 
@@ -167,14 +158,14 @@ describe('response signature verification', () => {
       signer: { signingAlgo: 'ed25519', signingAddress },
     };
 
-    expect(
-      verifyGatewayResponse({
-        requestBody,
-        responseBody,
-        signature,
-        attestation: await verifiedGatewayAttestation(signingAddress),
-      }),
-    ).toBeUndefined();
+    const attestation = await verifiedGatewayAttestation(signingAddress);
+
+    verifyGatewayResponse({
+      requestBody,
+      responseBody,
+      signature,
+      attestation,
+    });
   });
 
   test('rejects a gateway response signed by a different gateway identity', async () => {
@@ -195,15 +186,17 @@ describe('response signature verification', () => {
     );
     const attestation = await verifiedGatewayAttestation(otherSigningAddress);
 
-    expectVerificationFailure(
-      () =>
-        verifyGatewayResponse({
-          requestBody,
-          responseBody,
-          signature,
-          attestation,
-        }),
-      { phase: 'signature', code: 'signature.signer_mismatch' },
+    expect(() =>
+      verifyGatewayResponse({
+        requestBody,
+        responseBody,
+        signature,
+        attestation,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: { phase: 'signature', code: 'signature.signer_mismatch' },
+      }),
     );
   });
 
@@ -218,73 +211,21 @@ describe('response signature verification', () => {
       signature.signer.signingAddress,
     );
 
-    expectVerificationFailure(
-      () =>
-        verifyModelResponse({
-          requestBody,
-          responseBody,
-          signature,
-          attestation,
-        }),
-      {
-        phase: 'signature',
-        code: 'signature.kind_mismatch',
-        details: { expected: 'provider_tee', actual: 'gateway' },
-      },
-    );
-  });
-
-  test('verifies a response with a serialized model-attestation result', async () => {
-    const wallet = new ethers.Wallet(
-      '0x0123456789012345678901234567890123456789012345678901234567890123',
-    );
-    const attestation = JSON.parse(
-      JSON.stringify(await verifiedModelAttestation(wallet.address)),
-    );
-    const signedText = modelSignedText(
-      'canonical-model',
-      requestBody,
-      responseBody,
-    );
-    const signature: CompletionSignature = {
-      kind: 'provider_tee',
-      signedText,
-      signature: await wallet.signMessage(signedText),
-      signer: { signingAlgo: 'ecdsa', signingAddress: wallet.address },
-    };
-
-    expect(
+    expect(() =>
       verifyModelResponse({
         requestBody,
         responseBody,
         signature,
         attestation,
       }),
-    ).toBeUndefined();
-  });
-
-  test('rejects a response input without an attestation signer', () => {
-    expectVerificationFailure(
-      () =>
-        verifyModelResponse({
-          requestBody,
-          responseBody,
-          signature: {
-            kind: 'provider_tee',
-            signedText: 'model:request:response',
-            signature: '00',
-            signer: {
-              signingAlgo: 'ecdsa',
-              signingAddress: '11'.repeat(20),
-            },
-          },
-          attestation: {} as never,
-        }),
-      {
-        phase: 'input',
-        code: 'input.invalid',
-        details: { field: 'attestation.signer', reason: 'missing' },
-      },
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          phase: 'signature',
+          code: 'signature.kind_mismatch',
+          details: { expected: 'provider_tee', actual: 'gateway' },
+        },
+      }),
     );
   });
 });

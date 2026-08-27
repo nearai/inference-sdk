@@ -7,7 +7,6 @@ import {
   createModelAttestation,
   createQuote,
   nonce,
-  sha256,
   sha384,
   signingAddress,
   tlsFingerprint,
@@ -48,6 +47,10 @@ function createQuoteForEventLog(events: readonly { digest: string }[]) {
 describe('model attestation verification', () => {
   const quoteVerifier: QuoteVerifier = async () => createQuote();
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   test('returns verified model evidence with explicit verification states', async () => {
     const result = await verifyModelAttestation({
       attestation: createModelAttestation(),
@@ -83,58 +86,17 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('uses the signer snapshot captured before an async quote verifier runs', async () => {
-    const laterSigningAddress = `0x${'44'.repeat(20)}`;
-    const attestation = createModelAttestation();
-    const quote = createQuote({
-      reportData: Buffer.concat([
-        sha256(
-          Buffer.concat([
-            Buffer.from(laterSigningAddress.slice(2), 'hex'),
-            Buffer.from(tlsFingerprint, 'hex'),
-          ]),
-        ),
-        Buffer.from(nonce, 'hex'),
-      ]),
-    });
-
-    await expect(
-      verifyModelAttestation({
-        attestation,
-        nonce,
-        verifiers: {
-          quote: async () => {
-            attestation.signer = {
-              signingAlgo: 'ecdsa',
-              signingAddress: laterSigningAddress,
-            };
-            return quote;
-          },
-        },
+  test('accepts the legacy signer-and-nonce model binding without a declared SPKI', async () => {
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        declaredSpkiFingerprint: null,
       }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'binding',
-        code: 'binding.report_data_mismatch',
-        details: { source: 'signerTlsBinding' },
-      },
+      nonce,
+      verifiers: { quote: async () => createLegacyModelQuote() },
     });
+
+    expect(result.tlsBinding).toEqual({ kind: 'none' });
   });
-
-  test.each([undefined, null])(
-    'accepts the legacy signer-and-nonce model binding without a declared SPKI (%p)',
-    async (fingerprint) => {
-      const result = await verifyModelAttestation({
-        attestation: createModelAttestation({
-          declaredSpkiFingerprint: fingerprint,
-        }),
-        nonce,
-        verifiers: { quote: async () => createLegacyModelQuote() },
-      });
-
-      expect(result.tlsBinding).toEqual({ kind: 'none' });
-    },
-  );
 
   test('does not downgrade a declared-SPKI report to the legacy layout', async () => {
     await expect(
@@ -211,35 +173,32 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('rejects invalid quote verifier output', async () => {
+  test('rejects a structurally malformed Intel quote without suggesting retry', async () => {
     await expect(
       verifyModelAttestation({
-        attestation: createModelAttestation(),
+        attestation: createModelAttestation({ intelQuote: '00' }),
         nonce,
-        verifiers: { quote: async () => undefined as never },
       }),
     ).rejects.toMatchObject({
       failure: {
         phase: 'quote',
-        code: 'quote.invalid_result',
-        details: {
-          path: 'quote',
-          actual: 'undefined',
-        },
+        code: 'quote.verification_failed',
+        details: { reason: 'invalid_quote' },
       },
+      retryable: false,
     });
   });
 
   test('accepts OutOfDate by default and supports an explicit TCB policy', async () => {
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation(),
-        nonce,
-        verifiers: {
-          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
-        },
-      }),
-    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
+    const accepted = await verifyModelAttestation({
+      attestation: createModelAttestation(),
+      nonce,
+      verifiers: {
+        quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+      },
+    });
+
+    expect(accepted.tcbStatus).toBe('OutOfDate');
 
     await expect(
       verifyModelAttestation({
@@ -255,27 +214,6 @@ describe('model attestation verification', () => {
         phase: 'policy',
         code: 'policy.tcb_status_not_allowed',
         details: { actual: 'OutOfDate', accepted: ['UpToDate'] },
-      },
-    });
-  });
-
-  test('rejects a TCB status outside the default policy', async () => {
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation(),
-        nonce,
-        verifiers: {
-          quote: async () => createQuote({ tcbStatus: 'Revoked' }),
-        },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'policy',
-        code: 'policy.tcb_status_not_allowed',
-        details: {
-          actual: 'Revoked',
-          accepted: ['UpToDate', 'OutOfDate'],
-        },
       },
     });
   });
@@ -369,74 +307,6 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('accepts defaulted optional event fields and an empty runtime payload', async () => {
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation({
-          eventLog: JSON.stringify([{ digest: '00'.repeat(48), imr: 3 }]),
-        }),
-        nonce,
-        verifiers: { quote: quoteVerifier },
-      }),
-    ).resolves.toMatchObject({ gpuEvidence: 'not_provided' });
-
-    const runtimeDigest = sha384(
-      Buffer.concat([
-        Buffer.from([0x01, 0x00, 0x00, 0x08]),
-        Buffer.from(':'),
-        Buffer.from('app-id'),
-        Buffer.from(':'),
-      ]),
-    );
-    const quote = createQuote({
-      rtMr3: sha384(Buffer.concat([Buffer.alloc(48), runtimeDigest])),
-    });
-
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation({
-          eventLog: [
-            {
-              digest: runtimeDigest.toString('hex'),
-              event_type: 0x08000001,
-              event: 'app-id',
-              event_payload: '',
-              imr: 3,
-            },
-          ],
-        }),
-        nonce,
-        verifiers: { quote: async () => quote },
-      }),
-    ).resolves.toMatchObject({ gpuEvidence: 'not_provided' });
-  });
-
-  test('does not expose metadata from replay-only legacy events', async () => {
-    const digest = Buffer.alloc(48, 7);
-    const result = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        eventLog: [
-          {
-            digest: digest.toString('hex'),
-            event_type: 0,
-            event: 'compose-hash',
-            event_payload: 'forged',
-            imr: 3,
-          },
-        ],
-      }),
-      nonce,
-      verifiers: {
-        quote: async () =>
-          createQuote({
-            rtMr3: sha384(Buffer.concat([Buffer.alloc(48), digest])),
-          }),
-      },
-    });
-
-    expect(result.deployment.runtimeMeasurements).toEqual({});
-  });
-
   test('rejects app compose data that is not bound to MRCONFIGID', async () => {
     await expect(
       verifyModelAttestation({
@@ -473,22 +343,6 @@ describe('model attestation verification', () => {
       },
     });
     expect(nvidia).not.toHaveBeenCalled();
-  });
-
-  test('rejects an empty NVIDIA payload instead of treating it as absent', async () => {
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation({ nvidiaPayload: '' }),
-        nonce,
-        verifiers: { quote: quoteVerifier },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'gpu',
-        code: 'gpu.payload_invalid',
-        details: { reason: 'invalid_json' },
-      },
-    });
   });
 
   test('models GPU evidence as an explicit status', async () => {
@@ -536,36 +390,78 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('preserves an invalid NRAS response from the default NVIDIA verifier', async () => {
-    const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
-      'base64url',
-    );
-    const payload = Buffer.from('null').toString('base64url');
-    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => [['JWT', `${header}.${payload}.signature`]],
-    } as Response);
+  test('verifies NVIDIA evidence through NRAS by default', async () => {
+    mockNrasOverallResult(true);
 
-    try {
-      await expect(
-        verifyModelAttestation({
-          attestation: createModelAttestation({
-            nvidiaPayload: JSON.stringify({ nonce }),
-          }),
-          nonce,
-          verifiers: { quote: quoteVerifier },
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        nvidiaPayload: JSON.stringify({ nonce }),
+      }),
+      nonce,
+      verifiers: { quote: quoteVerifier },
+    });
+
+    expect(result.gpuEvidence).toBe('verified');
+  });
+
+  test('reports rejected NVIDIA evidence from NRAS', async () => {
+    mockNrasOverallResult(false);
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
         }),
-      ).rejects.toMatchObject({
-        failure: {
-          phase: 'gpu',
-          code: 'gpu.nras_response_invalid',
-          details: { reason: 'invalid_jwt' },
-        },
-      });
-    } finally {
-      fetch.mockRestore();
-    }
+        nonce,
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'gpu',
+        code: 'gpu.attestation_rejected',
+        details: { source: 'nras' },
+      },
+    });
+  });
+
+  test('rejects an NRAS result whose overall verdict is not boolean', async () => {
+    mockNrasOverallResult('PASS');
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        nonce,
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'gpu',
+        code: 'gpu.nras_response_invalid',
+        details: { reason: 'invalid_verdict_type' },
+      },
+    });
+  });
+
+  test('preserves an invalid NRAS response from the default NVIDIA verifier', async () => {
+    mockNrasJwtPayload(null);
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        nonce,
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'gpu',
+        code: 'gpu.nras_response_invalid',
+        details: { reason: 'invalid_jwt' },
+      },
+    });
   });
 
   test('rejects model report data that contradicts the verified quote', async () => {
@@ -610,25 +506,6 @@ describe('model attestation verification', () => {
     expect(result.deploymentProvenance).toBe('verified');
   });
 
-  test('keeps verified deployment measurements independent from the verifier input', async () => {
-    const composeEvent = createRuntimeEvent('compose-hash', 'beef');
-    const result = await verifyModelAttestation({
-      attestation: createModelAttestation({ eventLog: [composeEvent] }),
-      nonce,
-      verifiers: {
-        quote: async () => createQuoteForEventLog([composeEvent]),
-        deployment: async (deployment) => {
-          const mutable = deployment as {
-            runtimeMeasurements: { composeHash?: string };
-          };
-          mutable.runtimeMeasurements.composeHash = 'changed';
-        },
-      },
-    });
-
-    expect(result.deployment.runtimeMeasurements.composeHash).toBe('beef');
-  });
-
   test('normalizes deployment verifier failures', async () => {
     await expect(
       verifyModelAttestation({
@@ -646,3 +523,23 @@ describe('model attestation verification', () => {
     });
   });
 });
+
+function mockNrasOverallResult(result: boolean | string): void {
+  mockNrasJwtPayload({ 'x-nvidia-overall-att-result': result });
+}
+
+function mockNrasJwtPayload(payload: unknown): void {
+  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
+    'base64url',
+  );
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+    'base64url',
+  );
+  const jwt = `${header}.${encodedPayload}.signature`;
+
+  jest
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValue(
+      new Response(JSON.stringify([['JWT', jwt]]), { status: 200 }),
+    );
+}

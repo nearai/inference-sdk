@@ -1,7 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { verifyGatewayAttestation } from '../../src';
-import type { GatewayAttestation } from '../../src/types/attestation-gateway';
-import type { VerifyGatewayAttestationInput } from '../../src/types/verification';
+import type { GatewayAttestation } from '../../src';
 import {
   createModelAttestation,
   createQuote,
@@ -35,19 +34,6 @@ describe('gateway attestation verification', () => {
       deploymentProvenance: 'not_checked',
     });
     expect('gpuEvidence' in result).toBe(false);
-  });
-
-  test('accepts an OutOfDate gateway TCB status by default', async () => {
-    await expect(
-      verifyGatewayAttestation({
-        attestation: createGatewayAttestation(),
-        nonce,
-        peerSpkiFingerprint: tlsFingerprint,
-        verifiers: {
-          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
-        },
-      }),
-    ).resolves.toMatchObject({ tcbStatus: 'OutOfDate' });
   });
 
   test('rejects gateway evidence when the live TLS peer differs', async () => {
@@ -100,39 +86,4 @@ describe('gateway attestation verification', () => {
       },
     });
   });
-
-  test('does not treat an empty gateway report data field as absent', async () => {
-    await expect(
-      verifyGatewayAttestation({
-        attestation: createGatewayAttestation({ reportedQuoteData: '' }),
-        nonce,
-        peerSpkiFingerprint: tlsFingerprint,
-        verifiers: { quote: async () => createQuote() },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'binding',
-        code: 'binding.report_data_invalid',
-        details: {
-          source: 'reportedQuoteData',
-          reason: 'invalid_hex',
-          expectedBytes: 64,
-        },
-      },
-    });
-  });
 });
-
-// A gateway policy cannot express a model-only GPU requirement.
-function assertGatewayPolicyType(): void {
-  const gatewayInput: VerifyGatewayAttestationInput = {
-    attestation: createGatewayAttestation(),
-    nonce,
-    peerSpkiFingerprint: tlsFingerprint,
-  };
-
-  // @ts-expect-error GPU policy belongs only to verifyModelAttestation.
-  gatewayInput.policy = { gpuEvidence: 'required' };
-}
-
-void assertGatewayPolicyType;

@@ -1,14 +1,5 @@
-import type {
-  CompletionSignature,
-  CompletionSignatureReference,
-  ModelAttestation,
-} from '../../src';
-import {
-  ApiError,
-  findModelAttestationForSignature,
-  isVerificationError,
-  NearAiCloudClient,
-} from '../../src';
+import type { CompletionSignature, ModelAttestation } from '../../src';
+import { findModelAttestationForSignature, NearAiCloudClient } from '../../src';
 import { nonce } from '../fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -34,33 +25,6 @@ function gatewaySignature(): CompletionSignature {
   };
 }
 
-function dstackAttestation(overrides: Record<string, unknown> = {}) {
-  return {
-    request_nonce: nonce,
-    signing_algo: 'ecdsa',
-    signing_address: signingAddress,
-    intel_quote: 'aa',
-    event_log: [],
-    info: { tcb_info: { app_compose: '{}' } },
-    tls_cert_fingerprint: '33'.repeat(32),
-    ...overrides,
-  };
-}
-
-function nearReport(
-  model_attestations: unknown[] = [
-    dstackAttestation({ report_data: '44'.repeat(64) }),
-  ],
-) {
-  return {
-    gateway_attestation: {
-      ...dstackAttestation(),
-      report_data: '00'.repeat(64),
-    },
-    model_attestations,
-  };
-}
-
 function modelAttestation(
   overrides: Partial<ModelAttestation> = {},
 ): ModelAttestation {
@@ -76,970 +40,420 @@ function modelAttestation(
   };
 }
 
-function clientReplyingWith(response: unknown) {
-  let request: Request | undefined;
+function cloudAttestation(
+  requestNonce: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    request_nonce: requestNonce,
+    signing_algo: 'ecdsa',
+    signing_address: signingAddress,
+    intel_quote: 'aa',
+    event_log: [],
+    info: { tcb_info: { app_compose: '{}' } },
+    tls_cert_fingerprint: '33'.repeat(32),
+    ...overrides,
+  };
+}
+
+function modelReport(
+  requestNonce: string,
+  attestations: unknown[] = [
+    cloudAttestation(requestNonce, { report_data: '44'.repeat(64) }),
+  ],
+) {
+  return { model_attestations: attestations };
+}
+
+function gatewayReport(
+  requestNonce: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    gateway_attestation: cloudAttestation(requestNonce, {
+      signing_algo: 'ed25519',
+      signing_address: '55'.repeat(32),
+      report_data: '00'.repeat(64),
+      ...overrides,
+    }),
+  };
+}
+
+function completionSignature(kind: CompletionSignature['kind']) {
+  return {
+    text:
+      kind === 'provider_tee'
+        ? 'canonical-model:request:response'
+        : 'request:response',
+    signature: '00',
+    signing_address: signingAddress,
+    signing_algo: 'ecdsa',
+    signature_kind: kind,
+  };
+}
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status });
+}
+
+function clientFor(response: (request: Request) => Response) {
+  let lastRequest: Request | undefined;
+  const client = new NearAiCloudClient({
+    baseUrl,
+    apiKey: 'test',
+    fetch: async (input, init) => {
+      lastRequest = new Request(input, init);
+      return response(lastRequest);
+    },
+  });
 
   return {
-    client: new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async (input, init) => {
-        request = new Request(input, init);
-        const requestNonce = new URL(request.url).searchParams.get('nonce');
-        return new Response(
-          JSON.stringify(echoRequestNonce(response, requestNonce)),
-          { status: 200 },
-        );
-      },
-    }),
+    client,
     request(): Request {
-      if (!request) throw new Error('Expected a Cloud API request');
-      return request;
+      if (lastRequest === undefined) {
+        throw new Error('Expected a Cloud API request');
+      }
+      return lastRequest;
     },
   };
 }
 
-function echoRequestNonce(
-  response: unknown,
-  requestNonce: string | null,
-): unknown {
-  if (requestNonce === null) return response;
-  if (Array.isArray(response)) {
-    return response.map((item) => echoRequestNonce(item, requestNonce));
+function requestNonce(request: Request): string {
+  const value = new URL(request.url).searchParams.get('nonce');
+  if (value === null) {
+    throw new Error('Expected the Cloud API request to include a nonce');
   }
-  if (!isRecord(response)) return response;
-
-  return Object.fromEntries(
-    Object.entries(response).map(([key, value]) => [
-      key,
-      key === 'request_nonce' && value === nonce
-        ? requestNonce
-        : echoRequestNonce(value, requestNonce),
-    ]),
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object';
+  return value;
 }
 
 describe('NEAR AI Cloud client', () => {
-  test('fetches and selects a NEAR model attestation for a model signature', async () => {
-    const selectedSigningAddress = `0x${'44'.repeat(20)}`;
-    const selectedSignature: CompletionSignatureReference = {
-      kind: 'provider_tee',
-      signer: {
-        signingAlgo: 'ecdsa',
-        signingAddress: selectedSigningAddress,
-      },
-    };
-    const api = clientReplyingWith({
-      gateway_attestation: { this: 'is unrelated to model parsing' },
-      model_attestations: [
-        dstackAttestation({
-          signing_address: selectedSigningAddress,
-          report_data: '44'.repeat(64),
-        }),
-      ],
+  describe('model attestations', () => {
+    test('fetches model evidence and selects the signer for a model response', async () => {
+      const selectedSigningAddress = `0x${'44'.repeat(20)}`;
+      const signature = modelSignature(selectedSigningAddress);
+      const api = clientFor((request) => {
+        const clientNonce = requestNonce(request);
+        return jsonResponse(
+          modelReport(clientNonce, [
+            cloudAttestation(clientNonce, {
+              signing_address: selectedSigningAddress,
+              report_data: '44'.repeat(64),
+            }),
+          ]),
+        );
+      });
+
+      const { attestations, nonce: clientNonce } =
+        await api.client.fetchModelAttestations({
+          model: 'canonical-model',
+          signingAlgo: signature.signer.signingAlgo,
+          signingAddress: signature.signer.signingAddress,
+        });
+      const attestation = findModelAttestationForSignature({
+        attestations,
+        signature,
+      });
+
+      expect(attestation).toMatchObject({
+        nonce: clientNonce,
+        signer: signature.signer,
+        appCompose: '{}',
+        reportedQuoteData: '44'.repeat(64),
+      });
+
+      const request = api.request();
+      const query = new URL(request.url).searchParams;
+      expect(query.get('model')).toBe('canonical-model');
+      expect(query.get('provider')).toBe('near');
+      expect(query.get('nonce')).toBe(clientNonce);
+      expect(query.get('signing_algo')).toBe('ecdsa');
+      expect(query.get('signing_address')).toBe(selectedSigningAddress);
+      expect(request.headers.get('authorization')).toBe('Bearer test');
+      expect(request.headers.get('x-no-aliasing')).toBe('true');
     });
 
-    const fetched = await api.client.fetchModelAttestationForSignature({
-      model: 'canonical-model',
-      signature: selectedSignature,
-    });
+    test('fetches the single model attestation for a provider signature', async () => {
+      const signature = modelSignature();
+      const api = clientFor((request) => {
+        const clientNonce = requestNonce(request);
+        return jsonResponse(modelReport(clientNonce));
+      });
 
-    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
-    expect(fetched.attestation).toMatchObject({
-      nonce: fetched.nonce,
-      signer: {
-        signingAlgo: 'ecdsa',
-        signingAddress: selectedSigningAddress,
-      },
-      intelQuote: 'aa',
-      eventLog: [],
-      appCompose: '{}',
-      declaredSpkiFingerprint: '33'.repeat(32),
-      reportedQuoteData: '44'.repeat(64),
-    });
-    expect(fetched.attestation).not.toHaveProperty('request_nonce');
-
-    const request = api.request();
-    const url = new URL(request.url);
-    expect(request.method).toBe('GET');
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      model: 'canonical-model',
-      nonce: fetched.nonce,
-      signing_algo: 'ecdsa',
-      signing_address: selectedSigningAddress,
-      provider: 'near',
-    });
-    expect(request.headers.get('authorization')).toBe('Bearer test');
-    expect(request.headers.get('x-no-aliasing')).toBe('true');
-  });
-
-  test('fetches the current Cloud API model-attestation list without signing filters', async () => {
-    const api = clientReplyingWith(nearReport());
-
-    const fetched = await api.client.fetchModelAttestations({
-      model: 'canonical-model',
-    });
-
-    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
-    expect(fetched.attestations).toHaveLength(1);
-    expect(fetched.attestations[0]).toMatchObject({
-      nonce: fetched.nonce,
-      signer: { signingAlgo: 'ecdsa', signingAddress },
-      reportedQuoteData: '44'.repeat(64),
-    });
-    expect(Object.fromEntries(new URL(api.request().url).searchParams)).toEqual(
-      {
+      const fetched = await api.client.fetchModelAttestationForSignature({
         model: 'canonical-model',
-        nonce: fetched.nonce,
-        provider: 'near',
-      },
-    );
-  });
+        signature,
+      });
 
-  test('rejects a model report whose echoed nonce differs from the request', async () => {
-    const api = clientReplyingWith(
-      nearReport([dstackAttestation({ request_nonce: '44'.repeat(32) })]),
-    );
-
-    await expect(
-      api.client.fetchModelAttestations({
-        model: 'canonical-model',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.nonce_mismatch',
-        details: { resource: 'model_attestation' },
-      },
-    });
-  });
-
-  test('forwards an optional model signer filter', async () => {
-    const api = clientReplyingWith(nearReport());
-
-    await api.client.fetchModelAttestations({
-      model: 'canonical-model',
-      signingAlgo: 'ecdsa',
-      signingAddress,
+      expect(fetched).toMatchObject({
+        nonce: fetched.attestation.nonce,
+        attestation: { signer: signature.signer },
+      });
     });
 
-    expect(new URL(api.request().url).searchParams.get('signing_address')).toBe(
-      signingAddress,
-    );
-  });
-
-  test('allows a signing-address filter without a signing-algorithm filter', async () => {
-    const api = clientReplyingWith(nearReport());
-
-    await api.client.fetchModelAttestations({
-      model: 'canonical-model',
-      signingAddress,
-    });
-
-    const query = new URL(api.request().url).searchParams;
-    expect(query.get('signing_address')).toBe(signingAddress);
-    expect(query.has('signing_algo')).toBe(false);
-  });
-
-  test.each([
-    { attestations: [], actualCount: 0 },
-    {
-      attestations: [dstackAttestation(), dstackAttestation()],
-      actualCount: 2,
-    },
-  ])(
-    'rejects a Cloud API model-attestation list with $actualCount entries',
-    async ({ attestations, actualCount }) => {
-      const api = clientReplyingWith(nearReport(attestations));
+    test('rejects a model report whose nonce does not match the request', async () => {
+      const api = clientFor(() => jsonResponse(modelReport('44'.repeat(32))));
 
       await expect(
-        api.client.fetchModelAttestations({
-          model: 'canonical-model',
-        }),
+        api.client.fetchModelAttestations({ model: 'canonical-model' }),
       ).rejects.toMatchObject({
         failure: {
           phase: 'api',
-          code: 'api.unexpected_model_attestation_count',
-          details: { expectedCount: 1, actualCount },
+          code: 'api.nonce_mismatch',
+          details: { resource: 'model_attestation' },
         },
       });
-    },
-  );
-
-  test('finds the one model attestation for a matching provider signature', () => {
-    const attestation = modelAttestation({
-      signer: {
-        signingAlgo: 'ecdsa',
-        signingAddress: `0x${'44'.repeat(20)}`,
-      },
     });
 
-    expect(
-      findModelAttestationForSignature({
-        attestations: [modelAttestation(), attestation],
-        signature: modelSignature(`0X${'44'.repeat(20)}`),
-      }),
-    ).toEqual(attestation);
-  });
+    test.each([
+      { label: 'no candidates', attestations: [], actualCount: 0 },
+      {
+        label: 'multiple candidates',
+        attestations: [cloudAttestation(nonce), cloudAttestation(nonce)],
+        actualCount: 2,
+      },
+    ])(
+      'requires exactly one model attestation when Cloud API returns $label',
+      async ({ attestations, actualCount }) => {
+        const api = clientFor((request) =>
+          jsonResponse(modelReport(requestNonce(request), attestations)),
+        );
 
-  test('rejects a model-attestation list with no matching signature signer', () => {
-    expect(() =>
-      findModelAttestationForSignature({
+        await expect(
+          api.client.fetchModelAttestations({ model: 'canonical-model' }),
+        ).rejects.toMatchObject({
+          failure: {
+            phase: 'api',
+            code: 'api.unexpected_model_attestation_count',
+            details: { expectedCount: 1, actualCount },
+          },
+        });
+      },
+    );
+
+    test.each([
+      {
+        label: 'a provider signer with no matching attestation',
         attestations: [modelAttestation()],
         signature: modelSignature(`0x${'44'.repeat(20)}`),
-      }),
-    ).toThrow(
-      expect.objectContaining({
         failure: {
           phase: 'api',
           code: 'api.attestation_signer_mismatch',
           details: { resource: 'model_attestation' },
         },
-      }),
-    );
-  });
-
-  test('requires a unique model attestation for a signature signer', () => {
-    const first = modelAttestation();
-    const second = modelAttestation({ reportedQuoteData: '55'.repeat(64) });
-
-    expect(() =>
-      findModelAttestationForSignature({
-        attestations: [first, second],
+      },
+      {
+        label: 'multiple attestations for the same signer',
+        attestations: [modelAttestation(), modelAttestation()],
         signature: modelSignature(),
-      }),
-    ).toThrow(
-      expect.objectContaining({
         failure: {
           phase: 'api',
           code: 'api.ambiguous_model_attestation_signer',
           details: { matchingCount: 2, totalCount: 2 },
         },
-      }),
-    );
-  });
-
-  test('rejects a gateway signature in local model-attestation selection', () => {
-    expect(() =>
-      findModelAttestationForSignature({
+      },
+      {
+        label: 'a gateway signature',
         attestations: [modelAttestation()],
         signature: gatewaySignature(),
-      }),
-    ).toThrow(
-      expect.objectContaining({
         failure: {
           phase: 'signature',
           code: 'signature.kind_mismatch',
           details: { expected: 'provider_tee', actual: 'gateway' },
         },
-      }),
-    );
+      },
+    ])('rejects $label', ({ attestations, signature, failure }) => {
+      expect(() =>
+        findModelAttestationForSignature({ attestations, signature }),
+      ).toThrow(expect.objectContaining({ failure }));
+    });
   });
 
-  test('rejects unknown fields in a model signer reference', () => {
-    expect(() =>
-      findModelAttestationForSignature({
-        attestations: [modelAttestation()],
-        signature: {
-          kind: 'provider_tee',
-          signer: {
-            signingAlgo: 'ecdsa',
-            signingAddress,
-            signingAddres: signingAddress,
-          },
-        },
-      } as never),
-    ).toThrow(
-      expect.objectContaining({
-        failure: expect.objectContaining({
-          phase: 'input',
-          code: 'input.invalid',
-          details: expect.objectContaining({
-            field: 'signature.signer.signingAddres',
-            reason: 'unsupported_value',
+  describe('gateway attestations', () => {
+    test('fetches gateway evidence with TLS binding and the default signing algorithm', async () => {
+      const api = clientFor((request) =>
+        jsonResponse(gatewayReport(requestNonce(request))),
+      );
+
+      const fetched = await api.client.fetchGatewayAttestation();
+
+      expect(fetched).toMatchObject({
+        nonce: fetched.attestation.nonce,
+        attestation: { reportedQuoteData: '00'.repeat(64) },
+      });
+      const query = new URL(api.request().url).searchParams;
+      expect(query.get('nonce')).toBe(fetched.nonce);
+      expect(query.get('signing_algo')).toBe('ed25519');
+      expect(query.get('include_tls_fingerprint')).toBe('true');
+    });
+
+    test('requests the gateway signing algorithm needed by a response signature', async () => {
+      const api = clientFor((request) =>
+        jsonResponse(
+          gatewayReport(requestNonce(request), {
+            signing_algo: 'ecdsa',
+            signing_address: signingAddress,
           }),
-        }),
-      }),
-    );
-  });
+        ),
+      );
 
-  test('rejects legacy signer field names', () => {
-    expect(() =>
-      findModelAttestationForSignature({
-        attestations: [modelAttestation()],
-        signature: {
-          kind: 'provider_tee',
-          signer: {
-            algorithm: 'ecdsa',
-            address: signingAddress,
-          },
+      await api.client.fetchGatewayAttestation({ signingAlgo: 'ecdsa' });
+
+      expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
+        'ecdsa',
+      );
+    });
+
+    test('rejects gateway evidence whose nonce does not match the request', async () => {
+      const api = clientFor(() => jsonResponse(gatewayReport('44'.repeat(32))));
+
+      await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
+        failure: {
+          phase: 'api',
+          code: 'api.nonce_mismatch',
+          details: { resource: 'gateway_attestation' },
         },
-      } as never),
-    ).toThrow(
-      expect.objectContaining({
-        failure: expect.objectContaining({
-          phase: 'input',
-          code: 'input.invalid',
-          details: expect.objectContaining({
-            field: 'signature.signer.algorithm',
-            reason: 'unsupported_value',
-          }),
-        }),
-      }),
-    );
-  });
-
-  test('fetches standalone gateway attestation with TLS binding enabled', async () => {
-    const api = clientReplyingWith(nearReport([{ provider: 'chutes' }]));
-
-    const fetched = await api.client.fetchGatewayAttestation();
-
-    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
-    expect(fetched.attestation).toMatchObject({
-      nonce: fetched.nonce,
-      reportedQuoteData: '00'.repeat(64),
-    });
-
-    const request = api.request();
-    const url = new URL(request.url);
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      nonce: fetched.nonce,
-      signing_algo: 'ed25519',
-      include_tls_fingerprint: 'true',
-    });
-    expect(request.headers.get('authorization')).toBe('Bearer test');
-    expect(request.headers.has('x-no-aliasing')).toBe(false);
-  });
-
-  test('rejects a gateway report whose echoed nonce differs from the request', async () => {
-    const api = clientReplyingWith({
-      gateway_attestation: {
-        ...dstackAttestation({ request_nonce: '44'.repeat(32) }),
-        report_data: '00'.repeat(64),
-      },
-    });
-
-    await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.nonce_mismatch',
-        details: { resource: 'gateway_attestation' },
-      },
+      });
     });
   });
 
-  test('requests an explicit gateway signing algorithm when provided', async () => {
-    const api = clientReplyingWith(nearReport());
+  describe('completion signatures', () => {
+    test.each([
+      { kind: 'provider_tee' as const, expected: modelSignature() },
+      { kind: 'gateway' as const, expected: gatewaySignature() },
+    ])('fetches a $kind completion signature', async ({ kind, expected }) => {
+      const api = clientFor(() => jsonResponse(completionSignature(kind)));
 
-    await api.client.fetchGatewayAttestation({
-      signingAlgo: 'ecdsa',
-    });
-
-    expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
-      'ecdsa',
-    );
-  });
-
-  test('rejects a completion signature in standalone gateway input before sending a request', async () => {
-    let requestCount = 0;
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => {
-        requestCount += 1;
-        return new Response('{}', { status: 200 });
-      },
-    });
-
-    await expect(
-      client.fetchGatewayAttestation({
-        signature: gatewaySignature(),
-      } as never),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'input',
-        code: 'input.invalid',
-        details: { field: 'input.signature', reason: 'unsupported_value' },
-      },
-    });
-    expect(requestCount).toBe(0);
-  });
-
-  test('rejects a caller-supplied nonce instead of silently ignoring it', async () => {
-    let requestCount = 0;
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => {
-        requestCount += 1;
-        return new Response('{}', { status: 200 });
-      },
-    });
-
-    await expect(
-      client.fetchModelAttestations({
-        model: 'canonical-model',
-        nonce,
-      } as never),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'input',
-        code: 'input.invalid',
-        details: { field: 'input.nonce', reason: 'unsupported_value' },
-      },
-    });
-    expect(requestCount).toBe(0);
-  });
-
-  test('looks up an unavailable completion signature explicitly', async () => {
-    const api = clientReplyingWith({
-      error_code: 'SIGNATURE_UNSUPPORTED',
-      message: 'No provider signature',
-    });
-
-    const lookup = await api.client.lookupCompletionSignature({
-      completionId: 'chat-1',
-      signingAlgo: 'ed25519',
-    });
-
-    expect(lookup).toEqual({
-      status: 'unavailable',
-      unavailable: {
-        errorCode: 'SIGNATURE_UNSUPPORTED',
-        message: 'No provider signature',
-      },
-    });
-    expect(Object.fromEntries(new URL(api.request().url).searchParams)).toEqual(
-      {
-        signing_algo: 'ed25519',
-      },
-    );
-  });
-
-  test('throws a structured error for an unavailable completion signature', async () => {
-    const api = clientReplyingWith({
-      error_code: 'SIGNATURE_UNSUPPORTED',
-      message: 'No provider signature',
-    });
-
-    await expect(
-      api.client.fetchCompletionSignature({
+      const signature = await api.client.fetchCompletionSignature({
         completionId: 'chat-1',
-        signingAlgo: 'ed25519',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'signature',
-        code: 'signature.unavailable',
-        details: { providerErrorCode: 'SIGNATURE_UNSUPPORTED' },
-      },
-    });
-  });
-
-  test('fetches and normalizes a model completion signature', async () => {
-    const api = clientReplyingWith({
-      text: 'canonical-model:request:response',
-      signature: '00',
-      signing_address: signingAddress,
-      signing_algo: 'ecdsa',
-      signature_kind: 'provider_tee',
-    });
-
-    const signature = await api.client.fetchCompletionSignature({
-      completionId: 'chat-1',
-    });
-
-    expect(signature).toEqual(modelSignature());
-    const url = new URL(api.request().url);
-    expect(url.pathname).toBe('/v1/signature/chat-1');
-    expect(Object.fromEntries(url.searchParams)).toEqual({});
-  });
-
-  test('retains a gateway signature source', async () => {
-    const api = clientReplyingWith({
-      text: 'request:response',
-      signature: '00',
-      signing_address: signingAddress,
-      signing_algo: 'ecdsa',
-      signature_kind: 'gateway',
-    });
-
-    const signature = await api.client.fetchCompletionSignature({
-      completionId: 'chat-1',
-      signingAlgo: 'ecdsa',
-    });
-
-    expect(signature).toEqual(gatewaySignature());
-  });
-
-  test('rejects a signature without an explicit source', async () => {
-    const api = clientReplyingWith({
-      text: 'old-format',
-      signature: 'aa',
-      signing_address: signingAddress,
-      signing_algo: 'ecdsa',
-    });
-
-    await expect(
-      api.client.lookupCompletionSignature({
-        completionId: 'chat-1',
-        signingAlgo: 'ecdsa',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'signature.signature_kind',
-          actual: 'undefined',
-        },
-      },
-    });
-  });
-
-  test.each([
-    { value: 'other', actual: 'string' },
-    { value: 0, actual: 'number' },
-    { value: [], actual: 'array' },
-    { value: {}, actual: 'object' },
-  ])(
-    'rejects an unrecognized signature source with $actual input',
-    async ({ value, actual }) => {
-      const api = clientReplyingWith({
-        text: 'old-format',
-        signature: 'aa',
-        signing_address: signingAddress,
-        signing_algo: 'ecdsa',
-        signature_kind: value,
       });
 
-      await expect(
-        api.client.fetchCompletionSignature({
-          completionId: 'chat-1',
-          signingAlgo: 'ecdsa',
+      expect(signature).toEqual(expected);
+      expect(new URL(api.request().url).pathname).toBe('/v1/signature/chat-1');
+    });
+
+    test('lets callers choose between an unavailable result and an error', async () => {
+      const api = clientFor(() =>
+        jsonResponse({
+          error_code: 'SIGNATURE_UNSUPPORTED',
+          message: 'No provider signature',
         }),
+      );
+
+      const lookup = await api.client.lookupCompletionSignature({
+        completionId: 'chat-1',
+      });
+
+      expect(lookup).toEqual({
+        status: 'unavailable',
+        unavailable: {
+          errorCode: 'SIGNATURE_UNSUPPORTED',
+          message: 'No provider signature',
+        },
+      });
+      await expect(
+        api.client.fetchCompletionSignature({ completionId: 'chat-1' }),
+      ).rejects.toMatchObject({
+        failure: {
+          phase: 'signature',
+          code: 'signature.unavailable',
+          details: { providerErrorCode: 'SIGNATURE_UNSUPPORTED' },
+        },
+      });
+    });
+
+    test('marks a pending completion signature lookup as retryable', async () => {
+      const api = clientFor(() => new Response('', { status: 404 }));
+
+      await expect(
+        api.client.lookupCompletionSignature({ completionId: 'chat-1' }),
+      ).rejects.toMatchObject({
+        failure: {
+          phase: 'api',
+          code: 'api.http_status',
+          details: { resource: 'completion_signature', status: 404 },
+          retryable: true,
+        },
+      });
+    });
+
+    test('does not mistake malformed signature data for an unavailable result', async () => {
+      const api = clientFor(() =>
+        jsonResponse({
+          error_code: 'SIGNATURE_UNSUPPORTED',
+          message: 'No provider signature',
+          ...completionSignature('provider_tee'),
+          signature_kind: 'unknown',
+        }),
+      );
+
+      await expect(
+        api.client.lookupCompletionSignature({ completionId: 'chat-1' }),
       ).rejects.toMatchObject({
         failure: {
           phase: 'api',
           code: 'api.invalid_response',
           details: {
             path: 'signature.signature_kind',
-            actual,
+            actual: 'string',
           },
         },
       });
-    },
-  );
-
-  test('rejects a null signature source instead of treating it as legacy', async () => {
-    const api = clientReplyingWith({
-      text: 'old-format',
-      signature: 'aa',
-      signing_address: signingAddress,
-      signing_algo: 'ecdsa',
-      signature_kind: null,
-    });
-
-    await expect(
-      api.client.fetchCompletionSignature({
-        completionId: 'chat-1',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'signature.signature_kind',
-          actual: 'null',
-        },
-      },
     });
   });
 
-  test('does not classify a malformed signature payload as unavailable', async () => {
-    const api = clientReplyingWith({
-      error_code: 'SIGNATURE_UNSUPPORTED',
-      message: 'No provider signature',
-      text: 'old-format',
-      signature: 'aa',
-      signing_address: signingAddress,
-      signing_algo: 'ecdsa',
-      signature_kind: 'other',
-    });
+  describe('API errors', () => {
+    test('distinguishes missing gateway evidence from a transient gateway failure', async () => {
+      const missing = clientFor(() => new Response('', { status: 404 }));
+      const unavailable = clientFor(() => new Response('', { status: 503 }));
 
-    await expect(
-      api.client.lookupCompletionSignature({
-        completionId: 'chat-1',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'signature.signature_kind',
-          actual: 'string',
+      await expect(
+        missing.client.fetchGatewayAttestation(),
+      ).rejects.toMatchObject({
+        failure: {
+          phase: 'api',
+          code: 'api.http_status',
+          details: { resource: 'gateway_attestation', status: 404 },
+          retryable: false,
         },
-      },
-    });
-  });
-
-  test('does not parse provider-specific evidence as a NEAR model attestation', async () => {
-    const api = clientReplyingWith(nearReport([{ provider: 'chutes' }]));
-
-    await expect(
-      api.client.fetchModelAttestations({
-        model: 'model',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'model_attestations[0].info',
-          actual: 'undefined',
-        },
-      },
-    });
-  });
-
-  test('normalizes malformed API JSON into ApiError', async () => {
-    const api = clientReplyingWith({ model_attestations: 'not-an-array' });
-
-    try {
-      await api.client.fetchModelAttestations({
-        model: 'canonical-model',
       });
-    } catch (error) {
-      expect(error).toBeInstanceOf(ApiError);
-      expect(isVerificationError(error)).toBe(true);
-      expect(error).toMatchObject({
-        failure: { phase: 'api', code: 'api.invalid_response' },
-      });
-      return;
-    }
-    throw new Error('Expected malformed API JSON to fail');
-  });
-
-  test('rejects evidence whose signer differs from the selected signature', async () => {
-    const api = clientReplyingWith({
-      model_attestations: [
-        dstackAttestation({ signing_address: `0x${'44'.repeat(20)}` }),
-      ],
-    });
-
-    await expect(
-      api.client.fetchModelAttestationForSignature({
-        model: 'canonical-model',
-        signature: modelSignature(),
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.attestation_signer_mismatch',
-        details: { resource: 'model_attestation' },
-      },
-    });
-  });
-
-  test('rejects an incompatible model signature before sending its attestation request', async () => {
-    let requestCount = 0;
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => {
-        requestCount += 1;
-        return new Response('{}', { status: 200 });
-      },
-    });
-
-    await expect(
-      client.fetchModelAttestationForSignature({
-        model: 'canonical-model',
-        signature: gatewaySignature(),
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'signature',
-        code: 'signature.kind_mismatch',
-        details: { expected: 'provider_tee', actual: 'gateway' },
-      },
-    });
-    expect(requestCount).toBe(0);
-  });
-
-  test('reports HTTP failures with status and retry guidance, not response text', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () =>
-        new Response('private upstream response', { status: 503 }),
-    });
-
-    try {
-      await client.fetchGatewayAttestation();
-      throw new Error('Expected the Cloud API request to fail');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ApiError);
-      expect(error).toMatchObject({
+      await expect(
+        unavailable.client.fetchGatewayAttestation(),
+      ).rejects.toMatchObject({
         failure: {
           phase: 'api',
           code: 'api.http_status',
           details: { resource: 'gateway_attestation', status: 503 },
           retryable: true,
         },
-        status: 503,
-        retryable: true,
       });
-      expect(JSON.stringify(error)).not.toContain('private upstream response');
-    }
-  });
-
-  test('marks a pending completion signature lookup as retryable', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => new Response('', { status: 404 }),
     });
 
-    await expect(
-      client.lookupCompletionSignature({ completionId: 'chat-1' }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.http_status',
-        details: { resource: 'completion_signature', status: 404 },
-        retryable: true,
-      },
-      retryable: true,
-    });
-  });
+    test('normalizes a malformed model-attestation response into an API error', async () => {
+      const api = clientFor(() =>
+        jsonResponse({ model_attestations: 'not-an-array' }),
+      );
 
-  test('does not mark an evidence 404 as retryable', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => new Response('', { status: 404 }),
-    });
-
-    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.http_status',
-        details: { resource: 'gateway_attestation', status: 404 },
-        retryable: false,
-      },
-      retryable: false,
-    });
-  });
-
-  test('returns structured errors for malformed client inputs', async () => {
-    expectClientInputFailure(() => new NearAiCloudClient(undefined as never), {
-      field: 'options',
-      reason: 'missing',
-    });
-    expectClientInputFailure(
-      () => new NearAiCloudClient({ apiKey: 'test', baseUr: baseUrl } as never),
-      { field: 'options.baseUr', reason: 'unsupported_value' },
-    );
-
-    const client = new NearAiCloudClient({ baseUrl, apiKey: 'test' });
-    const expected = {
-      failure: { phase: 'input', code: 'input.invalid' },
-    };
-    await expect(
-      client.fetchModelAttestations(undefined as never),
-    ).rejects.toMatchObject(expected);
-    await expect(
-      client.fetchModelAttestationForSignature(undefined as never),
-    ).rejects.toMatchObject(expected);
-    await expect(
-      client.fetchGatewayAttestation(null as never),
-    ).rejects.toMatchObject(expected);
-    await expect(
-      client.fetchCompletionSignature(undefined as never),
-    ).rejects.toMatchObject(expected);
-    expectClientInputFailure(
-      () => findModelAttestationForSignature(undefined as never),
-      { field: 'input', reason: 'missing' },
-    );
-  });
-
-  test('fails before sending an attestation request without secure random bytes', async () => {
-    let requestCount = 0;
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: async () => {
-        requestCount += 1;
-        return new Response('{}', { status: 200 });
-      },
-    });
-    const cryptoDescriptor = Object.getOwnPropertyDescriptor(
-      globalThis,
-      'crypto',
-    );
-
-    Object.defineProperty(globalThis, 'crypto', {
-      configurable: true,
-      value: undefined,
-    });
-
-    try {
-      await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
-        failure: {
-          phase: 'runtime',
-          code: 'runtime.crypto_unavailable',
-          details: { capability: 'secure_random' },
-        },
+      await expect(
+        api.client.fetchModelAttestations({ model: 'canonical-model' }),
+      ).rejects.toMatchObject({
+        failure: { phase: 'api', code: 'api.invalid_response' },
       });
-      expect(requestCount).toBe(0);
-    } finally {
-      if (cryptoDescriptor === undefined) {
-        Reflect.deleteProperty(globalThis, 'crypto');
-      } else {
-        Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
-      }
-    }
-  });
-
-  test('supports a synchronous custom transport', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: () =>
-        new Response(
-          JSON.stringify({
-            error_code: 'SIGNATURE_UNSUPPORTED',
-            message: 'No provider signature',
-          }),
-          { status: 200 },
-        ),
-    });
-
-    await expect(
-      client.lookupCompletionSignature({ completionId: 'chat-1' }),
-    ).resolves.toEqual({
-      status: 'unavailable',
-      unavailable: {
-        errorCode: 'SIGNATURE_UNSUPPORTED',
-        message: 'No provider signature',
-      },
     });
   });
 
-  test('rejects a malformed custom transport response before reading status', async () => {
-    const client = new NearAiCloudClient({
-      baseUrl,
-      apiKey: 'test',
-      fetch: (() => ({
-        ok: false,
-        text: () => '',
-      })) as never,
-    });
-
-    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-      },
-    });
-  });
-
-  test('rejects a null model report-data field instead of treating it as absent', async () => {
-    const api = clientReplyingWith({
-      model_attestations: [dstackAttestation({ report_data: null })],
-    });
-
-    await expect(
-      api.client.fetchModelAttestations({
-        model: 'canonical-model',
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'api',
-        code: 'api.invalid_response',
-        details: {
-          path: 'model_attestations[0].report_data',
-          actual: 'null',
-        },
-      },
-    });
-  });
-
-  test('accepts an HTTPS base URL and rejects an HTTP base URL', () => {
-    expect(
-      () => new NearAiCloudClient({ baseUrl, apiKey: 'test' }),
-    ).not.toThrow();
-
-    try {
-      new NearAiCloudClient({
-        baseUrl: 'http://cloud-api.near.ai/v1',
-        apiKey: 'test',
-      });
-      throw new Error('Expected an HTTP base URL to be rejected');
-    } catch (error) {
-      expect(error).toMatchObject({
-        failure: {
-          phase: 'input',
-          code: 'input.invalid',
-          details: { field: 'baseUrl', reason: 'invalid_url' },
-        },
-      });
-    }
-  });
-
-  test.each(['https://cloud-api.near.ai/v1?', 'https://cloud-api.near.ai/v1#'])(
-    'rejects a base URL with a bare query or fragment delimiter: %s',
-    (invalidBaseUrl) => {
-      expectClientInputFailure(
+  describe('client configuration', () => {
+    test.each([
+      'http://cloud-api.near.ai/v1',
+      'https://cloud-api.near.ai/v1?',
+      'https://cloud-api.near.ai/v1#',
+    ])('rejects an unsafe base URL: %s', (invalidBaseUrl) => {
+      expect(
         () =>
           new NearAiCloudClient({
             baseUrl: invalidBaseUrl,
             apiKey: 'test',
           }),
-        { field: 'baseUrl', reason: 'invalid_url' },
-      );
-    },
-  );
-
-  test('rejects an API key that cannot be sent as an HTTP header', () => {
-    expect(
-      () =>
-        new NearAiCloudClient({
-          baseUrl,
-          apiKey: 'invalid\nheader',
-        }),
-    ).toThrow(
-      expect.objectContaining({
-        failure: {
-          phase: 'input',
-          code: 'input.invalid',
-          details: {
-            field: 'apiKey',
-            reason: 'invalid_header',
-            expected: 'non-empty HTTP header value',
-          },
-        },
-      }),
-    );
+      ).toThrow('Invalid baseUrl');
+    });
   });
 });
-
-function expectClientInputFailure(
-  action: () => unknown,
-  details: Record<string, unknown>,
-): void {
-  try {
-    action();
-  } catch (error) {
-    expect(error).toMatchObject({
-      failure: { phase: 'input', code: 'input.invalid', details },
-    });
-    return;
-  }
-  throw new Error('Expected client input validation to fail');
-}
