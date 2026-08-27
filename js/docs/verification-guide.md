@@ -1,15 +1,24 @@
 # TypeScript verification guide
 
-Use this SDK when your application needs to verify a NEAR AI Cloud completion.
-The completion signature selects one of two claims: a **model response**, signed
-by a model-serving TEE, or a **gateway response**, signed by the Cloud API
-gateway. The two flows use different attestations and are verified separately.
+Use this SDK to verify NEAR AI Cloud attestations and completion signatures.
+The completion signature's explicit `kind` selects the response-verification
+flow:
+
+| Signature kind | Verify | Establishes |
+| --- | --- | --- |
+| `provider_tee` | `verifyModelAttestation` then `verifyModelResponse` | A model-serving TEE signed the exact completion bytes. |
+| `gateway` | `verifyGatewayAttestation` then `verifyGatewayResponse` | The attested NEAR AI Cloud Gateway service key signed the exact completion bytes. |
+
+A gateway attestation can also be verified on its own, without a completion.
+Never infer the signature kind from its signed text or use model evidence for a
+gateway signature, or vice versa.
 
 For every exported function, input field, result type, and error type, see the
 [API reference](./api-reference.md).
 
-Start with model-response verification unless you specifically need to
-authenticate the Cloud API gateway's TLS peer.
+Start with model-response verification when you need to verify an inference
+result. Use gateway attestation when you need to authenticate a Cloud API
+gateway endpoint.
 
 ## Verify a model response
 
@@ -126,42 +135,29 @@ measurements, and the model signing identity. Its result includes:
 the service declared an SPKI fingerprint. A model declaration is not proof that
 the client connected directly to the model CVM.
 
-## Verify a gateway response
+## Verify a gateway attestation
 
-Gateway verification verifies the gateway signature over the exact completion
-bytes and binds its signer to evidence whose SPKI fingerprint matches the TLS
-peer your application observed. It does not establish that a model-serving TEE
-produced the completion.
+A gateway attestation is a standalone claim about a Cloud API gateway. It does
+not require a completion or completion signature.
 
-Your completion transport must expose the SHA-256 SPKI fingerprint of its TLS
-peer. Pass that independently observed value to `verifyGatewayAttestation`.
-A normal keep-alive transport usually reuses an eligible connection for the
-later signature and evidence requests. Reusing its transport is also useful
-when a deployment can route requests to different gateways.
-
-The SDK compares the peer fingerprint, not a TLS session identifier: it does
-not require or prove connection reuse. Browser `fetch` and most ordinary Node
-`fetch` APIs do not expose the peer certificate, so use a TLS-aware backend
-transport for this flow. Otherwise, use model-response verification.
+The TLS-aware transport that fetches the attestation must expose the SHA-256
+SPKI fingerprint of that request's TLS peer. Browser `fetch` and most ordinary
+Node `fetch` APIs do not expose the peer certificate, so this flow needs a
+backend transport that does. In the example, `peerSpkiFingerprint` is the
+value independently captured from that request.
 
 ```ts
-// `connection` exposes the peer SPKI fingerprint for this completion.
-// Reusing its transport preserves normal connection affinity when available.
-const completion = await connection.complete(request);
-const peerSpkiFingerprint = connection.peerSpkiFingerprint;
+import {
+  NearAiCloudClient,
+  generateNonce,
+  verifyGatewayAttestation,
+} from 'verification-sdk';
 
-const client = new NearAiCloudClient({
-  apiKey,
-  fetch: connection.fetch.bind(connection),
-});
-const signature = await client.fetchCompletionSignature({
-  completionId: completion.id,
-});
+const client = new NearAiCloudClient({ apiKey, fetch: tlsAwareFetch });
 
 const gatewayNonce = generateNonce();
 const gatewayAttestation = await client.fetchGatewayAttestation({
   nonce: gatewayNonce,
-  signature,
 });
 
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
@@ -169,19 +165,37 @@ const verifiedGatewayAttestation = await verifyGatewayAttestation({
   nonce: gatewayNonce,
   peerSpkiFingerprint,
 });
+```
+
+`tlsAwareFetch` is application code: it must return a fetch-compatible
+response and record the peer fingerprint for the attestation request. Never
+use the fingerprint declared inside the attestation as
+`peerSpkiFingerprint`; that would compare the evidence with itself rather than
+with a TLS peer you observed.
+
+When `signature.kind` is `gateway`, fetch and verify fresh gateway evidence as
+above with `algorithm: signature.signer.algorithm`, then verify the response
+with that evidence. This is the gateway counterpart to `verifyModelResponse`,
+not a secondary check:
+
+```ts
+import { verifyGatewayResponse } from 'verification-sdk';
 
 verifyGatewayResponse({
-  requestBody: completion.requestBody,
-  responseBody: completion.responseBody,
+  requestBody,
+  responseBody,
   signature,
   attestation: verifiedGatewayAttestation,
 });
 ```
 
-Never use a fingerprint declared inside the attestation as
-`peerSpkiFingerprint`; that would compare the evidence with itself rather than
-with a TLS peer you observed. Gateway verification accepts the same quote and
-deployment policy options as model verification, except it has no GPU option.
+This verifies gateway-service provenance and integrity for the exact completion
+bytes: the signature is valid and its signer is bound to the verified gateway
+deployment evidence. It does not establish model execution; use a
+`provider_tee` signature and model evidence for that claim.
+
+Gateway attestation accepts the same quote and deployment policy options as
+model verification, except it has no GPU option.
 
 ## Set policy and trust roots
 

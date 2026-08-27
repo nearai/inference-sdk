@@ -347,7 +347,7 @@ export type FetchModelAttestationInput =
 
 export const FetchGatewayAttestationInputSchema = strictObjectSchema({
   nonce: v.string(),
-  signature: CompletionSignatureSchema,
+  algorithm: v.optional(SigningAlgorithmSchema),
 });
 export type FetchGatewayAttestationInputSchema =
   typeof FetchGatewayAttestationInputSchema;

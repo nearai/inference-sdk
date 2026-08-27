@@ -13,8 +13,8 @@ import {
 import { markVerifiedGatewayAttestation } from './verified-attestation';
 
 /**
- * Verify gateway evidence and bind it to the TLS peer fingerprint independently
- * observed by the client while receiving the completion.
+ * Verify gateway evidence and bind it to a TLS peer fingerprint independently
+ * observed by the client.
  */
 export async function verifyGatewayAttestation(
   input: VerifyGatewayAttestationInput,

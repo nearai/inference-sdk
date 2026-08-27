@@ -61,7 +61,7 @@ type ApiResource = Extract<
   ApiFailure,
   { code: 'api.transport_failed' }
 >['details']['resource'];
-type AttestationResource = Exclude<ApiResource, 'completion_signature'>;
+type AttestationResource = 'model_attestation';
 
 /**
  * A narrow NEAR AI Cloud client for attestation evidence and response
@@ -107,28 +107,21 @@ export class NearAiCloudClient {
   }
 
   /**
-   * Fetch gateway evidence with the TLS fingerprint required for gateway
-   * verification. The caller must independently observe that fingerprint for
-   * the TLS peer that served the completion.
+   * Fetch standalone gateway evidence. The caller must independently observe
+   * the TLS peer fingerprint for this attestation request.
    */
   async fetchGatewayAttestation(
     input: FetchGatewayAttestationInput,
   ): Promise<GatewayAttestation> {
     const request = parseGatewayAttestationRequest(input);
     const url = this.endpoint('attestation/report');
-    setAttestationQuery(url, request.nonce, request.signature.signer, true);
+    setGatewayAttestationQuery(url, request.nonce, request.algorithm);
     const report = parseApiResponse(
       CloudApiGatewayAttestationResponseSchema,
       await this.getJson(url, 'gateway_attestation'),
       'gateway attestation report',
     );
-    const attestation = parseGatewayAttestation(report.gateway_attestation);
-    requireMatchingAttestationSigner(
-      attestation,
-      request.signature,
-      'gateway_attestation',
-    );
-    return attestation;
+    return parseGatewayAttestation(report.gateway_attestation);
   }
 
   /**
@@ -276,7 +269,10 @@ function parseModelAttestationRequest(
   };
 }
 
-type ParsedGatewayAttestationRequest = FetchGatewayAttestationInput;
+type ParsedGatewayAttestationRequest = {
+  nonce: string;
+  algorithm: SigningAlgorithm;
+};
 
 function parseGatewayAttestationRequest(
   input: unknown,
@@ -289,7 +285,7 @@ function parseGatewayAttestationRequest(
 
   return {
     nonce: validateNonce(parsed.nonce),
-    signature: parseSignatureSigner(parsed.signature, 'gateway'),
+    algorithm: parsed.algorithm ?? 'ed25519',
   };
 }
 
@@ -429,6 +425,16 @@ function setAttestationQuery(
   if (includeTlsFingerprint) {
     url.searchParams.set('include_tls_fingerprint', 'true');
   }
+}
+
+function setGatewayAttestationQuery(
+  url: URL,
+  nonce: string,
+  algorithm: SigningAlgorithm,
+): void {
+  url.searchParams.set('nonce', nonce);
+  url.searchParams.set('signing_algo', algorithm);
+  url.searchParams.set('include_tls_fingerprint', 'true');
 }
 
 function parseSingleModelAttestation(value: unknown): ModelAttestation {

@@ -1,30 +1,33 @@
 # Verifiable AI SDK for TypeScript
 
 Verify NEAR AI Cloud completion signatures and attestation evidence. The SDK
-fetches and verifies evidence; your application sends the completion request and
-retains its exact request and response bytes.
+fetches and verifies evidence; your application sends completion requests and
+retains their exact request and response bytes when it verifies a response.
 
 ## What the SDK verifies
 
-A successful verification establishes, for the selected flow:
+A successful attestation establishes:
 
-- a signature covers the exact completion request and response bytes;
-- the signature's signer matches fresh attested evidence;
 - the Intel TDX quote, nonce, accepted TCB status, measured compose
   configuration, and runtime measurements are valid;
 - supplied NVIDIA GPU evidence is verified for model attestations, or can be
   required by policy; and
-- gateway evidence, when used, is bound to the TLS peer fingerprint
-  independently observed by the client.
+- gateway evidence is bound to a TLS peer fingerprint independently observed
+  by the client.
+
+When verifying a response, the SDK additionally establishes that a signature
+covers the exact request and response bytes and its signer is bound to the
+matching verified evidence.
 
 The SDK does not send inference requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
 
 ## Choose the claim you need
 
-The completion signature's explicit `kind` selects exactly one verification
-flow and its matching attestation. Do not infer the kind from the signed text
-or mix the two flows.
+The completion signature's explicit `kind` selects the matching response
+verification flow. Gateway attestation itself is independent of a completion.
+Do not infer a signature kind from signed text or mix model and gateway
+evidence.
 
 ### Verify a model response
 
@@ -37,27 +40,33 @@ connected directly to the model CVM.
 
 [Follow the model-response guide](./docs/verification-guide.md#verify-a-model-response).
 
+### Verify a gateway attestation
+
+Fetch fresh gateway evidence without sending a completion, then verify it
+against the SHA-256 SPKI fingerprint independently observed for the
+attestation request's TLS peer. This verifies a Cloud API gateway endpoint; it
+does not establish model execution. Standard browser `fetch` and most Node
+`fetch` APIs do not expose the required peer certificate data.
+
+[Follow the gateway-attestation guide](./docs/verification-guide.md#verify-a-gateway-attestation).
+
 ### Verify a gateway response
 
-Use a `gateway` signature with gateway attestation when you need to bind gateway
-evidence to the TLS peer that served the completion. The application must
-independently obtain that peer's SHA-256 SPKI fingerprint. This verifies a
-gateway claim, not that a model-serving TEE produced the response. Standard
-browser `fetch` and most Node `fetch` APIs do not expose the required peer
-certificate data.
+Use a `gateway` signature with verified gateway evidence to verify the exact
+completion bytes and gateway-service provenance. This is the matching response
+verification flow when the signature kind is `gateway`; it does not establish
+model execution.
 
-[Follow the gateway-response guide](./docs/verification-guide.md#verify-a-gateway-response).
+## Requirements
 
-## Requirements common to both flows
-
-- Preserve the exact request and response bytes; do not parse and serialize
-  them before response verification.
-- Generate a fresh nonce for each evidence request.
-- Use the signature's explicit kind and matching attestation and response
+- Generate a fresh nonce for every evidence request.
+- For response verification, preserve exact request and response bytes; use
+  the signature's explicit kind with its matching evidence and response
   verifier.
-- Keep the SDK's verified attestation result in memory and pass that exact
-  object to response verification. Re-verify raw evidence after serialization
-  or a process boundary.
+- For gateway attestation, independently observe the TLS peer fingerprint of
+  the attestation request.
+- Keep a verified attestation in memory when passing it to a response verifier.
+  Re-verify raw evidence after serialization or a process boundary.
 - Supply a deployment verifier when the application must restrict acceptable
   measured deployments.
 

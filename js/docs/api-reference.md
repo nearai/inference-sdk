@@ -45,7 +45,7 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns the `unavailable` variant instead of throwing when no signature is available. |
 | `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Throws `signature.unavailable` when the lookup result is unavailable. |
 | `fetchModelAttestation(input)` | `FetchModelAttestationInput` | `ModelAttestation` | Requires a `provider_tee` signature, exactly one NEAR model report, and a matching signer. |
-| `fetchGatewayAttestation(input)` | `FetchGatewayAttestationInput` | `GatewayAttestation` | Requires a `gateway` signature and a matching signer. |
+| `fetchGatewayAttestation(input)` | `FetchGatewayAttestationInput` | `GatewayAttestation` | Fetches standalone gateway evidence and always requests its TLS fingerprint. |
 
 #### Client input types
 
@@ -57,7 +57,7 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 |  | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
 |  | `signature` | `CompletionSignature` | Yes | Completion signature with `kind: 'provider_tee'`. |
 | `FetchGatewayAttestationInput` | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
-|  | `signature` | `CompletionSignature` | Yes | Completion signature with `kind: 'gateway'`. |
+|  | `algorithm?` | `SigningAlgorithm` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature algorithm. This does not select a gateway instance. |
 
 ## Verification functions
 
@@ -66,8 +66,8 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | `generateNonce()` | — | `string` | Returns a fresh 64-character hexadecimal nonce. Throws `runtime.crypto_unavailable` if secure random bytes are unavailable. |
 | `verifyModelAttestation(input)` | `VerifyModelAttestationInput` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
 | `verifyModelResponse(input)` | `VerifyModelResponseInput` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and its model attestation. |
-| `verifyGatewayAttestation(input)` | `VerifyGatewayAttestationInput` | `Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and binds it to the caller's TLS peer fingerprint. |
-| `verifyGatewayResponse(input)` | `VerifyGatewayResponseInput` | `void` | Verifies the exact completion bytes, a `gateway` signature, and its gateway attestation. |
+| `verifyGatewayAttestation(input)` | `VerifyGatewayAttestationInput` | `Promise<VerifiedGatewayAttestation>` | Verifies standalone gateway evidence and binds it to the caller's TLS peer fingerprint. |
+| `verifyGatewayResponse(input)` | `VerifyGatewayResponseInput` | `void` | Verifies the exact completion bytes, a `gateway` signature, and its verified gateway-service signer. |
 
 ### Attestation verification inputs
 
@@ -77,9 +77,9 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 |  | `nonce` | `string` | Yes | Nonce sent in the attestation request and required to match the evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
-| `VerifyGatewayAttestationInput` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
+| `VerifyGatewayAttestationInput` | `attestation` | `GatewayAttestation` | Yes | Raw standalone gateway evidence. |
 |  | `nonce` | `string` | Yes | Nonce sent in the attestation request and required to match the evidence. |
-|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint independently observed for the TLS peer that served the completion. |
+|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint independently observed for the TLS peer bound to this evidence. For standalone verification, use the attestation request's peer. |
 |  | `policy?` | `AttestationPolicy` | No | TCB requirements. |
 |  | `verifiers?` | `AttestationVerifiers` | No | Quote and deployment verifier overrides. |
 
@@ -87,6 +87,10 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 `declaredSpkiFingerprint` from the attestation as this field. The SDK compares
 the peer fingerprint with quote-bound evidence; it does not prove TLS
 connection reuse.
+
+`verifyGatewayResponse` verifies gateway-service provenance and integrity for
+the exact completion bytes. It matches the signature to the signer bound to
+verified gateway deployment evidence; it does not establish model execution.
 
 ### Response verification inputs
 

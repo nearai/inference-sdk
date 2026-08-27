@@ -49,7 +49,7 @@ export type ModelTlsBinding =
 
 /** TLS information authenticated for gateway evidence. */
 export type GatewayTlsBinding = {
-  /** The declared fingerprint matched the client-observed peer. */
+  /** The declared fingerprint matched the caller-supplied TLS peer. */
   readonly kind: 'peer';
   readonly spkiFingerprint: string;
 };
@@ -86,13 +86,14 @@ export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
 };
 
 /**
- * Immutable in-memory result of `verifyGatewayAttestation`. Pass this exact
- * object to `verifyGatewayResponse`; re-verify raw evidence after a process
- * or serialization boundary.
+ * Immutable in-memory result of `verifyGatewayAttestation`. It may be passed
+ * to `verifyGatewayResponse` to verify gateway-service provenance for exact
+ * completion bytes; re-verify raw evidence after a process or serialization
+ * boundary.
  */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
   readonly [verifiedGatewayAttestationBrand]: true;
-  /** The quote-bound fingerprint matched the completion's observed TLS peer. */
+  /** The quote-bound fingerprint matched the caller-supplied TLS peer. */
   readonly tlsBinding: GatewayTlsBinding;
 };
 
@@ -108,6 +109,6 @@ export type VerifyGatewayResponseInput = Omit<
   VerifyGatewayResponseFields,
   'attestation'
 > & {
-  /** Gateway evidence whose verified signer must match `signature`. */
+  /** Gateway evidence whose verified service signer must match `signature`. */
   attestation: VerifiedGatewayAttestation;
 };

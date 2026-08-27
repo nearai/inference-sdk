@@ -175,6 +175,36 @@ describe('response signature verification', () => {
     ).toBeUndefined();
   });
 
+  test('rejects a gateway response signed by a different gateway identity', async () => {
+    const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
+    const signedText = gatewaySignedText(requestBody, responseBody);
+    const signerAddress = Buffer.from(keyPair.publicKey).toString('hex');
+    const signature: CompletionSignature = {
+      kind: 'gateway',
+      signedText,
+      signature: Buffer.from(
+        nacl.sign.detached(Buffer.from(signedText), keyPair.secretKey),
+      ).toString('hex'),
+      signer: { algorithm: 'ed25519', address: signerAddress },
+    };
+    const otherKeyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 8));
+    const otherSignerAddress = Buffer.from(otherKeyPair.publicKey).toString(
+      'hex',
+    );
+    const attestation = await verifiedGatewayAttestation(otherSignerAddress);
+
+    expectVerificationFailure(
+      () =>
+        verifyGatewayResponse({
+          requestBody,
+          responseBody,
+          signature,
+          attestation,
+        }),
+      { phase: 'signature', code: 'signature.signer_mismatch' },
+    );
+  });
+
   test('rejects an explicit signature kind for the other claim', async () => {
     const signature: CompletionSignature = {
       kind: 'gateway',

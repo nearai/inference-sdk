@@ -115,12 +115,11 @@ describe('NEAR AI Cloud client', () => {
     expect(request.headers.get('x-no-aliasing')).toBe('true');
   });
 
-  test('fetches gateway attestation selected by its gateway signature', async () => {
+  test('fetches standalone gateway attestation with TLS binding enabled', async () => {
     const api = clientReplyingWith(nearReport([{ provider: 'chutes' }]));
 
     const attestation = await api.client.fetchGatewayAttestation({
       nonce,
-      signature: gatewaySignature(),
     });
 
     expect(attestation.reportedQuoteData).toBe('00'.repeat(64));
@@ -129,12 +128,50 @@ describe('NEAR AI Cloud client', () => {
     const url = new URL(request.url);
     expect(Object.fromEntries(url.searchParams)).toEqual({
       nonce,
-      signing_algo: 'ecdsa',
-      signing_address: signerAddress,
+      signing_algo: 'ed25519',
       include_tls_fingerprint: 'true',
     });
     expect(request.headers.get('authorization')).toBe('Bearer test');
     expect(request.headers.has('x-no-aliasing')).toBe(false);
+  });
+
+  test('requests an explicit gateway signing algorithm when provided', async () => {
+    const api = clientReplyingWith(nearReport());
+
+    await api.client.fetchGatewayAttestation({
+      nonce,
+      algorithm: 'ecdsa',
+    });
+
+    expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
+      'ecdsa',
+    );
+  });
+
+  test('rejects a completion signature in standalone gateway input before sending a request', async () => {
+    let requestCount = 0;
+    const client = new NearAiCloudClient({
+      baseUrl,
+      apiKey: 'test',
+      fetch: async () => {
+        requestCount += 1;
+        return new Response('{}', { status: 200 });
+      },
+    });
+
+    await expect(
+      client.fetchGatewayAttestation({
+        nonce,
+        signature: gatewaySignature(),
+      } as never),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: { field: 'input.signature', reason: 'unsupported_value' },
+      },
+    });
+    expect(requestCount).toBe(0);
   });
 
   test('looks up an unavailable completion signature explicitly', async () => {
@@ -356,7 +393,6 @@ describe('NEAR AI Cloud client', () => {
     try {
       await client.fetchGatewayAttestation({
         nonce,
-        signature: gatewaySignature(),
       });
     } catch (error) {
       expect(v.isValiError(error)).toBe(false);
@@ -395,7 +431,7 @@ describe('NEAR AI Cloud client', () => {
     });
   });
 
-  test('rejects explicitly incompatible signatures before sending attestation requests', async () => {
+  test('rejects an incompatible model signature before sending its attestation request', async () => {
     let requestCount = 0;
     const client = new NearAiCloudClient({
       baseUrl,
@@ -420,20 +456,6 @@ describe('NEAR AI Cloud client', () => {
       },
     });
     expect(requestCount).toBe(0);
-
-    await expect(
-      client.fetchGatewayAttestation({
-        nonce,
-        signature: modelSignature(),
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'signature',
-        code: 'signature.kind_mismatch',
-        details: { expected: 'gateway', actual: 'provider_tee' },
-      },
-    });
-    expect(requestCount).toBe(0);
   });
 
   test('reports HTTP failures with status and retry guidance, not response text', async () => {
@@ -447,7 +469,6 @@ describe('NEAR AI Cloud client', () => {
     try {
       await client.fetchGatewayAttestation({
         nonce,
-        signature: gatewaySignature(),
       });
       throw new Error('Expected the Cloud API request to fail');
     } catch (error) {
@@ -496,7 +517,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       client.fetchGatewayAttestation({
         nonce,
-        signature: gatewaySignature(),
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -572,7 +592,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       client.fetchGatewayAttestation({
         nonce,
-        signature: gatewaySignature(),
       }),
     ).rejects.toMatchObject({
       failure: {

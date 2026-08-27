@@ -74,7 +74,7 @@ export type VerificationFailure =
       phase: 'api';
       code: 'api.attestation_signer_mismatch';
       details: {
-        resource: 'model_attestation' | 'gateway_attestation';
+        resource: 'model_attestation';
       };
     }
   | {

@@ -35,9 +35,9 @@ export function verifyModelResponse(input: VerifyModelResponseInput): void {
 }
 
 /**
- * Verify a gateway signature over the exact completion bytes. Resolves only
- * when the gateway-response claim is valid; it does not establish model
- * execution.
+ * Verify gateway-service provenance and integrity for the exact completion
+ * bytes. The signature must match a signer bound to verified gateway evidence;
+ * this does not establish model execution.
  */
 export function verifyGatewayResponse(input: VerifyGatewayResponseInput): void {
   const parsed = parseResponseInput(input, requireVerifiedGatewaySigner);
