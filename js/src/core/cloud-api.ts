@@ -89,7 +89,7 @@ export class NearAiCloudClient {
   /**
    * Fetch NEAR model attestation candidates with a fresh client nonce.
    * Optionally narrow the report to a signing algorithm and signing address.
-   * currently returns exactly one candidate.
+   * Currently returns exactly one candidate.
    */
   async fetchModelAttestations(
     input: FetchModelAttestationsInput,
@@ -97,14 +97,15 @@ export class NearAiCloudClient {
     const request = parseModelAttestationsRequest(input);
     const clientNonce = generateNonce();
     const url = this.endpoint('attestation/report');
-    setModelAttestationQuery(
-      url,
-      clientNonce,
-      request.signingAlgo,
-      request.signingAddress,
-    );
     url.searchParams.set('model', request.model);
     url.searchParams.set('provider', 'near');
+    url.searchParams.set('nonce', clientNonce);
+    if (request.signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', request.signingAlgo);
+    }
+    if (request.signingAddress !== undefined) {
+      url.searchParams.set('signing_address', request.signingAddress);
+    }
 
     const attestations = parseModelAttestations(
       await this.getJson(url, 'model_attestation', {
@@ -153,7 +154,9 @@ export class NearAiCloudClient {
     const request = parseGatewayAttestationRequest(input);
     const clientNonce = generateNonce();
     const url = this.endpoint('attestation/report');
-    setGatewayAttestationQuery(url, clientNonce, request.signingAlgo);
+    url.searchParams.set('nonce', clientNonce);
+    url.searchParams.set('signing_algo', request.signingAlgo);
+    url.searchParams.set('include_tls_fingerprint', 'true');
     const report = parseApiResponse(
       CloudApiGatewayAttestationResponseSchema,
       await this.getJson(url, 'gateway_attestation'),
@@ -626,31 +629,6 @@ function parseResponseLike(value: unknown, root: string): ResponseLike {
     status: parsed.status,
     text: () => parsed.text.call(value),
   };
-}
-
-function setModelAttestationQuery(
-  url: URL,
-  nonce: string,
-  signingAlgo: SigningAlgo | undefined,
-  signingAddress: string | undefined,
-): void {
-  url.searchParams.set('nonce', nonce);
-  if (signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', signingAlgo);
-  }
-  if (signingAddress !== undefined) {
-    url.searchParams.set('signing_address', signingAddress);
-  }
-}
-
-function setGatewayAttestationQuery(
-  url: URL,
-  nonce: string,
-  signingAlgo: SigningAlgo,
-): void {
-  url.searchParams.set('nonce', nonce);
-  url.searchParams.set('signing_algo', signingAlgo);
-  url.searchParams.set('include_tls_fingerprint', 'true');
 }
 
 function parseModelAttestations(value: unknown): readonly ModelAttestation[] {

@@ -197,6 +197,23 @@ describe('NEAR AI Cloud client', () => {
       });
     });
 
+    test('fetches model evidence without signer filters', async () => {
+      const api = clientFor((request) =>
+        jsonResponse(modelReport(requestNonce(request))),
+      );
+
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+      });
+
+      const query = new URL(api.request().url).searchParams;
+      expect(query.get('model')).toBe('canonical-model');
+      expect(query.get('provider')).toBe('near');
+      expect(query.get('nonce')).toBe(fetched.nonce);
+      expect(query.has('signing_algo')).toBe(false);
+      expect(query.has('signing_address')).toBe(false);
+    });
+
     test('rejects a model report whose nonce does not match the request', async () => {
       const api = clientFor(() => jsonResponse(modelReport('44'.repeat(32))));
 
