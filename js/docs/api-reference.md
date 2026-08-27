@@ -8,12 +8,11 @@ workflows and complete code examples, see the [verification guide](./verificatio
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
 | `NearAiCloudClient` | `new NearAiCloudClient(options)` | Fetches completion signatures and attestation evidence. It does not send completion requests. |
-| `generateNonce` | `() => string` | Generates a cryptographically random 32-byte hexadecimal nonce. |
 | `verifyModelAttestation` | `(input: VerifyModelAttestationInput) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(input: VerifyModelResponseInput) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(input: VerifyGatewayAttestationInput) => Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and a caller-observed TLS peer binding. |
 | `verifyGatewayResponse` | `(input: VerifyGatewayResponseInput) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
-| `findModelAttestationForSigner` | `(input: FindModelAttestationForSignerInput) => ModelAttestation` | Selects the single model attestation matching a signer. It does not verify evidence. |
+| `findModelAttestationForSignature` | `(input: FindModelAttestationForSignatureInput) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
 | `VerificationError` | `class VerificationError extends Error` | Structured base class for SDK failures. |
 | `ApiError` | `class ApiError extends VerificationError` | Structured Cloud API transport or response failure. |
 | `isVerificationError` | `(value: unknown) => value is VerificationError` | Type guard for SDK failures. |
@@ -45,9 +44,9 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | --- | --- | --- | --- |
 | `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns the `unavailable` variant instead of throwing when no signature is available. |
 | `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Throws `signature.unavailable` when the lookup result is unavailable. |
-| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `readonly ModelAttestation[]` | Fetches NEAR model evidence for one model, optionally filtered by signing algorithm and address. Rejects a report whose echoed nonce differs from the request. Cloud API currently returns exactly one item; the SDK enforces that contract. |
-| `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `ModelAttestation` | Requires a `provider_tee` signature, requests its signer, then confirms the returned evidence matches it. |
-| `fetchGatewayAttestation(input)` | `FetchGatewayAttestationInput` | `GatewayAttestation` | Fetches standalone gateway evidence, rejects a mismatched echoed nonce, and always requests its TLS fingerprint. |
+| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and address. It rejects a mismatched echoed nonce and a response count other than one. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
+| `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
+| `fetchGatewayAttestation(input?)` | `FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
 
 #### Client input types
 
@@ -56,30 +55,50 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | `FetchCompletionSignatureInput` | `completionId` | `string` | Yes | Non-empty completion ID. |
 |  | `algorithm?` | `SigningAlgorithm` | No | Algorithm to request. Omitting it requests the service default, `ecdsa`. |
 | `FetchModelAttestationsInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
-|  | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
 |  | `algorithm?` | `SigningAlgorithm` | No | Optional signing-algorithm filter. Omit it to use the service default. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter. Supply it when requesting evidence for a `provider_tee` response signature. |
 | `FetchModelAttestationForSignatureInput` | `model` | `string` | Yes | Non-empty canonical model ID. |
-|  | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
-|  | `signature` | `CompletionSignature` | Yes | Completion signature with `kind: 'provider_tee'`; its signer selects the result. |
-| `FetchGatewayAttestationInput` | `nonce` | `string` | Yes | Fresh 32-byte hexadecimal nonce. |
-|  | `algorithm?` | `SigningAlgorithm` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature algorithm. This does not select a gateway instance. |
+|  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
+| `FetchGatewayAttestationInput` | `algorithm?` | `SigningAlgorithm` | No | Gateway signing algorithm. Omitting it requests `ed25519`; when verifying a gateway response, use its signature algorithm. This does not select a gateway instance. |
 
-#### `FindModelAttestationForSignerInput`
+#### Attestation fetch result types
+
+Every attestation fetch helper generates and sends a fresh 32-byte client nonce,
+checks the service's echoed nonce, and returns the client nonce with the raw
+evidence. Pass the result's `nonce` to the corresponding attestation verifier.
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `FetchedModelAttestations` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
+|  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The SDK currently requires exactly one item. |
+| `FetchedModelAttestation` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
+|  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
+| `FetchedGatewayAttestation` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
+|  | `attestation` | `GatewayAttestation` | Returned gateway attestation. |
+
+## Model attestation selection
+
+### `findModelAttestationForSignature`
+
+Use this function after `fetchModelAttestations` to select the evidence for a
+`provider_tee` signature. It requires exactly one signer match but does not
+verify the attestation. `fetchModelAttestationForSignature` is the convenience
+form of these two operations.
+
+#### `FindModelAttestationForSignatureInput`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly ModelAttestation[]` | Yes | Candidate model evidence. Exactly one item must match `signer`. |
-| `signer` | `SigningIdentity` | Yes | Signing identity to match by algorithm and hexadecimal address. |
+| `attestations` | `readonly ModelAttestation[]` | Yes | Model attestations returned by `fetchModelAttestations`. Exactly one item must match `signature.signer`. |
+| `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
 
 | Function | Input | Returns | Description |
 | --- | --- | --- | --- |
-| `generateNonce()` | — | `string` | Returns a fresh 64-character hexadecimal nonce. Throws `runtime.crypto_unavailable` if secure random bytes are unavailable. |
 | `verifyModelAttestation(input)` | `VerifyModelAttestationInput` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
 | `verifyModelResponse(input)` | `VerifyModelResponseInput` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and its model attestation. |
-| `verifyGatewayAttestation(input)` | `VerifyGatewayAttestationInput` | `Promise<VerifiedGatewayAttestation>` | Verifies standalone gateway evidence and binds it to the caller's TLS peer fingerprint. |
+| `verifyGatewayAttestation(input)` | `VerifyGatewayAttestationInput` | `Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and binds it to the TLS peer observed for its request. |
 | `verifyGatewayResponse(input)` | `VerifyGatewayResponseInput` | `void` | Verifies the exact completion bytes, a `gateway` signature, and its verified gateway-service signer. |
 
 ### Attestation verification inputs
@@ -87,19 +106,18 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `VerifyModelAttestationInput` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
-|  | `nonce` | `string` | Yes | Nonce sent in the attestation request and required to match the evidence. |
+|  | `nonce` | `string` | Yes | Client nonce returned by the matching model-attestation fetch result. It must match the evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
-| `VerifyGatewayAttestationInput` | `attestation` | `GatewayAttestation` | Yes | Raw standalone gateway evidence. |
-|  | `nonce` | `string` | Yes | Nonce sent in the attestation request and required to match the evidence. |
-|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint independently observed for the TLS peer bound to this evidence. For standalone verification, use the attestation request's peer. |
+| `VerifyGatewayAttestationInput` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
+|  | `nonce` | `string` | Yes | Client nonce returned by the matching gateway-attestation fetch result. It must match the evidence. |
+|  | `peerSpkiFingerprint` | `string` | Yes | 32-byte hexadecimal SHA-256 SPKI fingerprint independently observed for the TLS peer that served the attestation request. |
 |  | `policy?` | `AttestationPolicy` | No | TCB requirements. |
 |  | `verifiers?` | `AttestationVerifiers` | No | Quote and deployment verifier overrides. |
 
 `peerSpkiFingerprint` must be independently observed by the caller. Do not use
 `declaredSpkiFingerprint` from the attestation as this field. The SDK compares
-the peer fingerprint with quote-bound evidence; it does not prove TLS
-connection reuse.
+the peer fingerprint with quote-bound evidence.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for
 the exact completion bytes. It matches the signature to the signer bound to
@@ -130,6 +148,8 @@ verified gateway deployment evidence; it does not establish model execution.
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |
+| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind used when selecting evidence. |
+|  | `signer` | `SigningIdentity` | Signing identity used when selecting evidence. |
 | `CompletionBytes` | `requestBody` | `Uint8Array` | Exact completion request bytes. |
 |  | `responseBody` | `Uint8Array` | Exact completion response bytes. |
 
@@ -152,7 +172,7 @@ verified gateway deployment evidence; it does not establish model execution.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `nonce` | `string` | Nonce echoed by the service. |
+| `nonce` | `string` | Nonce echoed by the service. The fetch helper validates it against, and separately returns, its client nonce. |
 | `signer` | `SigningIdentity` | Advertised signing identity. |
 | `intelQuote` | `string` | Intel TDX quote. |
 | `eventLog` | `AttestationEventLog` | Input used to replay RTMR3 measurements. |

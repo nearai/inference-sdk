@@ -9,7 +9,6 @@ flow:
 | `provider_tee` | `verifyModelAttestation` then `verifyModelResponse` | A model-serving TEE signed the exact completion bytes. |
 | `gateway` | `verifyGatewayAttestation` then `verifyGatewayResponse` | The attested NEAR AI Cloud Gateway service key signed the exact completion bytes. |
 
-A gateway attestation can also be verified on its own, without a completion.
 Never infer the signature kind from its signed text or use model evidence for a
 gateway signature, or vice versa.
 
@@ -32,9 +31,9 @@ the model signature.
 
 ```ts
 import {
+  findModelAttestationForSignature,
   NO_ALIASING_HEADER,
   NearAiCloudClient,
-  generateNonce,
   verifyModelAttestation,
   verifyModelResponse,
 } from 'verification-sdk';
@@ -81,10 +80,13 @@ const signature = await client.fetchCompletionSignature({
   completionId: completion.id,
 });
 
-const nonce = generateNonce();
-const attestation = await client.fetchModelAttestationForSignature({
+const { attestations, nonce } = await client.fetchModelAttestations({
   model,
-  nonce,
+  algorithm: signature.signer.algorithm,
+  signingAddress: signature.signer.address,
+});
+const attestation = findModelAttestationForSignature({
+  attestations,
   signature,
 });
 
@@ -103,7 +105,9 @@ verifyModelResponse({
 
 When `verifyModelResponse` returns, the model signature is valid for those
 exact bytes and its signing identity matches the verified model attestation.
-The nonce makes the attestation fresh for this verification attempt.
+`fetchModelAttestations` creates a fresh client nonce, checks the service's
+echo, and returns that nonce with the evidence. `findModelAttestationForSignature`
+requires exactly one returned attestation to match the signature's signer.
 
 Keep the exact `verifiedAttestation` object returned by
 `verifyModelAttestation` in memory and pass it directly to
@@ -137,32 +141,26 @@ the client connected directly to the model CVM.
 
 ## Verify a gateway attestation
 
-A gateway attestation is a standalone claim about a Cloud API gateway. It does
-not require a completion or completion signature.
-
-The TLS-aware transport that fetches the attestation must expose the SHA-256
-SPKI fingerprint of that request's TLS peer. Browser `fetch` and most ordinary
-Node `fetch` APIs do not expose the peer certificate, so this flow needs a
-backend transport that does. In the example, `peerSpkiFingerprint` is the
-value independently captured from that request.
+A gateway attestation binds a verified Cloud API gateway deployment to the
+TLS peer observed for its evidence request. The TLS-aware transport that
+fetches the attestation must expose that request's SHA-256 SPKI fingerprint.
+Browser `fetch` and most ordinary Node `fetch` APIs do not expose the peer
+certificate, so this flow needs a backend transport that does. In the example,
+`peerSpkiFingerprint` is the value independently captured from that request.
 
 ```ts
 import {
   NearAiCloudClient,
-  generateNonce,
   verifyGatewayAttestation,
 } from 'verification-sdk';
 
 const client = new NearAiCloudClient({ apiKey, fetch: tlsAwareFetch });
 
-const gatewayNonce = generateNonce();
-const gatewayAttestation = await client.fetchGatewayAttestation({
-  nonce: gatewayNonce,
-});
+const { attestation, nonce } = await client.fetchGatewayAttestation();
 
 const verifiedGatewayAttestation = await verifyGatewayAttestation({
-  attestation: gatewayAttestation,
-  nonce: gatewayNonce,
+  attestation,
+  nonce,
   peerSpkiFingerprint,
 });
 ```
@@ -173,13 +171,24 @@ use the fingerprint declared inside the attestation as
 `peerSpkiFingerprint`; that would compare the evidence with itself rather than
 with a TLS peer you observed.
 
-When `signature.kind` is `gateway`, fetch and verify fresh gateway evidence as
-above with `algorithm: signature.signer.algorithm`, then verify the response
-with that evidence. This is the gateway counterpart to `verifyModelResponse`,
-not a secondary check:
+When `signature.kind` is `gateway`, fetch fresh evidence for the signature's
+algorithm, verify it with the TLS peer fingerprint observed for that fetch,
+then verify the response:
 
 ```ts
-import { verifyGatewayResponse } from 'verification-sdk';
+import {
+  verifyGatewayAttestation,
+  verifyGatewayResponse,
+} from 'verification-sdk';
+
+const { attestation, nonce } = await client.fetchGatewayAttestation({
+  algorithm: signature.signer.algorithm,
+});
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation,
+  nonce,
+  peerSpkiFingerprint,
+});
 
 verifyGatewayResponse({
   requestBody,
@@ -202,6 +211,8 @@ model verification, except it has no GPU option.
 The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU
 evidence is verified when the report provides it; a report without GPU evidence
 is accepted by default. Require GPU evidence when your application needs it:
+
+Add these options to the `verifyModelAttestation` call in the model flow above.
 
 ```ts
 import type {

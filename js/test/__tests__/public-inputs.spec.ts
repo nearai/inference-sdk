@@ -1,4 +1,3 @@
-import * as v from 'valibot';
 import {
   isVerificationError,
   verifyGatewayAttestation,
@@ -142,6 +141,80 @@ describe('public input validation', () => {
     });
   });
 
+  test('normalizes accessor-based public input failures', async () => {
+    const input = {};
+    Object.defineProperty(input, 'attestation', {
+      enumerable: true,
+      get() {
+        throw new Error('input getter should not run');
+      },
+    });
+
+    await expect(verifyModelAttestation(input as never)).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: {
+          field: 'input.attestation',
+          reason: 'unsupported_value',
+        },
+      },
+    });
+  });
+
+  test('rejects a sparse TCB policy before quote verification', async () => {
+    const quote = jest.fn(async () => createQuote());
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        policy: { acceptedTcbStatuses: new Array(1) },
+        verifiers: { quote },
+      } as never),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: {
+          field: 'policy.acceptedTcbStatuses.0',
+          reason: 'missing',
+        },
+      },
+    });
+    expect(quote).not.toHaveBeenCalled();
+  });
+
+  test('normalizes accessor-based policy-array failures', async () => {
+    const quote = jest.fn(async () => createQuote());
+    const statuses = new Array(1);
+    Object.defineProperty(statuses, '0', {
+      enumerable: true,
+      get() {
+        throw new Error('array getter should not run');
+      },
+    });
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        nonce,
+        policy: { acceptedTcbStatuses: statuses },
+        verifiers: { quote },
+      } as never),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: {
+          field: 'policy.acceptedTcbStatuses.0',
+          reason: 'unsupported_value',
+        },
+      },
+    });
+    expect(quote).not.toHaveBeenCalled();
+  });
+
   test('accepts synchronous verifier callbacks', async () => {
     const result = await verifyModelAttestation({
       attestation: createModelAttestation({
@@ -213,7 +286,6 @@ async function expectSdkVerificationFailure(
   try {
     await action;
   } catch (error) {
-    expect(v.isValiError(error)).toBe(false);
     expect(isVerificationError(error)).toBe(true);
     expect(error).toMatchObject(expected);
     return;

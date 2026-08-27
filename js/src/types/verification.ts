@@ -1,29 +1,81 @@
 import type { Buffer } from 'buffer';
+import type { GatewayAttestation } from './attestation-gateway';
+import type { ModelAttestation } from './attestation-model';
+import type { CompletionSignature } from './chat';
 import type { SigningIdentity } from './attestation-common';
-import type {
-  MeasuredDeployment,
-  QuoteVerificationResult,
-  TcbStatus,
-  VerifyGatewayResponseFields,
-  VerifyModelResponseFields,
-} from '../schemas';
+import type { Awaitable } from './shared';
 
-export type {
-  AttestationPolicy,
-  AttestationVerifiers,
-  Awaitable,
-  DeploymentVerifier,
-  MeasuredDeployment,
-  ModelAttestationPolicy,
-  ModelAttestationVerifiers,
-  NvidiaEvidenceVerifier,
-  QuoteVerificationResult,
-  QuoteVerifier,
-  RuntimeMeasurements,
-  TcbStatus,
-  VerifyGatewayAttestationInput,
-  VerifyModelAttestationInput,
-} from '../schemas';
+export type TcbStatus =
+  | 'UpToDate'
+  | 'SWHardeningNeeded'
+  | 'ConfigurationNeeded'
+  | 'ConfigurationAndSWHardeningNeeded'
+  | 'OutOfDate'
+  | 'OutOfDateConfigurationNeeded'
+  | 'Revoked'
+  | 'Unknown';
+
+export type RuntimeMeasurements = {
+  readonly osImageHash?: string;
+  readonly composeHash?: string;
+};
+
+export type MeasuredDeployment = {
+  readonly appCompose: string;
+  readonly runtimeMeasurements: RuntimeMeasurements;
+};
+
+/** Facts returned by a quote verifier before SDK policy and binding checks. */
+export type QuoteVerificationResult = {
+  tcbStatus: TcbStatus;
+  advisoryIds: readonly string[];
+  debugEnabled: boolean;
+  reportData: Uint8Array;
+  mrConfigId: Uint8Array;
+  rtMr3: Uint8Array;
+};
+
+export type QuoteVerifier = (
+  quote: string,
+) => Awaitable<QuoteVerificationResult>;
+
+export type NvidiaEvidenceVerifier = (payload: string) => Awaitable<void>;
+
+export type DeploymentVerifier = (
+  deployment: MeasuredDeployment,
+) => Awaitable<void>;
+
+export type AttestationPolicy = {
+  readonly acceptedTcbStatuses?: readonly TcbStatus[];
+};
+
+export type ModelAttestationPolicy = AttestationPolicy & {
+  readonly gpuEvidence?: 'if-present' | 'required';
+};
+
+export type AttestationVerifiers = {
+  readonly quote?: QuoteVerifier;
+  readonly deployment?: DeploymentVerifier;
+};
+
+export type ModelAttestationVerifiers = AttestationVerifiers & {
+  readonly nvidia?: NvidiaEvidenceVerifier;
+};
+
+export type VerifyModelAttestationInput = {
+  readonly attestation: ModelAttestation;
+  readonly nonce: string;
+  readonly policy?: ModelAttestationPolicy;
+  readonly verifiers?: ModelAttestationVerifiers;
+};
+
+export type VerifyGatewayAttestationInput = {
+  readonly attestation: GatewayAttestation;
+  readonly nonce: string;
+  readonly peerSpkiFingerprint: string;
+  readonly policy?: AttestationPolicy;
+  readonly verifiers?: AttestationVerifiers;
+};
 
 declare const verifiedModelAttestationBrand: unique symbol;
 declare const verifiedGatewayAttestationBrand: unique symbol;
@@ -97,18 +149,18 @@ export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
   readonly tlsBinding: GatewayTlsBinding;
 };
 
-export type VerifyModelResponseInput = Omit<
-  VerifyModelResponseFields,
-  'attestation'
-> & {
+export type VerifyModelResponseInput = {
+  readonly requestBody: Uint8Array;
+  readonly responseBody: Uint8Array;
+  readonly signature: CompletionSignature;
   /** Model evidence whose verified signer must match `signature`. */
-  attestation: VerifiedModelAttestation;
+  readonly attestation: VerifiedModelAttestation;
 };
 
-export type VerifyGatewayResponseInput = Omit<
-  VerifyGatewayResponseFields,
-  'attestation'
-> & {
+export type VerifyGatewayResponseInput = {
+  readonly requestBody: Uint8Array;
+  readonly responseBody: Uint8Array;
+  readonly signature: CompletionSignature;
   /** Gateway evidence whose verified service signer must match `signature`. */
-  attestation: VerifiedGatewayAttestation;
+  readonly attestation: VerifiedGatewayAttestation;
 };

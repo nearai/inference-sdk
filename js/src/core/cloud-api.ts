@@ -7,9 +7,26 @@ import type {
 } from '../types/attestation-common';
 import type {
   CompletionSignature,
+  CompletionSignatureReference,
   CompletionSignatureLookup,
   SignatureUnavailable,
 } from '../types/chat';
+import type {
+  CloudApiGatewayAttestation,
+  CloudApiInfo,
+  CloudApiModelAttestation,
+  FetchCompletionSignatureInput,
+  FetchedGatewayAttestation,
+  FetchedModelAttestation,
+  FetchedModelAttestations,
+  FetchGatewayAttestationInput,
+  FetchModelAttestationForSignatureInput,
+  FetchModelAttestationsInput,
+  FindModelAttestationForSignatureInput,
+  NearAiCloudClientOptions,
+  NearAiCloudFetch,
+  ResponseLike,
+} from '../types/cloud-api';
 import {
   CloudApiCompletionSignatureResponseSchema,
   CloudApiAttestationInfoEnvelopeSchema,
@@ -19,43 +36,26 @@ import {
   CloudApiModelAttestationResponseSchema,
   CloudApiModelAttestationSchema,
   CloudApiTcbInfoSchema,
-  FetchModelAttestationForSignatureInputSchema,
-  FetchModelAttestationsInputSchema,
   CloudApiUnavailableSignatureResponseSchema,
-  FetchCompletionSignatureInputSchema,
-  FetchGatewayAttestationInputSchema,
-  FindModelAttestationForSignerInputSchema,
-  NearAiCloudClientOptionsSchema,
   ResponseBodySchema,
   ResponseLikeSchema,
 } from '../schemas';
-import type {
-  CloudApiGatewayAttestation,
-  CloudApiInfo,
-  CloudApiModelAttestation,
-  FetchCompletionSignatureInput,
-  FetchGatewayAttestationInput,
-  FetchModelAttestationForSignatureInput,
-  FetchModelAttestationsInput,
-  FindModelAttestationForSignerInput,
-  NearAiCloudClientOptions,
-  NearAiCloudFetch,
-  ResponseLike,
-} from '../schemas';
-import { normalizeHex, requireByteLength } from '../utils/common';
+import {
+  generateNonce,
+  normalizeHex,
+  requireByteLength,
+} from '../utils/common';
 import { ApiError, type ApiFailure, VerificationError } from '../utils/errors';
-import { inputError } from '../utils/input';
-import { parseApiResponse, parsePublicInput, tryParse } from '../utils/schema';
-
-export type {
-  FetchCompletionSignatureInput,
-  FetchGatewayAttestationInput,
-  FetchModelAttestationForSignatureInput,
-  FetchModelAttestationsInput,
-  FindModelAttestationForSignerInput,
-  NearAiCloudClientOptions,
-  NearAiCloudFetch,
-} from '../schemas';
+import {
+  inputError,
+  optionalInputString,
+  rejectUnknownInputKeys,
+  requireInputArray,
+  requireInputFunction,
+  requireInputObject,
+  requireInputString,
+} from '../utils/input';
+import { parseApiResponse, tryParse } from '../utils/schema';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -87,18 +87,19 @@ export class NearAiCloudClient {
   }
 
   /**
-   * Fetch NEAR model attestation candidates for one model and signing
-   * algorithm. Optionally narrow the report to a signing address. Cloud API
+   * Fetch NEAR model attestation candidates with a fresh client nonce.
+   * Optionally narrow the report to a signing algorithm and address. Cloud API
    * currently returns exactly one candidate.
    */
   async fetchModelAttestations(
     input: FetchModelAttestationsInput,
-  ): Promise<readonly ModelAttestation[]> {
+  ): Promise<FetchedModelAttestations> {
     const request = parseModelAttestationsRequest(input);
+    const clientNonce = generateNonce();
     const url = this.endpoint('attestation/report');
     setModelAttestationQuery(
       url,
-      request.nonce,
+      clientNonce,
       request.algorithm,
       request.signingAddress,
     );
@@ -113,11 +114,11 @@ export class NearAiCloudClient {
     for (const attestation of attestations) {
       requireMatchingApiNonce(
         attestation.nonce,
-        request.nonce,
+        clientNonce,
         'model_attestation',
       );
     }
-    return attestations;
+    return { attestations, nonce: clientNonce };
   }
 
   /**
@@ -126,18 +127,20 @@ export class NearAiCloudClient {
    */
   async fetchModelAttestationForSignature(
     input: FetchModelAttestationForSignatureInput,
-  ): Promise<ModelAttestation> {
+  ): Promise<FetchedModelAttestation> {
     const request = parseModelAttestationForSignatureRequest(input);
-    const attestations = await this.fetchModelAttestations({
+    const fetched = await this.fetchModelAttestations({
       model: request.model,
-      nonce: request.nonce,
       algorithm: request.signature.signer.algorithm,
       signingAddress: request.signature.signer.address,
     });
-    return findModelAttestationForSigner({
-      attestations,
-      signer: request.signature.signer,
-    });
+    return {
+      attestation: selectModelAttestationForSigner(
+        fetched.attestations,
+        request.signature.signer,
+      ),
+      nonce: fetched.nonce,
+    };
   }
 
   /**
@@ -145,11 +148,12 @@ export class NearAiCloudClient {
    * the TLS peer fingerprint for this attestation request.
    */
   async fetchGatewayAttestation(
-    input: FetchGatewayAttestationInput,
-  ): Promise<GatewayAttestation> {
+    input: FetchGatewayAttestationInput = {},
+  ): Promise<FetchedGatewayAttestation> {
     const request = parseGatewayAttestationRequest(input);
+    const clientNonce = generateNonce();
     const url = this.endpoint('attestation/report');
-    setGatewayAttestationQuery(url, request.nonce, request.algorithm);
+    setGatewayAttestationQuery(url, clientNonce, request.algorithm);
     const report = parseApiResponse(
       CloudApiGatewayAttestationResponseSchema,
       await this.getJson(url, 'gateway_attestation'),
@@ -158,10 +162,10 @@ export class NearAiCloudClient {
     const attestation = parseGatewayAttestation(report.gateway_attestation);
     requireMatchingApiNonce(
       attestation.nonce,
-      request.nonce,
+      clientNonce,
       'gateway_attestation',
     );
-    return attestation;
+    return { attestation, nonce: clientNonce };
   }
 
   /**
@@ -269,31 +273,40 @@ export class NearAiCloudClient {
 
 /**
  * Select the single model attestation whose advertised signer matches a
- * requested signer. It does not verify the quote or completion signature.
+ * provider_tee completion signature. It does not verify the quote or
+ * completion signature.
  */
-export function findModelAttestationForSigner(
-  input: FindModelAttestationForSignerInput,
+export function findModelAttestationForSignature(
+  input: FindModelAttestationForSignatureInput,
 ): ModelAttestation {
-  const parsed = parsePublicInput(
-    FindModelAttestationForSignerInputSchema,
-    input,
-    'input',
-  );
-  const signer = parseSigningIdentity(parsed.signer, 'signer');
-  const matches = parsed.attestations
-    .map((attestation, index) => ({
-      ...attestation,
-      signer: parseSigningIdentity(
-        attestation.signer,
-        `attestations[${index}].signer`,
-      ),
-    }))
-    .filter(
-      (attestation) =>
-        attestation.signer.algorithm === signer.algorithm &&
-        normalizeHex(attestation.signer.address) ===
-          normalizeHex(signer.address),
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', ['attestations', 'signature']);
+  const signature = requireSignatureSigner(value.signature, 'provider_tee');
+  const attestations = requireInputArray(
+    value.attestations,
+    'attestations',
+  ) as readonly ModelAttestation[];
+  return selectModelAttestationForSigner(attestations, signature.signer);
+}
+
+function selectModelAttestationForSigner(
+  attestations: readonly ModelAttestation[],
+  signer: SigningIdentity,
+): ModelAttestation {
+  const matches: ModelAttestation[] = [];
+  for (const [index, attestation] of attestations.entries()) {
+    const candidate = requireInputObject(attestation, `attestations[${index}]`);
+    const candidateSigner = parseSigningIdentity(
+      candidate.signer,
+      `attestations[${index}].signer`,
     );
+    if (
+      candidateSigner.algorithm === signer.algorithm &&
+      normalizeHex(candidateSigner.address) === normalizeHex(signer.address)
+    ) {
+      matches.push(attestation);
+    }
+  }
 
   if (matches.length === 0) {
     throw new ApiError({
@@ -308,7 +321,7 @@ export function findModelAttestationForSigner(
       code: 'api.ambiguous_model_attestation_signer',
       details: {
         matchingCount: matches.length,
-        totalCount: parsed.attestations.length,
+        totalCount: attestations.length,
       },
     });
   }
@@ -322,26 +335,25 @@ type ParsedClientOptions = {
 };
 
 function parseClientOptions(options: unknown): ParsedClientOptions {
-  const parsed = parsePublicInput(
-    NearAiCloudClientOptionsSchema,
-    options,
-    'options',
-  );
+  const value = requireInputObject(options, 'options');
+  rejectUnknownInputKeys(value, 'options', ['baseUrl', 'apiKey', 'fetch']);
+  const baseUrl = optionalInputString(value.baseUrl, 'baseUrl');
+  const fetchImpl =
+    value.fetch === undefined
+      ? fetch
+      : (requireInputFunction(value.fetch, 'fetch') as NearAiCloudFetch);
 
   return {
     baseUrl: validateBaseUrl(
-      parsed.baseUrl === undefined
-        ? DEFAULT_NEAR_AI_CLOUD_BASE_URL
-        : parsed.baseUrl,
+      baseUrl === undefined ? DEFAULT_NEAR_AI_CLOUD_BASE_URL : baseUrl,
     ),
-    apiKey: validateApiKey(parsed.apiKey),
-    fetch: parsed.fetch ?? fetch,
+    apiKey: validateApiKey(requireInputString(value.apiKey, 'apiKey')),
+    fetch: fetchImpl,
   };
 }
 
 type ParsedModelAttestationsRequest = {
   model: string;
-  nonce: string;
   algorithm?: SigningAlgorithm;
   signingAddress?: string;
 };
@@ -349,68 +361,69 @@ type ParsedModelAttestationsRequest = {
 function parseModelAttestationsRequest(
   input: unknown,
 ): ParsedModelAttestationsRequest {
-  const parsed = parsePublicInput(
-    FetchModelAttestationsInputSchema,
-    input,
-    'input',
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', [
+    'model',
+    'algorithm',
+    'signingAddress',
+  ]);
+  const algorithm = optionalSigningAlgorithm(value.algorithm, 'algorithm');
+  const signingAddress = optionalInputString(
+    value.signingAddress,
+    'signingAddress',
   );
 
-  const signingAddress =
-    parsed.signingAddress === undefined
-      ? undefined
-      : validateModelAttestationSigningAddress(
-          parsed.signingAddress,
-          parsed.algorithm,
-          'signingAddress',
-        );
-
   return {
-    model: requireNonEmptyString(parsed.model, 'model'),
-    nonce: validateNonce(parsed.nonce),
-    ...(parsed.algorithm === undefined ? {} : { algorithm: parsed.algorithm }),
-    ...(signingAddress === undefined ? {} : { signingAddress }),
+    model: requireNonEmptyString(
+      requireInputString(value.model, 'model'),
+      'model',
+    ),
+    ...(algorithm === undefined ? {} : { algorithm }),
+    ...(signingAddress === undefined
+      ? {}
+      : {
+          signingAddress: validateModelAttestationSigningAddress(
+            signingAddress,
+            algorithm,
+            'signingAddress',
+          ),
+        }),
   };
 }
 
 type ParsedModelAttestationForSignatureRequest = {
   model: string;
-  nonce: string;
-  signature: CompletionSignature;
+  signature: SignatureSigner;
 };
 
 function parseModelAttestationForSignatureRequest(
   input: unknown,
 ): ParsedModelAttestationForSignatureRequest {
-  const parsed = parsePublicInput(
-    FetchModelAttestationForSignatureInputSchema,
-    input,
-    'input',
-  );
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', ['model', 'signature']);
 
   return {
-    model: requireNonEmptyString(parsed.model, 'model'),
-    nonce: validateNonce(parsed.nonce),
-    signature: parseSignatureSigner(parsed.signature, 'provider_tee'),
+    model: requireNonEmptyString(
+      requireInputString(value.model, 'model'),
+      'model',
+    ),
+    signature: requireSignatureSigner(value.signature, 'provider_tee'),
   };
 }
 
 type ParsedGatewayAttestationRequest = {
-  nonce: string;
   algorithm: SigningAlgorithm;
 };
 
 function parseGatewayAttestationRequest(
   input: unknown,
 ): ParsedGatewayAttestationRequest {
-  const parsed = parsePublicInput(
-    FetchGatewayAttestationInputSchema,
-    input,
-    'input',
-  );
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', ['algorithm']);
 
   return {
-    nonce: validateNonce(parsed.nonce),
-    algorithm: parsed.algorithm ?? 'ed25519',
+    algorithm:
+      optionalSigningAlgorithm(value.algorithm, 'algorithm') ?? 'ed25519',
   };
 }
 
@@ -419,23 +432,33 @@ type ParsedCompletionSignatureRequest = FetchCompletionSignatureInput;
 function parseCompletionSignatureRequest(
   input: unknown,
 ): ParsedCompletionSignatureRequest {
-  const parsed = parsePublicInput(
-    FetchCompletionSignatureInputSchema,
-    input,
-    'input',
-  );
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', ['completionId', 'algorithm']);
+  const algorithm = optionalSigningAlgorithm(value.algorithm, 'algorithm');
 
   return {
-    completionId: requireNonEmptyString(parsed.completionId, 'completionId'),
-    ...(parsed.algorithm === undefined ? {} : { algorithm: parsed.algorithm }),
+    completionId: requireNonEmptyString(
+      requireInputString(value.completionId, 'completionId'),
+      'completionId',
+    ),
+    ...(algorithm === undefined ? {} : { algorithm }),
   };
 }
 
-function parseSignatureSigner(
-  signature: CompletionSignature,
-  expectedKind: CompletionSignature['kind'],
-): CompletionSignature {
-  const kind = signature.kind;
+type SignatureSigner = CompletionSignatureReference;
+
+function requireSignatureSigner(
+  value: unknown,
+  expectedKind: CompletionSignatureReference['kind'],
+): SignatureSigner {
+  const signature = requireInputObject(value, 'signature');
+  rejectUnknownInputKeys(signature, 'signature', [
+    'kind',
+    'signer',
+    'signedText',
+    'signature',
+  ]);
+  const kind = requireSignatureKind(signature.kind, 'signature.kind');
   if (kind !== expectedKind) {
     throw new VerificationError({
       phase: 'signature',
@@ -445,30 +468,66 @@ function parseSignatureSigner(
   }
   return {
     kind,
-    signedText: requireNonEmptyString(
-      signature.signedText,
-      'signature.signedText',
-    ),
-    signature: requireNonEmptyString(
-      signature.signature,
-      'signature.signature',
-    ),
-    signer: parseSigningIdentity(signature.signer),
+    signer: parseSigningIdentity(signature.signer, 'signature.signer'),
   };
 }
 
-function parseSigningIdentity(
-  signer: SigningIdentity,
-  field = 'signature.signer',
-): SigningIdentity {
+function parseSigningIdentity(value: unknown, field: string): SigningIdentity {
+  const signer = requireInputObject(value, field);
+  rejectUnknownInputKeys(signer, field, ['algorithm', 'address']);
+  const algorithm = requireSigningAlgorithm(
+    signer.algorithm,
+    `${field}.algorithm`,
+  );
   return {
-    algorithm: signer.algorithm,
+    algorithm,
     address: validateSigningAddress(
-      signer.address,
-      signer.algorithm,
+      requireInputString(signer.address, `${field}.address`),
+      algorithm,
       `${field}.address`,
     ),
   };
+}
+
+function requireSignatureKind(
+  value: unknown,
+  field: string,
+): CompletionSignature['kind'] {
+  if (value === 'provider_tee' || value === 'gateway') {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    {
+      expected: "'provider_tee' or 'gateway'",
+    },
+  );
+}
+
+function requireSigningAlgorithm(
+  value: unknown,
+  field: string,
+): SigningAlgorithm {
+  if (value === 'ecdsa' || value === 'ed25519') {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    {
+      expected: "'ecdsa' or 'ed25519'",
+    },
+  );
+}
+
+function optionalSigningAlgorithm(
+  value: unknown,
+  field: string,
+): SigningAlgorithm | undefined {
+  return value === undefined
+    ? undefined
+    : requireSigningAlgorithm(value, field);
 }
 
 function validateSigningAddress(
@@ -497,10 +556,6 @@ function validateModelAttestationSigningAddress(
     expected: '20-byte ECDSA or 32-byte Ed25519 hexadecimal signing address',
     actualBytes,
   });
-}
-
-function validateNonce(nonce: string): string {
-  return requireByteLength(nonce, 32, 'nonce').toString('hex');
 }
 
 function validateBaseUrl(baseUrl: string): string {

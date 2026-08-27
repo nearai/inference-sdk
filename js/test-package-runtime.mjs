@@ -2,14 +2,18 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
-import {
-  findModelAttestationForSigner,
+import * as sdk from './dist/index.js';
+
+const {
+  findModelAttestationForSignature,
   isVerificationError,
   NearAiCloudClient,
   VerificationError,
   verifyGatewayAttestation,
   verifyGatewayResponse,
-} from './dist/index.js';
+} = sdk;
+
+assert.equal('generateNonce' in sdk, false);
 
 const requestBody = Buffer.from('{"model":"canonical-model"}');
 const responseBody = Buffer.from('data: hello\n\n');
@@ -116,6 +120,37 @@ assert.deepEqual(
   },
 );
 
+let gatewayAttestationUrl;
+const gatewayAttestationClient = new NearAiCloudClient({
+  apiKey: 'test',
+  fetch: (input) => {
+    gatewayAttestationUrl = new URL(input.toString());
+    const requestNonce = gatewayAttestationUrl.searchParams.get('nonce');
+    assert.ok(requestNonce, 'expected a client nonce in the request URL');
+
+    return {
+      ok: true,
+      status: 200,
+      text: () =>
+        JSON.stringify({
+          gateway_attestation: gatewayAttestationResponse(requestNonce),
+        }),
+    };
+  },
+});
+const fetchedGatewayAttestation =
+  await gatewayAttestationClient.fetchGatewayAttestation();
+
+assert.match(fetchedGatewayAttestation.nonce, /^[0-9a-f]{64}$/);
+assert.equal(
+  gatewayAttestationUrl.searchParams.get('nonce'),
+  fetchedGatewayAttestation.nonce,
+);
+assert.equal(
+  fetchedGatewayAttestation.attestation.nonce,
+  fetchedGatewayAttestation.nonce,
+);
+
 const modelAttestation = {
   nonce,
   signer: { algorithm: 'ecdsa', address: '22'.repeat(20) },
@@ -124,9 +159,14 @@ const modelAttestation = {
   appCompose: '{}',
 };
 assert.deepEqual(
-  findModelAttestationForSigner({
+  findModelAttestationForSignature({
     attestations: [modelAttestation],
-    signer: modelAttestation.signer,
+    signature: {
+      kind: 'provider_tee',
+      signedText: 'canonical-model:request:response',
+      signature: '00',
+      signer: modelAttestation.signer,
+    },
   }),
   modelAttestation,
 );
@@ -137,4 +177,17 @@ function gatewaySignedText(request, response) {
 
 function hashBytes(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function gatewayAttestationResponse(requestNonce) {
+  return {
+    request_nonce: requestNonce,
+    signing_algo: 'ed25519',
+    signing_address: signerAddress,
+    intel_quote: 'aa',
+    event_log: [],
+    info: { tcb_info: { app_compose: '{}' } },
+    tls_cert_fingerprint: peerSpkiFingerprint,
+    report_data: '00'.repeat(64),
+  };
 }

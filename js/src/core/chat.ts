@@ -1,16 +1,24 @@
 import { Buffer } from 'buffer';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
-import type { SigningIdentity } from '../types/attestation-common';
+import type {
+  SigningAlgorithm,
+  SigningIdentity,
+} from '../types/attestation-common';
 import type { CompletionSignature } from '../types/chat';
 import type {
   VerifyGatewayResponseInput,
   VerifyModelResponseInput,
 } from '../types/verification';
-import { VerifyModelResponseFieldsSchema } from '../schemas';
 import { hexToBuffer, normalizeHex } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import { parsePublicInput } from '../utils/schema';
+import {
+  inputError,
+  rejectUnknownInputKeys,
+  requireInputBytes,
+  requireInputObject,
+  requireInputString,
+} from '../utils/input';
 import {
   requireVerifiedGatewaySigner,
   requireVerifiedModelSigner,
@@ -61,21 +69,89 @@ function parseResponseInput(
   input: unknown,
   requireVerifiedSigner: (attestation: unknown) => SigningIdentity,
 ): ParsedResponseInput {
-  const parsed = parsePublicInput(
-    VerifyModelResponseFieldsSchema,
-    input,
-    'input',
-  );
-  const attestationSigner = requireVerifiedSigner(parsed.attestation);
+  const value = requireInputObject(input, 'input');
+  rejectUnknownInputKeys(value, 'input', [
+    'requestBody',
+    'responseBody',
+    'signature',
+    'attestation',
+  ]);
+
+  const requestBody = requireInputBytes(value.requestBody, 'requestBody');
+  const responseBody = requireInputBytes(value.responseBody, 'responseBody');
+  const signature = parseCompletionSignature(value.signature);
+  const attestationSigner = requireVerifiedSigner(value.attestation);
 
   return {
-    requestBody: parsed.requestBody,
-    responseBody: parsed.responseBody,
-    signature: parsed.signature,
+    requestBody,
+    responseBody,
+    signature,
     attestation: {
       signer: attestationSigner,
     },
   };
+}
+
+function parseCompletionSignature(value: unknown): CompletionSignature {
+  const signature = requireInputObject(value, 'signature');
+  rejectUnknownInputKeys(signature, 'signature', [
+    'signedText',
+    'signature',
+    'signer',
+    'kind',
+  ]);
+
+  return {
+    signedText: requireInputString(
+      signature.signedText,
+      'signature.signedText',
+    ),
+    signature: requireInputString(signature.signature, 'signature.signature'),
+    signer: parseSigningIdentity(signature.signer, 'signature.signer'),
+    kind: requireSignatureKind(signature.kind, 'signature.kind'),
+  };
+}
+
+function parseSigningIdentity(value: unknown, field: string): SigningIdentity {
+  const signer = requireInputObject(value, field);
+  rejectUnknownInputKeys(signer, field, ['algorithm', 'address']);
+
+  return {
+    algorithm: requireSigningAlgorithm(signer.algorithm, `${field}.algorithm`),
+    address: requireInputString(signer.address, `${field}.address`),
+  };
+}
+
+function requireSigningAlgorithm(
+  value: unknown,
+  field: string,
+): SigningAlgorithm {
+  if (value === 'ecdsa' || value === 'ed25519') {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    {
+      expected: 'ecdsa or ed25519',
+    },
+  );
+}
+
+function requireSignatureKind(
+  value: unknown,
+  field: string,
+): CompletionSignature['kind'] {
+  if (value === 'provider_tee' || value === 'gateway') {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    {
+      expected: 'provider_tee or gateway',
+    },
+  );
 }
 
 /** Internal test helper; normal users verify a complete response instead. */

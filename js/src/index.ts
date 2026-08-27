@@ -1,24 +1,26 @@
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-  findModelAttestationForSigner,
+  findModelAttestationForSignature,
   NearAiCloudClient,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export type {
   FetchCompletionSignatureInput,
+  FetchedGatewayAttestation,
+  FetchedModelAttestation,
+  FetchedModelAttestations,
   FetchGatewayAttestationInput,
   FetchModelAttestationForSignatureInput,
   FetchModelAttestationsInput,
-  FindModelAttestationForSignerInput,
+  FindModelAttestationForSignatureInput,
   NearAiCloudFetch,
   NearAiCloudClientOptions,
-} from './core/cloud-api';
+} from './types/cloud-api';
+export type { Awaitable } from './types/shared';
 
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
-
-export { generateNonce } from './utils/common';
 
 export type {
   AttestationEventLog,
@@ -32,13 +34,13 @@ export type {
   CompletionBytes,
   CompletionSignature,
   CompletionSignatureKind,
+  CompletionSignatureReference,
   CompletionSignatureLookup,
   SignatureUnavailable,
 } from './types/chat';
 export type {
   AttestationPolicy,
   AttestationVerifiers,
-  Awaitable,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayTlsBinding,

@@ -25,28 +25,28 @@ evidence into a client-to-model TLS claim.
 ## Choose the claim you need
 
 The completion signature's explicit `kind` selects the matching response
-verification flow. Gateway attestation itself is independent of a completion.
-Do not infer a signature kind from signed text or mix model and gateway
-evidence.
+verification flow. Do not infer a signature kind from signed text or mix model
+and gateway evidence.
 
 ### Verify a model response
 
 Use a `provider_tee` signature with model attestation to verify that a
 model-serving TEE signed the exact completion bytes. This is the normal
 completion-verification flow. Keep the original bytes, use a canonical model ID
-with `x-no-aliasing: true`, fetch a fresh nonce and matching model attestation,
-then verify the response. A model attestation does not prove that the client
+with `x-no-aliasing: true`, fetch matching model attestation evidence, then
+verify the response. The model-attestation fetch returns the fresh nonce used
+for that evidence request. A model attestation does not prove that the client
 connected directly to the model CVM.
 
 [Follow the model-response guide](./docs/verification-guide.md#verify-a-model-response).
 
 ### Verify a gateway attestation
 
-Fetch fresh gateway evidence without sending a completion, then verify it
-against the SHA-256 SPKI fingerprint independently observed for the
-attestation request's TLS peer. This verifies a Cloud API gateway endpoint; it
-does not establish model execution. Standard browser `fetch` and most Node
-`fetch` APIs do not expose the required peer certificate data.
+Fetch fresh gateway evidence and verify it against the SHA-256 SPKI fingerprint
+independently observed for the attestation request's TLS peer. This verifies a
+Cloud API gateway endpoint; it does not establish model execution. Standard
+browser `fetch` and most Node `fetch` APIs do not expose the required peer
+certificate data.
 
 [Follow the gateway-attestation guide](./docs/verification-guide.md#verify-a-gateway-attestation).
 
@@ -59,7 +59,8 @@ model execution.
 
 ## Requirements
 
-- Generate a fresh nonce for every evidence request.
+- Use the nonce returned with each attestation fetch result when verifying that
+  result. The SDK generates a fresh nonce for every evidence request.
 - For response verification, preserve exact request and response bytes; use
   the signature's explicit kind with its matching evidence and response
   verifier.

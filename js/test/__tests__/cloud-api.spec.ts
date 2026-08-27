@@ -1,8 +1,12 @@
-import * as v from 'valibot';
-import type { CompletionSignature, ModelAttestation } from '../../src';
+import type {
+  CompletionSignature,
+  CompletionSignatureReference,
+  ModelAttestation,
+} from '../../src';
 import {
   ApiError,
-  findModelAttestationForSigner,
+  findModelAttestationForSignature,
+  isVerificationError,
   NearAiCloudClient,
 } from '../../src';
 import { nonce } from '../fixtures';
@@ -79,7 +83,11 @@ function clientReplyingWith(response: unknown) {
       apiKey: 'test',
       fetch: async (input, init) => {
         request = new Request(input, init);
-        return new Response(JSON.stringify(response), { status: 200 });
+        const requestNonce = new URL(request.url).searchParams.get('nonce');
+        return new Response(
+          JSON.stringify(echoRequestNonce(response, requestNonce)),
+          { status: 200 },
+        );
       },
     }),
     request(): Request {
@@ -89,10 +97,37 @@ function clientReplyingWith(response: unknown) {
   };
 }
 
+function echoRequestNonce(
+  response: unknown,
+  requestNonce: string | null,
+): unknown {
+  if (requestNonce === null) return response;
+  if (Array.isArray(response)) {
+    return response.map((item) => echoRequestNonce(item, requestNonce));
+  }
+  if (!isRecord(response)) return response;
+
+  return Object.fromEntries(
+    Object.entries(response).map(([key, value]) => [
+      key,
+      key === 'request_nonce' && value === nonce
+        ? requestNonce
+        : echoRequestNonce(value, requestNonce),
+    ]),
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
 describe('NEAR AI Cloud client', () => {
   test('fetches and selects a NEAR model attestation for a model signature', async () => {
     const selectedSignerAddress = `0x${'44'.repeat(20)}`;
-    const selectedSignature = modelSignature(selectedSignerAddress);
+    const selectedSignature: CompletionSignatureReference = {
+      kind: 'provider_tee',
+      signer: { algorithm: 'ecdsa', address: selectedSignerAddress },
+    };
     const api = clientReplyingWith({
       gateway_attestation: { this: 'is unrelated to model parsing' },
       model_attestations: [
@@ -103,14 +138,14 @@ describe('NEAR AI Cloud client', () => {
       ],
     });
 
-    const attestation = await api.client.fetchModelAttestationForSignature({
+    const fetched = await api.client.fetchModelAttestationForSignature({
       model: 'canonical-model',
-      nonce,
       signature: selectedSignature,
     });
 
-    expect(attestation).toMatchObject({
-      nonce,
+    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
+    expect(fetched.attestation).toMatchObject({
+      nonce: fetched.nonce,
       signer: { algorithm: 'ecdsa', address: selectedSignerAddress },
       intelQuote: 'aa',
       eventLog: [],
@@ -118,14 +153,14 @@ describe('NEAR AI Cloud client', () => {
       declaredSpkiFingerprint: '33'.repeat(32),
       reportedQuoteData: '44'.repeat(64),
     });
-    expect(attestation).not.toHaveProperty('request_nonce');
+    expect(fetched.attestation).not.toHaveProperty('request_nonce');
 
     const request = api.request();
     const url = new URL(request.url);
     expect(request.method).toBe('GET');
     expect(Object.fromEntries(url.searchParams)).toEqual({
       model: 'canonical-model',
-      nonce,
+      nonce: fetched.nonce,
       signing_algo: 'ecdsa',
       signing_address: selectedSignerAddress,
       provider: 'near',
@@ -137,20 +172,21 @@ describe('NEAR AI Cloud client', () => {
   test('fetches the current Cloud API model-attestation list without signing filters', async () => {
     const api = clientReplyingWith(nearReport());
 
-    const attestations = await api.client.fetchModelAttestations({
+    const fetched = await api.client.fetchModelAttestations({
       model: 'canonical-model',
-      nonce,
     });
 
-    expect(attestations).toHaveLength(1);
-    expect(attestations[0]).toMatchObject({
+    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
+    expect(fetched.attestations).toHaveLength(1);
+    expect(fetched.attestations[0]).toMatchObject({
+      nonce: fetched.nonce,
       signer: { algorithm: 'ecdsa', address: signerAddress },
       reportedQuoteData: '44'.repeat(64),
     });
     expect(Object.fromEntries(new URL(api.request().url).searchParams)).toEqual(
       {
         model: 'canonical-model',
-        nonce,
+        nonce: fetched.nonce,
         provider: 'near',
       },
     );
@@ -164,7 +200,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       api.client.fetchModelAttestations({
         model: 'canonical-model',
-        nonce,
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -180,7 +215,6 @@ describe('NEAR AI Cloud client', () => {
 
     await api.client.fetchModelAttestations({
       model: 'canonical-model',
-      nonce,
       algorithm: 'ecdsa',
       signingAddress: signerAddress,
     });
@@ -195,7 +229,6 @@ describe('NEAR AI Cloud client', () => {
 
     await api.client.fetchModelAttestations({
       model: 'canonical-model',
-      nonce,
       signingAddress: signerAddress,
     });
 
@@ -218,7 +251,6 @@ describe('NEAR AI Cloud client', () => {
       await expect(
         api.client.fetchModelAttestations({
           model: 'canonical-model',
-          nonce,
         }),
       ).rejects.toMatchObject({
         failure: {
@@ -230,24 +262,24 @@ describe('NEAR AI Cloud client', () => {
     },
   );
 
-  test('finds the one model attestation with a matching signer', () => {
+  test('finds the one model attestation for a matching provider signature', () => {
     const attestation = modelAttestation({
       signer: { algorithm: 'ecdsa', address: `0x${'44'.repeat(20)}` },
     });
 
     expect(
-      findModelAttestationForSigner({
+      findModelAttestationForSignature({
         attestations: [modelAttestation(), attestation],
-        signer: { algorithm: 'ecdsa', address: `0X${'44'.repeat(20)}` },
+        signature: modelSignature(`0X${'44'.repeat(20)}`),
       }),
     ).toEqual(attestation);
   });
 
-  test('rejects a model-attestation list with no matching signer', () => {
+  test('rejects a model-attestation list with no matching signature signer', () => {
     expect(() =>
-      findModelAttestationForSigner({
+      findModelAttestationForSignature({
         attestations: [modelAttestation()],
-        signer: { algorithm: 'ecdsa', address: `0x${'44'.repeat(20)}` },
+        signature: modelSignature(`0x${'44'.repeat(20)}`),
       }),
     ).toThrow(
       expect.objectContaining({
@@ -260,14 +292,14 @@ describe('NEAR AI Cloud client', () => {
     );
   });
 
-  test('requires a unique model attestation for a signer', () => {
+  test('requires a unique model attestation for a signature signer', () => {
     const first = modelAttestation();
     const second = modelAttestation({ reportedQuoteData: '55'.repeat(64) });
 
     expect(() =>
-      findModelAttestationForSigner({
+      findModelAttestationForSignature({
         attestations: [first, second],
-        signer: modelSignature().signer,
+        signature: modelSignature(),
       }),
     ).toThrow(
       expect.objectContaining({
@@ -280,19 +312,65 @@ describe('NEAR AI Cloud client', () => {
     );
   });
 
+  test('rejects a gateway signature in local model-attestation selection', () => {
+    expect(() =>
+      findModelAttestationForSignature({
+        attestations: [modelAttestation()],
+        signature: gatewaySignature(),
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          phase: 'signature',
+          code: 'signature.kind_mismatch',
+          details: { expected: 'provider_tee', actual: 'gateway' },
+        },
+      }),
+    );
+  });
+
+  test('rejects unknown fields in a model signer reference', () => {
+    expect(() =>
+      findModelAttestationForSignature({
+        attestations: [modelAttestation()],
+        signature: {
+          kind: 'provider_tee',
+          signer: {
+            algorithm: 'ecdsa',
+            address: signerAddress,
+            signingAddres: signerAddress,
+          },
+        },
+      } as never),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          phase: 'input',
+          code: 'input.invalid',
+          details: expect.objectContaining({
+            field: 'signature.signer.signingAddres',
+            reason: 'unsupported_value',
+          }),
+        }),
+      }),
+    );
+  });
+
   test('fetches standalone gateway attestation with TLS binding enabled', async () => {
     const api = clientReplyingWith(nearReport([{ provider: 'chutes' }]));
 
-    const attestation = await api.client.fetchGatewayAttestation({
-      nonce,
-    });
+    const fetched = await api.client.fetchGatewayAttestation();
 
-    expect(attestation.reportedQuoteData).toBe('00'.repeat(64));
+    expect(fetched.nonce).toMatch(/^[0-9a-f]{64}$/);
+    expect(fetched.attestation).toMatchObject({
+      nonce: fetched.nonce,
+      reportedQuoteData: '00'.repeat(64),
+    });
 
     const request = api.request();
     const url = new URL(request.url);
     expect(Object.fromEntries(url.searchParams)).toEqual({
-      nonce,
+      nonce: fetched.nonce,
       signing_algo: 'ed25519',
       include_tls_fingerprint: 'true',
     });
@@ -308,9 +386,7 @@ describe('NEAR AI Cloud client', () => {
       },
     });
 
-    await expect(
-      api.client.fetchGatewayAttestation({ nonce }),
-    ).rejects.toMatchObject({
+    await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
       failure: {
         phase: 'api',
         code: 'api.nonce_mismatch',
@@ -323,7 +399,6 @@ describe('NEAR AI Cloud client', () => {
     const api = clientReplyingWith(nearReport());
 
     await api.client.fetchGatewayAttestation({
-      nonce,
       algorithm: 'ecdsa',
     });
 
@@ -345,7 +420,6 @@ describe('NEAR AI Cloud client', () => {
 
     await expect(
       client.fetchGatewayAttestation({
-        nonce,
         signature: gatewaySignature(),
       } as never),
     ).rejects.toMatchObject({
@@ -353,6 +427,32 @@ describe('NEAR AI Cloud client', () => {
         phase: 'input',
         code: 'input.invalid',
         details: { field: 'input.signature', reason: 'unsupported_value' },
+      },
+    });
+    expect(requestCount).toBe(0);
+  });
+
+  test('rejects a caller-supplied nonce instead of silently ignoring it', async () => {
+    let requestCount = 0;
+    const client = new NearAiCloudClient({
+      baseUrl,
+      apiKey: 'test',
+      fetch: async () => {
+        requestCount += 1;
+        return new Response('{}', { status: 200 });
+      },
+    });
+
+    await expect(
+      client.fetchModelAttestations({
+        model: 'canonical-model',
+        nonce,
+      } as never),
+    ).rejects.toMatchObject({
+      failure: {
+        phase: 'input',
+        code: 'input.invalid',
+        details: { field: 'input.nonce', reason: 'unsupported_value' },
       },
     });
     expect(requestCount).toBe(0);
@@ -524,7 +624,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       api.client.fetchModelAttestations({
         model: 'model',
-        nonce,
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -545,11 +644,10 @@ describe('NEAR AI Cloud client', () => {
     try {
       await api.client.fetchModelAttestations({
         model: 'canonical-model',
-        nonce,
       });
     } catch (error) {
-      expect(v.isValiError(error)).toBe(false);
       expect(error).toBeInstanceOf(ApiError);
+      expect(isVerificationError(error)).toBe(true);
       expect(error).toMatchObject({
         failure: { phase: 'api', code: 'api.invalid_response' },
       });
@@ -573,12 +671,10 @@ describe('NEAR AI Cloud client', () => {
     });
 
     try {
-      await client.fetchGatewayAttestation({
-        nonce,
-      });
+      await client.fetchGatewayAttestation();
     } catch (error) {
-      expect(v.isValiError(error)).toBe(false);
       expect(error).toBeInstanceOf(ApiError);
+      expect(isVerificationError(error)).toBe(true);
       expect(error).toMatchObject({
         failure: {
           phase: 'api',
@@ -601,7 +697,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       api.client.fetchModelAttestationForSignature({
         model: 'canonical-model',
-        nonce,
         signature: modelSignature(),
       }),
     ).rejects.toMatchObject({
@@ -627,7 +722,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       client.fetchModelAttestationForSignature({
         model: 'canonical-model',
-        nonce,
         signature: gatewaySignature(),
       }),
     ).rejects.toMatchObject({
@@ -649,9 +743,7 @@ describe('NEAR AI Cloud client', () => {
     });
 
     try {
-      await client.fetchGatewayAttestation({
-        nonce,
-      });
+      await client.fetchGatewayAttestation();
       throw new Error('Expected the Cloud API request to fail');
     } catch (error) {
       expect(error).toBeInstanceOf(ApiError);
@@ -696,11 +788,7 @@ describe('NEAR AI Cloud client', () => {
       fetch: async () => new Response('', { status: 404 }),
     });
 
-    await expect(
-      client.fetchGatewayAttestation({
-        nonce,
-      }),
-    ).rejects.toMatchObject({
+    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
       failure: {
         phase: 'api',
         code: 'api.http_status',
@@ -732,15 +820,53 @@ describe('NEAR AI Cloud client', () => {
       client.fetchModelAttestationForSignature(undefined as never),
     ).rejects.toMatchObject(expected);
     await expect(
-      client.fetchGatewayAttestation(undefined as never),
+      client.fetchGatewayAttestation(null as never),
     ).rejects.toMatchObject(expected);
     await expect(
       client.fetchCompletionSignature(undefined as never),
     ).rejects.toMatchObject(expected);
     expectClientInputFailure(
-      () => findModelAttestationForSigner(undefined as never),
+      () => findModelAttestationForSignature(undefined as never),
       { field: 'input', reason: 'missing' },
     );
+  });
+
+  test('fails before sending an attestation request without secure random bytes', async () => {
+    let requestCount = 0;
+    const client = new NearAiCloudClient({
+      baseUrl,
+      apiKey: 'test',
+      fetch: async () => {
+        requestCount += 1;
+        return new Response('{}', { status: 200 });
+      },
+    });
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'crypto',
+    );
+
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: undefined,
+    });
+
+    try {
+      await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
+        failure: {
+          phase: 'runtime',
+          code: 'runtime.crypto_unavailable',
+          details: { capability: 'secure_random' },
+        },
+      });
+      expect(requestCount).toBe(0);
+    } finally {
+      if (cryptoDescriptor === undefined) {
+        Reflect.deleteProperty(globalThis, 'crypto');
+      } else {
+        Object.defineProperty(globalThis, 'crypto', cryptoDescriptor);
+      }
+    }
   });
 
   test('supports a synchronous custom transport', async () => {
@@ -778,11 +904,7 @@ describe('NEAR AI Cloud client', () => {
       })) as never,
     });
 
-    await expect(
-      client.fetchGatewayAttestation({
-        nonce,
-      }),
-    ).rejects.toMatchObject({
+    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
       failure: {
         phase: 'api',
         code: 'api.invalid_response',
@@ -798,7 +920,6 @@ describe('NEAR AI Cloud client', () => {
     await expect(
       api.client.fetchModelAttestations({
         model: 'canonical-model',
-        nonce,
       }),
     ).rejects.toMatchObject({
       failure: {

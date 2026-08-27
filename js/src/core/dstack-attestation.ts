@@ -1,7 +1,4 @@
-import type {
-  AttestationEventLog,
-  AttestationEvidence,
-} from '../types/attestation-common';
+import type { AttestationEvidence } from '../types/attestation-common';
 import type {
   AttestationPolicy,
   DeploymentProvenanceStatus,
@@ -12,14 +9,16 @@ import type {
   VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
-import {
-  AttestationEvidenceBaseSchema,
-  AttestationPolicyBaseSchema,
-} from '../schemas';
 import { requireByteLength } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
-import { inputError } from '../utils/input';
-import { parsePublicInput } from '../utils/schema';
+import {
+  inputError,
+  optionalInputString,
+  rejectUnknownInputKeys,
+  requireInputArray,
+  requireInputObject,
+  requireInputString,
+} from '../utils/input';
 import { normalizeVerifiedTdxQuote, verifyDcapQuote } from '../utils/intel';
 import {
   verifyAdvertisedReportData,
@@ -28,10 +27,21 @@ import {
 } from './attestation-common';
 import { verifyAndReplayRtmr3 } from './event-log';
 
-const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
+const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = Object.freeze([
   'UpToDate',
   'OutOfDate',
-];
+]);
+
+const TCB_STATUSES: readonly TcbStatus[] = Object.freeze([
+  'UpToDate',
+  'SWHardeningNeeded',
+  'ConfigurationNeeded',
+  'ConfigurationAndSWHardeningNeeded',
+  'OutOfDate',
+  'OutOfDateConfigurationNeeded',
+  'Revoked',
+  'Unknown',
+]);
 
 /** Quote facts shared by model and gateway evidence. Internal to the SDK. */
 export type VerifiedDstackQuote = {
@@ -40,32 +50,45 @@ export type VerifiedDstackQuote = {
   signer: AttestationEvidence['signer'];
 };
 
-/** Validate the parsed SDK evidence before it reaches measurement logic. */
+/**
+ * Snapshot shared evidence before it reaches asynchronous measurement logic.
+ * Endpoint-specific public entry points validate their own complete input
+ * shape; this helper intentionally permits their extra evidence fields.
+ */
 export function requireAttestationEvidence(
   value: unknown,
 ): AttestationEvidence {
-  const attestation = parsePublicInput(
-    AttestationEvidenceBaseSchema,
-    value,
-    'attestation',
+  const attestation = requireInputObject(value, 'attestation');
+  const nonce = requireInputString(attestation.nonce, 'attestation.nonce');
+  const signer = snapshotSigningIdentity(attestation.signer);
+  const intelQuote = requireInputString(
+    attestation.intelQuote,
+    'attestation.intelQuote',
   );
   const eventLog = snapshotEventLog(attestation.eventLog);
+  const appCompose = requireInputString(
+    attestation.appCompose,
+    'attestation.appCompose',
+  );
+  const declaredSpkiFingerprint = optionalNullableInputString(
+    attestation.declaredSpkiFingerprint,
+    'attestation.declaredSpkiFingerprint',
+  );
+  const reportedQuoteData = optionalInputString(
+    attestation.reportedQuoteData,
+    'attestation.reportedQuoteData',
+  );
 
   return Object.freeze({
-    nonce: attestation.nonce,
-    signer: Object.freeze({
-      algorithm: attestation.signer.algorithm,
-      address: attestation.signer.address,
-    }),
-    intelQuote: attestation.intelQuote,
+    nonce,
+    signer,
+    intelQuote,
     eventLog,
-    appCompose: attestation.appCompose,
-    ...(attestation.declaredSpkiFingerprint !== undefined
-      ? { declaredSpkiFingerprint: attestation.declaredSpkiFingerprint }
+    appCompose,
+    ...(declaredSpkiFingerprint !== undefined
+      ? { declaredSpkiFingerprint }
       : {}),
-    ...(attestation.reportedQuoteData !== undefined
-      ? { reportedQuoteData: attestation.reportedQuoteData }
-      : {}),
+    ...(reportedQuoteData !== undefined ? { reportedQuoteData } : {}),
   });
 }
 
@@ -74,12 +97,13 @@ export function requireAttestationEvidence(
  * Event-log entries are JSON data, so normalizing an array to JSON preserves
  * the accepted wire representation while preventing later caller mutation.
  */
-function snapshotEventLog(eventLog: AttestationEventLog): string {
+function snapshotEventLog(eventLog: unknown): string {
   if (typeof eventLog === 'string') {
     return eventLog;
   }
+  const eventLogArray = requireInputArray(eventLog, 'attestation.eventLog');
   try {
-    const serialized = JSON.stringify(eventLog);
+    const serialized = JSON.stringify(eventLogArray);
     if (typeof serialized === 'string') {
       return serialized;
     }
@@ -102,14 +126,38 @@ function snapshotEventLog(eventLog: AttestationEventLog): string {
   });
 }
 
-/** Validate policy once at the public boundary before quote verification runs. */
+/** Snapshot shared policy fields before quote verification runs. */
 export function parseAttestationPolicy(
   value: unknown,
 ): AttestationPolicy | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return parsePublicInput(AttestationPolicyBaseSchema, value, 'policy');
+  const policy = requireInputObject(value, 'policy');
+  const acceptedTcbStatuses = parseAcceptedTcbStatuses(
+    policy.acceptedTcbStatuses,
+  );
+  return Object.freeze({
+    ...(acceptedTcbStatuses !== undefined ? { acceptedTcbStatuses } : {}),
+  });
+}
+
+/** Validate and snapshot the shared TCB-status policy field. */
+export function parseAcceptedTcbStatuses(
+  value: unknown,
+): readonly TcbStatus[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const values = requireInputArray(value, 'policy.acceptedTcbStatuses');
+  const acceptedTcbStatuses: TcbStatus[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    acceptedTcbStatuses.push(
+      requireTcbStatus(values[index], `policy.acceptedTcbStatuses.${index}`),
+    );
+  }
+  return Object.freeze(acceptedTcbStatuses);
 }
 
 /**
@@ -125,7 +173,10 @@ export async function verifyDstackQuote(input: {
   advertisedReportData?: string;
 }): Promise<VerifiedDstackQuote> {
   const attestation = requireAttestationEvidence(input.attestation);
-  const acceptedTcbStatuses = getAcceptedTcbStatuses(input.policy);
+  const policy = parseAttestationPolicy(input.policy);
+  const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
+  const quoteVerifier = input.quoteVerifier ?? verifyDcapQuote;
+  const advertisedReportData = input.advertisedReportData;
 
   verifyReportedNonce(attestation.nonce, input.nonce);
   const signer = verifySigningAddressLength(
@@ -133,11 +184,8 @@ export async function verifyDstackQuote(input: {
     attestation.signer.address,
   );
 
-  const quote = await verifyQuote(
-    input.quoteVerifier ?? verifyDcapQuote,
-    attestation.intelQuote,
-  );
-  verifyAdvertisedReportData(input.advertisedReportData, quote.reportData);
+  const quote = await verifyQuote(quoteVerifier, attestation.intelQuote);
+  verifyAdvertisedReportData(advertisedReportData, quote.reportData);
   if (quote.debugEnabled) {
     throw new VerificationError({
       phase: 'policy',
@@ -238,11 +286,72 @@ async function verifyQuote(
 function getAcceptedTcbStatuses(
   policy: AttestationPolicy | undefined,
 ): readonly TcbStatus[] {
-  const value = parseAttestationPolicy(policy)?.acceptedTcbStatuses;
+  const value = policy?.acceptedTcbStatuses;
   if (value === undefined) {
     return DEFAULT_ACCEPTED_TCB_STATUSES;
   }
   return value;
+}
+
+function snapshotSigningIdentity(
+  value: unknown,
+): AttestationEvidence['signer'] {
+  const signer = requireInputObject(value, 'attestation.signer');
+  rejectUnknownInputKeys(signer, 'attestation.signer', [
+    'algorithm',
+    'address',
+  ]);
+  const algorithm = requireSigningAlgorithm(
+    signer.algorithm,
+    'attestation.signer.algorithm',
+  );
+  const address = requireInputString(
+    signer.address,
+    'attestation.signer.address',
+  );
+
+  return Object.freeze({ algorithm, address });
+}
+
+function optionalNullableInputString(
+  value: unknown,
+  field: string,
+): string | null | undefined {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  return requireInputString(value, field);
+}
+
+function requireTcbStatus(value: unknown, field: string): TcbStatus {
+  if (isTcbStatus(value)) {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    { expected: 'a supported TCB status' },
+  );
+}
+
+function isTcbStatus(value: unknown): value is TcbStatus {
+  return (
+    typeof value === 'string' && TCB_STATUSES.some((status) => status === value)
+  );
+}
+
+function requireSigningAlgorithm(
+  value: unknown,
+  field: string,
+): AttestationEvidence['signer']['algorithm'] {
+  if (value === 'ecdsa' || value === 'ed25519') {
+    return value;
+  }
+  throw inputError(
+    field,
+    value === undefined ? 'missing' : 'unsupported_value',
+    { expected: "'ecdsa' or 'ed25519'" },
+  );
 }
 
 function verifySigningAddressLength(
@@ -265,5 +374,8 @@ function verifySigningAddressLength(
     signingAlgorithm === 'ecdsa' ? 20 : 32,
     'attestation.signer.address',
   );
-  return { algorithm: signingAlgorithm, address: signingAddress };
+  return Object.freeze({
+    algorithm: signingAlgorithm,
+    address: signingAddress,
+  });
 }

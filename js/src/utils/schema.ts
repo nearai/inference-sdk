@@ -1,50 +1,10 @@
 import * as v from 'valibot';
 import { ApiError, VerificationError } from './errors';
-import { inputError } from './input';
 
 type ValidationIssue = v.BaseIssue<unknown>;
 export type ValidationSchema = v.BaseSchema<unknown, unknown, ValidationIssue>;
 export type SchemaOutput<TSchema extends ValidationSchema> =
   v.InferOutput<TSchema>;
-
-/**
- * Parse an SDK-owned public input without exposing Valibot's error type.
- * Strict schemas reject unknown option names before any verification runs.
- */
-export function parsePublicInput<TSchema extends ValidationSchema>(
-  schema: TSchema,
-  value: unknown,
-  root: string,
-): SchemaOutput<TSchema> {
-  const result = safeParse(schema, value);
-  if (result.success) {
-    return result.output;
-  }
-
-  if ('cause' in result) {
-    throw new VerificationError(
-      {
-        phase: 'input',
-        code: 'input.invalid',
-        details: {
-          field: root,
-          reason: 'unsupported_value',
-          expected: 'a readable value matching the documented input shape',
-        },
-      },
-      { cause: result.cause },
-    );
-  }
-
-  const issue = selectIssue(result.issues);
-  throw inputError(
-    inputField(issue, root),
-    issue.input === undefined && issue.expected !== 'never'
-      ? 'missing'
-      : 'unsupported_value',
-    { expected: describeExpected(issue.expected) },
-  );
-}
 
 /**
  * Parse an untrusted HTTP response without exposing Valibot's error type.
@@ -162,26 +122,7 @@ function safeParse<TSchema extends ValidationSchema>(
 }
 
 function selectIssue(issues: readonly ValidationIssue[]): ValidationIssue {
-  return (
-    issues.find(
-      (issue) => issue.type === 'strict_object' && issue.expected === 'never',
-    ) ?? issues[0]
-  );
-}
-
-function inputField(issue: ValidationIssue, root: string): string {
-  const path = v.getDotPath(issue);
-  if (!path) {
-    return root;
-  }
-  if (
-    issue.type === 'strict_object' &&
-    issue.expected === 'never' &&
-    !path.includes('.')
-  ) {
-    return `${root}.${path}`;
-  }
-  return path;
+  return issues[0];
 }
 
 function apiPath(issue: ValidationIssue, root: string): string {

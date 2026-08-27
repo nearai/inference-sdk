@@ -81,6 +81,37 @@ try {
     },
   );
 
+  let gatewayAttestationUrl;
+  const gatewayAttestationClient = new sdk.NearAiCloudClient({
+    apiKey: 'test',
+    fetch: (input) => {
+      gatewayAttestationUrl = new URL(input.toString());
+      const requestNonce = gatewayAttestationUrl.searchParams.get('nonce');
+      assert.ok(requestNonce, 'expected a client nonce in the request URL');
+
+      return {
+        ok: true,
+        status: 200,
+        text: () =>
+          JSON.stringify({
+            gateway_attestation: gatewayAttestationResponse(requestNonce),
+          }),
+      };
+    },
+  });
+  const fetchedGatewayAttestation =
+    await gatewayAttestationClient.fetchGatewayAttestation();
+
+  assert.match(fetchedGatewayAttestation.nonce, /^[0-9a-f]{64}$/);
+  assert.equal(
+    gatewayAttestationUrl.searchParams.get('nonce'),
+    fetchedGatewayAttestation.nonce,
+  );
+  assert.equal(
+    fetchedGatewayAttestation.attestation.nonce,
+    fetchedGatewayAttestation.nonce,
+  );
+
   const normalizedQuote = sdk.normalizeVerifiedTdxQuote({
     advisoryIds: [],
     debugEnabled: false,
@@ -215,4 +246,17 @@ function bytesFromHex(value) {
     bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
+}
+
+function gatewayAttestationResponse(requestNonce) {
+  return {
+    request_nonce: requestNonce,
+    signing_algo: 'ed25519',
+    signing_address: '44'.repeat(32),
+    intel_quote: 'aa',
+    event_log: [],
+    info: { tcb_info: { app_compose: '{}' } },
+    tls_cert_fingerprint: '55'.repeat(32),
+    report_data: '00'.repeat(64),
+  };
 }
