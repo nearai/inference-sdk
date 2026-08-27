@@ -5,33 +5,14 @@ type ApiResource =
   | 'gateway_attestation'
   | 'completion_signature';
 
-/** A JSON-safe description of a verification failure.
+/** A JSON-safe description of a Cloud API failure.
  *
  * `code`, `phase`, and any fields in `details` are the public error contract.
  * `message` is only for people; consumers must not parse it. The shape is kept
  * deliberately free of API keys, nonces, quotes, prompts, and response bytes.
  * Future language SDKs should preserve these codes and detail field names.
  */
-export type VerificationFailure =
-  | {
-      phase: 'input';
-      code: 'input.invalid';
-      details: {
-        field: string;
-        reason:
-          | 'missing'
-          | 'invalid_hex'
-          | 'wrong_length'
-          | 'invalid_json'
-          | 'invalid_jwt'
-          | 'invalid_url'
-          | 'invalid_header'
-          | 'unsupported_value';
-        expected?: string;
-        expectedBytes?: number;
-        actualBytes?: number;
-      };
-    }
+export type ApiFailure =
   | {
       phase: 'api';
       code: 'api.transport_failed';
@@ -86,6 +67,34 @@ export type VerificationFailure =
       code: 'api.attestation_signer_mismatch';
       details: {
         resource: 'model_attestation';
+      };
+    };
+
+/** A JSON-safe description of a local verification failure.
+ *
+ * `code`, `phase`, and any fields in `details` are the public error contract.
+ * `message` is only for people; consumers must not parse it. The shape is kept
+ * deliberately free of API keys, nonces, quotes, prompts, and response bytes.
+ * Future language SDKs should preserve these codes and detail field names.
+ */
+export type VerificationFailure =
+  | {
+      phase: 'input';
+      code: 'input.invalid';
+      details: {
+        field: string;
+        reason:
+          | 'missing'
+          | 'invalid_hex'
+          | 'wrong_length'
+          | 'invalid_json'
+          | 'invalid_jwt'
+          | 'invalid_url'
+          | 'invalid_header'
+          | 'unsupported_value';
+        expected?: string;
+        expectedBytes?: number;
+        actualBytes?: number;
       };
     }
   | {
@@ -288,26 +297,28 @@ export type VerificationFailure =
       details: { capability: 'subtle_digest' | 'secure_random' };
     };
 
+type SdkFailure = ApiFailure | VerificationFailure;
+
+export type ApiErrorCode = ApiFailure['code'];
 export type VerificationErrorCode = VerificationFailure['code'];
 export type VerificationPhase = VerificationFailure['phase'];
-export type ApiFailure = Extract<VerificationFailure, { phase: 'api' }>;
 
-export type VerificationErrorOptions = { cause?: unknown };
+export type SdkErrorOptions = { cause?: unknown };
 
 /**
- * A machine-readable verification failure.
+ * A machine-readable local verification failure.
  *
  * Inspect `failure.code` (and, where needed, its typed `details`) instead of
  * branching on `message`. This is intentionally a single class: the
  * discriminated `failure` union gives TypeScript and future SDKs a stable,
- * cross-language contract without requiring a class hierarchy per failure.
+ * cross-language contract.
  */
 export class VerificationError extends Error {
   readonly name: string = 'VerificationError';
 
   constructor(
     readonly failure: VerificationFailure,
-    options?: VerificationErrorOptions,
+    options?: SdkErrorOptions,
   ) {
     super(formatFailureMessage(failure), options);
   }
@@ -321,7 +332,7 @@ export class VerificationError extends Error {
   }
 
   get retryable(): boolean {
-    return 'retryable' in this.failure && this.failure.retryable;
+    return isRetryableFailure(this.failure);
   }
 
   /** Safe structured data for logs and cross-process diagnostics. */
@@ -340,13 +351,42 @@ export class VerificationError extends Error {
   }
 }
 
-/** API transport or response failure; inspect `failure.code` as usual. */
-export class ApiError extends VerificationError {
+/** Cloud API request, response, or evidence-selection failure. */
+export class ApiError extends Error {
   readonly name: string = 'ApiError';
 
-  // biome-ignore lint/complexity/noUselessConstructor: Narrows the public input to API failures.
-  constructor(failure: ApiFailure, options?: VerificationErrorOptions) {
-    super(failure, options);
+  constructor(
+    readonly failure: ApiFailure,
+    options?: SdkErrorOptions,
+  ) {
+    super(formatFailureMessage(failure), options);
+  }
+
+  get code(): ApiErrorCode {
+    return this.failure.code;
+  }
+
+  get phase(): 'api' {
+    return this.failure.phase;
+  }
+
+  get retryable(): boolean {
+    return isRetryableFailure(this.failure);
+  }
+
+  /** Safe structured data for logs and cross-process diagnostics. */
+  toJSON(): {
+    name: string;
+    message: string;
+    failure: ApiFailure;
+    retryable: boolean;
+  } {
+    return {
+      name: this.name,
+      message: this.message,
+      failure: this.failure,
+      retryable: this.retryable,
+    };
   }
 
   /** Kept as a convenience for HTTP callers; `failure.details.status` is canonical. */
@@ -363,7 +403,11 @@ export function isVerificationError(
   return value instanceof VerificationError;
 }
 
-/** Preserve an SDK failure, or add a stable failure code around an external cause. */
+export function isApiError(value: unknown): value is ApiError {
+  return value instanceof ApiError;
+}
+
+/** Preserve a verification failure, or add a stable failure code around an external cause. */
 export function wrapVerificationError(
   failure: VerificationFailure,
   cause: unknown,
@@ -373,7 +417,11 @@ export function wrapVerificationError(
     : new VerificationError(failure, { cause });
 }
 
-function formatFailureMessage(failure: VerificationFailure): string {
+function isRetryableFailure(failure: SdkFailure): boolean {
+  return 'retryable' in failure && failure.retryable;
+}
+
+function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
     case 'input.invalid':
       return `Invalid ${failure.details.field}`;

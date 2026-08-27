@@ -65,13 +65,15 @@ export type {
 
 export {
   ApiError,
+  isApiError,
   isVerificationError,
   VerificationError,
 } from './utils/errors';
 export type {
+  ApiErrorCode,
   ApiFailure,
   VerificationErrorCode,
   VerificationFailure,
-  VerificationErrorOptions,
   VerificationPhase,
+  SdkErrorOptions,
 } from './utils/errors';

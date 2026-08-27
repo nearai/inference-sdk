@@ -289,30 +289,41 @@ simply pass the signature unchanged to the matching response verifier, which
 checks the complete signed payload,
 signature, and attested signer.
 
-All SDK failures are `VerificationError` instances, including Cloud API
-failures. Branch on `failure.code`, rather than parsing a human-readable error
-message:
+Cloud API evidence retrieval and selection can throw `ApiError` for transport,
+HTTP, response-format, nonce, or candidate-selection failures. Verification
+functions and local input or signature-contract checks throw
+`VerificationError`. Both expose `failure.code`, typed `failure.details`, and
+`retryable`; branch on those fields rather than parsing a human-readable
+message.
+
+A 2xx unavailable response from `fetchCompletionSignature` is valid Cloud API
+output, so it becomes a `VerificationError` with `signature.unavailable`, not
+an `ApiError`.
 
 ```ts
-import { isVerificationError } from 'verification-sdk';
+import { isApiError, isVerificationError } from 'verification-sdk';
 
 try {
-  await verifyModelAttestation({ attestation, nonce });
+  await client.fetchCompletionSignature({ completionId });
 } catch (error) {
-  if (!isVerificationError(error)) throw error;
-
-  if (error.failure.code === 'policy.tcb_status_not_allowed') {
-    console.log('TCB status:', error.failure.details.actual);
-  } else if (error.failure.code === 'api.http_status') {
-    console.log('HTTP status:', error.failure.details.status);
+  if (isApiError(error)) {
+    if (error.retryable) {
+      console.log('Cloud API request may succeed if retried');
+    }
+  } else if (isVerificationError(error)) {
+    if (error.failure.code === 'signature.unavailable') {
+      console.log('The completion has no usable signature');
+    } else {
+      console.log(error.failure.code);
+    }
   } else {
-    console.log(error.failure.code);
+    throw error;
   }
 }
 ```
 
-`error.retryable` is true only for remote failures that the SDK considers
-transient. A failed signature, binding, quote, measurement, GPU, deployment,
-or policy check is not automatically safe to retry.
+`retryable` means the SDK considers the underlying failure potentially
+transient. The application still decides whether retrying or replaying a
+completion is appropriate.
 In particular, a `completion_signature` HTTP 404 is retryable, including when
 the signature is still being recorded or is unknown.

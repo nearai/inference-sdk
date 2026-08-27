@@ -1,5 +1,11 @@
 import { Buffer } from 'node:buffer';
-import { VerificationError, verifyModelAttestation } from '../../src';
+import {
+  ApiError,
+  isApiError,
+  isVerificationError,
+  VerificationError,
+  verifyModelAttestation,
+} from '../../src';
 import type { QuoteVerifier, TcbStatus } from '../../src';
 import {
   appCompose,
@@ -153,23 +159,38 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('normalizes custom quote verifier failures', async () => {
-    await expect(
-      verifyModelAttestation({
+  test('normalizes an API failure from a custom quote verifier', async () => {
+    let error: unknown;
+    try {
+      await verifyModelAttestation({
         attestation: createModelAttestation(),
         nonce,
         verifiers: {
           quote: async () => {
-            throw new Error('verifier implementation detail');
+            throw new ApiError({
+              phase: 'api',
+              code: 'api.transport_failed',
+              details: { resource: 'model_attestation', reason: 'request' },
+              retryable: true,
+            });
           },
         },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        phase: 'quote',
-        code: 'quote.verification_failed',
-        details: { reason: 'verifier_error' },
-      },
+      });
+    } catch (cause) {
+      error = cause;
+    }
+
+    expect(error).toBeInstanceOf(VerificationError);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect(isVerificationError(error)).toBe(true);
+    expect(isApiError(error)).toBe(false);
+    if (!isVerificationError(error)) {
+      return;
+    }
+    expect(error.failure).toMatchObject({
+      phase: 'quote',
+      code: 'quote.verification_failed',
+      details: { reason: 'verifier_error' },
     });
   });
 

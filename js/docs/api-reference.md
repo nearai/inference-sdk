@@ -13,11 +13,6 @@ workflows and complete code examples, see the [verification guide](./verificatio
 | `verifyGatewayAttestation` | `(input: VerifyGatewayAttestationInput) => Promise<VerifiedGatewayAttestation>` | Verifies gateway evidence and a caller-observed TLS peer binding. |
 | `verifyGatewayResponse` | `(input: VerifyGatewayResponseInput) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(input: FindModelAttestationForSignatureInput) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
-| `VerificationError` | `class VerificationError extends Error` | Structured base class for SDK failures. |
-| `ApiError` | `class ApiError extends VerificationError` | Structured Cloud API transport or response failure. |
-| `isVerificationError` | `(value: unknown) => value is VerificationError` | Type guard for SDK failures. |
-| `NO_ALIASING_HEADER` | `'x-no-aliasing'` | Header name used to reject model aliases. |
-| `DEFAULT_NEAR_AI_CLOUD_BASE_URL` | `'https://cloud-api.near.ai/v1'` | Default Cloud API base URL used by `NearAiCloudClient`. |
 
 ## Client
 
@@ -40,11 +35,11 @@ and returns `Awaitable<Response>`. `Awaitable<T>` is `T | PromiseLike<T>`.
 
 #### Methods
 
-| Method | Input | Resolves to | Notable failure or behavior |
+| Method | Input | Resolves to | Behavior |
 | --- | --- | --- | --- |
-| `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns `unavailable` for a 2xx unavailable envelope. A 404 throws retryable `api.http_status`. |
-| `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Turns a 2xx unavailable envelope into `signature.unavailable`. A 404 remains retryable `api.http_status`. |
-| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. It rejects a mismatched echoed nonce and a response count other than one. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
+| `lookupCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignatureLookup` | Returns either a signature or a service-provided unavailable state. |
+| `fetchCompletionSignature(input)` | `FetchCompletionSignatureInput` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
+| `fetchModelAttestations(input)` | `FetchModelAttestationsInput` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(input)` | `FetchModelAttestationForSignatureInput` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(input?)` | `FetchGatewayAttestationInput` | `FetchedGatewayAttestation` | Creates a fresh client nonce and fetches gateway evidence. It rejects a mismatched echoed nonce and always requests the gateway TLS fingerprint. |
 
@@ -263,82 +258,3 @@ JWT/EAT validation, different trust roots, or another verification service.
 | `GatewayTlsBinding` | `{ kind: 'peer'; spkiFingerprint: string }` |
 | `GpuEvidenceStatus` | `'not_provided' \| 'verified'` |
 | `DeploymentProvenanceStatus` | `'not_checked' \| 'verified'` |
-
-## Errors
-
-The stable error contract is `failure.code` and its typed `failure.details`.
-`message` is for people and should not be parsed.
-
-| API | Property or signature | Description |
-| --- | --- | --- |
-| `VerificationError` | `new (failure: VerificationFailure, options?: VerificationErrorOptions)` | Creates a structured SDK failure. |
-| `VerificationError` | `failure: VerificationFailure` | Discriminated failure payload. |
-|  | `code: VerificationErrorCode` | Convenience alias for `failure.code`. |
-|  | `phase: VerificationPhase` | Convenience alias for `failure.phase`. |
-|  | `retryable: boolean` | Whether this failure is safe for the SDK to classify as transient. |
-|  | `toJSON()` | Returns `name`, `message`, `failure`, and `retryable`. |
-| `ApiError` | `new (failure: ApiFailure, options?: VerificationErrorOptions)` | Creates a structured API failure. |
-|  | `status: number \| undefined` | HTTP status for `api.http_status`; otherwise `undefined`. |
-| `isVerificationError` | `(value: unknown) => value is VerificationError` | Narrows an unknown thrown value to the SDK error type. |
-| `VerificationFailure` | Discriminated union | Every failure variant in the tables below. |
-| `ApiFailure` | Extracted union | `VerificationFailure` variants whose phase is `api`. |
-| `VerificationErrorCode` | Union | All `VerificationFailure['code']` values. |
-| `VerificationPhase` | Union | All `VerificationFailure['phase']` values. |
-| `VerificationErrorOptions` | `{ cause?: unknown }` | Optional constructor options. |
-
-### Input and API failures
-
-| Code | `failure.details` | Retryable |
-| --- | --- | --- |
-| `input.invalid` | `field`, `reason` (`missing`, `invalid_hex`, `wrong_length`, `invalid_json`, `invalid_jwt`, `invalid_url`, `invalid_header`, or `unsupported_value`); may include `expected`, `expectedBytes`, `actualBytes` | No |
-| `api.transport_failed` | `resource` (`model_attestation`, `gateway_attestation`, or `completion_signature`), `reason` (`request` or `response_body`) | Yes |
-| `api.http_status` | `resource`, `status` | Depends on status |
-| `api.invalid_json` | `resource` | No |
-| `api.invalid_response` | `path`, `expected`, `actual` | No |
-| `api.nonce_mismatch` | `resource` (`model_attestation` or `gateway_attestation`) | No |
-| `api.unexpected_model_attestation_count` | `expectedCount`, `actualCount` | No |
-| `api.ambiguous_model_attestation_signer` | `matchingCount`, `totalCount` | No |
-| `api.attestation_signer_mismatch` | `resource: 'model_attestation'` | No |
-
-`api.http_status` is retryable for 408, 425, 429, status `>= 500`, and a
-`completion_signature` 404. The latter includes pending or unknown signatures;
-it does not produce an `unavailable` lookup result.
-
-### Quote, policy, and binding failures
-
-| Code | `failure.details` | Retryable |
-| --- | --- | --- |
-| `quote.collateral_unavailable` | — | Yes |
-| `quote.verification_failed` | `reason` (`invalid_encoding`, `invalid_quote`, or `verifier_error`) | No |
-| `quote.invalid_result` | `path`, `expected`, `actual` | No |
-| `quote.unsupported_report_type` | `expected: 'TD10'` | No |
-| `policy.debug_enabled` | — | No |
-| `policy.tcb_status_not_allowed` | `actual`, `accepted`, `advisoryIds` | No |
-| `policy.gpu_evidence_required` | — | No |
-| `binding.nonce_mismatch` | `source` (`attestationNonce`, `quoteReportData`, or `nvidiaPayload`) | No |
-| `binding.report_data_invalid` | `source` (`quoteReportData` or `reportedQuoteData`), `reason` (`invalid_hex` or `wrong_length`), `expectedBytes`, optional `actualBytes` | No |
-| `binding.report_data_mismatch` | `source` (`reportedQuoteData`, `signerBinding`, or `signerTlsBinding`) | No |
-| `binding.spki_fingerprint_missing` | — | No |
-| `binding.spki_fingerprint_mismatch` | `source: 'peer_tls_connection'` | No |
-
-### Measurement, GPU, signature, and runtime failures
-
-| Code | `failure.details` | Retryable |
-| --- | --- | --- |
-| `measurement.event_log_invalid` | `path`, `reason` (`invalid_json`, `invalid_type`, `invalid_hex`, `wrong_length`, or `digest_mismatch`); may include `expected`, `expectedBytes`, `actualBytes` | No |
-| `measurement.rtmr3_mismatch` | `reason` (`wrong_length`, `no_events`, or `replay_mismatch`); may include `expectedBytes`, `actualBytes` | No |
-| `measurement.app_compose_invalid` | `reason` (`invalid_json` or `missing`) | No |
-| `measurement.mrconfigid_invalid` | `reason` (`wrong_length` or `unsupported_version`); may include `minimumBytes`, `actualBytes`, `version` | No |
-| `measurement.app_compose_mrconfigid_mismatch` | — | No |
-| `gpu.payload_invalid` | `reason` (`invalid_json` or `nonce_missing`) | No |
-| `gpu.nras_request_failed` | `reason` (`timeout`, `transport`, or `http_status`), optional `status` | Depends on NRAS response |
-| `gpu.nras_response_invalid` | `reason` (`invalid_json`, `invalid_jwt`, `invalid_schema`, or `invalid_verdict_type`) | No |
-| `gpu.attestation_rejected` | `source` (`nras` or `custom_verifier`) | No |
-| `provenance.verification_failed` | — | No |
-| `signature.unavailable` | `providerErrorCode` | No |
-| `signature.kind_mismatch` | `expected`, `actual` (`provider_tee` or `gateway`) | No |
-| `signature.payload_mismatch` | `source` (`request_model` or `signed_payload`), `reason` (`invalid_json`, `missing_model`, or `text_mismatch`) | No |
-| `signature.format_invalid` | `field` (`signature`, `signer.signingAddress`, or `signer.signingAlgo`), `reason` (`invalid_hex`, `wrong_length`, or `unsupported_signing_algo`); may include `expectedBytes`, `actualBytes` | No |
-| `signature.invalid` | `signingAlgo` (`ecdsa` or `ed25519`) | No |
-| `signature.signer_mismatch` | — | No |
-| `runtime.crypto_unavailable` | `capability` (`subtle_digest` or `secure_random`) | No |

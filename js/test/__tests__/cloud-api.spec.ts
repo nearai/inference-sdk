@@ -1,5 +1,12 @@
 import type { CompletionSignature, ModelAttestation } from '../../src';
-import { findModelAttestationForSignature, NearAiCloudClient } from '../../src';
+import {
+  ApiError,
+  findModelAttestationForSignature,
+  isApiError,
+  isVerificationError,
+  NearAiCloudClient,
+  VerificationError,
+} from '../../src';
 import { nonce } from '../fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -433,10 +440,23 @@ describe('NEAR AI Cloud client', () => {
         jsonResponse({ model_attestations: 'not-an-array' }),
       );
 
-      await expect(
-        api.client.fetchModelAttestations({ model: 'canonical-model' }),
-      ).rejects.toMatchObject({
-        failure: { phase: 'api', code: 'api.invalid_response' },
+      let error: unknown;
+      try {
+        await api.client.fetchModelAttestations({ model: 'canonical-model' });
+      } catch (cause) {
+        error = cause;
+      }
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).not.toBeInstanceOf(VerificationError);
+      expect(isApiError(error)).toBe(true);
+      expect(isVerificationError(error)).toBe(false);
+      if (!isApiError(error)) {
+        return;
+      }
+      expect(error.failure).toMatchObject({
+        phase: 'api',
+        code: 'api.invalid_response',
       });
     });
   });
