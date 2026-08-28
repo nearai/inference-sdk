@@ -1,8 +1,8 @@
 use crate::errors::VerificationError;
 use crate::types::NvidiaEvidenceVerifier;
-use crate::util::decode_jwt_payload;
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -74,50 +74,156 @@ impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
                     || status.is_server_error(),
             });
         }
-        let value: Value =
+        // Keep HTTP JSON decoding separate from NRAS wire decoding so an
+        // invalid JSON document and an invalid NRAS envelope remain distinct
+        // public failures.
+        let raw: Value =
             response
                 .json()
                 .await
                 .map_err(|_| VerificationError::NrasResponseInvalid {
                     reason: "invalid_json",
                 })?;
-        let jwt = get_overall_jwt(&value)?;
-        let claims =
-            decode_jwt_payload(jwt).map_err(|_| VerificationError::NrasResponseInvalid {
-                reason: "invalid_jwt",
-            })?;
-        let claims = claims
-            .as_object()
-            .ok_or(VerificationError::NrasResponseInvalid {
-                reason: "invalid_jwt",
-            })?;
-        match claims.get("x-nvidia-overall-att-result") {
-            Some(Value::Bool(true)) => Ok(()),
-            Some(Value::Bool(false)) => {
-                Err(VerificationError::GpuAttestationRejected { origin: "nras" })
-            }
-            _ => Err(VerificationError::NrasResponseInvalid {
-                reason: "invalid_verdict_type",
-            }),
+        let jwt = decode_nras_overall_attestation_jwt(raw)?;
+        if decode_nras_overall_attestation_verdict(&jwt)? {
+            Ok(())
+        } else {
+            Err(VerificationError::GpuAttestationRejected { origin: "nras" })
         }
     }
 }
 
-fn get_overall_jwt(value: &Value) -> Result<&str, VerificationError> {
-    let first = value
-        .as_array()
-        .and_then(|items| items.first())
-        .and_then(Value::as_array)
-        .ok_or(VerificationError::NrasResponseInvalid {
-            reason: "invalid_schema",
-        })?;
+/// NRAS returns a heterogeneous list. Only the first entry is part of the
+/// contract consumed by this SDK; later entries remain intentionally opaque.
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct NrasResponseWire(Vec<Value>);
+
+/// The first NRAS entry is also extensible. Decode it as an array and consume
+/// only the documented `JWT` and token prefix.
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct NrasJwtEntryWire(Vec<Value>);
+
+#[derive(Deserialize)]
+struct NrasOverallAttestationJwtClaimsWire {
+    #[serde(rename = "x-nvidia-overall-att-result")]
+    overall_attestation_result: bool,
+}
+
+fn decode_nras_overall_attestation_jwt(raw: Value) -> Result<String, VerificationError> {
+    let NrasResponseWire(entries) =
+        serde_json::from_value(raw).map_err(|_| invalid_nras_response("invalid_schema"))?;
+    let first = entries
+        .into_iter()
+        .next()
+        .ok_or_else(|| invalid_nras_response("invalid_schema"))?;
+    let NrasJwtEntryWire(entry) =
+        serde_json::from_value(first).map_err(|_| invalid_nras_response("invalid_schema"))?;
     match (
-        first.first().and_then(Value::as_str),
-        first.get(1).and_then(Value::as_str),
+        entry.first().and_then(Value::as_str),
+        entry.get(1).and_then(Value::as_str),
     ) {
-        (Some("JWT"), Some(jwt)) => Ok(jwt),
-        _ => Err(VerificationError::NrasResponseInvalid {
-            reason: "invalid_schema",
-        }),
+        (Some("JWT"), Some(jwt)) => Ok(jwt.to_owned()),
+        _ => Err(invalid_nras_response("invalid_schema")),
+    }
+}
+
+fn decode_nras_overall_attestation_verdict(jwt: &str) -> Result<bool, VerificationError> {
+    let payload = decode_nras_jwt_payload(jwt)?;
+    if !payload.is_object() {
+        return Err(invalid_nras_response("invalid_jwt"));
+    }
+    let claims: NrasOverallAttestationJwtClaimsWire = serde_json::from_value(payload)
+        .map_err(|_| invalid_nras_response("invalid_verdict_type"))?;
+    Ok(claims.overall_attestation_result)
+}
+
+fn decode_nras_jwt_payload(jwt: &str) -> Result<Value, VerificationError> {
+    use base64::Engine;
+
+    let mut parts = jwt.split('.');
+    let _header = parts
+        .next()
+        .ok_or_else(|| invalid_nras_response("invalid_jwt"))?;
+    let payload = parts
+        .next()
+        .ok_or_else(|| invalid_nras_response("invalid_jwt"))?;
+    let _signature = parts
+        .next()
+        .ok_or_else(|| invalid_nras_response("invalid_jwt"))?;
+    if parts.next().is_some() {
+        return Err(invalid_nras_response("invalid_jwt"));
+    }
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .map_err(|_| invalid_nras_response("invalid_jwt"))?;
+    serde_json::from_slice(&bytes).map_err(|_| invalid_nras_response("invalid_jwt"))
+}
+
+fn invalid_nras_response(reason: &'static str) -> VerificationError {
+    VerificationError::NrasResponseInvalid { reason }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_the_required_nras_jwt_prefix_and_ignores_extensions() {
+        let jwt = jwt_with_payload(json!({
+            "x-nvidia-overall-att-result": true,
+            "extra_claim": "ignored",
+        }));
+        let raw = json!([
+            ["JWT", jwt, {"extra_entry_value": true}],
+            {"later_entry": "ignored"},
+        ]);
+
+        let jwt = decode_nras_overall_attestation_jwt(raw).unwrap();
+        assert!(decode_nras_overall_attestation_verdict(&jwt).unwrap());
+    }
+
+    #[test]
+    fn rejects_an_invalid_nras_jwt_envelope() {
+        let error = decode_nras_overall_attestation_jwt(json!([["TOKEN", "value"]])).unwrap_err();
+
+        assert!(matches!(
+            error,
+            VerificationError::NrasResponseInvalid {
+                reason: "invalid_schema"
+            }
+        ));
+    }
+
+    #[test]
+    fn distinguishes_invalid_jwt_payloads_from_invalid_verdicts() {
+        let error = decode_nras_overall_attestation_verdict("not-a-jwt").unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::NrasResponseInvalid {
+                reason: "invalid_jwt"
+            }
+        ));
+
+        let jwt = jwt_with_payload(json!({
+            "x-nvidia-overall-att-result": "PASS",
+        }));
+        let error = decode_nras_overall_attestation_verdict(&jwt).unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::NrasResponseInvalid {
+                reason: "invalid_verdict_type"
+            }
+        ));
+    }
+
+    fn jwt_with_payload(payload: Value) -> String {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&payload).unwrap());
+        format!("{header}.{payload}.signature")
     }
 }

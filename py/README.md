@@ -1,80 +1,49 @@
 # NEAR AI verification SDK for Python
 
-This asynchronous SDK fetches and verifies NEAR AI Cloud attestation evidence
-and completion signatures. It separates the evidence for a deployment from a
-signature over a particular request and response.
+Verify NEAR AI Cloud attestation evidence and completion signatures. This
+asynchronous SDK fetches and verifies evidence; your application sends the
+completion request and retains its exact request and response bytes.
 
 ## What it verifies
 
-| Evidence | Successful verification establishes |
-| --- | --- |
-| Model attestation | The model CVM quote, client nonce, signing identity, TCB policy, report-data binding, event-log replay, and `MRCONFIGID`/`app_compose` binding are valid. NVIDIA GPU evidence is verified when supplied; set `ModelAttestationPolicy(gpu_evidence='required')` to require it. |
-| Gateway attestation | The same deployment evidence, plus that the quote-bound Gateway TLS SPKI fingerprint equals the TLS peer fingerprint observed by the caller. |
-| `provider_tee` response signature | The exact request/response bytes are signed by the signer established by verified model evidence. |
-| `gateway` response signature | The exact client-visible request/response bytes are signed by the signer established by verified Gateway evidence. |
+- Model evidence: the Intel TDX quote, client nonce, signer, accepted TCB
+  policy, runtime measurements, and measured deployment configuration. NVIDIA
+  GPU evidence is verified when supplied and can be required by policy.
+- Gateway evidence: the same deployment evidence, plus the Gateway TLS peer
+  fingerprint independently observed by the caller for the evidence request.
+- Completion signatures: the exact request and response bytes, signed by the
+  signer established by the matching verified evidence.
 
-The SDK does not infer a signature's trust boundary from signed text.
-`CompletionSignature.kind` selects the matching verification path.
+Cloud API returns an explicit signature kind. `provider_tee` selects model
+evidence and verifies a model-serving TEE signature. `gateway` selects Gateway
+evidence and verifies a Gateway signature for the client-visible response; it
+does not establish model execution.
 
-## Public API
+The SDK does not send completion requests, choose retry behavior, or turn model
+evidence into a client-to-model TLS claim.
 
-All Cloud helpers take `NearAiCloudOptions` and are asynchronous. Attestation
-fetch results contain the fresh client nonce required by the corresponding
-attestation verifier.
+## Documentation
 
-| Function | Purpose |
-| --- | --- |
-| `fetch_model_attestations` | Fetch the current model evidence for a canonical model name. |
-| `find_model_attestation_for_signature` | Select the one model attestation that matches a `provider_tee` signer. |
-| `fetch_model_attestation_for_signature` | Fetch and select model evidence in one call. |
-| `fetch_gateway_attestation` | Fetch Gateway evidence with TLS-fingerprint evidence requested. |
-| `lookup_completion_signature` | Look up a completion signature and preserve a successful unavailable response. |
-| `fetch_completion_signature` | Look up a completion signature and raise `signature.unavailable` if it is unavailable. |
-| `verify_model_attestation` | Verify `ModelAttestation` using `VerifyModelAttestationInput`. |
-| `verify_gateway_attestation` | Verify `GatewayAttestation` using `VerifyGatewayAttestationInput`. |
-| `verify_model_response` | Verify a `provider_tee` signature using `VerifyModelResponseInput`. |
-| `verify_gateway_response` | Verify a `gateway` signature using `VerifyGatewayResponseInput`. |
+- [Verification guide](./docs/verification-guide.md) covers model and Gateway
+  flows, policy configuration, and error handling.
+- [API reference](./docs/api-reference.md) lists public request helpers,
+  verification functions, parameters, and result fields.
 
-`NearAiCloudOptions` defaults to `https://cloud-api.near.ai/v1` and accepts an
-optional async `fetch(url, headers)` override. `NearAiCloudResponse` is the
-small, explicit response type required by that override. A TLS-aware override
-can return its exact-request SPKI fingerprint; `fetch_gateway_attestation`
-returns the normalized value as `peer_spki_fingerprint`.
+## Errors
 
-## Choosing a flow
+Cloud retrieval and evidence-selection failures raise `ApiError`. Local input,
+cryptographic, policy, and binding failures raise `VerificationError`. For
+both, branch on `error.failure.code` and inspect `error.failure.details` only
+when it is present; never parse the human-readable message.
 
-1. To audit a model deployment, call `fetch_model_attestations`, then call
-   `verify_model_attestation` for the returned attestation and nonce.
-2. To verify a model-generated completion, fetch its signature, require
-   `kind == 'provider_tee'`, select matching model evidence, verify that
-   evidence, then call `verify_model_response` with the exact request and
-   response bytes.
-3. To audit a Gateway endpoint, call `fetch_gateway_attestation`, independently
-   obtain that HTTPS connection's SPKI fingerprint, then call
-   `verify_gateway_attestation`.
-4. To verify a Gateway-signed completion, require `kind == 'gateway'`, verify
-   Gateway evidence, then call `verify_gateway_response` with the exact bytes.
+`error.retryable` means a new attempt at the failed external operation may
+succeed. It does not mean that re-verifying the same evidence will succeed or
+that an inference should be replayed.
 
-Model and Gateway evidence are independently verifiable. A successful
-attestation establishes the deployment evidence; a response verifier adds the
-binding to one exact request/response pair.
-
-The SDK's default HTTP transport does not expose a TLS peer certificate, so its
-Gateway fetch result has no peer fingerprint. Applications that need Gateway
-verification must collect it in their TLS-aware connection layer and return it
-from a custom `fetch` override.
-
-## Errors and policies
-
-Cloud retrieval failures raise `ApiError`; local cryptographic, policy, and
-binding failures raise `VerificationError`. Inspect `error.failure.code`,
-`error.failure.details`, and `error.retryable` rather than parsing the message.
-
-The default TCB policy accepts `UpToDate` and `OutOfDate`. Pass
-`AttestationPolicy` or `ModelAttestationPolicy` to tighten it. The default
-NVIDIA verifier sends supplied GPU evidence to NVIDIA NRAS and uses its
-documented boolean overall verdict; applications needing a different trust
-model can provide `ModelAttestationVerifiers(nvidia=...)`.
+`fetch_completion_signature` is the strict helper: a successful Cloud API
+unavailable envelope raises `ApiError` with
+`api.completion_signature_unavailable`. Use `lookup_completion_signature` when
+that unavailable state is a normal application outcome.
 
 ## Development checks
 

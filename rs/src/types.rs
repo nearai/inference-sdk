@@ -43,16 +43,20 @@ pub struct AttestationEvidence {
     pub intel_quote: String,
     pub event_log: AttestationEventLog,
     pub app_compose: String,
+    /// Optional server-declared value. An absent value becomes `None` at the
+    /// Cloud API response boundary.
     pub declared_spki_fingerprint: Option<String>,
-    pub reported_quote_data: Option<String>,
 }
 
 /// Raw model-serving TEE evidence returned through NEAR AI Cloud.
 #[derive(Clone, Debug)]
 pub struct ModelAttestation {
     pub evidence: AttestationEvidence,
+    /// Optional server-declared copy of quote report data. An absent value
+    /// becomes `None` at the Cloud API response boundary.
+    pub reported_quote_data: Option<String>,
     /// NVIDIA evidence is optional for model deployments which do not expose it.
-    /// Missing and JSON `null` are both represented as `None`.
+    /// Absent evidence is represented as `None`.
     pub nvidia_payload: Option<String>,
 }
 
@@ -222,31 +226,6 @@ pub struct VerifiedGatewayAttestation {
     pub tls_binding: GatewayTlsBinding,
 }
 
-/// Arguments for [`crate::verify_model_attestation`].
-pub struct VerifyModelAttestationInput<'a> {
-    pub attestation: &'a ModelAttestation,
-    pub nonce: &'a str,
-    pub policy: Option<&'a ModelAttestationPolicy>,
-    pub verifiers: ModelAttestationVerifiers<'a>,
-}
-
-/// Arguments for [`crate::verify_gateway_attestation`].
-pub struct VerifyGatewayAttestationInput<'a> {
-    pub attestation: &'a GatewayAttestation,
-    pub nonce: &'a str,
-    /// SHA-256 SPKI fingerprint independently observed from the TLS peer.
-    pub peer_spki_fingerprint: &'a str,
-    pub policy: Option<&'a AttestationPolicy>,
-    pub verifiers: AttestationVerifiers<'a>,
-}
-
-/// Exact request and response bytes covered by a completion signature.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompletionBytes {
-    pub request_body: Vec<u8>,
-    pub response_body: Vec<u8>,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionSignatureKind {
@@ -280,53 +259,6 @@ pub struct SignatureUnavailable {
 pub enum CompletionSignatureLookup {
     Found(CompletionSignature),
     Unavailable(SignatureUnavailable),
-}
-
-/// Arguments for [`crate::verify_model_response`].
-pub struct VerifyModelResponseInput<'a> {
-    pub request_body: &'a [u8],
-    pub response_body: &'a [u8],
-    pub signature: &'a CompletionSignature,
-    pub attestation: &'a VerifiedModelAttestation,
-}
-
-/// Arguments for [`crate::verify_gateway_response`].
-pub struct VerifyGatewayResponseInput<'a> {
-    pub request_body: &'a [u8],
-    pub response_body: &'a [u8],
-    pub signature: &'a CompletionSignature,
-    pub attestation: &'a VerifiedGatewayAttestation,
-}
-
-/// Query parameters for fetching model attestation candidates.
-pub struct FetchModelAttestationsInput<'a> {
-    pub model: &'a str,
-    pub signing_algo: Option<SigningAlgo>,
-    pub signing_address: Option<&'a str>,
-}
-
-/// Query parameters for fetching model evidence matched to a signature.
-pub struct FetchModelAttestationForSignatureInput<'a> {
-    pub model: &'a str,
-    pub signature: &'a CompletionSignatureReference,
-}
-
-/// Arguments for selecting one model attestation from a report.
-pub struct FindModelAttestationForSignatureInput<'a> {
-    pub attestations: &'a [ModelAttestation],
-    pub signature: &'a CompletionSignatureReference,
-}
-
-/// Query parameters for fetching standalone Gateway evidence.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FetchGatewayAttestationInput {
-    pub signing_algo: Option<SigningAlgo>,
-}
-
-/// Query parameters for looking up a completion signature.
-pub struct FetchCompletionSignatureInput<'a> {
-    pub completion_id: &'a str,
-    pub signing_algo: Option<SigningAlgo>,
 }
 
 /// Model evidence and the fresh nonce used to obtain it.

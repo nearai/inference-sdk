@@ -1,21 +1,17 @@
 use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    CompletionSignatureLookup, CompletionSignatureReference, FetchCompletionSignatureInput,
-    FetchGatewayAttestationInput, FetchModelAttestationForSignatureInput,
-    FetchModelAttestationsInput, FetchedGatewayAttestation, FetchedModelAttestation,
-    FetchedModelAttestations, FindModelAttestationForSignatureInput, GatewayAttestation,
-    ModelAttestation, SignatureUnavailable, SigningAlgo, SigningIdentity,
+    CompletionSignatureLookup, CompletionSignatureReference, FetchedGatewayAttestation,
+    FetchedModelAttestation, FetchedModelAttestations, GatewayAttestation, ModelAttestation,
+    SignatureUnavailable, SigningAlgo, SigningIdentity,
 };
-use crate::util::{generate_nonce, normalize_hex, require_hex_length};
+use crate::util::{decode_hex, generate_nonce, require_hex_length};
 use async_trait::async_trait;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION},
     Client, Url,
 };
-use serde::Deserialize;
-use serde_json::Value;
-use std::sync::Arc;
+use serde::{de::Error as _, Deserialize, Deserializer};
 
 /// Default production endpoint used when a helper does not select another one.
 pub const DEFAULT_NEAR_AI_CLOUD_BASE_URL: &str = "https://cloud-api.near.ai/v1";
@@ -23,132 +19,66 @@ pub const DEFAULT_NEAR_AI_CLOUD_BASE_URL: &str = "https://cloud-api.near.ai/v1";
 /// Set this on model-attestation requests to reject aliases before dispatch.
 pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 
-/// A Cloud API request supplied to a caller-owned transport.
+/// A Gateway-attestation request supplied to a caller-owned TLS-aware
+/// transport.
 ///
 /// `headers` includes the authorization header required by the SDK. A custom
 /// transport must send this exact request and must not reuse a peer TLS
 /// fingerprint from a different connection.
-pub struct NearAiCloudRequest {
+pub struct GatewayAttestationTransportRequest {
     pub url: Url,
     pub headers: HeaderMap,
 }
 
-/// A Cloud API response returned by a caller-owned transport.
+/// A Gateway-attestation response returned by a caller-owned TLS-aware
+/// transport.
 ///
 /// A TLS-aware transport can set `peer_spki_fingerprint` to the SHA-256 SPKI
 /// fingerprint observed for this exact HTTPS request. The built-in reqwest
 /// transport leaves it as `None` because it does not expose peer certificate
 /// data through this SDK's request helper.
-pub struct NearAiCloudResponse {
+pub struct GatewayAttestationTransportResponse {
     pub status: u16,
     pub body: String,
     pub peer_spki_fingerprint: Option<String>,
 }
 
-/// Transport used by the Cloud API helpers.
+/// TLS-aware transport used only by [`GatewayAttestationRequest`].
 ///
 /// Implement this when an application needs TLS metadata for a Gateway
-/// attestation request. Return a descriptive error string for a request or
+/// attestation request. Return the appropriate [`ApiTransportReason`] for a
 /// request or response-body failure; the SDK maps it to a structured
-/// `ApiError` without exposing transport-provided text.
+/// [`ApiError`].
 #[async_trait]
-pub trait NearAiCloudTransport: Send + Sync {
+pub trait GatewayAttestationTransport: Send + Sync {
     async fn get(
         &self,
-        request: NearAiCloudRequest,
-    ) -> Result<NearAiCloudResponse, ApiTransportReason>;
+        request: GatewayAttestationTransportRequest,
+    ) -> Result<GatewayAttestationTransportResponse, ApiTransportReason>;
 }
 
-#[derive(Clone)]
-struct ReqwestNearAiCloudTransport {
+/// Internal transport and endpoint settings owned by an individual request
+/// builder. It is intentionally not a reusable client configuration type:
+/// callers pass their API key to each operation they make.
+struct CloudApiRequestConfig {
+    api_key: String,
+    base_url: Url,
     client: Client,
 }
 
-#[async_trait]
-impl NearAiCloudTransport for ReqwestNearAiCloudTransport {
-    async fn get(
-        &self,
-        request: NearAiCloudRequest,
-    ) -> Result<NearAiCloudResponse, ApiTransportReason> {
-        let response = self
-            .client
-            .get(request.url)
-            .headers(request.headers)
-            .send()
-            .await
-            .map_err(|_| ApiTransportReason::Request)?;
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|_| ApiTransportReason::ResponseBody)?;
-        Ok(NearAiCloudResponse {
-            status,
-            body,
-            peer_spki_fingerprint: None,
-        })
-    }
-}
-
-/// Shared Cloud API transport configuration.
-#[derive(Clone)]
-pub struct NearAiCloudOptions {
-    api_key: String,
-    base_url: Url,
-    transport: Arc<dyn NearAiCloudTransport>,
-}
-
-impl NearAiCloudOptions {
-    pub fn new(api_key: impl Into<String>) -> Result<Self, VerificationError> {
-        Self::with_base_url(api_key, DEFAULT_NEAR_AI_CLOUD_BASE_URL)
-    }
-
-    pub fn with_base_url(
-        api_key: impl Into<String>,
-        base_url: impl AsRef<str>,
-    ) -> Result<Self, VerificationError> {
-        Self::with_client(api_key, base_url, Client::new())
-    }
-
-    pub fn with_client(
-        api_key: impl Into<String>,
-        base_url: impl AsRef<str>,
-        client: Client,
-    ) -> Result<Self, VerificationError> {
-        Self::with_transport(api_key, base_url, ReqwestNearAiCloudTransport { client })
-    }
-
-    /// Configure the Cloud API helpers with an application-owned transport.
-    ///
-    /// Use this for Gateway attestation when the application needs the TLS
-    /// peer fingerprint associated with the exact evidence request. The
-    /// transport's optional response fingerprint is returned by
-    /// [`fetch_gateway_attestation`].
-    pub fn with_transport(
-        api_key: impl Into<String>,
-        base_url: impl AsRef<str>,
-        transport: impl NearAiCloudTransport + 'static,
-    ) -> Result<Self, VerificationError> {
-        let api_key = api_key.into();
-        if api_key.is_empty()
-            || api_key.chars().any(|value| value.is_control())
-            || HeaderValue::from_str(&format!("Bearer {api_key}")).is_err()
-        {
-            return Err(VerificationError::InvalidInput {
-                field: "api_key".to_owned(),
-                reason: "expected a non-empty HTTP header value".to_owned(),
-            });
+impl CloudApiRequestConfig {
+    fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            api_key: api_key.into(),
+            base_url: Url::parse(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
+                .expect("the SDK's default Cloud API URL is valid"),
+            client: Client::new(),
         }
-        let base_url = validate_base_url(base_url.as_ref())?;
-        Ok(Self {
-            api_key,
-            base_url,
-            transport: Arc::new(transport),
-        })
     }
 
-    pub fn base_url(&self) -> &Url {
-        &self.base_url
+    fn set_base_url(&mut self, base_url: impl AsRef<str>) -> Result<(), VerificationError> {
+        self.base_url = parse_base_url(base_url.as_ref())?;
+        Ok(())
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, VerificationError> {
@@ -161,37 +91,310 @@ impl NearAiCloudOptions {
     }
 }
 
-/// Fetch NEAR model evidence with a fresh client nonce. The Cloud API
-/// currently returns exactly one candidate and the helper enforces that
-/// contract.
+/// Build a request for NEAR model evidence. The builder starts with the
+/// production endpoint; use its methods only when the request needs filters
+/// or another endpoint.
+pub struct ModelAttestationsRequest {
+    config: CloudApiRequestConfig,
+    model: String,
+    signing_algo: Option<SigningAlgo>,
+    signing_address: Option<String>,
+}
+
+impl ModelAttestationsRequest {
+    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            config: CloudApiRequestConfig::new(api_key),
+            model: model.into(),
+            signing_algo: None,
+            signing_address: None,
+        }
+    }
+
+    /// Use another absolute Cloud API base URL.
+    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
+        self.config.set_base_url(base_url)?;
+        Ok(self)
+    }
+
+    /// Restrict the report to attestations using this signing algorithm.
+    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
+        self.signing_algo = Some(signing_algo);
+        self
+    }
+
+    /// Restrict the report to attestations using this signing address.
+    pub fn signing_address(mut self, signing_address: impl Into<String>) -> Self {
+        self.signing_address = Some(signing_address.into());
+        self
+    }
+
+    /// Fetch evidence with a fresh nonce. Cloud API currently returns exactly
+    /// one candidate, and this helper enforces that contract.
+    pub async fn send(self) -> Result<FetchedModelAttestations, SdkError> {
+        fetch_model_attestations_with_config(
+            &self.config,
+            &self.model,
+            self.signing_algo,
+            self.signing_address.as_deref(),
+        )
+        .await
+    }
+}
+
+/// Build a request for the model evidence associated with one `provider_tee`
+/// signature.
+pub struct ModelAttestationForSignatureRequest<'a> {
+    request: ModelAttestationsRequest,
+    signature: &'a CompletionSignatureReference,
+}
+
+impl<'a> ModelAttestationForSignatureRequest<'a> {
+    pub fn new(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        signature: &'a CompletionSignatureReference,
+    ) -> Self {
+        let request = ModelAttestationsRequest::new(api_key, model)
+            .signing_algo(signature.signer.signing_algo)
+            .signing_address(&signature.signer.signing_address);
+        Self { request, signature }
+    }
+
+    /// Use another absolute Cloud API base URL.
+    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
+        self.request = self.request.base_url(base_url)?;
+        Ok(self)
+    }
+
+    /// Fetch model evidence and select the candidate matching the signature
+    /// signer.
+    pub async fn send(self) -> Result<FetchedModelAttestation, SdkError> {
+        require_provider_signature(self.signature)?;
+        let fetched = self.request.send().await?;
+        let attestation =
+            find_model_attestation_for_signature(&fetched.attestations, self.signature)?.clone();
+        Ok(FetchedModelAttestation {
+            attestation,
+            nonce: fetched.nonce,
+        })
+    }
+}
+
+/// Build a request for standalone Gateway evidence.
+pub struct GatewayAttestationRequest {
+    config: CloudApiRequestConfig,
+    signing_algo: SigningAlgo,
+    transport: Option<Box<dyn GatewayAttestationTransport>>,
+}
+
+impl GatewayAttestationRequest {
+    pub fn new(api_key: impl Into<String>) -> Self {
+        Self {
+            config: CloudApiRequestConfig::new(api_key),
+            signing_algo: SigningAlgo::Ed25519,
+            transport: None,
+        }
+    }
+
+    /// Use another absolute Cloud API base URL.
+    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
+        self.config.set_base_url(base_url)?;
+        Ok(self)
+    }
+
+    /// Use an application-owned transport for this request. A TLS-aware
+    /// transport may return the observed peer fingerprint with the evidence.
+    pub fn transport(mut self, transport: impl GatewayAttestationTransport + 'static) -> Self {
+        self.transport = Some(Box::new(transport));
+        self
+    }
+
+    /// Request evidence for this Gateway signing algorithm.
+    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
+        self.signing_algo = signing_algo;
+        self
+    }
+
+    /// Fetch Gateway evidence with a fresh nonce and TLS-fingerprint evidence.
+    pub async fn send(self) -> Result<FetchedGatewayAttestation, SdkError> {
+        fetch_gateway_attestation_with_config(
+            &self.config,
+            self.signing_algo,
+            self.transport.as_deref(),
+        )
+        .await
+    }
+}
+
+/// Build a request for a completion signature.
+pub struct CompletionSignatureRequest {
+    config: CloudApiRequestConfig,
+    completion_id: String,
+    signing_algo: Option<SigningAlgo>,
+}
+
+impl CompletionSignatureRequest {
+    pub fn new(api_key: impl Into<String>, completion_id: impl Into<String>) -> Self {
+        Self {
+            config: CloudApiRequestConfig::new(api_key),
+            completion_id: completion_id.into(),
+            signing_algo: None,
+        }
+    }
+
+    /// Use another absolute Cloud API base URL.
+    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
+        self.config.set_base_url(base_url)?;
+        Ok(self)
+    }
+
+    /// Request a completion signature using this signing algorithm.
+    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
+        self.signing_algo = Some(signing_algo);
+        self
+    }
+
+    /// Look up a completion signature without treating a 2xx unavailable
+    /// envelope as an error. A pending 404 remains a retryable HTTP error.
+    pub async fn lookup(self) -> Result<CompletionSignatureLookup, SdkError> {
+        lookup_completion_signature_with_config(
+            &self.config,
+            &self.completion_id,
+            self.signing_algo,
+        )
+        .await
+    }
+
+    /// Fetch a completion signature or return an API error when Cloud API
+    /// returns a 2xx unavailable envelope. Use [`Self::lookup`] when an
+    /// unavailable signature is an ordinary application state.
+    pub async fn send(self) -> Result<CompletionSignature, SdkError> {
+        match self.lookup().await? {
+            CompletionSignatureLookup::Found(signature) => Ok(signature),
+            CompletionSignatureLookup::Unavailable(unavailable) => {
+                Err(ApiError::CompletionSignatureUnavailable {
+                    provider_error_code: unavailable.error_code,
+                }
+                .into())
+            }
+        }
+    }
+}
+
+/// Fetch NEAR model evidence using the production endpoint. Use
+/// [`ModelAttestationsRequest`] to add request filters or select a different
+/// base URL.
 pub async fn fetch_model_attestations(
-    cloud: &NearAiCloudOptions,
-    input: FetchModelAttestationsInput<'_>,
+    api_key: &str,
+    model: &str,
 ) -> Result<FetchedModelAttestations, SdkError> {
-    validate_model_query(&input)?;
+    ModelAttestationsRequest::new(api_key, model).send().await
+}
+
+/// Fetch model evidence for a `provider_tee` completion signature using the
+/// production endpoint. Use [`ModelAttestationForSignatureRequest`] to select
+/// a different base URL.
+pub async fn fetch_model_attestation_for_signature(
+    api_key: &str,
+    model: &str,
+    signature: &CompletionSignatureReference,
+) -> Result<FetchedModelAttestation, SdkError> {
+    ModelAttestationForSignatureRequest::new(api_key, model, signature)
+        .send()
+        .await
+}
+
+/// Fetch standalone Gateway evidence using the production endpoint and
+/// built-in reqwest transport. Use [`GatewayAttestationRequest`] when the
+/// request needs a different signing algorithm, endpoint, or TLS-aware
+/// transport.
+pub async fn fetch_gateway_attestation(
+    api_key: &str,
+) -> Result<FetchedGatewayAttestation, SdkError> {
+    GatewayAttestationRequest::new(api_key).send().await
+}
+
+/// Look up a completion signature using the production endpoint and built-in
+/// reqwest transport. Use [`CompletionSignatureRequest`] to select a different
+/// base URL or signing algorithm.
+pub async fn lookup_completion_signature(
+    api_key: &str,
+    completion_id: &str,
+) -> Result<CompletionSignatureLookup, SdkError> {
+    CompletionSignatureRequest::new(api_key, completion_id)
+        .lookup()
+        .await
+}
+
+/// Fetch a completion signature using the production endpoint and built-in
+/// reqwest transport. Use [`CompletionSignatureRequest`] to select a different
+/// base URL, signing algorithm, or handle an unavailable signature directly.
+pub async fn fetch_completion_signature(
+    api_key: &str,
+    completion_id: &str,
+) -> Result<CompletionSignature, SdkError> {
+    CompletionSignatureRequest::new(api_key, completion_id)
+        .send()
+        .await
+}
+
+/// Select the exact model evidence matching a `provider_tee` signature. It
+/// performs no quote or response-signature verification itself.
+pub fn find_model_attestation_for_signature<'a>(
+    attestations: &'a [ModelAttestation],
+    signature: &CompletionSignatureReference,
+) -> Result<&'a ModelAttestation, SdkError> {
+    require_provider_signature(signature)?;
+    let mut matches = Vec::new();
+    for attestation in attestations {
+        if signer_matches(&attestation.evidence.signer, &signature.signer) {
+            matches.push(attestation);
+        }
+    }
+    match matches.len() {
+        0 => Err(ApiError::ModelAttestationSignerNotFound.into()),
+        1 => Ok(matches[0]),
+        matching_count => Err(ApiError::AmbiguousModelAttestationSigner {
+            matching_count,
+            total_count: attestations.len(),
+        }
+        .into()),
+    }
+}
+
+async fn fetch_model_attestations_with_config(
+    config: &CloudApiRequestConfig,
+    model: &str,
+    signing_algo: Option<SigningAlgo>,
+    signing_address: Option<&str>,
+) -> Result<FetchedModelAttestations, SdkError> {
     let nonce = generate_nonce();
-    let mut url = cloud.endpoint("attestation/report")?;
+    let mut url = config.endpoint("attestation/report")?;
     {
         let mut query = url.query_pairs_mut();
-        query.append_pair("model", input.model);
+        query.append_pair("model", model);
         query.append_pair("provider", "near");
         query.append_pair("nonce", &nonce);
-        if let Some(signing_algo) = input.signing_algo {
+        if let Some(signing_algo) = signing_algo {
             query.append_pair("signing_algo", &signing_algo.to_string());
         }
-        if let Some(signing_address) = input.signing_address {
+        if let Some(signing_address) = signing_address {
             query.append_pair("signing_address", signing_address);
         }
     }
-    let response = get_cloud_api_json(
-        cloud,
+    let cloud_response = get_cloud_api_response(
+        config,
         url,
         ApiResource::ModelAttestation,
         Some((NO_ALIASING_HEADER, "true")),
     )
     .await?;
-    let response: WireModelAttestationResponse =
-        deserialize_response(response.json, "model_attestations")?;
+    let response: WireModelAttestationResponse = decode_wire_response(
+        &cloud_response.body,
+        ApiResource::ModelAttestation,
+        "model_attestations",
+    )?;
     if response.model_attestations.len() != 1 {
         return Err(ApiError::UnexpectedModelAttestationCount {
             actual_count: response.model_attestations.len(),
@@ -202,8 +405,8 @@ pub async fn fetch_model_attestations(
         .model_attestations
         .into_iter()
         .enumerate()
-        .map(|(index, value)| {
-            parse_model_attestation(value, &format!("model_attestations[{index}]"))
+        .map(|(index, attestation)| {
+            map_model_attestation(attestation, &format!("model_attestations[{index}]"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     for attestation in &attestations {
@@ -219,60 +422,26 @@ pub async fn fetch_model_attestations(
     })
 }
 
-/// Fetch model evidence for a `provider_tee` completion signature, then select
-/// the single candidate whose signer matches the signature signer.
-pub async fn fetch_model_attestation_for_signature(
-    cloud: &NearAiCloudOptions,
-    input: FetchModelAttestationForSignatureInput<'_>,
-) -> Result<FetchedModelAttestation, SdkError> {
-    require_provider_signature(input.signature)?;
-    let fetched = fetch_model_attestations(
-        cloud,
-        FetchModelAttestationsInput {
-            model: input.model,
-            signing_algo: Some(input.signature.signer.signing_algo),
-            signing_address: Some(&input.signature.signer.signing_address),
-        },
-    )
-    .await?;
-    let attestation =
-        find_model_attestation_for_signature(FindModelAttestationForSignatureInput {
-            attestations: &fetched.attestations,
-            signature: input.signature,
-        })?
-        .clone();
-    Ok(FetchedModelAttestation {
-        attestation,
-        nonce: fetched.nonce,
-    })
-}
-
-/// Fetch standalone Gateway evidence. The caller must independently observe
-/// the TLS peer SPKI fingerprint for the attestation request.
-pub async fn fetch_gateway_attestation(
-    cloud: &NearAiCloudOptions,
-    input: FetchGatewayAttestationInput,
+async fn fetch_gateway_attestation_with_config(
+    config: &CloudApiRequestConfig,
+    signing_algo: SigningAlgo,
+    transport: Option<&dyn GatewayAttestationTransport>,
 ) -> Result<FetchedGatewayAttestation, SdkError> {
     let nonce = generate_nonce();
-    let mut url = cloud.endpoint("attestation/report")?;
+    let mut url = config.endpoint("attestation/report")?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("nonce", &nonce);
-        query.append_pair(
-            "signing_algo",
-            &input
-                .signing_algo
-                .unwrap_or(SigningAlgo::Ed25519)
-                .to_string(),
-        );
+        query.append_pair("signing_algo", &signing_algo.to_string());
         query.append_pair("include_tls_fingerprint", "true");
     }
-    let cloud_response =
-        get_cloud_api_json(cloud, url, ApiResource::GatewayAttestation, None).await?;
-    let response: WireGatewayAttestationResponse =
-        deserialize_response(cloud_response.json, "gateway_attestation")?;
-    let attestation =
-        parse_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
+    let cloud_response = get_gateway_attestation_response(config, url, transport).await?;
+    let response: WireGatewayAttestationResponse = decode_wire_response(
+        &cloud_response.body,
+        ApiResource::GatewayAttestation,
+        "gateway_attestation",
+    )?;
+    let attestation = map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
     require_matching_api_nonce(
         &attestation.evidence.nonce,
         &nonce,
@@ -281,93 +450,79 @@ pub async fn fetch_gateway_attestation(
     Ok(FetchedGatewayAttestation {
         attestation,
         nonce,
-        peer_spki_fingerprint: validate_transport_peer_spki_fingerprint(
-            cloud_response.peer_spki_fingerprint,
-        )?,
+        peer_spki_fingerprint: cloud_response.peer_spki_fingerprint,
     })
 }
 
-/// Look up a completion signature without treating a 200 unavailable envelope
-/// as an error. A pending 404 remains a retryable `ApiError::HttpStatus`.
-pub async fn lookup_completion_signature(
-    cloud: &NearAiCloudOptions,
-    input: FetchCompletionSignatureInput<'_>,
+async fn lookup_completion_signature_with_config(
+    config: &CloudApiRequestConfig,
+    completion_id: &str,
+    signing_algo: Option<SigningAlgo>,
 ) -> Result<CompletionSignatureLookup, SdkError> {
-    if input.completion_id.is_empty() {
-        return Err(VerificationError::InvalidInput {
-            field: "completion_id".to_owned(),
-            reason: "expected a non-empty string".to_owned(),
-        }
-        .into());
-    }
-    let mut url = cloud.endpoint("signature")?;
+    let mut url = config.endpoint("signature")?;
     url.path_segments_mut()
         .map_err(|_| VerificationError::InvalidInput {
             field: "base_url".to_owned(),
             reason: "cannot construct signature endpoint".to_owned(),
         })?
-        .push(input.completion_id);
-    if let Some(signing_algo) = input.signing_algo {
+        .push(completion_id);
+    if let Some(signing_algo) = signing_algo {
         url.query_pairs_mut()
             .append_pair("signing_algo", &signing_algo.to_string());
     }
-    let response = get_cloud_api_json(cloud, url, ApiResource::CompletionSignature, None).await?;
-    Ok(parse_completion_signature_lookup(response.json)?)
+    let cloud_response =
+        get_cloud_api_response(config, url, ApiResource::CompletionSignature, None).await?;
+    let response: WireCompletionSignatureResponse = decode_wire_response(
+        &cloud_response.body,
+        ApiResource::CompletionSignature,
+        "signature",
+    )?;
+    map_completion_signature_lookup(response).map_err(Into::into)
 }
 
-/// Fetch a completion signature or return a local `signature.unavailable`
-/// verification error for a 200 unavailable envelope.
-pub async fn fetch_completion_signature(
-    cloud: &NearAiCloudOptions,
-    input: FetchCompletionSignatureInput<'_>,
-) -> Result<CompletionSignature, SdkError> {
-    match lookup_completion_signature(cloud, input).await? {
-        CompletionSignatureLookup::Found(signature) => Ok(signature),
-        CompletionSignatureLookup::Unavailable(unavailable) => {
-            Err(VerificationError::SignatureUnavailable {
-                provider_error_code: unavailable.error_code,
-            }
-            .into())
-        }
-    }
-}
-
-/// Select the exact model evidence matching a `provider_tee` signature. It
-/// performs no quote or response-signature verification itself.
-pub fn find_model_attestation_for_signature<'a>(
-    input: FindModelAttestationForSignatureInput<'a>,
-) -> Result<&'a ModelAttestation, SdkError> {
-    require_provider_signature(input.signature)?;
-    let mut matches = Vec::new();
-    for (index, attestation) in input.attestations.iter().enumerate() {
-        validate_public_signing_identity(
-            &attestation.evidence.signer,
-            &format!("attestations[{index}].signer"),
-        )?;
-        if signer_matches(&attestation.evidence.signer, &input.signature.signer) {
-            matches.push(attestation);
-        }
-    }
-    match matches.len() {
-        0 => Err(ApiError::AttestationSignerMismatch.into()),
-        1 => Ok(matches[0]),
-        matching_count => Err(ApiError::AmbiguousModelAttestationSigner {
-            matching_count,
-            total_count: input.attestations.len(),
-        }
-        .into()),
-    }
-}
-
-async fn get_cloud_api_json(
-    cloud: &NearAiCloudOptions,
+async fn get_cloud_api_response(
+    config: &CloudApiRequestConfig,
     url: Url,
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
-) -> Result<CloudApiJsonResponse, ApiError> {
+) -> Result<CloudApiResponse, SdkError> {
+    let request = build_cloud_api_request(config, url, extra_header)?;
+    let response = get_with_reqwest(&config.client, request)
+        .await
+        .map_err(|reason| ApiError::Transport { resource, reason })?;
+    response.into_cloud_api_response(resource)
+}
+
+async fn get_gateway_attestation_response(
+    config: &CloudApiRequestConfig,
+    url: Url,
+    transport: Option<&dyn GatewayAttestationTransport>,
+) -> Result<CloudApiResponse, SdkError> {
+    let request = build_cloud_api_request(config, url, None)?;
+    let response = match transport {
+        Some(transport) => transport.get(request).await,
+        None => get_with_reqwest(&config.client, request).await,
+    }
+    .map_err(|reason| ApiError::Transport {
+        resource: ApiResource::GatewayAttestation,
+        reason,
+    })?;
+    response.into_cloud_api_response(ApiResource::GatewayAttestation)
+}
+
+fn build_cloud_api_request(
+    config: &CloudApiRequestConfig,
+    url: Url,
+    extra_header: Option<(&str, &str)>,
+) -> Result<GatewayAttestationTransportRequest, VerificationError> {
     let mut headers = HeaderMap::new();
-    let authorization = HeaderValue::from_str(&format!("Bearer {}", cloud.api_key))
-        .expect("NearAiCloudOptions validates API keys as HTTP header values");
+    let authorization =
+        HeaderValue::from_str(&format!("Bearer {}", config.api_key)).map_err(|_| {
+            VerificationError::InvalidInput {
+                field: "api_key".to_owned(),
+                reason: "expected an HTTP header value".to_owned(),
+            }
+        })?;
     headers.insert(AUTHORIZATION, authorization);
     if let Some((name, value)) = extra_header {
         let name = HeaderName::from_bytes(name.as_bytes())
@@ -376,60 +531,54 @@ async fn get_cloud_api_json(
             HeaderValue::from_str(value).expect("the SDK only supplies static valid header values");
         headers.insert(name, value);
     }
-    let response = cloud
-        .transport
-        .get(NearAiCloudRequest { url, headers })
+    Ok(GatewayAttestationTransportRequest { url, headers })
+}
+
+async fn get_with_reqwest(
+    client: &Client,
+    request: GatewayAttestationTransportRequest,
+) -> Result<GatewayAttestationTransportResponse, ApiTransportReason> {
+    let response = client
+        .get(request.url)
+        .headers(request.headers)
+        .send()
         .await
-        .map_err(|reason| ApiError::Transport { resource, reason })?;
-    if !(200..300).contains(&response.status) {
-        return Err(ApiError::HttpStatus {
-            resource,
-            status: response.status,
-        });
-    }
-    let json =
-        serde_json::from_str(&response.body).map_err(|_| ApiError::InvalidJson { resource })?;
-    Ok(CloudApiJsonResponse {
-        json,
-        peer_spki_fingerprint: response.peer_spki_fingerprint,
+        .map_err(|_| ApiTransportReason::Request)?;
+    let status = response.status().as_u16();
+    let body = response
+        .text()
+        .await
+        .map_err(|_| ApiTransportReason::ResponseBody)?;
+    Ok(GatewayAttestationTransportResponse {
+        status,
+        body,
+        peer_spki_fingerprint: None,
     })
 }
 
-struct CloudApiJsonResponse {
-    json: Value,
+impl GatewayAttestationTransportResponse {
+    fn into_cloud_api_response(self, resource: ApiResource) -> Result<CloudApiResponse, SdkError> {
+        if !(200..300).contains(&self.status) {
+            return Err(ApiError::HttpStatus {
+                resource,
+                status: self.status,
+            }
+            .into());
+        }
+        Ok(CloudApiResponse {
+            body: self.body,
+            peer_spki_fingerprint: self.peer_spki_fingerprint,
+        })
+    }
+}
+
+struct CloudApiResponse {
+    body: String,
     peer_spki_fingerprint: Option<String>,
 }
 
-fn validate_transport_peer_spki_fingerprint(
-    fingerprint: Option<String>,
-) -> Result<Option<String>, ApiError> {
-    fingerprint
-        .map(|fingerprint| {
-            require_hex_length(&fingerprint, 32).map_err(|_| ApiError::InvalidResponse {
-                path: "gateway_transport.peer_spki_fingerprint".to_owned(),
-                expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
-            })?;
-            normalize_hex(&fingerprint).map_err(|_| ApiError::InvalidResponse {
-                path: "gateway_transport.peer_spki_fingerprint".to_owned(),
-                expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
-            })
-        })
-        .transpose()
-}
-
-fn validate_base_url(value: &str) -> Result<Url, VerificationError> {
-    if value.contains('?') || value.contains('#') {
-        return Err(invalid_base_url());
-    }
+fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
     let mut url = Url::parse(value).map_err(|_| invalid_base_url())?;
-    if url.scheme() != "https"
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
-        return Err(invalid_base_url());
-    }
     if !url.path().ends_with('/') {
         let path = format!("{}/", url.path());
         url.set_path(&path);
@@ -440,41 +589,8 @@ fn validate_base_url(value: &str) -> Result<Url, VerificationError> {
 fn invalid_base_url() -> VerificationError {
     VerificationError::InvalidInput {
         field: "base_url".to_owned(),
-        reason: "expected an absolute HTTPS URL without credentials, query, or fragment".to_owned(),
+        reason: "expected an absolute URL".to_owned(),
     }
-}
-
-fn validate_model_query(input: &FetchModelAttestationsInput<'_>) -> Result<(), VerificationError> {
-    if input.model.is_empty() {
-        return Err(VerificationError::InvalidInput {
-            field: "model".to_owned(),
-            reason: "expected a non-empty string".to_owned(),
-        });
-    }
-    if let Some(signing_address) = input.signing_address {
-        let bytes = require_hex_length_any(signing_address).map_err(|_| {
-            VerificationError::InvalidInput {
-                field: "signing_address".to_owned(),
-                reason: "expected a hexadecimal signing address".to_owned(),
-            }
-        })?;
-        let valid = match input.signing_algo {
-            Some(SigningAlgo::Ecdsa) => bytes.len() == 20,
-            Some(SigningAlgo::Ed25519) => bytes.len() == 32,
-            None => bytes.len() == 20 || bytes.len() == 32,
-        };
-        if !valid {
-            return Err(VerificationError::InvalidInput {
-                field: "signing_address".to_owned(),
-                reason: "address length does not match signing algorithm".to_owned(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn require_hex_length_any(value: &str) -> Result<Vec<u8>, ()> {
-    crate::util::decode_hex(value)
 }
 
 fn require_provider_signature(
@@ -486,31 +602,13 @@ fn require_provider_signature(
             actual: signature.kind,
         });
     }
-    validate_public_signing_identity(&signature.signer, "signature.signer")?;
-    Ok(())
-}
-
-fn validate_public_signing_identity(
-    signer: &SigningIdentity,
-    field: &str,
-) -> Result<(), VerificationError> {
-    let expected_length = match signer.signing_algo {
-        SigningAlgo::Ecdsa => 20,
-        SigningAlgo::Ed25519 => 32,
-    };
-    require_hex_length(&signer.signing_address, expected_length).map_err(|_| {
-        VerificationError::InvalidInput {
-            field: format!("{field}.signing_address"),
-            reason: format!("expected a {expected_length}-byte hexadecimal signing address"),
-        }
-    })?;
     Ok(())
 }
 
 fn signer_matches(left: &SigningIdentity, right: &SigningIdentity) -> bool {
     let (Ok(left_address), Ok(right_address)) = (
-        normalize_hex(&left.signing_address),
-        normalize_hex(&right.signing_address),
+        decode_hex(&left.signing_address),
+        decode_hex(&right.signing_address),
     ) else {
         return false;
     };
@@ -522,116 +620,114 @@ fn require_matching_api_nonce(
     requested_nonce: &str,
     resource: ApiResource,
 ) -> Result<(), ApiError> {
-    if normalize_hex(reported_nonce).ok().as_deref() == Some(requested_nonce) {
+    let matches = matches!(
+        (
+            decode_hex(reported_nonce),
+            decode_hex(requested_nonce),
+        ),
+        (Ok(reported), Ok(requested)) if reported == requested
+    );
+    if matches {
         return Ok(());
     }
     Err(ApiError::NonceMismatch { resource })
 }
 
-fn deserialize_response<T: for<'de> Deserialize<'de>>(
-    value: Value,
-    path: &str,
-) -> Result<T, ApiError> {
-    serde_path_to_error::deserialize(value).map_err(|error| {
-        let nested_path = error.path().to_string();
-        let path = if nested_path.is_empty() || nested_path == "." || nested_path == path {
-            path.to_owned()
-        } else {
-            format!("{path}.{nested_path}")
-        };
+/// Decode one complete endpoint response into its wire type. This is the only
+/// JSON shape-decoding step between a Cloud API response body and its domain
+/// mapping, and attaches a stable root path to shape errors.
+fn decode_wire_response<T>(
+    body: &str,
+    resource: ApiResource,
+    root_path: &str,
+) -> Result<T, ApiError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let mut deserializer = serde_json::Deserializer::from_str(body);
+    let response = serde_path_to_error::deserialize(&mut deserializer).map_err(|error| {
+        if error.inner().is_syntax() || error.inner().is_eof() {
+            return ApiError::InvalidJson { resource };
+        }
         ApiError::InvalidResponse {
-            path,
+            path: response_error_path(root_path, &error.path().to_string()),
             expected: "the documented Cloud API response shape".to_owned(),
         }
-    })
+    })?;
+    deserializer
+        .end()
+        .map_err(|_| ApiError::InvalidJson { resource })?;
+    Ok(response)
 }
 
-fn parse_model_attestation(value: Value, path: &str) -> Result<ModelAttestation, ApiError> {
-    validate_reported_quote_data_field(&value, path, false)?;
-    let value: WireModelAttestation = deserialize_response(value, path)?;
+fn response_error_path(root_path: &str, nested_path: &str) -> String {
+    match nested_path {
+        "" | "." => root_path.to_owned(),
+        _ if root_path.is_empty() || nested_path == root_path => nested_path.to_owned(),
+        _ if nested_path.starts_with(root_path)
+            && matches!(
+                nested_path.as_bytes().get(root_path.len()),
+                Some(b'.' | b'[')
+            ) =>
+        {
+            nested_path.to_owned()
+        }
+        _ if nested_path.starts_with('[') => format!("{root_path}{nested_path}"),
+        _ => format!("{root_path}.{nested_path}"),
+    }
+}
+
+fn map_model_attestation(
+    value: WireModelAttestation,
+    path: &str,
+) -> Result<ModelAttestation, ApiError> {
+    let (evidence, reported_quote_data) = map_evidence(value.attestation, path)?;
     Ok(ModelAttestation {
-        evidence: parse_evidence(value.attestation, path)?,
+        evidence,
+        reported_quote_data,
         nvidia_payload: value.nvidia_payload,
     })
 }
 
-fn parse_gateway_attestation(value: Value, path: &str) -> Result<GatewayAttestation, ApiError> {
-    validate_reported_quote_data_field(&value, path, true)?;
-    let value: WireAttestation = deserialize_response(value, path)?;
-    let evidence = parse_evidence(value, path)?;
-    let reported_quote_data =
-        evidence
-            .reported_quote_data
-            .clone()
-            .ok_or_else(|| ApiError::InvalidResponse {
-                path: format!("{path}.report_data"),
-                expected: "a string".to_owned(),
-            })?;
+fn map_gateway_attestation(
+    value: WireAttestation,
+    path: &str,
+) -> Result<GatewayAttestation, ApiError> {
+    let (evidence, reported_quote_data) = map_evidence(value, path)?;
+    let reported_quote_data = reported_quote_data.ok_or_else(|| ApiError::InvalidResponse {
+        path: format!("{path}.report_data"),
+        expected: "a string".to_owned(),
+    })?;
     Ok(GatewayAttestation {
         evidence,
         reported_quote_data,
     })
 }
 
-fn parse_evidence(value: WireAttestation, path: &str) -> Result<AttestationEvidence, ApiError> {
+fn map_evidence(
+    value: WireAttestation,
+    path: &str,
+) -> Result<(AttestationEvidence, Option<String>), ApiError> {
     validate_api_nonce(&value.request_nonce, &format!("{path}.request_nonce"))?;
     validate_api_signing_identity(
         value.signing_algo,
         &value.signing_address,
         &format!("{path}.signing_address"),
     )?;
-    let app_compose = parse_app_compose(value.info.tcb_info, &format!("{path}.info.tcb_info"))?;
-    Ok(AttestationEvidence {
-        nonce: value.request_nonce,
-        signer: SigningIdentity {
-            signing_algo: value.signing_algo,
-            signing_address: value.signing_address,
+    Ok((
+        AttestationEvidence {
+            nonce: value.request_nonce,
+            signer: SigningIdentity {
+                signing_algo: value.signing_algo,
+                signing_address: value.signing_address,
+            },
+            intel_quote: value.intel_quote,
+            event_log: value.event_log,
+            app_compose: value.info.tcb_info.app_compose,
+            declared_spki_fingerprint: value.tls_cert_fingerprint,
         },
-        intel_quote: value.intel_quote,
-        event_log: value.event_log,
-        app_compose,
-        declared_spki_fingerprint: value.tls_cert_fingerprint,
-        reported_quote_data: value.report_data,
-    })
-}
-
-fn validate_reported_quote_data_field(
-    value: &Value,
-    path: &str,
-    required: bool,
-) -> Result<(), ApiError> {
-    let Some(object) = value.as_object() else {
-        return Ok(());
-    };
-    match object.get("report_data") {
-        Some(Value::String(_)) => Ok(()),
-        None if !required => Ok(()),
-        _ => Err(ApiError::InvalidResponse {
-            path: format!("{path}.report_data"),
-            expected: "a string".to_owned(),
-        }),
-    }
-}
-
-fn parse_app_compose(value: Value, path: &str) -> Result<String, ApiError> {
-    let value = match value {
-        Value::String(value) => {
-            serde_json::from_str(&value).map_err(|_| ApiError::InvalidResponse {
-                path: path.to_owned(),
-                expected: "a JSON object with app_compose".to_owned(),
-            })?
-        }
-        value => value,
-    };
-    value
-        .as_object()
-        .and_then(|value| value.get("app_compose"))
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| ApiError::InvalidResponse {
-            path: path.to_owned(),
-            expected: "an object with string app_compose".to_owned(),
-        })
+        value.report_data,
+    ))
 }
 
 fn validate_api_nonce(value: &str, path: &str) -> Result<(), ApiError> {
@@ -658,29 +754,13 @@ fn validate_api_signing_identity(
     Ok(())
 }
 
-fn parse_completion_signature_lookup(value: Value) -> Result<CompletionSignatureLookup, ApiError> {
-    if let Some(object) = value.as_object() {
-        let is_unavailable = object.get("error_code").and_then(Value::as_str).is_some()
-            && object.get("message").and_then(Value::as_str).is_some()
-            && [
-                "text",
-                "signature",
-                "signing_address",
-                "signing_algo",
-                "signature_kind",
-            ]
-            .iter()
-            .all(|field| !object.contains_key(*field));
-        if is_unavailable {
-            return Ok(CompletionSignatureLookup::Unavailable(
-                SignatureUnavailable {
-                    error_code: object["error_code"].as_str().unwrap().to_owned(),
-                    message: object["message"].as_str().unwrap().to_owned(),
-                },
-            ));
-        }
+fn map_completion_signature_lookup(
+    value: WireCompletionSignatureResponse,
+) -> Result<CompletionSignatureLookup, ApiError> {
+    if let Some(unavailable) = value.unavailable() {
+        return Ok(CompletionSignatureLookup::Unavailable(unavailable));
     }
-    let signature: WireCompletionSignature = deserialize_response(value, "signature")?;
+    let signature = value.require_signature()?;
     validate_api_signing_identity(
         signature.signing_algo,
         &signature.signing_address,
@@ -699,19 +779,18 @@ fn parse_completion_signature_lookup(value: Value) -> Result<CompletionSignature
 
 #[derive(Deserialize)]
 struct WireModelAttestationResponse {
-    model_attestations: Vec<Value>,
+    model_attestations: Vec<WireModelAttestation>,
 }
 
 #[derive(Deserialize)]
 struct WireGatewayAttestationResponse {
-    gateway_attestation: Value,
+    gateway_attestation: WireAttestation,
 }
 
 #[derive(Deserialize)]
 struct WireModelAttestation {
     #[serde(flatten)]
     attestation: WireAttestation,
-    #[serde(default)]
     nvidia_payload: Option<String>,
 }
 
@@ -722,19 +801,104 @@ struct WireAttestation {
     signing_address: String,
     intel_quote: String,
     event_log: AttestationEventLog,
-    #[serde(default)]
     tls_cert_fingerprint: Option<String>,
-    #[serde(default)]
     report_data: Option<String>,
     info: WireInfo,
 }
 
 #[derive(Deserialize)]
 struct WireInfo {
-    tcb_info: Value,
+    tcb_info: WireTcbInfo,
+}
+
+struct WireTcbInfo {
+    app_compose: String,
 }
 
 #[derive(Deserialize)]
+struct WireTcbInfoObject {
+    app_compose: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum WireTcbInfoSource {
+    Object(WireTcbInfoObject),
+    Json(String),
+}
+
+impl<'de> Deserialize<'de> for WireTcbInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let source = WireTcbInfoSource::deserialize(deserializer)?;
+        let value = match source {
+            WireTcbInfoSource::Object(value) => value,
+            WireTcbInfoSource::Json(value) => {
+                serde_json::from_str(&value).map_err(D::Error::custom)?
+            }
+        };
+        Ok(Self {
+            app_compose: value.app_compose,
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct WireCompletionSignatureResponse {
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    signature: Option<String>,
+    #[serde(default)]
+    signing_address: Option<String>,
+    #[serde(default)]
+    signing_algo: Option<SigningAlgo>,
+    #[serde(default)]
+    signature_kind: Option<CompletionSignatureKind>,
+    #[serde(default)]
+    error_code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+impl WireCompletionSignatureResponse {
+    fn unavailable(&self) -> Option<SignatureUnavailable> {
+        let (Some(error_code), Some(message)) = (&self.error_code, &self.message) else {
+            return None;
+        };
+        if self.text.is_none()
+            && self.signature.is_none()
+            && self.signing_address.is_none()
+            && self.signing_algo.is_none()
+            && self.signature_kind.is_none()
+        {
+            return Some(SignatureUnavailable {
+                error_code: error_code.clone(),
+                message: message.clone(),
+            });
+        }
+        None
+    }
+
+    fn require_signature(self) -> Result<WireCompletionSignature, ApiError> {
+        Ok(WireCompletionSignature {
+            text: require_completion_signature_field(self.text, "text")?,
+            signature: require_completion_signature_field(self.signature, "signature")?,
+            signing_address: require_completion_signature_field(
+                self.signing_address,
+                "signing_address",
+            )?,
+            signing_algo: require_completion_signature_field(self.signing_algo, "signing_algo")?,
+            signature_kind: require_completion_signature_field(
+                self.signature_kind,
+                "signature_kind",
+            )?,
+        })
+    }
+}
+
 struct WireCompletionSignature {
     text: String,
     signature: String,
@@ -743,180 +907,243 @@ struct WireCompletionSignature {
     signature_kind: CompletionSignatureKind,
 }
 
+fn require_completion_signature_field<T>(value: Option<T>, field: &str) -> Result<T, ApiError> {
+    value.ok_or_else(|| ApiError::InvalidResponse {
+        path: format!("signature.{field}"),
+        expected: "the documented Cloud API response shape".to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use serde_json::json;
-    use wiremock::{
-        matchers::{header, method, path, query_param},
-        Mock, MockServer, Request, Respond, ResponseTemplate,
-    };
 
-    #[derive(Clone)]
-    struct ModelAttestationResponder;
-
-    impl Respond for ModelAttestationResponder {
-        fn respond(&self, request: &Request) -> ResponseTemplate {
-            let nonce = request
-                .url
-                .query_pairs()
-                .find(|(key, _)| key == "nonce")
-                .map(|(_, value)| value.into_owned())
-                .expect("request contains a nonce");
-            ResponseTemplate::new(200).set_body_json(json!({
-                "model_attestations": [{
-                    "request_nonce": nonce,
-                    "signing_algo": "ecdsa",
-                    "signing_address": "22".repeat(20),
-                    "intel_quote": "aa",
-                    "event_log": [],
-                    "info": {"tcb_info": {"app_compose": "{}"}},
-                    "nvidia_payload": null,
-                }]
-            }))
-        }
-    }
-
-    #[derive(Clone)]
-    struct GatewayAttestationResponder;
-
-    impl Respond for GatewayAttestationResponder {
-        fn respond(&self, request: &Request) -> ResponseTemplate {
-            let nonce = request
-                .url
-                .query_pairs()
-                .find(|(key, _)| key == "nonce")
-                .map(|(_, value)| value.into_owned())
-                .expect("request contains a nonce");
-            ResponseTemplate::new(200).set_body_json(json!({
-                "gateway_attestation": {
-                    "request_nonce": nonce,
-                    "signing_algo": "ed25519",
-                    "signing_address": "22".repeat(32),
-                    "intel_quote": "aa",
-                    "event_log": [],
-                    "tls_cert_fingerprint": "33".repeat(32),
-                    "report_data": "00".repeat(64),
-                    "info": {"tcb_info": {"app_compose": "{}"}},
-                }
-            }))
-        }
-    }
-
-    struct TlsAwareGatewayTransport;
-
-    #[async_trait]
-    impl NearAiCloudTransport for TlsAwareGatewayTransport {
-        async fn get(
-            &self,
-            request: NearAiCloudRequest,
-        ) -> Result<NearAiCloudResponse, ApiTransportReason> {
-            assert_eq!(request.url.path(), "/v1/attestation/report");
-            assert_eq!(
-                request
-                    .headers
-                    .get(AUTHORIZATION)
-                    .and_then(|value| value.to_str().ok()),
-                Some("Bearer test-key")
-            );
-            let query = request
-                .url
-                .query_pairs()
-                .collect::<std::collections::HashMap<_, _>>();
-            assert_eq!(
-                query.get("signing_algo").map(|value| value.as_ref()),
-                Some("ed25519")
-            );
-            assert_eq!(
-                query
-                    .get("include_tls_fingerprint")
-                    .map(|value| value.as_ref()),
-                Some("true")
-            );
-            let nonce = query.get("nonce").expect("request contains a nonce");
-            Ok(NearAiCloudResponse {
-                status: 200,
-                body: json!({
-                    "gateway_attestation": {
-                        "request_nonce": nonce,
-                        "signing_algo": "ed25519",
-                        "signing_address": "22".repeat(32),
-                        "intel_quote": "aa",
-                        "event_log": [],
-                        "tls_cert_fingerprint": "33".repeat(32),
-                        "report_data": "00".repeat(64),
-                        "info": {"tcb_info": {"app_compose": "{}"}},
-                    }
-                })
-                .to_string(),
-                peer_spki_fingerprint: Some("33".repeat(32)),
-            })
-        }
-    }
-
-    fn test_cloud(server: &MockServer) -> NearAiCloudOptions {
-        NearAiCloudOptions {
-            api_key: "test-key".to_owned(),
-            base_url: Url::parse(&format!("{}/v1/", server.uri())).unwrap(),
-            transport: std::sync::Arc::new(ReqwestNearAiCloudTransport {
-                client: Client::builder().no_proxy().build().unwrap(),
-            }),
-        }
-    }
-
-    fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
-        ModelAttestation {
-            evidence: AttestationEvidence {
-                nonce: "11".repeat(32),
-                signer,
-                intel_quote: "aa".to_owned(),
-                event_log: AttestationEventLog::Entries(vec![]),
-                app_compose: "{}".to_owned(),
-                declared_spki_fingerprint: None,
-                reported_quote_data: None,
-            },
-            nvidia_payload: None,
-        }
+    fn decode_test_wire<T>(
+        value: serde_json::Value,
+        resource: ApiResource,
+        root_path: &str,
+    ) -> Result<T, ApiError>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        decode_wire_response(&value.to_string(), resource, root_path)
     }
 
     #[test]
-    fn rejects_null_model_report_data_at_the_response_boundary() {
-        let result = parse_model_attestation(
+    fn normalizes_optional_model_wire_fields_to_none() {
+        for value in [
             json!({
                 "request_nonce": "11".repeat(32),
                 "signing_algo": "ecdsa",
                 "signing_address": "22".repeat(20),
                 "intel_quote": "aa",
                 "event_log": [],
-                "report_data": null,
                 "info": {"tcb_info": {"app_compose": "{}"}},
             }),
-            "model_attestations[0]",
-        );
-        let error = match result {
-            Ok(_) => panic!("a null report_data must be rejected"),
-            Err(error) => error,
-        };
-
-        assert!(
-            matches!(
-                error,
-                ApiError::InvalidResponse { ref path, .. }
-                    if path == "model_attestations[0].report_data"
-            ),
-            "{error:?}"
-        );
+            json!({
+                "request_nonce": "11".repeat(32),
+                "signing_algo": "ecdsa",
+                "signing_address": "22".repeat(20),
+                "intel_quote": "aa",
+                "event_log": [],
+                "tls_cert_fingerprint": null,
+                "report_data": null,
+                "nvidia_payload": null,
+                "info": {"tcb_info": {"app_compose": "{}"}},
+            }),
+        ] {
+            let response: WireModelAttestationResponse = decode_test_wire(
+                json!({"model_attestations": [value]}),
+                ApiResource::ModelAttestation,
+                "model_attestations",
+            )
+            .unwrap();
+            let attestation = map_model_attestation(
+                response
+                    .model_attestations
+                    .into_iter()
+                    .next()
+                    .expect("one model attestation"),
+                "model_attestations[0]",
+            )
+            .unwrap();
+            assert_eq!(attestation.evidence.declared_spki_fingerprint, None);
+            assert_eq!(attestation.reported_quote_data, None);
+            assert_eq!(attestation.nvidia_payload, None);
+        }
     }
 
     #[test]
     fn gateway_response_requires_report_data() {
-        let error = parse_gateway_attestation(json!({}), "gateway_attestation").unwrap_err();
+        let response: WireGatewayAttestationResponse = decode_test_wire(
+            json!({
+                "gateway_attestation": {
+                    "request_nonce": "11".repeat(32),
+                    "signing_algo": "ecdsa",
+                    "signing_address": "22".repeat(20),
+                    "intel_quote": "aa",
+                    "event_log": [],
+                    "info": {"tcb_info": {"app_compose": "{}"}},
+                },
+            }),
+            ApiResource::GatewayAttestation,
+            "gateway_attestation",
+        )
+        .unwrap();
+        let error = map_gateway_attestation(response.gateway_attestation, "gateway_attestation")
+            .unwrap_err();
 
         assert!(matches!(
             error,
             ApiError::InvalidResponse { ref path, .. }
                 if path == "gateway_attestation.report_data"
+        ));
+    }
+
+    #[test]
+    fn typed_model_response_keeps_indexed_decode_paths() {
+        let result = decode_test_wire::<WireModelAttestationResponse>(
+            json!({
+                "model_attestations": [{
+                    "request_nonce": 1,
+                    "signing_algo": "ecdsa",
+                    "signing_address": "22".repeat(20),
+                    "intel_quote": "aa",
+                    "event_log": [],
+                    "info": {"tcb_info": {"app_compose": "{}"}},
+                }],
+            }),
+            ApiResource::ModelAttestation,
+            "model_attestations",
+        );
+        let error = match result {
+            Ok(_) => panic!("a non-string nonce must be rejected"),
+            Err(error) => error,
+        };
+
+        let ApiError::InvalidResponse { path, .. } = error else {
+            panic!("a non-string nonce must be an invalid response");
+        };
+        assert_eq!(path, "model_attestations[0]");
+    }
+
+    #[test]
+    fn wire_decoder_keeps_malformed_json_as_an_api_json_error() {
+        let result = decode_wire_response::<WireModelAttestationResponse>(
+            "{",
+            ApiResource::ModelAttestation,
+            "model_attestations",
+        );
+
+        assert!(matches!(
+            result,
+            Err(ApiError::InvalidJson {
+                resource: ApiResource::ModelAttestation
+            })
+        ));
+    }
+
+    #[test]
+    fn typed_model_records_preserve_wire_nonce_and_signer_validation() {
+        for (request_nonce, signing_address, expected_path) in [
+            ("aa".to_owned(), "22".repeat(20), "request_nonce"),
+            ("11".repeat(32), "aa".to_owned(), "signing_address"),
+        ] {
+            let response: WireModelAttestationResponse = decode_test_wire(
+                json!({
+                    "model_attestations": [{
+                        "request_nonce": request_nonce,
+                        "signing_algo": "ecdsa",
+                        "signing_address": signing_address,
+                        "intel_quote": "aa",
+                        "event_log": [],
+                        "info": {"tcb_info": {"app_compose": "{}"}},
+                    }],
+                }),
+                ApiResource::ModelAttestation,
+                "model_attestations",
+            )
+            .unwrap();
+
+            let error = map_model_attestation(
+                response
+                    .model_attestations
+                    .into_iter()
+                    .next()
+                    .expect("one model attestation"),
+                "model_attestations[0]",
+            )
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                ApiError::InvalidResponse { ref path, .. }
+                    if path == &format!("model_attestations[0].{expected_path}")
+            ));
+        }
+    }
+
+    #[test]
+    fn typed_model_records_accept_json_string_tcb_info() {
+        let response: WireModelAttestationResponse = decode_test_wire(
+            json!({
+                "model_attestations": [{
+                    "request_nonce": "11".repeat(32),
+                    "signing_algo": "ecdsa",
+                    "signing_address": "22".repeat(20),
+                    "intel_quote": "aa",
+                    "event_log": [],
+                    "info": {"tcb_info": "{\"app_compose\":\"{}\"}"},
+                }],
+            }),
+            ApiResource::ModelAttestation,
+            "model_attestations",
+        )
+        .unwrap();
+        let attestation = map_model_attestation(
+            response
+                .model_attestations
+                .into_iter()
+                .next()
+                .expect("one model attestation"),
+            "model_attestations[0]",
+        )
+        .unwrap();
+
+        assert_eq!(attestation.evidence.app_compose, "{}");
+    }
+
+    #[test]
+    fn accepts_an_equivalent_nonce_encoding() {
+        require_matching_api_nonce(
+            &format!("0X{}", "AB".repeat(32)),
+            &"ab".repeat(32),
+            ApiResource::ModelAttestation,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn typed_model_records_reject_invalid_json_string_tcb_info() {
+        let result = decode_test_wire::<WireModelAttestationResponse>(
+            json!({
+                "model_attestations": [{
+                    "request_nonce": "11".repeat(32),
+                    "signing_algo": "ecdsa",
+                    "signing_address": "22".repeat(20),
+                    "intel_quote": "aa",
+                    "event_log": [],
+                    "info": {"tcb_info": "not JSON"},
+                }],
+            }),
+            ApiResource::ModelAttestation,
+            "model_attestations",
+        );
+
+        assert!(matches!(
+            result,
+            Err(ApiError::InvalidResponse { ref path, .. })
+                if path.starts_with("model_attestations[0]")
         ));
     }
 
@@ -937,287 +1164,31 @@ mod tests {
                 "signature_kind": "unknown",
             }),
         ] {
-            let error = parse_completion_signature_lookup(response).unwrap_err();
+            let error = decode_test_wire::<WireCompletionSignatureResponse>(
+                response,
+                ApiResource::CompletionSignature,
+                "signature",
+            )
+            .and_then(map_completion_signature_lookup)
+            .unwrap_err();
             assert!(matches!(error, ApiError::InvalidResponse { .. }));
         }
     }
 
     #[test]
-    fn finder_rejects_malformed_signers_before_matching() {
-        let malformed_signature = CompletionSignatureReference {
-            kind: CompletionSignatureKind::ProviderTee,
-            signer: SigningIdentity {
-                signing_algo: SigningAlgo::Ecdsa,
-                signing_address: "00".to_owned(),
-            },
-        };
-        let error = find_model_attestation_for_signature(FindModelAttestationForSignatureInput {
-            attestations: &[],
-            signature: &malformed_signature,
-        })
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            SdkError::Verification(VerificationError::InvalidInput { ref field, .. })
-                if field == "signature.signer.signing_address"
-        ));
-
-        let valid_signature = CompletionSignatureReference {
-            kind: CompletionSignatureKind::ProviderTee,
-            signer: SigningIdentity {
-                signing_algo: SigningAlgo::Ecdsa,
-                signing_address: "22".repeat(20),
-            },
-        };
-        let malformed_candidate = model_attestation_for_signer(SigningIdentity {
-            signing_algo: SigningAlgo::Ecdsa,
-            signing_address: "00".to_owned(),
-        });
-        let error = find_model_attestation_for_signature(FindModelAttestationForSignatureInput {
-            attestations: &[malformed_candidate],
-            signature: &valid_signature,
-        })
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            SdkError::Verification(VerificationError::InvalidInput { ref field, .. })
-                if field == "attestations[0].signer.signing_address"
-        ));
-    }
-
-    #[test]
-    fn finder_requires_one_matching_attestation() {
-        let signature = CompletionSignatureReference {
-            kind: CompletionSignatureKind::ProviderTee,
-            signer: SigningIdentity {
-                signing_algo: SigningAlgo::Ecdsa,
-                signing_address: "22".repeat(20),
-            },
-        };
-        let candidate = model_attestation_for_signer(signature.signer.clone());
-        let candidates = vec![candidate.clone(), candidate];
-
-        let error = find_model_attestation_for_signature(FindModelAttestationForSignatureInput {
-            attestations: &candidates,
-            signature: &signature,
-        })
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            SdkError::Api(ApiError::AmbiguousModelAttestationSigner {
-                matching_count: 2,
-                total_count: 2,
-            })
-        ));
-    }
-
-    #[test]
-    fn cloud_options_reject_invalid_local_input() {
-        let result = NearAiCloudOptions::with_base_url("test-key", "http://cloud.example/v1");
-
-        assert!(matches!(
-            result,
-            Err(VerificationError::InvalidInput { ref field, .. }) if field == "base_url"
-        ));
-    }
-
-    #[tokio::test]
-    async fn fetch_model_attestations_rejects_an_empty_candidate_list() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/attestation/report"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "model_attestations": [],
-            })))
-            .mount(&server)
-            .await;
-
-        let error = fetch_model_attestations(
-            &test_cloud(&server),
-            FetchModelAttestationsInput {
-                model: "glm-5.2",
-                signing_algo: None,
-                signing_address: None,
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            SdkError::Api(ApiError::UnexpectedModelAttestationCount { actual_count: 0 })
-        ));
-    }
-
-    #[tokio::test]
-    async fn fetch_model_attestations_returns_a_fresh_nonce_and_normalized_evidence() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/attestation/report"))
-            .and(query_param("model", "glm-5.2"))
-            .and(query_param("provider", "near"))
-            .and(header(NO_ALIASING_HEADER, "true"))
-            .respond_with(ModelAttestationResponder)
-            .mount(&server)
-            .await;
-
-        let fetched = fetch_model_attestations(
-            &test_cloud(&server),
-            FetchModelAttestationsInput {
-                model: "glm-5.2",
-                signing_algo: None,
-                signing_address: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(fetched.attestations.len(), 1);
-        assert_eq!(fetched.attestations[0].evidence.nonce, fetched.nonce);
-        assert_eq!(fetched.attestations[0].nvidia_payload, None);
-    }
-
-    #[tokio::test]
-    async fn fetch_model_attestation_for_signature_uses_the_signature_signer() {
-        let server = MockServer::start().await;
-        let signing_address = "22".repeat(20);
-        Mock::given(method("GET"))
-            .and(path("/v1/attestation/report"))
-            .and(query_param("model", "glm-5.2"))
-            .and(query_param("signing_algo", "ecdsa"))
-            .and(query_param("signing_address", signing_address.clone()))
-            .respond_with(ModelAttestationResponder)
-            .mount(&server)
-            .await;
-        let signature = CompletionSignatureReference {
-            kind: CompletionSignatureKind::ProviderTee,
-            signer: SigningIdentity {
-                signing_algo: SigningAlgo::Ecdsa,
-                signing_address,
-            },
-        };
-
-        let fetched = fetch_model_attestation_for_signature(
-            &test_cloud(&server),
-            FetchModelAttestationForSignatureInput {
-                model: "glm-5.2",
-                signature: &signature,
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(fetched.attestation.evidence.signer, signature.signer);
-    }
-
-    #[tokio::test]
-    async fn fetch_gateway_attestation_requests_tls_bound_evidence() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/attestation/report"))
-            .and(query_param("include_tls_fingerprint", "true"))
-            .and(query_param("signing_algo", "ed25519"))
-            .respond_with(GatewayAttestationResponder)
-            .mount(&server)
-            .await;
-
-        let fetched = fetch_gateway_attestation(
-            &test_cloud(&server),
-            FetchGatewayAttestationInput::default(),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(fetched.attestation.evidence.nonce, fetched.nonce);
-        assert_eq!(
-            fetched.attestation.evidence.declared_spki_fingerprint,
-            Some("33".repeat(32))
-        );
-        assert_eq!(fetched.peer_spki_fingerprint, None);
-    }
-
-    #[tokio::test]
-    async fn fetch_gateway_attestation_returns_the_peer_from_a_custom_transport() {
-        let cloud = NearAiCloudOptions::with_transport(
-            "test-key",
-            "https://cloud.example/v1",
-            TlsAwareGatewayTransport,
-        )
-        .unwrap();
-
-        let fetched = fetch_gateway_attestation(&cloud, FetchGatewayAttestationInput::default())
-            .await
-            .unwrap();
-
-        assert_eq!(fetched.peer_spki_fingerprint, Some("33".repeat(32)));
-    }
-
-    #[tokio::test]
-    async fn lookup_completion_signature_preserves_kind_and_unavailable_response() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/v1/signature/found"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "text": "signed",
-                "signature": "aa",
-                "signing_address": "22".repeat(32),
-                "signing_algo": "ed25519",
-                "signature_kind": "gateway",
-            })))
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/v1/signature/pending"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+    fn signature_fields_prevent_an_error_envelope_from_being_treated_as_unavailable() {
+        let response: WireCompletionSignatureResponse = decode_test_wire(
+            json!({
                 "error_code": "pending",
                 "message": "not ready",
-            })))
-            .mount(&server)
-            .await;
-
-        let cloud = test_cloud(&server);
-        let found = lookup_completion_signature(
-            &cloud,
-            FetchCompletionSignatureInput {
-                completion_id: "found",
-                signing_algo: None,
-            },
+                "text": "partial signature",
+            }),
+            ApiResource::CompletionSignature,
+            "signature",
         )
-        .await
         .unwrap();
-        assert!(matches!(
-            found,
-            CompletionSignatureLookup::Found(CompletionSignature {
-                kind: CompletionSignatureKind::Gateway,
-                ..
-            })
-        ));
 
-        let fetched = fetch_completion_signature(
-            &cloud,
-            FetchCompletionSignatureInput {
-                completion_id: "found",
-                signing_algo: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(fetched.kind, CompletionSignatureKind::Gateway);
-
-        let pending = lookup_completion_signature(
-            &cloud,
-            FetchCompletionSignatureInput {
-                completion_id: "pending",
-                signing_algo: None,
-            },
-        )
-        .await
-        .unwrap();
-        assert!(matches!(
-            pending,
-            CompletionSignatureLookup::Unavailable(SignatureUnavailable { ref error_code, .. })
-                if error_code == "pending"
-        ));
+        let error = map_completion_signature_lookup(response).unwrap_err();
+        assert!(matches!(error, ApiError::InvalidResponse { .. }));
     }
 }

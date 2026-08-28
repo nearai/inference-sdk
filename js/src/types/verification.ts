@@ -62,14 +62,14 @@ export type ModelAttestationVerifiers = AttestationVerifiers & {
   readonly nvidia?: NvidiaEvidenceVerifier;
 };
 
-export type VerifyModelAttestationInput = {
+export type VerifyModelAttestationParams = {
   readonly attestation: ModelAttestation;
   readonly nonce: string;
   readonly policy?: ModelAttestationPolicy;
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
-export type VerifyGatewayAttestationInput = {
+export type VerifyGatewayAttestationParams = {
   readonly attestation: GatewayAttestation;
   readonly nonce: string;
   readonly peerSpkiFingerprint: string;
@@ -135,7 +135,7 @@ export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
   readonly tlsBinding: GatewayTlsBinding;
 };
 
-export type VerifyModelResponseInput = {
+export type VerifyModelResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
@@ -143,7 +143,7 @@ export type VerifyModelResponseInput = {
   readonly attestation: VerifiedModelAttestation;
 };
 
-export type VerifyGatewayResponseInput = {
+export type VerifyGatewayResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;

@@ -1,5 +1,5 @@
 {
-  "name": "verification-sdk",
+  "name": "verifiable-ai-sdk",
   "version": "0.0.1",
   "description": "Verify NEAR AI Cloud attestation evidence in TypeScript",
   "license": "MIT",
@@ -32,8 +32,8 @@
     "typecheck": "tsc --project tsconfig.json",
     "typecheck:test": "tsc --project tsconfig.test.json",
     "test": "jest --runInBand",
-    "test:browser": "node test-browser-runtime.mjs",
-    "test:node": "pnpm build && node test-node-runtime.mjs",
+    "test:browser": "node test/runtime/browser-runtime.mjs",
+    "test:node": "pnpm build && node test/runtime/node-runtime.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",

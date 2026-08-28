@@ -1,16 +1,8 @@
 import * as v from 'valibot';
-import type { Awaitable } from './types/shared';
 
-/** Values accepted by external NEAR AI and quote-verifier responses. */
+/** Values accepted by external NEAR AI, quote-verifier, and NRAS responses. */
 const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
 const CompletionSignatureKindValues = ['provider_tee', 'gateway'] as const;
-const CompletionSignatureResponseFields = [
-  'text',
-  'signature',
-  'signing_address',
-  'signing_algo',
-  'signature_kind',
-] as const;
 const TcbStatusValues = [
   'UpToDate',
   'SWHardeningNeeded',
@@ -25,10 +17,6 @@ const TcbStatusValues = [
 export const SigningAlgoSchema = v.picklist(SigningAlgoValues);
 
 export const TcbStatusSchema = v.picklist(TcbStatusValues);
-
-function isFunction(value: unknown): boolean {
-  return typeof value === 'function';
-}
 
 function isUint8Array(value: unknown): boolean {
   return value instanceof Uint8Array;
@@ -52,7 +40,7 @@ function looseObjectSchema<TEntries extends v.ObjectEntries>(
 }
 
 // ---------------------------------------------------------------------------
-// External quote-verifier and Cloud API response shapes
+// External quote-verifier, Cloud API, and NRAS response shapes
 // ---------------------------------------------------------------------------
 
 export const AttestationEventLogSchema = v.union([
@@ -71,31 +59,29 @@ export const QuoteVerificationResultSchema = objectSchema({
   rtMr3: Uint8ArraySchema,
 });
 
-/** Minimal response surface the client consumes from an injected transport. */
-export const ResponseLikeSchema = v.pipe(
-  NonArrayObjectSchema,
-  v.object({
-    ok: v.boolean(),
-    status: v.number(),
-    text: v.custom<() => Awaitable<string>>(isFunction),
-  }),
-);
-
-export const ResponseBodySchema = v.string();
-
 export const CloudApiTcbInfoSchema = objectSchema({
   app_compose: v.string(),
 });
 
+const CloudApiTcbInfoJsonSchema = v.pipe(
+  v.string(),
+  v.parseJson(),
+  CloudApiTcbInfoSchema,
+);
+
 export const CloudApiInfoSchema = objectSchema({
-  tcb_info: v.union([v.string(), CloudApiTcbInfoSchema]),
+  // Cloud API has returned this field both as an object and as a JSON string.
+  // Decode either wire form into the same object before domain mapping.
+  tcb_info: v.union([CloudApiTcbInfoSchema, CloudApiTcbInfoJsonSchema]),
 });
 
-export const CloudApiAttestationInfoEnvelopeSchema = objectSchema({
-  // Decode this separately so a malformed nested value reports the stable
-  // public `…info` path rather than an implementation-specific envelope path.
-  info: v.optional(v.unknown()),
-});
+// Cloud API may encode optional evidence as either a missing field or JSON
+// null. Canonicalize both at the HTTP boundary so public SDK values only use
+// the ordinary JavaScript absence state.
+const OptionalCloudApiStringSchema = v.pipe(
+  v.optional(v.nullable(v.string())),
+  v.transform((value) => value ?? undefined),
+);
 
 const CloudApiAttestationEntries = {
   request_nonce: v.string(),
@@ -103,13 +89,14 @@ const CloudApiAttestationEntries = {
   signing_address: v.string(),
   intel_quote: v.string(),
   event_log: AttestationEventLogSchema,
-  tls_cert_fingerprint: v.optional(v.nullable(v.string())),
-  report_data: v.optional(v.string()),
+  info: CloudApiInfoSchema,
+  tls_cert_fingerprint: OptionalCloudApiStringSchema,
+  report_data: OptionalCloudApiStringSchema,
 };
 
 export const CloudApiModelAttestationSchema = objectSchema({
   ...CloudApiAttestationEntries,
-  nvidia_payload: v.optional(v.nullable(v.string())),
+  nvidia_payload: OptionalCloudApiStringSchema,
 });
 
 export const CloudApiGatewayAttestationSchema = objectSchema({
@@ -118,31 +105,34 @@ export const CloudApiGatewayAttestationSchema = objectSchema({
 });
 
 export const CloudApiModelAttestationResponseSchema = objectSchema({
-  // Each item is decoded separately to retain its `model_attestations[index]`
-  // error path and validate the nested `info` envelope once.
-  model_attestations: v.array(v.unknown()),
+  model_attestations: v.array(CloudApiModelAttestationSchema),
 });
 
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({
-  // Decode the nested report separately to retain the public
-  // `gateway_attestation` error path.
-  gateway_attestation: v.unknown(),
+  gateway_attestation: CloudApiGatewayAttestationSchema,
 });
+
+const CompletionSignatureFieldNames = [
+  'text',
+  'signature',
+  'signing_address',
+  'signing_algo',
+  'signature_kind',
+] as const;
 
 export const CloudApiUnavailableSignatureResponseSchema = v.pipe(
   looseObjectSchema({
     error_code: v.string(),
     message: v.string(),
   }),
-  // An error envelope must not hide a malformed signature response just
-  // because it also contains error metadata. The success parser will then
-  // produce the relevant `api.invalid_response` error instead.
-  v.check(
-    (value) =>
-      !CompletionSignatureResponseFields.some((field) =>
-        Object.hasOwn(value, field),
-      ),
-  ),
+  // Do not classify a response that contains completion-signature fields as
+  // unavailable. The signature schema gets first chance to decode it.
+  v.check((value) => {
+    const record = value as Record<string, unknown>;
+    return CompletionSignatureFieldNames.every(
+      (field) => record[field] === undefined,
+    );
+  }),
 );
 
 export const CloudApiCompletionSignatureResponseSchema = objectSchema({
@@ -151,4 +141,25 @@ export const CloudApiCompletionSignatureResponseSchema = objectSchema({
   signing_address: v.string(),
   signing_algo: SigningAlgoSchema,
   signature_kind: v.picklist(CompletionSignatureKindValues),
+});
+
+export const CloudApiCompletionSignatureLookupSchema = v.union([
+  CloudApiCompletionSignatureResponseSchema,
+  CloudApiUnavailableSignatureResponseSchema,
+]);
+
+// NRAS returns a list whose first entry carries the overall-attestation JWT.
+// Both levels tolerate extra values because only that first JWT is part of the
+// NRAS contract consumed by the SDK.
+const NrasJwtEntrySchema = v.looseTuple([v.literal('JWT'), v.string()]);
+
+export const NrasResponseSchema = v.tupleWithRest(
+  [NrasJwtEntrySchema],
+  v.unknown(),
+);
+
+export const NrasJwtPayloadSchema = looseObjectSchema({});
+
+export const NrasOverallAttestationJwtClaimsSchema = looseObjectSchema({
+  'x-nvidia-overall-att-result': v.boolean(),
 });

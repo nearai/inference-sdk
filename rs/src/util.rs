@@ -17,10 +17,6 @@ pub fn decode_hex(value: &str) -> Result<Vec<u8>, ()> {
     hex::decode(normalized).map_err(|_| ())
 }
 
-pub fn normalize_hex(value: &str) -> Result<String, ()> {
-    Ok(hex::encode(decode_hex(value)?))
-}
-
 pub fn require_hex_length(value: &str, length: usize) -> Result<Vec<u8>, ()> {
     let bytes = decode_hex(value)?;
     if bytes.len() != length {
@@ -35,20 +31,4 @@ pub fn sha256(value: impl AsRef<[u8]>) -> Vec<u8> {
 
 pub fn sha384(value: impl AsRef<[u8]>) -> Vec<u8> {
     Sha384::digest(value.as_ref()).to_vec()
-}
-
-pub fn decode_jwt_payload(jwt: &str) -> Result<serde_json::Value, ()> {
-    use base64::Engine;
-
-    let mut parts = jwt.split('.');
-    let _header = parts.next().ok_or(())?;
-    let payload = parts.next().ok_or(())?;
-    let _signature = parts.next().ok_or(())?;
-    if parts.next().is_some() {
-        return Err(());
-    }
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload)
-        .map_err(|_| ())?;
-    serde_json::from_slice(&bytes).map_err(|_| ())
 }

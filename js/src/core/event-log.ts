@@ -16,6 +16,18 @@ type EventLogEntry = {
   event_payload: string;
   imr: number;
 };
+type DecodeEventHexParams = {
+  value: string;
+  path: string;
+  allowEmpty: boolean;
+};
+type RequireStringParams = {
+  record: Record<string, unknown>;
+  field: string;
+  index: number;
+};
+type OptionalStringParams = RequireStringParams;
+type RequireNumberParams = RequireStringParams;
 
 /**
  * Replay RTMR3 from the dstack event log. Runtime event payloads are hashed
@@ -32,7 +44,6 @@ export async function verifyAndReplayRtmr3(
   const expected = Buffer.from(quotedRtmr3);
   if (expected.length !== 48) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.rtmr3_mismatch',
       details: {
         reason: 'wrong_length',
@@ -70,14 +81,12 @@ export async function verifyAndReplayRtmr3(
 
   if (count === 0) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.rtmr3_mismatch',
       details: { reason: 'no_events' },
     });
   }
   if (!Buffer.from(replayed).equals(expected)) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.rtmr3_mismatch',
       details: { reason: 'replay_mismatch' },
     });
@@ -94,7 +103,6 @@ function parseEventLog(eventLog: AttestationEventLog): EventLogEntry[] {
     } catch (cause) {
       throw new VerificationError(
         {
-          phase: 'measurement',
           code: 'measurement.event_log_invalid',
           details: { path: 'eventLog', reason: 'invalid_json' },
         },
@@ -104,7 +112,6 @@ function parseEventLog(eventLog: AttestationEventLog): EventLogEntry[] {
   }
   if (!Array.isArray(parsed)) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: 'eventLog',
@@ -121,20 +128,19 @@ function parseEventLogEntry(value: unknown, index: number): EventLogEntry {
   const path = `eventLog[${index}]`;
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: { path, reason: 'invalid_type', expected: 'object' },
     });
   }
   const record = value as Record<string, unknown>;
-  const digest = requireString(record, 'digest', index);
-  const event = optionalString(record, 'event', index) ?? '';
-  const eventPayload = optionalString(record, 'event_payload', index) ?? '';
-  const imr = requireNumber(record, 'imr', index);
+  const digest = requireString({ record, field: 'digest', index });
+  const event = optionalString({ record, field: 'event', index }) ?? '';
+  const eventPayload =
+    optionalString({ record, field: 'event_payload', index }) ?? '';
+  const imr = requireNumber({ record, field: 'imr', index });
   const eventType = record.event_type;
   if (eventType !== undefined && !isU32(eventType)) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: `${path}.event_type`,
@@ -155,11 +161,11 @@ function parseEventLogEntry(value: unknown, index: number): EventLogEntry {
 
 async function eventDigest(entry: EventLogEntry): Promise<Buffer> {
   if (entry.event_type === DSTACK_RUNTIME_EVENT_TYPE) {
-    const payload = decodeEventHex(
-      entry.event_payload,
-      `${entry.path}.event_payload`,
-      true,
-    );
+    const payload = decodeEventHex({
+      value: entry.event_payload,
+      path: `${entry.path}.event_payload`,
+      allowEmpty: true,
+    });
     const eventType = Buffer.alloc(4);
     eventType.writeUInt32LE(DSTACK_RUNTIME_EVENT_TYPE);
     const computed = await sha384(
@@ -173,14 +179,13 @@ async function eventDigest(entry: EventLogEntry): Promise<Buffer> {
     );
 
     if (entry.digest.length > 0) {
-      const stored = decodeEventHex(
-        entry.digest,
-        `${entry.path}.digest`,
-        false,
-      );
+      const stored = decodeEventHex({
+        value: entry.digest,
+        path: `${entry.path}.digest`,
+        allowEmpty: false,
+      });
       if (stored.length !== 48 || !stored.equals(computed)) {
         throw new VerificationError({
-          phase: 'measurement',
           code: 'measurement.event_log_invalid',
           details: {
             path: `${entry.path}.digest`,
@@ -197,10 +202,13 @@ async function eventDigest(entry: EventLogEntry): Promise<Buffer> {
 
   // dstack event-log digests are SHA-384 values, so a malformed length is
   // rejected even though replaying a shorter byte string would be possible.
-  const digest = decodeEventHex(entry.digest, `${entry.path}.digest`, false);
+  const digest = decodeEventHex({
+    value: entry.digest,
+    path: `${entry.path}.digest`,
+    allowEmpty: false,
+  });
   if (digest.length !== 48) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: `${entry.path}.digest`,
@@ -214,11 +222,11 @@ async function eventDigest(entry: EventLogEntry): Promise<Buffer> {
 }
 
 /** dstack runtime events may legitimately carry an empty payload. */
-function decodeEventHex(
-  value: string,
-  path: string,
-  allowEmpty: boolean,
-): Buffer {
+function decodeEventHex({
+  value,
+  path,
+  allowEmpty,
+}: DecodeEventHexParams): Buffer {
   const normalized = trimHexPrefix(value);
   if (
     (!allowEmpty && normalized.length === 0) ||
@@ -226,7 +234,6 @@ function decodeEventHex(
     !/^[0-9a-fA-F]*$/.test(normalized)
   ) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: { path, reason: 'invalid_hex' },
     });
@@ -234,15 +241,10 @@ function decodeEventHex(
   return Buffer.from(normalized, 'hex');
 }
 
-function requireString(
-  record: Record<string, unknown>,
-  field: string,
-  index: number,
-): string {
+function requireString({ record, field, index }: RequireStringParams): string {
   const value = record[field];
   if (typeof value !== 'string') {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: `eventLog[${index}].${field}`,
@@ -254,18 +256,17 @@ function requireString(
   return value;
 }
 
-function optionalString(
-  record: Record<string, unknown>,
-  field: string,
-  index: number,
-): string | undefined {
+function optionalString({
+  record,
+  field,
+  index,
+}: OptionalStringParams): string | undefined {
   const value = record[field];
   if (value === undefined) {
     return undefined;
   }
   if (typeof value !== 'string') {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: `eventLog[${index}].${field}`,
@@ -277,15 +278,10 @@ function optionalString(
   return value;
 }
 
-function requireNumber(
-  record: Record<string, unknown>,
-  field: string,
-  index: number,
-): number {
+function requireNumber({ record, field, index }: RequireNumberParams): number {
   const value = record[field];
   if (!isU32(value)) {
     throw new VerificationError({
-      phase: 'measurement',
       code: 'measurement.event_log_invalid',
       details: {
         path: `eventLog[${index}].${field}`,

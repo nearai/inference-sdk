@@ -1,5 +1,5 @@
 [project]
-name = "verification_sdk"
+name = "verifiable-ai-sdk"
 version = "0.1.0"
 description = "Verification SDK for NEAR AI Cloud attestations"
 readme = "README.md"

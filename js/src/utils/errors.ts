@@ -7,14 +7,13 @@ type ApiResource =
 
 /** A JSON-safe description of a Cloud API failure.
  *
- * `code`, `phase`, and any fields in `details` are the public error contract.
+ * `code` and any fields in `details` are the public error contract.
  * `message` is only for people; consumers must not parse it. The shape is kept
  * deliberately free of API keys, nonces, quotes, prompts, and response bytes.
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type ApiFailure =
   | {
-      phase: 'api';
       code: 'api.transport_failed';
       details: {
         resource: ApiResource;
@@ -23,7 +22,6 @@ export type ApiFailure =
       retryable: true;
     }
   | {
-      phase: 'api';
       code: 'api.http_status';
       details: {
         resource: ApiResource;
@@ -32,12 +30,10 @@ export type ApiFailure =
       retryable: boolean;
     }
   | {
-      phase: 'api';
       code: 'api.invalid_json';
       details: { resource: ApiResource };
     }
   | {
-      phase: 'api';
       code: 'api.invalid_response';
       details: {
         path: string;
@@ -46,71 +42,56 @@ export type ApiFailure =
       };
     }
   | {
-      phase: 'api';
       code: 'api.nonce_mismatch';
       details: {
         resource: 'model_attestation' | 'gateway_attestation';
       };
     }
   | {
-      phase: 'api';
       code: 'api.unexpected_model_attestation_count';
-      details: { expectedCount: 1; actualCount: number };
+      details: { actualCount: number };
     }
   | {
-      phase: 'api';
       code: 'api.ambiguous_model_attestation_signer';
       details: { matchingCount: number; totalCount: number };
     }
   | {
-      phase: 'api';
-      code: 'api.attestation_signer_mismatch';
-      details: {
-        resource: 'model_attestation';
-      };
+      code: 'api.model_attestation_signer_not_found';
+    }
+  | {
+      code: 'api.completion_signature_unavailable';
+      details: { providerErrorCode: string };
     };
 
 /** A JSON-safe description of a local verification failure.
  *
- * `code`, `phase`, and any fields in `details` are the public error contract.
+ * `code` and any fields in `details` are the public error contract.
  * `message` is only for people; consumers must not parse it. The shape is kept
  * deliberately free of API keys, nonces, quotes, prompts, and response bytes.
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type VerificationFailure =
   | {
-      phase: 'input';
       code: 'input.invalid';
       details: {
         field: string;
-        reason:
-          | 'missing'
-          | 'invalid_hex'
-          | 'wrong_length'
-          | 'invalid_json'
-          | 'invalid_jwt'
-          | 'invalid_url'
-          | 'invalid_header'
-          | 'unsupported_value';
+        reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt';
         expected?: string;
         expectedBytes?: number;
         actualBytes?: number;
       };
     }
   | {
-      phase: 'quote';
       code: 'quote.collateral_unavailable';
       retryable: true;
     }
   | {
-      phase: 'quote';
       code: 'quote.verification_failed';
       details: {
         reason: 'invalid_encoding' | 'invalid_quote' | 'verifier_error';
       };
     }
   | {
-      phase: 'quote';
       code: 'quote.invalid_result';
       details: {
         path: string;
@@ -119,16 +100,13 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'quote';
       code: 'quote.unsupported_report_type';
       details: { expected: 'TD10' };
     }
   | {
-      phase: 'policy';
       code: 'policy.debug_enabled';
     }
   | {
-      phase: 'policy';
       code: 'policy.tcb_status_not_allowed';
       details: {
         actual: TcbStatus;
@@ -137,18 +115,15 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'policy';
       code: 'policy.gpu_evidence_required';
     }
   | {
-      phase: 'binding';
       code: 'binding.nonce_mismatch';
       details: {
         source: 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
       };
     }
   | {
-      phase: 'binding';
       code: 'binding.report_data_invalid';
       details: {
         source: 'quoteReportData' | 'reportedQuoteData';
@@ -158,23 +133,18 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'binding';
       code: 'binding.report_data_mismatch';
       details: {
         source: 'reportedQuoteData' | 'signerBinding' | 'signerTlsBinding';
       };
     }
   | {
-      phase: 'binding';
       code: 'binding.spki_fingerprint_missing';
     }
   | {
-      phase: 'binding';
       code: 'binding.spki_fingerprint_mismatch';
-      details: { source: 'peer_tls_connection' };
     }
   | {
-      phase: 'measurement';
       code: 'measurement.event_log_invalid';
       details: {
         path: string;
@@ -190,7 +160,6 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'measurement';
       code: 'measurement.rtmr3_mismatch';
       details: {
         reason: 'wrong_length' | 'no_events' | 'replay_mismatch';
@@ -199,12 +168,6 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'measurement';
-      code: 'measurement.app_compose_invalid';
-      details: { reason: 'invalid_json' | 'missing' };
-    }
-  | {
-      phase: 'measurement';
       code: 'measurement.mrconfigid_invalid';
       details: {
         reason: 'wrong_length' | 'unsupported_version';
@@ -214,16 +177,13 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'measurement';
       code: 'measurement.app_compose_mrconfigid_mismatch';
     }
   | {
-      phase: 'gpu';
       code: 'gpu.payload_invalid';
       details: { reason: 'invalid_json' | 'nonce_missing' };
     }
   | {
-      phase: 'gpu';
       code: 'gpu.nras_request_failed';
       details: {
         reason: 'timeout' | 'transport' | 'http_status';
@@ -232,7 +192,6 @@ export type VerificationFailure =
       retryable: boolean;
     }
   | {
-      phase: 'gpu';
       code: 'gpu.nras_response_invalid';
       details: {
         reason:
@@ -243,21 +202,13 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'gpu';
       code: 'gpu.attestation_rejected';
       details: { source: 'nras' | 'custom_verifier' };
     }
   | {
-      phase: 'provenance';
       code: 'provenance.verification_failed';
     }
   | {
-      phase: 'signature';
-      code: 'signature.unavailable';
-      details: { providerErrorCode: string };
-    }
-  | {
-      phase: 'signature';
       code: 'signature.kind_mismatch';
       details: {
         expected: 'provider_tee' | 'gateway';
@@ -265,7 +216,6 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'signature';
       code: 'signature.payload_mismatch';
       details: {
         source: 'request_model' | 'signed_payload';
@@ -273,37 +223,45 @@ export type VerificationFailure =
       };
     }
   | {
-      phase: 'signature';
       code: 'signature.format_invalid';
       details: {
-        field: 'signature' | 'signer.signingAddress' | 'signer.signingAlgo';
-        reason: 'invalid_hex' | 'wrong_length' | 'unsupported_signing_algo';
+        field: 'signature' | 'signer.signingAddress';
+        reason: 'invalid_hex' | 'wrong_length';
         expectedBytes?: number;
         actualBytes?: number;
       };
     }
   | {
-      phase: 'signature';
       code: 'signature.invalid';
       details: { signingAlgo: 'ecdsa' | 'ed25519' };
     }
   | {
-      phase: 'signature';
       code: 'signature.signer_mismatch';
-    }
-  | {
-      phase: 'runtime';
-      code: 'runtime.crypto_unavailable';
-      details: { capability: 'subtle_digest' | 'secure_random' };
     };
 
 type SdkFailure = ApiFailure | VerificationFailure;
+type SerializedFailure<TFailure extends SdkFailure> = TFailure extends unknown
+  ? Omit<TFailure, 'retryable'>
+  : never;
+type SdkErrorJson<TFailure extends SdkFailure> = {
+  name: string;
+  message: string;
+  failure: SerializedFailure<TFailure>;
+  retryable: boolean;
+};
 
 export type ApiErrorCode = ApiFailure['code'];
 export type VerificationErrorCode = VerificationFailure['code'];
-export type VerificationPhase = VerificationFailure['phase'];
+export type ApiErrorJson = SdkErrorJson<ApiFailure>;
+export type VerificationErrorJson = SdkErrorJson<VerificationFailure>;
 
 export type SdkErrorOptions = { cause?: unknown };
+type InputFailure = Extract<VerificationFailure, { code: 'input.invalid' }>;
+type InputErrorParams = {
+  field: string;
+  reason: InputFailure['details']['reason'];
+  details?: Omit<InputFailure['details'], 'field' | 'reason'>;
+};
 
 /**
  * A machine-readable local verification failure.
@@ -323,29 +281,16 @@ export class VerificationError extends Error {
     super(formatFailureMessage(failure), options);
   }
 
-  get code(): VerificationErrorCode {
-    return this.failure.code;
-  }
-
-  get phase(): VerificationPhase {
-    return this.failure.phase;
-  }
-
   get retryable(): boolean {
     return isRetryableFailure(this.failure);
   }
 
   /** Safe structured data for logs and cross-process diagnostics. */
-  toJSON(): {
-    name: string;
-    message: string;
-    failure: VerificationFailure;
-    retryable: boolean;
-  } {
+  toJSON(): VerificationErrorJson {
     return {
       name: this.name,
       message: this.message,
-      failure: this.failure,
+      failure: serializeFailure(this.failure),
       retryable: this.retryable,
     };
   }
@@ -362,38 +307,18 @@ export class ApiError extends Error {
     super(formatFailureMessage(failure), options);
   }
 
-  get code(): ApiErrorCode {
-    return this.failure.code;
-  }
-
-  get phase(): 'api' {
-    return this.failure.phase;
-  }
-
   get retryable(): boolean {
     return isRetryableFailure(this.failure);
   }
 
   /** Safe structured data for logs and cross-process diagnostics. */
-  toJSON(): {
-    name: string;
-    message: string;
-    failure: ApiFailure;
-    retryable: boolean;
-  } {
+  toJSON(): ApiErrorJson {
     return {
       name: this.name,
       message: this.message,
-      failure: this.failure,
+      failure: serializeFailure(this.failure),
       retryable: this.retryable,
     };
-  }
-
-  /** Kept as a convenience for HTTP callers; `failure.details.status` is canonical. */
-  get status(): number | undefined {
-    return this.failure.code === 'api.http_status'
-      ? this.failure.details.status
-      : undefined;
   }
 }
 
@@ -417,87 +342,139 @@ export function wrapVerificationError(
     : new VerificationError(failure, { cause });
 }
 
+export function inputError({
+  field,
+  reason,
+  details = {},
+}: InputErrorParams): VerificationError {
+  return new VerificationError({
+    code: 'input.invalid',
+    details: { field, reason, ...details },
+  });
+}
+
 function isRetryableFailure(failure: SdkFailure): boolean {
   return 'retryable' in failure && failure.retryable;
+}
+
+function serializeFailure<TFailure extends SdkFailure>(
+  failure: TFailure,
+): SerializedFailure<TFailure> {
+  if (!('retryable' in failure)) {
+    return failure as SerializedFailure<TFailure>;
+  }
+  const { retryable: _retryable, ...serialized } = failure;
+  return serialized as SerializedFailure<TFailure>;
 }
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
     case 'input.invalid':
-      return `Invalid ${failure.details.field}`;
+      return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':
-      return 'API request failed';
+      return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} ${
+        failure.details.reason === 'request'
+          ? 'request failed'
+          : 'response body could not be read'
+      }`;
     case 'api.http_status':
-      return `API returned HTTP ${failure.details.status}`;
+      return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} returned HTTP ${failure.details.status}`;
     case 'api.invalid_json':
-      return 'API returned invalid JSON';
+      return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} returned invalid JSON`;
     case 'api.invalid_response':
-      return `API response has an invalid ${failure.details.path} field`;
+      return `[${failure.code}] Cloud API response has an invalid ${failure.details.path}: expected ${failure.details.expected}, received ${failure.details.actual}`;
     case 'api.nonce_mismatch':
-      return 'API attestation nonce does not match the request';
+      return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} nonce does not match the request`;
     case 'api.unexpected_model_attestation_count':
-      return 'API returned an unexpected number of model attestations';
+      return `[${failure.code}] Cloud API returned ${failure.details.actualCount} model attestations; expected exactly one`;
     case 'api.ambiguous_model_attestation_signer':
-      return 'More than one model attestation matches the requested signer';
-    case 'api.attestation_signer_mismatch':
-      return 'Attestation signer does not match the requested signer';
+      return `[${failure.code}] Cloud API returned ${failure.details.matchingCount} model attestations for the requested signer (${failure.details.totalCount} total)`;
+    case 'api.model_attestation_signer_not_found':
+      return `[${failure.code}] Cloud API returned no model attestation for the requested signer`;
+    case 'api.completion_signature_unavailable':
+      return `[${failure.code}] Cloud API did not provide a completion signature (${failure.details.providerErrorCode})`;
     case 'quote.collateral_unavailable':
-      return 'Intel collateral is unavailable';
+      return `[${failure.code}] Intel quote collateral is unavailable`;
     case 'quote.verification_failed':
-      return 'Intel TDX quote verification failed';
+      return `[${failure.code}] Intel TDX quote verification failed: ${failure.details.reason}`;
     case 'quote.invalid_result':
-      return `Quote verifier returned an invalid ${failure.details.path} field`;
+      return `[${failure.code}] Quote verifier returned an invalid ${failure.details.path}: expected ${failure.details.expected}, received ${failure.details.actual}`;
     case 'quote.unsupported_report_type':
-      return 'Verified quote has an unsupported report type';
+      return `[${failure.code}] Verified quote has an unsupported report type; expected ${failure.details.expected}`;
     case 'policy.debug_enabled':
-      return 'TDX debug mode is enabled';
+      return `[${failure.code}] TDX debug mode is enabled`;
     case 'policy.tcb_status_not_allowed':
-      return 'TDX TCB status is not allowed by policy';
+      return `[${failure.code}] TDX TCB status ${failure.details.actual} is not allowed by policy`;
     case 'policy.gpu_evidence_required':
-      return 'GPU evidence is required by policy';
+      return `[${failure.code}] GPU evidence is required by policy`;
     case 'binding.nonce_mismatch':
-      return 'Attestation nonce does not match';
+      return `[${failure.code}] Nonce in ${failure.details.source} does not match`;
     case 'binding.report_data_invalid':
-      return 'Attestation report data is invalid';
+      return `[${failure.code}] ${failure.details.source} is invalid: ${failure.details.reason}`;
     case 'binding.report_data_mismatch':
-      return 'Attestation report data does not match the verified quote';
+      return `[${failure.code}] ${failure.details.source} does not match the verified quote`;
     case 'binding.spki_fingerprint_missing':
-      return 'Attestation is missing its SPKI fingerprint';
+      return `[${failure.code}] Attestation is missing its SPKI fingerprint`;
     case 'binding.spki_fingerprint_mismatch':
-      return 'Attestation SPKI fingerprint does not match the peer connection';
+      return `[${failure.code}] Attestation SPKI fingerprint does not match the observed TLS peer`;
     case 'measurement.event_log_invalid':
-      return 'Attestation event log is invalid';
+      return `[${failure.code}] Attestation event log is invalid at ${failure.details.path}: ${failure.details.reason}`;
     case 'measurement.rtmr3_mismatch':
-      return 'Attestation event log does not match RTMR3';
-    case 'measurement.app_compose_invalid':
-      return 'Attestation app compose data is invalid';
+      return `[${failure.code}] Attestation event log does not match RTMR3: ${failure.details.reason}`;
     case 'measurement.mrconfigid_invalid':
-      return 'Quote MRCONFIGID is invalid';
+      return `[${failure.code}] Quote MRCONFIGID is invalid: ${failure.details.reason}`;
     case 'measurement.app_compose_mrconfigid_mismatch':
-      return 'App compose does not match quote MRCONFIGID';
+      return `[${failure.code}] App compose does not match quote MRCONFIGID`;
     case 'gpu.payload_invalid':
-      return 'GPU evidence payload is invalid';
+      return `[${failure.code}] GPU evidence payload is invalid: ${failure.details.reason}`;
     case 'gpu.nras_request_failed':
-      return 'NVIDIA NRAS request failed';
+      return `[${failure.code}] NVIDIA NRAS request failed: ${failure.details.reason}`;
     case 'gpu.nras_response_invalid':
-      return 'NVIDIA NRAS response is invalid';
+      return `[${failure.code}] NVIDIA NRAS response is invalid: ${failure.details.reason}`;
     case 'gpu.attestation_rejected':
-      return 'GPU evidence was rejected';
+      return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':
-      return 'Deployment provenance verification failed';
-    case 'signature.unavailable':
-      return 'Completion signature is unavailable';
+      return `[${failure.code}] Deployment provenance verification failed`;
     case 'signature.kind_mismatch':
-      return 'Completion signature does not support this verification claim';
+      return `[${failure.code}] Expected a ${failure.details.expected} signature, received ${failure.details.actual}`;
     case 'signature.payload_mismatch':
-      return 'Completion signature does not match the request or response';
+      return `[${failure.code}] Completion signature does not match the ${failure.details.source}: ${failure.details.reason}`;
     case 'signature.format_invalid':
-      return 'Completion signature format is invalid';
+      return `[${failure.code}] Completion ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'signature.invalid':
-      return 'Completion signature is invalid';
+      return `[${failure.code}] Completion signature is invalid for ${failure.details.signingAlgo}`;
     case 'signature.signer_mismatch':
-      return 'Completion signature signer does not match the attestation';
-    case 'runtime.crypto_unavailable':
-      return 'Required Web Crypto capability is unavailable';
+      return `[${failure.code}] Completion signature signer does not match the attestation`;
+  }
+}
+
+function formatApiResource(resource: ApiResource): string {
+  switch (resource) {
+    case 'model_attestation':
+      return 'model attestation';
+    case 'gateway_attestation':
+      return 'Gateway attestation';
+    case 'completion_signature':
+      return 'completion signature';
+  }
+}
+
+function formatInputFailure(
+  details: Extract<VerificationFailure, { code: 'input.invalid' }>['details'],
+): string {
+  const subject = details.field;
+  switch (details.reason) {
+    case 'invalid_hex':
+      return `${subject} must be hexadecimal`;
+    case 'wrong_length':
+      if (details.expected !== undefined) {
+        return `${subject} must be ${details.expected}`;
+      }
+      return details.expectedBytes === undefined ||
+        details.actualBytes === undefined
+        ? `${subject} has the wrong length`
+        : `${subject} must be ${details.expectedBytes} bytes; received ${details.actualBytes}`;
+    case 'invalid_jwt':
+      return `${subject} must be a valid JWT`;
   }
 }

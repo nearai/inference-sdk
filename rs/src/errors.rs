@@ -40,16 +40,16 @@ impl std::fmt::Display for ApiResource {
 /// These are deliberately distinct from local input and verification failures.
 #[derive(Debug, Error)]
 pub enum ApiError {
-    #[error("{resource} {reason} failed")]
+    #[error("Cloud API {resource} {reason} failed")]
     Transport {
         resource: ApiResource,
         reason: ApiTransportReason,
     },
 
-    #[error("{resource} returned HTTP {status}")]
+    #[error("Cloud API {resource} returned HTTP {status}")]
     HttpStatus { resource: ApiResource, status: u16 },
 
-    #[error("{resource} returned invalid JSON")]
+    #[error("Cloud API {resource} returned invalid JSON")]
     InvalidJson { resource: ApiResource },
 
     #[error("Cloud API response has an invalid {path}: expected {expected}")]
@@ -61,16 +61,19 @@ pub enum ApiError {
     #[error("Cloud API returned {actual_count} model attestations; expected exactly one")]
     UnexpectedModelAttestationCount { actual_count: usize },
 
-    #[error("Cloud API returned no model attestation for the completion signer")]
-    AttestationSignerMismatch,
+    #[error("Cloud API returned no model attestation for the requested signer")]
+    ModelAttestationSignerNotFound,
 
     #[error(
-        "Cloud API returned {matching_count} model attestations for the completion signer ({total_count} total)"
+        "Cloud API returned {matching_count} model attestations for the requested signer ({total_count} total)"
     )]
     AmbiguousModelAttestationSigner {
         matching_count: usize,
         total_count: usize,
     },
+
+    #[error("Cloud API did not provide a completion signature ({provider_error_code})")]
+    CompletionSignatureUnavailable { provider_error_code: String },
 }
 
 impl ApiError {
@@ -85,10 +88,11 @@ impl ApiError {
             Self::UnexpectedModelAttestationCount { .. } => {
                 "api.unexpected_model_attestation_count"
             }
-            Self::AttestationSignerMismatch => "api.attestation_signer_mismatch",
+            Self::ModelAttestationSignerNotFound => "api.model_attestation_signer_not_found",
             Self::AmbiguousModelAttestationSigner { .. } => {
                 "api.ambiguous_model_attestation_signer"
             }
+            Self::CompletionSignatureUnavailable { .. } => "api.completion_signature_unavailable",
         }
     }
 
@@ -125,7 +129,7 @@ pub enum VerificationError {
     #[error("Intel quote verifier returned an invalid result: {reason}")]
     QuoteInvalidResult { reason: String },
 
-    #[error("Intel quote report type is unsupported; expected TD10 or TD15")]
+    #[error("Intel quote report type is unsupported; expected TD10")]
     QuoteUnsupportedReportType,
 
     #[error("quote was created with debug enabled")]
@@ -187,9 +191,6 @@ pub enum VerificationError {
     #[error("deployment provenance verifier rejected the measured deployment")]
     DeploymentProvenanceRejected,
 
-    #[error("completion signature is unavailable: {provider_error_code}")]
-    SignatureUnavailable { provider_error_code: String },
-
     #[error("completion signature kind {actual:?} cannot be used here; expected {expected:?}")]
     SignatureKindMismatch {
         expected: CompletionSignatureKind,
@@ -238,7 +239,6 @@ impl VerificationError {
             Self::NrasResponseInvalid { .. } => "gpu.nras_response_invalid",
             Self::GpuAttestationRejected { .. } => "gpu.attestation_rejected",
             Self::DeploymentProvenanceRejected => "provenance.verification_failed",
-            Self::SignatureUnavailable { .. } => "signature.unavailable",
             Self::SignatureKindMismatch { .. } => "signature.kind_mismatch",
             Self::SignaturePayloadMismatch { .. } => "signature.payload_mismatch",
             Self::SignatureFormatInvalid { .. } => "signature.format_invalid",

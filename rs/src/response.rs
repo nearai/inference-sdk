@@ -1,40 +1,48 @@
 use crate::errors::VerificationError;
 use crate::types::{
     CompletionSignature, CompletionSignatureKind, SigningAlgo, SigningIdentity,
-    VerifyGatewayResponseInput, VerifyModelResponseInput,
+    VerifiedGatewayAttestation, VerifiedModelAttestation,
 };
-use crate::util::{decode_hex, normalize_hex, sha256};
+use crate::util::{decode_hex, sha256};
 use ed25519_dalek::Verifier;
 use serde_json::Value;
 use sha3::Digest;
 
 /// Verify a model-serving signature over exact completion bytes against the
 /// signer established by verified model evidence.
-pub fn verify_model_response(input: VerifyModelResponseInput<'_>) -> Result<(), VerificationError> {
-    require_signature_kind(input.signature, CompletionSignatureKind::ProviderTee)?;
-    let model = canonical_model_id(input.request_body)?;
+pub fn verify_model_response(
+    request_body: &[u8],
+    response_body: &[u8],
+    signature: &CompletionSignature,
+    attestation: &VerifiedModelAttestation,
+) -> Result<(), VerificationError> {
+    require_signature_kind(signature, CompletionSignatureKind::ProviderTee)?;
+    let model = canonical_model_id(request_body)?;
     let expected = format!(
         "{model}:{}:{}",
-        hex::encode(sha256(input.request_body)),
-        hex::encode(sha256(input.response_body))
+        hex::encode(sha256(request_body)),
+        hex::encode(sha256(response_body))
     );
-    verify_signature_text_and_bytes(input.signature, &expected)?;
-    verify_signature_matches_attestation(input.signature, &input.attestation.evidence.signer)
+    verify_signature_text_and_bytes(signature, &expected)?;
+    verify_signature_matches_attestation(signature, &attestation.evidence.signer)
 }
 
 /// Verify Gateway-service provenance and integrity for exact client-visible
 /// completion bytes. This does not establish that a model TEE generated them.
 pub fn verify_gateway_response(
-    input: VerifyGatewayResponseInput<'_>,
+    request_body: &[u8],
+    response_body: &[u8],
+    signature: &CompletionSignature,
+    attestation: &VerifiedGatewayAttestation,
 ) -> Result<(), VerificationError> {
-    require_signature_kind(input.signature, CompletionSignatureKind::Gateway)?;
+    require_signature_kind(signature, CompletionSignatureKind::Gateway)?;
     let expected = format!(
         "{}:{}",
-        hex::encode(sha256(input.request_body)),
-        hex::encode(sha256(input.response_body))
+        hex::encode(sha256(request_body)),
+        hex::encode(sha256(response_body))
     );
-    verify_signature_text_and_bytes(input.signature, &expected)?;
-    verify_signature_matches_attestation(input.signature, &input.attestation.evidence.signer)
+    verify_signature_text_and_bytes(signature, &expected)?;
+    verify_signature_matches_attestation(signature, &attestation.evidence.signer)
 }
 
 fn require_signature_kind(
@@ -83,9 +91,9 @@ fn verify_signature_matches_attestation(
     signature: &CompletionSignature,
     signer: &SigningIdentity,
 ) -> Result<(), VerificationError> {
-    let signature_address = normalize_hex(&signature.signer.signing_address)
+    let signature_address = decode_hex(&signature.signer.signing_address)
         .map_err(|_| VerificationError::SignatureSignerMismatch)?;
-    let attestation_address = normalize_hex(&signer.signing_address)
+    let attestation_address = decode_hex(&signer.signing_address)
         .map_err(|_| VerificationError::SignatureSignerMismatch)?;
     if signature.signer.signing_algo != signer.signing_algo
         || signature_address != attestation_address

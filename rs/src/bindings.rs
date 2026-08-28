@@ -68,17 +68,7 @@ pub fn verify_gateway_report_data_binding(
     reported_spki_fingerprint: Option<&str>,
     peer_spki_fingerprint: &str,
 ) -> Result<GatewayTlsBinding, VerificationError> {
-    require_report_data_length(report_data)?;
-    let expected_nonce =
-        require_hex_length(nonce, 32).map_err(|_| VerificationError::InvalidInput {
-            field: "nonce".to_owned(),
-            reason: "expected a 32-byte hexadecimal nonce".to_owned(),
-        })?;
-    if report_data[32..64] != expected_nonce {
-        return Err(VerificationError::NonceMismatch {
-            binding: "quote_report_data",
-        });
-    }
+    verify_quote_report_data_nonce(report_data, nonce)?;
     let reported_spki_fingerprint = reported_spki_fingerprint
         .filter(|fingerprint| !fingerprint.is_empty())
         .ok_or(VerificationError::SpkiFingerprintMissing)?;
@@ -97,7 +87,7 @@ pub fn verify_gateway_report_data_binding(
     if reported != peer {
         return Err(VerificationError::SpkiFingerprintMismatch);
     }
-    let signing_address = require_signing_address_bytes(signing_address)?;
+    let signing_address = decode_signing_address(signing_address)?;
     let mut binding_data = signing_address;
     binding_data.extend_from_slice(&reported);
     if report_data[..32] != sha256(binding_data) {
@@ -116,19 +106,9 @@ pub fn verify_cloud_model_report_data_binding(
     signing_address: &str,
     reported_spki_fingerprint: Option<&str>,
 ) -> Result<ModelTlsBinding, VerificationError> {
-    require_report_data_length(report_data)?;
-    let expected_nonce =
-        require_hex_length(nonce, 32).map_err(|_| VerificationError::InvalidInput {
-            field: "nonce".to_owned(),
-            reason: "expected a 32-byte hexadecimal nonce".to_owned(),
-        })?;
-    if report_data[32..64] != expected_nonce {
-        return Err(VerificationError::NonceMismatch {
-            binding: "quote_report_data",
-        });
-    }
+    verify_quote_report_data_nonce(report_data, nonce)?;
 
-    let signing_address = require_signing_address_bytes(signing_address)?;
+    let signing_address = decode_signing_address(signing_address)?;
     if let Some(fingerprint) = reported_spki_fingerprint {
         let fingerprint =
             require_hex_length(fingerprint, 32).map_err(|_| VerificationError::InvalidInput {
@@ -178,25 +158,31 @@ pub fn verify_app_compose_mrconfigid_binding(
     Ok(())
 }
 
-fn require_report_data_length(report_data: &[u8]) -> Result<(), VerificationError> {
+fn verify_quote_report_data_nonce(
+    report_data: &[u8],
+    nonce: &str,
+) -> Result<(), VerificationError> {
     if report_data.len() != 64 {
         return Err(VerificationError::ReportDataInvalid {
             reason: "quote_report_data",
         });
     }
+    let expected_nonce =
+        require_hex_length(nonce, 32).map_err(|_| VerificationError::InvalidInput {
+            field: "nonce".to_owned(),
+            reason: "expected a 32-byte hexadecimal nonce".to_owned(),
+        })?;
+    if report_data[32..64] != expected_nonce {
+        return Err(VerificationError::NonceMismatch {
+            binding: "quote_report_data",
+        });
+    }
     Ok(())
 }
 
-fn require_signing_address_bytes(value: &str) -> Result<Vec<u8>, VerificationError> {
-    let bytes = crate::util::decode_hex(value).map_err(|_| VerificationError::InvalidInput {
+fn decode_signing_address(value: &str) -> Result<Vec<u8>, VerificationError> {
+    crate::util::decode_hex(value).map_err(|_| VerificationError::InvalidInput {
         field: "attestation.signer.signing_address".to_owned(),
         reason: "expected hexadecimal signing address".to_owned(),
-    })?;
-    if bytes.len() > 32 {
-        return Err(VerificationError::InvalidInput {
-            field: "attestation.signer.signing_address".to_owned(),
-            reason: "expected a signing address of at most 32 bytes".to_owned(),
-        });
-    }
-    Ok(bytes)
+    })
 }

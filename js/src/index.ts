@@ -9,16 +9,17 @@ export {
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export type {
-  FetchCompletionSignatureInput,
+  FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestation,
   FetchedModelAttestations,
-  FetchGatewayAttestationInput,
-  FetchModelAttestationForSignatureInput,
-  FetchModelAttestationsInput,
-  FindModelAttestationForSignatureInput,
-  NearAiCloudFetch,
-  NearAiCloudOptions,
+  FetchGatewayAttestationParams,
+  FetchModelAttestationForSignatureParams,
+  FetchModelAttestationsParams,
+  FindModelAttestationForSignatureParams,
+  GatewayAttestationTransport,
+  GatewayAttestationTransportResponse,
+  LookupCompletionSignatureParams,
 } from './types/cloud-api';
 export type { Awaitable } from './types/shared';
 
@@ -35,7 +36,6 @@ export type {
 export type { GatewayAttestation } from './types/attestation-gateway';
 export type { ModelAttestation } from './types/attestation-model';
 export type {
-  CompletionBytes,
   CompletionSignature,
   CompletionSignatureKind,
   CompletionSignatureReference,
@@ -61,10 +61,10 @@ export type {
   VerifiedAttestationEvidence,
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
-  VerifyGatewayAttestationInput,
-  VerifyGatewayResponseInput,
-  VerifyModelAttestationInput,
-  VerifyModelResponseInput,
+  VerifyGatewayAttestationParams,
+  VerifyGatewayResponseParams,
+  VerifyModelAttestationParams,
+  VerifyModelResponseParams,
 } from './types/verification';
 
 export {
@@ -76,8 +76,9 @@ export {
 export type {
   ApiErrorCode,
   ApiFailure,
+  ApiErrorJson,
   VerificationErrorCode,
   VerificationFailure,
-  VerificationPhase,
+  VerificationErrorJson,
   SdkErrorOptions,
 } from './utils/errors';

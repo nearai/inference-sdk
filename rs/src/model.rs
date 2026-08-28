@@ -3,8 +3,9 @@ use crate::bindings::{verify_cloud_model_report_data_binding, verify_reported_no
 use crate::errors::VerificationError;
 use crate::nvidia::NrasNvidiaEvidenceVerifier;
 use crate::types::{
-    AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, NvidiaEvidenceVerifier,
-    VerifiedModelAttestation, VerifyModelAttestationInput,
+    AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, ModelAttestation,
+    ModelAttestationPolicy, ModelAttestationVerifiers, NvidiaEvidenceVerifier,
+    VerifiedModelAttestation,
 };
 use serde_json::Value;
 
@@ -13,37 +14,39 @@ use serde_json::Value;
 /// measurements, but not a client-to-model TLS connection: the client talks to
 /// the Cloud Gateway rather than the upstream model CVM.
 pub async fn verify_model_attestation(
-    input: VerifyModelAttestationInput<'_>,
+    attestation: &ModelAttestation,
+    nonce: &str,
+    policy: Option<&ModelAttestationPolicy>,
+    verifiers: ModelAttestationVerifiers<'_>,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
-    let common_policy = input.policy.map(|policy| AttestationPolicy {
+    let common_policy = policy.map(|policy| AttestationPolicy {
         accepted_tcb_statuses: policy.accepted_tcb_statuses.clone(),
     });
     let verified_quote = verify_dstack_quote(
-        &input.attestation.evidence,
-        input.nonce,
+        &attestation.evidence,
+        nonce,
         common_policy.as_ref(),
-        input.verifiers.quote,
-        input.attestation.evidence.reported_quote_data.as_deref(),
+        verifiers.quote,
+        attestation.reported_quote_data.as_deref(),
     )
     .await?;
     let tls_binding = verify_cloud_model_report_data_binding(
         &verified_quote.quote.report_data,
-        input.nonce,
+        nonce,
         &verified_quote.signer.signing_address,
         verified_quote
             .attestation
             .declared_spki_fingerprint
             .as_deref(),
     )?;
-    let evidence = verify_dstack_deployment(&verified_quote, input.verifiers.deployment).await?;
+    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
     let gpu_evidence = verify_nvidia_evidence(
-        input.attestation.nvidia_payload.as_deref(),
-        input.nonce,
-        input
-            .policy
+        attestation.nvidia_payload.as_deref(),
+        nonce,
+        policy
             .map(|policy| policy.gpu_evidence)
             .unwrap_or(GpuEvidenceRequirement::IfPresent),
-        input.verifiers.nvidia,
+        verifiers.nvidia,
     )
     .await?;
     Ok(VerifiedModelAttestation {

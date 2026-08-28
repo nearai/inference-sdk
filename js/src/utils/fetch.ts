@@ -7,11 +7,17 @@ export class FetchTimeoutError extends Error {
   }
 }
 
-export async function fetchTimeout(
-  input: string | URL | Request,
-  timeout: number,
-  init?: Omit<RequestInit, 'signal'>,
-): Promise<Response> {
+type FetchTimeoutParams = {
+  input: string | URL | Request;
+  timeout: number;
+  init?: Omit<RequestInit, 'signal'>;
+};
+
+export async function fetchTimeout({
+  input,
+  timeout,
+  init,
+}: FetchTimeoutParams): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
 

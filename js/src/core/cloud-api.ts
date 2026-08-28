@@ -1,61 +1,30 @@
-import type { GatewayAttestation } from '../types/attestation-gateway';
 import type { ModelAttestation } from '../types/attestation-model';
-import type {
-  AttestationEvidence,
-  SigningAlgo,
-  SigningIdentity,
-} from '../types/attestation-common';
+import type { SigningIdentity } from '../types/attestation-common';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
   CompletionSignatureLookup,
-  SignatureUnavailable,
 } from '../types/chat';
 import type {
-  CloudApiGatewayAttestation,
-  CloudApiInfo,
-  CloudApiModelAttestation,
-  FetchCompletionSignatureInput,
+  FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestation,
   FetchedModelAttestations,
-  FetchGatewayAttestationInput,
-  FetchModelAttestationForSignatureInput,
-  FetchModelAttestationsInput,
-  FindModelAttestationForSignatureInput,
-  NearAiCloudOptions,
-  NearAiCloudFetch,
-  ResponseLike,
+  FetchGatewayAttestationParams,
+  FetchModelAttestationForSignatureParams,
+  FetchModelAttestationsParams,
+  FindModelAttestationForSignatureParams,
+  GatewayAttestationTransport,
+  GatewayAttestationTransportResponse,
+  LookupCompletionSignatureParams,
 } from '../types/cloud-api';
 import {
-  CloudApiCompletionSignatureResponseSchema,
-  CloudApiAttestationInfoEnvelopeSchema,
-  CloudApiGatewayAttestationResponseSchema,
-  CloudApiGatewayAttestationSchema,
-  CloudApiInfoSchema,
-  CloudApiModelAttestationResponseSchema,
-  CloudApiModelAttestationSchema,
-  CloudApiTcbInfoSchema,
-  CloudApiUnavailableSignatureResponseSchema,
-  ResponseBodySchema,
-  ResponseLikeSchema,
-} from '../schemas';
-import {
-  generateNonce,
-  normalizeHex,
-  requireByteLength,
-} from '../utils/common';
+  decodeCompletionSignatureLookup,
+  decodeGatewayAttestationReport,
+  decodeModelAttestationReport,
+} from '../boundaries/cloud-api';
+import { generateNonce, hexToBuffer } from '../utils/common';
 import { ApiError, type ApiFailure, VerificationError } from '../utils/errors';
-import {
-  inputError,
-  optionalInputString,
-  rejectUnknownInputKeys,
-  requireInputArray,
-  requireInputFunction,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
-import { parseApiResponse, tryParse } from '../utils/schema';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -68,10 +37,29 @@ type ApiResource = Extract<
   { code: 'api.transport_failed' }
 >['details']['resource'];
 type AttestationResource = 'model_attestation' | 'gateway_attestation';
-type ParsedNearAiCloudOptions = {
-  baseUrl: string;
+type GetCloudApiJsonParams = {
   apiKey: string;
-  fetch: NearAiCloudFetch;
+  url: URL;
+  resource: ApiResource;
+  extraHeaders?: HeadersInit;
+};
+type GetGatewayAttestationJsonParams = {
+  apiKey: string;
+  url: URL;
+  transport?: GatewayAttestationTransport;
+};
+type GatewayAttestationJson = {
+  json: unknown;
+  peerSpkiFingerprint?: string;
+};
+type CreateCloudApiRequestParams = {
+  apiKey: string;
+  url: URL;
+  extraHeaders?: HeadersInit;
+};
+type ReadCloudApiJsonParams = {
+  response: Response;
+  resource: ApiResource;
 };
 
 /**
@@ -79,36 +67,72 @@ type ParsedNearAiCloudOptions = {
  * Optionally narrow the report to a signing algorithm and signing address.
  * Currently returns exactly one candidate.
  */
-export async function fetchModelAttestations(
-  cloud: NearAiCloudOptions,
-  input: FetchModelAttestationsInput,
-): Promise<FetchedModelAttestations> {
-  return fetchModelAttestationsWithOptions(
-    parseNearAiCloudOptions(cloud),
-    parseModelAttestationsRequest(input),
+export async function fetchModelAttestations({
+  apiKey,
+  baseUrl,
+  model,
+  signingAlgo,
+  signingAddress,
+}: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
+  const clientNonce = generateNonce();
+  const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
+  url.searchParams.set('model', model);
+  url.searchParams.set('provider', 'near');
+  url.searchParams.set('nonce', clientNonce);
+  if (signingAlgo !== undefined) {
+    url.searchParams.set('signing_algo', signingAlgo);
+  }
+  if (signingAddress !== undefined) {
+    url.searchParams.set('signing_address', signingAddress);
+  }
+
+  const attestations = decodeModelAttestationReport(
+    await getCloudApiJson({
+      apiKey,
+      url,
+      resource: 'model_attestation',
+      extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
+    }),
   );
+  if (attestations.length !== 1) {
+    throw new ApiError({
+      code: 'api.unexpected_model_attestation_count',
+      details: { actualCount: attestations.length },
+    });
+  }
+  for (const attestation of attestations) {
+    requireMatchingApiNonce({
+      reportedNonce: attestation.nonce,
+      requestedNonce: clientNonce,
+      resource: 'model_attestation',
+    });
+  }
+  return { attestations, nonce: clientNonce };
 }
 
 /**
  * Fetch model attestation candidates for a provider_tee signature, then
  * select the one whose advertised signer matches the signature signer.
  */
-export async function fetchModelAttestationForSignature(
-  cloud: NearAiCloudOptions,
-  input: FetchModelAttestationForSignatureInput,
-): Promise<FetchedModelAttestation> {
-  const options = parseNearAiCloudOptions(cloud);
-  const request = parseModelAttestationForSignatureRequest(input);
-  const fetched = await fetchModelAttestationsWithOptions(options, {
-    model: request.model,
-    signingAlgo: request.signature.signer.signingAlgo,
-    signingAddress: request.signature.signer.signingAddress,
+export async function fetchModelAttestationForSignature({
+  apiKey,
+  baseUrl,
+  model,
+  signature,
+}: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
+  assertSignatureKind(signature, 'provider_tee');
+  const fetched = await fetchModelAttestations({
+    apiKey,
+    baseUrl,
+    model,
+    signingAlgo: signature.signer.signingAlgo,
+    signingAddress: signature.signer.signingAddress,
   });
   return {
-    attestation: selectModelAttestationForSigner(
-      fetched.attestations,
-      request.signature.signer,
-    ),
+    attestation: findModelAttestationForSignature({
+      attestations: fetched.attestations,
+      signature,
+    }),
     nonce: fetched.nonce,
   };
 }
@@ -117,126 +141,93 @@ export async function fetchModelAttestationForSignature(
  * Fetch standalone gateway evidence. The caller must independently observe
  * the TLS peer fingerprint for this attestation request.
  */
-export async function fetchGatewayAttestation(
-  cloud: NearAiCloudOptions,
-  input: FetchGatewayAttestationInput = {},
-): Promise<FetchedGatewayAttestation> {
-  const options = parseNearAiCloudOptions(cloud);
-  const request = parseGatewayAttestationRequest(input);
+export async function fetchGatewayAttestation({
+  apiKey,
+  baseUrl,
+  signingAlgo = 'ed25519',
+  transport,
+}: FetchGatewayAttestationParams): Promise<FetchedGatewayAttestation> {
   const clientNonce = generateNonce();
-  const url = new URL('attestation/report', options.baseUrl);
+  const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
   url.searchParams.set('nonce', clientNonce);
-  url.searchParams.set('signing_algo', request.signingAlgo);
+  url.searchParams.set('signing_algo', signingAlgo);
   url.searchParams.set('include_tls_fingerprint', 'true');
-  const report = parseApiResponse(
-    CloudApiGatewayAttestationResponseSchema,
-    await getCloudApiJson(options, url, 'gateway_attestation'),
-    'gateway attestation report',
-  );
-  const attestation = parseGatewayAttestation(report.gateway_attestation);
-  requireMatchingApiNonce(
-    attestation.nonce,
-    clientNonce,
-    'gateway_attestation',
-  );
-  return { attestation, nonce: clientNonce };
+  const result = await getGatewayAttestationJson({ apiKey, url, transport });
+  const attestation = decodeGatewayAttestationReport(result.json);
+  requireMatchingApiNonce({
+    reportedNonce: attestation.nonce,
+    requestedNonce: clientNonce,
+    resource: 'gateway_attestation',
+  });
+  return {
+    attestation,
+    nonce: clientNonce,
+    peerSpkiFingerprint: result.peerSpkiFingerprint,
+  };
 }
 
 /**
  * Look up one completion signature without polling. Use this when an
  * application needs to handle an unavailable signature itself.
  */
-export async function lookupCompletionSignature(
-  cloud: NearAiCloudOptions,
-  input: FetchCompletionSignatureInput,
-): Promise<CompletionSignatureLookup> {
-  return lookupCompletionSignatureWithOptions(
-    parseNearAiCloudOptions(cloud),
-    parseCompletionSignatureRequest(input),
+export async function lookupCompletionSignature({
+  apiKey,
+  baseUrl,
+  completionId,
+  signingAlgo,
+}: LookupCompletionSignatureParams): Promise<CompletionSignatureLookup> {
+  const url = new URL(
+    `signature/${encodeURIComponent(completionId)}`,
+    resolveCloudApiBaseUrl(baseUrl),
+  );
+  if (signingAlgo !== undefined) {
+    url.searchParams.set('signing_algo', signingAlgo);
+  }
+  return decodeCompletionSignatureLookup(
+    await getCloudApiJson({
+      apiKey,
+      url,
+      resource: 'completion_signature',
+    }),
   );
 }
 
-/** Fetch one completion signature or throw when it is unavailable. */
-export async function fetchCompletionSignature(
-  cloud: NearAiCloudOptions,
-  input: FetchCompletionSignatureInput,
-): Promise<CompletionSignature> {
-  const lookup = await lookupCompletionSignatureWithOptions(
-    parseNearAiCloudOptions(cloud),
-    parseCompletionSignatureRequest(input),
-  );
+/** Fetch one completion signature or throw when Cloud API does not provide one. */
+export async function fetchCompletionSignature({
+  apiKey,
+  baseUrl,
+  completionId,
+  signingAlgo,
+}: FetchCompletionSignatureParams): Promise<CompletionSignature> {
+  const lookup = await lookupCompletionSignature({
+    apiKey,
+    baseUrl,
+    completionId,
+    signingAlgo,
+  });
   if (lookup.status === 'found') {
     return lookup.signature;
   }
-  throw new VerificationError({
-    phase: 'signature',
-    code: 'signature.unavailable',
+  throw new ApiError({
+    code: 'api.completion_signature_unavailable',
     details: { providerErrorCode: lookup.unavailable.errorCode },
   });
 }
 
-async function fetchModelAttestationsWithOptions(
-  cloud: ParsedNearAiCloudOptions,
-  request: ParsedModelAttestationsRequest,
-): Promise<FetchedModelAttestations> {
-  const clientNonce = generateNonce();
-  const url = new URL('attestation/report', cloud.baseUrl);
-  url.searchParams.set('model', request.model);
-  url.searchParams.set('provider', 'near');
-  url.searchParams.set('nonce', clientNonce);
-  if (request.signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', request.signingAlgo);
-  }
-  if (request.signingAddress !== undefined) {
-    url.searchParams.set('signing_address', request.signingAddress);
-  }
-
-  const attestations = parseModelAttestations(
-    await getCloudApiJson(cloud, url, 'model_attestation', {
-      [NO_ALIASING_HEADER]: 'true',
-    }),
-  );
-  for (const attestation of attestations) {
-    requireMatchingApiNonce(
-      attestation.nonce,
-      clientNonce,
-      'model_attestation',
-    );
-  }
-  return { attestations, nonce: clientNonce };
-}
-
-async function lookupCompletionSignatureWithOptions(
-  cloud: ParsedNearAiCloudOptions,
-  request: ParsedCompletionSignatureRequest,
-): Promise<CompletionSignatureLookup> {
-  const url = new URL(
-    `signature/${encodeURIComponent(request.completionId)}`,
-    cloud.baseUrl,
-  );
-  if (request.signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', request.signingAlgo);
-  }
-  return parseCompletionSignatureLookup(
-    await getCloudApiJson(cloud, url, 'completion_signature'),
-  );
-}
-
-async function getCloudApiJson(
-  cloud: ParsedNearAiCloudOptions,
-  url: URL,
-  resource: ApiResource,
-  extraHeaders: HeadersInit = {},
-): Promise<unknown> {
-  let rawResponse: unknown;
+async function getCloudApiJson({
+  apiKey,
+  url,
+  resource,
+  extraHeaders = {},
+}: GetCloudApiJsonParams): Promise<unknown> {
+  let response: Response;
   try {
-    const headers = new Headers(extraHeaders);
-    headers.set('authorization', `Bearer ${cloud.apiKey}`);
-    rawResponse = await cloud.fetch(url, { headers });
+    response = await fetch(
+      createCloudApiRequest({ apiKey, url, extraHeaders }),
+    );
   } catch (cause) {
     throw new ApiError(
       {
-        phase: 'api',
         code: 'api.transport_failed',
         details: { resource, reason: 'request' },
         retryable: true,
@@ -244,15 +235,62 @@ async function getCloudApiJson(
       { cause },
     );
   }
-  const response = parseResponseLike(rawResponse, `${resource} response`);
 
-  let rawBody: unknown;
+  return readCloudApiJson({ response, resource });
+}
+
+async function getGatewayAttestationJson({
+  apiKey,
+  url,
+  transport,
+}: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
+  const request = createCloudApiRequest({ apiKey, url });
+  let result: GatewayAttestationTransportResponse;
   try {
-    rawBody = await response.text();
+    result =
+      transport === undefined
+        ? { response: await fetch(request) }
+        : await transport(request);
   } catch (cause) {
     throw new ApiError(
       {
-        phase: 'api',
+        code: 'api.transport_failed',
+        details: { resource: 'gateway_attestation', reason: 'request' },
+        retryable: true,
+      },
+      { cause },
+    );
+  }
+
+  return {
+    json: await readCloudApiJson({
+      response: result.response,
+      resource: 'gateway_attestation',
+    }),
+    peerSpkiFingerprint: result.peerSpkiFingerprint,
+  };
+}
+
+function createCloudApiRequest({
+  apiKey,
+  url,
+  extraHeaders = {},
+}: CreateCloudApiRequestParams): Request {
+  const headers = new Headers(extraHeaders);
+  headers.set('authorization', `Bearer ${apiKey}`);
+  return new Request(url, { headers });
+}
+
+async function readCloudApiJson({
+  response,
+  resource,
+}: ReadCloudApiJsonParams): Promise<unknown> {
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    throw new ApiError(
+      {
         code: 'api.transport_failed',
         details: { resource, reason: 'response_body' },
         retryable: true,
@@ -260,14 +298,8 @@ async function getCloudApiJson(
       { cause },
     );
   }
-  const body = parseApiResponse(
-    ResponseBodySchema,
-    rawBody,
-    `${resource} response body`,
-  );
   if (!response.ok) {
     throw new ApiError({
-      phase: 'api',
       code: 'api.http_status',
       details: { resource, status: response.status },
       retryable: isRetryableHttpStatus(response.status, resource),
@@ -278,7 +310,6 @@ async function getCloudApiJson(
   } catch (cause) {
     throw new ApiError(
       {
-        phase: 'api',
         code: 'api.invalid_json',
         details: { resource },
       },
@@ -292,16 +323,11 @@ async function getCloudApiJson(
  * provider_tee completion signature. It does not verify the quote or
  * completion signature.
  */
-export function findModelAttestationForSignature(
-  input: FindModelAttestationForSignatureInput,
-): ModelAttestation {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['attestations', 'signature']);
-  const signature = requireSignatureSigner(value.signature, 'provider_tee');
-  const attestations = requireInputArray(
-    value.attestations,
-    'attestations',
-  ) as readonly ModelAttestation[];
+export function findModelAttestationForSignature({
+  attestations,
+  signature,
+}: FindModelAttestationForSignatureParams): ModelAttestation {
+  assertSignatureKind(signature, 'provider_tee');
   return selectModelAttestationForSigner(attestations, signature.signer);
 }
 
@@ -310,16 +336,13 @@ function selectModelAttestationForSigner(
   signer: SigningIdentity,
 ): ModelAttestation {
   const matches: ModelAttestation[] = [];
-  for (const [index, attestation] of attestations.entries()) {
-    const candidate = requireInputObject(attestation, `attestations[${index}]`);
-    const candidateSigner = parseSigningIdentity(
-      candidate.signer,
-      `attestations[${index}].signer`,
-    );
+  for (const attestation of attestations) {
+    const candidateSigner = attestation.signer;
     if (
       candidateSigner.signingAlgo === signer.signingAlgo &&
-      normalizeHex(candidateSigner.signingAddress) ===
-        normalizeHex(signer.signingAddress)
+      hexToBuffer(candidateSigner.signingAddress).equals(
+        hexToBuffer(signer.signingAddress),
+      )
     ) {
       matches.push(attestation);
     }
@@ -327,14 +350,11 @@ function selectModelAttestationForSigner(
 
   if (matches.length === 0) {
     throw new ApiError({
-      phase: 'api',
-      code: 'api.attestation_signer_mismatch',
-      details: { resource: 'model_attestation' },
+      code: 'api.model_attestation_signer_not_found',
     });
   }
   if (matches.length !== 1) {
     throw new ApiError({
-      phase: 'api',
       code: 'api.ambiguous_model_attestation_signer',
       details: {
         matchingCount: matches.length,
@@ -345,278 +365,26 @@ function selectModelAttestationForSigner(
   return matches[0];
 }
 
-function parseNearAiCloudOptions(options: unknown): ParsedNearAiCloudOptions {
-  const value = requireInputObject(options, 'options');
-  rejectUnknownInputKeys(value, 'options', ['baseUrl', 'apiKey', 'fetch']);
-  const baseUrl = optionalInputString(value.baseUrl, 'baseUrl');
-  const fetchImpl =
-    value.fetch === undefined
-      ? fetch
-      : (requireInputFunction(value.fetch, 'fetch') as NearAiCloudFetch);
-
-  return {
-    baseUrl: validateBaseUrl(
-      baseUrl === undefined ? DEFAULT_NEAR_AI_CLOUD_BASE_URL : baseUrl,
-    ),
-    apiKey: validateApiKey(requireInputString(value.apiKey, 'apiKey')),
-    fetch: fetchImpl,
-  };
-}
-
-type ParsedModelAttestationsRequest = {
-  model: string;
-  signingAlgo?: SigningAlgo;
-  signingAddress?: string;
-};
-
-function parseModelAttestationsRequest(
-  input: unknown,
-): ParsedModelAttestationsRequest {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', [
-    'model',
-    'signingAlgo',
-    'signingAddress',
-  ]);
-  const signingAlgo = optionalSigningAlgo(value.signingAlgo, 'signingAlgo');
-  const signingAddress = optionalInputString(
-    value.signingAddress,
-    'signingAddress',
-  );
-
-  return {
-    model: requireNonEmptyString(
-      requireInputString(value.model, 'model'),
-      'model',
-    ),
-    ...(signingAlgo === undefined ? {} : { signingAlgo }),
-    ...(signingAddress === undefined
-      ? {}
-      : {
-          signingAddress: validateModelAttestationSigningAddress(
-            signingAddress,
-            signingAlgo,
-            'signingAddress',
-          ),
-        }),
-  };
-}
-
-type ParsedModelAttestationForSignatureRequest = {
-  model: string;
-  signature: SignatureSigner;
-};
-
-function parseModelAttestationForSignatureRequest(
-  input: unknown,
-): ParsedModelAttestationForSignatureRequest {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['model', 'signature']);
-
-  return {
-    model: requireNonEmptyString(
-      requireInputString(value.model, 'model'),
-      'model',
-    ),
-    signature: requireSignatureSigner(value.signature, 'provider_tee'),
-  };
-}
-
-type ParsedGatewayAttestationRequest = {
-  signingAlgo: SigningAlgo;
-};
-
-function parseGatewayAttestationRequest(
-  input: unknown,
-): ParsedGatewayAttestationRequest {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['signingAlgo']);
-
-  return {
-    signingAlgo:
-      optionalSigningAlgo(value.signingAlgo, 'signingAlgo') ?? 'ed25519',
-  };
-}
-
-type ParsedCompletionSignatureRequest = FetchCompletionSignatureInput;
-
-function parseCompletionSignatureRequest(
-  input: unknown,
-): ParsedCompletionSignatureRequest {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', ['completionId', 'signingAlgo']);
-  const signingAlgo = optionalSigningAlgo(value.signingAlgo, 'signingAlgo');
-
-  return {
-    completionId: requireNonEmptyString(
-      requireInputString(value.completionId, 'completionId'),
-      'completionId',
-    ),
-    ...(signingAlgo === undefined ? {} : { signingAlgo }),
-  };
-}
-
-type SignatureSigner = CompletionSignatureReference;
-
-function requireSignatureSigner(
-  value: unknown,
+function assertSignatureKind(
+  signature: CompletionSignatureReference,
   expectedKind: CompletionSignatureReference['kind'],
-): SignatureSigner {
-  const signature = requireInputObject(value, 'signature');
-  rejectUnknownInputKeys(signature, 'signature', [
-    'kind',
-    'signer',
-    'signedText',
-    'signature',
-  ]);
-  const kind = requireSignatureKind(signature.kind, 'signature.kind');
-  if (kind !== expectedKind) {
+): void {
+  if (signature.kind !== expectedKind) {
     throw new VerificationError({
-      phase: 'signature',
       code: 'signature.kind_mismatch',
-      details: { expected: expectedKind, actual: kind },
+      details: { expected: expectedKind, actual: signature.kind },
     });
   }
-  return {
-    kind,
-    signer: parseSigningIdentity(signature.signer, 'signature.signer'),
-  };
 }
 
-function parseSigningIdentity(value: unknown, field: string): SigningIdentity {
-  const signer = requireInputObject(value, field);
-  rejectUnknownInputKeys(signer, field, ['signingAlgo', 'signingAddress']);
-  const signingAlgo = requireSigningAlgo(
-    signer.signingAlgo,
-    `${field}.signingAlgo`,
-  );
-  return {
-    signingAlgo,
-    signingAddress: validateSigningAddress(
-      requireInputString(signer.signingAddress, `${field}.signingAddress`),
-      signingAlgo,
-      `${field}.signingAddress`,
-    ),
-  };
-}
-
-function requireSignatureKind(
-  value: unknown,
-  field: string,
-): CompletionSignature['kind'] {
-  if (value === 'provider_tee' || value === 'gateway') {
-    return value;
-  }
-  throw inputError(
-    field,
-    value === undefined ? 'missing' : 'unsupported_value',
-    {
-      expected: "'provider_tee' or 'gateway'",
-    },
-  );
-}
-
-function requireSigningAlgo(value: unknown, field: string): SigningAlgo {
-  if (value === 'ecdsa' || value === 'ed25519') {
-    return value;
-  }
-  throw inputError(
-    field,
-    value === undefined ? 'missing' : 'unsupported_value',
-    {
-      expected: "'ecdsa' or 'ed25519'",
-    },
-  );
-}
-
-function optionalSigningAlgo(
-  value: unknown,
-  field: string,
-): SigningAlgo | undefined {
-  return value === undefined ? undefined : requireSigningAlgo(value, field);
-}
-
-function validateSigningAddress(
-  signingAddress: string,
-  signingAlgo: SigningAlgo,
-  field: string,
+function resolveCloudApiBaseUrl(
+  baseUrl = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ): string {
-  requireByteLength(signingAddress, signingAlgo === 'ecdsa' ? 20 : 32, field);
-  return signingAddress;
-}
-
-function validateModelAttestationSigningAddress(
-  signingAddress: string,
-  signingAlgo: SigningAlgo | undefined,
-  field: string,
-): string {
-  if (signingAlgo !== undefined) {
-    return validateSigningAddress(signingAddress, signingAlgo, field);
+  const resolvedBaseUrl = new URL(baseUrl);
+  if (!resolvedBaseUrl.pathname.endsWith('/')) {
+    resolvedBaseUrl.pathname = `${resolvedBaseUrl.pathname}/`;
   }
-
-  const actualBytes = normalizeHex(signingAddress).length / 2;
-  if (actualBytes === 20 || actualBytes === 32) {
-    return signingAddress;
-  }
-  throw inputError(field, 'wrong_length', {
-    expected: '20-byte ECDSA or 32-byte Ed25519 hexadecimal signing address',
-    actualBytes,
-  });
-}
-
-function validateBaseUrl(baseUrl: string): string {
-  try {
-    // WHATWG URL normalizes a trailing bare `?` or `#` to an empty search/hash.
-    // Reject the raw delimiters before that normalization so appending a path
-    // separator cannot accidentally turn the query or fragment into the base.
-    if (baseUrl.includes('?') || baseUrl.includes('#')) {
-      throw new TypeError('invalid base URL');
-    }
-    const parsed = new URL(baseUrl);
-    if (
-      parsed.protocol !== 'https:' ||
-      parsed.search ||
-      parsed.hash ||
-      parsed.username ||
-      parsed.password
-    ) {
-      throw new TypeError('invalid base URL');
-    }
-  } catch {
-    throw inputError('baseUrl', 'invalid_url', {
-      expected: 'absolute HTTPS URL without credentials, query, or fragment',
-    });
-  }
-
-  return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-}
-
-function validateApiKey(apiKey: string): string {
-  if (apiKey.length === 0 || containsHttpHeaderControl(apiKey)) {
-    throw inputError(
-      'apiKey',
-      apiKey.length === 0 ? 'missing' : 'invalid_header',
-      { expected: 'non-empty HTTP header value' },
-    );
-  }
-  return apiKey;
-}
-
-function containsHttpHeaderControl(value: string): boolean {
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (code <= 0x1f || code === 0x7f) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function requireNonEmptyString(value: string, field: string): string {
-  if (value.length > 0) {
-    return value;
-  }
-  throw inputError(field, 'missing', { expected: 'non-empty string' });
+  return resolvedBaseUrl.toString();
 }
 
 function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
@@ -629,225 +397,23 @@ function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
   );
 }
 
-function parseResponseLike(value: unknown, root: string): ResponseLike {
-  const parsed = parseApiResponse(ResponseLikeSchema, value, root);
-  return {
-    ok: parsed.ok,
-    status: parsed.status,
-    text: () => parsed.text.call(value),
-  };
-}
-
-function parseModelAttestations(value: unknown): readonly ModelAttestation[] {
-  const report = parseApiResponse(
-    CloudApiModelAttestationResponseSchema,
-    value,
-    'model attestation report',
-  );
-  const rawAttestations = report.model_attestations;
-  if (rawAttestations.length !== 1) {
-    throw new ApiError({
-      phase: 'api',
-      code: 'api.unexpected_model_attestation_count',
-      details: { expectedCount: 1, actualCount: rawAttestations.length },
-    });
-  }
-  return rawAttestations.map((attestation, index) =>
-    parseModelAttestation(attestation, `model_attestations[${index}]`),
-  );
-}
-
-function parseGatewayAttestation(value: unknown): GatewayAttestation {
-  const info = parseCloudApiInfo(value, 'gateway_attestation');
-  const parsed = parseApiResponse(
-    CloudApiGatewayAttestationSchema,
-    value,
-    'gateway_attestation',
-  );
-  const base = parseAttestationEvidence(parsed, 'gateway_attestation', info);
-  return { ...base, reportedQuoteData: parsed.report_data };
-}
-
-function parseModelAttestation(
-  value: unknown,
-  label: string,
-): ModelAttestation {
-  const info = parseCloudApiInfo(value, label);
-  const parsed = parseApiResponse(CloudApiModelAttestationSchema, value, label);
-  const base = parseAttestationEvidence(parsed, label, info);
-
-  return {
-    ...base,
-    ...(parsed.nvidia_payload !== undefined
-      ? { nvidiaPayload: parsed.nvidia_payload }
-      : {}),
-  };
-}
-
-type CloudApiAttestation =
-  | CloudApiGatewayAttestation
-  | CloudApiModelAttestation;
-type CloudApiTcbInfoValue = CloudApiInfo['tcb_info'];
-
-function parseAttestationEvidence(
-  value: CloudApiAttestation,
-  label: string,
-  info: CloudApiInfo,
-): AttestationEvidence {
-  const appCompose = parseAppCompose(info.tcb_info, `${label}.info.tcb_info`);
-  const signingAlgo = value.signing_algo;
-  const signingAddress = value.signing_address;
-  validateApiSigningAddress(
-    signingAddress,
-    signingAlgo,
-    `${label}.signing_address`,
-  );
-  return {
-    nonce: validateApiNonce(value.request_nonce, `${label}.request_nonce`),
-    signer: {
-      signingAlgo,
-      signingAddress,
-    },
-    intelQuote: value.intel_quote,
-    eventLog: value.event_log,
-    appCompose,
-    ...(value.tls_cert_fingerprint !== undefined
-      ? { declaredSpkiFingerprint: value.tls_cert_fingerprint }
-      : {}),
-    ...(value.report_data !== undefined
-      ? { reportedQuoteData: value.report_data }
-      : {}),
-  };
-}
-
-function parseCloudApiInfo(value: unknown, label: string): CloudApiInfo {
-  const envelope = parseApiResponse(
-    CloudApiAttestationInfoEnvelopeSchema,
-    value,
-    label,
-  );
-  return parseApiResponse(CloudApiInfoSchema, envelope.info, `${label}.info`);
-}
-
-function parseCompletionSignatureLookup(
-  value: unknown,
-): CompletionSignatureLookup {
-  const unavailableResponse = tryParse(
-    CloudApiUnavailableSignatureResponseSchema,
-    value,
-  );
-  if (unavailableResponse) {
-    const unavailable: SignatureUnavailable = {
-      errorCode: unavailableResponse.error_code,
-      message: unavailableResponse.message,
-    };
-    return { status: 'unavailable', unavailable };
-  }
-
-  const response = parseApiResponse(
-    CloudApiCompletionSignatureResponseSchema,
-    value,
-    'signature',
-  );
-  const signingAlgo = response.signing_algo;
-  const signingAddress = response.signing_address;
-  validateApiSigningAddress(
-    signingAddress,
-    signingAlgo,
-    'signature.signing_address',
-  );
-  const base = {
-    signedText: response.text,
-    signature: response.signature,
-    signer: { signingAlgo, signingAddress },
-  };
-  return {
-    status: 'found',
-    signature: {
-      ...base,
-      kind: response.signature_kind,
-    },
-  };
-}
-
-function parseAppCompose(value: CloudApiTcbInfoValue, label: string): string {
-  if (typeof value === 'string') {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      throw invalidResponse(label, 'JSON object', value);
-    }
-    return parseApiResponse(CloudApiTcbInfoSchema, parsed, label).app_compose;
-  }
-  return value.app_compose;
-}
-
-function validateApiSigningAddress(
-  signingAddress: string,
-  signingAlgo: SigningAlgo,
-  label: string,
-): void {
-  const normalized =
-    signingAddress.startsWith('0x') || signingAddress.startsWith('0X')
-      ? signingAddress.slice(2)
-      : signingAddress;
-  const expectedBytes = signingAlgo === 'ecdsa' ? 20 : 32;
-  if (
-    normalized.length !== expectedBytes * 2 ||
-    !/^[0-9a-fA-F]+$/.test(normalized)
-  ) {
-    throw invalidResponse(
-      label,
-      `${expectedBytes}-byte hexadecimal signing address`,
-      signingAddress,
-    );
-  }
-}
-
-function validateApiNonce(value: string, label: string): string {
-  const normalized =
-    value.startsWith('0x') || value.startsWith('0X') ? value.slice(2) : value;
-  if (normalized.length !== 64 || !/^[0-9a-fA-F]+$/.test(normalized)) {
-    throw invalidResponse(label, '32-byte hexadecimal nonce', value);
-  }
-  return value;
-}
+type RequireMatchingApiNonceParams = {
+  reportedNonce: string;
+  requestedNonce: string;
+  resource: AttestationResource;
+};
 
 /** Reject a response that does not echo the nonce sent in its request. */
-function requireMatchingApiNonce(
-  reportedNonce: string,
-  requestedNonce: string,
-  resource: AttestationResource,
-): void {
-  if (normalizeHex(reportedNonce) === requestedNonce) {
+function requireMatchingApiNonce({
+  reportedNonce,
+  requestedNonce,
+  resource,
+}: RequireMatchingApiNonceParams): void {
+  if (hexToBuffer(reportedNonce).equals(hexToBuffer(requestedNonce))) {
     return;
   }
   throw new ApiError({
-    phase: 'api',
     code: 'api.nonce_mismatch',
     details: { resource },
   });
-}
-
-function invalidResponse(
-  path: string,
-  expected: string,
-  value: unknown,
-): ApiError {
-  return new ApiError({
-    phase: 'api',
-    code: 'api.invalid_response',
-    details: { path, expected, actual: describeValue(value) },
-  });
-}
-
-function describeValue(value: unknown): string {
-  if (value === null) {
-    return 'null';
-  }
-  if (Array.isArray(value)) {
-    return 'array';
-  }
-  return typeof value;
 }

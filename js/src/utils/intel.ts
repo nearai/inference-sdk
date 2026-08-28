@@ -7,10 +7,9 @@ import {
   verify,
 } from '@phala/dcap-qvl';
 import type { VerifiedTdxQuote } from '../types/verification';
-import { QuoteVerificationResultSchema } from '../schemas';
+import { decodeQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { isVerificationError, VerificationError } from './errors';
-import { parseQuoteResult } from './schema';
 
 /**
  * Verify an Intel TDX quote using DCAP and expose only the measurements needed
@@ -25,7 +24,6 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw new VerificationError(
       {
-        phase: 'quote',
         code: 'quote.verification_failed',
         details: { reason: 'invalid_encoding' },
       },
@@ -38,7 +36,6 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw new VerificationError(
       {
-        phase: 'quote',
         code: 'quote.verification_failed',
         details: { reason: 'invalid_quote' },
       },
@@ -52,7 +49,6 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw new VerificationError(
       {
-        phase: 'quote',
         code: 'quote.collateral_unavailable',
         retryable: true,
       },
@@ -70,7 +66,6 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw new VerificationError(
       {
-        phase: 'quote',
         code: 'quote.verification_failed',
         details: { reason: 'verifier_error' },
       },
@@ -86,7 +81,6 @@ export async function verifyDcapQuote(
   }
   if (!td10) {
     throw new VerificationError({
-      phase: 'quote',
       code: 'quote.unsupported_report_type',
       details: { expected: 'TD10' },
     });
@@ -107,27 +101,13 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw invalidDcapResult(cause);
   }
-  return normalizeVerifiedTdxQuote(result);
-}
-
-/** Validate quote-adapter output and normalize its byte fields to Buffers. */
-export function normalizeVerifiedTdxQuote(value: unknown): VerifiedTdxQuote {
-  const quote = parseQuoteResult(QuoteVerificationResultSchema, value);
-  return {
-    tcbStatus: quote.tcbStatus,
-    advisoryIds: [...quote.advisoryIds],
-    debugEnabled: quote.debugEnabled,
-    reportData: Buffer.from(quote.reportData),
-    mrConfigId: Buffer.from(quote.mrConfigId),
-    rtMr3: Buffer.from(quote.rtMr3),
-  };
+  return decodeQuoteVerifierOutput(result);
 }
 
 function getDebugEnabled(value: unknown): boolean {
   const attributes = requireBytes(value, 'tdAttributes');
   if (attributes.length < 1) {
     throw new VerificationError({
-      phase: 'quote',
       code: 'quote.invalid_result',
       details: {
         path: 'tdAttributes',
@@ -144,7 +124,6 @@ function requireBytes(value: unknown, path: string): Buffer {
     return Buffer.from(value);
   }
   throw new VerificationError({
-    phase: 'quote',
     code: 'quote.invalid_result',
     details: { path, expected: 'Uint8Array', actual: describeValue(value) },
   });
@@ -156,7 +135,6 @@ function invalidDcapResult(cause: unknown): VerificationError {
   }
   return new VerificationError(
     {
-      phase: 'quote',
       code: 'quote.invalid_result',
       details: {
         path: 'dcap_result',
