@@ -112,7 +112,7 @@ export async function fetchModelAttestations({
       resource: 'model_attestation',
     });
   }
-  return { attestations, nonce: clientNonce };
+  return { attestations, clientBinding: { nonce: clientNonce } };
 }
 
 /**
@@ -138,7 +138,7 @@ export async function fetchModelAttestationForSignature({
       attestations: fetched.attestations,
       signature,
     }),
-    nonce: fetched.nonce,
+    clientBinding: fetched.clientBinding,
   };
 }
 

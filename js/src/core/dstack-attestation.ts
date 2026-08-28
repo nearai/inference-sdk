@@ -75,8 +75,8 @@ export async function verifyDstackQuote({
       code: 'policy.tcb_status_not_allowed',
       details: {
         actual: quote.tcbStatus,
-        accepted: acceptedTcbStatuses,
-        advisoryIds: quote.advisoryIds,
+        accepted: [...acceptedTcbStatuses],
+        advisoryIds: [...quote.advisoryIds],
       },
     });
   }

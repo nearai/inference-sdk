@@ -88,7 +88,7 @@ async fn does_not_downgrade_declared_tls_to_legacy_binding() {
 }
 
 #[tokio::test]
-async fn rejects_empty_gpu_payload_before_calling_a_verifier() {
+async fn rejects_an_empty_gpu_payload() {
     let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
     let attestation = model_attestation(Some(""), false);
 

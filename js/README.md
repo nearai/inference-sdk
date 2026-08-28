@@ -42,7 +42,7 @@ Use a `provider_tee` signature with model attestation to verify that a
 model-serving TEE signed the exact completion bytes. This is the normal
 completion-verification flow. Keep the original bytes, use a canonical model ID
 with `x-no-aliasing: true`, fetch matching model attestation evidence, then
-verify the response. The model-attestation fetch returns the fresh nonce used
+verify the response. The model-attestation fetch returns the client binding used
 for that evidence request. A model attestation does not prove that the client
 connected directly to the model CVM.
 
@@ -69,15 +69,16 @@ model execution.
 
 ## Requirements
 
-- Use the nonce returned with each attestation fetch result when verifying that
-  result. The SDK generates a fresh nonce for every evidence request.
+- Use the `clientBinding` returned with each attestation fetch result when
+  verifying that result. The SDK generates a fresh nonce for every evidence
+  request.
 - For response verification, preserve exact request and response bytes; use
   the signature's explicit kind with its matching evidence and response
   verifier.
-- For Gateway attestation, pass the `FetchedGatewayAttestation` result to
-  `verifyGatewayAttestation`. By default it requires a TLS peer fingerprint;
-  Node captures it for the evidence request. Browser callers must pass
-  `policy: { verifyPeerTlsBinding: false }`.
+- For Gateway attestation, pass the fetch result's `attestation` and
+  `clientBinding` to `verifyGatewayAttestation`. By default it requires a TLS
+  peer fingerprint; Node captures it for the evidence request. Browser callers
+  must pass `policy: { verifyPeerTlsBinding: false }`.
 - Verify raw evidence before using its result for response verification. Decide
   where to verify it again after storage or transfer.
 - Supply a deployment verifier when the application must restrict acceptable

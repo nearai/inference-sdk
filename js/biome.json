@@ -6,7 +6,13 @@
     "useIgnoreFile": false
   },
   "files": {
-    "includes": ["src/**/*.ts", "test/**/*.ts", "*.mjs", "*.json"]
+    "includes": [
+      "src/**/*.ts",
+      "test/**/*.ts",
+      "test/**/*.mjs",
+      "*.mjs",
+      "*.json"
+    ]
   },
   "formatter": {
     "enabled": true,

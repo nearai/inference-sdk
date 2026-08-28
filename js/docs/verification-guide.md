@@ -38,7 +38,7 @@ completion signature only when the claim is about a particular response.
 
 `fetchModelAttestations` preserves the Cloud API's `model_attestations` array.
 The SDK currently requires exactly one returned attestation. For a deployment
-audit, verify that sole item with the returned `nonce`; use
+audit, verify that sole item with the returned `clientBinding`; use
 `findModelAttestationForSignature` only when selecting evidence for a
 `provider_tee` response signature.
 
@@ -84,7 +84,7 @@ if (signature.kind !== 'provider_tee') {
   throw new Error('This completion has a Gateway signature; use the Gateway flow.');
 }
 
-const { attestations, nonce } = await fetchModelAttestations({
+const { attestations, clientBinding } = await fetchModelAttestations({
   apiKey,
   model,
   signingAlgo: signature.signer.signingAlgo,
@@ -97,7 +97,7 @@ const attestation = findModelAttestationForSignature({
 
 const verifiedAttestation = await verifyModelAttestation({
   attestation,
-  nonce,
+  clientBinding,
 });
 
 verifyModelResponse({
@@ -111,8 +111,9 @@ verifyModelResponse({
 When `verifyModelResponse` returns, the model signature is valid for those
 exact bytes and its signing identity matches `verifiedAttestation.signer`.
 `fetchModelAttestations` creates a fresh client nonce, checks the service's
-echo, and returns that nonce with the evidence. `findModelAttestationForSignature`
-requires exactly one returned attestation to match the signature's signer.
+echo, and returns it in `clientBinding` with the evidence.
+`findModelAttestationForSignature` requires exactly one returned attestation to
+match the signature's signer.
 
 `verifyModelResponse` verifies the response bytes and matches the signature to
 `verifiedAttestation.signer`; it does not repeat quote, policy, or deployment
@@ -251,7 +252,7 @@ const verifiers: ModelAttestationVerifiers = {
 
 const verifiedAttestation = await verifyModelAttestation({
   attestation,
-  nonce,
+  clientBinding,
   policy,
   verifiers,
 });

@@ -7,7 +7,7 @@ import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
-import type { GatewayClientBinding } from './verification';
+import type { GatewayClientBinding, ModelClientBinding } from './verification';
 
 export type FetchModelAttestationsParams = {
   readonly apiKey: string;
@@ -55,19 +55,18 @@ export type CloudApiGatewayAttestation = v.InferOutput<
   typeof CloudApiGatewayAttestationSchema
 >;
 
-type FetchedAttestation<TAttestation> = {
-  readonly attestation: TAttestation;
-  /** Fresh client nonce sent with the request. */
-  readonly nonce: string;
+export type FetchedModelAttestation = {
+  readonly attestation: ModelAttestation;
+  /** Client values associated with this model-attestation request. */
+  readonly clientBinding: ModelClientBinding;
 };
 
-export type FetchedModelAttestation = FetchedAttestation<ModelAttestation>;
 export type FetchedGatewayAttestation = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
 };
 export type FetchedModelAttestations = {
   readonly attestations: readonly ModelAttestation[];
-  /** Fresh client nonce sent with the request. */
-  readonly nonce: string;
+  /** Client values associated with this model-attestation request. */
+  readonly clientBinding: ModelClientBinding;
 };

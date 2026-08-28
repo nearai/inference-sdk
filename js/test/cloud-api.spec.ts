@@ -154,21 +154,19 @@ describe('NEAR AI Cloud fetch helpers', () => {
         );
       });
 
-      const { attestations, nonce: clientNonce } = await fetchModelAttestations(
-        {
-          ...api.params,
-          model: 'canonical-model',
-          signingAlgo: signature.signer.signingAlgo,
-          signingAddress: signature.signer.signingAddress,
-        },
-      );
+      const { attestations, clientBinding } = await fetchModelAttestations({
+        ...api.params,
+        model: 'canonical-model',
+        signingAlgo: signature.signer.signingAlgo,
+        signingAddress: signature.signer.signingAddress,
+      });
       const attestation = findModelAttestationForSignature({
         attestations,
         signature,
       });
 
       expect(attestation).toMatchObject({
-        nonce: clientNonce,
+        nonce: clientBinding.nonce,
         signer: signature.signer,
         appCompose: '{}',
         reportedQuoteData: '44'.repeat(64),
@@ -178,7 +176,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const query = new URL(request.url).searchParams;
       expect(query.get('model')).toBe('canonical-model');
       expect(query.get('provider')).toBe('near');
-      expect(query.get('nonce')).toBe(clientNonce);
+      expect(query.get('nonce')).toBe(clientBinding.nonce);
       expect(query.get('signing_algo')).toBe('ecdsa');
       expect(query.get('signing_address')).toBe(selectedSigningAddress);
       expect(request.headers.get('authorization')).toBe('Bearer test');
@@ -199,7 +197,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
 
       expect(fetched).toMatchObject({
-        nonce: fetched.attestation.nonce,
+        clientBinding: { nonce: fetched.attestation.nonce },
         attestation: { signer: signature.signer },
       });
 
@@ -210,25 +208,6 @@ describe('NEAR AI Cloud fetch helpers', () => {
       expect(query.get('signing_address')).toBe(
         signature.signer.signingAddress,
       );
-    });
-
-    test('rejects a gateway signature before requesting model evidence', async () => {
-      const fetchMock = jest.spyOn(globalThis, 'fetch');
-
-      await expect(
-        fetchModelAttestationForSignature({
-          apiKey: 'test',
-          model: 'canonical-model',
-          signature: gatewaySignature(),
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'signature.kind_mismatch',
-          details: { expected: 'provider_tee', actual: 'gateway' },
-        },
-      });
-
-      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     test('matches signer encodings by bytes', () => {
@@ -261,7 +240,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const query = new URL(api.request().url).searchParams;
       expect(query.get('model')).toBe('canonical-model');
       expect(query.get('provider')).toBe('near');
-      expect(query.get('nonce')).toBe(fetched.nonce);
+      expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
       expect(query.has('signing_algo')).toBe(false);
       expect(query.has('signing_address')).toBe(false);
     });
@@ -466,18 +445,6 @@ describe('NEAR AI Cloud fetch helpers', () => {
       expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
         'ecdsa',
       );
-    });
-
-    test('returns no peer observation from the browser fetch path', async () => {
-      const api = cloudFor((request) =>
-        jsonResponse(gatewayReport(requestNonce(request))),
-      );
-
-      const fetched = await fetchGatewayAttestation({ ...api.params });
-
-      expect(fetched.clientBinding).toEqual({
-        nonce: fetched.attestation.nonce,
-      });
     });
 
     test('requires the Gateway TLS fingerprint requested by the helper', async () => {

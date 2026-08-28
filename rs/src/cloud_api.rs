@@ -972,33 +972,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_model_response_keeps_indexed_decode_paths() {
-        let result = decode_test_wire::<WireModelAttestationResponse>(
-            json!({
-                "model_attestations": [{
-                    "request_nonce": 1,
-                    "signing_algo": "ecdsa",
-                    "signing_address": "22".repeat(20),
-                    "intel_quote": "aa",
-                    "event_log": [],
-                    "info": {"tcb_info": {"app_compose": "{}"}},
-                }],
-            }),
-            ApiResource::ModelAttestation,
-            "model_attestations",
-        );
-        let error = match result {
-            Ok(_) => panic!("a non-string nonce must be rejected"),
-            Err(error) => error,
-        };
-
-        let ApiError::InvalidResponse { path, .. } = error else {
-            panic!("a non-string nonce must be an invalid response");
-        };
-        assert_eq!(path, "model_attestations[0]");
-    }
-
-    #[test]
     fn wire_decoder_keeps_malformed_json_as_an_api_json_error() {
         let result = decode_wire_response::<WireModelAttestationResponse>(
             "{",

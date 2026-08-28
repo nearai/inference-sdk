@@ -58,18 +58,19 @@ configuration and operation-specific fields at the same level.
 ### Attestation fetch result types
 
 Every attestation fetch helper generates and sends a fresh 32-byte client nonce
-and checks the service's echoed nonce. Model-attestation results expose it as
-`nonce`; Gateway results place it in `clientBinding`, so that result can be
-passed directly to `verifyGatewayAttestation`.
+and checks the service's echoed nonce. Each result places its client values in
+`clientBinding`. Pair that value with the result's attestation in the matching
+attestation verifier.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `FetchedModelAttestations` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
+| `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
 |  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The SDK currently requires exactly one item. |
-| `FetchedModelAttestation` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
+| `FetchedModelAttestation` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
 |  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
-|  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass the result directly to `verifyGatewayAttestation` in Node. |
+|  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
+| `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 | `GatewayClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 |  | `peerSpkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it automatically; browser fetch does not expose it, so browser verification must disable peer TLS binding. |
 
@@ -103,7 +104,7 @@ form of these two operations.
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `VerifyModelAttestationParams` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
-|  | `nonce` | `string` | Yes | Client nonce returned by the matching model-attestation fetch result. It must match the evidence. |
+|  | `clientBinding` | `ModelClientBinding` | Yes | Client values returned by the matching model-attestation fetch result. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
 | `VerifyGatewayAttestationParams` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |

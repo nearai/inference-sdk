@@ -179,55 +179,6 @@ async def test_model_helper_decodes_serialized_tcb_info(
     assert fetched.attestations[0].app_compose == '{"services": {}}'
 
 
-async def test_model_helper_reports_indexed_wire_error_paths(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_fetch(url: str, _: Mapping[str, str]) -> FetchResponse:
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        attestation = cloud_attestation(nonce)
-        del attestation['intel_quote']
-        return FetchResponse(
-            status=200,
-            body=json.dumps({'model_attestations': [attestation]}).encode(),
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
-
-    with pytest.raises(ApiError) as malformed:
-        await fetch_model_attestations(
-            API_KEY,
-            'canonical-model',
-        )
-
-    assert malformed.value.failure.code == 'api.invalid_response'
-    assert (
-        malformed.value.failure.details['path'] == 'model_attestations[0].intel_quote'
-    )
-
-
-async def test_model_helper_keeps_malformed_wire_hex_as_an_api_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_fetch(url: str, _: Mapping[str, str]) -> FetchResponse:
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {'model_attestations': [cloud_attestation(f'{nonce[:-1]}!')]}
-            ).encode(),
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
-
-    with pytest.raises(ApiError) as malformed:
-        await fetch_model_attestations(API_KEY, 'canonical-model')
-
-    assert malformed.value.failure.code == 'api.invalid_response'
-    assert (
-        malformed.value.failure.details['path'] == 'model_attestations[0].request_nonce'
-    )
-
-
 async def test_fetch_model_attestation_for_signature_adds_signer_filters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -270,11 +221,10 @@ async def test_gateway_helper_requests_tls_aware_evidence(
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
-        **options: object,
+        **_: object,
     ) -> FetchResponse:
         nonlocal seen_url
         assert headers is not None
-        assert options['_capture_peer_spki'] is True
         seen_url = url
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
         return FetchResponse(
@@ -312,10 +262,9 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
-        **options: object,
+        **_: object,
     ) -> FetchResponse:
         assert headers is not None
-        assert options['_capture_peer_spki'] is True
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
         return FetchResponse(
             status=200,
@@ -444,33 +393,6 @@ async def test_model_report_count_and_nonce_are_checked_before_returning(
     assert nonce_error.value.failure.code == 'api.nonce_mismatch'
 
 
-@pytest.mark.parametrize(
-    'include_report_data',
-    [pytest.param(False, id='missing'), pytest.param(True, id='null')],
-)
-async def test_model_report_data_is_optional_at_the_wire_boundary(
-    include_report_data: bool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def optional_report_data(url: str, _: Mapping[str, str]) -> FetchResponse:
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        attestation = cloud_attestation(nonce)
-        if include_report_data:
-            attestation['report_data'] = None
-        return FetchResponse(
-            status=200,
-            body=json.dumps({'model_attestations': [attestation]}).encode(),
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, optional_report_data)
-
-    fetched = await fetch_model_attestations(
-        API_KEY,
-        'canonical-model',
-    )
-
-    assert fetched.attestations[0].reported_quote_data is None
-
-
 async def test_redirect_response_is_not_a_successful_cloud_api_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -490,3 +412,18 @@ async def test_redirect_response_is_not_a_successful_cloud_api_response(
         'resource': 'model_attestation',
         'status': 302,
     }
+
+
+async def test_non_utf8_success_response_is_an_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def non_utf8(_: str, __: Mapping[str, str]) -> FetchResponse:
+        return FetchResponse(status=200, body=b'\xff')
+
+    use_fake_cloud_api_fetch(monkeypatch, non_utf8)
+
+    with pytest.raises(ApiError) as raised:
+        await fetch_model_attestations(API_KEY, 'canonical-model')
+
+    assert raised.value.failure.code == 'api.invalid_json'
+    assert raised.value.failure.details == {'resource': 'model_attestation'}

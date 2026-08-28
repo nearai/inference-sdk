@@ -70,9 +70,15 @@ export type ModelAttestationVerifiers = AttestationVerifiers & {
   readonly nvidia?: NvidiaEvidenceVerifier;
 };
 
+/** Values supplied by the client for a model-attestation request. */
+export type ModelClientBinding = {
+  /** Fresh nonce sent in the model-attestation request. */
+  readonly nonce: string;
+};
+
 export type VerifyModelAttestationParams = {
   readonly attestation: ModelAttestation;
-  readonly nonce: string;
+  readonly clientBinding: ModelClientBinding;
   readonly policy?: ModelAttestationPolicy;
   readonly verifiers?: ModelAttestationVerifiers;
 };

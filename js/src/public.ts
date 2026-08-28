@@ -49,6 +49,7 @@ export type {
   GatewayTlsBinding,
   GpuEvidenceStatus,
   MeasuredDeployment,
+  ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
   ModelTlsBinding,

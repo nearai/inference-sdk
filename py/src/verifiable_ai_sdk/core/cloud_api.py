@@ -243,7 +243,7 @@ async def _get_cloud_api_json(
         )
     try:
         json_body = json.loads(response.text())
-    except json.JSONDecodeError as error:
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise api_failure(
             'api.invalid_json', {'resource': resource}, cause=error
         ) from error

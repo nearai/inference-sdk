@@ -23,10 +23,11 @@ import {
  */
 export async function verifyModelAttestation({
   attestation,
-  nonce,
+  clientBinding,
   policy,
   verifiers,
 }: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
+  const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce,

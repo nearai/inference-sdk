@@ -31,7 +31,7 @@ needed only when the claim concerns one particular response.
 | Audit a model deployment | `fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
 | Audit a Gateway endpoint | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote, deployment evidence, and quote-bound TLS identity passed. By default, the observed TLS peer also matched. | That a particular completion was served by that Gateway or that a model executed it. |
 | Verify a model-issued response | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
-| Verify a Gateway-issued response | `fetch_completion_signature` → `fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
+| Verify a Gateway-issued response | `fetch_completion_signature` → `GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
 `fetch_model_attestations` returns `FetchedModelAttestations`, preserving the
 Cloud API `model_attestations` field. The SDK currently requires exactly one
@@ -121,10 +121,11 @@ client-to-model TLS connection.
 
 ## Verify a Gateway attestation or response
 
-`fetch_gateway_attestation` requests the Gateway's TLS fingerprint and
-configures reqwest to expose the leaf certificate for that exact HTTPS request.
-It derives the certificate's SHA-256 SPKI fingerprint and returns it with the
-fresh nonce in `FetchedGatewayAttestation.client_binding`.
+For an independent Gateway endpoint audit, `fetch_gateway_attestation` requests
+the Gateway's TLS fingerprint with its default Ed25519 signing algorithm. It
+configures reqwest to expose the leaf certificate for that exact HTTPS request,
+then returns the certificate's SHA-256 SPKI fingerprint with the fresh nonce in
+`FetchedGatewayAttestation.client_binding`.
 
 `verify_gateway_attestation` requires that observed peer fingerprint by
 default. It verifies the quote's nonce and declared TLS identity, then compares
@@ -132,18 +133,49 @@ the declared key with the client-observed peer. Do not replace the observed
 peer fingerprint with the declaration inside the attestation: that would only
 compare the evidence with itself.
 
-```rust,no_run
-use verifiable_ai_sdk::{fetch_gateway_attestation, verify_gateway_attestation};
+For a `CompletionSignatureKind::Gateway` response, use
+`GatewayAttestationRequest` with `signature.signer.signing_algo`; do not rely on
+the standalone helper's Ed25519 default:
 
-async fn verify_gateway_endpoint(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let fetched = fetch_gateway_attestation(api_key).await?;
-    let _verified = verify_gateway_attestation(
+```rust,no_run
+use verifiable_ai_sdk::{
+    fetch_completion_signature, verify_gateway_attestation, verify_gateway_response,
+    CompletionSignatureKind, GatewayAttestationRequest,
+};
+
+async fn verify_gateway_completion(
+    api_key: &str,
+    completion_id: &str,
+    request_body: &[u8],
+    response_body: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let signature = fetch_completion_signature(api_key, completion_id).await?;
+    if signature.kind != CompletionSignatureKind::Gateway {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "this completion requires the model flow",
+        )
+        .into());
+    }
+
+    let fetched = GatewayAttestationRequest::new(api_key)
+        .signing_algo(signature.signer.signing_algo)
+        .send()
+        .await?;
+    let verified_attestation = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
         None,
         Default::default(),
     )
     .await?;
+
+    verify_gateway_response(
+        request_body,
+        response_body,
+        &signature,
+        &verified_attestation,
+    )?;
     Ok(())
 }
 ```
@@ -175,11 +207,8 @@ async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::err
 }
 ```
 
-For a `CompletionSignatureKind::Gateway` completion, request Gateway evidence
-for `signature.signer.signing_algo`, verify it, then call
-`verify_gateway_response` with the original completion bytes, signature, and
-verified Gateway evidence. This verifies Gateway-service provenance and
-integrity for those bytes; it does not establish model execution.
+This verifies Gateway-service provenance and integrity for those bytes; it does
+not establish model execution.
 
 ## Policy and trust roots
 

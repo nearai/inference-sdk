@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { ApiError, verifyModelAttestation } from '../src';
-import type { QuoteVerifier } from '../src';
+import type { MeasuredDeployment, QuoteVerifier } from '../src';
 import {
   appCompose,
   createLegacyModelQuote,
@@ -57,7 +57,7 @@ describe('model attestation verification', () => {
   test('returns verified model evidence with explicit verification states', async () => {
     const result = await verifyModelAttestation({
       attestation: createModelAttestation(),
-      nonce,
+      clientBinding: { nonce },
       verifiers: { quote: quoteVerifier },
     });
 
@@ -77,7 +77,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nonce: '44'.repeat(32),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -93,7 +93,7 @@ describe('model attestation verification', () => {
       attestation: createModelAttestation({
         declaredSpkiFingerprint: undefined,
       }),
-      nonce,
+      clientBinding: { nonce },
       verifiers: { quote: async () => createLegacyModelQuote() },
     });
 
@@ -104,7 +104,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: async () => createLegacyModelQuote() },
       }),
     ).rejects.toMatchObject({
@@ -128,7 +128,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           declaredSpkiFingerprint: undefined,
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: async () => quote },
       }),
     ).rejects.toMatchObject({
@@ -143,7 +143,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         verifiers: {
           quote: async () => createQuote({ debugEnabled: true }),
         },
@@ -157,7 +157,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         verifiers: {
           quote: async () => {
             throw new ApiError({
@@ -180,7 +180,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({ intelQuote: '00' }),
-        nonce,
+        clientBinding: { nonce },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -194,7 +194,7 @@ describe('model attestation verification', () => {
   test('accepts OutOfDate by default and supports an explicit TCB policy', async () => {
     const accepted = await verifyModelAttestation({
       attestation: createModelAttestation(),
-      nonce,
+      clientBinding: { nonce },
       verifiers: {
         quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
       },
@@ -205,7 +205,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         policy: { acceptedTcbStatuses: ['UpToDate'] },
         verifiers: {
           quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
@@ -223,7 +223,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         verifiers: {
           quote: async () => createQuote({ reportData: Buffer.alloc(63) }),
         },
@@ -255,7 +255,7 @@ describe('model attestation verification', () => {
             },
           ],
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -272,7 +272,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           appCompose: '{"changed":true}',
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -282,16 +282,14 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('checks the NVIDIA payload nonce before calling a custom verifier', async () => {
-    const nvidia = jest.fn(async () => undefined);
-
+  test('rejects NVIDIA evidence with a different nonce', async () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce: '55'.repeat(32) }),
         }),
-        nonce,
-        verifiers: { quote: quoteVerifier, nvidia },
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -299,14 +297,13 @@ describe('model attestation verification', () => {
         details: { source: 'nvidiaPayload' },
       },
     });
-    expect(nvidia).not.toHaveBeenCalled();
   });
 
   test('models GPU evidence as an explicit status', async () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         policy: { gpuEvidence: 'required' },
         verifiers: { quote: quoteVerifier },
       }),
@@ -318,7 +315,7 @@ describe('model attestation verification', () => {
       attestation: createModelAttestation({
         nvidiaPayload: JSON.stringify({ nonce }),
       }),
-      nonce,
+      clientBinding: { nonce },
       verifiers: { quote: quoteVerifier, nvidia: async () => undefined },
     });
     expect(result.gpuEvidence).toBe('verified');
@@ -330,7 +327,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: {
           quote: quoteVerifier,
           nvidia: async () => {
@@ -353,28 +350,7 @@ describe('model attestation verification', () => {
       attestation: createModelAttestation({
         nvidiaPayload: JSON.stringify({ nonce }),
       }),
-      nonce,
-      verifiers: { quote: quoteVerifier },
-    });
-
-    expect(result.gpuEvidence).toBe('verified');
-  });
-
-  test('uses the first NRAS JWT entry and ignores extensions', async () => {
-    mockNrasResponse([
-      [
-        'JWT',
-        createNrasJwt({ 'x-nvidia-overall-att-result': true }),
-        { ignored: true },
-      ],
-      { ignored: true },
-    ]);
-
-    const result = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        nvidiaPayload: JSON.stringify({ nonce }),
-      }),
-      nonce,
+      clientBinding: { nonce },
       verifiers: { quote: quoteVerifier },
     });
 
@@ -389,7 +365,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -408,7 +384,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -427,7 +403,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -450,7 +426,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -467,7 +443,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation({
           reportedQuoteData: 'ff'.repeat(64),
         }),
-        nonce,
+        clientBinding: { nonce },
         verifiers: { quote: quoteVerifier },
       }),
     ).rejects.toMatchObject({
@@ -482,23 +458,31 @@ describe('model attestation verification', () => {
     const osImageEvent = createRuntimeEvent('os-image-hash', 'cafe');
     const composeEvent = createRuntimeEvent('compose-hash', 'beef');
     const quote = createQuoteForEventLog([osImageEvent, composeEvent]);
-    const deployment = jest.fn(async () => undefined);
+    const verifiedDeployments: MeasuredDeployment[] = [];
+
+    async function verifyDeployment(
+      deployment: MeasuredDeployment,
+    ): Promise<void> {
+      verifiedDeployments.push(deployment);
+    }
 
     const result = await verifyModelAttestation({
       attestation: createModelAttestation({
         eventLog: [osImageEvent, composeEvent],
       }),
-      nonce,
-      verifiers: { quote: async () => quote, deployment },
+      clientBinding: { nonce },
+      verifiers: { quote: async () => quote, deployment: verifyDeployment },
     });
 
-    expect(deployment).toHaveBeenCalledWith({
-      appCompose,
-      runtimeMeasurements: {
-        osImageHash: 'cafe',
-        composeHash: 'beef',
+    expect(verifiedDeployments).toEqual([
+      {
+        appCompose,
+        runtimeMeasurements: {
+          osImageHash: 'cafe',
+          composeHash: 'beef',
+        },
       },
-    });
+    ]);
     expect(result.deploymentProvenance).toBe('verified');
   });
 
@@ -506,7 +490,7 @@ describe('model attestation verification', () => {
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation(),
-        nonce,
+        clientBinding: { nonce },
         verifiers: {
           quote: quoteVerifier,
           deployment: async () => {

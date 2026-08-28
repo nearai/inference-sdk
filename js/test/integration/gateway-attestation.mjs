@@ -28,4 +28,6 @@ assert.deepEqual(verifiedGatewayAttestation.tlsBinding, {
   spkiFingerprint: peerSpkiFingerprint,
 });
 
-console.log('Verified the production Gateway attestation with a peer TLS binding.');
+console.log(
+  'Verified the production Gateway attestation with a peer TLS binding.',
+);

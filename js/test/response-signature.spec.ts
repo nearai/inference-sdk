@@ -63,7 +63,7 @@ async function verifiedModelAttestation(signingAddress: string) {
     attestation: createModelAttestation({
       signer: { signingAlgo: 'ecdsa', signingAddress },
     }),
-    nonce,
+    clientBinding: { nonce },
     verifiers: { quote: async () => quote },
   });
 }

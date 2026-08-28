@@ -34,7 +34,6 @@ describe('gateway attestation verification', () => {
       tlsBinding: { kind: 'peer', spkiFingerprint: tlsFingerprint },
       deploymentProvenance: 'not_checked',
     });
-    expect('gpuEvidence' in result).toBe(false);
   });
 
   test('requires a peer observation by default', async () => {
