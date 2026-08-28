@@ -530,21 +530,6 @@ fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
     Ok(url)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_base_url_preserves_the_v1_path_when_resolving_an_endpoint() {
-        let config = CloudApiRequestConfig::new("test-key");
-
-        assert_eq!(
-            config.endpoint("attestation/report").unwrap().as_str(),
-            "https://cloud-api.near.ai/v1/attestation/report",
-        );
-    }
-}
-
 fn invalid_base_url() -> VerificationError {
     VerificationError::InvalidInput {
         field: "base_url".to_owned(),
@@ -885,6 +870,16 @@ fn require_completion_signature_field<T>(value: Option<T>, field: &str) -> Resul
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn default_base_url_preserves_the_v1_path_when_resolving_an_endpoint() {
+        let config = CloudApiRequestConfig::new("test-key");
+
+        assert_eq!(
+            config.endpoint("attestation/report").unwrap().as_str(),
+            "https://cloud-api.near.ai/v1/attestation/report",
+        );
+    }
 
     fn decode_test_wire<T>(
         value: serde_json::Value,

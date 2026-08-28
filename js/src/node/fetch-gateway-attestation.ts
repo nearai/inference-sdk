@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import type { TLSSocket } from 'node:tls';
@@ -33,14 +33,13 @@ function requestGatewayAttestation(
     const nativeRequest = httpsRequest(
       request.url,
       {
+        agent: false,
         method: request.method,
         headers: Object.fromEntries(request.headers),
       },
       (incoming) => {
         try {
-          const certificate = (
-            incoming.socket as TLSSocket
-          ).getPeerX509Certificate();
+          const certificate = peerCertificate(incoming.socket as TLSSocket);
           const peerSpkiFingerprint =
             certificate === undefined
               ? undefined
@@ -70,4 +69,14 @@ function requestGatewayAttestation(
     nativeRequest.once('error', reject);
     nativeRequest.end();
   });
+}
+
+function peerCertificate(socket: TLSSocket): X509Certificate | undefined {
+  const certificate = socket.getPeerX509Certificate();
+  if (certificate !== undefined) {
+    return certificate;
+  }
+
+  const peer = socket.getPeerCertificate(true);
+  return peer.raw === undefined ? undefined : new X509Certificate(peer.raw);
 }
