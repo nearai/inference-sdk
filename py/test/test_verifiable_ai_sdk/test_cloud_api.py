@@ -244,16 +244,13 @@ async def test_gateway_helper_requests_tls_aware_evidence(
         )
 
     monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
-    fetched = await fetch_gateway_attestation(
-        API_KEY,
-        signing_algo='ed25519',
-    )
+    fetched = await fetch_gateway_attestation(API_KEY)
 
     assert fetched.attestation.nonce == fetched.client_binding.nonce
     assert fetched.client_binding.peer_spki_fingerprint == '33' * 32
     query = parse_qs(urlsplit(seen_url).query)
     assert query['include_tls_fingerprint'] == ['true']
-    assert query['signing_algo'] == ['ed25519']
+    assert 'signing_algo' not in query
 
 
 async def test_gateway_helper_requires_tls_fingerprint_evidence(

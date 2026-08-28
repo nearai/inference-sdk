@@ -8,7 +8,7 @@ use verifiable_ai_sdk::{
     SignatureUnavailable, SigningAlgo, SigningIdentity, VerificationError,
 };
 use wiremock::{
-    matchers::{header, method, path, query_param},
+    matchers::{header, method, path, query_param, query_param_is_missing},
     Mock, MockServer, Request, Respond, ResponseTemplate,
 };
 
@@ -260,7 +260,7 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
         .and(query_param("include_tls_fingerprint", "true"))
-        .and(query_param("signing_algo", "ed25519"))
+        .and(query_param_is_missing("signing_algo"))
         .respond_with(GatewayAttestationResponder)
         .mount(&server)
         .await;

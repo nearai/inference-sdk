@@ -158,14 +158,14 @@ impl<'a> ModelAttestationForSignatureRequest<'a> {
 /// Build a request for standalone Gateway evidence.
 pub struct GatewayAttestationRequest {
     config: CloudApiRequestConfig,
-    signing_algo: SigningAlgo,
+    signing_algo: Option<SigningAlgo>,
 }
 
 impl GatewayAttestationRequest {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             config: CloudApiRequestConfig::new(api_key),
-            signing_algo: SigningAlgo::Ed25519,
+            signing_algo: None,
         }
     }
 
@@ -177,7 +177,7 @@ impl GatewayAttestationRequest {
 
     /// Request evidence for this Gateway signing algorithm.
     pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
-        self.signing_algo = signing_algo;
+        self.signing_algo = Some(signing_algo);
         self
     }
 
@@ -383,14 +383,16 @@ async fn fetch_model_attestations_with_config(
 
 async fn fetch_gateway_attestation_with_config(
     config: &CloudApiRequestConfig,
-    signing_algo: SigningAlgo,
+    signing_algo: Option<SigningAlgo>,
 ) -> Result<FetchedGatewayAttestation, SdkError> {
     let nonce = generate_nonce();
     let mut url = config.endpoint("attestation/report")?;
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("nonce", &nonce);
-        query.append_pair("signing_algo", &signing_algo.to_string());
+        if let Some(signing_algo) = signing_algo {
+            query.append_pair("signing_algo", &signing_algo.to_string());
+        }
         query.append_pair("include_tls_fingerprint", "true");
     }
     let cloud_response =

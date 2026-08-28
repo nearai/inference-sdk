@@ -132,22 +132,24 @@ def find_model_attestation_for_signature(
 async def fetch_gateway_attestation(
     api_key: str,
     *,
-    signing_algo: SigningAlgo = 'ed25519',
+    signing_algo: SigningAlgo | None = None,
     base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ) -> FetchedGatewayAttestation:
     """Fetch Gateway evidence and capture the TLS peer for this request."""
 
     nonce = generate_nonce()
+    query = {
+        'nonce': nonce,
+        'include_tls_fingerprint': 'true',
+    }
+    if signing_algo is not None:
+        query['signing_algo'] = signing_algo
     response = await _get_cloud_api_json(
         api_key,
         _endpoint(
             base_url,
             'attestation/report',
-            {
-                'nonce': nonce,
-                'signing_algo': signing_algo,
-                'include_tls_fingerprint': 'true',
-            },
+            query,
         ),
         'gateway_attestation',
         capture_peer_spki=True,

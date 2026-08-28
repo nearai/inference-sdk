@@ -41,7 +41,7 @@ an inference request or retain completion bytes.
 | `fetch_model_attestations` | `api_key`, `model: &str` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. It currently requires exactly one candidate. |
 | `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignatureReference` | `&ModelAttestation` | Selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
 | `fetch_model_attestation_for_signature` | `api_key`, `model`, `signature: &CompletionSignatureReference` | `FetchedModelAttestation` | Fetches model evidence for a `ProviderTee` signer and selects the sole matching candidate. |
-| `fetch_gateway_attestation` | `api_key` | `FetchedGatewayAttestation` | Standalone Gateway-evidence helper. It uses Ed25519, requests TLS-fingerprint evidence with a fresh nonce, and captures the SHA-256 SPKI fingerprint from that HTTPS request's peer certificate. |
+| `fetch_gateway_attestation` | `api_key` | `FetchedGatewayAttestation` | Standalone Gateway-evidence helper. It uses the Cloud API signing-algorithm default, requests TLS-fingerprint evidence with a fresh nonce, and captures the SHA-256 SPKI fingerprint from that HTTPS request's peer certificate. |
 
 ### Cloud fetch results
 
@@ -99,8 +99,8 @@ attestation must bind the signature signer.
 
 For a `Gateway` response, fetch evidence through
 `GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()`.
-The convenience `fetch_gateway_attestation(api_key)` always selects Ed25519, so
-use it for a response only when the returned signature uses Ed25519.
+The convenience `fetch_gateway_attestation(api_key)` follows the Cloud API
+default, so do not use it when the response requires a specific signer.
 
 ## Signatures and evidence
 

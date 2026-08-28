@@ -158,13 +158,15 @@ export function fetchGatewayAttestation(
 
 /** Internal shared implementation used by the browser and Node entry points. */
 export async function fetchGatewayAttestationWithRequester(
-  { apiKey, baseUrl, signingAlgo = 'ed25519' }: FetchGatewayAttestationParams,
+  { apiKey, baseUrl, signingAlgo }: FetchGatewayAttestationParams,
   requester: GatewayAttestationRequester,
 ): Promise<FetchedGatewayAttestation> {
   const clientNonce = generateNonce();
   const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
   url.searchParams.set('nonce', clientNonce);
-  url.searchParams.set('signing_algo', signingAlgo);
+  if (signingAlgo !== undefined) {
+    url.searchParams.set('signing_algo', signingAlgo);
+  }
   url.searchParams.set('include_tls_fingerprint', 'true');
   const result = await getGatewayAttestationJson({ apiKey, url, requester });
   const attestation = decodeGatewayAttestationReport(result.json);

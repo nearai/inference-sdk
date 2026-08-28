@@ -15,7 +15,7 @@ Response verification functions are synchronous.
 | `fetch_model_attestations` | `(api_key, model, *, signing_algo=None, signing_address=None, base_url=...)` | `FetchedModelAttestations` | Fetches model evidence for a canonical model, optionally filtered by signer. |
 | `fetch_model_attestation_for_signature` | `(api_key, model, signature, *, base_url=...)` | `FetchedModelAttestation` | Fetches and selects model evidence for a `provider_tee` signer. |
 | `find_model_attestation_for_signature` | `(attestations, signature)` | `ModelAttestation` | Selects the single model attestation for a `provider_tee` signer. It does not verify evidence. |
-| `fetch_gateway_attestation` | `(api_key, *, signing_algo='ed25519', base_url=...)` | `FetchedGatewayAttestation` | Fetches Gateway evidence, requests its TLS fingerprint, and captures the TLS peer for that HTTPS request. |
+| `fetch_gateway_attestation` | `(api_key, *, signing_algo=None, base_url=...)` | `FetchedGatewayAttestation` | Fetches Gateway evidence, requests its TLS fingerprint, and captures the TLS peer for that HTTPS request. |
 | `verify_model_attestation` | `(attestation, nonce, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies model attestation evidence. |
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway evidence and its quote-bound TLS identity. By default, it requires the observed TLS peer binding. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes signed by a `provider_tee` signer. |
@@ -86,7 +86,7 @@ Cloud API's echoed nonce, and returns the nonce with raw evidence. Pass it to
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-| `signing_algo` | `SigningAlgo` | No | Gateway signing algorithm. Defaults to `ed25519`; for a Gateway response, pass `signature.signer.signing_algo`. |
+| `signing_algo` | `SigningAlgo \| None` | No | Gateway signing algorithm. Omit it to use the Cloud API default; for a Gateway response, pass `signature.signer.signing_algo`. |
 
 `fetch_gateway_attestation` generates a fresh nonce, checks its echoed value,
 requests TLS-fingerprint evidence, and captures the SHA-256 SPKI fingerprint

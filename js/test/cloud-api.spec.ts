@@ -411,7 +411,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
   });
 
   describe('gateway attestations', () => {
-    test('fetches gateway evidence with its client nonce and the default signing algorithm', async () => {
+    test('fetches gateway evidence with its client nonce and no signing-algorithm filter', async () => {
       const api = cloudFor((request) =>
         jsonResponse(gatewayReport(requestNonce(request))),
       );
@@ -424,7 +424,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
       const query = new URL(api.request().url).searchParams;
       expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
-      expect(query.get('signing_algo')).toBe('ed25519');
+      expect(query.get('signing_algo')).toBeNull();
       expect(query.get('include_tls_fingerprint')).toBe('true');
     });
 

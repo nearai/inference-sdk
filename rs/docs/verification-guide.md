@@ -122,7 +122,7 @@ client-to-model TLS connection.
 ## Verify a Gateway attestation or response
 
 For an independent Gateway endpoint audit, `fetch_gateway_attestation` requests
-the Gateway's TLS fingerprint with its default Ed25519 signing algorithm. It
+the Gateway's TLS fingerprint using the Cloud API default signing algorithm. It
 configures reqwest to expose the leaf certificate for that exact HTTPS request,
 then returns the certificate's SHA-256 SPKI fingerprint with the fresh nonce in
 `FetchedGatewayAttestation.client_binding`.
@@ -135,7 +135,7 @@ compare the evidence with itself.
 
 For a `CompletionSignatureKind::Gateway` response, use
 `GatewayAttestationRequest` with `signature.signer.signing_algo`; do not rely on
-the standalone helper's Ed25519 default:
+the standalone helper's service-selected signer:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
