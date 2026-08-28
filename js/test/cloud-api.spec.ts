@@ -431,7 +431,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
   });
 
   describe('gateway attestations', () => {
-    test('fetches gateway evidence with TLS binding and the default signing algorithm', async () => {
+    test('fetches gateway evidence with its client nonce and the default signing algorithm', async () => {
       const api = cloudFor((request) =>
         jsonResponse(gatewayReport(requestNonce(request))),
       );
@@ -439,11 +439,11 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const fetched = await fetchGatewayAttestation({ ...api.params });
 
       expect(fetched).toMatchObject({
-        nonce: fetched.attestation.nonce,
+        clientBinding: { nonce: fetched.attestation.nonce },
         attestation: { reportedQuoteData: '00'.repeat(64) },
       });
       const query = new URL(api.request().url).searchParams;
-      expect(query.get('nonce')).toBe(fetched.nonce);
+      expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
       expect(query.get('signing_algo')).toBe('ed25519');
       expect(query.get('include_tls_fingerprint')).toBe('true');
     });
@@ -468,24 +468,35 @@ describe('NEAR AI Cloud fetch helpers', () => {
       );
     });
 
-    test('returns the TLS peer fingerprint from a gateway-only transport', async () => {
-      let capturedRequest: Request | undefined;
-      const transport = async (request: Request) => {
-        capturedRequest = request;
-        return {
-          response: jsonResponse(gatewayReport(requestNonce(request))),
-          peerSpkiFingerprint: '33'.repeat(32),
-        };
-      };
+    test('returns no peer observation from the browser fetch path', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(gatewayReport(requestNonce(request))),
+      );
 
-      const fetched = await fetchGatewayAttestation({
-        apiKey: 'test',
-        baseUrl,
-        transport,
+      const fetched = await fetchGatewayAttestation({ ...api.params });
+
+      expect(fetched.clientBinding).toEqual({
+        nonce: fetched.attestation.nonce,
       });
+    });
 
-      expect(fetched.peerSpkiFingerprint).toBe('33'.repeat(32));
-      expect(capturedRequest).toBeDefined();
+    test('requires the Gateway TLS fingerprint requested by the helper', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(
+          gatewayReport(requestNonce(request), {
+            tls_cert_fingerprint: null,
+          }),
+        ),
+      );
+
+      await expect(
+        fetchGatewayAttestation({ ...api.params }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.invalid_response',
+          details: { path: 'gateway_attestation.tls_cert_fingerprint' },
+        },
+      });
     });
 
     test('rejects gateway evidence whose nonce does not match the request', async () => {

@@ -145,6 +145,7 @@ function mapGatewayAttestation(
 ): GatewayAttestation {
   return {
     ...mapAttestationEvidence({ attestation, label }),
+    declaredSpkiFingerprint: attestation.tls_cert_fingerprint,
     reportedQuoteData: attestation.report_data,
   };
 }

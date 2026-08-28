@@ -9,29 +9,28 @@ import {
 } from './dstack-attestation';
 
 /**
- * Verify gateway evidence and bind it to a TLS peer fingerprint independently
- * observed by the client.
+ * Verify Gateway evidence and, when available, bind its declared TLS
+ * fingerprint to the peer observed by the client.
  */
 export async function verifyGatewayAttestation({
   attestation,
-  nonce,
-  peerSpkiFingerprint,
+  clientBinding,
   policy,
   verifiers,
 }: VerifyGatewayAttestationParams): Promise<VerifiedGatewayAttestation> {
   const verifiedQuote = await verifyDstackQuote({
     attestation,
-    nonce,
+    nonce: clientBinding.nonce,
     policy,
     quoteVerifier: verifiers?.quote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   const tlsBinding = await verifyGatewayReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
-    nonce,
+    nonce: clientBinding.nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
-    reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
-    peerSpkiFingerprint,
+    reportedSpkiFingerprint: attestation.declaredSpkiFingerprint,
+    peerSpkiFingerprint: clientBinding.peerSpkiFingerprint,
   });
   const evidence = await verifyDstackDeployment(
     verifiedQuote,

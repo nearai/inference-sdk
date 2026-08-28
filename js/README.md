@@ -12,8 +12,8 @@ A successful attestation establishes:
   configuration, and runtime measurements are valid;
 - supplied NVIDIA GPU evidence is accepted by the configured verifier for
   model attestations, or can be required by policy; and
-- gateway evidence is bound to a TLS peer fingerprint independently observed
-  by the client.
+- gateway evidence binds the Gateway signer and its declared TLS SPKI
+  fingerprint into the verified quote.
 
 When verifying a response, the SDK additionally establishes that a signature
 covers the exact request and response bytes and its signer is bound to the
@@ -49,11 +49,12 @@ connected directly to the model CVM.
 
 ### Verify a gateway attestation
 
-Fetch fresh gateway evidence and verify it against the SHA-256 SPKI fingerprint
-independently observed for the attestation request's TLS peer. This verifies a
-Cloud API gateway endpoint; it does not establish model execution. Standard
-browser `fetch` and most Node `fetch` APIs do not expose the required peer
-certificate data.
+Fetch fresh Gateway evidence to verify a Cloud API Gateway deployment and its
+quote-bound TLS service identity. In Node, the SDK captures the SHA-256 SPKI
+fingerprint of the TLS peer serving that exact evidence request and checks it
+against the quote. Browser runtimes cannot access the peer certificate, but
+still verify the quote-bound declared TLS fingerprint. Gateway evidence does
+not establish model execution.
 
 [Follow the gateway-attestation guide](./docs/verification-guide.md#verify-a-gateway-attestation).
 
@@ -71,8 +72,9 @@ model execution.
 - For response verification, preserve exact request and response bytes; use
   the signature's explicit kind with its matching evidence and response
   verifier.
-- For gateway attestation, independently observe the TLS peer fingerprint of
-  the attestation request.
+- For Gateway attestation, pass the `FetchedGatewayAttestation` result to
+  `verifyGatewayAttestation`. It includes the fresh nonce and, in Node, the
+  TLS peer fingerprint captured for the evidence request.
 - Verify raw evidence before using its result for response verification. Decide
   where to verify it again after storage or transfer.
 - Supply a deployment verifier when the application must restrict acceptable
@@ -87,7 +89,10 @@ model execution.
 
 ## Runtime
 
-The package publishes ESM and is developed with Node.js 24. Browser consumers
-can bundle it, though the default Intel verifier may require `crypto`,
-`buffer`, and `stream` polyfills. Supply a custom quote verifier when your
-runtime or trust model requires one.
+The package publishes ESM and is developed with Node.js 24. In Node,
+`fetchGatewayAttestation` uses HTTPS to capture the TLS peer fingerprint for
+the evidence request. Browser consumers can bundle the SDK; their Gateway
+verification result has `tlsBinding.kind: 'attested'` because browser fetch
+does not expose peer certificates. The default Intel verifier may require
+`crypto`, `buffer`, and `stream` polyfills in browsers. Supply a custom quote
+verifier when your runtime or trust model requires one.

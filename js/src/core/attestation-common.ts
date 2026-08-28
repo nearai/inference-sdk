@@ -15,8 +15,8 @@ type VerifyGatewayReportDataBindingParams = {
   reportData: Uint8Array;
   nonce: string;
   signingAddress: string;
-  reportedSpkiFingerprint?: string;
-  peerSpkiFingerprint: string;
+  reportedSpkiFingerprint: string;
+  peerSpkiFingerprint?: string;
 };
 
 type VerifyCloudModelReportDataBindingParams = {
@@ -62,9 +62,9 @@ export function verifyReportedNonce({
  * - bytes [0, 32): SHA-256(signing-address bytes || TLS SPKI fingerprint)
  * - bytes [32, 64): caller's 32-byte nonce
  *
- * The first half becomes a gateway endpoint binding only after the report's
- * fingerprint is compared with a peer SPKI independently observed by the
- * caller.
+ * The first half always authenticates the Gateway's declared TLS key. When
+ * the caller also observed the TLS peer, the function verifies that it is the
+ * same key.
  */
 export async function verifyGatewayReportDataBinding(
   input: VerifyGatewayReportDataBindingParams,
@@ -94,27 +94,11 @@ export async function verifyGatewayReportDataBinding(
     });
   }
 
-  if (input.reportedSpkiFingerprint === undefined) {
-    throw new VerificationError({
-      code: 'binding.spki_fingerprint_missing',
-    });
-  }
-
   const reportedFingerprint = requireByteLength({
     value: input.reportedSpkiFingerprint,
     byteLength: 32,
     label: 'attestation.declaredSpkiFingerprint',
   });
-  const peerFingerprint = requireByteLength({
-    value: input.peerSpkiFingerprint,
-    byteLength: 32,
-    label: 'peerSpkiFingerprint',
-  });
-  if (!reportedFingerprint.equals(peerFingerprint)) {
-    throw new VerificationError({
-      code: 'binding.spki_fingerprint_mismatch',
-    });
-  }
 
   const signingAddress = hexToBuffer(
     input.signingAddress,
@@ -127,6 +111,24 @@ export async function verifyGatewayReportDataBinding(
     throw new VerificationError({
       code: 'binding.report_data_mismatch',
       details: { source: 'signerTlsBinding' },
+    });
+  }
+
+  if (input.peerSpkiFingerprint === undefined) {
+    return {
+      kind: 'attested',
+      spkiFingerprint: reportedFingerprint.toString('hex'),
+    };
+  }
+
+  const peerFingerprint = requireByteLength({
+    value: input.peerSpkiFingerprint,
+    byteLength: 32,
+    label: 'clientBinding.peerSpkiFingerprint',
+  });
+  if (!reportedFingerprint.equals(peerFingerprint)) {
+    throw new VerificationError({
+      code: 'binding.spki_fingerprint_mismatch',
     });
   }
 

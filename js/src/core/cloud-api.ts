@@ -14,8 +14,6 @@ import type {
   FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
-  GatewayAttestationTransport,
-  GatewayAttestationTransportResponse,
   LookupCompletionSignatureParams,
 } from '../types/cloud-api';
 import {
@@ -46,10 +44,17 @@ type GetCloudApiJsonParams = {
 type GetGatewayAttestationJsonParams = {
   apiKey: string;
   url: URL;
-  transport?: GatewayAttestationTransport;
+  requester: GatewayAttestationRequester;
 };
 type GatewayAttestationJson = {
   json: unknown;
+  peerSpkiFingerprint?: string;
+};
+type GatewayAttestationRequester = (
+  request: Request,
+) => Promise<GatewayAttestationResponse>;
+type GatewayAttestationResponse = {
+  response: Response;
   peerSpkiFingerprint?: string;
 };
 type CreateCloudApiRequestParams = {
@@ -138,21 +143,29 @@ export async function fetchModelAttestationForSignature({
 }
 
 /**
- * Fetch standalone gateway evidence. The caller must independently observe
- * the TLS peer fingerprint for this attestation request.
+ * Fetch standalone Gateway evidence using the runtime's standard Fetch API.
+ * Browser runtimes can verify the quote-bound TLS key but cannot inspect the
+ * peer certificate for this request.
  */
-export async function fetchGatewayAttestation({
-  apiKey,
-  baseUrl,
-  signingAlgo = 'ed25519',
-  transport,
-}: FetchGatewayAttestationParams): Promise<FetchedGatewayAttestation> {
+export function fetchGatewayAttestation(
+  params: FetchGatewayAttestationParams,
+): Promise<FetchedGatewayAttestation> {
+  return fetchGatewayAttestationWithRequester(params, async (request) => ({
+    response: await fetch(request),
+  }));
+}
+
+/** Internal shared implementation used by the browser and Node entry points. */
+export async function fetchGatewayAttestationWithRequester(
+  { apiKey, baseUrl, signingAlgo = 'ed25519' }: FetchGatewayAttestationParams,
+  requester: GatewayAttestationRequester,
+): Promise<FetchedGatewayAttestation> {
   const clientNonce = generateNonce();
   const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
   url.searchParams.set('nonce', clientNonce);
   url.searchParams.set('signing_algo', signingAlgo);
   url.searchParams.set('include_tls_fingerprint', 'true');
-  const result = await getGatewayAttestationJson({ apiKey, url, transport });
+  const result = await getGatewayAttestationJson({ apiKey, url, requester });
   const attestation = decodeGatewayAttestationReport(result.json);
   requireMatchingApiNonce({
     reportedNonce: attestation.nonce,
@@ -161,8 +174,12 @@ export async function fetchGatewayAttestation({
   });
   return {
     attestation,
-    nonce: clientNonce,
-    peerSpkiFingerprint: result.peerSpkiFingerprint,
+    clientBinding: {
+      nonce: clientNonce,
+      ...(result.peerSpkiFingerprint === undefined
+        ? {}
+        : { peerSpkiFingerprint: result.peerSpkiFingerprint }),
+    },
   };
 }
 
@@ -242,15 +259,12 @@ async function getCloudApiJson({
 async function getGatewayAttestationJson({
   apiKey,
   url,
-  transport,
+  requester,
 }: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
   const request = createCloudApiRequest({ apiKey, url });
-  let result: GatewayAttestationTransportResponse;
+  let result: GatewayAttestationResponse;
   try {
-    result =
-      transport === undefined
-        ? { response: await fetch(request) }
-        : await transport(request);
+    result = await requester(request);
   } catch (cause) {
     throw new ApiError(
       {

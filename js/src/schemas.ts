@@ -101,6 +101,7 @@ export const CloudApiModelAttestationSchema = objectSchema({
 
 export const CloudApiGatewayAttestationSchema = objectSchema({
   ...CloudApiAttestationEntries,
+  tls_cert_fingerprint: v.string(),
   report_data: v.string(),
 });
 

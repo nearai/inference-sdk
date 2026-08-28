@@ -16,6 +16,8 @@ function createGatewayAttestation(
     ...createModelAttestation(),
     reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     ...overrides,
+    declaredSpkiFingerprint:
+      overrides.declaredSpkiFingerprint ?? tlsFingerprint,
   };
 }
 
@@ -23,8 +25,7 @@ describe('gateway attestation verification', () => {
   test('binds gateway evidence to the caller-observed peer SPKI', async () => {
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
-      nonce,
-      peerSpkiFingerprint: tlsFingerprint,
+      clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
       verifiers: { quote: async () => createQuote() },
     });
 
@@ -36,12 +37,24 @@ describe('gateway attestation verification', () => {
     expect('gpuEvidence' in result).toBe(false);
   });
 
+  test('verifies the quote-bound Gateway TLS key without a peer observation', async () => {
+    const result = await verifyGatewayAttestation({
+      attestation: createGatewayAttestation(),
+      clientBinding: { nonce },
+      verifiers: { quote: async () => createQuote() },
+    });
+
+    expect(result.tlsBinding).toEqual({
+      kind: 'attested',
+      spkiFingerprint: tlsFingerprint,
+    });
+  });
+
   test('rejects gateway evidence when the live TLS peer differs', async () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
-        nonce,
-        peerSpkiFingerprint: '44'.repeat(32),
+        clientBinding: { nonce, peerSpkiFingerprint: '44'.repeat(32) },
         verifiers: { quote: async () => createQuote() },
       }),
     ).rejects.toMatchObject({
@@ -51,29 +64,13 @@ describe('gateway attestation verification', () => {
     });
   });
 
-  test('requires a declared SPKI fingerprint on gateway evidence', async () => {
-    await expect(
-      verifyGatewayAttestation({
-        attestation: createGatewayAttestation({
-          declaredSpkiFingerprint: undefined,
-        }),
-        nonce,
-        peerSpkiFingerprint: tlsFingerprint,
-        verifiers: { quote: async () => createQuote() },
-      }),
-    ).rejects.toMatchObject({
-      failure: { code: 'binding.spki_fingerprint_missing' },
-    });
-  });
-
   test('rejects gateway report data that contradicts the verified quote', async () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation({
           reportedQuoteData: 'ff'.repeat(64),
         }),
-        nonce,
-        peerSpkiFingerprint: tlsFingerprint,
+        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
         verifiers: { quote: async () => createQuote() },
       }),
     ).rejects.toMatchObject({

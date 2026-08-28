@@ -29,18 +29,42 @@ await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array());
 const originalBuffer = globalThis.Buffer;
 const originalFetch = globalThis.fetch;
 globalThis.Buffer = undefined;
-globalThis.fetch = async () => ({
-  ok: true,
-  status: 200,
-  text: async () =>
-    JSON.stringify({
+globalThis.fetch = async (input) => {
+  const url = new URL(
+    typeof input === 'string' || input instanceof URL ? input : input.url,
+  );
+  if (url.pathname.endsWith('/attestation/report')) {
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+        gateway_attestation: {
+          request_nonce: url.searchParams.get('nonce'),
+          signing_algo: 'ed25519',
+          signing_address: '55'.repeat(32),
+          intel_quote: 'aa',
+          event_log: [],
+          info: { tcb_info: { app_compose: '{}' } },
+          tls_cert_fingerprint: '33'.repeat(32),
+          report_data: '00'.repeat(64),
+        },
+      }),
+    };
+  }
+  return {
+    ok: true,
+    status: 200,
+    text: async () =>
+      JSON.stringify({
       text: 'canonical-model:request:response',
       signature: '00',
       signing_address: `0x${'22'.repeat(20)}`,
       signing_algo: 'ecdsa',
       signature_kind: 'provider_tee',
     }),
-});
+  };
+};
 
 try {
   const sdk = await import(moduleUrl);
@@ -49,6 +73,18 @@ try {
     completionId: 'chat-1',
   });
   assert.equal(fetchedSignature.kind, 'provider_tee');
+
+  const fetchedGatewayAttestation = await sdk.fetchGatewayAttestation({
+    apiKey: 'test',
+  });
+  assert.equal(
+    fetchedGatewayAttestation.clientBinding.nonce,
+    fetchedGatewayAttestation.attestation.nonce,
+  );
+  assert.equal(
+    fetchedGatewayAttestation.clientBinding.peerSpkiFingerprint,
+    undefined,
+  );
 
   const requestBody = new TextEncoder().encode(
     JSON.stringify({ model: 'canonical-model' }),

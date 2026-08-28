@@ -17,8 +17,13 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
+      "browser": "./dist/index.js",
+      "node": "./dist/node.js",
       "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
     }
   },
   "sideEffects": false,
@@ -34,6 +39,7 @@
     "test": "jest --runInBand",
     "test:browser": "node test/runtime/browser-runtime.mjs",
     "test:node": "pnpm build && node test/runtime/node-runtime.mjs",
+    "test:integration:gateway": "pnpm build && node test/integration/gateway-attestation.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",

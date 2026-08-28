@@ -7,21 +7,7 @@ import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
-import type { Awaitable } from './shared';
-
-/**
- * Performs the request for Gateway attestation evidence and returns the TLS
- * peer observed for that exact request when the transport can expose it.
- */
-export type GatewayAttestationTransport = (
-  request: Request,
-) => Awaitable<GatewayAttestationTransportResponse>;
-
-export type GatewayAttestationTransportResponse = {
-  readonly response: Response;
-  /** SHA-256 SPKI fingerprint observed for this exact TLS peer, if available. */
-  readonly peerSpkiFingerprint?: string;
-};
+import type { GatewayClientBinding } from './verification';
 
 export type FetchModelAttestationsParams = {
   readonly apiKey: string;
@@ -47,8 +33,6 @@ export type FetchGatewayAttestationParams = {
   readonly apiKey: string;
   readonly baseUrl?: string;
   readonly signingAlgo?: SigningAlgo;
-  /** Optional TLS-aware transport for this Gateway attestation request. */
-  readonly transport?: GatewayAttestationTransport;
 };
 
 export type FetchCompletionSignatureParams = {
@@ -78,11 +62,10 @@ type FetchedAttestation<TAttestation> = {
 };
 
 export type FetchedModelAttestation = FetchedAttestation<ModelAttestation>;
-export type FetchedGatewayAttestation =
-  FetchedAttestation<GatewayAttestation> & {
-    /** TLS peer observed by the optional transport for this exact request. */
-    readonly peerSpkiFingerprint?: string;
-  };
+export type FetchedGatewayAttestation = {
+  readonly attestation: GatewayAttestation;
+  readonly clientBinding: GatewayClientBinding;
+};
 export type FetchedModelAttestations = {
   readonly attestations: readonly ModelAttestation[];
   /** Fresh client nonce sent with the request. */

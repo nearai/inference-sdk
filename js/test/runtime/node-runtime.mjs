@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { fetchCompletionSignature } from '../../dist/index.js';
+import { fetchCompletionSignature } from 'verifiable-ai-sdk';
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () =>
