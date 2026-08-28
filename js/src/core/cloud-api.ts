@@ -84,6 +84,7 @@ export async function fetchModelAttestations({
   url.searchParams.set('model', model);
   url.searchParams.set('provider', 'near');
   url.searchParams.set('nonce', clientNonce);
+  url.searchParams.set('include_tls_fingerprint', 'false');
   if (signingAlgo !== undefined) {
     url.searchParams.set('signing_algo', signingAlgo);
   }

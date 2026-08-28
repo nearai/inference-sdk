@@ -182,6 +182,7 @@ async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence
         .and(path("/v1/attestation/report"))
         .and(query_param("model", "glm-5.2"))
         .and(query_param("provider", "near"))
+        .and(query_param("include_tls_fingerprint", "false"))
         .and(header("x-no-aliasing", "true"))
         .respond_with(ModelAttestationResponder)
         .mount(&server)

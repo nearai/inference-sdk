@@ -108,6 +108,7 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
     assert query['model'] == ['canonical-model']
     assert query['provider'] == ['near']
     assert query['nonce'] == [fetched.nonce]
+    assert query['include_tls_fingerprint'] == ['false']
     assert query['signing_algo'] == ['ecdsa']
     assert query['signing_address'] == [SIGNING_ADDRESS]
     assert headers['authorization'] == 'Bearer test'

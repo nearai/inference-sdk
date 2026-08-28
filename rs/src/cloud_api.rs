@@ -334,6 +334,7 @@ async fn fetch_model_attestations_with_config(
         query.append_pair("model", model);
         query.append_pair("provider", "near");
         query.append_pair("nonce", &nonce);
+        query.append_pair("include_tls_fingerprint", "false");
         if let Some(signing_algo) = signing_algo {
             query.append_pair("signing_algo", &signing_algo.to_string());
         }

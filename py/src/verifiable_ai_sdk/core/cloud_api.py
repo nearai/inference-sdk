@@ -76,6 +76,7 @@ async def fetch_model_attestations(
         'model': model,
         'provider': 'near',
         'nonce': nonce,
+        'include_tls_fingerprint': 'false',
     }
     if signing_algo is not None:
         query['signing_algo'] = signing_algo

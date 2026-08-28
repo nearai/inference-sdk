@@ -177,6 +177,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       expect(query.get('model')).toBe('canonical-model');
       expect(query.get('provider')).toBe('near');
       expect(query.get('nonce')).toBe(clientBinding.nonce);
+      expect(query.get('include_tls_fingerprint')).toBe('false');
       expect(query.get('signing_algo')).toBe('ecdsa');
       expect(query.get('signing_address')).toBe(selectedSigningAddress);
       expect(request.headers.get('authorization')).toBe('Bearer test');
