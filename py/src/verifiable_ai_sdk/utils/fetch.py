@@ -34,35 +34,37 @@ async def fetch(
     data: str | bytes | None = None,
     headers: Mapping[str, str] | None = None,
     timeout: float | None = None,
+    _capture_peer_spki: bool = False,
 ) -> FetchResponse:
-    client_timeout = aiohttp.ClientTimeout(total=timeout)
-    async with aiohttp.ClientSession(timeout=client_timeout) as session:
-        async with session.request(method, url, data=data, headers=headers) as response:
-            return FetchResponse(status=response.status, body=await response.read())
+    """Send one request, optionally retaining its TLS peer SPKI fingerprint.
 
-
-async def fetch_gateway_attestation(
-    url: str,
-    *,
-    headers: Mapping[str, str] | None = None,
-    timeout: float | None = None,
-) -> FetchResponse:
-    """Fetch Gateway evidence and capture the TLS peer for this request."""
+    ``_capture_peer_spki`` is used internally for the Gateway-attestation
+    request. aiohttp normally releases a fully buffered response's connection
+    before callers can inspect its certificate, so the response class captures
+    the peer when the response starts.
+    """
 
     client_timeout = aiohttp.ClientTimeout(total=timeout)
+    response_class = (
+        _PeerSpkiCapturingResponse if _capture_peer_spki else aiohttp.ClientResponse
+    )
     async with aiohttp.ClientSession(
         timeout=client_timeout,
-        response_class=_GatewayAttestationResponse,
+        response_class=response_class,
     ) as session:
-        async with session.get(url, headers=headers) as response:
+        async with session.request(method, url, data=data, headers=headers) as response:
             return FetchResponse(
                 status=response.status,
                 body=await response.read(),
-                peer_spki_fingerprint=response.peer_spki_fingerprint,
+                peer_spki_fingerprint=(
+                    response.peer_spki_fingerprint
+                    if isinstance(response, _PeerSpkiCapturingResponse)
+                    else None
+                ),
             )
 
 
-class _GatewayAttestationResponse(aiohttp.ClientResponse):
+class _PeerSpkiCapturingResponse(aiohttp.ClientResponse):
     """Record the peer before aiohttp releases a fully buffered response."""
 
     peer_spki_fingerprint: str | None = None

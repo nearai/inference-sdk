@@ -308,7 +308,7 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
     let found = CompletionSignatureRequest::new(test_api_key(), "found")
         .base_url(base_url(&server))
         .unwrap()
-        .lookup()
+        .send()
         .await
         .unwrap();
     assert!(matches!(
@@ -319,18 +319,10 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
         })
     ));
 
-    let fetched = CompletionSignatureRequest::new(test_api_key(), "found")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(fetched.kind, CompletionSignatureKind::Gateway);
-
     let pending = CompletionSignatureRequest::new(test_api_key(), "pending")
         .base_url(base_url(&server))
         .unwrap()
-        .lookup()
+        .send()
         .await
         .unwrap();
     assert!(matches!(
@@ -338,23 +330,6 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
         CompletionSignatureLookup::Unavailable(SignatureUnavailable { ref error_code, .. })
             if error_code == "pending"
     ));
-
-    let error = CompletionSignatureRequest::new(test_api_key(), "pending")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
-        .await
-        .unwrap_err();
-    let SdkError::Api(error) = error else {
-        panic!("strict signature fetch must return an ApiError");
-    };
-    assert!(matches!(
-        error,
-        ApiError::CompletionSignatureUnavailable { ref provider_error_code }
-            if provider_error_code == "pending"
-    ));
-    assert_eq!(error.code(), "api.completion_signature_unavailable");
-    assert!(!error.retryable());
 }
 
 #[tokio::test]
@@ -373,7 +348,7 @@ async fn completion_signature_request_applies_a_signing_algorithm() {
         .mount(&server)
         .await;
 
-    let signature = CompletionSignatureRequest::new(test_api_key(), "found")
+    let lookup = CompletionSignatureRequest::new(test_api_key(), "found")
         .base_url(base_url(&server))
         .unwrap()
         .signing_algo(SigningAlgo::Ed25519)
@@ -381,5 +356,11 @@ async fn completion_signature_request_applies_a_signing_algorithm() {
         .await
         .unwrap();
 
-    assert_eq!(signature.kind, CompletionSignatureKind::Gateway);
+    assert!(matches!(
+        lookup,
+        CompletionSignatureLookup::Found(CompletionSignature {
+            kind: CompletionSignatureKind::Gateway,
+            ..
+        })
+    ));
 }

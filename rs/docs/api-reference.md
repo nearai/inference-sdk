@@ -11,19 +11,22 @@ Each Cloud API helper takes its `api_key` directly. It uses
 no shared Cloud client or configuration object to retain.
 
 For a custom base URL or request filter, construct the matching request
-builder. Builders own configuration for one request and finish with `send()`
-(or `lookup()` for a non-strict signature lookup).
+builder. Builders own configuration for one request and finish with `send()`.
 
 | Builder | Required constructor arguments | Optional methods | Terminal operation |
 | --- | --- | --- | --- |
 | `ModelAttestationsRequest` | `new(api_key, model)` | `base_url`, `signing_algo`, `signing_address` | `send()` → `FetchedModelAttestations` |
 | `ModelAttestationForSignatureRequest` | `new(api_key, model, signature)` | `base_url` | `send()` → `FetchedModelAttestation` |
 | `GatewayAttestationRequest` | `new(api_key)` | `base_url`, `signing_algo` | `send()` → `FetchedGatewayAttestation` |
-| `CompletionSignatureRequest` | `new(api_key, completion_id)` | `base_url`, `signing_algo` | `lookup()` → `CompletionSignatureLookup`; `send()` → `CompletionSignature` |
+| `CompletionSignatureRequest` | `new(api_key, completion_id)` | `base_url`, `signing_algo` | `send()` → `CompletionSignatureLookup` |
 
 `base_url` parses an absolute Cloud API base URL and returns
 `Result<Self, VerificationError>`. The `signing_algo` and `signing_address`
 methods add the corresponding Cloud API query filters.
+
+`CompletionSignatureRequest::send()` preserves Cloud API's unavailable result.
+Use `fetch_completion_signature()` when an unavailable signature should instead
+be returned as `ApiError::CompletionSignatureUnavailable`.
 
 ## Cloud API functions
 

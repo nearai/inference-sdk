@@ -43,10 +43,7 @@ from ..utils.errors import (
     api_failure,
     verification_failure,
 )
-from ..utils.fetch import (
-    fetch as default_fetch,
-    fetch_gateway_attestation as fetch_gateway_attestation_response,
-)
+from ..utils.fetch import fetch as default_fetch
 
 
 SIGNATURE_RESPONSE_FIELDS = {
@@ -62,17 +59,6 @@ SIGNATURE_RESPONSE_FIELDS = {
 class _CloudApiJsonResponse:
     json: object
     peer_spki_fingerprint: str | None
-
-
-@dataclass(frozen=True)
-class _CloudApiResponse:
-    status: int
-    body: str
-    peer_spki_fingerprint: str | None = None
-
-    @property
-    def ok(self) -> bool:
-        return 200 <= self.status < 300
 
 
 async def fetch_model_attestations(
@@ -236,13 +222,12 @@ async def _get_cloud_api_json(
     if extra_headers is not None:
         headers.update(extra_headers)
     try:
-        response = await _fetch_cloud_api_response(
+        response = await default_fetch(
             url,
-            headers,
-            capture_peer_spki=capture_peer_spki,
+            headers=headers,
+            timeout=TIMEOUT,
+            _capture_peer_spki=capture_peer_spki,
         )
-    except (ApiError, VerificationError):
-        raise
     except Exception as error:
         raise api_failure(
             'api.transport_failed',
@@ -257,31 +242,13 @@ async def _get_cloud_api_json(
             retryable=_is_retryable_status(response.status, resource),
         )
     try:
-        json_body = json.loads(response.body)
+        json_body = json.loads(response.text())
     except json.JSONDecodeError as error:
         raise api_failure(
             'api.invalid_json', {'resource': resource}, cause=error
         ) from error
     return _CloudApiJsonResponse(
         json=json_body,
-        peer_spki_fingerprint=response.peer_spki_fingerprint,
-    )
-
-
-async def _fetch_cloud_api_response(
-    url: str,
-    headers: Mapping[str, str],
-    *,
-    capture_peer_spki: bool = False,
-) -> _CloudApiResponse:
-    response = await (
-        fetch_gateway_attestation_response(url, headers=headers, timeout=TIMEOUT)
-        if capture_peer_spki
-        else default_fetch(url, headers=headers, timeout=TIMEOUT)
-    )
-    return _CloudApiResponse(
-        status=response.status,
-        body=response.text(),
         peer_spki_fingerprint=response.peer_spki_fingerprint,
     )
 

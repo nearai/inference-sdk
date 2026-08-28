@@ -37,7 +37,7 @@ def use_fake_cloud_api_fetch(
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
-        timeout: float | None = None,
+        **_: object,
     ) -> FetchResponse:
         assert headers is not None
         return await responder(url, headers)
@@ -270,11 +270,11 @@ async def test_gateway_helper_requests_tls_aware_evidence(
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
-        timeout: float | None = None,
+        **options: object,
     ) -> FetchResponse:
         nonlocal seen_url
         assert headers is not None
-        _ = timeout
+        assert options['_capture_peer_spki'] is True
         seen_url = url
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
         return FetchResponse(
@@ -292,11 +292,7 @@ async def test_gateway_helper_requests_tls_aware_evidence(
             peer_spki_fingerprint='33' * 32,
         )
 
-    monkeypatch.setattr(
-        cloud_api,
-        'fetch_gateway_attestation_response',
-        fake_gateway_fetch,
-    )
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
     fetched = await fetch_gateway_attestation(
         API_KEY,
         signing_algo='ed25519',
@@ -316,10 +312,10 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
         url: str,
         *,
         headers: Mapping[str, str] | None = None,
-        timeout: float | None = None,
+        **options: object,
     ) -> FetchResponse:
         assert headers is not None
-        _ = timeout
+        assert options['_capture_peer_spki'] is True
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
         return FetchResponse(
             status=200,
@@ -336,11 +332,7 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
             ).encode(),
         )
 
-    monkeypatch.setattr(
-        cloud_api,
-        'fetch_gateway_attestation_response',
-        fake_gateway_fetch,
-    )
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
 
     with pytest.raises(ApiError) as malformed:
         await fetch_gateway_attestation(API_KEY)

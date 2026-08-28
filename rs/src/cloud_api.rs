@@ -210,30 +210,15 @@ impl CompletionSignatureRequest {
         self
     }
 
-    /// Look up a completion signature without treating a 2xx unavailable
-    /// envelope as an error. A pending 404 remains a retryable HTTP error.
-    pub async fn lookup(self) -> Result<CompletionSignatureLookup, SdkError> {
+    /// Send the request without treating a 2xx unavailable envelope as an
+    /// error. A pending 404 remains a retryable HTTP error.
+    pub async fn send(self) -> Result<CompletionSignatureLookup, SdkError> {
         lookup_completion_signature_with_config(
             &self.config,
             &self.completion_id,
             self.signing_algo,
         )
         .await
-    }
-
-    /// Fetch a completion signature or return an API error when Cloud API
-    /// returns a 2xx unavailable envelope. Use [`Self::lookup`] when an
-    /// unavailable signature is an ordinary application state.
-    pub async fn send(self) -> Result<CompletionSignature, SdkError> {
-        match self.lookup().await? {
-            CompletionSignatureLookup::Found(signature) => Ok(signature),
-            CompletionSignatureLookup::Unavailable(unavailable) => {
-                Err(ApiError::CompletionSignatureUnavailable {
-                    provider_error_code: unavailable.error_code,
-                }
-                .into())
-            }
-        }
     }
 }
 
@@ -278,20 +263,32 @@ pub async fn lookup_completion_signature(
     completion_id: &str,
 ) -> Result<CompletionSignatureLookup, SdkError> {
     CompletionSignatureRequest::new(api_key, completion_id)
-        .lookup()
+        .send()
         .await
 }
 
 /// Fetch a completion signature using the production endpoint and built-in
-/// reqwest transport. Use [`CompletionSignatureRequest`] to select a different
-/// base URL, signing algorithm, or handle an unavailable signature directly.
+/// reqwest transport. Use [`lookup_completion_signature`] when a 2xx
+/// unavailable envelope is an ordinary application state.
 pub async fn fetch_completion_signature(
     api_key: &str,
     completion_id: &str,
 ) -> Result<CompletionSignature, SdkError> {
-    CompletionSignatureRequest::new(api_key, completion_id)
-        .send()
-        .await
+    require_completion_signature(lookup_completion_signature(api_key, completion_id).await?)
+        .map_err(Into::into)
+}
+
+fn require_completion_signature(
+    lookup: CompletionSignatureLookup,
+) -> Result<CompletionSignature, ApiError> {
+    match lookup {
+        CompletionSignatureLookup::Found(signature) => Ok(signature),
+        CompletionSignatureLookup::Unavailable(unavailable) => {
+            Err(ApiError::CompletionSignatureUnavailable {
+                provider_error_code: unavailable.error_code,
+            })
+        }
+    }
 }
 
 /// Select the exact model evidence matching a `provider_tee` signature. It
@@ -443,11 +440,11 @@ async fn get_cloud_api_response(
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
 ) -> Result<CloudApiResponse, SdkError> {
-    let request = build_cloud_api_request(config, url, extra_header)?;
+    let headers = build_cloud_api_headers(config, extra_header)?;
     let response = config
         .client
-        .get(request.url)
-        .headers(request.headers)
+        .get(url)
+        .headers(headers)
         .send()
         .await
         .map_err(|_| ApiError::Transport {
@@ -471,11 +468,10 @@ async fn get_cloud_api_response(
     })
 }
 
-fn build_cloud_api_request(
+fn build_cloud_api_headers(
     config: &CloudApiRequestConfig,
-    url: Url,
     extra_header: Option<(&str, &str)>,
-) -> Result<CloudApiRequest, VerificationError> {
+) -> Result<HeaderMap, VerificationError> {
     let mut headers = HeaderMap::new();
     let authorization =
         HeaderValue::from_str(&format!("Bearer {}", config.api_key)).map_err(|_| {
@@ -492,7 +488,7 @@ fn build_cloud_api_request(
             HeaderValue::from_str(value).expect("the SDK only supplies static valid header values");
         headers.insert(name, value);
     }
-    Ok(CloudApiRequest { url, headers })
+    Ok(headers)
 }
 
 fn peer_spki_fingerprint(response: &reqwest::Response) -> Option<String> {
@@ -507,11 +503,6 @@ fn peer_spki_fingerprint(response: &reqwest::Response) -> Option<String> {
         .to_der()
         .ok()?;
     Some(hex::encode(sha256(spki)))
-}
-
-struct CloudApiRequest {
-    url: Url,
-    headers: HeaderMap,
 }
 
 struct CloudApiResponse {
@@ -1169,5 +1160,24 @@ mod tests {
 
         let error = map_completion_signature_lookup(response).unwrap_err();
         assert!(matches!(error, ApiError::InvalidResponse { .. }));
+    }
+
+    #[test]
+    fn strict_signature_fetch_maps_an_unavailable_lookup_to_an_api_error() {
+        let error = require_completion_signature(CompletionSignatureLookup::Unavailable(
+            SignatureUnavailable {
+                error_code: "pending".to_owned(),
+                message: "not ready".to_owned(),
+            },
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ApiError::CompletionSignatureUnavailable { ref provider_error_code }
+                if provider_error_code == "pending"
+        ));
+        assert_eq!(error.code(), "api.completion_signature_unavailable");
+        assert!(!error.retryable());
     }
 }

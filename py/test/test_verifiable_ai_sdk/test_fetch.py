@@ -28,5 +28,5 @@ async def test_gateway_response_captures_peer_before_aiohttp_releases_connection
         lambda transport: expected_fingerprint,
     )
     monkeypatch.setattr(aiohttp.ClientResponse, 'start', parent_start)
-    response = object.__new__(fetch_module._GatewayAttestationResponse)
+    response = object.__new__(fetch_module._PeerSpkiCapturingResponse)
     await response.start(connection)

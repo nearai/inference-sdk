@@ -142,9 +142,6 @@ export type VerificationFailure =
       };
     }
   | {
-      code: 'binding.spki_fingerprint_missing';
-    }
-  | {
       code: 'binding.spki_fingerprint_mismatch';
     }
   | {
@@ -418,8 +415,6 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] ${failure.details.source} is invalid: ${failure.details.reason}`;
     case 'binding.report_data_mismatch':
       return `[${failure.code}] ${failure.details.source} does not match the verified quote`;
-    case 'binding.spki_fingerprint_missing':
-      return `[${failure.code}] Attestation is missing its SPKI fingerprint`;
     case 'binding.spki_fingerprint_mismatch':
       return `[${failure.code}] Attestation SPKI fingerprint does not match the observed TLS peer`;
     case 'measurement.event_log_invalid':
