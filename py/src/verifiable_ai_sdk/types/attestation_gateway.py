@@ -11,4 +11,5 @@ from .attestation_common import AttestationEvidence
 class GatewayAttestation(AttestationEvidence):
     """A NEAR AI Cloud Gateway TEE attestation."""
 
+    declared_spki_fingerprint: str
     reported_quote_data: str

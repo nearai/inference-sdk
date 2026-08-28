@@ -34,10 +34,7 @@ pub async fn verify_model_attestation(
         &verified_quote.quote.report_data,
         nonce,
         &verified_quote.signer.signing_address,
-        verified_quote
-            .attestation
-            .declared_spki_fingerprint
-            .as_deref(),
+        attestation.declared_spki_fingerprint.as_deref(),
     )?;
     let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
     let gpu_evidence = verify_nvidia_evidence(

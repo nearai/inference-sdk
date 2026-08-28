@@ -9,6 +9,7 @@ from eth_account.messages import encode_defunct
 
 from verifiable_ai_sdk import (
     CompletionSignature,
+    GatewayClientBinding,
     ModelAttestationVerifiers,
     SigningIdentity,
     VerificationError,
@@ -101,8 +102,10 @@ async def test_gateway_response_verifies_ed25519_signature() -> None:
             signer=SigningIdentity(signing_algo='ed25519', signing_address=public_key),
             reported_quote_data=quote.report_data.hex(),
         ),
-        NONCE,
-        TLS_FINGERPRINT,
+        GatewayClientBinding(
+            nonce=NONCE,
+            peer_spki_fingerprint=TLS_FINGERPRINT,
+        ),
         verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
     )
 

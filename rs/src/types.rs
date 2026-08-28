@@ -43,15 +43,15 @@ pub struct AttestationEvidence {
     pub intel_quote: String,
     pub event_log: AttestationEventLog,
     pub app_compose: String,
-    /// Optional server-declared value. An absent value becomes `None` at the
-    /// Cloud API response boundary.
-    pub declared_spki_fingerprint: Option<String>,
 }
 
 /// Raw model-serving TEE evidence returned through NEAR AI Cloud.
 #[derive(Clone, Debug)]
 pub struct ModelAttestation {
     pub evidence: AttestationEvidence,
+    /// Optional server-declared value. An absent value becomes `None` at the
+    /// Cloud API response boundary.
+    pub declared_spki_fingerprint: Option<String>,
     /// Optional server-declared copy of quote report data. An absent value
     /// becomes `None` at the Cloud API response boundary.
     pub reported_quote_data: Option<String>,
@@ -64,6 +64,9 @@ pub struct ModelAttestation {
 #[derive(Clone, Debug)]
 pub struct GatewayAttestation {
     pub evidence: AttestationEvidence,
+    /// TLS SPKI fingerprint declared by the Gateway and authenticated by its
+    /// quote.
+    pub declared_spki_fingerprint: String,
     /// Gateway reports always advertise the quote report-data copy.
     pub reported_quote_data: String,
 }
@@ -123,9 +126,9 @@ pub trait DeploymentVerifier: Send + Sync {
     async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError>;
 }
 
-/// Quote policy shared by model and Gateway attestation verification.
+/// Internal quote policy shared by model and Gateway attestation verification.
 #[derive(Clone, Debug, Default)]
-pub struct AttestationPolicy {
+pub(crate) struct AttestationPolicy {
     /// Defaults to `UpToDate` and `OutOfDate` when omitted.
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
 }
@@ -144,6 +147,25 @@ pub enum GpuEvidenceRequirement {
 pub struct ModelAttestationPolicy {
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
     pub gpu_evidence: GpuEvidenceRequirement,
+}
+
+/// Gateway-specific verification policy.
+#[derive(Clone, Debug)]
+pub struct GatewayAttestationPolicy {
+    /// Defaults to `UpToDate` and `OutOfDate` when omitted.
+    pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
+    /// Require the TLS peer observed by the client to match the TLS key
+    /// authenticated by the Gateway quote. Defaults to `true`.
+    pub verify_peer_tls_binding: bool,
+}
+
+impl Default for GatewayAttestationPolicy {
+    fn default() -> Self {
+        Self {
+            accepted_tcb_statuses: None,
+            verify_peer_tls_binding: true,
+        }
+    }
 }
 
 /// Optional verifier implementations used by a Gateway verification call.
@@ -203,8 +225,12 @@ pub enum ModelTlsBinding {
 
 /// TLS information authenticated for a Gateway report.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GatewayTlsBinding {
-    pub spki_fingerprint: String,
+pub enum GatewayTlsBinding {
+    /// The quote authenticated the Gateway's declared TLS fingerprint.
+    Attested { spki_fingerprint: String },
+    /// The declared fingerprint also matched the TLS peer observed by the
+    /// client for the evidence request.
+    Peer { spki_fingerprint: String },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -275,14 +301,19 @@ pub struct FetchedModelAttestations {
     pub nonce: String,
 }
 
-/// Gateway evidence and the fresh nonce used to obtain it.
+/// Client values associated with a Gateway-attestation request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GatewayClientBinding {
+    /// Fresh nonce sent in the Gateway-attestation request.
+    pub nonce: String,
+    /// SHA-256 SPKI fingerprint observed for that exact HTTPS request, when
+    /// the runtime exposes peer certificate information.
+    pub peer_spki_fingerprint: Option<String>,
+}
+
+/// Gateway evidence and the client values associated with its request.
 #[derive(Clone, Debug)]
 pub struct FetchedGatewayAttestation {
     pub attestation: GatewayAttestation,
-    pub nonce: String,
-    /// SHA-256 SPKI fingerprint observed by the configured transport for this
-    /// exact attestation request. The built-in reqwest transport does not
-    /// expose peer certificate data, so this is `None` unless a TLS-aware
-    /// custom transport supplies it.
-    pub peer_spki_fingerprint: Option<String>,
+    pub client_binding: GatewayClientBinding,
 }

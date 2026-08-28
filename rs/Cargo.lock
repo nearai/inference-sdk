@@ -2616,6 +2616,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "wiremock",
+ "x509-cert",
 ]
 
 [[package]]

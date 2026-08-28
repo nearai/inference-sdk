@@ -65,28 +65,16 @@ pub fn verify_gateway_report_data_binding(
     report_data: &[u8],
     nonce: &str,
     signing_address: &str,
-    reported_spki_fingerprint: Option<&str>,
-    peer_spki_fingerprint: &str,
+    reported_spki_fingerprint: &str,
+    peer_spki_fingerprint: Option<&str>,
 ) -> Result<GatewayTlsBinding, VerificationError> {
     verify_quote_report_data_nonce(report_data, nonce)?;
-    let reported_spki_fingerprint = reported_spki_fingerprint
-        .filter(|fingerprint| !fingerprint.is_empty())
-        .ok_or(VerificationError::SpkiFingerprintMissing)?;
     let reported = require_hex_length(reported_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
             field: "attestation.declared_spki_fingerprint".to_owned(),
             reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
         }
     })?;
-    let peer = require_hex_length(peer_spki_fingerprint, 32).map_err(|_| {
-        VerificationError::InvalidInput {
-            field: "peer_spki_fingerprint".to_owned(),
-            reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
-        }
-    })?;
-    if reported != peer {
-        return Err(VerificationError::SpkiFingerprintMismatch);
-    }
     let signing_address = decode_signing_address(signing_address)?;
     let mut binding_data = signing_address;
     binding_data.extend_from_slice(&reported);
@@ -95,7 +83,21 @@ pub fn verify_gateway_report_data_binding(
             binding: "signer_tls_binding",
         });
     }
-    Ok(GatewayTlsBinding {
+    let Some(peer_spki_fingerprint) = peer_spki_fingerprint else {
+        return Ok(GatewayTlsBinding::Attested {
+            spki_fingerprint: hex::encode(reported),
+        });
+    };
+    let peer = require_hex_length(peer_spki_fingerprint, 32).map_err(|_| {
+        VerificationError::InvalidInput {
+            field: "client_binding.peer_spki_fingerprint".to_owned(),
+            reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
+        }
+    })?;
+    if reported != peer {
+        return Err(VerificationError::SpkiFingerprintMismatch);
+    }
+    Ok(GatewayTlsBinding::Peer {
         spki_fingerprint: hex::encode(reported),
     })
 }

@@ -1,14 +1,11 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Once;
 use verifiable_ai_sdk::{
-    find_model_attestation_for_signature, ApiError, ApiTransportReason, AttestationEventLog,
-    AttestationEvidence, CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
+    find_model_attestation_for_signature, ApiError, AttestationEventLog, AttestationEvidence,
+    CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
     CompletionSignatureReference, CompletionSignatureRequest, GatewayAttestationRequest,
-    GatewayAttestationTransport, GatewayAttestationTransportRequest,
-    GatewayAttestationTransportResponse, ModelAttestation, ModelAttestationForSignatureRequest,
-    ModelAttestationsRequest, SdkError, SignatureUnavailable, SigningAlgo, SigningIdentity,
-    VerificationError,
+    ModelAttestation, ModelAttestationForSignatureRequest, ModelAttestationsRequest, SdkError,
+    SignatureUnavailable, SigningAlgo, SigningIdentity, VerificationError,
 };
 use wiremock::{
     matchers::{header, method, path, query_param},
@@ -66,57 +63,6 @@ impl Respond for GatewayAttestationResponder {
     }
 }
 
-struct TlsAwareGatewayTransport;
-
-#[async_trait]
-impl GatewayAttestationTransport for TlsAwareGatewayTransport {
-    async fn get(
-        &self,
-        request: GatewayAttestationTransportRequest,
-    ) -> Result<GatewayAttestationTransportResponse, ApiTransportReason> {
-        assert_eq!(request.url.path(), "/v1/attestation/report");
-        assert_eq!(
-            request
-                .headers
-                .get("authorization")
-                .and_then(|value| value.to_str().ok()),
-            Some("Bearer test-key")
-        );
-        let query = request
-            .url
-            .query_pairs()
-            .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(
-            query.get("signing_algo").map(|value| value.as_ref()),
-            Some("ed25519")
-        );
-        assert_eq!(
-            query
-                .get("include_tls_fingerprint")
-                .map(|value| value.as_ref()),
-            Some("true")
-        );
-        let nonce = query.get("nonce").expect("request contains a nonce");
-        Ok(GatewayAttestationTransportResponse {
-            status: 200,
-            body: json!({
-                "gateway_attestation": {
-                    "request_nonce": nonce,
-                    "signing_algo": "ed25519",
-                    "signing_address": "22".repeat(32),
-                    "intel_quote": "aa",
-                    "event_log": [],
-                    "tls_cert_fingerprint": "33".repeat(32),
-                    "report_data": "00".repeat(64),
-                    "info": {"tcb_info": {"app_compose": "{}"}},
-                }
-            })
-            .to_string(),
-            peer_spki_fingerprint: Some("33".repeat(32)),
-        })
-    }
-}
-
 fn base_url(server: &MockServer) -> String {
     format!("{}/v1", server.uri())
 }
@@ -138,8 +84,8 @@ fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
             intel_quote: "aa".to_owned(),
             event_log: AttestationEventLog::Entries(vec![]),
             app_compose: "{}".to_owned(),
-            declared_spki_fingerprint: None,
         },
+        declared_spki_fingerprint: None,
         reported_quote_data: None,
         nvidia_payload: None,
     }
@@ -325,25 +271,15 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
         .await
         .unwrap();
 
-    assert_eq!(fetched.attestation.evidence.nonce, fetched.nonce);
     assert_eq!(
-        fetched.attestation.evidence.declared_spki_fingerprint,
-        Some("33".repeat(32))
+        fetched.attestation.evidence.nonce,
+        fetched.client_binding.nonce
     );
-    assert_eq!(fetched.peer_spki_fingerprint, None);
-}
-
-#[tokio::test]
-async fn gateway_attestation_request_returns_the_peer_from_a_custom_transport() {
-    let fetched = GatewayAttestationRequest::new("test-key")
-        .base_url("https://cloud.example/v1")
-        .unwrap()
-        .transport(TlsAwareGatewayTransport)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(fetched.peer_spki_fingerprint, Some("33".repeat(32)));
+    assert_eq!(
+        fetched.attestation.declared_spki_fingerprint,
+        "33".repeat(32)
+    );
+    assert_eq!(fetched.client_binding.peer_spki_fingerprint, None);
 }
 
 #[tokio::test]

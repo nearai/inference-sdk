@@ -24,6 +24,14 @@ The guide includes complete model and Gateway verification flows. In both
 cases, retain the exact bytes sent to and received from the completion endpoint:
 the SDK verifies those bytes without reserializing them.
 
+Gateway verification requires a client-observed TLS peer by default. The Rust
+fetch helper captures the peer certificate for its HTTPS evidence request and
+returns its SHA-256 SPKI fingerprint in `FetchedGatewayAttestation.client_binding`.
+Callers without peer-certificate access must explicitly disable that check with
+`GatewayAttestationPolicy { verify_peer_tls_binding: false, ..Default::default() }`.
+That path still verifies the nonce and quote-bound TLS identity, returns
+`GatewayTlsBinding::Attested`, and ignores any supplied peer fingerprint.
+
 ## Error handling
 
 Cloud request helpers return `SdkError`, which distinguishes `ApiError` from

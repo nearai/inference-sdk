@@ -9,8 +9,9 @@ completion request and retains its exact request and response bytes.
 - Model evidence: the Intel TDX quote, client nonce, signer, accepted TCB
   policy, runtime measurements, and measured deployment configuration. NVIDIA
   GPU evidence is verified when supplied and can be required by policy.
-- Gateway evidence: the same deployment evidence, plus the Gateway TLS peer
-  fingerprint independently observed by the caller for the evidence request.
+- Gateway evidence: the same deployment evidence, plus the Gateway TLS service
+  identity bound into the quote. By default, verification also requires the
+  TLS peer observed for the evidence request to match it.
 - Completion signatures: the exact request and response bytes, signed by the
   signer established by the matching verified evidence.
 
@@ -21,6 +22,15 @@ does not establish model execution.
 
 The SDK does not send completion requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
+
+`fetch_gateway_attestation` returns `FetchedGatewayAttestation` with raw
+evidence and `client_binding`. The native helper obtains the SHA-256 SPKI
+fingerprint from the TLS connection for that exact HTTPS request. Pass the
+binding to `verify_gateway_attestation`; the default Gateway policy requires a
+peer fingerprint. A runtime without peer-certificate access must explicitly use
+`GatewayAttestationPolicy(verify_peer_tls_binding=False)`. That path still
+verifies the nonce and quote-bound TLS identity, returns an `attested` TLS
+binding, and ignores any supplied peer fingerprint.
 
 ## Documentation
 

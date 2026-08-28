@@ -29,7 +29,7 @@ needed only when the claim concerns one particular response.
 | Goal | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- |
 | Audit a model deployment | `fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote, deployment evidence, and the attestation request's observed TLS peer binding passed. | That a particular completion was served by that Gateway or that a model executed it. |
+| Audit a Gateway endpoint | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote, deployment evidence, and quote-bound TLS identity passed. By default, the observed TLS peer also matched. | That a particular completion was served by that Gateway or that a model executed it. |
 | Verify a model-issued response | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
 | Verify a Gateway-issued response | `fetch_completion_signature` → `fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
@@ -121,43 +121,25 @@ client-to-model TLS connection.
 
 ## Verify a Gateway attestation or response
 
-`verify_gateway_attestation` binds Gateway evidence to the SHA-256 SPKI
-fingerprint independently observed from the TLS peer that served the
-attestation request. The built-in reqwest transport cannot expose peer
-certificate data, so it returns `None` for
-`FetchedGatewayAttestation.peer_spki_fingerprint`. Use
-`GatewayAttestationRequest::transport` with an application-owned
-`GatewayAttestationTransport` when making this TLS binding claim. That request
-transport must attach the fingerprint observed for the exact request to
-`GatewayAttestationTransportResponse.peer_spki_fingerprint`.
+`fetch_gateway_attestation` requests the Gateway's TLS fingerprint and
+configures reqwest to expose the leaf certificate for that exact HTTPS request.
+It derives the certificate's SHA-256 SPKI fingerprint and returns it with the
+fresh nonce in `FetchedGatewayAttestation.client_binding`.
 
-Do not use the fingerprint declared inside the attestation as the observed
-peer fingerprint; that compares the evidence with itself rather than with a
-TLS peer the application observed.
+`verify_gateway_attestation` requires that observed peer fingerprint by
+default. It verifies the quote's nonce and declared TLS identity, then compares
+the declared key with the client-observed peer. Do not replace the observed
+peer fingerprint with the declaration inside the attestation: that would only
+compare the evidence with itself.
 
 ```rust,no_run
-use verifiable_ai_sdk::{
-    verify_gateway_attestation, GatewayAttestationRequest, GatewayAttestationTransport,
-};
+use verifiable_ai_sdk::{fetch_gateway_attestation, verify_gateway_attestation};
 
-async fn verify_gateway_endpoint<T>(
-    api_key: String,
-    transport: T,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    T: GatewayAttestationTransport + 'static,
-{
-    let fetched = GatewayAttestationRequest::new(api_key)
-        .transport(transport)
-        .send()
-        .await?;
-    let peer_spki_fingerprint = fetched.peer_spki_fingerprint.as_deref().ok_or_else(|| {
-        std::io::Error::other("transport did not report a TLS peer fingerprint")
-    })?;
+async fn verify_gateway_endpoint(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fetched = fetch_gateway_attestation(api_key).await?;
     let _verified = verify_gateway_attestation(
         &fetched.attestation,
-        &fetched.nonce,
-        peer_spki_fingerprint,
+        &fetched.client_binding,
         None,
         Default::default(),
     )
@@ -166,12 +148,38 @@ where
 }
 ```
 
+If a runtime does not expose the TLS peer certificate, it must opt out
+explicitly. This still verifies the nonce and the quote-bound TLS identity, but
+does not compare a peer fingerprint and returns `GatewayTlsBinding::Attested`.
+When peer binding is disabled, a supplied peer fingerprint is ignored.
+
+```rust,no_run
+use verifiable_ai_sdk::{
+    fetch_gateway_attestation, verify_gateway_attestation, GatewayAttestationPolicy,
+};
+
+async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let fetched = fetch_gateway_attestation(api_key).await?;
+    let policy = GatewayAttestationPolicy {
+        verify_peer_tls_binding: false,
+        ..Default::default()
+    };
+    let _verified = verify_gateway_attestation(
+        &fetched.attestation,
+        &fetched.client_binding,
+        Some(&policy),
+        Default::default(),
+    )
+    .await?;
+    Ok(())
+}
+```
+
 For a `CompletionSignatureKind::Gateway` completion, request Gateway evidence
-for `signature.signer.signing_algo`, verify it with the peer fingerprint
-observed for that fetch, then call `verify_gateway_response` with the original
-completion bytes, signature, and verified Gateway evidence. This verifies
-Gateway-service provenance and integrity for those bytes; it does not establish
-model execution.
+for `signature.signer.signing_algo`, verify it, then call
+`verify_gateway_response` with the original completion bytes, signature, and
+verified Gateway evidence. This verifies Gateway-service provenance and
+integrity for those bytes; it does not establish model execution.
 
 ## Policy and trust roots
 
@@ -180,6 +188,10 @@ Model GPU evidence is verified when supplied; reports without it are accepted
 by default. Set `ModelAttestationPolicy { gpu_evidence:
 GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
+
+`GatewayAttestationPolicy::verify_peer_tls_binding` defaults to `true`. Set it
+to `false` only for a runtime that cannot obtain the peer certificate for the
+Gateway evidence request.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
 quote, deployment, and (for models) NVIDIA evidence verifiers. A supplied

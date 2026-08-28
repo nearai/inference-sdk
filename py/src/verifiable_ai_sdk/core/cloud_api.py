@@ -33,8 +33,8 @@ from ..types.cloud_api import (
     FetchedGatewayAttestation,
     FetchedModelAttestation,
     FetchedModelAttestations,
-    GatewayAttestationTransport,
 )
+from ..types.verification import GatewayClientBinding
 from ..utils.common import generate_nonce, hex_to_bytes
 from ..utils.consts import TIMEOUT
 from ..utils.errors import (
@@ -43,7 +43,10 @@ from ..utils.errors import (
     api_failure,
     verification_failure,
 )
-from ..utils.fetch import fetch as default_fetch
+from ..utils.fetch import (
+    fetch as default_fetch,
+    fetch_gateway_attestation as fetch_gateway_attestation_response,
+)
 
 
 SIGNATURE_RESPONSE_FIELDS = {
@@ -144,9 +147,8 @@ async def fetch_gateway_attestation(
     *,
     signing_algo: SigningAlgo = 'ed25519',
     base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-    transport: GatewayAttestationTransport | None = None,
 ) -> FetchedGatewayAttestation:
-    """Fetch standalone Gateway evidence in its TLS-aware report-data layout."""
+    """Fetch Gateway evidence and capture the TLS peer for this request."""
 
     nonce = generate_nonce()
     response = await _get_cloud_api_json(
@@ -161,14 +163,16 @@ async def fetch_gateway_attestation(
             },
         ),
         'gateway_attestation',
-        gateway_transport=transport,
+        capture_peer_spki=True,
     )
     attestation = _decode_gateway_attestation_report(response.json)
     _require_matching_api_nonce(attestation.nonce, nonce, 'gateway_attestation')
     return FetchedGatewayAttestation(
         attestation=attestation,
-        nonce=nonce,
-        peer_spki_fingerprint=response.peer_spki_fingerprint,
+        client_binding=GatewayClientBinding(
+            nonce=nonce,
+            peer_spki_fingerprint=response.peer_spki_fingerprint,
+        ),
     )
 
 
@@ -225,7 +229,7 @@ async def _get_cloud_api_json(
     url: str,
     resource: str,
     *,
-    gateway_transport: GatewayAttestationTransport | None = None,
+    capture_peer_spki: bool = False,
     extra_headers: Mapping[str, str] | None = None,
 ) -> _CloudApiJsonResponse:
     headers = {'authorization': f'Bearer {api_key}'}
@@ -235,7 +239,7 @@ async def _get_cloud_api_json(
         response = await _fetch_cloud_api_response(
             url,
             headers,
-            gateway_transport=gateway_transport,
+            capture_peer_spki=capture_peer_spki,
         )
     except (ApiError, VerificationError):
         raise
@@ -268,17 +272,18 @@ async def _fetch_cloud_api_response(
     url: str,
     headers: Mapping[str, str],
     *,
-    gateway_transport: GatewayAttestationTransport | None = None,
+    capture_peer_spki: bool = False,
 ) -> _CloudApiResponse:
-    if gateway_transport is not None:
-        response = await gateway_transport(url, headers)
-        return _CloudApiResponse(
-            status=response.status,
-            body=response.body,
-            peer_spki_fingerprint=response.peer_spki_fingerprint,
-        )
-    response = await default_fetch(url, headers=headers, timeout=TIMEOUT)
-    return _CloudApiResponse(status=response.status, body=response.text())
+    response = await (
+        fetch_gateway_attestation_response(url, headers=headers, timeout=TIMEOUT)
+        if capture_peer_spki
+        else default_fetch(url, headers=headers, timeout=TIMEOUT)
+    )
+    return _CloudApiResponse(
+        status=response.status,
+        body=response.text(),
+        peer_spki_fingerprint=response.peer_spki_fingerprint,
+    )
 
 
 def _decode_model_attestation_report(value: object) -> tuple[ModelAttestation, ...]:

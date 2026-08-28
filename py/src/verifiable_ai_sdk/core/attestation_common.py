@@ -93,26 +93,30 @@ def verify_gateway_report_data_binding(
     report_data: bytes,
     nonce: str,
     signer: SigningIdentity,
-    reported_spki_fingerprint: str | None,
-    peer_spki_fingerprint: str,
+    reported_spki_fingerprint: str,
+    peer_spki_fingerprint: str | None,
 ) -> GatewayTlsBinding:
     _verify_quote_report_data_length_and_nonce(report_data, nonce)
-    if not reported_spki_fingerprint:
-        raise verification_failure('binding.spki_fingerprint_missing')
-
     reported = require_byte_length(
         reported_spki_fingerprint, 32, 'attestation.declared_spki_fingerprint'
     )
-    peer = require_byte_length(peer_spki_fingerprint, 32, 'peer_spki_fingerprint')
-    if reported != peer:
-        raise verification_failure('binding.spki_fingerprint_mismatch')
-
     signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
     if report_data[:32] != sha256(signing_address + reported):
         raise verification_failure(
             'binding.report_data_mismatch',
             {'source': 'signerTlsBinding'},
         )
+
+    if peer_spki_fingerprint is None:
+        return GatewayTlsBinding(kind='attested', spki_fingerprint=reported.hex())
+
+    peer = require_byte_length(
+        peer_spki_fingerprint,
+        32,
+        'client_binding.peer_spki_fingerprint',
+    )
+    if reported != peer:
+        raise verification_failure('binding.spki_fingerprint_mismatch')
     return GatewayTlsBinding(kind='peer', spki_fingerprint=reported.hex())
 
 

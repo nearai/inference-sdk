@@ -22,10 +22,8 @@ mod util;
 pub use cloud_api::{
     fetch_completion_signature, fetch_gateway_attestation, fetch_model_attestation_for_signature,
     fetch_model_attestations, find_model_attestation_for_signature, lookup_completion_signature,
-    CompletionSignatureRequest, GatewayAttestationRequest, GatewayAttestationTransport,
-    GatewayAttestationTransportRequest, GatewayAttestationTransportResponse,
-    ModelAttestationForSignatureRequest, ModelAttestationsRequest, DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-    NO_ALIASING_HEADER,
+    CompletionSignatureRequest, GatewayAttestationRequest, ModelAttestationForSignatureRequest,
+    ModelAttestationsRequest, DEFAULT_NEAR_AI_CLOUD_BASE_URL, NO_ALIASING_HEADER,
 };
 pub use errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
 pub use gateway::verify_gateway_attestation;

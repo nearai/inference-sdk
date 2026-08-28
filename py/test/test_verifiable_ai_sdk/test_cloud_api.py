@@ -9,7 +9,6 @@ import pytest
 from verifiable_ai_sdk import (
     ApiError,
     CompletionSignature,
-    GatewayAttestationResponse,
     SigningIdentity,
     fetch_completion_signature,
     fetch_gateway_attestation,
@@ -262,16 +261,23 @@ async def test_fetch_model_attestation_for_signature_adds_signer_filters(
     assert query['signing_address'] == [SIGNING_ADDRESS]
 
 
-async def test_gateway_helper_requests_tls_aware_evidence() -> None:
+async def test_gateway_helper_requests_tls_aware_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen_url = ''
 
-    async def fake_transport(
-        url: str, _: Mapping[str, str]
-    ) -> GatewayAttestationResponse:
+    async def fake_gateway_fetch(
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FetchResponse:
         nonlocal seen_url
+        assert headers is not None
+        _ = timeout
         seen_url = url
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        return GatewayAttestationResponse(
+        return FetchResponse(
             status=200,
             body=json.dumps(
                 {
@@ -282,20 +288,68 @@ async def test_gateway_helper_requests_tls_aware_evidence() -> None:
                         report_data='00' * 64,
                     )
                 }
-            ),
+            ).encode(),
             peer_spki_fingerprint='33' * 32,
         )
 
+    monkeypatch.setattr(
+        cloud_api,
+        'fetch_gateway_attestation_response',
+        fake_gateway_fetch,
+    )
     fetched = await fetch_gateway_attestation(
         API_KEY,
         signing_algo='ed25519',
-        transport=fake_transport,
     )
-    assert fetched.attestation.nonce == fetched.nonce
-    assert fetched.peer_spki_fingerprint == '33' * 32
+
+    assert fetched.attestation.nonce == fetched.client_binding.nonce
+    assert fetched.client_binding.peer_spki_fingerprint == '33' * 32
     query = parse_qs(urlsplit(seen_url).query)
     assert query['include_tls_fingerprint'] == ['true']
     assert query['signing_algo'] == ['ed25519']
+
+
+async def test_gateway_helper_requires_tls_fingerprint_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_gateway_fetch(
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FetchResponse:
+        assert headers is not None
+        _ = timeout
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        signing_algo='ed25519',
+                        signing_address='55' * 32,
+                        tls_cert_fingerprint=None,
+                        report_data='00' * 64,
+                    )
+                }
+            ).encode(),
+        )
+
+    monkeypatch.setattr(
+        cloud_api,
+        'fetch_gateway_attestation_response',
+        fake_gateway_fetch,
+    )
+
+    with pytest.raises(ApiError) as malformed:
+        await fetch_gateway_attestation(API_KEY)
+
+    assert malformed.value.failure.code == 'api.invalid_response'
+    assert (
+        malformed.value.failure.details['path']
+        == 'gateway_attestation.tls_cert_fingerprint'
+    )
 
 
 async def test_completion_signature_lookup_preserves_unavailable_state(

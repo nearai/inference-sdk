@@ -59,8 +59,8 @@ pub fn model_attestation(
                 "imr": 3,
             })]),
             app_compose: APP_COMPOSE.to_owned(),
-            declared_spki_fingerprint: with_tls_fingerprint.then(|| TLS_FINGERPRINT.to_owned()),
         },
+        declared_spki_fingerprint: with_tls_fingerprint.then(|| TLS_FINGERPRINT.to_owned()),
         reported_quote_data: Some(report_data),
         nvidia_payload: nvidia_payload.map(ToOwned::to_owned),
     }
@@ -82,8 +82,8 @@ pub fn gateway_attestation() -> GatewayAttestation {
                 "imr": 3,
             })]),
             app_compose: APP_COMPOSE.to_owned(),
-            declared_spki_fingerprint: Some(TLS_FINGERPRINT.to_owned()),
         },
+        declared_spki_fingerprint: TLS_FINGERPRINT.to_owned(),
         reported_quote_data,
     }
 }
@@ -142,7 +142,7 @@ pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttes
 pub fn verified_gateway_attestation(signer: SigningIdentity) -> VerifiedGatewayAttestation {
     VerifiedGatewayAttestation {
         evidence: verified_evidence(signer),
-        tls_binding: verifiable_ai_sdk::GatewayTlsBinding {
+        tls_binding: verifiable_ai_sdk::GatewayTlsBinding::Peer {
             spki_fingerprint: TLS_FINGERPRINT.to_owned(),
         },
     }

@@ -49,6 +49,13 @@ class ModelAttestationPolicy(AttestationPolicy):
 
 
 @dataclass(frozen=True, kw_only=True)
+class GatewayAttestationPolicy(AttestationPolicy):
+    """Policy controls specific to Gateway evidence verification."""
+
+    verify_peer_tls_binding: bool = True
+
+
+@dataclass(frozen=True, kw_only=True)
 class AttestationVerifiers:
     quote: QuoteVerifier | None = None
     deployment: DeploymentVerifier | None = None
@@ -66,8 +73,16 @@ class ModelTlsBinding:
 
 
 @dataclass(frozen=True, kw_only=True)
+class GatewayClientBinding:
+    """Values supplied or observed by the client for a Gateway request."""
+
+    nonce: str
+    peer_spki_fingerprint: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class GatewayTlsBinding:
-    kind: Literal['peer']
+    kind: Literal['attested', 'peer']
     spki_fingerprint: str
 
 
@@ -100,9 +115,11 @@ __all__ = [
     'DeploymentVerifier',
     'AttestationPolicy',
     'ModelAttestationPolicy',
+    'GatewayAttestationPolicy',
     'AttestationVerifiers',
     'ModelAttestationVerifiers',
     'ModelTlsBinding',
+    'GatewayClientBinding',
     'GatewayTlsBinding',
     'VerifiedAttestationEvidence',
     'VerifiedModelAttestation',

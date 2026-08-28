@@ -29,7 +29,7 @@ signature is needed only when the claim is about a particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetch_model_attestations` → `verify_model_attestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That a particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway signer and deployment evidence are quote-verified, and the evidence request's observed TLS peer is bound to that evidence. | That a particular completion was served by the Gateway, or that a model executed the request. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway signer, deployment evidence, and quote-bound TLS identity are verified. By default, the observed TLS peer must also match. | That a particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind == 'provider_tee'`. | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind == 'gateway'`. | `fetch_completion_signature` → `fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
@@ -119,11 +119,10 @@ client connected directly to the model CVM.
 
 ## Verify a Gateway attestation
 
-A Gateway attestation binds a verified Cloud API Gateway deployment to the TLS
-peer observed for its evidence request. A custom Gateway transport must collect
-that request's SHA-256 SPKI fingerprint and return it as
-`GatewayAttestationResponse.peer_spki_fingerprint`. The default transport does not
-expose a peer certificate, so it cannot supply that value.
+A Gateway attestation verifies a Cloud API Gateway deployment and the TLS
+service identity bound into its quote. `fetch_gateway_attestation` sends a fresh
+nonce, requests that TLS identity, checks the echoed nonce, and returns the
+evidence with its `GatewayClientBinding`.
 
 ```python
 from verifiable_ai_sdk import (
@@ -131,25 +130,35 @@ from verifiable_ai_sdk import (
     verify_gateway_attestation,
 )
 
-# tls_aware_transport is application code. For this request, it returns
-# GatewayAttestationResponse(..., peer_spki_fingerprint=<SHA-256 SPKI hex>).
-gateway_evidence = await fetch_gateway_attestation(
-    api_key,
-    transport=tls_aware_transport,
-)
-if gateway_evidence.peer_spki_fingerprint is None:
-    raise RuntimeError('The transport did not observe the TLS peer fingerprint')
-
+gateway_evidence = await fetch_gateway_attestation(api_key)
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
-    gateway_evidence.nonce,
-    gateway_evidence.peer_spki_fingerprint,
+    gateway_evidence.client_binding,
 )
 ```
 
-Never use `attestation.declared_spki_fingerprint` as
-`peer_spki_fingerprint`. That would compare the attestation with itself rather
-than with a TLS peer observed by the caller.
+The native fetch helper captures the SHA-256 SPKI fingerprint from the TLS
+connection used for this exact HTTPS evidence request. The default Gateway
+policy requires it and returns `tls_binding.kind == 'peer'` only when it
+matches the fingerprint bound into the quote. If the runtime cannot expose the
+peer certificate, default verification fails.
+
+If a runtime cannot observe the peer certificate, explicitly choose quote-bound
+TLS verification without the peer comparison:
+
+```python
+from verifiable_ai_sdk import GatewayAttestationPolicy
+
+verified_gateway_attestation = await verify_gateway_attestation(
+    gateway_evidence.attestation,
+    gateway_evidence.client_binding,
+    policy=GatewayAttestationPolicy(verify_peer_tls_binding=False),
+)
+```
+
+This still verifies the nonce and quote-bound TLS identity, and returns
+`tls_binding.kind == 'attested'`. With `verify_peer_tls_binding=False`, the SDK
+ignores `client_binding.peer_spki_fingerprint` even if one is present.
 
 For a signature with `kind == 'gateway'`, fetch evidence for the signature's
 algorithm, verify it with the TLS peer observed for that request, then verify
@@ -165,15 +174,10 @@ from verifiable_ai_sdk import (
 gateway_evidence = await fetch_gateway_attestation(
     api_key,
     signing_algo=signature.signer.signing_algo,
-    transport=tls_aware_transport,
 )
-if gateway_evidence.peer_spki_fingerprint is None:
-    raise RuntimeError('The transport did not observe the TLS peer fingerprint')
-
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
-    gateway_evidence.nonce,
-    gateway_evidence.peer_spki_fingerprint,
+    gateway_evidence.client_binding,
 )
 verify_gateway_response(
     request_body,
@@ -187,6 +191,10 @@ This verifies Gateway-service provenance and integrity for exact completion
 bytes: the signature is valid and its signer is bound to verified Gateway
 deployment evidence. It does not establish model execution; use a
 `provider_tee` signature and model evidence for that claim.
+
+For this flow without a peer certificate, use
+`GatewayAttestationPolicy(verify_peer_tls_binding=False)` as shown above before
+calling `verify_gateway_response`.
 
 ## Set policy and trust roots
 
@@ -222,6 +230,10 @@ deployment and must raise for every deployment the application does not accept.
 The SDK authenticates the measured values, but the callback decides which
 deployments are acceptable.
 
+`GatewayAttestationPolicy.verify_peer_tls_binding` defaults to `True`. Set it
+to `False` only when the runtime cannot obtain the peer certificate for the
+Gateway evidence request.
+
 `verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
 evidence, the default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and
 accepts its documented boolean overall result. It does not locally validate the
@@ -242,8 +254,8 @@ returns either:
 A pending or unknown signature can instead produce HTTP 404. That remains a
 retryable `api.http_status` error; it is not an unavailable lookup result.
 
-Cloud API request helpers and evidence selection raise `ApiError` for
-transport, HTTP, response-format, nonce, unavailable-signature, or
+Cloud API request helpers and evidence selection raise `ApiError` for request,
+HTTP, response-format, nonce, unavailable-signature, or
 candidate-selection failures. Verification functions and local input or
 signature-contract checks raise `VerificationError`.
 
