@@ -1,98 +1,170 @@
-import json
-import re
+"""Nonce, report-data, and compose bindings shared by attestation flows."""
 
-from ..types.attestation_common import TcbInfo
-from ..utils.common import hex_to_bytes
-from ..utils.consts import SIGSTORE_SEARCH_API_URL, TIMEOUT
-from ..utils.errors import VerificationError
-from ..utils.fetch import fetch
+from __future__ import annotations
 
-
-def verify_intel_quote_report_data_for_attestation_report(
-    report_data: str,
-    request_nonce: str,
-    signing_address: str,
-):
-    report_raw = hex_to_bytes(report_data)
-    signing_address_raw = hex_to_bytes(signing_address)
-
-    embedded_address = report_raw[:32]
-    embedded_nonce = report_raw[32:]
-
-    signing_address_verified = embedded_address == signing_address_raw.ljust(
-        32, b'\x00'
-    )
-
-    if not signing_address_verified:
-        raise VerificationError('Signing address mismatching')
-
-    request_nonce_verified = embedded_nonce == hex_to_bytes(request_nonce)
-
-    if not request_nonce_verified:
-        raise VerificationError('Request nonce mismatching')
+from ..types.attestation_common import SigningIdentity
+from ..types.verification import GatewayTlsBinding, ModelTlsBinding
+from ..utils.common import hex_to_bytes, require_byte_length, sha256
+from ..utils.errors import VerificationError, verification_failure
 
 
-def get_compose_from_tcb_info(tcb_info: str | TcbInfo) -> str:
-    if isinstance(tcb_info, str):
-        try:
-            tcb_info = TcbInfo.model_validate_json(tcb_info)
-        except Exception as e:
-            raise VerificationError('Invalid tcb info') from e
-
-    return tcb_info.app_compose
-
-
-async def verify_compose(compose: str, image_names_of_sigstore_hash: list[str]):
-    hashes = get_sigstore_hashes_from_compose(compose, image_names_of_sigstore_hash)
-    for h in hashes:
-        await verify_sigstore_hash(h)
-
-
-def get_sigstore_hashes_from_compose(
-    compose: str,
-    image_names_of_sigstore_hash: list[str],
-) -> list[str]:
-    names = set(image_names_of_sigstore_hash)
-
-    found_names: set[str] = set()
-    found_digests: list[str] = []
-
-    # Match "<image-name>@sha256:<64-hex-digest>"
-    for m in re.finditer(r'([^@\s]+)@sha256:([0-9a-f]{64})', compose):
-        name = m.group(1)
-        digest = m.group(2)
-
-        if name not in names:
-            continue
-
-        found_names.add(name)
-        found_digests.append(digest)
-
-    missing_names = [n for n in image_names_of_sigstore_hash if n not in found_names]
-
-    if missing_names:
-        raise VerificationError(
-            f'Missing sigstore hash for image: {", ".join(missing_names)}'
+def verify_reported_nonce(
+    reported_nonce: str,
+    nonce: str,
+    source: str = 'attestationNonce',
+) -> None:
+    expected = require_byte_length(nonce, 32, 'nonce')
+    field = 'nvidia_payload.nonce' if source == 'nvidiaPayload' else 'attestation.nonce'
+    reported = require_byte_length(reported_nonce, 32, field)
+    if reported != expected:
+        raise verification_failure(
+            'binding', 'binding.nonce_mismatch', {'source': source}
         )
 
-    return found_digests
 
-
-async def verify_sigstore_hash(_hash: str):
-    response = await fetch(
-        SIGSTORE_SEARCH_API_URL,
-        method='POST',
-        data=json.dumps({'hash': _hash}),
-        headers={'content-type': 'application/json'},
-        timeout=TIMEOUT,
-    )
-
-    if not response.ok:
-        raise VerificationError(
-            f'Failed to verify sigstore hash with status code {response.status}'
+def verify_advertised_report_data(
+    advertised_report_data: str | None,
+    quote_report_data: bytes,
+) -> None:
+    if advertised_report_data is None:
+        return
+    try:
+        advertised = hex_to_bytes(
+            advertised_report_data, 'attestation.reported_quote_data'
+        )
+    except VerificationError as error:
+        raise verification_failure(
+            'binding',
+            'binding.report_data_invalid',
+            {
+                'source': 'reportedQuoteData',
+                'reason': 'invalid_hex',
+                'expectedBytes': 64,
+            },
+            cause=error,
+        ) from error
+    if len(advertised) != 64:
+        raise verification_failure(
+            'binding',
+            'binding.report_data_invalid',
+            {
+                'source': 'reportedQuoteData',
+                'reason': 'wrong_length',
+                'expectedBytes': 64,
+                'actualBytes': len(advertised),
+            },
+        )
+    if advertised != quote_report_data:
+        raise verification_failure(
+            'binding',
+            'binding.report_data_mismatch',
+            {'source': 'reportedQuoteData'},
         )
 
-    outputs = response.json()
 
-    if not isinstance(outputs, list) or not outputs:
-        raise VerificationError(f'Invalid sigstore hash {_hash}')
+def verify_model_report_data_binding(
+    *,
+    report_data: bytes,
+    nonce: str,
+    signer: SigningIdentity,
+    reported_spki_fingerprint: str | None,
+) -> ModelTlsBinding:
+    _verify_quote_report_data_length_and_nonce(report_data, nonce)
+    signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
+
+    if reported_spki_fingerprint is not None:
+        fingerprint = require_byte_length(
+            reported_spki_fingerprint, 32, 'attestation.declared_spki_fingerprint'
+        )
+        expected = sha256(signing_address + fingerprint)
+        if report_data[:32] != expected:
+            raise verification_failure(
+                'binding',
+                'binding.report_data_mismatch',
+                {'source': 'signerTlsBinding'},
+            )
+        return ModelTlsBinding(kind='declared', spki_fingerprint=fingerprint.hex())
+
+    expected = signing_address.ljust(32, b'\x00')
+    if report_data[:32] != expected:
+        raise verification_failure(
+            'binding',
+            'binding.report_data_mismatch',
+            {'source': 'signerBinding'},
+        )
+    return ModelTlsBinding(kind='none')
+
+
+def verify_gateway_report_data_binding(
+    *,
+    report_data: bytes,
+    nonce: str,
+    signer: SigningIdentity,
+    reported_spki_fingerprint: str | None,
+    peer_spki_fingerprint: str,
+) -> GatewayTlsBinding:
+    _verify_quote_report_data_length_and_nonce(report_data, nonce)
+    if not reported_spki_fingerprint:
+        raise verification_failure('binding', 'binding.spki_fingerprint_missing')
+
+    reported = require_byte_length(
+        reported_spki_fingerprint, 32, 'attestation.declared_spki_fingerprint'
+    )
+    peer = require_byte_length(peer_spki_fingerprint, 32, 'peer_spki_fingerprint')
+    if reported != peer:
+        raise verification_failure(
+            'binding',
+            'binding.spki_fingerprint_mismatch',
+            {'source': 'peer_tls_connection'},
+        )
+
+    signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
+    if report_data[:32] != sha256(signing_address + reported):
+        raise verification_failure(
+            'binding',
+            'binding.report_data_mismatch',
+            {'source': 'signerTlsBinding'},
+        )
+    return GatewayTlsBinding(kind='peer', spki_fingerprint=reported.hex())
+
+
+def verify_app_compose_mrconfig_binding(app_compose: str, mr_config_id: bytes) -> None:
+    if len(mr_config_id) < 33:
+        raise verification_failure(
+            'measurement',
+            'measurement.mrconfigid_invalid',
+            {
+                'reason': 'wrong_length',
+                'minimumBytes': 33,
+                'actualBytes': len(mr_config_id),
+            },
+        )
+    if mr_config_id[0] != 1:
+        raise verification_failure(
+            'measurement',
+            'measurement.mrconfigid_invalid',
+            {'reason': 'unsupported_version', 'version': mr_config_id[0]},
+        )
+    if mr_config_id[1:33] != sha256(app_compose.encode('utf-8')):
+        raise verification_failure(
+            'measurement', 'measurement.app_compose_mrconfigid_mismatch'
+        )
+
+
+def _verify_quote_report_data_length_and_nonce(report_data: bytes, nonce: str) -> None:
+    if len(report_data) != 64:
+        raise verification_failure(
+            'binding',
+            'binding.report_data_invalid',
+            {
+                'source': 'quoteReportData',
+                'reason': 'wrong_length',
+                'expectedBytes': 64,
+                'actualBytes': len(report_data),
+            },
+        )
+    expected_nonce = require_byte_length(nonce, 32, 'nonce')
+    if report_data[32:64] != expected_nonce:
+        raise verification_failure(
+            'binding', 'binding.nonce_mismatch', {'source': 'quoteReportData'}
+        )

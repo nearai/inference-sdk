@@ -1,43 +1,139 @@
+"""Verification helpers for NEAR AI Cloud attestations and signatures."""
+
 from .core.attestation_gateway import verify_gateway_attestation
-from .types.attestation_gateway import (
-    GatewayAttestation,
-    GatewayAttestationReport,
-    VerifyGatewayAttestationConfig,
-)
-
 from .core.attestation_model import verify_model_attestation
-from .types.attestation_model import (
-    ModelAttestation,
-    ModelAttestationReport,
-    VerifyModelAttestationConfig,
+from .core.chat import verify_gateway_response, verify_model_response
+from .core.cloud_api import (
+    fetch_completion_signature,
+    fetch_gateway_attestation,
+    fetch_model_attestation_for_signature,
+    fetch_model_attestations,
+    find_model_attestation_for_signature,
+    lookup_completion_signature,
+)
+from .types.attestation_common import (
+    AttestationEvidence,
+    AttestationEventLog,
+    SigningAlgo,
+    SigningIdentity,
+    TcbStatus,
+)
+from .types.attestation_gateway import GatewayAttestation
+from .types.attestation_model import ModelAttestation
+from .types.chat import (
+    CompletionBytes,
+    CompletionSignature,
+    CompletionSignatureKind,
+    CompletionSignatureLookup,
+    CompletionSignatureReference,
+    SignatureUnavailable,
+)
+from .types.cloud_api import (
+    DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+    NO_ALIASING_HEADER,
+    FetchCompletionSignatureInput,
+    FetchGatewayAttestationInput,
+    FetchModelAttestationForSignatureInput,
+    FetchModelAttestationsInput,
+    FetchedGatewayAttestation,
+    FetchedModelAttestation,
+    FetchedModelAttestations,
+    FindModelAttestationForSignatureInput,
+    NearAiCloudFetch,
+    NearAiCloudOptions,
+    NearAiCloudResponse,
+)
+from .types.verification import (
+    AttestationPolicy,
+    AttestationVerifiers,
+    DeploymentVerifier,
+    GatewayTlsBinding,
+    MeasuredDeployment,
+    ModelAttestationPolicy,
+    ModelAttestationVerifiers,
+    ModelTlsBinding,
+    NvidiaEvidenceVerifier,
+    QuoteVerificationResult,
+    QuoteVerifier,
+    RuntimeMeasurements,
+    VerifiedAttestationEvidence,
+    VerifiedGatewayAttestation,
+    VerifiedModelAttestation,
+    VerifyGatewayAttestationInput,
+    VerifyGatewayResponseInput,
+    VerifyModelAttestationInput,
+    VerifyModelResponseInput,
+)
+from .utils.errors import (
+    ApiError,
+    ApiFailure,
+    VerificationError,
+    VerificationFailure,
+    is_api_error,
+    is_verification_error,
 )
 
-from .core.attestation_domain import verify_domain_attestation
-from .types.attestation_domain import DomainAttestation, VerifyDomainAttestationConfig
-
-from .types.attestation_common import SigningAlgo
-
-from .core.chat import verify_chat, verify_signing_address
-from .types.chat import Chat, ChatSignature
-
-from .utils.errors import VerificationError
 
 __all__ = [
-    'verify_gateway_attestation',
-    'GatewayAttestation',
-    'GatewayAttestationReport',
-    'VerifyGatewayAttestationConfig',
+    'DEFAULT_NEAR_AI_CLOUD_BASE_URL',
+    'NO_ALIASING_HEADER',
+    'fetch_completion_signature',
+    'fetch_gateway_attestation',
+    'fetch_model_attestation_for_signature',
+    'fetch_model_attestations',
+    'find_model_attestation_for_signature',
+    'lookup_completion_signature',
     'verify_model_attestation',
-    'ModelAttestation',
-    'ModelAttestationReport',
-    'VerifyModelAttestationConfig',
-    'verify_domain_attestation',
-    'DomainAttestation',
-    'VerifyDomainAttestationConfig',
+    'verify_gateway_attestation',
+    'verify_model_response',
+    'verify_gateway_response',
+    'NearAiCloudOptions',
+    'NearAiCloudResponse',
+    'NearAiCloudFetch',
+    'FetchModelAttestationsInput',
+    'FetchModelAttestationForSignatureInput',
+    'FindModelAttestationForSignatureInput',
+    'FetchGatewayAttestationInput',
+    'FetchCompletionSignatureInput',
+    'FetchedModelAttestation',
+    'FetchedGatewayAttestation',
+    'FetchedModelAttestations',
     'SigningAlgo',
-    'verify_chat',
-    'verify_signing_address',
-    'Chat',
-    'ChatSignature',
+    'SigningIdentity',
+    'TcbStatus',
+    'AttestationEventLog',
+    'AttestationEvidence',
+    'ModelAttestation',
+    'GatewayAttestation',
+    'CompletionBytes',
+    'CompletionSignature',
+    'CompletionSignatureKind',
+    'CompletionSignatureReference',
+    'CompletionSignatureLookup',
+    'SignatureUnavailable',
+    'AttestationPolicy',
+    'ModelAttestationPolicy',
+    'AttestationVerifiers',
+    'ModelAttestationVerifiers',
+    'QuoteVerifier',
+    'NvidiaEvidenceVerifier',
+    'DeploymentVerifier',
+    'QuoteVerificationResult',
+    'RuntimeMeasurements',
+    'MeasuredDeployment',
+    'ModelTlsBinding',
+    'GatewayTlsBinding',
+    'VerifiedAttestationEvidence',
+    'VerifiedModelAttestation',
+    'VerifiedGatewayAttestation',
+    'VerifyModelAttestationInput',
+    'VerifyGatewayAttestationInput',
+    'VerifyModelResponseInput',
+    'VerifyGatewayResponseInput',
+    'ApiError',
+    'ApiFailure',
     'VerificationError',
+    'VerificationFailure',
+    'is_api_error',
+    'is_verification_error',
 ]

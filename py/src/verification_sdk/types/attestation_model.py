@@ -1,26 +1,17 @@
+"""Raw model attestation evidence returned by NEAR AI Cloud."""
+
 from __future__ import annotations
 
-from pydantic import BaseModel
+from dataclasses import dataclass
 
-from .attestation_common import TcbInfo, SigningAlgo
-
-
-class ModelAttestation(BaseModel):
-    request_nonce: str
-    signing_algo: SigningAlgo
-    signing_address: str
-    intel_quote: str
-    nvidia_payload: str
-    info: ModelInfo
+from .attestation_common import AttestationEvidence, SigningIdentity
 
 
-class ModelInfo(BaseModel):
-    tcb_info: TcbInfo | str
+@dataclass(frozen=True, kw_only=True)
+class ModelAttestation(AttestationEvidence):
+    """A model-serving TEE attestation."""
+
+    nvidia_payload: str | None = None
 
 
-class ModelAttestationReport(BaseModel):
-    all_attestations: list[ModelAttestation]
-
-
-class VerifyModelAttestationConfig(BaseModel):
-    image_names_of_sigstore_hash: list[str]
+__all__ = ['ModelAttestation', 'SigningIdentity']

@@ -1,66 +1,35 @@
-import json
+"""Minimal asynchronous HTTP transport used by the default adapters."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping
+
 import aiohttp
 
-from typing import Any
-from dataclasses import dataclass
 
-
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class FetchResponse:
     status: int
-    data: bytes | None = None
+    body: bytes
 
     @property
     def ok(self) -> bool:
-        return 200 <= self.status < 400
-
-    def json(self) -> Any:
-        if self.data is None:
-            raise ValueError('Response data is None')
-        return json.loads(self.data)
+        return 200 <= self.status < 300
 
     def text(self) -> str:
-        if self.data is None:
-            raise ValueError('Response data is None')
-        return self.data.decode()
-
-    def bytes(self) -> bytes:
-        if self.data is None:
-            raise ValueError('Response data is None')
-        return self.data
+        return self.body.decode('utf-8')
 
 
 async def fetch(
     url: str,
-    method: str | None = None,
+    *,
+    method: str = 'GET',
     data: str | bytes | None = None,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
     timeout: float | None = None,
 ) -> FetchResponse:
-    if method is None:
-        method = 'GET'
-    else:
-        method = method.upper()
-
-    client_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else None
-
+    client_timeout = aiohttp.ClientTimeout(total=timeout)
     async with aiohttp.ClientSession(timeout=client_timeout) as session:
-        if method == 'GET':
-            async with session.get(url, headers=headers) as response:
-                response_data = await response.read()
-                fetch_response = FetchResponse(
-                    status=response.status, data=response_data
-                )
-        elif method == 'POST':
-            async with session.post(url, data=data, headers=headers) as response:
-                response_data = await response.read()
-                fetch_response = FetchResponse(
-                    status=response.status, data=response_data
-                )
-        elif method == 'HEAD':
-            async with session.head(url, headers=headers) as response:
-                fetch_response = FetchResponse(status=response.status)
-        else:
-            raise ValueError(f'Unsupported method: {method}')
-
-    return fetch_response
+        async with session.request(method, url, data=data, headers=headers) as response:
+            return FetchResponse(status=response.status, body=await response.read())

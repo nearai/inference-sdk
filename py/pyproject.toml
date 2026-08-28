@@ -1,12 +1,12 @@
 [project]
 name = "verification_sdk"
 version = "0.1.0"
-description = "Verification SDK"
+description = "Verification SDK for NEAR AI Cloud attestations"
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
     "eth-account>=0.10.0",
-    "cryptography>=42.0.0",
     "dcap-qvl>=0.3.9",
     "pynacl>=1.5.0",
     "pydantic>=2.12.5",
@@ -22,3 +22,6 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.9.15,<0.10.0"]
 build-backend = "uv_build"
+
+[project.urls]
+Repository = "https://github.com/nearai/verifiable-ai-sdk"

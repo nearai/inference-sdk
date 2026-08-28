@@ -1,39 +1,168 @@
+"""Default Intel DCAP quote adapter."""
+
+from __future__ import annotations
+
 import json
+from typing import cast
 
-from dcap_qvl import get_collateral_and_verify
+from dcap_qvl import Quote, get_collateral, verify
 
+from ..types.attestation_common import TcbStatus
+from ..types.verification import QuoteVerificationResult
 from .common import hex_to_bytes
 from .consts import INTEL_PCCS_API_URL
-from .errors import VerificationError
+from .errors import VerificationError, verification_failure
 
 
-async def fetch_intel_tdx_verification_data(quote: str) -> dict:
-    quote_raw = hex_to_bytes(quote)
+TCB_STATUSES = frozenset(
+    {
+        'UpToDate',
+        'SWHardeningNeeded',
+        'ConfigurationNeeded',
+        'ConfigurationAndSWHardeningNeeded',
+        'OutOfDate',
+        'OutOfDateConfigurationNeeded',
+        'Revoked',
+        'Unknown',
+    }
+)
+
+
+async def verify_dcap_quote(quote: str) -> QuoteVerificationResult:
+    """Verify a TDX quote and expose the facts used by the SDK core."""
 
     try:
-        verified_report = await get_collateral_and_verify(quote_raw, INTEL_PCCS_API_URL)
-    except Exception as e:
-        raise VerificationError('Failed to verify Intel quote') from e
+        quote_bytes = hex_to_bytes(quote, 'attestation.intel_quote')
+    except VerificationError as error:
+        raise verification_failure(
+            'quote',
+            'quote.verification_failed',
+            {'reason': 'invalid_encoding'},
+            cause=error,
+        ) from error
 
-    verification_data_raw = json.loads(verified_report.to_json())
+    try:
+        Quote.parse(quote_bytes)
+    except Exception as error:
+        raise verification_failure(
+            'quote',
+            'quote.verification_failed',
+            {'reason': 'invalid_quote'},
+            cause=error,
+        ) from error
 
-    verified = verification_data_raw.get('status') == 'UpToDate'
-    report_data = (
-        verification_data_raw.get('report', {}).get('TD10', {}).get('report_data')
+    try:
+        collateral = await get_collateral(INTEL_PCCS_API_URL, quote_bytes)
+    except Exception as error:
+        raise verification_failure(
+            'quote', 'quote.collateral_unavailable', retryable=True, cause=error
+        ) from error
+
+    try:
+        verified = verify(quote_bytes, collateral, _unix_time())
+    except Exception as error:
+        raise verification_failure(
+            'quote',
+            'quote.verification_failed',
+            {'reason': 'verifier_error'},
+            cause=error,
+        ) from error
+
+    try:
+        raw = json.loads(verified.to_json())
+        td10 = _td10_base(raw['report'])
+        report_data = _decode_quote_bytes(td10['report_data'], 'report_data')
+        mr_config_id = _decode_quote_bytes(td10['mr_config_id'], 'mr_config_id')
+        rt_mr3 = _decode_quote_bytes(td10['rt_mr3'], 'rt_mr3')
+        attributes = _decode_quote_bytes(td10['td_attributes'], 'td_attributes')
+        status = verified.status
+        advisory_ids = tuple(verified.advisory_ids)
+    except KeyError as error:
+        if error.args == ('TD10',):
+            raise verification_failure(
+                'quote',
+                'quote.unsupported_report_type',
+                {'expected': 'TD10'},
+                cause=error,
+            ) from error
+        raise _invalid_quote_result(error) from error
+    except (TypeError, ValueError) as error:
+        raise _invalid_quote_result(error) from error
+
+    if not isinstance(status, str) or status not in TCB_STATUSES:
+        raise _invalid_quote_result()
+    if not all(isinstance(advisory, str) for advisory in advisory_ids):
+        raise _invalid_quote_result()
+    if not attributes:
+        raise _invalid_quote_result()
+
+    return QuoteVerificationResult(
+        tcb_status=cast(TcbStatus, status),
+        advisory_ids=advisory_ids,
+        debug_enabled=(attributes[0] & 0x01) != 0,
+        report_data=report_data,
+        mr_config_id=mr_config_id,
+        rt_mr3=rt_mr3,
     )
-    mr_config = (
-        verification_data_raw.get('report', {}).get('TD10', {}).get('mr_config_id')
+
+
+def _decode_quote_bytes(value: object, path: str) -> bytes:
+    """Decode dcap-qvl's JSON byte encoding across supported package releases."""
+
+    if isinstance(value, str):
+        normalized = value.removeprefix('0x').removeprefix('0X')
+        if (
+            not normalized
+            or len(normalized) % 2 != 0
+            or any(
+                character not in '0123456789abcdefABCDEF' for character in normalized
+            )
+        ):
+            raise ValueError(f'{path} is not hexadecimal text')
+        return bytes.fromhex(normalized)
+    if isinstance(value, list) and all(
+        isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= 255
+        for item in value
+    ):
+        return bytes(value)
+    raise ValueError(f'{path} is not a byte sequence')
+
+
+def _td10_base(report: object) -> dict[str, object]:
+    """Return TD1.0 measurements from a TD1.0 or TD1.5 report."""
+
+    if not isinstance(report, dict):
+        raise TypeError('report is not an object')
+    if 'TD10' in report:
+        td10 = report['TD10']
+        if isinstance(td10, dict):
+            return td10
+        raise TypeError('TD10 is not an object')
+    if 'TD15' not in report:
+        raise KeyError('TD10')
+    td15 = report['TD15']
+    if not isinstance(td15, dict):
+        raise TypeError('TD15 is not an object')
+    base = td15.get('base')
+    if not isinstance(base, dict):
+        raise TypeError('TD15.base is not an object')
+    return base
+
+
+def _invalid_quote_result(cause: BaseException | None = None) -> VerificationError:
+    return verification_failure(
+        'quote',
+        'quote.invalid_result',
+        {
+            'path': 'dcap_result',
+            'expected': 'verified TD10 or TD15 quote',
+            'actual': 'unreadable',
+        },
+        cause=cause,
     )
 
-    if not isinstance(report_data, str) or not isinstance(mr_config, str):
-        raise VerificationError('Bad report data')
 
-    return {
-        'quote': {
-            'verified': verified,
-            'body': {
-                'reportdata': f'0x{report_data}',
-                'mrconfig': f'0x{mr_config}',
-            },
-        }
-    }
+def _unix_time() -> int:
+    import time
+
+    return int(time.time())

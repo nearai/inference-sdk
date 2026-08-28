@@ -1,85 +1,60 @@
-from ..core.attestation_common import (
-    get_compose_from_tcb_info,
-    verify_compose,
-    verify_intel_quote_report_data_for_attestation_report,
+"""NEAR AI Cloud Gateway attestation verification."""
+
+from __future__ import annotations
+
+from ..types.attestation_gateway import GatewayAttestation
+from ..types.verification import (
+    AttestationPolicy,
+    AttestationVerifiers,
+    VerifiedGatewayAttestation,
+    VerifyGatewayAttestationInput,
 )
-from ..types.attestation_gateway import (
-    GatewayAttestation,
-    VerifyGatewayAttestationConfig,
-)
-from ..utils.consts import ETHEREUM_ZERO_ADDRESS, TIMEOUT
-from ..utils.errors import VerificationError
-from ..utils.fetch import fetch
-from ..utils.intel import fetch_intel_tdx_verification_data
+from ..utils.common import require_instance
+from .attestation_common import verify_gateway_report_data_binding
+from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
 
 
 async def verify_gateway_attestation(
-    attestation: GatewayAttestation, config: VerifyGatewayAttestationConfig
-):
-    verification_data = await fetch_intel_tdx_verification_data(attestation.intel_quote)
+    input: VerifyGatewayAttestationInput,
+) -> VerifiedGatewayAttestation:
+    """Verify Gateway evidence and bind it to a caller-observed TLS peer."""
 
-    verify_intel_tdx_for_gateway(
-        verification_data,
-        attestation.request_nonce,
-        attestation.signing_address,
+    input = require_instance(input, VerifyGatewayAttestationInput, 'input')
+    attestation = require_instance(input.attestation, GatewayAttestation, 'attestation')
+    require_instance(
+        attestation.reported_quote_data, str, 'attestation.reported_quote_data'
     )
-
-    await verify_vpc_for_gateway(
-        config.domain,
-        attestation.vpc.vpc_server_app_id,
-        attestation.vpc.vpc_hostname,
+    policy = (
+        None
+        if input.policy is None
+        else require_instance(input.policy, AttestationPolicy, 'policy')
     )
-
-    if config.image_names_of_sigstore_hash:
-        await verify_compose(
-            get_compose_from_tcb_info(attestation.info.tcb_info),
-            config.image_names_of_sigstore_hash,
-        )
-
-
-def verify_intel_tdx_for_gateway(
-    verification_data: dict,
-    request_nonce: str,
-    signing_address: str | None = None,
-):
-    if signing_address is None:
-        signing_address = ETHEREUM_ZERO_ADDRESS
-
-    if not verification_data.get('quote', {}).get('verified'):
-        raise VerificationError('Intel quote not verified')
-
-    report_data = verification_data.get('quote', {}).get('body', {}).get('reportdata')
-
-    if not isinstance(report_data, str):
-        raise VerificationError('Bad report data')
-
-    verify_intel_quote_report_data_for_attestation_report(
-        report_data,
-        request_nonce,
-        signing_address,
+    verifiers = (
+        None
+        if input.verifiers is None
+        else require_instance(input.verifiers, AttestationVerifiers, 'verifiers')
     )
-
-
-async def verify_vpc_for_gateway(
-    domain: str,
-    vpc_server_app_id: str,
-    vpc_hostname: str,
-):
-    url = f'https://{domain}/evidences/vpc.json'
-
-    response = await fetch(url, timeout=TIMEOUT)
-
-    if not response.ok:
-        raise VerificationError(
-            f'Failed to fetch VPC info with status code {response.status}'
-        )
-
-    vpc_info = response.json()
-
-    if vpc_info.get('vpc_server_app_id') != vpc_server_app_id:
-        raise VerificationError('vpc_server_app_id mismatching')
-
-    nodes = vpc_info.get('nodes', [])
-
-    if not isinstance(nodes, list) or vpc_hostname not in nodes:
-        raise VerificationError('vpc_hostname mismatching')
+    verified_quote = await verify_dstack_quote(
+        attestation=attestation,
+        nonce=input.nonce,
+        policy=policy,
+        quote_verifier=None if verifiers is None else verifiers.quote,
+    )
+    tls_binding = verify_gateway_report_data_binding(
+        report_data=verified_quote.quote.report_data,
+        nonce=input.nonce,
+        signer=verified_quote.signer,
+        reported_spki_fingerprint=attestation.declared_spki_fingerprint,
+        peer_spki_fingerprint=input.peer_spki_fingerprint,
+    )
+    evidence = await verify_dstack_deployment(
+        verified_quote, None if verifiers is None else verifiers.deployment
+    )
+    return VerifiedGatewayAttestation(
+        signer=evidence.signer,
+        tcb_status=evidence.tcb_status,
+        advisory_ids=evidence.advisory_ids,
+        deployment=evidence.deployment,
+        deployment_provenance=evidence.deployment_provenance,
+        tls_binding=tls_binding,
+    )

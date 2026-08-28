@@ -1,34 +1,14 @@
+"""Raw Gateway attestation evidence returned by NEAR AI Cloud."""
+
 from __future__ import annotations
 
-from pydantic import BaseModel
+from dataclasses import dataclass, field
 
-from .attestation_common import TcbInfo, SigningAlgo
-from .attestation_model import ModelAttestation
-
-
-class GatewayAttestation(BaseModel):
-    request_nonce: str
-    intel_quote: str
-    info: GatewayInfo
-    vpc: VpcInfo
-    signing_algo: SigningAlgo | None = None
-    signing_address: str | None = None
+from .attestation_common import AttestationEvidence
 
 
-class GatewayInfo(BaseModel):
-    tcb_info: TcbInfo | str
+@dataclass(frozen=True, kw_only=True)
+class GatewayAttestation(AttestationEvidence):
+    """A NEAR AI Cloud Gateway TEE attestation."""
 
-
-class VpcInfo(BaseModel):
-    vpc_server_app_id: str
-    vpc_hostname: str
-
-
-class GatewayAttestationReport(BaseModel):
-    gateway_attestation: GatewayAttestation
-    model_attestations: list[ModelAttestation] | None = None
-
-
-class VerifyGatewayAttestationConfig(BaseModel):
-    domain: str
-    image_names_of_sigstore_hash: list[str]
+    reported_quote_data: str = field()
