@@ -29,15 +29,21 @@ struct CloudApiRequestConfig {
     api_key: String,
     base_url: Url,
     client: Client,
+    gateway_client: Client,
 }
 
 impl CloudApiRequestConfig {
     fn new(api_key: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
-            base_url: Url::parse(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
+            base_url: parse_base_url(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
                 .expect("the SDK's default Cloud API URL is valid"),
-            client: Client::builder()
+            client: Client::new(),
+            // A Gateway TLS binding must observe the Gateway's own peer, not
+            // a system-configured HTTPS proxy. Other Cloud API requests keep
+            // reqwest's normal proxy behavior.
+            gateway_client: Client::builder()
+                .no_proxy()
                 .tls_info(true)
                 .build()
                 .expect("the SDK's default HTTP client configuration is valid"),
@@ -441,16 +447,21 @@ async fn get_cloud_api_response(
     extra_header: Option<(&str, &str)>,
 ) -> Result<CloudApiResponse, SdkError> {
     let headers = build_cloud_api_headers(config, extra_header)?;
-    let response = config
-        .client
-        .get(url)
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|_| ApiError::Transport {
-            resource,
-            reason: ApiTransportReason::Request,
-        })?;
+    let client = if resource == ApiResource::GatewayAttestation {
+        &config.gateway_client
+    } else {
+        &config.client
+    };
+    let response =
+        client
+            .get(url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|_| ApiError::Transport {
+                resource,
+                reason: ApiTransportReason::Request,
+            })?;
     let status = response.status().as_u16();
     let peer_spki_fingerprint = (resource == ApiResource::GatewayAttestation)
         .then(|| peer_spki_fingerprint(&response))
@@ -517,6 +528,21 @@ fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
         url.set_path(&path);
     }
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_base_url_preserves_the_v1_path_when_resolving_an_endpoint() {
+        let config = CloudApiRequestConfig::new("test-key");
+
+        assert_eq!(
+            config.endpoint("attestation/report").unwrap().as_str(),
+            "https://cloud-api.near.ai/v1/attestation/report",
+        );
+    }
 }
 
 fn invalid_base_url() -> VerificationError {

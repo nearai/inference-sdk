@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use dcap_qvl::collateral::get_collateral;
 use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::verify;
-use parity_scale_codec::Decode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_INTEL_PCCS_URL: &str =
@@ -54,15 +53,9 @@ pub async fn verify_dcap_quote(
 
     // Validate the quote before requesting collateral. Invalid quote bytes are
     // permanent local failures, not a retryable PCCS failure.
-    let mut input = quote_bytes.as_slice();
-    Quote::decode(&mut input).map_err(|_| VerificationError::QuoteVerificationFailed {
+    Quote::parse(&quote_bytes).map_err(|_| VerificationError::QuoteVerificationFailed {
         reason: "invalid_quote",
     })?;
-    if !input.is_empty() {
-        return Err(VerificationError::QuoteVerificationFailed {
-            reason: "invalid_quote",
-        });
-    }
 
     let collateral = get_collateral(pccs_url, &quote_bytes)
         .await
