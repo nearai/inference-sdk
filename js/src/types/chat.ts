@@ -1,11 +1,5 @@
 import type { SigningIdentity } from './attestation-common';
 
-/** Exact request and response bytes covered by a completion signature. */
-export type CompletionBytes = {
-  requestBody: Uint8Array;
-  responseBody: Uint8Array;
-};
-
 export type CompletionSignatureKind = 'provider_tee' | 'gateway';
 
 /** The signature identity needed to select matching model evidence. */

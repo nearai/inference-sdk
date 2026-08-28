@@ -1,45 +1,46 @@
 import type {
-  AttestationPolicy,
-  AttestationVerifiers,
+  GatewayAttestationPolicy,
   VerifiedGatewayAttestation,
-  VerifyGatewayAttestationInput,
+  VerifyGatewayAttestationParams,
 } from '../types/verification';
-import {
-  optionalInputFunction,
-  rejectUnknownInputKeys,
-  requireInputObject,
-  requireInputString,
-} from '../utils/input';
+import { VerificationError } from '../utils/errors';
 import { verifyGatewayReportDataBinding } from './attestation-common';
 import {
-  requireAttestationEvidence,
-  parseAcceptedTcbStatuses,
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
 
 /**
- * Verify gateway evidence and bind it to a TLS peer fingerprint independently
- * observed by the client.
+ * Verify Gateway evidence. Peer TLS binding is required by default and can be
+ * disabled explicitly for runtimes that cannot observe the peer certificate.
  */
-export async function verifyGatewayAttestation(
-  input: VerifyGatewayAttestationInput,
-): Promise<VerifiedGatewayAttestation> {
-  const parsed = parseGatewayAttestationInput(input);
-  const { attestation, nonce, peerSpkiFingerprint, policy, verifiers } = parsed;
+export async function verifyGatewayAttestation({
+  attestation,
+  clientBinding,
+  policy,
+  verifiers,
+}: VerifyGatewayAttestationParams): Promise<VerifiedGatewayAttestation> {
+  const verifyPeerTlsBinding = shouldVerifyPeerTlsBinding(policy);
+  if (verifyPeerTlsBinding && clientBinding.peerSpkiFingerprint === undefined) {
+    throw new VerificationError({
+      code: 'policy.peer_tls_binding_required',
+    });
+  }
   const verifiedQuote = await verifyDstackQuote({
     attestation,
-    nonce,
+    nonce: clientBinding.nonce,
     policy,
     quoteVerifier: verifiers?.quote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   const tlsBinding = await verifyGatewayReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
-    nonce,
+    nonce: clientBinding.nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
-    reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
-    peerSpkiFingerprint,
+    reportedSpkiFingerprint: attestation.declaredSpkiFingerprint,
+    peerSpkiFingerprint: verifyPeerTlsBinding
+      ? clientBinding.peerSpkiFingerprint
+      : undefined,
   });
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
@@ -49,93 +50,8 @@ export async function verifyGatewayAttestation(
   return { ...evidence, tlsBinding };
 }
 
-type ParsedGatewayAttestationInput = VerifyGatewayAttestationInput;
-
-function parseGatewayAttestationInput(
-  input: unknown,
-): ParsedGatewayAttestationInput {
-  const value = requireInputObject(input, 'input');
-  rejectUnknownInputKeys(value, 'input', [
-    'attestation',
-    'nonce',
-    'peerSpkiFingerprint',
-    'policy',
-    'verifiers',
-  ]);
-
-  const attestationInput = requireInputObject(value.attestation, 'attestation');
-  rejectUnknownInputKeys(attestationInput, 'attestation', [
-    'nonce',
-    'signer',
-    'intelQuote',
-    'eventLog',
-    'appCompose',
-    'declaredSpkiFingerprint',
-    'reportedQuoteData',
-  ]);
-  const signerInput = requireInputObject(
-    attestationInput.signer,
-    'attestation.signer',
-  );
-  rejectUnknownInputKeys(signerInput, 'attestation.signer', [
-    'signingAlgo',
-    'signingAddress',
-  ]);
-  const baseAttestation = requireAttestationEvidence(attestationInput);
-  const reportedQuoteData = requireInputString(
-    attestationInput.reportedQuoteData,
-    'attestation.reportedQuoteData',
-  );
-
-  return {
-    attestation: {
-      ...baseAttestation,
-      reportedQuoteData,
-    },
-    nonce: requireInputString(value.nonce, 'nonce'),
-    peerSpkiFingerprint: requireInputString(
-      value.peerSpkiFingerprint,
-      'peerSpkiFingerprint',
-    ),
-    ...(value.policy !== undefined
-      ? { policy: parseGatewayAttestationPolicy(value.policy) }
-      : {}),
-    ...(value.verifiers !== undefined
-      ? { verifiers: parseGatewayAttestationVerifiers(value.verifiers) }
-      : {}),
-  };
-}
-
-function parseGatewayAttestationPolicy(value: unknown): AttestationPolicy {
-  const policy = requireInputObject(value, 'policy');
-  rejectUnknownInputKeys(policy, 'policy', ['acceptedTcbStatuses']);
-
-  const acceptedTcbStatuses = parseAcceptedTcbStatuses(
-    policy.acceptedTcbStatuses,
-  );
-  return {
-    ...(acceptedTcbStatuses !== undefined ? { acceptedTcbStatuses } : {}),
-  };
-}
-
-function parseGatewayAttestationVerifiers(
-  value: unknown,
-): AttestationVerifiers {
-  const verifiers = requireInputObject(value, 'verifiers');
-  rejectUnknownInputKeys(verifiers, 'verifiers', ['quote', 'deployment']);
-
-  const quote = optionalInputFunction(verifiers.quote, 'verifiers.quote');
-  const deployment = optionalInputFunction(
-    verifiers.deployment,
-    'verifiers.deployment',
-  );
-
-  return {
-    ...(quote !== undefined
-      ? { quote: quote as AttestationVerifiers['quote'] }
-      : {}),
-    ...(deployment !== undefined
-      ? { deployment: deployment as AttestationVerifiers['deployment'] }
-      : {}),
-  };
+function shouldVerifyPeerTlsBinding(
+  policy: GatewayAttestationPolicy | undefined,
+): boolean {
+  return policy?.verifyPeerTlsBinding ?? true;
 }

@@ -1,7 +1,13 @@
-lint: fmt check
-
 fmt:
 	@cargo fmt
 
-check:
-	@cargo clippy --fix --allow-dirty
+fmt-check:
+	@cargo fmt --check
+
+lint: fmt-check
+	@cargo clippy --all-targets -- -D warnings
+
+test:
+	@cargo test
+
+check: lint test

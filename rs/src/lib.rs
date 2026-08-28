@@ -1,23 +1,34 @@
-mod core;
+//! Verification primitives for NEAR AI Cloud attestations and completion
+//! signatures.
+//!
+//! The public API deliberately separates three operations:
+//! - fetch raw evidence from NEAR AI Cloud;
+//! - verify a model or Gateway deployment; and
+//! - verify an exact completion response against verified evidence.
+
+mod attestation;
+mod bindings;
+mod cloud_api;
+mod errors;
+mod event_log;
+mod gateway;
+mod model;
+mod nvidia;
+mod quote;
+mod response;
 mod types;
-mod utils;
+mod util;
 
-pub use core::attestation_gateway::verify_gateway_attestation;
-pub use types::attestation_gateway::{
-    GatewayAttestation, GatewayAttestationReport, VerifyGatewayAttestationConfig,
+pub use cloud_api::{
+    fetch_completion_signature, fetch_gateway_attestation, fetch_model_attestation_for_signature,
+    fetch_model_attestations, find_model_attestation_for_signature, lookup_completion_signature,
+    CompletionSignatureRequest, GatewayAttestationRequest, ModelAttestationForSignatureRequest,
+    ModelAttestationsRequest, DEFAULT_NEAR_AI_CLOUD_BASE_URL, NO_ALIASING_HEADER,
 };
-
-pub use core::attestation_model::verify_model_attestation;
-pub use types::attestation_model::{
-    ModelAttestation, ModelAttestationReport, VerifyModelAttestationConfig,
-};
-
-pub use core::attestation_domain::verify_domain_attestation;
-pub use types::attestation_domain::{DomainAttestation, VerifyDomainAttestationConfig};
-
-pub use types::attestation_common::SigningAlgo;
-
-pub use core::chat::{verify_chat, verify_signing_address};
-pub use types::chat::{Chat, ChatSignature};
-
-pub use utils::errors::Error;
+pub use errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
+pub use gateway::verify_gateway_attestation;
+pub use model::verify_model_attestation;
+pub use nvidia::{NrasNvidiaEvidenceVerifier, DEFAULT_NVIDIA_NRAS_URL};
+pub use quote::{verify_dcap_quote, DcapQuoteVerifier, DEFAULT_INTEL_PCCS_URL};
+pub use response::{verify_gateway_response, verify_model_response};
+pub use types::*;

@@ -53,6 +53,14 @@ export type ModelAttestationPolicy = AttestationPolicy & {
   readonly gpuEvidence?: 'if-present' | 'required';
 };
 
+export type GatewayAttestationPolicy = AttestationPolicy & {
+  /**
+   * Defaults to true. Require and verify the TLS peer observed by the client.
+   * When false, ignore any peer fingerprint in `clientBinding`.
+   */
+  readonly verifyPeerTlsBinding?: boolean;
+};
+
 export type AttestationVerifiers = {
   readonly quote?: QuoteVerifier;
   readonly deployment?: DeploymentVerifier;
@@ -62,18 +70,31 @@ export type ModelAttestationVerifiers = AttestationVerifiers & {
   readonly nvidia?: NvidiaEvidenceVerifier;
 };
 
-export type VerifyModelAttestationInput = {
-  readonly attestation: ModelAttestation;
+/** Values supplied by the client for a model-attestation request. */
+export type ModelClientBinding = {
+  /** Fresh nonce sent in the model-attestation request. */
   readonly nonce: string;
+};
+
+export type VerifyModelAttestationParams = {
+  readonly attestation: ModelAttestation;
+  readonly clientBinding: ModelClientBinding;
   readonly policy?: ModelAttestationPolicy;
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
-export type VerifyGatewayAttestationInput = {
-  readonly attestation: GatewayAttestation;
+/** Values supplied or observed by the client for a Gateway attestation request. */
+export type GatewayClientBinding = {
+  /** Fresh nonce sent in the Gateway-attestation request. */
   readonly nonce: string;
-  readonly peerSpkiFingerprint: string;
-  readonly policy?: AttestationPolicy;
+  /** TLS SPKI fingerprint observed for that request, when the runtime exposes it. */
+  readonly peerSpkiFingerprint?: string;
+};
+
+export type VerifyGatewayAttestationParams = {
+  readonly attestation: GatewayAttestation;
+  readonly clientBinding: GatewayClientBinding;
+  readonly policy?: GatewayAttestationPolicy;
   readonly verifiers?: AttestationVerifiers;
 };
 
@@ -97,11 +118,17 @@ export type ModelTlsBinding =
     };
 
 /** TLS information authenticated for gateway evidence. */
-export type GatewayTlsBinding = {
-  /** The declared fingerprint matched the caller-supplied TLS peer. */
-  readonly kind: 'peer';
-  readonly spkiFingerprint: string;
-};
+export type GatewayTlsBinding =
+  | {
+      /** The Gateway quote authenticated its declared TLS fingerprint. */
+      readonly kind: 'attested';
+      readonly spkiFingerprint: string;
+    }
+  | {
+      /** The declared fingerprint also matched the TLS peer observed by the client. */
+      readonly kind: 'peer';
+      readonly spkiFingerprint: string;
+    };
 
 export type GpuEvidenceStatus = 'not_provided' | 'verified';
 export type DeploymentProvenanceStatus = 'not_checked' | 'verified';
@@ -131,11 +158,11 @@ export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
-  /** The quote-bound fingerprint matched the caller-supplied TLS peer. */
+  /** TLS information bound by the Gateway quote and, when available, the client peer. */
   readonly tlsBinding: GatewayTlsBinding;
 };
 
-export type VerifyModelResponseInput = {
+export type VerifyModelResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
@@ -143,7 +170,7 @@ export type VerifyModelResponseInput = {
   readonly attestation: VerifiedModelAttestation;
 };
 
-export type VerifyGatewayResponseInput = {
+export type VerifyGatewayResponseParams = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;

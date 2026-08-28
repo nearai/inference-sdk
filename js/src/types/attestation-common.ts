@@ -17,6 +17,5 @@ export type AttestationEvidence = {
   intelQuote: string;
   eventLog: AttestationEventLog;
   appCompose: string;
-  declaredSpkiFingerprint?: string | null;
-  reportedQuoteData?: string;
+  declaredSpkiFingerprint?: string;
 };
