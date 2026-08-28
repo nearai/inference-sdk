@@ -37,10 +37,37 @@ describe('gateway attestation verification', () => {
     expect('gpuEvidence' in result).toBe(false);
   });
 
-  test('verifies the quote-bound Gateway TLS key without a peer observation', async () => {
+  test('requires a peer observation by default', async () => {
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation(),
+        clientBinding: { nonce },
+        verifiers: { quote: async () => createQuote() },
+      }),
+    ).rejects.toMatchObject({
+      failure: { code: 'policy.peer_tls_binding_required' },
+    });
+  });
+
+  test('allows a browser to disable peer TLS verification explicitly', async () => {
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
       clientBinding: { nonce },
+      policy: { verifyPeerTlsBinding: false },
+      verifiers: { quote: async () => createQuote() },
+    });
+
+    expect(result.tlsBinding).toEqual({
+      kind: 'attested',
+      spkiFingerprint: tlsFingerprint,
+    });
+  });
+
+  test('does not inspect a peer fingerprint when peer TLS verification is disabled', async () => {
+    const result = await verifyGatewayAttestation({
+      attestation: createGatewayAttestation(),
+      clientBinding: { nonce, peerSpkiFingerprint: '44'.repeat(32) },
+      policy: { verifyPeerTlsBinding: false },
       verifiers: { quote: async () => createQuote() },
     });
 

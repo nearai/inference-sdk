@@ -53,6 +53,14 @@ export type ModelAttestationPolicy = AttestationPolicy & {
   readonly gpuEvidence?: 'if-present' | 'required';
 };
 
+export type GatewayAttestationPolicy = AttestationPolicy & {
+  /**
+   * Defaults to true. Require and verify the TLS peer observed by the client.
+   * When false, ignore any peer fingerprint in `clientBinding`.
+   */
+  readonly verifyPeerTlsBinding?: boolean;
+};
+
 export type AttestationVerifiers = {
   readonly quote?: QuoteVerifier;
   readonly deployment?: DeploymentVerifier;
@@ -80,7 +88,7 @@ export type GatewayClientBinding = {
 export type VerifyGatewayAttestationParams = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
-  readonly policy?: AttestationPolicy;
+  readonly policy?: GatewayAttestationPolicy;
   readonly verifiers?: AttestationVerifiers;
 };
 

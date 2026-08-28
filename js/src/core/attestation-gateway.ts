@@ -1,7 +1,9 @@
 import type {
+  GatewayAttestationPolicy,
   VerifiedGatewayAttestation,
   VerifyGatewayAttestationParams,
 } from '../types/verification';
+import { VerificationError } from '../utils/errors';
 import { verifyGatewayReportDataBinding } from './attestation-common';
 import {
   verifyDstackDeployment,
@@ -9,8 +11,8 @@ import {
 } from './dstack-attestation';
 
 /**
- * Verify Gateway evidence and, when available, bind its declared TLS
- * fingerprint to the peer observed by the client.
+ * Verify Gateway evidence. Peer TLS binding is required by default and can be
+ * disabled explicitly for runtimes that cannot observe the peer certificate.
  */
 export async function verifyGatewayAttestation({
   attestation,
@@ -18,6 +20,12 @@ export async function verifyGatewayAttestation({
   policy,
   verifiers,
 }: VerifyGatewayAttestationParams): Promise<VerifiedGatewayAttestation> {
+  const verifyPeerTlsBinding = shouldVerifyPeerTlsBinding(policy);
+  if (verifyPeerTlsBinding && clientBinding.peerSpkiFingerprint === undefined) {
+    throw new VerificationError({
+      code: 'policy.peer_tls_binding_required',
+    });
+  }
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce: clientBinding.nonce,
@@ -30,7 +38,9 @@ export async function verifyGatewayAttestation({
     nonce: clientBinding.nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
     reportedSpkiFingerprint: attestation.declaredSpkiFingerprint,
-    peerSpkiFingerprint: clientBinding.peerSpkiFingerprint,
+    peerSpkiFingerprint: verifyPeerTlsBinding
+      ? clientBinding.peerSpkiFingerprint
+      : undefined,
   });
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
@@ -38,4 +48,10 @@ export async function verifyGatewayAttestation({
   );
 
   return { ...evidence, tlsBinding };
+}
+
+function shouldVerifyPeerTlsBinding(
+  policy: GatewayAttestationPolicy | undefined,
+): boolean {
+  return policy?.verifyPeerTlsBinding ?? true;
 }

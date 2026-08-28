@@ -118,6 +118,9 @@ export type VerificationFailure =
       code: 'policy.gpu_evidence_required';
     }
   | {
+      code: 'policy.peer_tls_binding_required';
+    }
+  | {
       code: 'binding.nonce_mismatch';
       details: {
         source: 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
@@ -407,6 +410,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] TDX TCB status ${failure.details.actual} is not allowed by policy`;
     case 'policy.gpu_evidence_required':
       return `[${failure.code}] GPU evidence is required by policy`;
+    case 'policy.peer_tls_binding_required':
+      return `[${failure.code}] A client-observed Gateway TLS peer is required by policy`;
     case 'binding.nonce_mismatch':
       return `[${failure.code}] Nonce in ${failure.details.source} does not match`;
     case 'binding.report_data_invalid':

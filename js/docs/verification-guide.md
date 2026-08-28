@@ -32,7 +32,7 @@ completion signature only when the claim is about a particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetchModelAttestations` → `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer, deployment evidence, and quote-bound TLS service identity are verified. In Node, the observed TLS peer is also matched to that identity. | That any particular completion was served by the Gateway, or that a model executed the request. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer, deployment evidence, and quote-bound TLS service identity are verified. By default, the observed TLS peer must also match. | That any particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `fetchCompletionSignature` → `fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `fetchCompletionSignature` → `fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
@@ -167,11 +167,24 @@ const verifiedGatewayAttestation = await verifyGatewayAttestation(
 ```
 
 In Node, the package captures the SHA-256 SPKI fingerprint of the TLS peer
-that served this evidence request. A successful verification returns
-`tlsBinding.kind: 'peer'` only when that observed fingerprint matches the
-fingerprint bound into the quote. Browser fetch does not expose peer
-certificates. Browser verification still checks the nonce and the quote-bound
-TLS identity, and returns `tlsBinding.kind: 'attested'`.
+that served this evidence request. The default Gateway policy requires that
+fingerprint and returns `tlsBinding.kind: 'peer'` only when it matches the
+fingerprint bound into the quote.
+
+Browser fetch does not expose peer certificates, so browser callers must
+explicitly choose quote-bound TLS verification without the peer check:
+
+```ts
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation: fetchedGatewayAttestation.attestation,
+  clientBinding: fetchedGatewayAttestation.clientBinding,
+  policy: { verifyPeerTlsBinding: false },
+});
+```
+
+This still verifies the nonce and quote-bound TLS identity, and returns
+`tlsBinding.kind: 'attested'`. With `verifyPeerTlsBinding: false`, the SDK
+does not compare a peer fingerprint even if `clientBinding` contains one.
 
 For a signature with `kind: 'gateway'`, fetch fresh evidence for the
 signature's signing algorithm, verify it, then verify the response:
@@ -199,13 +212,18 @@ verifyGatewayResponse({
 });
 ```
 
+For this flow in a browser, verify `fetchedGatewayAttestation` with
+`policy: { verifyPeerTlsBinding: false }` as shown above before calling
+`verifyGatewayResponse`.
+
 This verifies gateway-service provenance and integrity for the exact completion
 bytes: the signature is valid and its signer is bound to the verified gateway
 deployment evidence. It does not establish model execution; use a
 `provider_tee` signature and model evidence for that claim.
 
 Gateway attestation accepts the same quote and deployment policy options as
-model verification, except it has no GPU option.
+model verification, except it has no GPU option. Its
+`GatewayAttestationPolicy` also controls peer TLS binding.
 
 ## Set policy and trust roots
 

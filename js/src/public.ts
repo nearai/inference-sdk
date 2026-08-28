@@ -44,6 +44,7 @@ export type {
   AttestationVerifiers,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
+  GatewayAttestationPolicy,
   GatewayClientBinding,
   GatewayTlsBinding,
   GpuEvidenceStatus,

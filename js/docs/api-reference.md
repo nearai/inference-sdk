@@ -15,7 +15,7 @@ This page describes the Cloud request and verification APIs exported by
 | `fetchGatewayAttestation` | `(params: FetchGatewayAttestationParams) => Promise<FetchedGatewayAttestation>` | Fetches gateway-attestation evidence. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
-| `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence, its quote-bound TLS identity, and an observed TLS peer when available. |
+| `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence, its quote-bound TLS identity, and, by default, the observed TLS peer. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
 
@@ -40,7 +40,7 @@ configuration and operation-specific fields at the same level.
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
-| `fetchGatewayAttestation(params)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, rejects a mismatched echoed nonce, and requests the Gateway TLS fingerprint. In Node, it also captures the TLS peer fingerprint for that HTTPS request. |
+| `fetchGatewayAttestation(params)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, rejects a mismatched echoed nonce, and requests the Gateway TLS fingerprint. In Node, it captures the TLS peer fingerprint for that HTTPS request. |
 
 ### Operation-specific parameter fields
 
@@ -69,9 +69,9 @@ passed directly to `verifyGatewayAttestation`.
 | `FetchedModelAttestation` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 |  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
-|  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass the result directly to `verifyGatewayAttestation`. |
+|  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass the result directly to `verifyGatewayAttestation` in Node. |
 | `GatewayClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
-|  | `peerSpkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it automatically; browser fetch does not expose it. |
+|  | `peerSpkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it automatically; browser fetch does not expose it, so browser verification must disable peer TLS binding. |
 
 ## Model attestation selection
 
@@ -95,7 +95,7 @@ form of these two operations.
 | --- | --- | --- | --- |
 | `verifyModelAttestation(params)` | `VerifyModelAttestationParams` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
 | `verifyModelResponse(params)` | `VerifyModelResponseParams` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
-| `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its quote-bound TLS identity. It also checks the observed TLS peer when `clientBinding.peerSpkiFingerprint` is available. |
+| `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its quote-bound TLS identity. By default, it requires and checks `clientBinding.peerSpkiFingerprint`. |
 | `verifyGatewayResponse(params)` | `VerifyGatewayResponseParams` | `void` | Verifies the exact completion bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
 
 ### Attestation verification parameters
@@ -108,14 +108,15 @@ form of these two operations.
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
 | `VerifyGatewayAttestationParams` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
 |  | `clientBinding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-attestation fetch result. |
-|  | `policy?` | `AttestationPolicy` | No | TCB requirements. |
+|  | `policy?` | `GatewayAttestationPolicy` | No | TCB and peer TLS binding requirements. |
 |  | `verifiers?` | `AttestationVerifiers` | No | Quote and deployment verifier overrides. |
 
 `clientBinding.nonce` must be the nonce returned with the matching evidence.
-When `clientBinding.peerSpkiFingerprint` is present, the SDK compares the
-client-observed fingerprint with the fingerprint authenticated by the quote.
-Without it, such as in a browser, quote and nonce verification still succeeds
-with an `attested` TLS binding.
+`verifyPeerTlsBinding` defaults to `true`: a missing peer fingerprint fails
+verification, and a supplied one must match the fingerprint authenticated by
+the quote. Set it to `false` for browser fetch. The SDK then ignores any peer
+fingerprint, still verifies the nonce and quote-bound TLS identity, and returns
+an `attested` TLS binding.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for
 the exact completion bytes. It matches the signature to the signer bound to
@@ -212,6 +213,8 @@ because a byte-exact provider signature would no longer match those bytes.
 | `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
 | `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
 |  | `gpuEvidence?` | `'if-present' \| 'required'` | `'if-present'` | Whether a model report without GPU evidence is accepted. |
+| `GatewayAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
+|  | `verifyPeerTlsBinding?` | `boolean` | `true` | Require and verify the observed TLS peer fingerprint. Set to `false` only when no peer fingerprint is available, such as browser fetch; verification then returns an `attested` TLS binding. |
 
 `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
