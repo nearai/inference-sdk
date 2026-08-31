@@ -1,6 +1,6 @@
 {
   "name": "verifiable-ai-sdk",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Verify NEAR AI Cloud attestation evidence in TypeScript",
   "license": "MIT",
   "repository": {
