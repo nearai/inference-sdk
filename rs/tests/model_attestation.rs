@@ -2,14 +2,20 @@ mod support;
 
 use async_trait::async_trait;
 use support::{
-    model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier, APP_COMPOSE,
-    NONCE, TLS_FINGERPRINT,
+    gateway_tls_quote, model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier,
+    APP_COMPOSE, NONCE,
 };
 use verifiable_ai_sdk::{
     verify_model_attestation, DeploymentProvenanceStatus, DeploymentVerifier,
     GpuEvidenceRequirement, GpuEvidenceStatus, MeasuredDeployment, ModelAttestationPolicy,
-    ModelAttestationVerifiers, ModelTlsBinding, TcbStatus, VerificationError,
+    ModelAttestationVerifiers, ModelClientBinding, TcbStatus, VerificationError,
 };
+
+fn client_binding() -> ModelClientBinding {
+    ModelClientBinding {
+        nonce: NONCE.to_owned(),
+    }
+}
 
 struct ExpectedDeploymentVerifier;
 
@@ -26,12 +32,13 @@ impl DeploymentVerifier for ExpectedDeploymentVerifier {
 
 #[tokio::test]
 async fn accepts_missing_gpu_evidence() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::OutOfDate));
-    let attestation = model_attestation(None, false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::OutOfDate));
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
 
     let verified = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -43,7 +50,6 @@ async fn accepts_missing_gpu_evidence() {
 
     assert_eq!(verified.evidence.tcb_status, TcbStatus::OutOfDate);
     assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::NotProvided);
-    assert_eq!(verified.tls_binding, ModelTlsBinding::None);
     assert_eq!(
         verified.evidence.deployment_provenance,
         DeploymentProvenanceStatus::NotChecked
@@ -52,13 +58,14 @@ async fn accepts_missing_gpu_evidence() {
 
 #[tokio::test]
 async fn runs_a_model_deployment_verifier() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
-    let attestation = model_attestation(None, false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
     let deployment = ExpectedDeploymentVerifier;
 
     let verified = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -77,8 +84,9 @@ async fn runs_a_model_deployment_verifier() {
 
 #[tokio::test]
 async fn applies_an_explicit_model_tcb_policy() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::OutOfDate));
-    let attestation = model_attestation(None, false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::OutOfDate));
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
     let policy = ModelAttestationPolicy {
         accepted_tcb_statuses: Some(vec![TcbStatus::UpToDate]),
         ..Default::default()
@@ -86,7 +94,7 @@ async fn applies_an_explicit_model_tcb_policy() {
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         Some(&policy),
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -107,39 +115,15 @@ async fn applies_an_explicit_model_tcb_policy() {
 }
 
 #[tokio::test]
-async fn accepts_tls_bound_report_data() {
-    let quote = FixtureQuoteVerifier(model_quote(true, TcbStatus::UpToDate));
-    let attestation = model_attestation(None, true);
-
-    let verified = verify_model_attestation(
-        &attestation,
-        NONCE,
-        None,
-        ModelAttestationVerifiers {
-            quote: Some(&quote),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(
-        verified.tls_binding,
-        ModelTlsBinding::Declared {
-            spki_fingerprint: TLS_FINGERPRINT.to_owned(),
-        }
-    );
-}
-
-#[tokio::test]
-async fn does_not_downgrade_declared_tls_to_legacy_binding() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
-    let mut attestation = model_attestation(None, true);
+async fn rejects_tls_bound_report_data_for_cloud_model_evidence() {
+    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let mut attestation = model_attestation(None);
+    let client_binding = client_binding();
     attestation.reported_quote_data = None;
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -152,19 +136,20 @@ async fn does_not_downgrade_declared_tls_to_legacy_binding() {
     assert!(matches!(
         error,
         VerificationError::ReportDataMismatch {
-            binding: "signer_tls_binding"
+            binding: "signer_binding"
         }
     ));
 }
 
 #[tokio::test]
 async fn rejects_an_empty_gpu_payload() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
-    let attestation = model_attestation(Some(""), false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let attestation = model_attestation(Some(""));
+    let client_binding = client_binding();
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -184,8 +169,9 @@ async fn rejects_an_empty_gpu_payload() {
 
 #[tokio::test]
 async fn enforces_required_gpu_policy() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
-    let attestation = model_attestation(None, false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
     let policy = ModelAttestationPolicy {
         accepted_tcb_statuses: None,
         gpu_evidence: GpuEvidenceRequirement::Required,
@@ -193,7 +179,7 @@ async fn enforces_required_gpu_policy() {
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         Some(&policy),
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -208,14 +194,15 @@ async fn enforces_required_gpu_policy() {
 
 #[tokio::test]
 async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let nvidia = FixtureNvidiaVerifier;
     let payload = format!(r#"{{"nonce":"{NONCE}"}}"#);
-    let attestation = model_attestation(Some(&payload), false);
+    let attestation = model_attestation(Some(&payload));
+    let client_binding = client_binding();
 
     let verified = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -231,13 +218,14 @@ async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
 
 #[tokio::test]
 async fn rejects_incoherent_advertised_report_data() {
-    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
-    let mut attestation = model_attestation(None, false);
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let mut attestation = model_attestation(None);
+    let client_binding = client_binding();
     attestation.reported_quote_data = Some("00".repeat(64));
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -256,13 +244,14 @@ async fn rejects_incoherent_advertised_report_data() {
 
 #[tokio::test]
 async fn rejects_replayed_rtmr3_measurements() {
-    let mut quote = model_quote(false, TcbStatus::UpToDate);
+    let mut quote = model_quote(TcbStatus::UpToDate);
     quote.rt_mr3[0] ^= 1;
     let quote = FixtureQuoteVerifier(quote);
-    let attestation = model_attestation(None, false);
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
@@ -281,14 +270,15 @@ async fn rejects_replayed_rtmr3_measurements() {
 
 #[tokio::test]
 async fn rejects_an_app_compose_not_bound_by_mrconfigid() {
-    let mut quote = model_quote(false, TcbStatus::UpToDate);
+    let mut quote = model_quote(TcbStatus::UpToDate);
     quote.mr_config_id[1] ^= 1;
     let quote = FixtureQuoteVerifier(quote);
-    let attestation = model_attestation(None, false);
+    let attestation = model_attestation(None);
+    let client_binding = client_binding();
 
     let error = verify_model_attestation(
         &attestation,
-        NONCE,
+        &client_binding,
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),

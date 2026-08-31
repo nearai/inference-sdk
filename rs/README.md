@@ -24,13 +24,25 @@ The guide includes complete model and Gateway verification flows. In both
 cases, retain the exact bytes sent to and received from the completion endpoint:
 the SDK verifies those bytes without reserializing them.
 
-Gateway verification requires a client-observed TLS peer by default. The Rust
-fetch helper captures the peer certificate for its HTTPS evidence request and
-returns its SHA-256 SPKI fingerprint in `FetchedGatewayAttestation.client_binding`.
-Callers without peer-certificate access must explicitly disable that check with
-`GatewayAttestationPolicy { verify_peer_tls_binding: false, ..Default::default() }`.
-That path still verifies the nonce and quote-bound TLS identity, returns
-`GatewayTlsBinding::Attested`, and ignores any supplied peer fingerprint.
+There are two attestation classes. Model evidence verifies a model-serving TEE
+deployment; Gateway evidence verifies the Cloud API Gateway deployment. A
+completion signature binds exact request and response bytes to one of those
+verified signers. Its `CompletionSignatureKind` selects which path applies:
+`ProviderTee` establishes model-issued bytes, while `Gateway` establishes
+Gateway-issued client-visible bytes and does not establish model execution.
+
+Gateway TLS binding is enabled by default. The Rust fetch helper requests the
+Gateway TLS fingerprint, captures the peer certificate for that same HTTPS
+request, and returns the resolved policy with the evidence. Runtimes without
+peer-certificate access must use
+`GatewayAttestationPolicy { verify_tls_binding: false, ..Default::default() }`
+when creating `GatewayAttestationRequest`. That request uses the
+signer-and-nonce quote layout instead and verification returns
+`GatewayTlsBinding::None`; it makes no TLS claim.
+
+Cloud model fetches always request `include_tls_fingerprint=false`. They verify
+the signer-and-nonce quote layout and deliberately do not claim a direct
+client-to-model TLS connection.
 
 ## Error handling
 

@@ -49,9 +49,6 @@ pub struct AttestationEvidence {
 #[derive(Clone, Debug)]
 pub struct ModelAttestation {
     pub evidence: AttestationEvidence,
-    /// Optional server-declared value. An absent value becomes `None` at the
-    /// Cloud API response boundary.
-    pub declared_spki_fingerprint: Option<String>,
     /// Optional server-declared copy of quote report data. An absent value
     /// becomes `None` at the Cloud API response boundary.
     pub reported_quote_data: Option<String>,
@@ -64,9 +61,9 @@ pub struct ModelAttestation {
 #[derive(Clone, Debug)]
 pub struct GatewayAttestation {
     pub evidence: AttestationEvidence,
-    /// TLS SPKI fingerprint declared by the Gateway and authenticated by its
-    /// quote.
-    pub declared_spki_fingerprint: String,
+    /// TLS SPKI fingerprint returned when the evidence request enables TLS
+    /// binding. The quote authenticates this value only in that mode.
+    pub tls_spki_fingerprint: Option<String>,
     /// Gateway reports always advertise the quote report-data copy.
     pub reported_quote_data: String,
 }
@@ -154,16 +151,17 @@ pub struct ModelAttestationPolicy {
 pub struct GatewayAttestationPolicy {
     /// Defaults to `UpToDate` and `OutOfDate` when omitted.
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
-    /// Require the TLS peer observed by the client to match the TLS key
-    /// authenticated by the Gateway quote. Defaults to `true`.
-    pub verify_peer_tls_binding: bool,
+    /// Defaults to `true`. When enabled, request TLS fingerprint evidence and
+    /// require it to match the TLS peer observed by the client. When disabled,
+    /// verify the signer-and-nonce report-data layout instead.
+    pub verify_tls_binding: bool,
 }
 
 impl Default for GatewayAttestationPolicy {
     fn default() -> Self {
         Self {
             accepted_tcb_statuses: None,
-            verify_peer_tls_binding: true,
+            verify_tls_binding: true,
         }
     }
 }
@@ -213,24 +211,15 @@ pub struct VerifiedAttestationEvidence {
     pub deployment_provenance: DeploymentProvenanceStatus,
 }
 
-/// TLS information authenticated for a model report.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ModelTlsBinding {
-    None,
-    /// A server-declared value, not a client-observed model TLS peer.
-    Declared {
-        spki_fingerprint: String,
-    },
-}
-
 /// TLS information authenticated for a Gateway report.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayTlsBinding {
-    /// The quote authenticated the Gateway's declared TLS fingerprint.
+    /// TLS binding was disabled, so only the signer-and-nonce report-data
+    /// layout was verified.
+    None,
+    /// The quote-bound TLS fingerprint matched the peer observed by the
+    /// client for this evidence request.
     Attested { spki_fingerprint: String },
-    /// The declared fingerprint also matched the TLS peer observed by the
-    /// client for the evidence request.
-    Peer { spki_fingerprint: String },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,7 +231,6 @@ pub enum GpuEvidenceStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedModelAttestation {
     pub evidence: VerifiedAttestationEvidence,
-    pub tls_binding: ModelTlsBinding,
     pub gpu_evidence: GpuEvidenceStatus,
 }
 
@@ -287,17 +275,24 @@ pub enum CompletionSignatureLookup {
     Unavailable(SignatureUnavailable),
 }
 
-/// Model evidence and the fresh nonce used to obtain it.
+/// Model evidence and the client values used to obtain it.
 #[derive(Clone, Debug)]
 pub struct FetchedModelAttestation {
     pub attestation: ModelAttestation,
-    pub nonce: String,
+    pub client_binding: ModelClientBinding,
 }
 
-/// Model evidence candidates and the fresh nonce used to obtain them.
+/// Model evidence candidates and the client values used to obtain them.
 #[derive(Clone, Debug)]
 pub struct FetchedModelAttestations {
     pub attestations: Vec<ModelAttestation>,
+    pub client_binding: ModelClientBinding,
+}
+
+/// Client values associated with a model-attestation request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelClientBinding {
+    /// Fresh nonce sent in the model-attestation request.
     pub nonce: String,
 }
 
@@ -316,4 +311,8 @@ pub struct GatewayClientBinding {
 pub struct FetchedGatewayAttestation {
     pub attestation: GatewayAttestation,
     pub client_binding: GatewayClientBinding,
+    /// Resolved policy for this evidence request. Pass it to
+    /// `verify_gateway_attestation` so the fetch and verification modes stay
+    /// aligned.
+    pub policy: GatewayAttestationPolicy,
 }

@@ -10,6 +10,7 @@ from verifiable_ai_sdk import (
     ApiError,
     CompletionSignature,
     CompletionSignatureReference,
+    GatewayAttestationPolicy,
     ModelAttestation,
     SigningIdentity,
     VerificationError,
@@ -132,15 +133,16 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
         fetched.attestations, model_signature()
     )
 
-    assert selected.nonce == fetched.nonce
+    assert selected.nonce == fetched.client_binding.nonce
     assert selected.app_compose == '{}'
+    assert not hasattr(selected, 'tls_spki_fingerprint')
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)
     assert urlsplit(url).geturl().startswith(f'{BASE_URL}/attestation/report?')
     assert query['model'] == ['canonical-model']
     assert query['provider'] == ['near']
-    assert query['nonce'] == [fetched.nonce]
+    assert query['nonce'] == [fetched.client_binding.nonce]
     assert query['include_tls_fingerprint'] == ['false']
     assert query['signing_algo'] == ['ecdsa']
     assert query['signing_address'] == [SIGNING_ADDRESS]
@@ -304,6 +306,49 @@ async def test_gateway_helper_requests_tls_aware_evidence(
         assert 'signing_algo' not in query
     else:
         assert query['signing_algo'] == [signing_algo]
+    assert fetched.policy == GatewayAttestationPolicy()
+
+
+async def test_gateway_helper_uses_signer_nonce_evidence_when_tls_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen_url = ''
+    capture_peer_spki: object | None = None
+
+    async def fake_gateway_fetch(
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+        **options: object,
+    ) -> FetchResponse:
+        nonlocal capture_peer_spki, seen_url
+        assert headers is not None
+        seen_url = url
+        capture_peer_spki = options.get('_capture_peer_spki')
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        signing_algo='ed25519',
+                        signing_address='55' * 32,
+                        tls_cert_fingerprint=None,
+                        report_data='00' * 64,
+                    )
+                }
+            ).encode(),
+        )
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
+    policy = GatewayAttestationPolicy(verify_tls_binding=False)
+    fetched = await fetch_gateway_attestation(API_KEY, policy=policy)
+
+    assert fetched.policy == policy
+    assert fetched.attestation.tls_spki_fingerprint is None
+    assert capture_peer_spki is False
+    assert parse_qs(urlsplit(seen_url).query)['include_tls_fingerprint'] == ['false']
 
 
 async def test_gateway_helper_rejects_a_mismatched_nonce(
@@ -369,6 +414,7 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
         malformed.value.failure.details['path']
         == 'gateway_attestation.tls_cert_fingerprint'
     )
+    assert malformed.value.failure.details['actual'] == 'missing'
 
 
 async def test_completion_signature_lookup_preserves_unavailable_state(
@@ -553,13 +599,23 @@ def test_find_model_attestation_for_signature_rejects_a_gateway_signature() -> N
     assert raised.value.failure.code == 'signature.kind_mismatch'
 
 
-async def test_fetch_model_attestation_for_signature_rejects_gateway_pre_request(
+async def test_fetch_model_attestation_for_signature_delegates_kind_check_to_find(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def unexpected_fetch(_: str, **__: object) -> FetchResponse:
-        pytest.fail('gateway signatures must not request model evidence')
+    requests = 0
 
-    monkeypatch.setattr(cloud_api, 'default_fetch', unexpected_fetch)
+    async def fake_fetch(url: str, **__: object) -> FetchResponse:
+        nonlocal requests
+        requests += 1
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {'model_attestations': [cloud_attestation(nonce)]}
+            ).encode(),
+        )
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_fetch)
     signature = CompletionSignatureReference(
         kind='gateway',
         signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
@@ -573,6 +629,7 @@ async def test_fetch_model_attestation_for_signature_rejects_gateway_pre_request
         )
 
     assert raised.value.failure.code == 'signature.kind_mismatch'
+    assert requests == 1
 
 
 async def test_model_report_count_and_nonce_are_checked_before_returning(

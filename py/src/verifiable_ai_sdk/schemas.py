@@ -57,7 +57,6 @@ class CloudModelAttestationSchema(CloudAttestationSchema):
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
-    tls_cert_fingerprint: StrictStr
     report_data: StrictStr
 
 

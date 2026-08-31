@@ -29,15 +29,22 @@ signature is needed only when the claim is about a particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetch_model_attestations` → `verify_model_attestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That a particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway signer, deployment evidence, and quote-bound TLS identity are verified. By default, the observed TLS peer must also match. | That a particular completion was served by the Gateway, or that a model executed the request. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | By default, the Gateway signer, deployment evidence, and quote-bound TLS identity match the TLS peer observed for the evidence request. | That a particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind == 'provider_tee'`. | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind == 'gateway'`. | `fetch_completion_signature` → `fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
-`fetch_model_attestations` preserves Cloud API's `model_attestations` array.
-The SDK currently requires one returned attestation. For a deployment audit,
-verify that item with the returned `nonce`. Use
-`find_model_attestation_for_signature` only when selecting evidence for a
-`provider_tee` response signature.
+`fetch_model_attestations` preserves Cloud API's `model_attestations` array and
+currently requires it to contain one item. It always requests
+`include_tls_fingerprint=false`: model quote report data binds the signer and
+fresh nonce, not client TLS. The result carries a `ModelClientBinding` for the
+matching verification call.
+
+`signing_algo` and `signing_address` are optional API request filters. They can
+narrow what Cloud returns, but do not prove which result matches a completion.
+For a `provider_tee` signature, always use
+`find_model_attestation_for_signature` to perform the local signer selection.
+`fetch_model_attestation_for_signature` is the convenience version that applies
+those request filters and then performs the same local selection.
 
 For complete parameter and result definitions, see the
 [API reference](./api-reference.md).
@@ -68,19 +75,14 @@ signature = await fetch_completion_signature(api_key, completion_id)
 if signature.kind != 'provider_tee':
     raise RuntimeError('Use the Gateway flow for this completion')
 
-model_evidence = await fetch_model_attestations(
-    api_key,
-    model,
-    signing_algo=signature.signer.signing_algo,
-    signing_address=signature.signer.signing_address,
-)
+model_evidence = await fetch_model_attestations(api_key, model)
 attestation = find_model_attestation_for_signature(
     model_evidence.attestations,
     signature,
 )
 verified_attestation = await verify_model_attestation(
     attestation,
-    model_evidence.nonce,
+    model_evidence.client_binding,
 )
 verify_model_response(
     request_body,
@@ -93,7 +95,7 @@ verify_model_response(
 When `verify_model_response` returns, the model signature is valid for those
 exact bytes and its signing identity matches `verified_attestation.signer`.
 `fetch_model_attestations` creates a fresh client nonce, checks the service's
-echo, and returns it with the evidence.
+echo, and returns it inside `client_binding` with the evidence.
 
 `verify_model_response` verifies response bytes and matches the signature to
 the verified signer; it does not repeat quote, policy, or deployment
@@ -113,16 +115,16 @@ runtime measurements, and model signing identity. Its result includes:
 - `deployment_provenance`, either `verified` when a deployment verifier ran
   successfully or `not_checked` otherwise.
 
-`tls_binding.kind` is `none` when the model attestation does not declare TLS
-data, or `declared` when it does. A model declaration is not proof that the
-client connected directly to the model CVM.
+Model verification deliberately has no TLS-binding result. The client TLS
+connection terminates at the Gateway, so a model attestation cannot establish a
+client-to-model TLS claim.
 
 ## Verify a Gateway attestation
 
-A Gateway attestation verifies a Cloud API Gateway deployment and the TLS
-service identity bound into its quote. `fetch_gateway_attestation` sends a fresh
-nonce, requests that TLS identity, checks the echoed nonce, and returns the
-evidence with its `GatewayClientBinding`.
+A Gateway attestation verifies a Cloud API Gateway deployment. Its TLS policy
+selects both the evidence request and the quote layout used at verification.
+`fetch_gateway_attestation` sends a fresh nonce, checks the echoed nonce, and
+returns raw evidence, a `GatewayClientBinding`, and the resolved policy.
 
 ```python
 from verifiable_ai_sdk import (
@@ -134,35 +136,43 @@ gateway_evidence = await fetch_gateway_attestation(api_key)
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
     gateway_evidence.client_binding,
+    policy=gateway_evidence.policy,
 )
 ```
 
-The native fetch helper captures the SHA-256 SPKI fingerprint from the TLS
-connection used for this exact HTTPS evidence request. The default Gateway
-policy requires it and returns `tls_binding.kind == 'peer'` only when it
-matches the fingerprint bound into the quote. If the runtime cannot expose the
-peer certificate, default verification fails.
+The default policy has `verify_tls_binding=True`. The native fetch helper
+requests the TLS fingerprint and captures the SHA-256 SPKI fingerprint from the
+TLS connection used for this exact HTTPS evidence request. Verification then
+requires the quote-bound TLS fingerprint, the observed peer fingerprint, and
+the client nonce to agree. A successful result has
+`tls_binding.kind == 'attested'`.
 
-If a runtime cannot observe the peer certificate, explicitly choose quote-bound
-TLS verification without the peer comparison:
+If a runtime cannot observe the peer certificate, choose the no-TLS policy
+before fetching evidence and pass the returned policy into verification:
 
 ```python
 from verifiable_ai_sdk import GatewayAttestationPolicy
 
+gateway_evidence = await fetch_gateway_attestation(
+    api_key,
+    policy=GatewayAttestationPolicy(verify_tls_binding=False),
+)
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
     gateway_evidence.client_binding,
-    policy=GatewayAttestationPolicy(verify_peer_tls_binding=False),
+    policy=gateway_evidence.policy,
 )
+assert verified_gateway_attestation.tls_binding.kind == 'none'
 ```
 
-This still verifies the nonce and quote-bound TLS identity, and returns
-`tls_binding.kind == 'attested'`. With `verify_peer_tls_binding=False`, the SDK
-ignores `client_binding.peer_spki_fingerprint` even if one is present.
+With `verify_tls_binding=False`, the SDK sends
+`include_tls_fingerprint=false`, does not require a peer fingerprint, and
+verifies the signer-and-nonce report-data layout. It does not make or retain a
+Gateway TLS identity claim.
 
 For a signature with `kind == 'gateway'`, fetch evidence for the signature's
-algorithm, verify it with the TLS peer observed for that request, then verify
-the response:
+algorithm, verify it with the policy returned by that fetch, then verify the
+response:
 
 ```python
 from verifiable_ai_sdk import (
@@ -178,6 +188,7 @@ gateway_evidence = await fetch_gateway_attestation(
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
     gateway_evidence.client_binding,
+    policy=gateway_evidence.policy,
 )
 verify_gateway_response(
     request_body,
@@ -191,10 +202,6 @@ This verifies Gateway-service provenance and integrity for exact completion
 bytes: the signature is valid and its signer is bound to verified Gateway
 deployment evidence. It does not establish model execution; use a
 `provider_tee` signature and model evidence for that claim.
-
-For this flow without a peer certificate, use
-`GatewayAttestationPolicy(verify_peer_tls_binding=False)` as shown above before
-calling `verify_gateway_response`.
 
 ## Set policy and trust roots
 
@@ -219,7 +226,7 @@ verifiers = ModelAttestationVerifiers(
 
 verified_attestation = await verify_model_attestation(
     attestation,
-    model_evidence.nonce,
+    model_evidence.client_binding,
     policy=policy,
     verifiers=verifiers,
 )
@@ -230,9 +237,11 @@ deployment and must raise for every deployment the application does not accept.
 The SDK authenticates the measured values, but the callback decides which
 deployments are acceptable.
 
-`GatewayAttestationPolicy.verify_peer_tls_binding` defaults to `True`. Set it
-to `False` only when the runtime cannot obtain the peer certificate for the
-Gateway evidence request.
+`GatewayAttestationPolicy.verify_tls_binding` defaults to `True`. Set it to
+`False` only before a Gateway fetch when the runtime cannot obtain the peer
+certificate for that evidence request. Use the returned
+`FetchedGatewayAttestation.policy` for the paired verification so its quote
+layout stays aligned with the request.
 
 `verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
 evidence, the default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and
@@ -255,9 +264,9 @@ A pending or unknown signature can instead produce HTTP 404. That remains a
 retryable `api.http_status` error; it is not an unavailable lookup result.
 
 Cloud API request helpers and evidence selection raise `ApiError` for request,
-HTTP, response-format, nonce, unavailable-signature, or
-candidate-selection failures. Verification functions and local input or
-signature-contract checks raise `VerificationError`.
+HTTP, response-format, nonce, unavailable-signature, or candidate-selection
+failures. Verification functions and local input or signature-contract checks
+raise `VerificationError`.
 
 | Field | Meaning |
 | --- | --- |
@@ -289,4 +298,3 @@ except ApiError as error:
             raise
 except VerificationError as error:
     print(error.failure.code)
-```

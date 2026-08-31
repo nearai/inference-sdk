@@ -7,9 +7,9 @@ use sha2::Digest;
 use verifiable_ai_sdk::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     DeploymentProvenanceStatus, GatewayAttestation, GpuEvidenceStatus, ModelAttestation,
-    ModelTlsBinding, NvidiaEvidenceVerifier, QuoteVerificationResult, QuoteVerifier, SigningAlgo,
-    SigningIdentity, TcbStatus, VerificationError, VerifiedAttestationEvidence,
-    VerifiedGatewayAttestation, VerifiedModelAttestation,
+    NvidiaEvidenceVerifier, QuoteVerificationResult, QuoteVerifier, SigningAlgo, SigningIdentity,
+    TcbStatus, VerificationError, VerifiedAttestationEvidence, VerifiedGatewayAttestation,
+    VerifiedModelAttestation,
 };
 
 pub const NONCE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -40,12 +40,8 @@ impl NvidiaEvidenceVerifier for FixtureNvidiaVerifier {
     }
 }
 
-pub fn model_attestation(
-    nvidia_payload: Option<&str>,
-    with_tls_fingerprint: bool,
-) -> ModelAttestation {
-    let report_data =
-        hex::encode(model_quote(with_tls_fingerprint, TcbStatus::UpToDate).report_data);
+pub fn model_attestation(nvidia_payload: Option<&str>) -> ModelAttestation {
+    let report_data = hex::encode(model_quote(TcbStatus::UpToDate).report_data);
     ModelAttestation {
         evidence: AttestationEvidence {
             nonce: NONCE.to_owned(),
@@ -60,14 +56,13 @@ pub fn model_attestation(
             })]),
             app_compose: APP_COMPOSE.to_owned(),
         },
-        declared_spki_fingerprint: with_tls_fingerprint.then(|| TLS_FINGERPRINT.to_owned()),
         reported_quote_data: Some(report_data),
         nvidia_payload: nvidia_payload.map(ToOwned::to_owned),
     }
 }
 
 pub fn gateway_attestation() -> GatewayAttestation {
-    let quote = model_quote(true, TcbStatus::UpToDate);
+    let quote = gateway_tls_quote(TcbStatus::UpToDate);
     let reported_quote_data = hex::encode(&quote.report_data);
     GatewayAttestation {
         evidence: AttestationEvidence {
@@ -83,21 +78,53 @@ pub fn gateway_attestation() -> GatewayAttestation {
             })]),
             app_compose: APP_COMPOSE.to_owned(),
         },
-        declared_spki_fingerprint: TLS_FINGERPRINT.to_owned(),
+        tls_spki_fingerprint: Some(TLS_FINGERPRINT.to_owned()),
         reported_quote_data,
     }
 }
 
-pub fn model_quote(with_tls_fingerprint: bool, tcb_status: TcbStatus) -> QuoteVerificationResult {
-    let mut report_data = Vec::new();
-    if with_tls_fingerprint {
-        let mut input = hex::decode(ECDSA_ADDRESS).expect("fixture address is hexadecimal");
-        input.extend(hex::decode(TLS_FINGERPRINT).expect("fixture fingerprint is hexadecimal"));
-        report_data.extend(sha256_bytes(&input));
-    } else {
-        report_data.extend(hex::decode(ECDSA_ADDRESS).expect("fixture address is hexadecimal"));
-        report_data.extend([0u8; 12]);
+pub fn gateway_attestation_without_tls_binding() -> GatewayAttestation {
+    let quote = model_quote(TcbStatus::UpToDate);
+    let reported_quote_data = hex::encode(&quote.report_data);
+    GatewayAttestation {
+        evidence: AttestationEvidence {
+            nonce: NONCE.to_owned(),
+            signer: SigningIdentity {
+                signing_algo: SigningAlgo::Ecdsa,
+                signing_address: ECDSA_ADDRESS.to_owned(),
+            },
+            intel_quote: "fixture".to_owned(),
+            event_log: AttestationEventLog::Entries(vec![serde_json::json!({
+                "digest": "00".repeat(48),
+                "imr": 3,
+            })]),
+            app_compose: APP_COMPOSE.to_owned(),
+        },
+        tls_spki_fingerprint: None,
+        reported_quote_data,
     }
+}
+
+pub fn model_quote(tcb_status: TcbStatus) -> QuoteVerificationResult {
+    quote_with_report_data(signer_nonce_report_data(), tcb_status)
+}
+
+pub fn gateway_tls_quote(tcb_status: TcbStatus) -> QuoteVerificationResult {
+    let mut input = hex::decode(ECDSA_ADDRESS).expect("fixture address is hexadecimal");
+    input.extend(hex::decode(TLS_FINGERPRINT).expect("fixture fingerprint is hexadecimal"));
+    quote_with_report_data(sha256_bytes(&input), tcb_status)
+}
+
+fn signer_nonce_report_data() -> Vec<u8> {
+    let mut report_data = hex::decode(ECDSA_ADDRESS).expect("fixture address is hexadecimal");
+    report_data.extend([0u8; 12]);
+    report_data
+}
+
+fn quote_with_report_data(
+    mut report_data: Vec<u8>,
+    tcb_status: TcbStatus,
+) -> QuoteVerificationResult {
     report_data.extend(hex::decode(NONCE).expect("fixture nonce is hexadecimal"));
 
     let event_digest = vec![0u8; 48];
@@ -134,7 +161,6 @@ pub fn signed_signature(
 pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttestation {
     VerifiedModelAttestation {
         evidence: verified_evidence(signer),
-        tls_binding: ModelTlsBinding::None,
         gpu_evidence: GpuEvidenceStatus::NotProvided,
     }
 }
@@ -142,7 +168,7 @@ pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttes
 pub fn verified_gateway_attestation(signer: SigningIdentity) -> VerifiedGatewayAttestation {
     VerifiedGatewayAttestation {
         evidence: verified_evidence(signer),
-        tls_binding: verifiable_ai_sdk::GatewayTlsBinding::Peer {
+        tls_binding: verifiable_ai_sdk::GatewayTlsBinding::Attested {
             spki_fingerprint: TLS_FINGERPRINT.to_owned(),
         },
     }

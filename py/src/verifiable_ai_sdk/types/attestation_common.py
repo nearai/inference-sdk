@@ -38,4 +38,3 @@ class AttestationEvidence:
     intel_quote: str
     event_log: AttestationEventLog
     app_compose: str
-    declared_spki_fingerprint: str | None = None

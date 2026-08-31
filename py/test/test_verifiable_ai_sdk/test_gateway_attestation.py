@@ -14,7 +14,8 @@ from .fixtures import (
     NONCE,
     TLS_FINGERPRINT,
     create_gateway_attestation,
-    create_quote,
+    create_gateway_tls_quote,
+    create_model_quote,
 )
 
 
@@ -25,9 +26,9 @@ async def test_gateway_attestation_binds_the_observed_tls_peer() -> None:
             nonce=NONCE,
             peer_spki_fingerprint=TLS_FINGERPRINT,
         ),
-        verifiers=AttestationVerifiers(quote=lambda _: create_quote()),
+        verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
     )
-    assert result.tls_binding.kind == 'peer'
+    assert result.tls_binding.kind == 'attested'
     assert result.tls_binding.spki_fingerprint == TLS_FINGERPRINT
 
 
@@ -36,9 +37,9 @@ async def test_gateway_attestation_requires_a_peer_by_default() -> None:
         await verify_gateway_attestation(
             create_gateway_attestation(),
             GatewayClientBinding(nonce=NONCE),
-            verifiers=AttestationVerifiers(quote=lambda _: create_quote()),
+            verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
         )
-    assert missing_peer.value.failure.code == 'policy.peer_tls_binding_required'
+    assert missing_peer.value.failure.code == 'policy.tls_binding_required'
 
 
 async def test_gateway_attestation_rejects_a_different_peer() -> None:
@@ -49,24 +50,30 @@ async def test_gateway_attestation_rejects_a_different_peer() -> None:
                 nonce=NONCE,
                 peer_spki_fingerprint='44' * 32,
             ),
-            verifiers=AttestationVerifiers(quote=lambda _: create_quote()),
+            verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
         )
     assert mismatch.value.failure.code == 'binding.spki_fingerprint_mismatch'
 
 
-async def test_gateway_attestation_can_skip_peer_tls_binding_explicitly() -> None:
+async def test_gateway_attestation_uses_signer_nonce_binding_when_tls_is_disabled() -> (
+    None
+):
+    quote = create_model_quote()
     result = await verify_gateway_attestation(
-        create_gateway_attestation(),
+        create_gateway_attestation(
+            tls_spki_fingerprint=None,
+            reported_quote_data=quote.report_data.hex(),
+        ),
         GatewayClientBinding(
             nonce=NONCE,
             peer_spki_fingerprint='not-a-fingerprint',
         ),
-        policy=GatewayAttestationPolicy(verify_peer_tls_binding=False),
-        verifiers=AttestationVerifiers(quote=lambda _: create_quote()),
+        policy=GatewayAttestationPolicy(verify_tls_binding=False),
+        verifiers=AttestationVerifiers(quote=lambda _: quote),
     )
 
-    assert result.tls_binding.kind == 'attested'
-    assert result.tls_binding.spki_fingerprint == TLS_FINGERPRINT
+    assert result.tls_binding.kind == 'none'
+    assert result.tls_binding.spki_fingerprint is None
 
 
 async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
@@ -79,7 +86,7 @@ async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
             ),
             policy=GatewayAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
             verifiers=AttestationVerifiers(
-                quote=lambda _: create_quote(tcb_status='OutOfDate')
+                quote=lambda _: create_gateway_tls_quote(tcb_status='OutOfDate')
             ),
         )
 
@@ -98,7 +105,7 @@ async def test_gateway_attestation_normalizes_a_rejected_deployment_verifier() -
                 peer_spki_fingerprint=TLS_FINGERPRINT,
             ),
             verifiers=AttestationVerifiers(
-                quote=lambda _: create_quote(),
+                quote=lambda _: create_gateway_tls_quote(),
                 deployment=reject,
             ),
         )

@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 from .attestation_gateway import GatewayAttestation
 from .attestation_model import ModelAttestation
-from .verification import GatewayClientBinding
+from .verification import (
+    GatewayAttestationPolicy,
+    GatewayClientBinding,
+    ModelClientBinding,
+)
 
 
 DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1'
@@ -16,19 +20,21 @@ NO_ALIASING_HEADER = 'x-no-aliasing'
 @dataclass(frozen=True, kw_only=True)
 class FetchedModelAttestation:
     attestation: ModelAttestation
-    nonce: str
+    client_binding: ModelClientBinding
 
 
 @dataclass(frozen=True, kw_only=True)
 class FetchedGatewayAttestation:
     attestation: GatewayAttestation
     client_binding: GatewayClientBinding
+    #: The policy that selected this evidence request's quote layout.
+    policy: GatewayAttestationPolicy
 
 
 @dataclass(frozen=True, kw_only=True)
 class FetchedModelAttestations:
     attestations: tuple[ModelAttestation, ...]
-    nonce: str
+    client_binding: ModelClientBinding
 
 
 __all__ = [

@@ -187,8 +187,8 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'policy.gpu_evidence_required':
             return f'[{code}] GPU evidence is required by policy'
-        case 'policy.peer_tls_binding_required':
-            return f'[{code}] Gateway peer TLS binding is required by policy'
+        case 'policy.tls_binding_required':
+            return f'[{code}] Gateway TLS binding is required by policy'
         case 'binding.nonce_mismatch':
             return f'[{code}] Nonce in {_detail(details, "source")} does not match'
         case 'binding.report_data_invalid':

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from ..types.attestation_common import SigningIdentity
-from ..types.verification import GatewayTlsBinding, ModelTlsBinding
 from ..utils.common import hex_to_bytes, require_byte_length, sha256
 from ..utils.errors import VerificationError, verification_failure
 
@@ -57,48 +56,43 @@ def verify_advertised_report_data(
         )
 
 
-def verify_model_report_data_binding(
+def verify_report_data_binding(
     *,
     report_data: bytes,
     nonce: str,
     signer: SigningIdentity,
-    reported_spki_fingerprint: str | None,
-) -> ModelTlsBinding:
+) -> None:
+    """Verify the signer-and-nonce report-data layout.
+
+    This layout is used for every Cloud model report and for Gateway reports
+    fetched with TLS binding disabled.
+    """
+
     _verify_quote_report_data_length_and_nonce(report_data, nonce)
     signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
-
-    if reported_spki_fingerprint is not None:
-        fingerprint = require_byte_length(
-            reported_spki_fingerprint, 32, 'attestation.declared_spki_fingerprint'
-        )
-        expected = sha256(signing_address + fingerprint)
-        if report_data[:32] != expected:
-            raise verification_failure(
-                'binding.report_data_mismatch',
-                {'source': 'signerTlsBinding'},
-            )
-        return ModelTlsBinding(kind='declared', spki_fingerprint=fingerprint.hex())
-
     expected = signing_address.ljust(32, b'\x00')
     if report_data[:32] != expected:
         raise verification_failure(
             'binding.report_data_mismatch',
             {'source': 'signerBinding'},
         )
-    return ModelTlsBinding(kind='none')
 
 
-def verify_gateway_report_data_binding(
+def verify_report_data_binding_with_tls_fingerprint(
     *,
     report_data: bytes,
     nonce: str,
     signer: SigningIdentity,
-    reported_spki_fingerprint: str,
-    peer_spki_fingerprint: str | None,
-) -> GatewayTlsBinding:
+    reported_tls_spki_fingerprint: str | None,
+    peer_tls_spki_fingerprint: str,
+) -> str:
+    """Verify the signer-and-TLS report-data layout and return its fingerprint."""
+
     _verify_quote_report_data_length_and_nonce(report_data, nonce)
+    if reported_tls_spki_fingerprint is None:
+        raise verification_failure('policy.tls_binding_required')
     reported = require_byte_length(
-        reported_spki_fingerprint, 32, 'attestation.declared_spki_fingerprint'
+        reported_tls_spki_fingerprint, 32, 'attestation.tls_spki_fingerprint'
     )
     signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
     if report_data[:32] != sha256(signing_address + reported):
@@ -107,17 +101,14 @@ def verify_gateway_report_data_binding(
             {'source': 'signerTlsBinding'},
         )
 
-    if peer_spki_fingerprint is None:
-        return GatewayTlsBinding(kind='attested', spki_fingerprint=reported.hex())
-
     peer = require_byte_length(
-        peer_spki_fingerprint,
+        peer_tls_spki_fingerprint,
         32,
         'client_binding.peer_spki_fingerprint',
     )
     if reported != peer:
         raise verification_failure('binding.spki_fingerprint_mismatch')
-    return GatewayTlsBinding(kind='peer', spki_fingerprint=reported.hex())
+    return reported.hex()
 
 
 def verify_app_compose_mrconfig_binding(app_compose: str, mr_config_id: bytes) -> None:

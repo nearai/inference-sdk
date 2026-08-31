@@ -1,29 +1,26 @@
 use crate::attestation::{verify_dstack_deployment, verify_dstack_quote};
-use crate::bindings::verify_gateway_report_data_binding;
+use crate::bindings::{
+    verify_report_data_binding, verify_report_data_binding_with_tls_fingerprint,
+};
 use crate::errors::VerificationError;
 use crate::types::{
     AttestationPolicy, AttestationVerifiers, GatewayAttestation, GatewayAttestationPolicy,
     GatewayClientBinding, VerifiedGatewayAttestation,
 };
 
-/// Verify NEAR AI Cloud Gateway evidence and bind it to the TLS SPKI
-/// fingerprint independently observed by the caller for that attestation request.
+/// Verify NEAR AI Cloud Gateway evidence.
 ///
-/// Peer TLS binding is required by default. Set
-/// [`GatewayAttestationPolicy::verify_peer_tls_binding`] to `false` only when
-/// the runtime cannot expose the peer certificate for the evidence request.
+/// TLS binding is required by default. When disabled, verification uses the
+/// signer-and-nonce report-data layout instead.
 pub async fn verify_gateway_attestation(
     attestation: &GatewayAttestation,
     client_binding: &GatewayClientBinding,
     policy: Option<&GatewayAttestationPolicy>,
     verifiers: AttestationVerifiers<'_>,
 ) -> Result<VerifiedGatewayAttestation, VerificationError> {
-    let verify_peer_tls_binding = policy
-        .map(|policy| policy.verify_peer_tls_binding)
+    let verify_tls_binding = policy
+        .map(|policy| policy.verify_tls_binding)
         .unwrap_or(true);
-    if verify_peer_tls_binding && client_binding.peer_spki_fingerprint.is_none() {
-        return Err(VerificationError::PeerTlsBindingRequired);
-    }
     let common_policy = policy.map(|policy| AttestationPolicy {
         accepted_tcb_statuses: policy.accepted_tcb_statuses.clone(),
     });
@@ -35,18 +32,27 @@ pub async fn verify_gateway_attestation(
         Some(&attestation.reported_quote_data),
     )
     .await?;
-    let peer_spki_fingerprint = if verify_peer_tls_binding {
-        client_binding.peer_spki_fingerprint.as_deref()
+    let tls_binding = if verify_tls_binding {
+        let peer_spki_fingerprint = client_binding
+            .peer_spki_fingerprint
+            .as_deref()
+            .ok_or(VerificationError::TlsBindingRequired)?;
+        let spki_fingerprint = verify_report_data_binding_with_tls_fingerprint(
+            &verified_quote.quote.report_data,
+            &client_binding.nonce,
+            &verified_quote.signer.signing_address,
+            attestation.tls_spki_fingerprint.as_deref(),
+            peer_spki_fingerprint,
+        )?;
+        crate::types::GatewayTlsBinding::Attested { spki_fingerprint }
     } else {
-        None
+        verify_report_data_binding(
+            &verified_quote.quote.report_data,
+            &client_binding.nonce,
+            &verified_quote.signer.signing_address,
+        )?;
+        crate::types::GatewayTlsBinding::None
     };
-    let tls_binding = verify_gateway_report_data_binding(
-        &verified_quote.quote.report_data,
-        &client_binding.nonce,
-        &verified_quote.signer.signing_address,
-        &attestation.declared_spki_fingerprint,
-        peer_spki_fingerprint,
-    )?;
     let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
     Ok(VerifiedGatewayAttestation {
         evidence,

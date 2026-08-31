@@ -1,10 +1,10 @@
 use crate::attestation::{verify_dstack_deployment, verify_dstack_quote};
-use crate::bindings::{verify_cloud_model_report_data_binding, verify_reported_nonce};
+use crate::bindings::{verify_report_data_binding, verify_reported_nonce};
 use crate::errors::VerificationError;
 use crate::nvidia::NrasNvidiaEvidenceVerifier;
 use crate::types::{
     AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, ModelAttestation,
-    ModelAttestationPolicy, ModelAttestationVerifiers, NvidiaEvidenceVerifier,
+    ModelAttestationPolicy, ModelAttestationVerifiers, ModelClientBinding, NvidiaEvidenceVerifier,
     VerifiedModelAttestation,
 };
 use serde_json::Value;
@@ -15,7 +15,7 @@ use serde_json::Value;
 /// the Cloud Gateway rather than the upstream model CVM.
 pub async fn verify_model_attestation(
     attestation: &ModelAttestation,
-    nonce: &str,
+    client_binding: &ModelClientBinding,
     policy: Option<&ModelAttestationPolicy>,
     verifiers: ModelAttestationVerifiers<'_>,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
@@ -24,22 +24,21 @@ pub async fn verify_model_attestation(
     });
     let verified_quote = verify_dstack_quote(
         &attestation.evidence,
-        nonce,
+        &client_binding.nonce,
         common_policy.as_ref(),
         verifiers.quote,
         attestation.reported_quote_data.as_deref(),
     )
     .await?;
-    let tls_binding = verify_cloud_model_report_data_binding(
+    verify_report_data_binding(
         &verified_quote.quote.report_data,
-        nonce,
+        &client_binding.nonce,
         &verified_quote.signer.signing_address,
-        attestation.declared_spki_fingerprint.as_deref(),
     )?;
     let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
     let gpu_evidence = verify_nvidia_evidence(
         attestation.nvidia_payload.as_deref(),
-        nonce,
+        &client_binding.nonce,
         policy
             .map(|policy| policy.gpu_evidence)
             .unwrap_or(GpuEvidenceRequirement::IfPresent),
@@ -48,7 +47,6 @@ pub async fn verify_model_attestation(
     .await?;
     Ok(VerifiedModelAttestation {
         evidence,
-        tls_binding,
         gpu_evidence,
     })
 }

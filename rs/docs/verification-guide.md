@@ -11,7 +11,7 @@ exact request and response bytes, then supplies them to the response verifier.
 trust guarantee, not merely the key that signed.
 
 | `signature.kind` | Trust boundary | A successful response verification establishes | It does not establish |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | `ProviderTee` | The model-serving TEE | A verified model TEE signer signed the exact request and response bytes. | The Cloud API Gateway deployment or TLS identity. |
 | `Gateway` | The NEAR AI Cloud Gateway TEE | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
@@ -26,17 +26,17 @@ model execution.
 Both attestation kinds can be verified independently. A completion signature is
 needed only when the claim concerns one particular response.
 
-| Goal | SDK calls | A successful result establishes | It does not establish |
+| Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- |
-| Audit a model deployment | `fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote, deployment evidence, and quote-bound TLS identity passed. By default, the observed TLS peer also matched. | That a particular completion was served by that Gateway or that a model executed it. |
-| Verify a model-issued response | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
-| Verify a Gateway-issued response | `fetch_completion_signature` → `GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
+| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default TLS policy, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
+| Verify a model-issued response | The completion signature has `ProviderTee` kind. | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
+| Verify a Gateway-issued response | The completion signature has `Gateway` kind. | `fetch_completion_signature` → `GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
 `fetch_model_attestations` returns `FetchedModelAttestations`, preserving the
 Cloud API `model_attestations` field. The SDK currently requires exactly one
 candidate. For a deployment audit, verify its sole item with the returned
-nonce. Use `find_model_attestation_for_signature` only when a `ProviderTee`
+`client_binding`. Use `find_model_attestation_for_signature` only when a `ProviderTee`
 signature must select matching evidence.
 
 For all constructors, functions, policies, and result types, see the
@@ -54,10 +54,9 @@ whitespace, key ordering, framing, or encoding changes the signed bytes.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    fetch_completion_signature,
+    fetch_completion_signature, fetch_model_attestations,
     find_model_attestation_for_signature, verify_model_attestation,
     verify_model_response, CompletionSignatureKind, CompletionSignatureReference,
-    ModelAttestationsRequest,
 };
 
 async fn verify_model_completion(
@@ -80,18 +79,14 @@ async fn verify_model_completion(
         kind: signature.kind,
         signer: signature.signer.clone(),
     };
-    let model_evidence = ModelAttestationsRequest::new(api_key, model)
-        .signing_algo(signature.signer.signing_algo)
-        .signing_address(&signature.signer.signing_address)
-        .send()
-        .await?;
+    let model_evidence = fetch_model_attestations(api_key, model).await?;
     let attestation = find_model_attestation_for_signature(
         &model_evidence.attestations,
         &signature_reference,
     )?;
     let verified_attestation = verify_model_attestation(
         attestation,
-        &model_evidence.nonce,
+        &model_evidence.client_binding,
         None,
         Default::default(),
     )
@@ -116,8 +111,17 @@ call `verify_model_attestation` first.
 runtime measurements, model signer, and supplied GPU evidence. Its result
 includes the verified signer, TCB status and advisory IDs, measured deployment,
 GPU-evidence status, and whether a caller-supplied deployment verifier accepted
-the deployment. A declared model SPKI fingerprint is not proof of a direct
-client-to-model TLS connection.
+the deployment.
+
+Model fetches always request `include_tls_fingerprint=false`. Cloud API
+connects to the model on the client's behalf, so model verification checks the
+signer-and-nonce quote layout but does not establish a client-to-model TLS
+binding.
+
+`ModelAttestationsRequest::signing_algo` and `signing_address` are optional
+Cloud API request filters. They can narrow the response, but they do not
+replace `find_model_attestation_for_signature`, which performs the authoritative
+local match against the `ProviderTee` signature signer.
 
 ## Verify a Gateway attestation or response
 
@@ -128,10 +132,10 @@ then returns the certificate's SHA-256 SPKI fingerprint with the fresh nonce in
 `FetchedGatewayAttestation.client_binding`.
 
 `verify_gateway_attestation` requires that observed peer fingerprint by
-default. It verifies the quote's nonce and declared TLS identity, then compares
-the declared key with the client-observed peer. Do not replace the observed
-peer fingerprint with the declaration inside the attestation: that would only
-compare the evidence with itself.
+default. It verifies the quote's nonce and TLS binding, then compares the
+quote-bound key with the client-observed peer. Do not replace the observed peer
+fingerprint with the field inside the attestation: that would only compare the
+evidence with itself.
 
 For a `CompletionSignatureKind::Gateway` response, use
 `GatewayAttestationRequest` with `signature.signer.signing_algo`; do not rely on
@@ -165,7 +169,7 @@ async fn verify_gateway_completion(
     let verified_attestation = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
-        None,
+        Some(&fetched.policy),
         Default::default(),
     )
     .await?;
@@ -180,26 +184,31 @@ async fn verify_gateway_completion(
 }
 ```
 
-If a runtime does not expose the TLS peer certificate, it must opt out
-explicitly. This still verifies the nonce and the quote-bound TLS identity, but
-does not compare a peer fingerprint and returns `GatewayTlsBinding::Attested`.
-When peer binding is disabled, a supplied peer fingerprint is ignored.
+If a runtime does not expose the TLS peer certificate, it must opt out before
+fetching the evidence. The policy controls both the request's
+`include_tls_fingerprint` value and the quote layout checked later. With TLS
+binding disabled, the SDK requests no fingerprint, verifies the signer-and-
+nonce layout, returns `GatewayTlsBinding::None`, and ignores a supplied peer
+fingerprint.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    fetch_gateway_attestation, verify_gateway_attestation, GatewayAttestationPolicy,
+    verify_gateway_attestation, GatewayAttestationPolicy, GatewayAttestationRequest,
 };
 
 async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let fetched = fetch_gateway_attestation(api_key).await?;
     let policy = GatewayAttestationPolicy {
-        verify_peer_tls_binding: false,
+        verify_tls_binding: false,
         ..Default::default()
     };
+    let fetched = GatewayAttestationRequest::new(api_key)
+        .policy(policy)
+        .send()
+        .await?;
     let _verified = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
-        Some(&policy),
+        Some(&fetched.policy),
         Default::default(),
     )
     .await?;
@@ -218,9 +227,11 @@ by default. Set `ModelAttestationPolicy { gpu_evidence:
 GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
 
-`GatewayAttestationPolicy::verify_peer_tls_binding` defaults to `true`. Set it
-to `false` only for a runtime that cannot obtain the peer certificate for the
-Gateway evidence request.
+`GatewayAttestationPolicy::verify_tls_binding` defaults to `true`. Set it to
+`false` only for a runtime that cannot obtain the peer certificate for the
+Gateway evidence request. Pass the same policy to `GatewayAttestationRequest`
+that is later passed to verification; `FetchedGatewayAttestation.policy`
+contains the resolved value for that request.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
 quote, deployment, and (for models) NVIDIA evidence verifiers. A supplied

@@ -17,10 +17,11 @@ from verifiable_ai_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
     APP_COMPOSE,
+    MODEL_CLIENT_BINDING,
     NONCE,
-    TLS_FINGERPRINT,
     create_model_attestation,
-    create_quote,
+    create_model_quote,
+    create_gateway_tls_quote,
 )
 
 
@@ -39,36 +40,46 @@ def use_fake_nras_response(monkeypatch: pytest.MonkeyPatch, body: object) -> Non
 async def test_model_attestation_returns_verified_evidence() -> None:
     result = await verify_model_attestation(
         create_model_attestation(),
-        NONCE,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
     )
 
     assert result.tcb_status == 'UpToDate'
-    assert result.tls_binding.kind == 'declared'
-    assert result.tls_binding.spki_fingerprint == TLS_FINGERPRINT
     assert result.gpu_evidence == 'not_provided'
     assert result.deployment.app_compose == APP_COMPOSE
     assert result.deployment_provenance == 'not_checked'
 
 
-async def test_model_attestation_accepts_legacy_signer_nonce_layout() -> None:
+async def test_model_attestation_uses_signer_nonce_report_data_binding() -> None:
     result = await verify_model_attestation(
-        create_model_attestation(declared_spki_fingerprint=None),
-        NONCE,
-        verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_quote(legacy_model_layout=True)
-        ),
+        create_model_attestation(),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
     )
 
-    assert result.tls_binding.kind == 'none'
+    assert not hasattr(result, 'tls_binding')
+
+
+async def test_model_attestation_rejects_gateway_tls_report_data_layout() -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(
+                quote=lambda _: create_gateway_tls_quote()
+            ),
+        )
+
+    assert raised.value.failure.code == 'binding.report_data_mismatch'
+    assert raised.value.failure.details == {'source': 'signerBinding'}
 
 
 async def test_model_attestation_checks_advertised_quote_report_data() -> None:
-    quote = create_quote()
+    quote = create_model_quote()
 
     result = await verify_model_attestation(
         create_model_attestation(reported_quote_data=quote.report_data.hex()),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
     )
     assert result.tcb_status == 'UpToDate'
@@ -76,7 +87,7 @@ async def test_model_attestation_checks_advertised_quote_report_data() -> None:
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(reported_quote_data='44' * 64),
-            NONCE,
+            MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
         )
     assert raised.value.failure.code == 'binding.report_data_mismatch'
@@ -86,8 +97,8 @@ async def test_model_attestation_rejects_mismatched_nonce_before_quote() -> None
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nonce='44' * 32),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
     assert raised.value.failure.code == 'binding.nonce_mismatch'
@@ -95,10 +106,10 @@ async def test_model_attestation_rejects_mismatched_nonce_before_quote() -> None
 
 
 async def test_model_policy_accepts_out_of_date_by_default_and_can_tighten() -> None:
-    quote = create_quote(tcb_status='OutOfDate')
+    quote = create_model_quote(tcb_status='OutOfDate')
     result = await verify_model_attestation(
         create_model_attestation(),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
     )
     assert result.tcb_status == 'OutOfDate'
@@ -106,7 +117,7 @@ async def test_model_policy_accepts_out_of_date_by_default_and_can_tighten() -> 
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(),
-            NONCE,
+            MODEL_CLIENT_BINDING,
             policy=ModelAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
             verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
         )
@@ -117,9 +128,9 @@ async def test_model_gpu_policy_and_nonce_binding() -> None:
     with pytest.raises(VerificationError) as missing:
         await verify_model_attestation(
             create_model_attestation(),
-            NONCE,
+            MODEL_CLIENT_BINDING,
             policy=ModelAttestationPolicy(gpu_evidence='required'),
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
     assert missing.value.failure.code == 'policy.gpu_evidence_required'
 
@@ -129,18 +140,18 @@ async def test_model_gpu_policy_and_nonce_binding() -> None:
     with pytest.raises(VerificationError) as mismatch:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': '55' * 32})),
-            NONCE,
+            MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_quote(), nvidia=verify_gpu
+                quote=lambda _: create_model_quote(), nvidia=verify_gpu
             ),
         )
     assert mismatch.value.failure.code == 'binding.nonce_mismatch'
 
     result = await verify_model_attestation(
         create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_quote(), nvidia=verify_gpu
+            quote=lambda _: create_model_quote(), nvidia=verify_gpu
         ),
     )
     assert result.gpu_evidence == 'verified'
@@ -150,8 +161,8 @@ async def test_empty_gpu_payload_remains_invalid_supplied_json() -> None:
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=''),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
     assert raised.value.failure.code == 'gpu.payload_invalid'
     assert raised.value.failure.details == {'reason': 'invalid_json'}
@@ -165,8 +176,8 @@ async def test_default_nras_rejects_a_malformed_envelope(
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
     assert raised.value.failure.code == 'gpu.nras_response_invalid'
@@ -181,8 +192,8 @@ async def test_default_nras_rejects_an_invalid_jwt(
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
     assert raised.value.failure.code == 'gpu.nras_response_invalid'
@@ -200,8 +211,8 @@ async def test_default_nras_rejects_a_non_boolean_verdict(
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
     assert raised.value.failure.code == 'gpu.nras_response_invalid'
@@ -219,8 +230,8 @@ async def test_default_nras_rejects_a_false_verdict(
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
     assert raised.value.failure.code == 'gpu.attestation_rejected'
@@ -228,12 +239,12 @@ async def test_default_nras_rejects_a_false_verdict(
 
 
 async def test_model_attestation_rejects_invalid_custom_quote_results() -> None:
-    quote = replace(create_quote(), tcb_status=[])
+    quote = replace(create_model_quote(), tcb_status=[])
 
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(),
-            NONCE,
+            MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
         )
 
@@ -248,9 +259,9 @@ async def test_measurement_and_deployment_policy_are_bound_to_quote() -> None:
 
     result = await verify_model_attestation(
         create_model_attestation(),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_quote(), deployment=verify_deployment
+            quote=lambda _: create_model_quote(), deployment=verify_deployment
         ),
     )
     assert deployment_calls == [APP_COMPOSE]
@@ -259,7 +270,7 @@ async def test_measurement_and_deployment_policy_are_bound_to_quote() -> None:
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(app_compose='{"changed":true}'),
-            NONCE,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_quote()),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
     assert raised.value.failure.code == 'measurement.app_compose_mrconfigid_mismatch'

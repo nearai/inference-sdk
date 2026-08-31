@@ -20,11 +20,13 @@ from verifiable_ai_sdk import (
 )
 
 from .fixtures import (
+    MODEL_CLIENT_BINDING,
     NONCE,
     TLS_FINGERPRINT,
     create_gateway_attestation,
+    create_gateway_tls_quote,
     create_model_attestation,
-    create_quote,
+    create_model_quote,
 )
 
 
@@ -58,14 +60,14 @@ async def test_model_response_accepts_equivalent_signer_hex() -> None:
             signing_address=f'0X{account.address[2:].upper()}',
         ),
     )
-    quote = create_quote(signing_address=account.address)
+    quote = create_model_quote(signing_address=account.address)
     attestation = await verify_model_attestation(
         create_model_attestation(
             signer=SigningIdentity(
                 signing_algo='ecdsa', signing_address=account.address
             )
         ),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
     )
 
@@ -96,7 +98,7 @@ async def test_gateway_response_verifies_ed25519_signature() -> None:
         signature=key_pair.sign(signed_text.encode()).signature.hex(),
         signer=SigningIdentity(signing_algo='ed25519', signing_address=public_key),
     )
-    quote = create_quote(signing_address=public_key)
+    quote = create_gateway_tls_quote(signing_address=public_key)
     attestation = await verify_gateway_attestation(
         create_gateway_attestation(
             signer=SigningIdentity(signing_algo='ed25519', signing_address=public_key),
@@ -128,9 +130,9 @@ async def test_response_verifier_rejects_the_other_signature_kind() -> None:
         create_model_attestation(
             signer=SigningIdentity(signing_algo='ecdsa', signing_address='11' * 20)
         ),
-        NONCE,
+        MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_quote(signing_address='11' * 20)
+            quote=lambda _: create_model_quote(signing_address='11' * 20)
         ),
     )
 

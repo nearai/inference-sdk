@@ -1,5 +1,5 @@
 use crate::errors::VerificationError;
-use crate::types::{GatewayTlsBinding, ModelTlsBinding, SigningAlgo, SigningIdentity};
+use crate::types::{SigningAlgo, SigningIdentity};
 use crate::util::{require_hex_length, sha256};
 
 pub fn verify_reported_nonce(
@@ -61,17 +61,47 @@ pub fn verify_advertised_report_data(
     Ok(())
 }
 
-pub fn verify_gateway_report_data_binding(
+/// Verify the signer-and-nonce report-data layout used when TLS binding is not
+/// requested. The first half is the signing address zero-padded to 32 bytes;
+/// the second half is the caller nonce.
+pub fn verify_report_data_binding(
     report_data: &[u8],
     nonce: &str,
     signing_address: &str,
-    reported_spki_fingerprint: &str,
-    peer_spki_fingerprint: Option<&str>,
-) -> Result<GatewayTlsBinding, VerificationError> {
+) -> Result<(), VerificationError> {
     verify_quote_report_data_nonce(report_data, nonce)?;
-    let reported = require_hex_length(reported_spki_fingerprint, 32).map_err(|_| {
+    let signing_address = decode_signing_address(signing_address)?;
+    let mut expected = vec![0u8; 32];
+    expected[..signing_address.len()].copy_from_slice(&signing_address);
+    if report_data[..32] != expected {
+        return Err(VerificationError::ReportDataMismatch {
+            binding: "signer_binding",
+        });
+    }
+    Ok(())
+}
+
+/// Verify the signer-and-TLS report-data layout held inside an Intel-signed
+/// quote:
+///
+/// - bytes [0, 32): SHA-256(signing-address bytes || TLS SPKI fingerprint)
+/// - bytes [32, 64): caller's 32-byte nonce
+///
+/// The returned normalized fingerprint is valid only after it matches the TLS
+/// peer observed by the client.
+pub fn verify_report_data_binding_with_tls_fingerprint(
+    report_data: &[u8],
+    nonce: &str,
+    signing_address: &str,
+    reported_tls_spki_fingerprint: Option<&str>,
+    peer_tls_spki_fingerprint: &str,
+) -> Result<String, VerificationError> {
+    verify_quote_report_data_nonce(report_data, nonce)?;
+    let reported_tls_spki_fingerprint =
+        reported_tls_spki_fingerprint.ok_or(VerificationError::TlsBindingRequired)?;
+    let reported = require_hex_length(reported_tls_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
-            field: "attestation.declared_spki_fingerprint".to_owned(),
+            field: "attestation.tls_spki_fingerprint".to_owned(),
             reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
         }
     })?;
@@ -83,12 +113,8 @@ pub fn verify_gateway_report_data_binding(
             binding: "signer_tls_binding",
         });
     }
-    let Some(peer_spki_fingerprint) = peer_spki_fingerprint else {
-        return Ok(GatewayTlsBinding::Attested {
-            spki_fingerprint: hex::encode(reported),
-        });
-    };
-    let peer = require_hex_length(peer_spki_fingerprint, 32).map_err(|_| {
+
+    let peer = require_hex_length(peer_tls_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
             field: "client_binding.peer_spki_fingerprint".to_owned(),
             reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
@@ -97,46 +123,7 @@ pub fn verify_gateway_report_data_binding(
     if reported != peer {
         return Err(VerificationError::SpkiFingerprintMismatch);
     }
-    Ok(GatewayTlsBinding::Peer {
-        spki_fingerprint: hex::encode(reported),
-    })
-}
-
-pub fn verify_cloud_model_report_data_binding(
-    report_data: &[u8],
-    nonce: &str,
-    signing_address: &str,
-    reported_spki_fingerprint: Option<&str>,
-) -> Result<ModelTlsBinding, VerificationError> {
-    verify_quote_report_data_nonce(report_data, nonce)?;
-
-    let signing_address = decode_signing_address(signing_address)?;
-    if let Some(fingerprint) = reported_spki_fingerprint {
-        let fingerprint =
-            require_hex_length(fingerprint, 32).map_err(|_| VerificationError::InvalidInput {
-                field: "attestation.declared_spki_fingerprint".to_owned(),
-                reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
-            })?;
-        let mut binding_data = signing_address;
-        binding_data.extend_from_slice(&fingerprint);
-        if report_data[..32] != sha256(binding_data) {
-            return Err(VerificationError::ReportDataMismatch {
-                binding: "signer_tls_binding",
-            });
-        }
-        return Ok(ModelTlsBinding::Declared {
-            spki_fingerprint: hex::encode(fingerprint),
-        });
-    }
-
-    let mut expected = vec![0u8; 32];
-    expected[..signing_address.len()].copy_from_slice(&signing_address);
-    if report_data[..32] != expected {
-        return Err(VerificationError::ReportDataMismatch {
-            binding: "signer_binding",
-        });
-    }
-    Ok(ModelTlsBinding::None)
+    Ok(hex::encode(reported))
 }
 
 pub fn verify_app_compose_mrconfigid_binding(

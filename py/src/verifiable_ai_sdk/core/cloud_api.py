@@ -34,7 +34,11 @@ from ..types.cloud_api import (
     FetchedModelAttestation,
     FetchedModelAttestations,
 )
-from ..types.verification import GatewayClientBinding
+from ..types.verification import (
+    GatewayAttestationPolicy,
+    GatewayClientBinding,
+    ModelClientBinding,
+)
 from ..utils.common import generate_nonce, hex_to_bytes
 from ..utils.consts import TIMEOUT
 from ..utils.errors import (
@@ -91,7 +95,10 @@ async def fetch_model_attestations(
     attestations = _decode_model_attestation_report(response.json)
     for attestation in attestations:
         _require_matching_api_nonce(attestation.nonce, nonce, 'model_attestation')
-    return FetchedModelAttestations(attestations=attestations, nonce=nonce)
+    return FetchedModelAttestations(
+        attestations=attestations,
+        client_binding=ModelClientBinding(nonce=nonce),
+    )
 
 
 async def fetch_model_attestation_for_signature(
@@ -103,7 +110,6 @@ async def fetch_model_attestation_for_signature(
 ) -> FetchedModelAttestation:
     """Fetch and select evidence for a ``provider_tee`` completion signature."""
 
-    _require_provider_signature(signature)
     fetched = await fetch_model_attestations(
         api_key,
         model,
@@ -112,10 +118,10 @@ async def fetch_model_attestation_for_signature(
         base_url=base_url,
     )
     return FetchedModelAttestation(
-        attestation=_select_model_attestation_for_signer(
-            fetched.attestations, signature.signer
+        attestation=find_model_attestation_for_signature(
+            fetched.attestations, signature
         ),
-        nonce=fetched.nonce,
+        client_binding=fetched.client_binding,
     )
 
 
@@ -126,21 +132,23 @@ def find_model_attestation_for_signature(
     """Select the sole model attestation advertised by a provider signature."""
 
     _require_provider_signature(signature)
-    return _select_model_attestation_for_signer(attestations, signature.signer)
+    return find_model_attestation_for_signer(attestations, signature.signer)
 
 
 async def fetch_gateway_attestation(
     api_key: str,
     *,
     signing_algo: SigningAlgo | None = None,
+    policy: GatewayAttestationPolicy | None = None,
     base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ) -> FetchedGatewayAttestation:
-    """Fetch Gateway evidence and capture the TLS peer for this request."""
+    """Fetch Gateway evidence using the requested TLS-binding policy."""
 
+    resolved_policy = GatewayAttestationPolicy() if policy is None else policy
     nonce = generate_nonce()
     query = {
         'nonce': nonce,
-        'include_tls_fingerprint': 'true',
+        'include_tls_fingerprint': str(resolved_policy.verify_tls_binding).lower(),
     }
     if signing_algo is not None:
         query['signing_algo'] = signing_algo
@@ -152,9 +160,18 @@ async def fetch_gateway_attestation(
             query,
         ),
         'gateway_attestation',
-        capture_peer_spki=True,
+        capture_peer_spki=resolved_policy.verify_tls_binding,
     )
     attestation = _decode_gateway_attestation_report(response.json)
+    if resolved_policy.verify_tls_binding and attestation.tls_spki_fingerprint is None:
+        raise api_failure(
+            'api.invalid_response',
+            {
+                'path': 'gateway_attestation.tls_cert_fingerprint',
+                'expected': '32-byte hexadecimal string',
+                'actual': 'missing',
+            },
+        )
     _require_matching_api_nonce(attestation.nonce, nonce, 'gateway_attestation')
     return FetchedGatewayAttestation(
         attestation=attestation,
@@ -162,6 +179,7 @@ async def fetch_gateway_attestation(
             nonce=nonce,
             peer_spki_fingerprint=response.peer_spki_fingerprint,
         ),
+        policy=resolved_policy,
     )
 
 
@@ -297,7 +315,6 @@ def _map_model_attestation(
         intel_quote=raw.intel_quote,
         event_log=raw.event_log,
         app_compose=raw.info.tcb_info.app_compose,
-        declared_spki_fingerprint=raw.tls_cert_fingerprint,
         reported_quote_data=raw.report_data,
         nvidia_payload=raw.nvidia_payload,
     )
@@ -312,7 +329,7 @@ def _map_gateway_attestation(
         intel_quote=raw.intel_quote,
         event_log=raw.event_log,
         app_compose=raw.info.tcb_info.app_compose,
-        declared_spki_fingerprint=raw.tls_cert_fingerprint,
+        tls_spki_fingerprint=raw.tls_cert_fingerprint,
         reported_quote_data=raw.report_data,
     )
 
@@ -394,7 +411,7 @@ def _api_signer(algorithm: str, address: str, label: str) -> SigningIdentity:
     return SigningIdentity(signing_algo=algorithm, signing_address=address)
 
 
-def _select_model_attestation_for_signer(
+def find_model_attestation_for_signer(
     attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
     signer: SigningIdentity,
 ) -> ModelAttestation:

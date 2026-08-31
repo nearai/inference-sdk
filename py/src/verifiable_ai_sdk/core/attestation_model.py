@@ -7,6 +7,7 @@ import json
 from ..types.verification import (
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
+    ModelClientBinding,
     NvidiaEvidenceVerifier,
     VerifiedModelAttestation,
 )
@@ -17,19 +18,20 @@ from ..utils.errors import (
     verification_failure,
 )
 from ..utils.nvidia import verify_nvidia_nras
-from .attestation_common import verify_model_report_data_binding, verify_reported_nonce
+from .attestation_common import verify_report_data_binding, verify_reported_nonce
 from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
 
 
 async def verify_model_attestation(
     attestation: ModelAttestation,
-    nonce: str,
+    client_binding: ModelClientBinding,
     *,
     policy: ModelAttestationPolicy | None = None,
     verifiers: ModelAttestationVerifiers | None = None,
 ) -> VerifiedModelAttestation:
     """Verify model evidence returned through NEAR AI Cloud."""
 
+    nonce = client_binding.nonce
     verified_quote = await verify_dstack_quote(
         attestation=attestation,
         advertised_report_data=attestation.reported_quote_data,
@@ -37,11 +39,10 @@ async def verify_model_attestation(
         policy=policy,
         quote_verifier=None if verifiers is None else verifiers.quote,
     )
-    tls_binding = verify_model_report_data_binding(
+    verify_report_data_binding(
         report_data=verified_quote.quote.report_data,
         nonce=nonce,
         signer=verified_quote.signer,
-        reported_spki_fingerprint=attestation.declared_spki_fingerprint,
     )
     evidence = await verify_dstack_deployment(
         verified_quote, None if verifiers is None else verifiers.deployment
@@ -58,7 +59,6 @@ async def verify_model_attestation(
         advisory_ids=evidence.advisory_ids,
         deployment=evidence.deployment,
         deployment_provenance=evidence.deployment_provenance,
-        tls_binding=tls_binding,
         gpu_evidence=gpu_evidence,
     )
 

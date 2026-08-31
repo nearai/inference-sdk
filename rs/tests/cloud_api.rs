@@ -3,9 +3,10 @@ use std::sync::Once;
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, ApiError, AttestationEventLog, AttestationEvidence,
     CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
-    CompletionSignatureReference, CompletionSignatureRequest, GatewayAttestationRequest,
-    ModelAttestation, ModelAttestationForSignatureRequest, ModelAttestationsRequest, SdkError,
-    SignatureUnavailable, SigningAlgo, SigningIdentity, VerificationError,
+    CompletionSignatureReference, CompletionSignatureRequest, GatewayAttestationPolicy,
+    GatewayAttestationRequest, ModelAttestation, ModelAttestationForSignatureRequest,
+    ModelAttestationsRequest, SdkError, SignatureUnavailable, SigningAlgo, SigningIdentity,
+    VerificationError,
 };
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
@@ -48,17 +49,24 @@ impl Respond for GatewayAttestationResponder {
             .find(|(key, _)| key == "nonce")
             .map(|(_, value)| value.into_owned())
             .expect("request contains a nonce");
+        let has_tls_fingerprint = request
+            .url
+            .query_pairs()
+            .any(|(key, value)| key == "include_tls_fingerprint" && value == "true");
+        let mut attestation = json!({
+            "request_nonce": nonce,
+            "signing_algo": "ed25519",
+            "signing_address": "22".repeat(32),
+            "intel_quote": "aa",
+            "event_log": [],
+            "report_data": "00".repeat(64),
+            "info": {"tcb_info": {"app_compose": "{}"}},
+        });
+        if has_tls_fingerprint {
+            attestation["tls_cert_fingerprint"] = json!("33".repeat(32));
+        }
         ResponseTemplate::new(200).set_body_json(json!({
-            "gateway_attestation": {
-                "request_nonce": nonce,
-                "signing_algo": "ed25519",
-                "signing_address": "22".repeat(32),
-                "intel_quote": "aa",
-                "event_log": [],
-                "tls_cert_fingerprint": "33".repeat(32),
-                "report_data": "00".repeat(64),
-                "info": {"tcb_info": {"app_compose": "{}"}},
-            }
+            "gateway_attestation": attestation,
         }))
     }
 }
@@ -85,7 +93,6 @@ fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
             event_log: AttestationEventLog::Entries(vec![]),
             app_compose: "{}".to_owned(),
         },
-        declared_spki_fingerprint: None,
         reported_quote_data: None,
         nvidia_payload: None,
     }
@@ -204,6 +211,8 @@ async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence
         .and(query_param("model", "glm-5.2"))
         .and(query_param("provider", "near"))
         .and(query_param("include_tls_fingerprint", "false"))
+        .and(query_param_is_missing("signing_algo"))
+        .and(query_param_is_missing("signing_address"))
         .and(header("x-no-aliasing", "true"))
         .respond_with(ModelAttestationResponder)
         .mount(&server)
@@ -217,7 +226,10 @@ async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence
         .unwrap();
 
     assert_eq!(fetched.attestations.len(), 1);
-    assert_eq!(fetched.attestations[0].evidence.nonce, fetched.nonce);
+    assert_eq!(
+        fetched.attestations[0].evidence.nonce,
+        fetched.client_binding.nonce
+    );
     assert_eq!(fetched.attestations[0].nvidia_payload, None);
 }
 
@@ -298,10 +310,71 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
         fetched.client_binding.nonce
     );
     assert_eq!(
-        fetched.attestation.declared_spki_fingerprint,
-        "33".repeat(32)
+        fetched.attestation.tls_spki_fingerprint,
+        Some("33".repeat(32))
     );
     assert_eq!(fetched.client_binding.peer_spki_fingerprint, None);
+    assert!(fetched.policy.verify_tls_binding);
+}
+
+#[tokio::test]
+async fn gateway_attestation_request_can_disable_tls_binding() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .and(query_param("include_tls_fingerprint", "false"))
+        .respond_with(GatewayAttestationResponder)
+        .mount(&server)
+        .await;
+    let policy = GatewayAttestationPolicy {
+        verify_tls_binding: false,
+        ..Default::default()
+    };
+
+    let fetched = GatewayAttestationRequest::new(test_api_key())
+        .base_url(base_url(&server))
+        .unwrap()
+        .policy(policy)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(fetched.attestation.tls_spki_fingerprint, None);
+    assert!(!fetched.policy.verify_tls_binding);
+}
+
+#[tokio::test]
+async fn gateway_attestation_request_rejects_missing_tls_fingerprint_when_enabled() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .and(query_param("include_tls_fingerprint", "true"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "gateway_attestation": {
+                "request_nonce": "00".repeat(32),
+                "signing_algo": "ed25519",
+                "signing_address": "22".repeat(32),
+                "intel_quote": "aa",
+                "event_log": [],
+                "report_data": "00".repeat(64),
+                "info": {"tcb_info": {"app_compose": "{}"}},
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let error = GatewayAttestationRequest::new(test_api_key())
+        .base_url(base_url(&server))
+        .unwrap()
+        .send()
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::Api(ApiError::InvalidResponse { ref path, .. })
+            if path == "gateway_attestation.tls_cert_fingerprint"
+    ));
 }
 
 #[tokio::test]

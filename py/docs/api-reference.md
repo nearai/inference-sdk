@@ -10,14 +10,14 @@ Response verification functions are synchronous.
 
 | Function | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
-| `fetch_completion_signature` | `(api_key, completion_id, *, signing_algo=None, base_url=...)` | `CompletionSignature` | Fetches one completion signature. Raises if Cloud API reports that no signature is available. |
+| `fetch_completion_signature` | `(api_key, completion_id, *, signing_algo=None, base_url=...)` | `CompletionSignature` | Fetches one completion signature or raises when none is available. |
 | `lookup_completion_signature` | `(api_key, completion_id, *, signing_algo=None, base_url=...)` | `CompletionSignatureLookup` | Fetches one signature or a service-provided unavailable result. |
-| `fetch_model_attestations` | `(api_key, model, *, signing_algo=None, signing_address=None, base_url=...)` | `FetchedModelAttestations` | Fetches model evidence for a canonical model, optionally filtered by signer. |
-| `fetch_model_attestation_for_signature` | `(api_key, model, signature, *, base_url=...)` | `FetchedModelAttestation` | Fetches and selects model evidence for a `provider_tee` signer. |
-| `find_model_attestation_for_signature` | `(attestations, signature)` | `ModelAttestation` | Selects the single model attestation for a `provider_tee` signer. It does not verify evidence. |
-| `fetch_gateway_attestation` | `(api_key, *, signing_algo=None, base_url=...)` | `FetchedGatewayAttestation` | Fetches Gateway evidence, requests its TLS fingerprint, and captures the TLS peer for that HTTPS request. |
-| `verify_model_attestation` | `(attestation, nonce, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies model attestation evidence. |
-| `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway evidence and its quote-bound TLS identity. By default, it requires the observed TLS peer binding. |
+| `fetch_model_attestations` | `(api_key, model, *, signing_algo=None, signing_address=None, base_url=...)` | `FetchedModelAttestations` | Fetches model evidence; optional signer fields narrow the API response. |
+| `fetch_model_attestation_for_signature` | `(api_key, model, signature, *, base_url=...)` | `FetchedModelAttestation` | Fetches and locally selects model evidence for a `provider_tee` signer. |
+| `find_model_attestation_for_signature` | `(attestations, signature)` | `ModelAttestation` | Locally selects the sole evidence item for a `provider_tee` signer. |
+| `fetch_gateway_attestation` | `(api_key, *, signing_algo=None, policy=None, base_url=...)` | `FetchedGatewayAttestation` | Fetches Gateway evidence using the selected TLS-binding policy. |
+| `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies model attestation evidence. |
+| `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway evidence using the selected quote binding layout. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes signed by a `provider_tee` signer. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes signed by a `gateway` signer. |
 
@@ -27,23 +27,19 @@ The request helpers do not send completion requests or retain completion bytes.
 Python uses ordinary function parameters: `api_key` comes first, required
 request fields follow, and optional fields are keyword-only.
 
-### Shared Cloud parameters
+### Shared parameters
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `api_key` | `str` | Yes | — | Bearer token for signature and evidence requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Cloud API base URL. |
 
-The SDK owns the HTTP request for every helper. The native Gateway helper
-captures the TLS peer SPKI fingerprint for its exact evidence request.
-
 ### Signature helpers
 
 | Function | Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `lookup_completion_signature` and `fetch_completion_signature` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
-|  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Omit it to use the service default. |
+| --- | --- | --- | --- | --- |
+| `lookup_completion_signature` and `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
+|  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Omit it for the service default. |
 
 `lookup_completion_signature` returns `CompletionSignatureLookup`, whose
 `status` is either `'found'` with `signature`, or `'unavailable'` with the
@@ -51,86 +47,86 @@ service's `unavailable` error. `fetch_completion_signature` is the strict
 form: an unavailable 2xx response raises `ApiError` with
 `api.completion_signature_unavailable`.
 
-| `CompletionSignatureLookup` state | Available field | Type | Description |
-| --- | --- | --- | --- |
-| `status == 'found'` | `signature` | `CompletionSignature` | Signature returned by Cloud API. |
-| `status == 'unavailable'` | `unavailable` | `SignatureUnavailable` | Service-provided `error_code` and `message` from a 2xx response. |
-
 ### Model-attestation helpers
 
 | Function | Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
-| `fetch_model_attestations` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `model` | `str` | Yes | Canonical model ID. |
-|  | `signing_algo` | `SigningAlgo \| None` | No | Optional signer filter. |
-|  | `signing_address` | `str \| None` | No | Optional signer filter. Supply it when requesting evidence for a `provider_tee` response signature. |
-| `fetch_model_attestation_for_signature` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `model` | `str` | Yes | Canonical model ID. |
-|  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. Its signer selects the evidence. A full `CompletionSignature` also works. |
+| --- | --- | --- | --- | --- |
+| `fetch_model_attestations` | `model` | `str` | Yes | Canonical model ID. |
+|  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the advertised signing algorithm. |
+|  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. |
+| `fetch_model_attestation_for_signature` | `model` | `str` | Yes | Canonical model ID. |
+|  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. The helper uses its signer as request filters and then performs local selection. |
 | `find_model_attestation_for_signature` | `attestations` | `tuple[ModelAttestation, ...] \| list[ModelAttestation]` | Yes | Evidence returned by `fetch_model_attestations`. Exactly one item must match the signer. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |
 
-Every model-attestation fetch generates a fresh 32-byte client nonce, checks
-Cloud API's echoed nonce, and returns the nonce with raw evidence. Pass it to
-`verify_model_attestation`.
+Every model-attestation fetch generates a fresh 32-byte client nonce, requests
+`include_tls_fingerprint=false`, checks Cloud API's echoed nonce, and returns a
+`ModelClientBinding` with the raw evidence. `signing_algo` and
+`signing_address` only narrow the remote response: use
+`find_model_attestation_for_signature` to match a completion signature locally
+before verifying it.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `FetchedModelAttestations` | `nonce` | `str` | Client nonce generated and sent by the SDK. |
-|  | `attestations` | `tuple[ModelAttestation, ...]` | Cloud API model attestations. The SDK currently requires exactly one item. |
-| `FetchedModelAttestation` | `nonce` | `str` | Client nonce generated and sent by the SDK. |
-|  | `attestation` | `ModelAttestation` | Evidence selected for the `provider_tee` signer. |
+| `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Cloud API model attestations. The SDK currently requires exactly one item. |
+|  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
+| `FetchedModelAttestation` | `attestation` | `ModelAttestation` | Evidence selected for the `provider_tee` signer. |
+|  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
 
 ### Gateway-attestation helper
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-| `signing_algo` | `SigningAlgo \| None` | No | Gateway signing algorithm. Omit it to use the Cloud API default; for a Gateway response, pass `signature.signer.signing_algo`. |
+| `signing_algo` | `SigningAlgo \| None` | No | Gateway signing algorithm. For a Gateway response, pass `signature.signer.signing_algo`. |
+| `policy` | `GatewayAttestationPolicy \| None` | No | Controls both `include_tls_fingerprint` in the request and the later quote binding layout. Defaults to `GatewayAttestationPolicy()`. |
 
 `fetch_gateway_attestation` generates a fresh nonce, checks its echoed value,
-requests TLS-fingerprint evidence, and captures the SHA-256 SPKI fingerprint
-from the TLS connection for that HTTPS request. If the HTTP runtime cannot
-expose that connection, `client_binding.peer_spki_fingerprint` is `None` and
-the default Gateway policy rejects the result at verification time.
+and returns the resolved policy with the evidence. With the default
+`verify_tls_binding=True`, it requests TLS-fingerprint evidence and the native
+helper captures the SHA-256 SPKI fingerprint from the TLS connection for that
+exact HTTPS request. With `verify_tls_binding=False`, it sends
+`include_tls_fingerprint=false` and does not capture a peer fingerprint.
 
 | `FetchedGatewayAttestation` field | Type | Description |
 | --- | --- | --- |
 | `attestation` | `GatewayAttestation` | Returned Gateway evidence. |
 | `client_binding` | `GatewayClientBinding` | Client values associated with this evidence request. |
+| `policy` | `GatewayAttestationPolicy` | Resolved fetch policy; pass it to `verify_gateway_attestation`. |
 
-| `GatewayClientBinding` field | Type | Description |
+| Client-binding field | Type | Description |
 | --- | --- | --- |
-| `nonce` | `str` | Client nonce generated and sent by the SDK. |
-| `peer_spki_fingerprint` | `str \| None` | SHA-256 SPKI fingerprint observed for this exact HTTPS request. The default Gateway policy requires it; set `verify_peer_tls_binding=False` only if it is unavailable. |
+| `ModelClientBinding.nonce` | `str` | Client nonce generated and sent by the matching model-evidence fetch. |
+| `GatewayClientBinding.nonce` | `str` | Client nonce generated and sent by the matching Gateway-evidence fetch. |
+| `GatewayClientBinding.peer_spki_fingerprint` | `str \| None` | SHA-256 SPKI fingerprint observed for that exact Gateway-evidence HTTPS request when TLS binding was enabled and the runtime exposes it. |
 
 ## Verification functions
 
 ### Attestation verification
 
 | Function | Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | `verify_model_attestation` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
-|  | `nonce` | `str` | Yes | Client nonce returned by the matching model-evidence fetch. |
+|  | `client_binding` | `ModelClientBinding` | Yes | Client binding returned by the matching model-evidence fetch. |
 |  | `policy` | `ModelAttestationPolicy \| None` | No | TCB and GPU-evidence requirements. |
 |  | `verifiers` | `ModelAttestationVerifiers \| None` | No | Quote, deployment, and NVIDIA verifier overrides. |
 | `verify_gateway_attestation` | `attestation` | `GatewayAttestation` | Yes | Raw Gateway evidence. |
 |  | `client_binding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-evidence fetch. |
-|  | `policy` | `GatewayAttestationPolicy \| None` | No | TCB and peer TLS binding requirements. |
+|  | `policy` | `GatewayAttestationPolicy \| None` | No | TCB and TLS-binding requirements. Use the paired fetch result's `policy`. |
 |  | `verifiers` | `AttestationVerifiers \| None` | No | Quote and deployment verifier overrides. |
 
-`client_binding.nonce` must come from the matching fetch result.
-`GatewayAttestationPolicy.verify_peer_tls_binding` defaults to `True`: a
-missing peer fingerprint fails verification, and a supplied fingerprint must
-match the fingerprint authenticated by the quote. Set it to `False` only when
-no peer certificate is available. The SDK then ignores any supplied peer
-fingerprint, still verifies the nonce and quote-bound TLS identity, and returns
-`GatewayTlsBinding(kind='attested', ...)`.
+`client_binding.nonce` must come from the matching fetch result. Model evidence
+always verifies the signer-and-nonce report-data layout and has no TLS-binding
+result. `GatewayAttestationPolicy.verify_tls_binding` defaults to `True`: the
+Gateway fetch requests a TLS fingerprint, and verification requires the quote
+fingerprint to match the TLS peer observed for that request. Set it to `False`
+before fetching only when no peer certificate is available. The resulting
+Gateway verification instead checks signer-and-nonce report data and returns
+`GatewayTlsBinding(kind='none')`.
 
 ### Response verification
 
 | Function | Parameter | Type | Required | Description |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | `verify_model_response` | `request_body` | `bytes` | Yes | Exact bytes sent to the completion endpoint. |
 |  | `response_body` | `bytes` | Yes | Exact bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind='provider_tee'`. |
@@ -139,10 +135,6 @@ fingerprint, still verifies the nonce and quote-bound TLS identity, and returns
 |  | `response_body` | `bytes` | Yes | Exact bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind='gateway'`. |
 |  | `attestation` | `VerifiedGatewayAttestation` | Yes | Verified Gateway evidence whose signer must match the signature. |
-
-Call the matching attestation verifier before response verification. Verified
-results are ordinary data, so callers decide when raw evidence must be verified
-again after storage, transfer, or reconstruction in another process.
 
 ## Evidence, signatures, policies, and results
 
@@ -161,10 +153,9 @@ again after storage, transfer, or reconstruction in another process.
 |  | `intel_quote` | `str` | Intel TDX quote. |
 |  | `event_log` | `AttestationEventLog` | Input used to replay RTMR3 measurements. |
 |  | `app_compose` | `str` | Measured compose configuration text. |
-|  | `declared_spki_fingerprint` | `str \| None` | Optional service-declared fingerprint for model evidence; not a caller-observed TLS peer. |
 | `ModelAttestation` | `reported_quote_data` | `str \| None` | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `nvidia_payload` | `str \| None` | Optional GPU evidence payload. |
-| `GatewayAttestation` | `declared_spki_fingerprint` | `str` | Gateway TLS fingerprint authenticated by the quote. |
+| `GatewayAttestation` | `tls_spki_fingerprint` | `str \| None` | TLS fingerprint returned only for a TLS-binding evidence request. It is required by the enabled verification path. |
 |  | `reported_quote_data` | `str` | Gateway report-data copy required by Gateway verification. |
 
 `CompletionSignatureKind` is `Literal['provider_tee', 'gateway']` and
@@ -175,15 +166,13 @@ again after storage, transfer, or reconstruction in another process.
 | Type | Field or signature | Default | Description |
 | --- | --- | --- | --- |
 | `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate` and `OutOfDate`. |
-| `ModelAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. The default accepts `UpToDate` and `OutOfDate`. |
+| `ModelAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. |
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
-| `GatewayAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. The default accepts `UpToDate` and `OutOfDate`. |
-|  | `verify_peer_tls_binding` | `True` | Require and compare the TLS peer observed for the evidence request. Set to `False` only when no peer certificate is available; any supplied peer fingerprint is then ignored. |
+| `GatewayAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. |
+|  | `verify_tls_binding` | `True` | Controls both evidence retrieval and verification. `True` selects signer + TLS fingerprint + nonce and requires the observed peer; `False` selects signer + nonce and returns no TLS binding. |
 | `AttestationVerifiers` | `quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
 |  | `deployment` | absent | Optional deployment-acceptance verifier. |
-| `ModelAttestationVerifiers` | `quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
-|  | `deployment` | absent | Optional deployment-acceptance verifier. |
-|  | `nvidia` | built in | Optional replacement for the NVIDIA NRAS verifier. |
+| `ModelAttestationVerifiers` | `nvidia` | built in | Optional replacement for the NVIDIA NRAS verifier. |
 | `QuoteVerifier` | `(quote: str) -> QuoteVerificationResult \| Awaitable[QuoteVerificationResult]` | — | Authenticates a quote and returns verified fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
 | `NvidiaEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
@@ -191,10 +180,6 @@ again after storage, transfer, or reconstruction in another process.
 The default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and accepts its
 documented boolean overall result. It does not locally validate the returned
 JWT/EAT signature.
-
-`TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
-`ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -218,12 +203,8 @@ JWT/EAT signature.
 |  | `advisory_ids` | `tuple[str, ...]` | Quote advisory IDs. |
 |  | `deployment` | `MeasuredDeployment` | Verified deployment measurements. |
 |  | `deployment_provenance` | `'not_checked' \| 'verified'` | Whether a supplied deployment verifier accepted the deployment. |
-| `VerifiedModelAttestation` | `tls_binding` | `ModelTlsBinding` | `none` or a service-declared fingerprint binding; not client-to-model TLS proof. |
-|  | `gpu_evidence` | `'not_provided' \| 'verified'` | GPU-evidence verification outcome. |
-| `VerifiedGatewayAttestation` | `tls_binding` | `GatewayTlsBinding` | `peer` when the observed peer matched; `attested` when peer binding was explicitly disabled. |
+| `VerifiedModelAttestation` | `gpu_evidence` | `'not_provided' \| 'verified'` | GPU-evidence verification outcome. It has no TLS-binding field. |
+| `VerifiedGatewayAttestation` | `tls_binding` | `GatewayTlsBinding` | `attested` when TLS binding was enabled and matched the observed peer; `none` when the no-TLS policy selected signer-and-nonce evidence. |
 
-`ModelTlsBinding` is either `ModelTlsBinding(kind='none')` or
-`ModelTlsBinding(kind='declared', spki_fingerprint=...)`.
-`GatewayTlsBinding` is either `GatewayTlsBinding(kind='peer',
-spki_fingerprint=...)` or, only when peer binding was explicitly disabled,
+`GatewayTlsBinding` is either `GatewayTlsBinding(kind='none')` or
 `GatewayTlsBinding(kind='attested', spki_fingerprint=...)`.

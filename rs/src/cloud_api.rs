@@ -2,8 +2,9 @@ use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, Verific
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     CompletionSignatureLookup, CompletionSignatureReference, FetchedGatewayAttestation,
-    FetchedModelAttestation, FetchedModelAttestations, GatewayAttestation, GatewayClientBinding,
-    ModelAttestation, SignatureUnavailable, SigningAlgo, SigningIdentity,
+    FetchedModelAttestation, FetchedModelAttestations, GatewayAttestation,
+    GatewayAttestationPolicy, GatewayClientBinding, ModelAttestation, ModelClientBinding,
+    SignatureUnavailable, SigningAlgo, SigningIdentity,
 };
 use crate::util::{decode_hex, generate_nonce, require_hex_length, sha256};
 use reqwest::{
@@ -144,13 +145,12 @@ impl<'a> ModelAttestationForSignatureRequest<'a> {
     /// Fetch model evidence and select the candidate matching the signature
     /// signer.
     pub async fn send(self) -> Result<FetchedModelAttestation, SdkError> {
-        require_provider_signature(self.signature)?;
         let fetched = self.request.send().await?;
         let attestation =
             find_model_attestation_for_signature(&fetched.attestations, self.signature)?.clone();
         Ok(FetchedModelAttestation {
             attestation,
-            nonce: fetched.nonce,
+            client_binding: fetched.client_binding,
         })
     }
 }
@@ -159,6 +159,7 @@ impl<'a> ModelAttestationForSignatureRequest<'a> {
 pub struct GatewayAttestationRequest {
     config: CloudApiRequestConfig,
     signing_algo: Option<SigningAlgo>,
+    policy: GatewayAttestationPolicy,
 }
 
 impl GatewayAttestationRequest {
@@ -166,6 +167,7 @@ impl GatewayAttestationRequest {
         Self {
             config: CloudApiRequestConfig::new(api_key),
             signing_algo: None,
+            policy: GatewayAttestationPolicy::default(),
         }
     }
 
@@ -181,10 +183,18 @@ impl GatewayAttestationRequest {
         self
     }
 
+    /// Set the TLS and TCB policy to use for this evidence request. The TLS
+    /// setting controls both `include_tls_fingerprint` and the report-data
+    /// layout that must later be verified.
+    pub fn policy(mut self, policy: GatewayAttestationPolicy) -> Self {
+        self.policy = policy;
+        self
+    }
+
     /// Fetch Gateway evidence with a fresh nonce and the TLS peer observed by
     /// reqwest for this exact HTTPS request, when the runtime exposes it.
     pub async fn send(self) -> Result<FetchedGatewayAttestation, SdkError> {
-        fetch_gateway_attestation_with_config(&self.config, self.signing_algo).await
+        fetch_gateway_attestation_with_config(&self.config, self.signing_algo, self.policy).await
     }
 }
 
@@ -254,7 +264,7 @@ pub async fn fetch_model_attestation_for_signature(
 /// Fetch standalone Gateway evidence using the production endpoint. The
 /// built-in reqwest client records the TLS peer certificate for the evidence
 /// request when the runtime exposes it. Use [`GatewayAttestationRequest`] to
-/// select another signing algorithm or endpoint.
+/// select another signing algorithm, policy, or endpoint.
 pub async fn fetch_gateway_attestation(
     api_key: &str,
 ) -> Result<FetchedGatewayAttestation, SdkError> {
@@ -304,9 +314,16 @@ pub fn find_model_attestation_for_signature<'a>(
     signature: &CompletionSignatureReference,
 ) -> Result<&'a ModelAttestation, SdkError> {
     require_provider_signature(signature)?;
+    find_model_attestation_for_signer(attestations, &signature.signer)
+}
+
+fn find_model_attestation_for_signer<'a>(
+    attestations: &'a [ModelAttestation],
+    signer: &SigningIdentity,
+) -> Result<&'a ModelAttestation, SdkError> {
     let mut matches = Vec::new();
     for attestation in attestations {
-        if signer_matches(&attestation.evidence.signer, &signature.signer) {
+        if signer_matches(&attestation.evidence.signer, signer) {
             matches.push(attestation);
         }
     }
@@ -377,13 +394,14 @@ async fn fetch_model_attestations_with_config(
     }
     Ok(FetchedModelAttestations {
         attestations,
-        nonce,
+        client_binding: ModelClientBinding { nonce },
     })
 }
 
 async fn fetch_gateway_attestation_with_config(
     config: &CloudApiRequestConfig,
     signing_algo: Option<SigningAlgo>,
+    policy: GatewayAttestationPolicy,
 ) -> Result<FetchedGatewayAttestation, SdkError> {
     let nonce = generate_nonce();
     let mut url = config.endpoint("attestation/report")?;
@@ -393,7 +411,14 @@ async fn fetch_gateway_attestation_with_config(
         if let Some(signing_algo) = signing_algo {
             query.append_pair("signing_algo", &signing_algo.to_string());
         }
-        query.append_pair("include_tls_fingerprint", "true");
+        query.append_pair(
+            "include_tls_fingerprint",
+            if policy.verify_tls_binding {
+                "true"
+            } else {
+                "false"
+            },
+        );
     }
     let cloud_response =
         get_cloud_api_response(config, url, ApiResource::GatewayAttestation, None).await?;
@@ -403,6 +428,13 @@ async fn fetch_gateway_attestation_with_config(
         "gateway_attestation",
     )?;
     let attestation = map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
+    if policy.verify_tls_binding && attestation.tls_spki_fingerprint.is_none() {
+        return Err(ApiError::InvalidResponse {
+            path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
+            expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
+        }
+        .into());
+    }
     require_matching_api_nonce(
         &attestation.evidence.nonce,
         &nonce,
@@ -414,6 +446,7 @@ async fn fetch_gateway_attestation_with_config(
             nonce,
             peer_spki_fingerprint: cloud_response.peer_spki_fingerprint,
         },
+        policy,
     })
 }
 
@@ -628,11 +661,9 @@ fn map_model_attestation(
     value: WireModelAttestation,
     path: &str,
 ) -> Result<ModelAttestation, ApiError> {
-    let (evidence, declared_spki_fingerprint, reported_quote_data) =
-        map_evidence(value.attestation, path)?;
+    let (evidence, reported_quote_data) = map_evidence(value.attestation, path)?;
     Ok(ModelAttestation {
         evidence,
-        declared_spki_fingerprint,
         reported_quote_data,
         nvidia_payload: value.nvidia_payload,
     })
@@ -642,19 +673,15 @@ fn map_gateway_attestation(
     value: WireAttestation,
     path: &str,
 ) -> Result<GatewayAttestation, ApiError> {
-    let (evidence, declared_spki_fingerprint, reported_quote_data) = map_evidence(value, path)?;
-    let declared_spki_fingerprint =
-        declared_spki_fingerprint.ok_or_else(|| ApiError::InvalidResponse {
-            path: format!("{path}.tls_cert_fingerprint"),
-            expected: "a string".to_owned(),
-        })?;
+    let tls_spki_fingerprint = value.tls_cert_fingerprint.clone();
+    let (evidence, reported_quote_data) = map_evidence(value, path)?;
     let reported_quote_data = reported_quote_data.ok_or_else(|| ApiError::InvalidResponse {
         path: format!("{path}.report_data"),
         expected: "a string".to_owned(),
     })?;
     Ok(GatewayAttestation {
         evidence,
-        declared_spki_fingerprint,
+        tls_spki_fingerprint,
         reported_quote_data,
     })
 }
@@ -662,7 +689,7 @@ fn map_gateway_attestation(
 fn map_evidence(
     value: WireAttestation,
     path: &str,
-) -> Result<(AttestationEvidence, Option<String>, Option<String>), ApiError> {
+) -> Result<(AttestationEvidence, Option<String>), ApiError> {
     validate_api_nonce(&value.request_nonce, &format!("{path}.request_nonce"))?;
     validate_api_signing_identity(
         value.signing_algo,
@@ -680,7 +707,6 @@ fn map_evidence(
             event_log: value.event_log,
             app_compose: value.info.tcb_info.app_compose,
         },
-        value.tls_cert_fingerprint,
         value.report_data,
     ))
 }
@@ -933,7 +959,6 @@ mod tests {
                 "model_attestations[0]",
             )
             .unwrap();
-            assert_eq!(attestation.declared_spki_fingerprint, None);
             assert_eq!(attestation.reported_quote_data, None);
             assert_eq!(attestation.nvidia_payload, None);
         }
@@ -968,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn gateway_response_requires_a_tls_fingerprint() {
+    fn gateway_response_allows_an_omitted_tls_fingerprint() {
         let response: WireGatewayAttestationResponse = decode_test_wire(
             json!({
                 "gateway_attestation": {
@@ -985,14 +1010,10 @@ mod tests {
             "gateway_attestation",
         )
         .unwrap();
-        let error = map_gateway_attestation(response.gateway_attestation, "gateway_attestation")
-            .unwrap_err();
+        let attestation =
+            map_gateway_attestation(response.gateway_attestation, "gateway_attestation").unwrap();
 
-        assert!(matches!(
-            error,
-            ApiError::InvalidResponse { ref path, .. }
-                if path == "gateway_attestation.tls_cert_fingerprint"
-        ));
+        assert_eq!(attestation.tls_spki_fingerprint, None);
     }
 
     #[test]

@@ -52,7 +52,9 @@ class ModelAttestationPolicy(AttestationPolicy):
 class GatewayAttestationPolicy(AttestationPolicy):
     """Policy controls specific to Gateway evidence verification."""
 
-    verify_peer_tls_binding: bool = True
+    #: Request and verify TLS fingerprint evidence. When false, use the
+    #: signer-and-nonce report-data layout instead.
+    verify_tls_binding: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -67,9 +69,10 @@ class ModelAttestationVerifiers(AttestationVerifiers):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ModelTlsBinding:
-    kind: Literal['none', 'declared']
-    spki_fingerprint: str | None = None
+class ModelClientBinding:
+    """Values supplied by the client for a model-attestation request."""
+
+    nonce: str
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,8 +85,8 @@ class GatewayClientBinding:
 
 @dataclass(frozen=True, kw_only=True)
 class GatewayTlsBinding:
-    kind: Literal['attested', 'peer']
-    spki_fingerprint: str
+    kind: Literal['none', 'attested']
+    spki_fingerprint: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -97,7 +100,6 @@ class VerifiedAttestationEvidence:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelAttestation(VerifiedAttestationEvidence):
-    tls_binding: ModelTlsBinding
     gpu_evidence: Literal['not_provided', 'verified']
 
 
@@ -118,7 +120,7 @@ __all__ = [
     'GatewayAttestationPolicy',
     'AttestationVerifiers',
     'ModelAttestationVerifiers',
-    'ModelTlsBinding',
+    'ModelClientBinding',
     'GatewayClientBinding',
     'GatewayTlsBinding',
     'VerifiedAttestationEvidence',

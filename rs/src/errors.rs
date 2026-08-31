@@ -145,8 +145,8 @@ pub enum VerificationError {
     #[error("GPU evidence is required by policy but was not provided")]
     GpuEvidenceRequired,
 
-    #[error("a client-observed Gateway TLS peer is required by policy")]
-    PeerTlsBindingRequired,
+    #[error("Gateway TLS binding is required by policy")]
+    TlsBindingRequired,
 
     #[error("attestation nonce binding did not match ({binding})")]
     NonceMismatch { binding: &'static str },
@@ -225,7 +225,7 @@ impl VerificationError {
             Self::DebugEnabled => "policy.debug_enabled",
             Self::TcbStatusNotAllowed { .. } => "policy.tcb_status_not_allowed",
             Self::GpuEvidenceRequired => "policy.gpu_evidence_required",
-            Self::PeerTlsBindingRequired => "policy.peer_tls_binding_required",
+            Self::TlsBindingRequired => "policy.tls_binding_required",
             Self::NonceMismatch { .. } => "binding.nonce_mismatch",
             Self::ReportDataInvalid { .. } => "binding.report_data_invalid",
             Self::ReportDataMismatch { .. } => "binding.report_data_mismatch",

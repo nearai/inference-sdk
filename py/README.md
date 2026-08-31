@@ -24,13 +24,15 @@ The SDK does not send completion requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
 
 `fetch_gateway_attestation` returns `FetchedGatewayAttestation` with raw
-evidence and `client_binding`. The native helper obtains the SHA-256 SPKI
-fingerprint from the TLS connection for that exact HTTPS request. Pass the
-binding to `verify_gateway_attestation`; the default Gateway policy requires a
-peer fingerprint. A runtime without peer-certificate access must explicitly use
-`GatewayAttestationPolicy(verify_peer_tls_binding=False)`. That path still
-verifies the nonce and quote-bound TLS identity, returns an `attested` TLS
-binding, and ignores any supplied peer fingerprint.
+evidence, `client_binding`, and the resolved `policy`. The native helper obtains
+the SHA-256 SPKI fingerprint from the TLS connection for that exact HTTPS
+request. Pass both the binding and returned policy to
+`verify_gateway_attestation`; by default it requires the observed peer to match
+the fingerprint authenticated in the quote. A runtime without peer-certificate
+access must fetch with
+`GatewayAttestationPolicy(verify_tls_binding=False)`, then pass the returned
+policy to verification. That path requests no TLS fingerprint, verifies the
+signer-and-nonce quote layout, and returns `GatewayTlsBinding(kind='none')`.
 
 ## Documentation
 
