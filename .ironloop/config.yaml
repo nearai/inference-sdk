@@ -1,4 +1,3 @@
-# Review, Resolve, and Test start Agent Runs only for pull requests whose head belongs to this repository.
 version: 1
 
 implementer: {}
