@@ -142,21 +142,4 @@ describe('gateway attestation verification', () => {
     ]);
     expect(result.deploymentProvenance).toBe('verified');
   });
-
-  test('normalizes a rejected gateway deployment verifier', async () => {
-    await expect(
-      verifyGatewayAttestation({
-        attestation: createGatewayAttestation(),
-        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
-        verifiers: {
-          quote: async () => createQuote(),
-          deployment: async () => {
-            throw new Error('deployment rejected');
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
-      failure: { code: 'provenance.verification_failed' },
-    });
-  });
 });

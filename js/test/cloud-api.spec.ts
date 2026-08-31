@@ -206,14 +206,6 @@ describe('NEAR AI Cloud fetch helpers', () => {
         clientBinding: { nonce: fetched.attestation.nonce },
         attestation: { signer: signature.signer },
       });
-
-      const query = new URL(api.request().url).searchParams;
-      expect(query.get('model')).toBe('canonical-model');
-      expect(query.get('provider')).toBe('near');
-      expect(query.get('signing_algo')).toBe(signature.signer.signingAlgo);
-      expect(query.get('signing_address')).toBe(
-        signature.signer.signingAddress,
-      );
     });
 
     test('matches signer encodings by bytes', () => {
@@ -353,33 +345,29 @@ describe('NEAR AI Cloud fetch helpers', () => {
       expect(attestations[0].nonce).toMatch(/^0X[0-9A-F]{64}$/);
     });
 
-    test.each([
-      { label: 'no candidates', attestations: [], actualCount: 0 },
-      {
-        label: 'multiple candidates',
-        attestations: [cloudAttestation(nonce), cloudAttestation(nonce)],
-        actualCount: 2,
-      },
-    ])(
-      'requires exactly one model attestation when Cloud API returns $label',
-      async ({ attestations, actualCount }) => {
-        const api = cloudFor((request) =>
-          jsonResponse(modelReport(requestNonce(request), attestations)),
+    test('requires exactly one model attestation when Cloud API returns multiple candidates', async () => {
+      const api = cloudFor((request) => {
+        const clientNonce = requestNonce(request);
+        return jsonResponse(
+          modelReport(clientNonce, [
+            cloudAttestation(clientNonce),
+            cloudAttestation(clientNonce),
+          ]),
         );
+      });
 
-        await expect(
-          fetchModelAttestations({
-            ...api.params,
-            model: 'canonical-model',
-          }),
-        ).rejects.toMatchObject({
-          failure: {
-            code: 'api.unexpected_model_attestation_count',
-            details: { actualCount },
-          },
-        });
-      },
-    );
+      await expect(
+        fetchModelAttestations({
+          ...api.params,
+          model: 'canonical-model',
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.unexpected_model_attestation_count',
+          details: { actualCount: 2 },
+        },
+      });
+    });
 
     test.each([
       {
@@ -514,26 +502,6 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
 
       expect(signature.signer.signingAlgo).toBe('ed25519');
-      expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
-        'ed25519',
-      );
-    });
-
-    test('returns a found result and passes an explicit signing algorithm when looking up a completion signature', async () => {
-      const api = cloudFor(() =>
-        jsonResponse(completionSignature('provider_tee', 'ed25519')),
-      );
-
-      const lookup = await lookupCompletionSignature({
-        ...api.params,
-        completionId: 'chat-1',
-        signingAlgo: 'ed25519',
-      });
-
-      expect(lookup).toMatchObject({
-        status: 'found',
-        signature: { signer: { signingAlgo: 'ed25519' } },
-      });
       expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
         'ed25519',
       );

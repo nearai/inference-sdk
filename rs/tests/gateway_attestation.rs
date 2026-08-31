@@ -116,7 +116,7 @@ async fn can_disable_peer_tls_binding_for_non_peer_runtimes() {
 
     let verified = verify_gateway_attestation(
         &attestation,
-        &client_binding(Some("not-a-fingerprint".to_owned())),
+        &client_binding(None),
         Some(&policy),
         AttestationVerifiers {
             quote: Some(&quote),

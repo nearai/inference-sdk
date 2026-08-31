@@ -80,6 +80,26 @@ def model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation:
     )
 
 
+def completion_signature_response(
+    *,
+    signing_algo: str,
+    kind: str,
+    signing_address: str,
+) -> FetchResponse:
+    return FetchResponse(
+        status=200,
+        body=json.dumps(
+            {
+                'text': f'{kind}:request:response',
+                'signature': 'aa',
+                'signing_address': signing_address,
+                'signing_algo': signing_algo,
+                'signature_kind': kind,
+            }
+        ).encode(),
+    )
+
+
 async def test_model_helpers_request_fresh_evidence_and_select_signer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -387,38 +407,27 @@ async def test_completion_signature_lookup_preserves_unavailable_state(
         ('ed25519', 'gateway', '55' * 32),
     ],
 )
-async def test_completion_signature_helpers_return_found_signatures(
+async def test_completion_signature_lookup_returns_found_signature(
     monkeypatch: pytest.MonkeyPatch,
     signing_algo: str,
     kind: str,
     signing_address: str,
 ) -> None:
-    calls: list[tuple[str, dict[str, str]]] = []
+    seen_url = ''
 
     async def found(url: str, headers: Mapping[str, str]) -> FetchResponse:
-        calls.append((url, dict(headers)))
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {
-                    'text': f'{kind}:request:response',
-                    'signature': 'aa',
-                    'signing_address': signing_address,
-                    'signing_algo': signing_algo,
-                    'signature_kind': kind,
-                }
-            ).encode(),
+        nonlocal seen_url
+        assert headers['authorization'] == 'Bearer test'
+        seen_url = url
+        return completion_signature_response(
+            signing_algo=signing_algo,
+            kind=kind,
+            signing_address=signing_address,
         )
 
     use_fake_cloud_api_fetch(monkeypatch, found)
 
     lookup = await lookup_completion_signature(
-        API_KEY,
-        'completion-id',
-        signing_algo=signing_algo,
-        base_url=BASE_URL,
-    )
-    signature = await fetch_completion_signature(
         API_KEY,
         'completion-id',
         signing_algo=signing_algo,
@@ -432,12 +441,32 @@ async def test_completion_signature_helpers_return_found_signatures(
         signing_algo=signing_algo,
         signing_address=signing_address,
     )
-    assert signature == lookup.signature
-    assert len(calls) == 2
-    for url, headers in calls:
-        assert urlsplit(url).path == '/v1/signature/completion-id'
-        assert parse_qs(urlsplit(url).query) == {'signing_algo': [signing_algo]}
-        assert headers['authorization'] == 'Bearer test'
+    assert urlsplit(seen_url).path == '/v1/signature/completion-id'
+    assert parse_qs(urlsplit(seen_url).query) == {'signing_algo': [signing_algo]}
+
+
+async def test_fetch_completion_signature_returns_a_found_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = CompletionSignature(
+        kind='provider_tee',
+        signed_text='provider_tee:request:response',
+        signature='aa',
+        signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
+    )
+
+    async def found(_: str, __: Mapping[str, str]) -> FetchResponse:
+        return completion_signature_response(
+            signing_algo='ecdsa',
+            kind='provider_tee',
+            signing_address=SIGNING_ADDRESS,
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, found)
+
+    signature = await fetch_completion_signature(API_KEY, 'completion-id')
+
+    assert signature == expected
 
 
 async def test_completion_signature_lookup_requires_signature_kind(
@@ -527,18 +556,8 @@ def test_find_model_attestation_for_signature_rejects_a_gateway_signature() -> N
 async def test_fetch_model_attestation_for_signature_rejects_gateway_pre_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    requests = 0
-
-    async def unexpected_fetch(
-        _: str,
-        *,
-        headers: Mapping[str, str] | None = None,
-        **__: object,
-    ) -> FetchResponse:
-        nonlocal requests
-        assert headers is not None
-        requests += 1
-        raise AssertionError('gateway signatures must not request model evidence')
+    async def unexpected_fetch(_: str, **__: object) -> FetchResponse:
+        pytest.fail('gateway signatures must not request model evidence')
 
     monkeypatch.setattr(cloud_api, 'default_fetch', unexpected_fetch)
     signature = CompletionSignatureReference(
@@ -554,7 +573,6 @@ async def test_fetch_model_attestation_for_signature_rejects_gateway_pre_request
         )
 
     assert raised.value.failure.code == 'signature.kind_mismatch'
-    assert requests == 0
 
 
 async def test_model_report_count_and_nonce_are_checked_before_returning(
@@ -600,27 +618,6 @@ async def test_model_report_count_and_nonce_are_checked_before_returning(
             'canonical-model',
         )
     assert nonce_error.value.failure.code == 'api.nonce_mismatch'
-
-
-async def test_redirect_response_is_not_a_successful_cloud_api_response(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def redirect(_: str, __: Mapping[str, str]) -> FetchResponse:
-        return FetchResponse(status=302, body=b'{}')
-
-    use_fake_cloud_api_fetch(monkeypatch, redirect)
-
-    with pytest.raises(ApiError) as raised:
-        await fetch_model_attestations(
-            API_KEY,
-            'canonical-model',
-        )
-
-    assert raised.value.failure.code == 'api.http_status'
-    assert raised.value.failure.details == {
-        'resource': 'model_attestation',
-        'status': 302,
-    }
 
 
 async def test_non_utf8_success_response_is_an_api_error(

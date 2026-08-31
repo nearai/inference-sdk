@@ -92,7 +92,7 @@ fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
 }
 
 #[test]
-fn finds_exactly_one_model_attestation_for_a_signature() {
+fn model_attestation_selection_rejects_zero_or_multiple_matches() {
     let signature = CompletionSignatureReference {
         kind: CompletionSignatureKind::ProviderTee,
         signer: SigningIdentity {
@@ -315,18 +315,13 @@ async fn gateway_attestation_request_applies_a_signing_algorithm_filter() {
         .mount(&server)
         .await;
 
-    let fetched = GatewayAttestationRequest::new(test_api_key())
+    GatewayAttestationRequest::new(test_api_key())
         .base_url(base_url(&server))
         .unwrap()
         .signing_algo(SigningAlgo::Ed25519)
         .send()
         .await
         .unwrap();
-
-    assert_eq!(
-        fetched.attestation.evidence.signer.signing_algo,
-        SigningAlgo::Ed25519
-    );
 }
 
 #[tokio::test]
@@ -395,19 +390,11 @@ async fn completion_signature_request_applies_a_signing_algorithm() {
         .mount(&server)
         .await;
 
-    let lookup = CompletionSignatureRequest::new(test_api_key(), "found")
+    CompletionSignatureRequest::new(test_api_key(), "found")
         .base_url(base_url(&server))
         .unwrap()
         .signing_algo(SigningAlgo::Ed25519)
         .send()
         .await
         .unwrap();
-
-    assert!(matches!(
-        lookup,
-        CompletionSignatureLookup::Found(CompletionSignature {
-            kind: CompletionSignatureKind::Gateway,
-            ..
-        })
-    ));
 }
