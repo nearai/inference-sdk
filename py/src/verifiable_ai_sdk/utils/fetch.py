@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from asyncio import BaseTransport
 import hashlib
 from dataclasses import dataclass
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import aiohttp
-from aiohttp.connector import Connection
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+if TYPE_CHECKING:
+    from asyncio import BaseTransport
+    from aiohttp.connector import Connection
 
 
 @dataclass(frozen=True, kw_only=True)
