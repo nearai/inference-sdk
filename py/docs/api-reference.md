@@ -42,7 +42,7 @@ captures the TLS peer SPKI fingerprint for its exact evidence request.
 | Function | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `lookup_completion_signature` and `fetch_completion_signature` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `completion_id` | `str` | Yes | Non-empty completion ID. |
+|  | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Omit it to use the service default. |
 
 `lookup_completion_signature` returns `CompletionSignatureLookup`, whose
@@ -61,11 +61,11 @@ form: an unavailable 2xx response raises `ApiError` with
 | Function | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `fetch_model_attestations` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `model` | `str` | Yes | Non-empty canonical model ID. |
+|  | `model` | `str` | Yes | Canonical model ID. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Optional signer filter. |
 |  | `signing_address` | `str \| None` | No | Optional signer filter. Supply it when requesting evidence for a `provider_tee` response signature. |
 | `fetch_model_attestation_for_signature` | `api_key` | `str` | Yes | Bearer token for the Cloud API request. |
-|  | `model` | `str` | Yes | Non-empty canonical model ID. |
+|  | `model` | `str` | Yes | Canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. Its signer selects the evidence. A full `CompletionSignature` also works. |
 | `find_model_attestation_for_signature` | `attestations` | `tuple[ModelAttestation, ...] \| list[ModelAttestation]` | Yes | Evidence returned by `fetch_model_attestations`. Exactly one item must match the signer. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |

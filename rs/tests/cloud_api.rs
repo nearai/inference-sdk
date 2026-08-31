@@ -142,6 +142,27 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
 }
 
 #[test]
+fn rejects_a_gateway_signature_when_selecting_model_attestation() {
+    let signature = CompletionSignatureReference {
+        kind: CompletionSignatureKind::Gateway,
+        signer: SigningIdentity {
+            signing_algo: SigningAlgo::Ecdsa,
+            signing_address: "22".repeat(20),
+        },
+    };
+
+    let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::Verification(VerificationError::SignatureKindMismatch {
+            expected: CompletionSignatureKind::ProviderTee,
+            actual: CompletionSignatureKind::Gateway,
+        })
+    ));
+}
+
+#[test]
 fn request_builders_reject_an_invalid_base_url() {
     let result = ModelAttestationsRequest::new("test-key", "glm-5.2").base_url("://invalid");
 
@@ -281,6 +302,31 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
         "33".repeat(32)
     );
     assert_eq!(fetched.client_binding.peer_spki_fingerprint, None);
+}
+
+#[tokio::test]
+async fn gateway_attestation_request_applies_a_signing_algorithm_filter() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .and(query_param("signing_algo", "ed25519"))
+        .and(query_param("include_tls_fingerprint", "true"))
+        .respond_with(GatewayAttestationResponder)
+        .mount(&server)
+        .await;
+
+    let fetched = GatewayAttestationRequest::new(test_api_key())
+        .base_url(base_url(&server))
+        .unwrap()
+        .signing_algo(SigningAlgo::Ed25519)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fetched.attestation.evidence.signer.signing_algo,
+        SigningAlgo::Ed25519
+    );
 }
 
 #[tokio::test]

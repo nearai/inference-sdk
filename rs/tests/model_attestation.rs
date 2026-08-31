@@ -1,14 +1,28 @@
 mod support;
 
+use async_trait::async_trait;
 use support::{
-    model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier, NONCE,
-    TLS_FINGERPRINT,
+    model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier, APP_COMPOSE,
+    NONCE, TLS_FINGERPRINT,
 };
 use verifiable_ai_sdk::{
-    verify_model_attestation, DeploymentProvenanceStatus, GpuEvidenceRequirement,
-    GpuEvidenceStatus, ModelAttestationPolicy, ModelAttestationVerifiers, ModelTlsBinding,
-    TcbStatus, VerificationError,
+    verify_model_attestation, DeploymentProvenanceStatus, DeploymentVerifier,
+    GpuEvidenceRequirement, GpuEvidenceStatus, MeasuredDeployment, ModelAttestationPolicy,
+    ModelAttestationVerifiers, ModelTlsBinding, TcbStatus, VerificationError,
 };
+
+struct ExpectedDeploymentVerifier;
+
+#[async_trait]
+impl DeploymentVerifier for ExpectedDeploymentVerifier {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        if deployment.app_compose == APP_COMPOSE {
+            Ok(())
+        } else {
+            Err(VerificationError::DeploymentProvenanceRejected)
+        }
+    }
+}
 
 #[tokio::test]
 async fn accepts_missing_gpu_evidence() {
@@ -34,6 +48,62 @@ async fn accepts_missing_gpu_evidence() {
         verified.evidence.deployment_provenance,
         DeploymentProvenanceStatus::NotChecked
     );
+}
+
+#[tokio::test]
+async fn runs_a_model_deployment_verifier() {
+    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::UpToDate));
+    let attestation = model_attestation(None, false);
+    let deployment = ExpectedDeploymentVerifier;
+
+    let verified = verify_model_attestation(
+        &attestation,
+        NONCE,
+        None,
+        ModelAttestationVerifiers {
+            quote: Some(&quote),
+            deployment: Some(&deployment),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        verified.evidence.deployment_provenance,
+        DeploymentProvenanceStatus::Verified
+    );
+}
+
+#[tokio::test]
+async fn applies_an_explicit_model_tcb_policy() {
+    let quote = FixtureQuoteVerifier(model_quote(false, TcbStatus::OutOfDate));
+    let attestation = model_attestation(None, false);
+    let policy = ModelAttestationPolicy {
+        accepted_tcb_statuses: Some(vec![TcbStatus::UpToDate]),
+        ..Default::default()
+    };
+
+    let error = verify_model_attestation(
+        &attestation,
+        NONCE,
+        Some(&policy),
+        ModelAttestationVerifiers {
+            quote: Some(&quote),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        VerificationError::TcbStatusNotAllowed {
+            actual: TcbStatus::OutOfDate,
+            accepted,
+            ..
+        } if accepted == vec![TcbStatus::UpToDate]
+    ));
 }
 
 #[tokio::test]

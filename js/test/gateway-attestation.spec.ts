@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { verifyGatewayAttestation } from '../src';
-import type { GatewayAttestation } from '../src';
+import type { GatewayAttestation, MeasuredDeployment } from '../src';
 import {
+  appCompose,
   createModelAttestation,
   createQuote,
   nonce,
@@ -104,6 +105,58 @@ describe('gateway attestation verification', () => {
         code: 'binding.report_data_mismatch',
         details: { source: 'reportedQuoteData' },
       },
+    });
+  });
+
+  test('applies an explicit Gateway TCB policy', async () => {
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation(),
+        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+        policy: { acceptedTcbStatuses: ['OutOfDate'] },
+        verifiers: { quote: async () => createQuote() },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'policy.tcb_status_not_allowed',
+        details: { actual: 'UpToDate', accepted: ['OutOfDate'] },
+      },
+    });
+  });
+
+  test('passes gateway measurements to a deployment verifier', async () => {
+    const verifiedDeployments: MeasuredDeployment[] = [];
+    const result = await verifyGatewayAttestation({
+      attestation: createGatewayAttestation(),
+      clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+      verifiers: {
+        quote: async () => createQuote(),
+        deployment: async (deployment) => {
+          verifiedDeployments.push(deployment);
+        },
+      },
+    });
+
+    expect(verifiedDeployments).toEqual([
+      { appCompose, runtimeMeasurements: {} },
+    ]);
+    expect(result.deploymentProvenance).toBe('verified');
+  });
+
+  test('normalizes a rejected gateway deployment verifier', async () => {
+    await expect(
+      verifyGatewayAttestation({
+        attestation: createGatewayAttestation(),
+        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+        verifiers: {
+          quote: async () => createQuote(),
+          deployment: async () => {
+            throw new Error('deployment rejected');
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: { code: 'provenance.verification_failed' },
     });
   });
 });

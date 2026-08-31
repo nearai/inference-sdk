@@ -111,6 +111,57 @@ fn accepts_an_ethereum_personal_signature() {
 }
 
 #[test]
+fn accepts_an_ethereum_personal_gateway_signature() {
+    let signing_key = k256::ecdsa::SigningKey::from_bytes((&[1u8; 32]).into()).unwrap();
+    let request_body = br#"{"model":"glm-5.2","messages":[]}"#;
+    let response_body = br#"{"id":"response"}"#;
+    let signed_text = format!("{}:{}", sha256_hex(request_body), sha256_hex(response_body));
+    let mut personal_message =
+        format!("\x19Ethereum Signed Message:\n{}", signed_text.len()).into_bytes();
+    personal_message.extend_from_slice(signed_text.as_bytes());
+    let digest = sha3::Keccak256::digest(personal_message);
+    let (signature, recovery_id) = signing_key.sign_prehash_recoverable(&digest).unwrap();
+    let mut signature_bytes = signature.to_bytes().to_vec();
+    signature_bytes.push(u8::from(recovery_id) + 27);
+
+    let public_key = signing_key.verifying_key().to_encoded_point(false);
+    let public_key_hash = sha3::Keccak256::digest(&public_key.as_bytes()[1..]);
+    let signer = SigningIdentity {
+        signing_algo: SigningAlgo::Ecdsa,
+        signing_address: hex::encode(&public_key_hash[12..]),
+    };
+    let completion_signature = CompletionSignature {
+        kind: CompletionSignatureKind::Gateway,
+        signed_text,
+        signature: hex::encode(signature_bytes),
+        signer: signer.clone(),
+    };
+    let attestation = verified_gateway_attestation(signer);
+
+    verify_gateway_response(
+        request_body,
+        response_body,
+        &completion_signature,
+        &attestation,
+    )
+    .unwrap();
+
+    let mismatched_attestation = verified_gateway_attestation(SigningIdentity {
+        signing_algo: SigningAlgo::Ecdsa,
+        signing_address: "11".repeat(20),
+    });
+    let error = verify_gateway_response(
+        request_body,
+        response_body,
+        &completion_signature,
+        &mismatched_attestation,
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, VerificationError::SignatureSignerMismatch));
+}
+
+#[test]
 fn accepts_an_equivalent_hex_signing_address() {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
     let signing_address = hex::encode(signing_key.verifying_key().to_bytes());

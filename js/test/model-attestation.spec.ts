@@ -7,6 +7,7 @@ import {
   createModelAttestation,
   createQuote,
   nonce,
+  sha256,
   sha384,
   signingAddress,
   tlsFingerprint,
@@ -98,6 +99,38 @@ describe('model attestation verification', () => {
     });
 
     expect(result.tlsBinding).toEqual({ kind: 'none' });
+  });
+
+  test('supports serialized event logs for an Ed25519 model signer', async () => {
+    const ed25519SigningAddress = '66'.repeat(32);
+    const eventLog = createModelAttestation().eventLog;
+    const quote = createQuote({
+      reportData: Buffer.concat([
+        sha256(
+          Buffer.concat([
+            Buffer.from(ed25519SigningAddress, 'hex'),
+            Buffer.from(tlsFingerprint, 'hex'),
+          ]),
+        ),
+        Buffer.from(nonce, 'hex'),
+      ]),
+    });
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        signer: {
+          signingAlgo: 'ed25519',
+          signingAddress: ed25519SigningAddress,
+        },
+        eventLog: JSON.stringify(eventLog),
+      }),
+      clientBinding: { nonce },
+      verifiers: { quote: async () => quote },
+    });
+
+    expect(result).toMatchObject({
+      signer: { signingAlgo: 'ed25519', signingAddress: ed25519SigningAddress },
+      tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
+    });
   });
 
   test('does not downgrade a declared-SPKI report to the legacy layout', async () => {

@@ -46,12 +46,12 @@ configuration and operation-specific fields at the same level.
 
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `FetchCompletionSignatureParams` and `LookupCompletionSignatureParams` | `completionId` | `string` | Yes | Non-empty completion ID. |
+| `FetchCompletionSignatureParams` and `LookupCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it requests the service default, `ecdsa`. |
-| `FetchModelAttestationsParams` | `model` | `string` | Yes | Non-empty canonical model ID. |
+| `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter. Omit it to use the service default. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter. Supply it when requesting evidence for a `provider_tee` response signature. |
-| `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Non-empty canonical model ID. |
+| `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Cloud API default; when verifying a gateway response, use its signature's signing algorithm. This does not select a gateway instance. |
 

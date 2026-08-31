@@ -70,12 +70,13 @@ async function verifiedModelAttestation(signingAddress: string) {
 
 async function verifiedGatewayAttestation(
   signingAddress: string,
+  signingAlgo: CompletionSignature['signer']['signingAlgo'] = 'ed25519',
 ): Promise<Awaited<ReturnType<typeof verifyGatewayAttestation>>> {
   const quote = quoteForSigner(signingAddress);
   return verifyGatewayAttestation({
     attestation: {
       ...createModelAttestation({
-        signer: { signingAlgo: 'ed25519', signingAddress },
+        signer: { signingAlgo, signingAddress },
       }),
       declaredSpkiFingerprint: tlsFingerprint,
       reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
@@ -150,6 +151,49 @@ describe('response signature verification', () => {
     );
   });
 
+  test.each([
+    {
+      label: 'invalid JSON',
+      request: Buffer.from('{'),
+      reason: 'invalid_json',
+    },
+    {
+      label: 'a missing model',
+      request: Buffer.from('{}'),
+      reason: 'missing_model',
+    },
+  ])(
+    'rejects a model response request with $label',
+    async ({ request, reason }) => {
+      const wallet = new ethers.Wallet(
+        '0x0123456789012345678901234567890123456789012345678901234567890123',
+      );
+      const attestation = await verifiedModelAttestation(wallet.address);
+      const signature: CompletionSignature = {
+        kind: 'provider_tee',
+        signedText: 'unused',
+        signature: '00',
+        signer: { signingAlgo: 'ecdsa', signingAddress: wallet.address },
+      };
+
+      expect(() =>
+        verifyModelResponse({
+          requestBody: request,
+          responseBody,
+          signature,
+          attestation,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          failure: {
+            code: 'signature.payload_mismatch',
+            details: { source: 'request_model', reason },
+          },
+        }),
+      );
+    },
+  );
+
   test('verifies an Ed25519 gateway response signature', async () => {
     const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
     const signedText = gatewaySignedText(requestBody, responseBody);
@@ -164,6 +208,31 @@ describe('response signature verification', () => {
     };
 
     const attestation = await verifiedGatewayAttestation(signingAddress);
+
+    verifyGatewayResponse({
+      requestBody,
+      responseBody,
+      signature,
+      attestation,
+    });
+  });
+
+  test('verifies an ECDSA gateway response signature', async () => {
+    const wallet = new ethers.Wallet(
+      '0x0123456789012345678901234567890123456789012345678901234567890123',
+    );
+    const signedText = gatewaySignedText(requestBody, responseBody);
+    const signature: CompletionSignature = {
+      kind: 'gateway',
+      signedText,
+      signature: await wallet.signMessage(signedText),
+      signer: { signingAlgo: 'ecdsa', signingAddress: wallet.address },
+    };
+
+    const attestation = await verifiedGatewayAttestation(
+      wallet.address,
+      'ecdsa',
+    );
 
     verifyGatewayResponse({
       requestBody,

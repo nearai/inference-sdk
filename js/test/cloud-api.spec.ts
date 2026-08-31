@@ -86,15 +86,20 @@ function gatewayReport(
   };
 }
 
-function completionSignature(kind: CompletionSignature['kind']) {
+function completionSignature(
+  kind: CompletionSignature['kind'],
+  signingAlgo: CompletionSignature['signer']['signingAlgo'] = 'ecdsa',
+) {
+  const signatureSigningAddress =
+    signingAlgo === 'ecdsa' ? signingAddress : '66'.repeat(32);
   return {
     text:
       kind === 'provider_tee'
         ? 'canonical-model:request:response'
         : 'request:response',
     signature: '00',
-    signing_address: signingAddress,
-    signing_algo: 'ecdsa',
+    signing_address: signatureSigningAddress,
+    signing_algo: signingAlgo,
     signature_kind: kind,
   };
 }
@@ -495,6 +500,43 @@ describe('NEAR AI Cloud fetch helpers', () => {
 
       expect(signature).toEqual(expected);
       expect(new URL(api.request().url).pathname).toBe('/v1/signature/chat-1');
+    });
+
+    test('passes an explicit signing algorithm when fetching a completion signature', async () => {
+      const api = cloudFor(() =>
+        jsonResponse(completionSignature('gateway', 'ed25519')),
+      );
+
+      const signature = await fetchCompletionSignature({
+        ...api.params,
+        completionId: 'chat-1',
+        signingAlgo: 'ed25519',
+      });
+
+      expect(signature.signer.signingAlgo).toBe('ed25519');
+      expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
+        'ed25519',
+      );
+    });
+
+    test('returns a found result and passes an explicit signing algorithm when looking up a completion signature', async () => {
+      const api = cloudFor(() =>
+        jsonResponse(completionSignature('provider_tee', 'ed25519')),
+      );
+
+      const lookup = await lookupCompletionSignature({
+        ...api.params,
+        completionId: 'chat-1',
+        signingAlgo: 'ed25519',
+      });
+
+      expect(lookup).toMatchObject({
+        status: 'found',
+        signature: { signer: { signingAlgo: 'ed25519' } },
+      });
+      expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
+        'ed25519',
+      );
     });
 
     test('lets callers choose between an unavailable result and an error', async () => {
