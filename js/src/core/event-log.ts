@@ -1,4 +1,10 @@
 import { Buffer } from 'buffer';
+import * as v from 'valibot';
+import {
+  type DstackEventLogEntrySchema,
+  DstackEventLogSchema,
+  SerializedDstackEventLogSchema,
+} from '../schemas';
 import type { AttestationEventLog } from '../types/attestation-common';
 import type { RuntimeMeasurements } from '../types/verification';
 import { VerificationError } from '../utils/errors';
@@ -8,26 +14,14 @@ import { sha384, trimHexPrefix, utf8 } from '../utils/common';
 // recomputed from the payload rather than trusted from the event log.
 const DSTACK_RUNTIME_EVENT_TYPE = 0x08000001;
 
-type EventLogEntry = {
+type EventLogEntry = v.InferOutput<typeof DstackEventLogEntrySchema> & {
   path: string;
-  digest: string;
-  event_type?: number;
-  event: string;
-  event_payload: string;
-  imr: number;
 };
 type DecodeEventHexParams = {
   value: string;
   path: string;
   allowEmpty: boolean;
 };
-type RequireStringParams = {
-  record: Record<string, unknown>;
-  field: string;
-  index: number;
-};
-type OptionalStringParams = RequireStringParams;
-type RequireNumberParams = RequireStringParams;
 
 /**
  * Replay RTMR3 from the dstack event log. Runtime event payloads are hashed
@@ -96,67 +90,43 @@ export async function verifyAndReplayRtmr3(
 }
 
 function parseEventLog(eventLog: AttestationEventLog): EventLogEntry[] {
-  let parsed: unknown = eventLog;
-  if (typeof parsed === 'string') {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch (cause) {
-      throw new VerificationError(
-        {
-          code: 'measurement.event_log_invalid',
-          details: { path: 'eventLog', reason: 'invalid_json' },
-        },
-        { cause },
-      );
-    }
-  }
-  if (!Array.isArray(parsed)) {
-    throw new VerificationError({
-      code: 'measurement.event_log_invalid',
-      details: {
-        path: 'eventLog',
-        reason: 'invalid_type',
-        expected: 'array',
-      },
-    });
+  const schema =
+    typeof eventLog === 'string'
+      ? SerializedDstackEventLogSchema
+      : DstackEventLogSchema;
+  const parsed = v.safeParse(schema, eventLog);
+  if (!parsed.success) {
+    throw invalidEventLogSchema(parsed.issues[0]);
   }
 
-  return parsed.map((value, index) => parseEventLogEntry(value, index));
+  return parsed.output.map((entry, index) => ({
+    ...entry,
+    path: `eventLog[${index}]`,
+  }));
 }
 
-function parseEventLogEntry(value: unknown, index: number): EventLogEntry {
-  const path = `eventLog[${index}]`;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new VerificationError({
+function invalidEventLogSchema(issue: v.BaseIssue<unknown>): VerificationError {
+  if (issue.type === 'parse_json') {
+    return new VerificationError({
       code: 'measurement.event_log_invalid',
-      details: { path, reason: 'invalid_type', expected: 'object' },
+      details: { path: 'eventLog', reason: 'invalid_json' },
     });
   }
-  const record = value as Record<string, unknown>;
-  const digest = requireString({ record, field: 'digest', index });
-  const event = optionalString({ record, field: 'event', index }) ?? '';
-  const eventPayload =
-    optionalString({ record, field: 'event_payload', index }) ?? '';
-  const imr = requireNumber({ record, field: 'imr', index });
-  const eventType = record.event_type;
-  if (eventType !== undefined && !isU32(eventType)) {
-    throw new VerificationError({
-      code: 'measurement.event_log_invalid',
-      details: {
-        path: `${path}.event_type`,
-        reason: 'invalid_type',
-        expected: 'unsigned 32-bit integer',
-      },
-    });
-  }
-  return {
-    path,
-    digest,
-    event,
-    event_payload: eventPayload,
-    imr,
-    event_type: eventType ?? 0,
-  };
+
+  const dotPath = v.getDotPath(issue);
+  const path = !dotPath
+    ? 'eventLog'
+    : dotPath.startsWith('[')
+      ? `eventLog${dotPath}`
+      : `eventLog.${dotPath}`.replace(/\.(\d+)(?=\.|$)/g, '[$1]');
+  return new VerificationError({
+    code: 'measurement.event_log_invalid',
+    details: {
+      path,
+      reason: 'invalid_type',
+      expected: issue.expected ?? 'valid event log',
+    },
+  });
 }
 
 async function eventDigest(entry: EventLogEntry): Promise<Buffer> {
@@ -239,65 +209,4 @@ function decodeEventHex({
     });
   }
   return Buffer.from(normalized, 'hex');
-}
-
-function requireString({ record, field, index }: RequireStringParams): string {
-  const value = record[field];
-  if (typeof value !== 'string') {
-    throw new VerificationError({
-      code: 'measurement.event_log_invalid',
-      details: {
-        path: `eventLog[${index}].${field}`,
-        reason: 'invalid_type',
-        expected: 'string',
-      },
-    });
-  }
-  return value;
-}
-
-function optionalString({
-  record,
-  field,
-  index,
-}: OptionalStringParams): string | undefined {
-  const value = record[field];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== 'string') {
-    throw new VerificationError({
-      code: 'measurement.event_log_invalid',
-      details: {
-        path: `eventLog[${index}].${field}`,
-        reason: 'invalid_type',
-        expected: 'string',
-      },
-    });
-  }
-  return value;
-}
-
-function requireNumber({ record, field, index }: RequireNumberParams): number {
-  const value = record[field];
-  if (!isU32(value)) {
-    throw new VerificationError({
-      code: 'measurement.event_log_invalid',
-      details: {
-        path: `eventLog[${index}].${field}`,
-        reason: 'invalid_type',
-        expected: 'unsigned 32-bit integer',
-      },
-    });
-  }
-  return value;
-}
-
-function isU32(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    value <= 0xffffffff
-  );
 }

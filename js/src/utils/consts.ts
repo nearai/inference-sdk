@@ -1,5 +1,3 @@
-export const TIMEOUT = 10_000;
-
 export const INTEL_PCCS_API_URL_BROWSER = 'https://pccs.phala.network';
 
 export const INTEL_PCCS_API_URL_NODE =

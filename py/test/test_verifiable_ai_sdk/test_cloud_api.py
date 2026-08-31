@@ -632,6 +632,23 @@ async def test_fetch_model_attestation_for_signature_delegates_kind_check_to_fin
     assert requests == 1
 
 
+async def test_missing_model_attestations_are_zero_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_attestations(_: str, __: Mapping[str, str]) -> FetchResponse:
+        return FetchResponse(status=200, body=b'{}')
+
+    use_fake_cloud_api_fetch(monkeypatch, no_attestations)
+
+    with pytest.raises(ApiError) as empty_error:
+        await fetch_model_attestations(
+            API_KEY,
+            'canonical-model',
+        )
+    assert empty_error.value.failure.code == 'api.unexpected_model_attestation_count'
+    assert empty_error.value.failure.details == {'actualCount': 0}
+
+
 async def test_model_report_count_and_nonce_are_checked_before_returning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

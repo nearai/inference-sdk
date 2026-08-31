@@ -1,8 +1,7 @@
 import type { NvidiaEvidenceVerifier } from '../types/verification';
 import { decodeNrasOverallAttestationVerdict } from '../boundaries/nvidia';
-import { NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT } from './consts';
+import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { VerificationError } from './errors';
-import { FetchTimeoutError, fetchTimeout } from './fetch';
 
 /**
  * Default NVIDIA NRAS adapter. It verifies through the NRAS HTTPS service and
@@ -36,23 +35,18 @@ export const nvidiaNrasVerifier: NvidiaEvidenceVerifier = async (
 
 async function fetchNras(nvidiaPayload: string): Promise<Response> {
   try {
-    return await fetchTimeout({
-      input: NVIDIA_GPU_VERIFIER_API_URL,
-      timeout: TIMEOUT,
-      init: {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: nvidiaPayload,
+    return await fetch(NVIDIA_GPU_VERIFIER_API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
       },
+      body: nvidiaPayload,
     });
   } catch (cause) {
-    const reason = cause instanceof FetchTimeoutError ? 'timeout' : 'transport';
     throw new VerificationError(
       {
         code: 'gpu.nras_request_failed',
-        details: { reason },
+        details: { reason: 'transport' },
         retryable: true,
       },
       { cause },

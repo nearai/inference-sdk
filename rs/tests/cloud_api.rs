@@ -180,13 +180,11 @@ fn request_builders_reject_an_invalid_base_url() {
 }
 
 #[tokio::test]
-async fn model_attestation_request_rejects_an_empty_candidate_list() {
+async fn model_attestation_request_treats_a_missing_candidate_list_as_empty() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "model_attestations": [],
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
         .mount(&server)
         .await;
 

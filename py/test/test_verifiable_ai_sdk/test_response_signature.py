@@ -87,6 +87,30 @@ async def test_model_response_accepts_equivalent_signer_hex() -> None:
         )
     assert mismatch.value.failure.code == 'signature.payload_mismatch'
 
+    with pytest.raises(VerificationError) as empty_model:
+        verify_model_response(
+            b'{"model":""}',
+            RESPONSE_BODY,
+            signature,
+            attestation,
+        )
+    assert empty_model.value.failure.details == {
+        'source': 'request_model',
+        'reason': 'missing_model',
+    }
+
+    with pytest.raises(VerificationError) as invalid_json:
+        verify_model_response(
+            b'{',
+            RESPONSE_BODY,
+            signature,
+            attestation,
+        )
+    assert invalid_json.value.failure.details == {
+        'source': 'request_model',
+        'reason': 'invalid_json',
+    }
+
 
 async def test_gateway_response_verifies_ed25519_signature() -> None:
     key_pair = nacl.signing.SigningKey(bytes([7]) * 32)

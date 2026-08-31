@@ -174,6 +174,11 @@ describe('response signature verification', () => {
       request: Buffer.from('{}'),
       reason: 'missing_model',
     },
+    {
+      label: 'an empty model',
+      request: Buffer.from('{"model":""}'),
+      reason: 'missing_model',
+    },
   ])(
     'rejects a model response request with $label',
     async ({ request, reason }) => {

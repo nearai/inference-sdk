@@ -13,7 +13,7 @@ from ..schemas import (
     _NrasOverallAttestationJwtClaimsSchema,
     _NrasResponseSchema,
 )
-from .consts import NVIDIA_GPU_VERIFIER_API_URL, TIMEOUT
+from .consts import NVIDIA_GPU_VERIFIER_API_URL
 from .errors import verification_failure
 from .fetch import FetchResponse, fetch
 
@@ -32,7 +32,6 @@ async def verify_nvidia_nras(nvidia_payload: str) -> None:
             method='POST',
             data=nvidia_payload,
             headers={'content-type': 'application/json'},
-            timeout=TIMEOUT,
         )
     except (aiohttp.ClientError, TimeoutError, OSError) as error:
         raise verification_failure(

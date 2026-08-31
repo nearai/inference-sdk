@@ -1,6 +1,8 @@
 import { Buffer } from 'buffer';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
+import * as v from 'valibot';
+import { CompletionRequestModelSchema } from '../schemas';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type { CompletionSignature } from '../types/chat';
 import type {
@@ -219,9 +221,9 @@ function hashBytes(value: Uint8Array): string {
  * request to name that model. Use x-no-aliasing on the request.
  */
 function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
-  let parsed: unknown;
+  let request: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(requestBody).toString('utf8'));
+    request = JSON.parse(Buffer.from(requestBody).toString('utf8'));
   } catch (cause) {
     throw new VerificationError(
       {
@@ -231,19 +233,14 @@ function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
       { cause },
     );
   }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    typeof (parsed as Record<string, unknown>).model !== 'string' ||
-    !(parsed as Record<string, string>).model
-  ) {
+  const parsed = v.safeParse(CompletionRequestModelSchema, request);
+  if (!parsed.success) {
     throw new VerificationError({
       code: 'signature.payload_mismatch',
       details: { source: 'request_model', reason: 'missing_model' },
     });
   }
-  return (parsed as Record<string, string>).model;
+  return parsed.output.model;
 }
 
 function parseSignatureHex(

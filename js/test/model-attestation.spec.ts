@@ -111,6 +111,36 @@ describe('model attestation verification', () => {
     });
   });
 
+  test('rejects an event log entry with a missing required field', async () => {
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({ eventLog: '[{}]' }),
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'measurement.event_log_invalid',
+        details: { path: 'eventLog[0].digest', reason: 'invalid_type' },
+      },
+    });
+  });
+
+  test('rejects an invalid serialized event log', async () => {
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({ eventLog: '[' }),
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'measurement.event_log_invalid',
+        details: { path: 'eventLog', reason: 'invalid_json' },
+      },
+    });
+  });
+
   test('rejects a model report whose padded signer does not match', async () => {
     const quote = createModelQuote({
       reportData: Buffer.concat([
@@ -289,6 +319,21 @@ describe('model attestation verification', () => {
       failure: {
         code: 'binding.nonce_mismatch',
         details: { source: 'nvidiaPayload' },
+      },
+    });
+  });
+
+  test('rejects NVIDIA evidence without a nonce', async () => {
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({ nvidiaPayload: '{}' }),
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'gpu.payload_invalid',
+        details: { reason: 'nonce_missing' },
       },
     });
   });

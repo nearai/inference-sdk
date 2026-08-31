@@ -168,6 +168,73 @@ async def test_empty_gpu_payload_remains_invalid_supplied_json() -> None:
     assert raised.value.failure.details == {'reason': 'invalid_json'}
 
 
+async def test_gpu_evidence_requires_an_echoed_nonce() -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(nvidia_payload='{}'),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'gpu.payload_invalid'
+    assert raised.value.failure.details == {'reason': 'nonce_missing'}
+
+
+async def test_model_attestation_rejects_an_invalid_event_log_entry() -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(event_log='[{}]'),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'measurement.event_log_invalid'
+    assert raised.value.failure.details == {
+        'path': 'eventLog[0].digest',
+        'reason': 'invalid_type',
+        'expected': 'string',
+    }
+
+
+async def test_model_attestation_rejects_boolean_event_types() -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(
+                event_log=[
+                    {
+                        'digest': '00' * 48,
+                        'imr': 3,
+                        'event_type': True,
+                    }
+                ]
+            ),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'measurement.event_log_invalid'
+    assert raised.value.failure.details == {
+        'path': 'eventLog[0].event_type',
+        'reason': 'invalid_type',
+        'expected': 'unsigned 32-bit integer',
+    }
+
+
+async def test_model_attestation_rejects_invalid_serialized_event_log() -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(event_log='['),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'measurement.event_log_invalid'
+    assert raised.value.failure.details == {
+        'path': 'eventLog',
+        'reason': 'invalid_json',
+    }
+
+
 async def test_default_nras_rejects_a_malformed_envelope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

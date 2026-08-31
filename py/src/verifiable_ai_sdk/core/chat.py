@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-import json
 
 import nacl.exceptions
 import nacl.signing
 from eth_account import Account
 from eth_account.messages import encode_defunct
+from pydantic import ValidationError
 
+from ..schemas import CompletionRequestModelSchema
 from ..types.attestation_common import SigningAlgo, SigningIdentity
-from ..types.chat import CompletionSignature
+from ..types.chat import CompletionSignature, CompletionSignatureKind
 from ..types.verification import (
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
@@ -61,19 +62,9 @@ def _sha256_hex(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _require_kind(signature: CompletionSignature, expected: str) -> None:
-    if not isinstance(signature.kind, str) or signature.kind not in {
-        'provider_tee',
-        'gateway',
-    }:
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'signature.kind',
-                'reason': 'unsupported_value',
-                'expected': "'provider_tee' or 'gateway'",
-            },
-        )
+def _require_kind(
+    signature: CompletionSignature, expected: CompletionSignatureKind
+) -> None:
     if signature.kind != expected:
         raise verification_failure(
             'signature.kind_mismatch',
@@ -83,25 +74,18 @@ def _require_kind(signature: CompletionSignature, expected: str) -> None:
 
 def _model_from_request(request_body: bytes) -> str:
     try:
-        parsed = json.loads(request_body.decode('utf-8'))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        return CompletionRequestModelSchema.model_validate_json(request_body).model
+    except ValidationError as error:
+        reason = (
+            'invalid_json'
+            if error.errors(include_url=False)[0]['type'] == 'json_invalid'
+            else 'missing_model'
+        )
         raise verification_failure(
             'signature.payload_mismatch',
-            {'source': 'request_model', 'reason': 'invalid_json'},
+            {'source': 'request_model', 'reason': reason},
             cause=error,
         ) from error
-    if not isinstance(parsed, dict) or not isinstance(parsed.get('model'), str):
-        raise verification_failure(
-            'signature.payload_mismatch',
-            {'source': 'request_model', 'reason': 'missing_model'},
-        )
-    model = parsed['model']
-    if not model:
-        raise verification_failure(
-            'signature.payload_mismatch',
-            {'source': 'request_model', 'reason': 'missing_model'},
-        )
-    return model
 
 
 def _verify_signature_text_and_bytes(

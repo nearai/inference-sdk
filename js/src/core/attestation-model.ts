@@ -5,6 +5,8 @@ import type {
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
 } from '../types/verification';
+import * as v from 'valibot';
+import { NvidiaPayloadNonceSchema } from '../schemas';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
@@ -75,9 +77,9 @@ async function verifyNvidiaEvidence(
 
   // Bind the provider payload to the same nonce before handing it to either
   // the default NRAS verifier or a caller-supplied NVIDIA verifier.
-  let parsed: unknown;
+  let payload: unknown;
   try {
-    parsed = JSON.parse(input.payload);
+    payload = JSON.parse(input.payload);
   } catch (cause) {
     throw new VerificationError(
       {
@@ -87,19 +89,15 @@ async function verifyNvidiaEvidence(
       { cause },
     );
   }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    typeof (parsed as Record<string, unknown>).nonce !== 'string'
-  ) {
+  const parsed = v.safeParse(NvidiaPayloadNonceSchema, payload);
+  if (!parsed.success) {
     throw new VerificationError({
       code: 'gpu.payload_invalid',
       details: { reason: 'nonce_missing' },
     });
   }
   verifyReportedNonce({
-    reportedNonce: (parsed as Record<string, string>).nonce,
+    reportedNonce: parsed.output.nonce,
     nonce: input.nonce,
     source: 'nvidiaPayload',
   });

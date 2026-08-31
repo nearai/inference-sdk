@@ -368,6 +368,22 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
     });
 
+    test('treats an omitted model-attestations field as zero candidates', async () => {
+      const api = cloudFor(() => jsonResponse({}));
+
+      await expect(
+        fetchModelAttestations({
+          ...api.params,
+          model: 'canonical-model',
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.unexpected_model_attestation_count',
+          details: { actualCount: 0 },
+        },
+      });
+    });
+
     test.each([
       {
         label: 'a provider signer with no matching attestation',

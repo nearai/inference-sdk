@@ -9,9 +9,6 @@ type RequireByteLengthParams = {
 };
 
 export function hexToBuffer(hex: string, field = 'hex'): Buffer {
-  if (typeof hex !== 'string') {
-    throw inputError({ field, reason: 'invalid_hex' });
-  }
   const normalized = trimHexPrefix(hex);
   if (
     normalized.length === 0 ||

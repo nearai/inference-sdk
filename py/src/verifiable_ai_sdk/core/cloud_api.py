@@ -40,7 +40,6 @@ from ..types.verification import (
     ModelClientBinding,
 )
 from ..utils.common import generate_nonce, hex_to_bytes
-from ..utils.consts import TIMEOUT
 from ..utils.errors import (
     ApiError,
     VerificationError,
@@ -246,7 +245,6 @@ async def _get_cloud_api_json(
         response = await default_fetch(
             url,
             headers=headers,
-            timeout=TIMEOUT,
             _capture_peer_spki=capture_peer_spki,
         )
     except Exception as error:
@@ -406,7 +404,7 @@ def _format_api_path(location: tuple[object, ...]) -> str:
     return path
 
 
-def _api_signer(algorithm: str, address: str, label: str) -> SigningIdentity:
+def _api_signer(algorithm: SigningAlgo, address: str, label: str) -> SigningIdentity:
     _validate_api_signing_address(address, algorithm, f'{label}.signing_address')
     return SigningIdentity(signing_algo=algorithm, signing_address=address)
 
@@ -451,7 +449,9 @@ def _endpoint(base_url: str, path: str, query: Mapping[str, str]) -> str:
     )
 
 
-def _validate_api_signing_address(address: str, algorithm: str, label: str) -> None:
+def _validate_api_signing_address(
+    address: str, algorithm: SigningAlgo, label: str
+) -> None:
     expected_bytes = 20 if algorithm == 'ecdsa' else 32
     if len(_api_hex_to_bytes(address, label)) != expected_bytes:
         raise _invalid_response(
@@ -465,9 +465,7 @@ def _validate_api_nonce(value: str, label: str) -> str:
     return value
 
 
-def _api_hex_to_bytes(value: object, label: str) -> bytes:
-    if not isinstance(value, str):
-        raise _invalid_response(label, 'hexadecimal text', value)
+def _api_hex_to_bytes(value: str, label: str) -> bytes:
     try:
         return hex_to_bytes(value, label)
     except VerificationError as error:

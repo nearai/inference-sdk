@@ -760,6 +760,7 @@ fn map_completion_signature_lookup(
 
 #[derive(Deserialize)]
 struct WireModelAttestationResponse {
+    #[serde(default)]
     model_attestations: Vec<WireModelAttestation>,
 }
 
@@ -828,16 +829,16 @@ impl<'de> Deserialize<'de> for WireTcbInfo {
 
 #[derive(Deserialize)]
 struct WireCompletionSignatureResponse {
-    #[serde(default)]
-    text: Option<String>,
-    #[serde(default)]
-    signature: Option<String>,
-    #[serde(default)]
-    signing_address: Option<String>,
-    #[serde(default)]
-    signing_algo: Option<SigningAlgo>,
-    #[serde(default)]
-    signature_kind: Option<CompletionSignatureKind>,
+    #[serde(default, deserialize_with = "deserialize_optional_signature_field")]
+    text: OptionalSignatureField<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_signature_field")]
+    signature: OptionalSignatureField<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_signature_field")]
+    signing_address: OptionalSignatureField<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_signature_field")]
+    signing_algo: OptionalSignatureField<SigningAlgo>,
+    #[serde(default, deserialize_with = "deserialize_optional_signature_field")]
+    signature_kind: OptionalSignatureField<CompletionSignatureKind>,
     #[serde(default)]
     error_code: Option<String>,
     #[serde(default)]
@@ -849,11 +850,11 @@ impl WireCompletionSignatureResponse {
         let (Some(error_code), Some(message)) = (&self.error_code, &self.message) else {
             return None;
         };
-        if self.text.is_none()
-            && self.signature.is_none()
-            && self.signing_address.is_none()
-            && self.signing_algo.is_none()
-            && self.signature_kind.is_none()
+        if self.text.is_missing()
+            && self.signature.is_missing()
+            && self.signing_address.is_missing()
+            && self.signing_algo.is_missing()
+            && self.signature_kind.is_missing()
         {
             return Some(SignatureUnavailable {
                 error_code: error_code.clone(),
@@ -880,6 +881,38 @@ impl WireCompletionSignatureResponse {
     }
 }
 
+/// Preserve whether a response field was omitted or explicitly set to `null`.
+///
+/// An unavailable signature response must omit every signature field. A `null`
+/// field is instead a malformed signature response and must not be treated as
+/// an unavailable result.
+#[derive(Default)]
+enum OptionalSignatureField<T> {
+    #[default]
+    Missing,
+    Null,
+    Value(T),
+}
+
+impl<T> OptionalSignatureField<T> {
+    fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+}
+
+fn deserialize_optional_signature_field<'de, D, T>(
+    deserializer: D,
+) -> Result<OptionalSignatureField<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(|value| match value {
+        Some(value) => OptionalSignatureField::Value(value),
+        None => OptionalSignatureField::Null,
+    })
+}
+
 struct WireCompletionSignature {
     text: String,
     signature: String,
@@ -888,11 +921,19 @@ struct WireCompletionSignature {
     signature_kind: CompletionSignatureKind,
 }
 
-fn require_completion_signature_field<T>(value: Option<T>, field: &str) -> Result<T, ApiError> {
-    value.ok_or_else(|| ApiError::InvalidResponse {
-        path: format!("signature.{field}"),
-        expected: "the documented Cloud API response shape".to_owned(),
-    })
+fn require_completion_signature_field<T>(
+    value: OptionalSignatureField<T>,
+    field: &str,
+) -> Result<T, ApiError> {
+    match value {
+        OptionalSignatureField::Value(value) => Ok(value),
+        OptionalSignatureField::Missing | OptionalSignatureField::Null => {
+            Err(ApiError::InvalidResponse {
+                path: format!("signature.{field}"),
+                expected: "the documented Cloud API response shape".to_owned(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1165,19 +1206,24 @@ mod tests {
 
     #[test]
     fn signature_fields_prevent_an_error_envelope_from_being_treated_as_unavailable() {
-        let response: WireCompletionSignatureResponse = decode_test_wire(
+        for response in [
             json!({
                 "error_code": "pending",
                 "message": "not ready",
                 "text": "partial signature",
             }),
-            ApiResource::CompletionSignature,
-            "signature",
-        )
-        .unwrap();
+            json!({
+                "error_code": "pending",
+                "message": "not ready",
+                "signature": null,
+            }),
+        ] {
+            let response: WireCompletionSignatureResponse =
+                decode_test_wire(response, ApiResource::CompletionSignature, "signature").unwrap();
 
-        let error = map_completion_signature_lookup(response).unwrap_err();
-        assert!(matches!(error, ApiError::InvalidResponse { .. }));
+            let error = map_completion_signature_lookup(response).unwrap_err();
+            assert!(matches!(error, ApiError::InvalidResponse { .. }));
+        }
     }
 
     #[test]

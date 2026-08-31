@@ -11,6 +11,7 @@ from pydantic import (
     Field,
     RootModel,
     StrictBool,
+    StrictInt,
     StrictStr,
     field_validator,
     model_validator,
@@ -61,7 +62,8 @@ class CloudGatewayAttestationSchema(CloudAttestationSchema):
 
 
 class CloudModelAttestationResponseSchema(ApiSchema):
-    model_attestations: list[CloudModelAttestationSchema]
+    # Cloud API omits this field when no model provider produced evidence.
+    model_attestations: list[CloudModelAttestationSchema] = Field(default_factory=list)
 
 
 class CloudGatewayAttestationResponseSchema(ApiSchema):
@@ -79,6 +81,34 @@ class CloudCompletionSignatureSchema(ApiSchema):
 class CloudUnavailableSignatureSchema(ApiSchema):
     error_code: StrictStr
     message: StrictStr
+
+
+class CompletionRequestModelSchema(ApiSchema):
+    """The model identifier embedded in signed completion request bytes."""
+
+    model: StrictStr = Field(min_length=1)
+
+
+class NvidiaPayloadNonceSchema(ApiSchema):
+    """The nonce echoed by NVIDIA GPU evidence."""
+
+    nonce: StrictStr
+
+
+class DstackEventLogEntrySchema(ApiSchema):
+    """One dstack event-log record used while replaying RTMR3."""
+
+    digest: StrictStr
+    imr: StrictInt = Field(ge=0, le=0xFFFFFFFF)
+    event_type: StrictInt = Field(default=0, ge=0, le=0xFFFFFFFF)
+    event: StrictStr = ''
+    event_payload: StrictStr = ''
+
+
+class DstackEventLogSchema(RootModel[list[DstackEventLogEntrySchema]]):
+    """A parsed dstack event log."""
+
+    model_config = ConfigDict(strict=True)
 
 
 class _NrasResponseSchema(ApiSchema):

@@ -4,10 +4,8 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
-use std::time::Duration;
 
 pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Default NVIDIA adapter. It submits the payload to NRAS over HTTPS and
 /// accepts only NRAS's documented boolean overall result. It does not perform
@@ -27,10 +25,7 @@ impl Default for NrasNvidiaEvidenceVerifier {
 
 impl NrasNvidiaEvidenceVerifier {
     pub fn new(url: impl Into<String>) -> Self {
-        let client = Client::builder()
-            .timeout(DEFAULT_TIMEOUT)
-            .build()
-            .expect("default reqwest client configuration is valid");
+        let client = Client::new();
         Self {
             client,
             url: url.into(),
@@ -55,12 +50,8 @@ impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
             .body(nvidia_payload.to_owned())
             .send()
             .await
-            .map_err(|error| VerificationError::NrasRequestFailed {
-                reason: if error.is_timeout() {
-                    "timeout"
-                } else {
-                    "transport"
-                },
+            .map_err(|_| VerificationError::NrasRequestFailed {
+                reason: "transport",
                 status: None,
                 retryable: true,
             })?;

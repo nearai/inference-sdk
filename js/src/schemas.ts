@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 
-/** Values accepted by external NEAR AI, quote-verifier, and NRAS responses. */
+/** Values accepted at external HTTP, adapter, and signed-byte boundaries. */
 const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
 const CompletionSignatureKindValues = ['provider_tee', 'gateway'] as const;
 const TcbStatusValues = [
@@ -49,6 +49,37 @@ export const AttestationEventLogSchema = v.union([
   // structure is validated while replaying measurements.
   v.pipe(v.array(v.unknown()), v.readonly()),
 ]);
+
+const U32Schema = v.pipe(
+  v.number(),
+  v.integer(),
+  v.minValue(0),
+  v.maxValue(0xffffffff),
+);
+
+export const DstackEventLogEntrySchema = looseObjectSchema({
+  digest: v.string(),
+  imr: U32Schema,
+  event_type: v.optional(U32Schema, 0),
+  event: v.optional(v.string(), ''),
+  event_payload: v.optional(v.string(), ''),
+});
+
+export const DstackEventLogSchema = v.array(DstackEventLogEntrySchema);
+
+export const SerializedDstackEventLogSchema = v.pipe(
+  v.string(),
+  v.parseJson(),
+  DstackEventLogSchema,
+);
+
+export const NvidiaPayloadNonceSchema = looseObjectSchema({
+  nonce: v.string(),
+});
+
+export const CompletionRequestModelSchema = looseObjectSchema({
+  model: v.pipe(v.string(), v.minLength(1)),
+});
 
 export const QuoteVerificationResultSchema = objectSchema({
   tcbStatus: TcbStatusSchema,
@@ -105,7 +136,10 @@ export const CloudApiGatewayAttestationSchema = objectSchema({
 });
 
 export const CloudApiModelAttestationResponseSchema = objectSchema({
-  model_attestations: v.array(CloudApiModelAttestationSchema),
+  // Cloud API omits this field when no model provider produced evidence.
+  // Normalize that wire form before the fetch helper reports the expected
+  // candidate-count error.
+  model_attestations: v.optional(v.array(CloudApiModelAttestationSchema), []),
 });
 
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({

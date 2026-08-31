@@ -35,7 +35,6 @@ async def fetch(
     method: str = 'GET',
     data: str | bytes | None = None,
     headers: Mapping[str, str] | None = None,
-    timeout: float | None = None,
     _capture_peer_spki: bool = False,
 ) -> FetchResponse:
     """Send one request, optionally retaining its TLS peer SPKI fingerprint.
@@ -46,12 +45,10 @@ async def fetch(
     the peer when the response starts.
     """
 
-    client_timeout = aiohttp.ClientTimeout(total=timeout)
     response_class = (
         _PeerSpkiCapturingResponse if _capture_peer_spki else aiohttp.ClientResponse
     )
     async with aiohttp.ClientSession(
-        timeout=client_timeout,
         response_class=response_class,
     ) as session:
         async with session.request(method, url, data=data, headers=headers) as response:

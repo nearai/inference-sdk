@@ -186,7 +186,7 @@ export type VerificationFailure =
   | {
       code: 'gpu.nras_request_failed';
       details: {
-        reason: 'timeout' | 'transport' | 'http_status';
+        reason: 'transport' | 'http_status';
         status?: number;
       };
       retryable: boolean;
