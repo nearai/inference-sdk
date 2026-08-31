@@ -1,0 +1,11 @@
+version: 1
+
+implementer: {}
+
+reviewer:
+  auto_review:
+    enabled: true
+
+resolver:
+  auto_resolve:
+    enabled: true
