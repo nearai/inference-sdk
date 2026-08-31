@@ -17,7 +17,8 @@ export function sha384(value: Uint8Array): Buffer {
   return createHash('sha384').update(value).digest();
 }
 
-export function createQuote(
+/** A quote using the Gateway TLS report-data layout. */
+export function createGatewayTlsQuote(
   overrides: Partial<VerifiedTdxQuote> = {},
 ): VerifiedTdxQuote {
   const runtimeDigest = Buffer.alloc(48);
@@ -48,11 +49,11 @@ export function createQuote(
   };
 }
 
-/** A Cloud model quote using the signer + nonce report-data layout. */
-export function createLegacyModelQuote(
+/** A Cloud model quote using the signer-and-nonce report-data layout. */
+export function createModelQuote(
   overrides: Partial<VerifiedTdxQuote> = {},
 ): VerifiedTdxQuote {
-  return createQuote({
+  return createGatewayTlsQuote({
     reportData: Buffer.concat([
       Buffer.from(signingAddress.slice(2), 'hex'),
       Buffer.alloc(12),
@@ -79,7 +80,6 @@ export function createModelAttestation(
       },
     ],
     appCompose,
-    declaredSpkiFingerprint: tlsFingerprint,
     ...overrides,
   };
 }

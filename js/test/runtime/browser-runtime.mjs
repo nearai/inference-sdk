@@ -28,12 +28,14 @@ await globalThis.fetch('data:,browser-runtime-test');
 await globalThis.crypto.subtle.digest('SHA-256', new Uint8Array());
 const originalBuffer = globalThis.Buffer;
 const originalFetch = globalThis.fetch;
+let gatewayAttestationUrl;
 globalThis.Buffer = undefined;
 globalThis.fetch = async (input) => {
   const url = new URL(
     typeof input === 'string' || input instanceof URL ? input : input.url,
   );
   if (url.pathname.endsWith('/attestation/report')) {
+    gatewayAttestationUrl = url;
     return {
       ok: true,
       status: 200,
@@ -46,7 +48,6 @@ globalThis.fetch = async (input) => {
             intel_quote: 'aa',
             event_log: [],
             info: { tcb_info: { app_compose: '{}' } },
-            tls_cert_fingerprint: '33'.repeat(32),
             report_data: '00'.repeat(64),
           },
         }),
@@ -76,6 +77,7 @@ try {
 
   const fetchedGatewayAttestation = await sdk.fetchGatewayAttestation({
     apiKey: 'test',
+    policy: { verifyTlsBinding: false },
   });
   assert.equal(
     fetchedGatewayAttestation.clientBinding.nonce,
@@ -84,6 +86,11 @@ try {
   assert.equal(
     fetchedGatewayAttestation.clientBinding.peerSpkiFingerprint,
     undefined,
+  );
+  assert.equal(fetchedGatewayAttestation.policy.verifyTlsBinding, false);
+  assert.equal(
+    gatewayAttestationUrl.searchParams.get('include_tls_fingerprint'),
+    'false',
   );
 
   const requestBody = new TextEncoder().encode(

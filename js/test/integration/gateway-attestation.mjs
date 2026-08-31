@@ -24,10 +24,10 @@ const verifiedGatewayAttestation = await verifyGatewayAttestation(
 );
 
 assert.deepEqual(verifiedGatewayAttestation.tlsBinding, {
-  kind: 'peer',
+  kind: 'attested',
   spkiFingerprint: peerSpkiFingerprint,
 });
 
 console.log(
-  'Verified the production Gateway attestation with a peer TLS binding.',
+  'Verified the production Gateway attestation with an attested TLS binding.',
 );

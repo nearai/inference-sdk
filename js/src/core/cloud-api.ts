@@ -126,7 +126,6 @@ export async function fetchModelAttestationForSignature({
   model,
   signature,
 }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
-  assertSignatureKind(signature, 'provider_tee');
   const fetched = await fetchModelAttestations({
     apiKey,
     baseUrl,
@@ -145,8 +144,8 @@ export async function fetchModelAttestationForSignature({
 
 /**
  * Fetch standalone Gateway evidence using the runtime's standard Fetch API.
- * Browser runtimes can verify the quote-bound TLS key but cannot inspect the
- * peer certificate for this request.
+ * The TLS policy controls both whether the server returns TLS evidence and the
+ * quote layout that `verifyGatewayAttestation` will validate.
  */
 export function fetchGatewayAttestation(
   params: FetchGatewayAttestationParams,
@@ -158,18 +157,40 @@ export function fetchGatewayAttestation(
 
 /** Internal shared implementation used by the browser and Node entry points. */
 export async function fetchGatewayAttestationWithRequester(
-  { apiKey, baseUrl, signingAlgo }: FetchGatewayAttestationParams,
+  {
+    apiKey,
+    baseUrl,
+    signingAlgo,
+    policy: requestedPolicy,
+  }: FetchGatewayAttestationParams,
   requester: GatewayAttestationRequester,
 ): Promise<FetchedGatewayAttestation> {
+  const policy = {
+    ...requestedPolicy,
+    verifyTlsBinding: requestedPolicy?.verifyTlsBinding ?? true,
+  };
   const clientNonce = generateNonce();
   const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
   url.searchParams.set('nonce', clientNonce);
   if (signingAlgo !== undefined) {
     url.searchParams.set('signing_algo', signingAlgo);
   }
-  url.searchParams.set('include_tls_fingerprint', 'true');
+  url.searchParams.set(
+    'include_tls_fingerprint',
+    String(policy.verifyTlsBinding),
+  );
   const result = await getGatewayAttestationJson({ apiKey, url, requester });
   const attestation = decodeGatewayAttestationReport(result.json);
+  if (policy.verifyTlsBinding && attestation.tlsSpkiFingerprint === undefined) {
+    throw new ApiError({
+      code: 'api.invalid_response',
+      details: {
+        path: 'gateway_attestation.tls_cert_fingerprint',
+        expected: '32-byte hexadecimal string',
+        actual: 'missing',
+      },
+    });
+  }
   requireMatchingApiNonce({
     reportedNonce: attestation.nonce,
     requestedNonce: clientNonce,
@@ -183,6 +204,7 @@ export async function fetchGatewayAttestationWithRequester(
         ? {}
         : { peerSpkiFingerprint: result.peerSpkiFingerprint }),
     },
+    policy,
   };
 }
 
@@ -345,10 +367,10 @@ export function findModelAttestationForSignature({
   signature,
 }: FindModelAttestationForSignatureParams): ModelAttestation {
   assertSignatureKind(signature, 'provider_tee');
-  return selectModelAttestationForSigner(attestations, signature.signer);
+  return findModelAttestationForSigner(attestations, signature.signer);
 }
 
-function selectModelAttestationForSigner(
+function findModelAttestationForSigner(
   attestations: readonly ModelAttestation[],
   signer: SigningIdentity,
 ): ModelAttestation {

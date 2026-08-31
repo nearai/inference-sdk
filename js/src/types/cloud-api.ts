@@ -7,7 +7,11 @@ import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
-import type { GatewayClientBinding, ModelClientBinding } from './verification';
+import type {
+  GatewayAttestationPolicy,
+  GatewayClientBinding,
+  ModelClientBinding,
+} from './verification';
 
 export type FetchModelAttestationsParams = {
   readonly apiKey: string;
@@ -33,6 +37,11 @@ export type FetchGatewayAttestationParams = {
   readonly apiKey: string;
   readonly baseUrl?: string;
   readonly signingAlgo?: SigningAlgo;
+  /**
+   * The policy returned with the fetched evidence. Its TLS setting controls
+   * both the Cloud API request and the later quote binding check.
+   */
+  readonly policy?: GatewayAttestationPolicy;
 };
 
 export type FetchCompletionSignatureParams = {
@@ -64,6 +73,8 @@ export type FetchedModelAttestation = {
 export type FetchedGatewayAttestation = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
+  /** Pass this object directly to `verifyGatewayAttestation`. */
+  readonly policy: GatewayAttestationPolicy;
 };
 export type FetchedModelAttestations = {
   readonly attestations: readonly ModelAttestation[];

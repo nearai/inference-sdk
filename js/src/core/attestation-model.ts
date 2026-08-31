@@ -8,7 +8,7 @@ import type {
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
-  verifyCloudModelReportDataBinding,
+  verifyReportDataBinding,
   verifyReportedNonce,
 } from './attestation-common';
 import {
@@ -35,11 +35,10 @@ export async function verifyModelAttestation({
     quoteVerifier: verifiers?.quote,
     advertisedReportData: attestation.reportedQuoteData,
   });
-  const tlsBinding = await verifyCloudModelReportDataBinding({
+  verifyReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
     nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
-    reportedSpkiFingerprint: verifiedQuote.attestation.declaredSpkiFingerprint,
   });
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
@@ -52,7 +51,7 @@ export async function verifyModelAttestation({
     verifier: verifiers?.nvidia ?? nvidiaNrasVerifier,
   });
 
-  return { ...evidence, tlsBinding, gpuEvidence };
+  return { ...evidence, gpuEvidence };
 }
 
 type VerifyNvidiaEvidenceParams = {

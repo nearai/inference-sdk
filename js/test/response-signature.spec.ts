@@ -10,8 +10,9 @@ import {
   verifyModelResponse,
 } from '../src';
 import {
+  createGatewayTlsQuote,
   createModelAttestation,
-  createQuote,
+  createModelQuote,
   nonce,
   tlsFingerprint,
 } from './fixtures';
@@ -40,7 +41,7 @@ function gatewaySignedText(request: Uint8Array, response: Uint8Array): string {
   return `${hashBytes(request)}:${hashBytes(response)}`;
 }
 
-function quoteForSigner(signingAddress: string) {
+function gatewayQuoteForSigner(signingAddress: string) {
   const signingAddressHex = signingAddress.startsWith('0x')
     ? signingAddress.slice(2)
     : signingAddress;
@@ -52,13 +53,24 @@ function quoteForSigner(signingAddress: string) {
       ]),
     )
     .digest();
-  return createQuote({
+  return createGatewayTlsQuote({
     reportData: Buffer.concat([signerTlsBinding, Buffer.from(nonce, 'hex')]),
   });
 }
 
+function modelQuoteForSigner(signingAddress: string) {
+  const signingAddressHex = signingAddress.startsWith('0x')
+    ? signingAddress.slice(2)
+    : signingAddress;
+  const signerBinding = Buffer.alloc(32);
+  Buffer.from(signingAddressHex, 'hex').copy(signerBinding);
+  return createModelQuote({
+    reportData: Buffer.concat([signerBinding, Buffer.from(nonce, 'hex')]),
+  });
+}
+
 async function verifiedModelAttestation(signingAddress: string) {
-  const quote = quoteForSigner(signingAddress);
+  const quote = modelQuoteForSigner(signingAddress);
   return verifyModelAttestation({
     attestation: createModelAttestation({
       signer: { signingAlgo: 'ecdsa', signingAddress },
@@ -72,13 +84,13 @@ async function verifiedGatewayAttestation(
   signingAddress: string,
   signingAlgo: CompletionSignature['signer']['signingAlgo'] = 'ed25519',
 ): Promise<Awaited<ReturnType<typeof verifyGatewayAttestation>>> {
-  const quote = quoteForSigner(signingAddress);
+  const quote = gatewayQuoteForSigner(signingAddress);
   return verifyGatewayAttestation({
     attestation: {
       ...createModelAttestation({
         signer: { signingAlgo, signingAddress },
       }),
-      declaredSpkiFingerprint: tlsFingerprint,
+      tlsSpkiFingerprint: tlsFingerprint,
       reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     },
     clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },

@@ -1,5 +1,4 @@
 import { Buffer } from 'buffer';
-import type { GatewayTlsBinding, ModelTlsBinding } from '../types/verification';
 import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 
@@ -11,19 +10,18 @@ type VerifyReportedNonceParams = {
   source?: NonceSource;
 };
 
-type VerifyGatewayReportDataBindingParams = {
+type VerifyReportDataBindingWithTlsFingerprintParams = {
   reportData: Uint8Array;
   nonce: string;
   signingAddress: string;
-  reportedSpkiFingerprint: string;
-  peerSpkiFingerprint?: string;
+  reportedTlsSpkiFingerprint?: string;
+  peerTlsSpkiFingerprint: string;
 };
 
-type VerifyCloudModelReportDataBindingParams = {
+type VerifyReportDataBindingParams = {
   reportData: Uint8Array;
   nonce: string;
   signingAddress: string;
-  reportedSpkiFingerprint?: string;
 };
 
 /**
@@ -57,47 +55,29 @@ export function verifyReportedNonce({
 }
 
 /**
- * Verify the strict NEAR report-data layout held inside an Intel-signed quote:
+ * Verify the signer-and-TLS report-data layout held inside an Intel-signed
+ * quote:
  *
  * - bytes [0, 32): SHA-256(signing-address bytes || TLS SPKI fingerprint)
  * - bytes [32, 64): caller's 32-byte nonce
  *
- * The first half always authenticates the Gateway's declared TLS key. When
- * the caller also observed the TLS peer, the function verifies that it is the
- * same key.
+ * The first half binds the Gateway signing key and TLS key. The returned
+ * fingerprint is valid only when it also matches the caller-observed TLS peer.
  */
-export async function verifyGatewayReportDataBinding(
-  input: VerifyGatewayReportDataBindingParams,
-): Promise<GatewayTlsBinding> {
-  const reportData = Buffer.from(input.reportData);
-  if (reportData.length !== 64) {
-    throw new VerificationError({
-      code: 'binding.report_data_invalid',
-      details: {
-        source: 'quoteReportData',
-        reason: 'wrong_length',
-        expectedBytes: 64,
-        actualBytes: reportData.length,
-      },
-    });
-  }
-
-  const expectedNonce = requireByteLength({
-    value: input.nonce,
-    byteLength: 32,
-    label: 'nonce',
+export async function verifyReportDataBindingWithTlsFingerprint(
+  input: VerifyReportDataBindingWithTlsFingerprintParams,
+): Promise<string> {
+  const reportData = verifyQuoteReportDataNonce({
+    reportData: input.reportData,
+    nonce: input.nonce,
   });
-  if (!reportData.subarray(32, 64).equals(expectedNonce)) {
-    throw new VerificationError({
-      code: 'binding.nonce_mismatch',
-      details: { source: 'quoteReportData' },
-    });
+  if (input.reportedTlsSpkiFingerprint === undefined) {
+    throw new VerificationError({ code: 'policy.tls_binding_required' });
   }
-
   const reportedFingerprint = requireByteLength({
-    value: input.reportedSpkiFingerprint,
+    value: input.reportedTlsSpkiFingerprint,
     byteLength: 32,
-    label: 'attestation.declaredSpkiFingerprint',
+    label: 'attestation.tlsSpkiFingerprint',
   });
 
   const signingAddress = hexToBuffer(
@@ -114,15 +94,8 @@ export async function verifyGatewayReportDataBinding(
     });
   }
 
-  if (input.peerSpkiFingerprint === undefined) {
-    return {
-      kind: 'attested',
-      spkiFingerprint: reportedFingerprint.toString('hex'),
-    };
-  }
-
   const peerFingerprint = requireByteLength({
-    value: input.peerSpkiFingerprint,
+    value: input.peerTlsSpkiFingerprint,
     byteLength: 32,
     label: 'clientBinding.peerSpkiFingerprint',
   });
@@ -132,32 +105,47 @@ export async function verifyGatewayReportDataBinding(
     });
   }
 
-  return {
-    kind: 'peer',
-    spkiFingerprint: reportedFingerprint.toString('hex'),
-  };
+  return reportedFingerprint.toString('hex');
 }
 
 /**
- * Verify the model-report binding returned through the Cloud API. A client is
- * not connected to the upstream model endpoint, so a successful check never
- * claims client-to-model TLS binding. Both model layouts bind the signer and
- * nonce; when the report declares a TLS fingerprint, it is additionally bound
- * inside the quote but is not a client-observed peer certificate.
- *
- * - bytes [32, 64) always contain the caller nonce.
- * - Without `declaredSpkiFingerprint`, bytes [0, 32) are the signing address
- *   zero-padded to 32 bytes.
- * - With `declaredSpkiFingerprint`, bytes [0, 32) are
- *   SHA-256(signing address || declared fingerprint).
- *
- * Presence of the fingerprint selects the latter layout. Never downgrade a
- * report that declares a fingerprint to the legacy signer-only layout.
+ * Verify the signer-and-nonce report-data layout used when TLS binding is not
+ * requested. The first half is the signing address zero-padded to 32 bytes;
+ * the second half is the caller nonce.
  */
-export async function verifyCloudModelReportDataBinding(
-  input: VerifyCloudModelReportDataBindingParams,
-): Promise<ModelTlsBinding> {
-  const reportData = Buffer.from(input.reportData);
+export function verifyReportDataBinding({
+  reportData: rawReportData,
+  nonce,
+  signingAddress: rawSigningAddress,
+}: VerifyReportDataBindingParams): void {
+  const reportData = verifyQuoteReportDataNonce({
+    reportData: rawReportData,
+    nonce,
+  });
+  const signingAddress = hexToBuffer(
+    rawSigningAddress,
+    'signer.signingAddress',
+  );
+  const expectedBinding = Buffer.alloc(32);
+  signingAddress.copy(expectedBinding);
+  if (!reportData.subarray(0, 32).equals(expectedBinding)) {
+    throw new VerificationError({
+      code: 'binding.report_data_mismatch',
+      details: { source: 'signerBinding' },
+    });
+  }
+}
+
+type VerifyQuoteReportDataNonceParams = {
+  reportData: Uint8Array;
+  nonce: string;
+};
+
+function verifyQuoteReportDataNonce({
+  reportData: rawReportData,
+  nonce,
+}: VerifyQuoteReportDataNonceParams): Buffer {
+  const reportData = Buffer.from(rawReportData);
   if (reportData.length !== 64) {
     throw new VerificationError({
       code: 'binding.report_data_invalid',
@@ -170,7 +158,7 @@ export async function verifyCloudModelReportDataBinding(
     });
   }
   const expectedNonce = requireByteLength({
-    value: input.nonce,
+    value: nonce,
     byteLength: 32,
     label: 'nonce',
   });
@@ -180,43 +168,7 @@ export async function verifyCloudModelReportDataBinding(
       details: { source: 'quoteReportData' },
     });
   }
-
-  const signingAddress = hexToBuffer(
-    input.signingAddress,
-    'signer.signingAddress',
-  );
-  if (input.reportedSpkiFingerprint !== undefined) {
-    const fingerprint = requireByteLength({
-      value: input.reportedSpkiFingerprint,
-      byteLength: 32,
-      label: 'attestation.declaredSpkiFingerprint',
-    });
-    const expectedBinding = await sha256(
-      Buffer.concat([signingAddress, fingerprint]),
-    );
-    if (!reportData.subarray(0, 32).equals(expectedBinding)) {
-      throw new VerificationError({
-        code: 'binding.report_data_mismatch',
-        details: { source: 'signerTlsBinding' },
-      });
-    }
-    return {
-      kind: 'declared',
-      spkiFingerprint: fingerprint.toString('hex'),
-    };
-  }
-
-  // Legacy Cloud model layout is a zero-padded signer, not a hash. Keep it
-  // separate from the declared-fingerprint layout above.
-  const expectedBinding = Buffer.alloc(32);
-  signingAddress.copy(expectedBinding);
-  if (!reportData.subarray(0, 32).equals(expectedBinding)) {
-    throw new VerificationError({
-      code: 'binding.report_data_mismatch',
-      details: { source: 'signerBinding' },
-    });
-  }
-  return { kind: 'none' };
+  return reportData;
 }
 
 /**

@@ -55,10 +55,11 @@ export type ModelAttestationPolicy = AttestationPolicy & {
 
 export type GatewayAttestationPolicy = AttestationPolicy & {
   /**
-   * Defaults to true. Require and verify the TLS peer observed by the client.
-   * When false, ignore any peer fingerprint in `clientBinding`.
+   * Defaults to true. Request TLS fingerprint evidence and require it to match
+   * the TLS peer observed by the client. When false, verify the signer-and-
+   * nonce report-data layout instead and ignore any peer fingerprint.
    */
-  readonly verifyPeerTlsBinding?: boolean;
+  readonly verifyTlsBinding?: boolean;
 };
 
 export type AttestationVerifiers = {
@@ -108,25 +109,12 @@ export type VerifiedTdxQuote = Omit<
   rtMr3: Buffer;
 };
 
-/** TLS information authenticated for a model report. */
-export type ModelTlsBinding =
+/** TLS binding established by Gateway attestation verification. */
+export type GatewayTlsBinding =
   | { readonly kind: 'none' }
   | {
-      /** This is server-declared evidence, not a client-observed model peer. */
-      readonly kind: 'declared';
-      readonly spkiFingerprint: string;
-    };
-
-/** TLS information authenticated for gateway evidence. */
-export type GatewayTlsBinding =
-  | {
-      /** The Gateway quote authenticated its declared TLS fingerprint. */
+      /** The quote-bound fingerprint matched the TLS peer observed by the client. */
       readonly kind: 'attested';
-      readonly spkiFingerprint: string;
-    }
-  | {
-      /** The declared fingerprint also matched the TLS peer observed by the client. */
-      readonly kind: 'peer';
       readonly spkiFingerprint: string;
     };
 
@@ -151,14 +139,13 @@ export type VerifiedAttestationEvidence = {
 
 /** Result returned by a successful `verifyModelAttestation` call. */
 export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
-  readonly tlsBinding: ModelTlsBinding;
   /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
   readonly gpuEvidence: GpuEvidenceStatus;
 };
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
-  /** TLS information bound by the Gateway quote and, when available, the client peer. */
+  /** TLS binding selected by the Gateway verification policy. */
   readonly tlsBinding: GatewayTlsBinding;
 };
 

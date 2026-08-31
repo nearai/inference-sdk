@@ -52,7 +52,6 @@ export type {
   ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
-  ModelTlsBinding,
   NvidiaEvidenceVerifier,
   QuoteVerifier,
   QuoteVerificationResult,

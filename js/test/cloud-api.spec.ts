@@ -41,7 +41,6 @@ function modelAttestation(
     intelQuote: 'aa',
     eventLog: [],
     appCompose: '{}',
-    declaredSpkiFingerprint: '33'.repeat(32),
     reportedQuoteData: '44'.repeat(64),
     ...overrides,
   };
@@ -263,7 +262,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
       const [attestation] = attestations;
 
-      expect(attestation).not.toHaveProperty('declaredSpkiFingerprint');
+      expect(attestation).not.toHaveProperty('tlsSpkiFingerprint');
       expect(attestation).not.toHaveProperty('reportedQuoteData');
       expect(attestation).not.toHaveProperty('nvidiaPayload');
     });
@@ -414,11 +413,33 @@ describe('NEAR AI Cloud fetch helpers', () => {
       expect(fetched).toMatchObject({
         clientBinding: { nonce: fetched.attestation.nonce },
         attestation: { reportedQuoteData: '00'.repeat(64) },
+        policy: { verifyTlsBinding: true },
       });
       const query = new URL(api.request().url).searchParams;
       expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
       expect(query.get('signing_algo')).toBeNull();
       expect(query.get('include_tls_fingerprint')).toBe('true');
+    });
+
+    test('uses signer-and-nonce Gateway evidence when TLS binding is disabled', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(
+          gatewayReport(requestNonce(request), {
+            tls_cert_fingerprint: null,
+          }),
+        ),
+      );
+
+      const fetched = await fetchGatewayAttestation({
+        ...api.params,
+        policy: { verifyTlsBinding: false },
+      });
+
+      expect(fetched.policy).toEqual({ verifyTlsBinding: false });
+      expect(fetched.attestation).not.toHaveProperty('tlsSpkiFingerprint');
+      expect(
+        new URL(api.request().url).searchParams.get('include_tls_fingerprint'),
+      ).toBe('false');
     });
 
     test('requests the gateway signing algorithm needed by a response signature', async () => {

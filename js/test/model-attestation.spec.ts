@@ -3,14 +3,11 @@ import { ApiError, verifyModelAttestation } from '../src';
 import type { MeasuredDeployment, QuoteVerifier } from '../src';
 import {
   appCompose,
-  createLegacyModelQuote,
   createModelAttestation,
-  createQuote,
+  createModelQuote,
   nonce,
-  sha256,
   sha384,
   signingAddress,
-  tlsFingerprint,
 } from './fixtures';
 
 const DSTACK_RUNTIME_EVENT_TYPE = 0x08000001;
@@ -45,11 +42,11 @@ function createQuoteForEventLog(events: readonly EventLogDigest[]) {
   for (const event of events) {
     rtmr3 = sha384(Buffer.concat([rtmr3, Buffer.from(event.digest, 'hex')]));
   }
-  return createQuote({ rtMr3: Buffer.from(rtmr3) });
+  return createModelQuote({ rtMr3: Buffer.from(rtmr3) });
 }
 
 describe('model attestation verification', () => {
-  const quoteVerifier: QuoteVerifier = async () => createQuote();
+  const quoteVerifier: QuoteVerifier = async () => createModelQuote();
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -65,7 +62,6 @@ describe('model attestation verification', () => {
     expect(result).toMatchObject({
       signer: { signingAlgo: 'ecdsa', signingAddress },
       tcbStatus: 'UpToDate',
-      tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
       gpuEvidence: 'not_provided',
       deploymentProvenance: 'not_checked',
     });
@@ -89,29 +85,12 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('accepts the legacy signer-and-nonce model binding without a declared SPKI', async () => {
-    const result = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        declaredSpkiFingerprint: undefined,
-      }),
-      clientBinding: { nonce },
-      verifiers: { quote: async () => createLegacyModelQuote() },
-    });
-
-    expect(result.tlsBinding).toEqual({ kind: 'none' });
-  });
-
   test('supports serialized event logs for an Ed25519 model signer', async () => {
     const ed25519SigningAddress = '66'.repeat(32);
     const eventLog = createModelAttestation().eventLog;
-    const quote = createQuote({
+    const quote = createModelQuote({
       reportData: Buffer.concat([
-        sha256(
-          Buffer.concat([
-            Buffer.from(ed25519SigningAddress, 'hex'),
-            Buffer.from(tlsFingerprint, 'hex'),
-          ]),
-        ),
+        Buffer.from(ed25519SigningAddress, 'hex'),
         Buffer.from(nonce, 'hex'),
       ]),
     });
@@ -129,27 +108,11 @@ describe('model attestation verification', () => {
 
     expect(result).toMatchObject({
       signer: { signingAlgo: 'ed25519', signingAddress: ed25519SigningAddress },
-      tlsBinding: { kind: 'declared', spkiFingerprint: tlsFingerprint },
     });
   });
 
-  test('does not downgrade a declared-SPKI report to the legacy layout', async () => {
-    await expect(
-      verifyModelAttestation({
-        attestation: createModelAttestation(),
-        clientBinding: { nonce },
-        verifiers: { quote: async () => createLegacyModelQuote() },
-      }),
-    ).rejects.toMatchObject({
-      failure: {
-        code: 'binding.report_data_mismatch',
-        details: { source: 'signerTlsBinding' },
-      },
-    });
-  });
-
-  test('rejects a legacy report whose padded signer does not match', async () => {
-    const quote = createLegacyModelQuote({
+  test('rejects a model report whose padded signer does not match', async () => {
+    const quote = createModelQuote({
       reportData: Buffer.concat([
         Buffer.alloc(32, 0x44),
         Buffer.from(nonce, 'hex'),
@@ -158,9 +121,7 @@ describe('model attestation verification', () => {
 
     await expect(
       verifyModelAttestation({
-        attestation: createModelAttestation({
-          declaredSpkiFingerprint: undefined,
-        }),
+        attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: { quote: async () => quote },
       }),
@@ -178,7 +139,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => createQuote({ debugEnabled: true }),
+          quote: async () => createModelQuote({ debugEnabled: true }),
         },
       }),
     ).rejects.toMatchObject({
@@ -229,7 +190,7 @@ describe('model attestation verification', () => {
       attestation: createModelAttestation(),
       clientBinding: { nonce },
       verifiers: {
-        quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+        quote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
       },
     });
 
@@ -241,7 +202,7 @@ describe('model attestation verification', () => {
         clientBinding: { nonce },
         policy: { acceptedTcbStatuses: ['UpToDate'] },
         verifiers: {
-          quote: async () => createQuote({ tcbStatus: 'OutOfDate' }),
+          quote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
         },
       }),
     ).rejects.toMatchObject({
@@ -258,7 +219,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => createQuote({ reportData: Buffer.alloc(63) }),
+          quote: async () => createModelQuote({ reportData: Buffer.alloc(63) }),
         },
       }),
     ).rejects.toMatchObject({

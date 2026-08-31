@@ -145,8 +145,10 @@ function mapGatewayAttestation(
 ): GatewayAttestation {
   return {
     ...mapAttestationEvidence({ attestation, label }),
-    declaredSpkiFingerprint: attestation.tls_cert_fingerprint,
     reportedQuoteData: attestation.report_data,
+    ...(attestation.tls_cert_fingerprint === undefined
+      ? {}
+      : { tlsSpkiFingerprint: attestation.tls_cert_fingerprint }),
   };
 }
 
@@ -169,9 +171,6 @@ function mapAttestationEvidence({
     intelQuote: attestation.intel_quote,
     eventLog: attestation.event_log,
     appCompose: attestation.info.tcb_info.app_compose,
-    ...(attestation.tls_cert_fingerprint === undefined
-      ? {}
-      : { declaredSpkiFingerprint: attestation.tls_cert_fingerprint }),
   };
 }
 
