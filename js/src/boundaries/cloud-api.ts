@@ -148,7 +148,7 @@ function mapGatewayAttestation(
     reportedQuoteData: attestation.report_data,
     ...(attestation.tls_cert_fingerprint === undefined
       ? {}
-      : { tlsSpkiFingerprint: attestation.tls_cert_fingerprint }),
+      : { spkiFingerprint: attestation.tls_cert_fingerprint }),
   };
 }
 

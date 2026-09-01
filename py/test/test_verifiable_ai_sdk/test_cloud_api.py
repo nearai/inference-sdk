@@ -154,7 +154,7 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
 
     assert selected.nonce == fetched.client_binding.nonce
     assert selected.app_compose == '{}'
-    assert not hasattr(selected, 'tls_spki_fingerprint')
+    assert not hasattr(selected, 'spki_fingerprint')
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)
@@ -309,7 +309,7 @@ async def test_gateway_helper_requests_tls_aware_evidence(
     )
 
     assert fetched.attestation.nonce == fetched.client_binding.nonce
-    assert fetched.client_binding.peer_spki_fingerprint == '33' * 32
+    assert fetched.client_binding.spki_fingerprint == '33' * 32
     assert capture_peer_spki is True
     query = parse_qs(urlsplit(seen_url).query)
     assert urlsplit(seen_url).geturl().startswith(f'{BASE_URL}/attestation/report?')
@@ -358,7 +358,7 @@ async def test_gateway_helper_uses_signer_nonce_evidence_when_tls_is_disabled(
     fetched = await cloud_client().fetch_gateway_attestation(policy=policy)
 
     assert fetched.policy == policy
-    assert fetched.attestation.tls_spki_fingerprint is None
+    assert fetched.attestation.spki_fingerprint is None
     assert capture_peer_spki is False
     assert parse_qs(urlsplit(seen_url).query)['include_tls_fingerprint'] == ['false']
 
@@ -424,7 +424,7 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
     assert malformed.value.failure.code == 'api.invalid_response'
     assert (
         malformed.value.failure.details['path']
-        == 'gateway_attestation.tls_cert_fingerprint'
+        == 'gateway_attestation.spki_fingerprint'
     )
     assert malformed.value.failure.details['actual'] == 'missing'
 

@@ -24,7 +24,7 @@ async def test_gateway_attestation_binds_the_observed_tls_peer() -> None:
         create_gateway_attestation(),
         GatewayClientBinding(
             nonce=NONCE,
-            peer_spki_fingerprint=TLS_FINGERPRINT,
+            spki_fingerprint=TLS_FINGERPRINT,
         ),
         verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
     )
@@ -48,7 +48,7 @@ async def test_gateway_attestation_rejects_a_different_peer() -> None:
             create_gateway_attestation(),
             GatewayClientBinding(
                 nonce=NONCE,
-                peer_spki_fingerprint='44' * 32,
+                spki_fingerprint='44' * 32,
             ),
             verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
         )
@@ -61,12 +61,12 @@ async def test_gateway_attestation_uses_signer_nonce_binding_when_tls_is_disable
     quote = create_model_quote()
     result = await verify_gateway_attestation(
         create_gateway_attestation(
-            tls_spki_fingerprint=None,
+            spki_fingerprint=None,
             reported_quote_data=quote.report_data.hex(),
         ),
         GatewayClientBinding(
             nonce=NONCE,
-            peer_spki_fingerprint='not-a-fingerprint',
+            spki_fingerprint='not-a-fingerprint',
         ),
         policy=GatewayAttestationPolicy(verify_tls_binding=False),
         verifiers=AttestationVerifiers(quote=lambda _: quote),
@@ -82,7 +82,7 @@ async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
             create_gateway_attestation(),
             GatewayClientBinding(
                 nonce=NONCE,
-                peer_spki_fingerprint=TLS_FINGERPRINT,
+                spki_fingerprint=TLS_FINGERPRINT,
             ),
             policy=GatewayAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
             verifiers=AttestationVerifiers(
@@ -102,7 +102,7 @@ async def test_gateway_attestation_normalizes_a_rejected_deployment_verifier() -
             create_gateway_attestation(),
             GatewayClientBinding(
                 nonce=NONCE,
-                peer_spki_fingerprint=TLS_FINGERPRINT,
+                spki_fingerprint=TLS_FINGERPRINT,
             ),
             verifiers=AttestationVerifiers(
                 quote=lambda _: create_gateway_tls_quote(),

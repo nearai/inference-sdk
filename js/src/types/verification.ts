@@ -88,8 +88,8 @@ export type VerifyModelAttestationParams = {
 export type GatewayClientBinding = {
   /** Fresh nonce sent in the Gateway-attestation request. */
   readonly nonce: string;
-  /** TLS SPKI fingerprint observed for that request, when the runtime exposes it. */
-  readonly peerSpkiFingerprint?: string;
+  /** Client-observed TLS SPKI fingerprint for that request, when the runtime exposes it. */
+  readonly spkiFingerprint?: string;
 };
 
 export type VerifyGatewayAttestationParams = {

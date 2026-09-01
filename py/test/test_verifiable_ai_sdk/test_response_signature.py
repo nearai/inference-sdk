@@ -130,7 +130,7 @@ async def test_gateway_response_verifies_ed25519_signature() -> None:
         ),
         GatewayClientBinding(
             nonce=NONCE,
-            peer_spki_fingerprint=TLS_FINGERPRINT,
+            spki_fingerprint=TLS_FINGERPRINT,
         ),
         verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
     )

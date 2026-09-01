@@ -102,7 +102,7 @@ With `verify_tls_binding=False`, it sends
 | --- | --- | --- |
 | `ModelClientBinding.nonce` | `str` | Client nonce generated and sent by the matching model-evidence fetch. |
 | `GatewayClientBinding.nonce` | `str` | Client nonce generated and sent by the matching Gateway-evidence fetch. |
-| `GatewayClientBinding.peer_spki_fingerprint` | `str \| None` | SHA-256 SPKI fingerprint observed for that exact Gateway-evidence HTTPS request when TLS binding was enabled and the runtime exposes it. |
+| `GatewayClientBinding.spki_fingerprint` | `str \| None` | SHA-256 SPKI fingerprint observed for that exact Gateway-evidence HTTPS request when TLS binding was enabled and the runtime exposes it. |
 
 ## Verification functions
 
@@ -160,7 +160,7 @@ Gateway verification instead checks signer-and-nonce report data and returns
 |  | `app_compose` | `str` | Measured compose configuration text. |
 | `ModelAttestation` | `reported_quote_data` | `str \| None` | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `nvidia_payload` | `str \| None` | Optional GPU evidence payload. |
-| `GatewayAttestation` | `tls_spki_fingerprint` | `str \| None` | TLS fingerprint returned only for a TLS-binding evidence request. It is required by the enabled verification path. |
+| `GatewayAttestation` | `spki_fingerprint` | `str \| None` | TLS fingerprint returned only for a TLS-binding evidence request. It is required by the enabled verification path. |
 |  | `reported_quote_data` | `str` | Gateway report-data copy required by Gateway verification. |
 
 `CompletionSignatureKind` is `Literal['provider_tee', 'gateway']` and

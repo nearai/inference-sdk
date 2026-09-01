@@ -39,6 +39,9 @@ peer-certificate access must use
 when calling `AttestationClient::fetch_gateway_attestation`. The request then
 uses the signer-and-nonce quote layout instead and verification returns
 `GatewayTlsBinding::None`; it makes no TLS claim.
+`GatewayAttestation::spki_fingerprint` is Gateway-reported,
+`GatewayClientBinding::spki_fingerprint` is client-observed, and
+`GatewayTlsBinding::Attested { spki_fingerprint }` is their verified match.
 
 Cloud model fetches always request `include_tls_fingerprint=false`. They verify
 the signer-and-nonce quote layout and deliberately do not claim a direct

@@ -60,7 +60,7 @@ attestation verifier.
 |  | `policy` | Resolved `GatewayAttestationPolicy` for this request. Pass it to `verify_gateway_attestation`. |
 | `ModelClientBinding` | `nonce` | SDK-generated client nonce. |
 | `GatewayClientBinding` | `nonce` | SDK-generated client nonce. |
-|  | `peer_spki_fingerprint` | Optional SHA-256 SPKI fingerprint observed for the exact HTTPS evidence request. The default Gateway policy requires it; set `verify_tls_binding` to `false` before fetching when it is unavailable. |
+|  | `spki_fingerprint` | Optional SHA-256 SPKI fingerprint observed for the exact HTTPS evidence request. The default Gateway policy requires it; set `verify_tls_binding` to `false` before fetching when it is unavailable. |
 
 ## Attestation verification
 
@@ -76,7 +76,7 @@ pass `Default::default()` as `verifiers` to use built-in quote, deployment, and
 GPU verification.
 
 `GatewayAttestationPolicy::verify_tls_binding` defaults to `true`. In that
-mode, `client_binding.peer_spki_fingerprint` must be a 32-byte hexadecimal
+mode, `client_binding.spki_fingerprint` must be a 32-byte hexadecimal
 SHA-256 SPKI fingerprint independently observed for the TLS peer serving the
 Gateway attestation request. Do not use the attestation's fingerprint as the
 observed peer value. A runtime without peer-certificate access must set
@@ -142,7 +142,7 @@ Gateway `reported_quote_data` is required.
 | `ModelAttestation` | `reported_quote_data` | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `nvidia_payload` | Optional NVIDIA evidence payload. |
 | `GatewayAttestation` | `reported_quote_data` | Required report-data copy cross-checked against the authenticated quote. |
-|  | `tls_spki_fingerprint` | Optional Gateway TLS SPKI fingerprint. It is present when TLS binding was requested and must match the client-observed peer before verification returns an attested TLS binding. |
+|  | `spki_fingerprint` | Optional Gateway TLS SPKI fingerprint. It is present when TLS binding was requested and must match the client-observed peer before verification returns an attested TLS binding. |
 
 ## Policies and verifier callbacks
 

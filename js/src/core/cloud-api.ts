@@ -173,7 +173,7 @@ export class AttestationClient {
     const attestation = decodeGatewayAttestationReport(result.json);
     if (
       policy.verifyTlsBinding &&
-      attestation.tlsSpkiFingerprint === undefined
+      attestation.spkiFingerprint === undefined
     ) {
       throw new ApiError({
         code: 'api.invalid_response',
@@ -195,7 +195,7 @@ export class AttestationClient {
         nonce: clientNonce,
         ...(result.peerSpkiFingerprint === undefined
           ? {}
-          : { peerSpkiFingerprint: result.peerSpkiFingerprint }),
+          : { spkiFingerprint: result.peerSpkiFingerprint }),
       },
       policy,
     };

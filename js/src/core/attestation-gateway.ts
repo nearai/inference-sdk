@@ -33,8 +33,8 @@ export async function verifyGatewayAttestation({
   });
   let tlsBinding: VerifiedGatewayAttestation['tlsBinding'];
   if (verifyTlsBinding) {
-    const peerTlsSpkiFingerprint = clientBinding.peerSpkiFingerprint;
-    if (peerTlsSpkiFingerprint === undefined) {
+    const peerSpkiFingerprint = clientBinding.spkiFingerprint;
+    if (peerSpkiFingerprint === undefined) {
       throw new VerificationError({
         code: 'policy.tls_binding_required',
       });
@@ -43,8 +43,8 @@ export async function verifyGatewayAttestation({
       reportData: verifiedQuote.quote.reportData,
       nonce: clientBinding.nonce,
       signingAddress: verifiedQuote.signer.signingAddress,
-      reportedTlsSpkiFingerprint: attestation.tlsSpkiFingerprint,
-      peerTlsSpkiFingerprint,
+      reportedSpkiFingerprint: attestation.spkiFingerprint,
+      peerSpkiFingerprint,
     });
     tlsBinding = { kind: 'attested', spkiFingerprint };
   } else {

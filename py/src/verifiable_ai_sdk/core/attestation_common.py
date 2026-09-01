@@ -83,16 +83,16 @@ def verify_report_data_binding_with_tls_fingerprint(
     report_data: bytes,
     nonce: str,
     signer: SigningIdentity,
-    reported_tls_spki_fingerprint: str | None,
-    peer_tls_spki_fingerprint: str,
+    reported_spki_fingerprint: str | None,
+    peer_spki_fingerprint: str,
 ) -> str:
     """Verify the signer-and-TLS report-data layout and return its fingerprint."""
 
     _verify_quote_report_data_length_and_nonce(report_data, nonce)
-    if reported_tls_spki_fingerprint is None:
+    if reported_spki_fingerprint is None:
         raise verification_failure('policy.tls_binding_required')
     reported = require_byte_length(
-        reported_tls_spki_fingerprint, 32, 'attestation.tls_spki_fingerprint'
+        reported_spki_fingerprint, 32, 'attestation.spki_fingerprint'
     )
     signing_address = hex_to_bytes(signer.signing_address, 'signer.signing_address')
     if report_data[:32] != sha256(signing_address + reported):
@@ -102,9 +102,9 @@ def verify_report_data_binding_with_tls_fingerprint(
         )
 
     peer = require_byte_length(
-        peer_tls_spki_fingerprint,
+        peer_spki_fingerprint,
         32,
-        'client_binding.peer_spki_fingerprint',
+        'client_binding.spki_fingerprint',
     )
     if reported != peer:
         raise verification_failure('binding.spki_fingerprint_mismatch')

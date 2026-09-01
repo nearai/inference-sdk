@@ -78,7 +78,7 @@ pub fn gateway_attestation() -> GatewayAttestation {
             })]),
             app_compose: APP_COMPOSE.to_owned(),
         },
-        tls_spki_fingerprint: Some(TLS_FINGERPRINT.to_owned()),
+        spki_fingerprint: Some(TLS_FINGERPRINT.to_owned()),
         reported_quote_data,
     }
 }
@@ -100,7 +100,7 @@ pub fn gateway_attestation_without_tls_binding() -> GatewayAttestation {
             })]),
             app_compose: APP_COMPOSE.to_owned(),
         },
-        tls_spki_fingerprint: None,
+        spki_fingerprint: None,
         reported_quote_data,
     }
 }

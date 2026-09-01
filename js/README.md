@@ -101,6 +101,9 @@ the evidence request, satisfying the default Gateway policy. Browser consumers
 can bundle the SDK, but browser fetch does not expose peer certificates. They
 must use `verifyTlsBinding: false` when fetching Gateway evidence; that path
 returns `tlsBinding.kind: 'none'` after signer-and-nonce quote verification.
+`GatewayAttestation.spkiFingerprint` is Gateway-reported,
+`GatewayClientBinding.spkiFingerprint` is client-observed, and a successful
+`GatewayTlsBinding.spkiFingerprint` is their verified match.
 The default Intel verifier may require `crypto`, `buffer`,
 and `stream` polyfills in browsers. Supply a custom quote verifier when your
 runtime or trust model requires one.

@@ -36,6 +36,9 @@ without peer-certificate access must fetch with
 `GatewayAttestationPolicy(verify_tls_binding=False)`, then pass the returned
 policy to verification. That path requests no TLS fingerprint, verifies the
 signer-and-nonce quote layout, and returns `GatewayTlsBinding(kind='none')`.
+`GatewayAttestation.spki_fingerprint` is Gateway-reported,
+`GatewayClientBinding.spki_fingerprint` is client-observed, and a successful
+`GatewayTlsBinding.spki_fingerprint` is their verified match.
 
 ## Documentation
 

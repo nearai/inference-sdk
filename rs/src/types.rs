@@ -61,9 +61,10 @@ pub struct ModelAttestation {
 #[derive(Clone, Debug)]
 pub struct GatewayAttestation {
     pub evidence: AttestationEvidence,
-    /// TLS SPKI fingerprint returned when the evidence request enables TLS
-    /// binding. The quote authenticates this value only in that mode.
-    pub tls_spki_fingerprint: Option<String>,
+    /// SPKI fingerprint reported by the Gateway when the evidence request
+    /// enables TLS binding. The quote authenticates this value only in that
+    /// mode.
+    pub spki_fingerprint: Option<String>,
     /// Gateway reports always advertise the quote report-data copy.
     pub reported_quote_data: String,
 }
@@ -296,7 +297,7 @@ pub struct GatewayClientBinding {
     pub nonce: String,
     /// SHA-256 SPKI fingerprint observed for that exact HTTPS request, when
     /// the runtime exposes peer certificate information.
-    pub peer_spki_fingerprint: Option<String>,
+    pub spki_fingerprint: Option<String>,
 }
 
 /// Gateway evidence and the client values associated with its request.

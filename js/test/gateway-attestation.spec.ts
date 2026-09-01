@@ -18,7 +18,7 @@ function createGatewayAttestation(
     ...createModelAttestation(),
     reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     ...overrides,
-    tlsSpkiFingerprint: overrides.tlsSpkiFingerprint ?? tlsFingerprint,
+    spkiFingerprint: overrides.spkiFingerprint ?? tlsFingerprint,
   };
 }
 
@@ -26,7 +26,7 @@ describe('gateway attestation verification', () => {
   test('binds gateway evidence to the caller-observed peer SPKI', async () => {
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
-      clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+      clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: { quote: async () => createGatewayTlsQuote() },
     });
 
@@ -56,7 +56,7 @@ describe('gateway attestation verification', () => {
         ...createModelAttestation(),
         reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
       },
-      clientBinding: { nonce, peerSpkiFingerprint: '44'.repeat(32) },
+      clientBinding: { nonce, spkiFingerprint: '44'.repeat(32) },
       policy: { verifyTlsBinding: false },
       verifiers: { quote: async () => quote },
     });
@@ -68,7 +68,7 @@ describe('gateway attestation verification', () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
-        clientBinding: { nonce, peerSpkiFingerprint: '44'.repeat(32) },
+        clientBinding: { nonce, spkiFingerprint: '44'.repeat(32) },
         verifiers: { quote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
@@ -84,7 +84,7 @@ describe('gateway attestation verification', () => {
         attestation: createGatewayAttestation({
           reportedQuoteData: 'ff'.repeat(64),
         }),
-        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+        clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
         verifiers: { quote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
@@ -99,7 +99,7 @@ describe('gateway attestation verification', () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
-        clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+        clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
         policy: { acceptedTcbStatuses: ['OutOfDate'] },
         verifiers: { quote: async () => createGatewayTlsQuote() },
       }),
@@ -115,7 +115,7 @@ describe('gateway attestation verification', () => {
     const verifiedDeployments: MeasuredDeployment[] = [];
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
-      clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+      clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: {
         quote: async () => createGatewayTlsQuote(),
         deployment: async (deployment) => {

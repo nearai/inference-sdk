@@ -11,10 +11,10 @@ use verifiable_ai_sdk::{
     MeasuredDeployment, TcbStatus, VerificationError,
 };
 
-fn client_binding(peer_spki_fingerprint: Option<String>) -> GatewayClientBinding {
+fn client_binding(spki_fingerprint: Option<String>) -> GatewayClientBinding {
     GatewayClientBinding {
         nonce: NONCE.to_owned(),
-        peer_spki_fingerprint,
+        spki_fingerprint,
     }
 }
 
@@ -134,7 +134,7 @@ async fn can_disable_tls_binding_and_verify_signer_and_nonce() {
 async fn requires_a_tls_fingerprint_when_tls_binding_is_enabled() {
     let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let mut attestation = gateway_attestation();
-    attestation.tls_spki_fingerprint = None;
+    attestation.spki_fingerprint = None;
 
     let error = verify_gateway_attestation(
         &attestation,
@@ -155,7 +155,7 @@ async fn requires_a_tls_fingerprint_when_tls_binding_is_enabled() {
 async fn rejects_an_invalid_tls_fingerprint() {
     let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let mut attestation = gateway_attestation();
-    attestation.tls_spki_fingerprint = Some(String::new());
+    attestation.spki_fingerprint = Some(String::new());
 
     let error = verify_gateway_attestation(
         &attestation,
@@ -170,7 +170,7 @@ async fn rejects_an_invalid_tls_fingerprint() {
     .unwrap_err();
 
     assert!(
-        matches!(error, VerificationError::InvalidInput { ref field, .. } if field == "attestation.tls_spki_fingerprint")
+        matches!(error, VerificationError::InvalidInput { ref field, .. } if field == "attestation.spki_fingerprint")
     );
 }
 

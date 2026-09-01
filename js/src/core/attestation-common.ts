@@ -14,8 +14,8 @@ type VerifyReportDataBindingWithTlsFingerprintParams = {
   reportData: Uint8Array;
   nonce: string;
   signingAddress: string;
-  reportedTlsSpkiFingerprint?: string;
-  peerTlsSpkiFingerprint: string;
+  reportedSpkiFingerprint?: string;
+  peerSpkiFingerprint: string;
 };
 
 type VerifyReportDataBindingParams = {
@@ -71,13 +71,13 @@ export async function verifyReportDataBindingWithTlsFingerprint(
     reportData: input.reportData,
     nonce: input.nonce,
   });
-  if (input.reportedTlsSpkiFingerprint === undefined) {
+  if (input.reportedSpkiFingerprint === undefined) {
     throw new VerificationError({ code: 'policy.tls_binding_required' });
   }
-  const reportedFingerprint = requireByteLength({
-    value: input.reportedTlsSpkiFingerprint,
+  const reportedSpkiFingerprint = requireByteLength({
+    value: input.reportedSpkiFingerprint,
     byteLength: 32,
-    label: 'attestation.tlsSpkiFingerprint',
+    label: 'attestation.spkiFingerprint',
   });
 
   const signingAddress = hexToBuffer(
@@ -85,7 +85,7 @@ export async function verifyReportDataBindingWithTlsFingerprint(
     'signer.signingAddress',
   );
   const expectedBinding = await sha256(
-    Buffer.concat([signingAddress, reportedFingerprint]),
+    Buffer.concat([signingAddress, reportedSpkiFingerprint]),
   );
   if (!reportData.subarray(0, 32).equals(expectedBinding)) {
     throw new VerificationError({
@@ -94,18 +94,18 @@ export async function verifyReportDataBindingWithTlsFingerprint(
     });
   }
 
-  const peerFingerprint = requireByteLength({
-    value: input.peerTlsSpkiFingerprint,
+  const peerSpkiFingerprint = requireByteLength({
+    value: input.peerSpkiFingerprint,
     byteLength: 32,
-    label: 'clientBinding.peerSpkiFingerprint',
+    label: 'clientBinding.spkiFingerprint',
   });
-  if (!reportedFingerprint.equals(peerFingerprint)) {
+  if (!reportedSpkiFingerprint.equals(peerSpkiFingerprint)) {
     throw new VerificationError({
       code: 'binding.spki_fingerprint_mismatch',
     });
   }
 
-  return reportedFingerprint.toString('hex');
+  return reportedSpkiFingerprint.toString('hex');
 }
 
 /**

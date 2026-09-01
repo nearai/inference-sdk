@@ -34,14 +34,14 @@ pub async fn verify_gateway_attestation(
     .await?;
     let tls_binding = if verify_tls_binding {
         let peer_spki_fingerprint = client_binding
-            .peer_spki_fingerprint
+            .spki_fingerprint
             .as_deref()
             .ok_or(VerificationError::TlsBindingRequired)?;
         let spki_fingerprint = verify_report_data_binding_with_tls_fingerprint(
             &verified_quote.quote.report_data,
             &client_binding.nonce,
             &verified_quote.signer.signing_address,
-            attestation.tls_spki_fingerprint.as_deref(),
+            attestation.spki_fingerprint.as_deref(),
             peer_spki_fingerprint,
         )?;
         crate::types::GatewayTlsBinding::Attested { spki_fingerprint }

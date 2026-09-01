@@ -90,10 +90,10 @@ async function verifiedGatewayAttestation(
       ...createModelAttestation({
         signer: { signingAlgo, signingAddress },
       }),
-      tlsSpkiFingerprint: tlsFingerprint,
+      spkiFingerprint: tlsFingerprint,
       reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     },
-    clientBinding: { nonce, peerSpkiFingerprint: tlsFingerprint },
+    clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
     verifiers: { quote: async () => quote },
   });
 }

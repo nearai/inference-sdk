@@ -97,7 +97,7 @@ def create_gateway_attestation(**overrides: object) -> GatewayAttestation:
             }
         ],
         app_compose=APP_COMPOSE,
-        tls_spki_fingerprint=TLS_FINGERPRINT,
+        spki_fingerprint=TLS_FINGERPRINT,
         reported_quote_data=quote.report_data.hex(),
     )
     return replace(attestation, **overrides)

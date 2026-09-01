@@ -70,7 +70,7 @@ attestation verifier.
 |  | `policy` | `GatewayAttestationPolicy` | Resolved policy for this evidence request. Pass the whole result directly to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 | `GatewayClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
-|  | `peerSpkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it for TLS-enabled fetches; browser fetch does not expose it. |
+|  | `spkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it for TLS-enabled fetches; browser fetch does not expose it. |
 
 ## Model attestation selection
 
@@ -94,7 +94,7 @@ form of these two operations.
 | --- | --- | --- | --- |
 | `verifyModelAttestation(params)` | `VerifyModelAttestationParams` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
 | `verifyModelResponse(params)` | `VerifyModelResponseParams` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
-| `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence. With TLS binding enabled, it requires and checks `clientBinding.peerSpkiFingerprint`. |
+| `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence. With TLS binding enabled, it requires and checks `clientBinding.spkiFingerprint`. |
 | `verifyGatewayResponse(params)` | `VerifyGatewayResponseParams` | `void` | Verifies the exact completion bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
 
 ### Attestation verification parameters
@@ -199,7 +199,7 @@ because a byte-exact provider signature would no longer match those bytes.
 | --- | --- | --- | --- | --- |
 | `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
-| `GatewayAttestation` | `tlsSpkiFingerprint?` | `string` | No | Gateway TLS SPKI fingerprint returned only when TLS binding was requested. It must match the client-observed peer before verification returns an attested TLS binding. |
+| `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint returned only when TLS binding was requested. It must match the client-observed fingerprint before verification returns an attested TLS binding. |
 |  | `reportedQuoteData` | `string` | Yes | Gateway report-data copy. |
 
 ## Policies and verifier callbacks

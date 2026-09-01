@@ -200,7 +200,7 @@ impl AttestationClient {
         )?;
         let attestation =
             map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
-        if policy.verify_tls_binding && attestation.tls_spki_fingerprint.is_none() {
+        if policy.verify_tls_binding && attestation.spki_fingerprint.is_none() {
             return Err(ApiError::InvalidResponse {
                 path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
                 expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
@@ -216,7 +216,7 @@ impl AttestationClient {
             attestation,
             client_binding: GatewayClientBinding {
                 nonce,
-                peer_spki_fingerprint: cloud_response.peer_spki_fingerprint,
+                spki_fingerprint: cloud_response.peer_spki_fingerprint,
             },
             policy,
         })
@@ -522,7 +522,7 @@ fn map_gateway_attestation(
     value: WireAttestation,
     path: &str,
 ) -> Result<GatewayAttestation, ApiError> {
-    let tls_spki_fingerprint = value.tls_cert_fingerprint.clone();
+    let spki_fingerprint = value.tls_cert_fingerprint.clone();
     let (evidence, reported_quote_data) = map_evidence(value, path)?;
     let reported_quote_data = reported_quote_data.ok_or_else(|| ApiError::InvalidResponse {
         path: format!("{path}.report_data"),
@@ -530,7 +530,7 @@ fn map_gateway_attestation(
     })?;
     Ok(GatewayAttestation {
         evidence,
-        tls_spki_fingerprint,
+        spki_fingerprint,
         reported_quote_data,
     })
 }
@@ -903,7 +903,7 @@ mod tests {
         let attestation =
             map_gateway_attestation(response.gateway_attestation, "gateway_attestation").unwrap();
 
-        assert_eq!(attestation.tls_spki_fingerprint, None);
+        assert_eq!(attestation.spki_fingerprint, None);
     }
 
     #[test]

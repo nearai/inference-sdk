@@ -11,6 +11,7 @@ from .attestation_common import AttestationEvidence
 class GatewayAttestation(AttestationEvidence):
     """A NEAR AI Cloud Gateway TEE attestation."""
 
-    #: Present only when the evidence request enabled TLS binding.
-    tls_spki_fingerprint: str | None = None
+    #: Gateway-reported SPKI fingerprint, present only when the evidence
+    #: request enabled TLS binding.
+    spki_fingerprint: str | None = None
     reported_quote_data: str

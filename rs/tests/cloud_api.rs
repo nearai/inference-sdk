@@ -289,11 +289,8 @@ async fn client_fetches_tls_bound_gateway_evidence() {
         fetched.attestation.evidence.nonce,
         fetched.client_binding.nonce
     );
-    assert_eq!(
-        fetched.attestation.tls_spki_fingerprint,
-        Some("33".repeat(32))
-    );
-    assert_eq!(fetched.client_binding.peer_spki_fingerprint, None);
+    assert_eq!(fetched.attestation.spki_fingerprint, Some("33".repeat(32)));
+    assert_eq!(fetched.client_binding.spki_fingerprint, None);
     assert!(fetched.policy.verify_tls_binding);
 }
 
@@ -316,7 +313,7 @@ async fn client_can_fetch_gateway_evidence_without_tls_binding() {
         .await
         .unwrap();
 
-    assert_eq!(fetched.attestation.tls_spki_fingerprint, None);
+    assert_eq!(fetched.attestation.spki_fingerprint, None);
     assert!(!fetched.policy.verify_tls_binding);
 }
 

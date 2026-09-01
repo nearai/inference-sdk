@@ -93,15 +93,15 @@ pub fn verify_report_data_binding_with_tls_fingerprint(
     report_data: &[u8],
     nonce: &str,
     signing_address: &str,
-    reported_tls_spki_fingerprint: Option<&str>,
-    peer_tls_spki_fingerprint: &str,
+    reported_spki_fingerprint: Option<&str>,
+    peer_spki_fingerprint: &str,
 ) -> Result<String, VerificationError> {
     verify_quote_report_data_nonce(report_data, nonce)?;
-    let reported_tls_spki_fingerprint =
-        reported_tls_spki_fingerprint.ok_or(VerificationError::TlsBindingRequired)?;
-    let reported = require_hex_length(reported_tls_spki_fingerprint, 32).map_err(|_| {
+    let reported_spki_fingerprint =
+        reported_spki_fingerprint.ok_or(VerificationError::TlsBindingRequired)?;
+    let reported = require_hex_length(reported_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
-            field: "attestation.tls_spki_fingerprint".to_owned(),
+            field: "attestation.spki_fingerprint".to_owned(),
             reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
         }
     })?;
@@ -114,9 +114,9 @@ pub fn verify_report_data_binding_with_tls_fingerprint(
         });
     }
 
-    let peer = require_hex_length(peer_tls_spki_fingerprint, 32).map_err(|_| {
+    let peer = require_hex_length(peer_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
-            field: "client_binding.peer_spki_fingerprint".to_owned(),
+            field: "client_binding.spki_fingerprint".to_owned(),
             reason: "expected a 32-byte hexadecimal SPKI fingerprint".to_owned(),
         }
     })?;

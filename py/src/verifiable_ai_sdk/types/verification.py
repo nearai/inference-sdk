@@ -80,7 +80,7 @@ class GatewayClientBinding:
     """Values supplied or observed by the client for a Gateway request."""
 
     nonce: str
-    peer_spki_fingerprint: str | None = None
+    spki_fingerprint: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

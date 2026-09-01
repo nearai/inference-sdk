@@ -163,14 +163,11 @@ class AttestationClient:
             capture_peer_spki=resolved_policy.verify_tls_binding,
         )
         attestation = _decode_gateway_attestation_report(response.json)
-        if (
-            resolved_policy.verify_tls_binding
-            and attestation.tls_spki_fingerprint is None
-        ):
+        if resolved_policy.verify_tls_binding and attestation.spki_fingerprint is None:
             raise api_failure(
                 'api.invalid_response',
                 {
-                    'path': 'gateway_attestation.tls_cert_fingerprint',
+                    'path': 'gateway_attestation.spki_fingerprint',
                     'expected': '32-byte hexadecimal string',
                     'actual': 'missing',
                 },
@@ -180,7 +177,7 @@ class AttestationClient:
             attestation=attestation,
             client_binding=GatewayClientBinding(
                 nonce=nonce,
-                peer_spki_fingerprint=response.peer_spki_fingerprint,
+                spki_fingerprint=response.peer_spki_fingerprint,
             ),
             policy=resolved_policy,
         )
@@ -335,7 +332,7 @@ def _map_gateway_attestation(
         intel_quote=raw.intel_quote,
         event_log=raw.event_log,
         app_compose=raw.info.tcb_info.app_compose,
-        tls_spki_fingerprint=raw.tls_cert_fingerprint,
+        spki_fingerprint=raw.tls_cert_fingerprint,
         reported_quote_data=raw.report_data,
     )
 

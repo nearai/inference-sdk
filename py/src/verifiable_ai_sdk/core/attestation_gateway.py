@@ -41,15 +41,15 @@ async def verify_gateway_attestation(
         quote_verifier=None if verifiers is None else verifiers.quote,
     )
     if verify_tls_binding:
-        peer_tls_spki_fingerprint = client_binding.peer_spki_fingerprint
-        if peer_tls_spki_fingerprint is None:
+        peer_spki_fingerprint = client_binding.spki_fingerprint
+        if peer_spki_fingerprint is None:
             raise verification_failure('policy.tls_binding_required')
         spki_fingerprint = verify_report_data_binding_with_tls_fingerprint(
             report_data=verified_quote.quote.report_data,
             nonce=client_binding.nonce,
             signer=verified_quote.signer,
-            reported_tls_spki_fingerprint=attestation.tls_spki_fingerprint,
-            peer_tls_spki_fingerprint=peer_tls_spki_fingerprint,
+            reported_spki_fingerprint=attestation.spki_fingerprint,
+            peer_spki_fingerprint=peer_spki_fingerprint,
         )
         tls_binding = GatewayTlsBinding(
             kind='attested', spki_fingerprint=spki_fingerprint

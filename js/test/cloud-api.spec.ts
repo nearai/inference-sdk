@@ -252,7 +252,7 @@ describe('AttestationClient', () => {
       });
       const [attestation] = attestations;
 
-      expect(attestation).not.toHaveProperty('tlsSpkiFingerprint');
+      expect(attestation).not.toHaveProperty('spkiFingerprint');
       expect(attestation).not.toHaveProperty('reportedQuoteData');
       expect(attestation).not.toHaveProperty('nvidiaPayload');
     });
@@ -412,7 +412,10 @@ describe('AttestationClient', () => {
 
       expect(fetched).toMatchObject({
         clientBinding: { nonce: fetched.attestation.nonce },
-        attestation: { reportedQuoteData: '00'.repeat(64) },
+        attestation: {
+          reportedQuoteData: '00'.repeat(64),
+          spkiFingerprint: '33'.repeat(32),
+        },
         policy: { verifyTlsBinding: true },
       });
       const query = new URL(api.request().url).searchParams;
@@ -435,7 +438,7 @@ describe('AttestationClient', () => {
       });
 
       expect(fetched.policy).toEqual({ verifyTlsBinding: false });
-      expect(fetched.attestation).not.toHaveProperty('tlsSpkiFingerprint');
+      expect(fetched.attestation).not.toHaveProperty('spkiFingerprint');
       expect(
         new URL(api.request().url).searchParams.get('include_tls_fingerprint'),
       ).toBe('false');
