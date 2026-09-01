@@ -75,14 +75,14 @@ signature = await fetch_completion_signature(api_key, completion_id)
 if signature.kind != 'provider_tee':
     raise RuntimeError('Use the Gateway flow for this completion')
 
-model_evidence = await fetch_model_attestations(api_key, model)
+fetched_attestations = await fetch_model_attestations(api_key, model)
 attestation = find_model_attestation_for_signature(
-    model_evidence.attestations,
+    fetched_attestations.attestations,
     signature,
 )
 verified_attestation = await verify_model_attestation(
     attestation,
-    model_evidence.client_binding,
+    fetched_attestations.client_binding,
 )
 verify_model_response(
     request_body,
@@ -226,7 +226,7 @@ verifiers = ModelAttestationVerifiers(
 
 verified_attestation = await verify_model_attestation(
     attestation,
-    model_evidence.client_binding,
+    fetched_attestations.client_binding,
     policy=policy,
     verifiers=verifiers,
 )

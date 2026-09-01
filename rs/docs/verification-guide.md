@@ -75,14 +75,14 @@ async fn verify_model_completion(
         .into());
     }
 
-    let model_evidence = fetch_model_attestations(api_key, model).await?;
+    let fetched_attestations = fetch_model_attestations(api_key, model).await?;
     let attestation = find_model_attestation_for_signature(
-        &model_evidence.attestations,
+        &fetched_attestations.attestations,
         &signature,
     )?;
     let verified_attestation = verify_model_attestation(
         attestation,
-        &model_evidence.client_binding,
+        &fetched_attestations.client_binding,
         None,
         Default::default(),
     )
