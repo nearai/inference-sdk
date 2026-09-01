@@ -155,7 +155,7 @@ function verifySignatureBytes(signature: CompletionSignature): void {
     try {
       recoveredSigningAddress = ethers.verifyMessage(
         signature.signedText,
-        signature.signature,
+        ethers.hexlify(signatureBytes),
       );
     } catch (cause) {
       throw invalidSignature('ecdsa', cause);

@@ -75,7 +75,11 @@ export type VerificationFailure =
       code: 'input.invalid';
       details: {
         field: string;
-        reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt';
+        reason:
+          | 'invalid_hex'
+          | 'wrong_length'
+          | 'invalid_jwt'
+          | 'unsupported_value';
         expected?: string;
         expectedBytes?: number;
         actualBytes?: number;
@@ -476,5 +480,9 @@ function formatInputFailure(
         : `${subject} must be ${details.expectedBytes} bytes; received ${details.actualBytes}`;
     case 'invalid_jwt':
       return `${subject} must be a valid JWT`;
+    case 'unsupported_value':
+      return details.expected === undefined
+        ? `${subject} has an unsupported value`
+        : `${subject} must be ${details.expected}`;
   }
 }

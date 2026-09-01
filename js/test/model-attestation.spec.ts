@@ -1,6 +1,10 @@
 import { Buffer } from 'node:buffer';
 import { ApiError, verifyModelAttestation } from '../src';
-import type { MeasuredDeployment, QuoteVerifier } from '../src';
+import type {
+  MeasuredDeployment,
+  ModelAttestationPolicy,
+  QuoteVerifier,
+} from '../src';
 import {
   appCompose,
   createModelAttestation,
@@ -358,6 +362,30 @@ describe('model attestation verification', () => {
       verifiers: { quote: quoteVerifier, nvidia: async () => undefined },
     });
     expect(result.gpuEvidence).toBe('verified');
+  });
+
+  test('rejects an unsupported GPU evidence policy value', async () => {
+    const policy: ModelAttestationPolicy = JSON.parse(
+      '{"gpuEvidence":"disabled"}',
+    );
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation(),
+        clientBinding: { nonce },
+        policy,
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'input.invalid',
+        details: {
+          field: 'policy.gpuEvidence',
+          reason: 'unsupported_value',
+          expected: "'if-present' or 'required'",
+        },
+      },
+    });
   });
 
   test('normalizes NVIDIA verifier failures', async () => {

@@ -33,6 +33,27 @@ def cloud_client() -> AttestationClient:
     return AttestationClient(API_KEY, base_url=BASE_URL)
 
 
+@pytest.mark.parametrize(
+    ('base_url'),
+    (
+        pytest.param('not a URL', id='malformed'),
+        pytest.param('/v1', id='relative'),
+        pytest.param('ftp://cloud.example/v1', id='non-http'),
+    ),
+)
+def test_client_rejects_invalid_base_urls_at_construction(base_url: str) -> None:
+    with pytest.raises(VerificationError) as raised:
+        AttestationClient(API_KEY, base_url=base_url)
+
+    assert raised.value.failure.code == 'input.invalid'
+    assert raised.value.failure.details == {
+        'field': 'base_url',
+        'reason': 'invalid_url',
+        'expected': 'an absolute HTTP(S) URL',
+    }
+    assert raised.value.retryable is False
+
+
 def use_fake_cloud_api_fetch(
     monkeypatch: pytest.MonkeyPatch,
     responder: CloudApiResponder,

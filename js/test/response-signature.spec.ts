@@ -99,7 +99,7 @@ async function verifiedGatewayAttestation(
 }
 
 describe('response signature verification', () => {
-  test('verifies a canonical model response when signer encodings differ', async () => {
+  test('verifies an unprefixed ECDSA model signature when signer encodings differ', async () => {
     const wallet = new ethers.Wallet(
       '0x0123456789012345678901234567890123456789012345678901234567890123',
     );
@@ -111,7 +111,7 @@ describe('response signature verification', () => {
     const signature: CompletionSignature = {
       kind: 'provider_tee',
       signedText,
-      signature: await wallet.signMessage(signedText),
+      signature: (await wallet.signMessage(signedText)).slice(2),
       signer: {
         signingAlgo: 'ecdsa',
         signingAddress: wallet.address.slice(2).toUpperCase(),
@@ -234,7 +234,7 @@ describe('response signature verification', () => {
     });
   });
 
-  test('verifies an ECDSA gateway response signature', async () => {
+  test('verifies a prefixed ECDSA gateway response signature', async () => {
     const wallet = new ethers.Wallet(
       '0x0123456789012345678901234567890123456789012345678901234567890123',
     );

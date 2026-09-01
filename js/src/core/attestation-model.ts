@@ -7,7 +7,11 @@ import type {
 } from '../types/verification';
 import * as v from 'valibot';
 import { NvidiaPayloadNonceSchema } from '../schemas';
-import { VerificationError, wrapVerificationError } from '../utils/errors';
+import {
+  VerificationError,
+  inputError,
+  wrapVerificationError,
+} from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
   verifyReportDataBinding,
@@ -30,6 +34,7 @@ export async function verifyModelAttestation({
   verifiers,
 }: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
   const { nonce } = clientBinding;
+  const gpuEvidenceRequirement = getGpuEvidenceRequirement(policy);
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce,
@@ -49,7 +54,7 @@ export async function verifyModelAttestation({
   const gpuEvidence = await verifyNvidiaEvidence({
     payload: attestation.nvidiaPayload,
     nonce,
-    requirement: getGpuEvidenceRequirement(policy),
+    requirement: gpuEvidenceRequirement,
     verifier: verifiers?.nvidia ?? nvidiaNrasVerifier,
   });
 
@@ -119,5 +124,16 @@ async function verifyNvidiaEvidence(
 function getGpuEvidenceRequirement(
   policy: ModelAttestationPolicy | undefined,
 ): 'if-present' | 'required' {
-  return policy?.gpuEvidence ?? 'if-present';
+  const requirement = policy?.gpuEvidence;
+  if (requirement === undefined || requirement === 'if-present') {
+    return 'if-present';
+  }
+  if (requirement === 'required') {
+    return requirement;
+  }
+  throw inputError({
+    field: 'policy.gpuEvidence',
+    reason: 'unsupported_value',
+    details: { expected: "'if-present' or 'required'" },
+  });
 }

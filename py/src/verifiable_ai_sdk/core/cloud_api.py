@@ -81,7 +81,7 @@ class AttestationClient:
         base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     ) -> None:
         self._api_key = api_key
-        self._base_url = base_url
+        self._base_url = _validate_base_url(base_url)
 
     async def fetch_model_attestations(
         self,
@@ -454,6 +454,32 @@ def _endpoint(base_url: str, path: str, query: Mapping[str, str]) -> str:
     normalized_path = f'{parsed.path.rstrip("/")}/{path}'
     return urlunsplit(
         (parsed.scheme, parsed.netloc, normalized_path, urlencode(query), '')
+    )
+
+
+def _validate_base_url(base_url: str) -> str:
+    try:
+        parsed = urlsplit(base_url)
+        _ = parsed.port
+    except (TypeError, ValueError):
+        raise _invalid_base_url() from None
+    if (
+        parsed.scheme not in {'http', 'https'}
+        or not parsed.netloc
+        or parsed.hostname is None
+    ):
+        raise _invalid_base_url()
+    return base_url
+
+
+def _invalid_base_url() -> VerificationError:
+    return verification_failure(
+        'input.invalid',
+        {
+            'field': 'base_url',
+            'reason': 'invalid_url',
+            'expected': 'an absolute HTTP(S) URL',
+        },
     )
 
 
