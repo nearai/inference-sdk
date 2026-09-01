@@ -10,7 +10,7 @@ response bytes.
 - [Verification guide](./docs/verification-guide.md) explains which evidence
   and response-verification path to use for `provider_tee` and `gateway`
   signatures.
-- [API reference](./docs/api-reference.md) lists Cloud request builders,
+- [API reference](./docs/api-reference.md) lists the Cloud API client,
   functions, return values, policies, and callback traits.
 
 ## Install
@@ -31,13 +31,13 @@ verified signers. Its `CompletionSignatureKind` selects which path applies:
 `ProviderTee` establishes model-issued bytes, while `Gateway` establishes
 Gateway-issued client-visible bytes and does not establish model execution.
 
-Gateway TLS binding is enabled by default. The Rust fetch helper requests the
+Gateway TLS binding is enabled by default. The Rust client requests the
 Gateway TLS fingerprint, captures the peer certificate for that same HTTPS
 request, and returns the resolved policy with the evidence. Runtimes without
 peer-certificate access must use
 `GatewayAttestationPolicy { verify_tls_binding: false, ..Default::default() }`
-when creating `GatewayAttestationRequest`. That request uses the
-signer-and-nonce quote layout instead and verification returns
+when calling `AttestationClient::fetch_gateway_attestation`. The request then
+uses the signer-and-nonce quote layout instead and verification returns
 `GatewayTlsBinding::None`; it makes no TLS claim.
 
 Cloud model fetches always request `include_tls_fingerprint=false`. They verify
@@ -46,7 +46,7 @@ client-to-model TLS connection.
 
 ## Error handling
 
-Cloud request helpers return `SdkError`, which distinguishes `ApiError` from
+Cloud client methods return `SdkError`, which distinguishes `ApiError` from
 `VerificationError`. Local verification functions return `VerificationError`.
 Match error variants when practical, or use `code()` and `retryable()` for a
 stable machine-readable classification; never parse display text. See the

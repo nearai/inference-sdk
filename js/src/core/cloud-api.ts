@@ -6,6 +6,7 @@ import type {
   CompletionSignatureLookup,
 } from '../types/chat';
 import type {
+  AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestation,
@@ -36,288 +37,278 @@ type ApiResource = Extract<
 >['details']['resource'];
 type AttestationResource = 'model_attestation' | 'gateway_attestation';
 type GetCloudApiJsonParams = {
-  apiKey: string;
-  url: URL;
-  resource: ApiResource;
-  extraHeaders?: HeadersInit;
+  readonly url: URL;
+  readonly resource: ApiResource;
+  readonly extraHeaders?: HeadersInit;
 };
 type GetGatewayAttestationJsonParams = {
-  apiKey: string;
-  url: URL;
-  requester: GatewayAttestationRequester;
+  readonly url: URL;
 };
 type GatewayAttestationJson = {
-  json: unknown;
-  peerSpkiFingerprint?: string;
+  readonly json: unknown;
+  readonly peerSpkiFingerprint?: string;
 };
-type GatewayAttestationRequester = (
-  request: Request,
-) => Promise<GatewayAttestationResponse>;
-type GatewayAttestationResponse = {
-  response: Response;
-  peerSpkiFingerprint?: string;
+
+/** Internal response shape used by the Node client to attach its TLS peer. */
+export type GatewayAttestationHttpResponse = {
+  readonly response: Response;
+  readonly peerSpkiFingerprint?: string;
 };
+
 type CreateCloudApiRequestParams = {
-  apiKey: string;
-  url: URL;
-  extraHeaders?: HeadersInit;
+  readonly url: URL;
+  readonly extraHeaders?: HeadersInit;
 };
 type ReadCloudApiJsonParams = {
-  response: Response;
-  resource: ApiResource;
+  readonly response: Response;
+  readonly resource: ApiResource;
 };
 
 /**
- * Fetch NEAR model attestation candidates with a fresh client nonce.
- * Optionally narrow the report to a signing algorithm and signing address.
- * Currently returns exactly one candidate.
+ * Client for fetching attestation evidence and completion signatures from
+ * NEAR AI Cloud. It owns the Cloud API configuration; verification functions
+ * remain standalone.
  */
-export async function fetchModelAttestations({
-  apiKey,
-  baseUrl,
-  model,
-  signingAlgo,
-  signingAddress,
-}: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
-  const clientNonce = generateNonce();
-  const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
-  url.searchParams.set('model', model);
-  url.searchParams.set('provider', 'near');
-  url.searchParams.set('nonce', clientNonce);
-  url.searchParams.set('include_tls_fingerprint', 'false');
-  if (signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', signingAlgo);
-  }
-  if (signingAddress !== undefined) {
-    url.searchParams.set('signing_address', signingAddress);
+export class AttestationClient {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor({ apiKey, baseUrl }: AttestationClientOptions) {
+    this.apiKey = apiKey;
+    this.baseUrl = resolveCloudApiBaseUrl(baseUrl);
   }
 
-  const attestations = decodeModelAttestationReport(
-    await getCloudApiJson({
-      apiKey,
-      url,
-      resource: 'model_attestation',
-      extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
-    }),
-  );
-  if (attestations.length !== 1) {
-    throw new ApiError({
-      code: 'api.unexpected_model_attestation_count',
-      details: { actualCount: attestations.length },
-    });
+  /**
+   * Fetch NEAR model attestation candidates with a fresh client nonce.
+   * Optionally narrow the report to a signing algorithm and signing address.
+   * Currently returns exactly one candidate.
+   */
+  async fetchModelAttestations({
+    model,
+    signingAlgo,
+    signingAddress,
+  }: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
+    const clientNonce = generateNonce();
+    const url = new URL('attestation/report', this.baseUrl);
+    url.searchParams.set('model', model);
+    url.searchParams.set('provider', 'near');
+    url.searchParams.set('nonce', clientNonce);
+    url.searchParams.set('include_tls_fingerprint', 'false');
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    if (signingAddress !== undefined) {
+      url.searchParams.set('signing_address', signingAddress);
+    }
+
+    const attestations = decodeModelAttestationReport(
+      await this.getCloudApiJson({
+        url,
+        resource: 'model_attestation',
+        extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
+      }),
+    );
+    if (attestations.length !== 1) {
+      throw new ApiError({
+        code: 'api.unexpected_model_attestation_count',
+        details: { actualCount: attestations.length },
+      });
+    }
+    for (const attestation of attestations) {
+      requireMatchingApiNonce({
+        reportedNonce: attestation.nonce,
+        requestedNonce: clientNonce,
+        resource: 'model_attestation',
+      });
+    }
+    return { attestations, clientBinding: { nonce: clientNonce } };
   }
-  for (const attestation of attestations) {
+
+  /**
+   * Fetch model attestation candidates for a provider_tee signature, then
+   * select the one whose advertised signer matches the signature signer.
+   */
+  async fetchModelAttestationForSignature({
+    model,
+    signature,
+  }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
+    const fetched = await this.fetchModelAttestations({
+      model,
+      signingAlgo: signature.signer.signingAlgo,
+      signingAddress: signature.signer.signingAddress,
+    });
+    return {
+      attestation: findModelAttestationForSignature({
+        attestations: fetched.attestations,
+        signature,
+      }),
+      clientBinding: fetched.clientBinding,
+    };
+  }
+
+  /**
+   * Fetch standalone Gateway evidence. The TLS policy controls both whether
+   * the service returns TLS evidence and the quote layout later verified by
+   * `verifyGatewayAttestation`.
+   */
+  async fetchGatewayAttestation({
+    signingAlgo,
+    policy: requestedPolicy,
+  }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
+    const policy = {
+      ...requestedPolicy,
+      verifyTlsBinding: requestedPolicy?.verifyTlsBinding ?? true,
+    };
+    const clientNonce = generateNonce();
+    const url = new URL('attestation/report', this.baseUrl);
+    url.searchParams.set('nonce', clientNonce);
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    url.searchParams.set(
+      'include_tls_fingerprint',
+      String(policy.verifyTlsBinding),
+    );
+    const result = await this.getGatewayAttestationJson({ url });
+    const attestation = decodeGatewayAttestationReport(result.json);
+    if (
+      policy.verifyTlsBinding &&
+      attestation.tlsSpkiFingerprint === undefined
+    ) {
+      throw new ApiError({
+        code: 'api.invalid_response',
+        details: {
+          path: 'gateway_attestation.tls_cert_fingerprint',
+          expected: '32-byte hexadecimal string',
+          actual: 'missing',
+        },
+      });
+    }
     requireMatchingApiNonce({
       reportedNonce: attestation.nonce,
       requestedNonce: clientNonce,
-      resource: 'model_attestation',
+      resource: 'gateway_attestation',
     });
-  }
-  return { attestations, clientBinding: { nonce: clientNonce } };
-}
-
-/**
- * Fetch model attestation candidates for a provider_tee signature, then
- * select the one whose advertised signer matches the signature signer.
- */
-export async function fetchModelAttestationForSignature({
-  apiKey,
-  baseUrl,
-  model,
-  signature,
-}: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
-  const fetched = await fetchModelAttestations({
-    apiKey,
-    baseUrl,
-    model,
-    signingAlgo: signature.signer.signingAlgo,
-    signingAddress: signature.signer.signingAddress,
-  });
-  return {
-    attestation: findModelAttestationForSignature({
-      attestations: fetched.attestations,
-      signature,
-    }),
-    clientBinding: fetched.clientBinding,
-  };
-}
-
-/**
- * Fetch standalone Gateway evidence using the runtime's standard Fetch API.
- * The TLS policy controls both whether the server returns TLS evidence and the
- * quote layout that `verifyGatewayAttestation` will validate.
- */
-export function fetchGatewayAttestation(
-  params: FetchGatewayAttestationParams,
-): Promise<FetchedGatewayAttestation> {
-  return fetchGatewayAttestationWithRequester(params, async (request) => ({
-    response: await fetch(request),
-  }));
-}
-
-/** Internal shared implementation used by the browser and Node entry points. */
-export async function fetchGatewayAttestationWithRequester(
-  {
-    apiKey,
-    baseUrl,
-    signingAlgo,
-    policy: requestedPolicy,
-  }: FetchGatewayAttestationParams,
-  requester: GatewayAttestationRequester,
-): Promise<FetchedGatewayAttestation> {
-  const policy = {
-    ...requestedPolicy,
-    verifyTlsBinding: requestedPolicy?.verifyTlsBinding ?? true,
-  };
-  const clientNonce = generateNonce();
-  const url = new URL('attestation/report', resolveCloudApiBaseUrl(baseUrl));
-  url.searchParams.set('nonce', clientNonce);
-  if (signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', signingAlgo);
-  }
-  url.searchParams.set(
-    'include_tls_fingerprint',
-    String(policy.verifyTlsBinding),
-  );
-  const result = await getGatewayAttestationJson({ apiKey, url, requester });
-  const attestation = decodeGatewayAttestationReport(result.json);
-  if (policy.verifyTlsBinding && attestation.tlsSpkiFingerprint === undefined) {
-    throw new ApiError({
-      code: 'api.invalid_response',
-      details: {
-        path: 'gateway_attestation.tls_cert_fingerprint',
-        expected: '32-byte hexadecimal string',
-        actual: 'missing',
+    return {
+      attestation,
+      clientBinding: {
+        nonce: clientNonce,
+        ...(result.peerSpkiFingerprint === undefined
+          ? {}
+          : { peerSpkiFingerprint: result.peerSpkiFingerprint }),
       },
-    });
+      policy,
+    };
   }
-  requireMatchingApiNonce({
-    reportedNonce: attestation.nonce,
-    requestedNonce: clientNonce,
-    resource: 'gateway_attestation',
-  });
-  return {
-    attestation,
-    clientBinding: {
-      nonce: clientNonce,
-      ...(result.peerSpkiFingerprint === undefined
-        ? {}
-        : { peerSpkiFingerprint: result.peerSpkiFingerprint }),
-    },
-    policy,
-  };
-}
 
-/**
- * Look up one completion signature without polling. Use this when an
- * application needs to handle an unavailable signature itself.
- */
-export async function lookupCompletionSignature({
-  apiKey,
-  baseUrl,
-  completionId,
-  signingAlgo,
-}: LookupCompletionSignatureParams): Promise<CompletionSignatureLookup> {
-  const url = new URL(
-    `signature/${encodeURIComponent(completionId)}`,
-    resolveCloudApiBaseUrl(baseUrl),
-  );
-  if (signingAlgo !== undefined) {
-    url.searchParams.set('signing_algo', signingAlgo);
-  }
-  return decodeCompletionSignatureLookup(
-    await getCloudApiJson({
-      apiKey,
-      url,
-      resource: 'completion_signature',
-    }),
-  );
-}
-
-/** Fetch one completion signature or throw when Cloud API does not provide one. */
-export async function fetchCompletionSignature({
-  apiKey,
-  baseUrl,
-  completionId,
-  signingAlgo,
-}: FetchCompletionSignatureParams): Promise<CompletionSignature> {
-  const lookup = await lookupCompletionSignature({
-    apiKey,
-    baseUrl,
+  /**
+   * Look up one completion signature without polling. Use this when an
+   * application needs to handle an unavailable signature itself.
+   */
+  async lookupCompletionSignature({
     completionId,
     signingAlgo,
-  });
-  if (lookup.status === 'found') {
-    return lookup.signature;
-  }
-  throw new ApiError({
-    code: 'api.completion_signature_unavailable',
-    details: { providerErrorCode: lookup.unavailable.errorCode },
-  });
-}
-
-async function getCloudApiJson({
-  apiKey,
-  url,
-  resource,
-  extraHeaders = {},
-}: GetCloudApiJsonParams): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(
-      createCloudApiRequest({ apiKey, url, extraHeaders }),
+  }: LookupCompletionSignatureParams): Promise<CompletionSignatureLookup> {
+    const url = new URL(
+      `signature/${encodeURIComponent(completionId)}`,
+      this.baseUrl,
     );
-  } catch (cause) {
-    throw new ApiError(
-      {
-        code: 'api.transport_failed',
-        details: { resource, reason: 'request' },
-        retryable: true,
-      },
-      { cause },
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    return decodeCompletionSignatureLookup(
+      await this.getCloudApiJson({
+        url,
+        resource: 'completion_signature',
+      }),
     );
   }
 
-  return readCloudApiJson({ response, resource });
-}
-
-async function getGatewayAttestationJson({
-  apiKey,
-  url,
-  requester,
-}: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
-  const request = createCloudApiRequest({ apiKey, url });
-  let result: GatewayAttestationResponse;
-  try {
-    result = await requester(request);
-  } catch (cause) {
-    throw new ApiError(
-      {
-        code: 'api.transport_failed',
-        details: { resource: 'gateway_attestation', reason: 'request' },
-        retryable: true,
-      },
-      { cause },
-    );
+  /** Fetch one completion signature or throw when Cloud API does not provide one. */
+  async fetchCompletionSignature({
+    completionId,
+    signingAlgo,
+  }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
+    const lookup = await this.lookupCompletionSignature({
+      completionId,
+      signingAlgo,
+    });
+    if (lookup.status === 'found') {
+      return lookup.signature;
+    }
+    throw new ApiError({
+      code: 'api.completion_signature_unavailable',
+      details: { providerErrorCode: lookup.unavailable.errorCode },
+    });
   }
 
-  return {
-    json: await readCloudApiJson({
-      response: result.response,
-      resource: 'gateway_attestation',
-    }),
-    peerSpkiFingerprint: result.peerSpkiFingerprint,
-  };
-}
+  /**
+   * Node overrides this to capture the TLS peer certificate for the exact
+   * Gateway attestation request. Browser clients use standard Fetch.
+   */
+  protected async requestGatewayAttestation(
+    request: Request,
+  ): Promise<GatewayAttestationHttpResponse> {
+    return { response: await fetch(request) };
+  }
 
-function createCloudApiRequest({
-  apiKey,
-  url,
-  extraHeaders = {},
-}: CreateCloudApiRequestParams): Request {
-  const headers = new Headers(extraHeaders);
-  headers.set('authorization', `Bearer ${apiKey}`);
-  return new Request(url, { headers });
+  private async getCloudApiJson({
+    url,
+    resource,
+    extraHeaders = {},
+  }: GetCloudApiJsonParams): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await fetch(this.createCloudApiRequest({ url, extraHeaders }));
+    } catch (cause) {
+      throw new ApiError(
+        {
+          code: 'api.transport_failed',
+          details: { resource, reason: 'request' },
+          retryable: true,
+        },
+        { cause },
+      );
+    }
+
+    return readCloudApiJson({ response, resource });
+  }
+
+  private async getGatewayAttestationJson({
+    url,
+  }: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
+    const request = this.createCloudApiRequest({ url });
+    let result: GatewayAttestationHttpResponse;
+    try {
+      result = await this.requestGatewayAttestation(request);
+    } catch (cause) {
+      throw new ApiError(
+        {
+          code: 'api.transport_failed',
+          details: { resource: 'gateway_attestation', reason: 'request' },
+          retryable: true,
+        },
+        { cause },
+      );
+    }
+
+    return {
+      json: await readCloudApiJson({
+        response: result.response,
+        resource: 'gateway_attestation',
+      }),
+      peerSpkiFingerprint: result.peerSpkiFingerprint,
+    };
+  }
+
+  private createCloudApiRequest({
+    url,
+    extraHeaders = {},
+  }: CreateCloudApiRequestParams): Request {
+    const headers = new Headers(extraHeaders);
+    headers.set('authorization', `Bearer ${this.apiKey}`);
+    return new Request(url, { headers });
+  }
 }
 
 async function readCloudApiJson({
@@ -437,9 +428,9 @@ function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
 }
 
 type RequireMatchingApiNonceParams = {
-  reportedNonce: string;
-  requestedNonce: string;
-  resource: AttestationResource;
+  readonly reportedNonce: string;
+  readonly requestedNonce: string;
+  readonly resource: AttestationResource;
 };
 
 /** Reject a response that does not echo the nonce sent in its request. */

@@ -23,13 +23,16 @@ does not establish model execution.
 The SDK does not send completion requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
 
-`fetch_gateway_attestation` returns `FetchedGatewayAttestation` with raw
-evidence, `client_binding`, and the resolved `policy`. The native helper obtains
-the SHA-256 SPKI fingerprint from the TLS connection for that exact HTTPS
-request. Pass both the binding and returned policy to
-`verify_gateway_attestation`; by default it requires the observed peer to match
-the fingerprint authenticated in the quote. A runtime without peer-certificate
-access must fetch with
+Create an `AttestationClient` with the Cloud API key once. Its asynchronous
+methods retrieve signatures and evidence, while selection and verification stay
+as standalone functions. `client.fetch_gateway_attestation()` returns
+`FetchedGatewayAttestation` with raw evidence, `client_binding`, and the
+resolved `policy`. The native implementation obtains the SHA-256 SPKI
+fingerprint from the TLS connection for that exact HTTPS request. Pass both the
+binding and returned policy to `verify_gateway_attestation`; by default it
+requires the observed peer to match the fingerprint authenticated in the quote.
+A runtime
+without peer-certificate access must fetch with
 `GatewayAttestationPolicy(verify_tls_binding=False)`, then pass the returned
 policy to verification. That path requests no TLS fingerprint, verifies the
 signer-and-nonce quote layout, and returns `GatewayTlsBinding(kind='none')`.
@@ -38,7 +41,7 @@ signer-and-nonce quote layout, and returns `GatewayTlsBinding(kind='none')`.
 
 - [Verification guide](./docs/verification-guide.md) covers model and Gateway
   flows, policy configuration, and error handling.
-- [API reference](./docs/api-reference.md) lists public request helpers,
+- [API reference](./docs/api-reference.md) lists `AttestationClient`,
   verification functions, parameters, and result fields.
 
 ## Errors
@@ -52,10 +55,11 @@ when it is present; never parse the human-readable message.
 succeed. It does not mean that re-verifying the same evidence will succeed or
 that an inference should be replayed.
 
-`fetch_completion_signature` is the strict helper: a successful Cloud API
-unavailable envelope raises `ApiError` with
-`api.completion_signature_unavailable`. Use `lookup_completion_signature` when
-that unavailable state is a normal application outcome.
+`client.fetch_completion_signature()` is the strict method: a successful Cloud
+API unavailable envelope raises `ApiError` with
+`api.completion_signature_unavailable`. Use
+`client.lookup_completion_signature()` when that unavailable state is a normal
+application outcome.
 
 ## Development checks
 

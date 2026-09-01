@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from verifiable_ai_sdk import (
+    AttestationClient,
     ApiError,
     CompletionSignature,
     CompletionSignatureReference,
@@ -14,12 +15,7 @@ from verifiable_ai_sdk import (
     ModelAttestation,
     SigningIdentity,
     VerificationError,
-    fetch_completion_signature,
-    fetch_gateway_attestation,
-    fetch_model_attestation_for_signature,
-    fetch_model_attestations,
     find_model_attestation_for_signature,
-    lookup_completion_signature,
 )
 from verifiable_ai_sdk.core import cloud_api
 from verifiable_ai_sdk.utils.fetch import FetchResponse
@@ -31,6 +27,10 @@ BASE_URL = 'https://cloud.example/v1'
 
 
 CloudApiResponder = Callable[[str, Mapping[str, str]], Awaitable[FetchResponse]]
+
+
+def cloud_client() -> AttestationClient:
+    return AttestationClient(API_KEY, base_url=BASE_URL)
 
 
 def use_fake_cloud_api_fetch(
@@ -122,12 +122,10 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
 
     use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
 
-    fetched = await fetch_model_attestations(
-        API_KEY,
+    fetched = await cloud_client().fetch_model_attestations(
         'canonical-model',
         signing_algo='ecdsa',
         signing_address=SIGNING_ADDRESS,
-        base_url=BASE_URL,
     )
     selected = find_model_attestation_for_signature(
         fetched.attestations, model_signature()
@@ -173,7 +171,7 @@ async def test_model_helpers_match_equivalent_hex_nonce_and_signer_formats(
 
     use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
 
-    fetched = await fetch_model_attestations(API_KEY, 'canonical-model')
+    fetched = await cloud_client().fetch_model_attestations('canonical-model')
     selected = find_model_attestation_for_signature(
         fetched.attestations, model_signature()
     )
@@ -207,10 +205,7 @@ async def test_model_helper_decodes_serialized_tcb_info(
 
     use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
 
-    fetched = await fetch_model_attestations(
-        API_KEY,
-        'canonical-model',
-    )
+    fetched = await cloud_client().fetch_model_attestations('canonical-model')
 
     assert fetched.attestations[0].app_compose == '{"services": {}}'
 
@@ -241,10 +236,8 @@ async def test_fetch_model_attestation_for_signature_adds_signer_filters(
         kind='provider_tee',
         signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
     )
-    fetched = await fetch_model_attestation_for_signature(
-        API_KEY,
-        'canonical-model',
-        signature,
+    fetched = await cloud_client().fetch_model_attestation_for_signature(
+        'canonical-model', signature
     )
     assert fetched.attestation.signer.signing_address == SIGNING_ADDRESS
     query = parse_qs(urlsplit(seen_url).query)
@@ -290,10 +283,8 @@ async def test_gateway_helper_requests_tls_aware_evidence(
         )
 
     monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
-    fetched = await fetch_gateway_attestation(
-        API_KEY,
+    fetched = await cloud_client().fetch_gateway_attestation(
         signing_algo=signing_algo,
-        base_url=BASE_URL,
     )
 
     assert fetched.attestation.nonce == fetched.client_binding.nonce
@@ -343,7 +334,7 @@ async def test_gateway_helper_uses_signer_nonce_evidence_when_tls_is_disabled(
 
     monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
     policy = GatewayAttestationPolicy(verify_tls_binding=False)
-    fetched = await fetch_gateway_attestation(API_KEY, policy=policy)
+    fetched = await cloud_client().fetch_gateway_attestation(policy=policy)
 
     assert fetched.policy == policy
     assert fetched.attestation.tls_spki_fingerprint is None
@@ -372,7 +363,7 @@ async def test_gateway_helper_rejects_a_mismatched_nonce(
     use_fake_cloud_api_fetch(monkeypatch, wrong_nonce)
 
     with pytest.raises(ApiError) as raised:
-        await fetch_gateway_attestation(API_KEY)
+        await cloud_client().fetch_gateway_attestation()
 
     assert raised.value.failure.code == 'api.nonce_mismatch'
     assert raised.value.failure.details == {'resource': 'gateway_attestation'}
@@ -407,7 +398,7 @@ async def test_gateway_helper_requires_tls_fingerprint_evidence(
     monkeypatch.setattr(cloud_api, 'default_fetch', fake_gateway_fetch)
 
     with pytest.raises(ApiError) as malformed:
-        await fetch_gateway_attestation(API_KEY)
+        await cloud_client().fetch_gateway_attestation()
 
     assert malformed.value.failure.code == 'api.invalid_response'
     assert (
@@ -428,18 +419,12 @@ async def test_completion_signature_lookup_preserves_unavailable_state(
 
     use_fake_cloud_api_fetch(monkeypatch, unavailable)
 
-    lookup = await lookup_completion_signature(
-        API_KEY,
-        'completion-id',
-    )
+    lookup = await cloud_client().lookup_completion_signature('completion-id')
     assert lookup.status == 'unavailable'
     assert lookup.unavailable is not None
     assert lookup.unavailable.error_code == 'pending'
     with pytest.raises(ApiError) as unavailable_error:
-        await fetch_completion_signature(
-            API_KEY,
-            'completion-id',
-        )
+        await cloud_client().fetch_completion_signature('completion-id')
     assert (
         unavailable_error.value.failure.code == 'api.completion_signature_unavailable'
     )
@@ -473,11 +458,9 @@ async def test_completion_signature_lookup_returns_found_signature(
 
     use_fake_cloud_api_fetch(monkeypatch, found)
 
-    lookup = await lookup_completion_signature(
-        API_KEY,
+    lookup = await cloud_client().lookup_completion_signature(
         'completion-id',
         signing_algo=signing_algo,
-        base_url=BASE_URL,
     )
 
     assert lookup.status == 'found'
@@ -510,7 +493,7 @@ async def test_fetch_completion_signature_returns_a_found_signature(
 
     use_fake_cloud_api_fetch(monkeypatch, found)
 
-    signature = await fetch_completion_signature(API_KEY, 'completion-id')
+    signature = await cloud_client().fetch_completion_signature('completion-id')
 
     assert signature == expected
 
@@ -534,10 +517,7 @@ async def test_completion_signature_lookup_requires_signature_kind(
     use_fake_cloud_api_fetch(monkeypatch, missing_kind)
 
     with pytest.raises(ApiError) as malformed:
-        await fetch_completion_signature(
-            API_KEY,
-            'completion-id',
-        )
+        await cloud_client().fetch_completion_signature('completion-id')
     assert malformed.value.failure.code == 'api.invalid_response'
 
 
@@ -622,10 +602,8 @@ async def test_fetch_model_attestation_for_signature_delegates_kind_check_to_fin
     )
 
     with pytest.raises(VerificationError) as raised:
-        await fetch_model_attestation_for_signature(
-            API_KEY,
-            'canonical-model',
-            signature,
+        await cloud_client().fetch_model_attestation_for_signature(
+            'canonical-model', signature
         )
 
     assert raised.value.failure.code == 'signature.kind_mismatch'
@@ -641,10 +619,7 @@ async def test_missing_model_attestations_are_zero_candidates(
     use_fake_cloud_api_fetch(monkeypatch, no_attestations)
 
     with pytest.raises(ApiError) as empty_error:
-        await fetch_model_attestations(
-            API_KEY,
-            'canonical-model',
-        )
+        await cloud_client().fetch_model_attestations('canonical-model')
     assert empty_error.value.failure.code == 'api.unexpected_model_attestation_count'
     assert empty_error.value.failure.details == {'actualCount': 0}
 
@@ -669,10 +644,7 @@ async def test_model_report_count_and_nonce_are_checked_before_returning(
     use_fake_cloud_api_fetch(monkeypatch, two_attestations)
 
     with pytest.raises(ApiError) as count_error:
-        await fetch_model_attestations(
-            API_KEY,
-            'canonical-model',
-        )
+        await cloud_client().fetch_model_attestations('canonical-model')
     assert count_error.value.failure.code == 'api.unexpected_model_attestation_count'
 
     async def wrong_nonce(url: str, _: Mapping[str, str]) -> FetchResponse:
@@ -687,10 +659,7 @@ async def test_model_report_count_and_nonce_are_checked_before_returning(
     use_fake_cloud_api_fetch(monkeypatch, wrong_nonce)
 
     with pytest.raises(ApiError) as nonce_error:
-        await fetch_model_attestations(
-            API_KEY,
-            'canonical-model',
-        )
+        await cloud_client().fetch_model_attestations('canonical-model')
     assert nonce_error.value.failure.code == 'api.nonce_mismatch'
 
 
@@ -703,7 +672,7 @@ async def test_non_utf8_success_response_is_an_api_error(
     use_fake_cloud_api_fetch(monkeypatch, non_utf8)
 
     with pytest.raises(ApiError) as raised:
-        await fetch_model_attestations(API_KEY, 'canonical-model')
+        await cloud_client().fetch_model_attestations('canonical-model')
 
     assert raised.value.failure.code == 'api.invalid_json'
     assert raised.value.failure.details == {'resource': 'model_attestation'}

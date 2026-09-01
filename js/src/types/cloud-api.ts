@@ -13,17 +13,19 @@ import type {
   ModelClientBinding,
 } from './verification';
 
-export type FetchModelAttestationsParams = {
+/** Configuration shared by all Cloud API evidence requests. */
+export type AttestationClientOptions = {
   readonly apiKey: string;
   readonly baseUrl?: string;
+};
+
+export type FetchModelAttestationsParams = {
   readonly model: string;
   readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
 };
 
 export type FetchModelAttestationForSignatureParams = {
-  readonly apiKey: string;
-  readonly baseUrl?: string;
   readonly model: string;
   readonly signature: CompletionSignatureReference;
 };
@@ -34,8 +36,6 @@ export type FindModelAttestationForSignatureParams = {
 };
 
 export type FetchGatewayAttestationParams = {
-  readonly apiKey: string;
-  readonly baseUrl?: string;
   readonly signingAlgo?: SigningAlgo;
   /**
    * The policy returned with the fetched evidence. Its TLS setting controls
@@ -45,15 +45,11 @@ export type FetchGatewayAttestationParams = {
 };
 
 export type FetchCompletionSignatureParams = {
-  readonly apiKey: string;
-  readonly baseUrl?: string;
   readonly completionId: string;
   readonly signingAlgo?: SigningAlgo;
 };
 
 export type LookupCompletionSignatureParams = {
-  readonly apiKey: string;
-  readonly baseUrl?: string;
   readonly completionId: string;
   readonly signingAlgo?: SigningAlgo;
 };

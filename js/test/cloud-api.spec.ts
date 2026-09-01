@@ -1,12 +1,5 @@
 import type { CompletionSignature, ModelAttestation } from '../src';
-import {
-  fetchCompletionSignature,
-  fetchGatewayAttestation,
-  fetchModelAttestationForSignature,
-  fetchModelAttestations,
-  findModelAttestationForSignature,
-  lookupCompletionSignature,
-} from '../src';
+import { AttestationClient, findModelAttestationForSignature } from '../src';
 import { nonce } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -113,13 +106,13 @@ function cloudFor(response: (request: Request) => Response) {
     lastRequest = new Request(input, init);
     return response(lastRequest);
   });
-  const params = {
+  const client = new AttestationClient({
     baseUrl,
     apiKey: 'test',
-  };
+  });
 
   return {
-    params,
+    client,
     request(): Request {
       if (lastRequest === undefined) {
         throw new Error('Expected a Cloud API request');
@@ -137,7 +130,7 @@ function requestNonce(request: Request): string {
   return value;
 }
 
-describe('NEAR AI Cloud fetch helpers', () => {
+describe('AttestationClient', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -158,12 +151,12 @@ describe('NEAR AI Cloud fetch helpers', () => {
         );
       });
 
-      const { attestations, clientBinding } = await fetchModelAttestations({
-        ...api.params,
-        model: 'canonical-model',
-        signingAlgo: signature.signer.signingAlgo,
-        signingAddress: signature.signer.signingAddress,
-      });
+      const { attestations, clientBinding } =
+        await api.client.fetchModelAttestations({
+          model: 'canonical-model',
+          signingAlgo: signature.signer.signingAlgo,
+          signingAddress: signature.signer.signingAddress,
+        });
       const attestation = findModelAttestationForSignature({
         attestations,
         signature,
@@ -195,8 +188,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         return jsonResponse(modelReport(clientNonce));
       });
 
-      const fetched = await fetchModelAttestationForSignature({
-        ...api.params,
+      const fetched = await api.client.fetchModelAttestationForSignature({
         model: 'canonical-model',
         signature,
       });
@@ -229,8 +221,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         jsonResponse(modelReport(requestNonce(request))),
       );
 
-      const fetched = await fetchModelAttestations({
-        ...api.params,
+      const fetched = await api.client.fetchModelAttestations({
         model: 'canonical-model',
       });
 
@@ -256,8 +247,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         );
       });
 
-      const { attestations } = await fetchModelAttestations({
-        ...api.params,
+      const { attestations } = await api.client.fetchModelAttestations({
         model: 'canonical-model',
       });
       const [attestation] = attestations;
@@ -281,8 +271,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         );
       });
 
-      const { attestations } = await fetchModelAttestations({
-        ...api.params,
+      const { attestations } = await api.client.fetchModelAttestations({
         model: 'canonical-model',
       });
 
@@ -302,8 +291,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
 
       await expect(
-        fetchModelAttestations({
-          ...api.params,
+        api.client.fetchModelAttestations({
           model: 'canonical-model',
         }),
       ).rejects.toMatchObject({
@@ -318,8 +306,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const api = cloudFor(() => jsonResponse(modelReport('44'.repeat(32))));
 
       await expect(
-        fetchModelAttestations({
-          ...api.params,
+        api.client.fetchModelAttestations({
           model: 'canonical-model',
         }),
       ).rejects.toMatchObject({
@@ -336,8 +323,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         return jsonResponse(modelReport(responseNonce));
       });
 
-      const { attestations } = await fetchModelAttestations({
-        ...api.params,
+      const { attestations } = await api.client.fetchModelAttestations({
         model: 'canonical-model',
       });
 
@@ -356,8 +342,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       });
 
       await expect(
-        fetchModelAttestations({
-          ...api.params,
+        api.client.fetchModelAttestations({
           model: 'canonical-model',
         }),
       ).rejects.toMatchObject({
@@ -372,8 +357,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const api = cloudFor(() => jsonResponse({}));
 
       await expect(
-        fetchModelAttestations({
-          ...api.params,
+        api.client.fetchModelAttestations({
           model: 'canonical-model',
         }),
       ).rejects.toMatchObject({
@@ -424,7 +408,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         jsonResponse(gatewayReport(requestNonce(request))),
       );
 
-      const fetched = await fetchGatewayAttestation({ ...api.params });
+      const fetched = await api.client.fetchGatewayAttestation();
 
       expect(fetched).toMatchObject({
         clientBinding: { nonce: fetched.attestation.nonce },
@@ -446,8 +430,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         ),
       );
 
-      const fetched = await fetchGatewayAttestation({
-        ...api.params,
+      const fetched = await api.client.fetchGatewayAttestation({
         policy: { verifyTlsBinding: false },
       });
 
@@ -468,8 +451,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         ),
       );
 
-      await fetchGatewayAttestation({
-        ...api.params,
+      await api.client.fetchGatewayAttestation({
         signingAlgo: 'ecdsa',
       });
 
@@ -487,9 +469,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         ),
       );
 
-      await expect(
-        fetchGatewayAttestation({ ...api.params }),
-      ).rejects.toMatchObject({
+      await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
         failure: {
           code: 'api.invalid_response',
           details: { path: 'gateway_attestation.tls_cert_fingerprint' },
@@ -500,9 +480,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
     test('rejects gateway evidence whose nonce does not match the request', async () => {
       const api = cloudFor(() => jsonResponse(gatewayReport('44'.repeat(32))));
 
-      await expect(
-        fetchGatewayAttestation({ ...api.params }),
-      ).rejects.toMatchObject({
+      await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
         failure: {
           code: 'api.nonce_mismatch',
           details: { resource: 'gateway_attestation' },
@@ -518,8 +496,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
     ])('fetches a $kind completion signature', async ({ kind, expected }) => {
       const api = cloudFor(() => jsonResponse(completionSignature(kind)));
 
-      const signature = await fetchCompletionSignature({
-        ...api.params,
+      const signature = await api.client.fetchCompletionSignature({
         completionId: 'chat-1',
       });
 
@@ -532,8 +509,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         jsonResponse(completionSignature('gateway', 'ed25519')),
       );
 
-      const signature = await fetchCompletionSignature({
-        ...api.params,
+      const signature = await api.client.fetchCompletionSignature({
         completionId: 'chat-1',
         signingAlgo: 'ed25519',
       });
@@ -552,8 +528,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         }),
       );
 
-      const lookup = await lookupCompletionSignature({
-        ...api.params,
+      const lookup = await api.client.lookupCompletionSignature({
         completionId: 'chat-1',
       });
 
@@ -565,8 +540,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
         },
       });
       await expect(
-        fetchCompletionSignature({
-          ...api.params,
+        api.client.fetchCompletionSignature({
           completionId: 'chat-1',
         }),
       ).rejects.toMatchObject({
@@ -581,8 +555,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const api = cloudFor(() => new Response('', { status: 404 }));
 
       await expect(
-        lookupCompletionSignature({
-          ...api.params,
+        api.client.lookupCompletionSignature({
           completionId: 'chat-1',
         }),
       ).rejects.toMatchObject({
@@ -600,7 +573,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       const missing = cloudFor(() => new Response('', { status: 404 }));
 
       await expect(
-        fetchGatewayAttestation({ ...missing.params }),
+        missing.client.fetchGatewayAttestation(),
       ).rejects.toMatchObject({
         failure: {
           code: 'api.http_status',
@@ -611,7 +584,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
 
       const unavailable = cloudFor(() => new Response('', { status: 503 }));
       await expect(
-        fetchGatewayAttestation({ ...unavailable.params }),
+        unavailable.client.fetchGatewayAttestation(),
       ).rejects.toMatchObject({
         failure: {
           code: 'api.http_status',
@@ -627,8 +600,7 @@ describe('NEAR AI Cloud fetch helpers', () => {
       );
 
       await expect(
-        fetchModelAttestations({
-          ...api.params,
+        api.client.fetchModelAttestations({
           model: 'canonical-model',
         }),
       ).rejects.toMatchObject({

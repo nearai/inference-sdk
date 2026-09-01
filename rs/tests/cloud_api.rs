@@ -1,11 +1,10 @@
 use serde_json::json;
 use std::sync::Once;
 use verifiable_ai_sdk::{
-    find_model_attestation_for_signature, ApiError, AttestationEventLog, AttestationEvidence,
-    CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
-    CompletionSignatureRequest, GatewayAttestationPolicy, GatewayAttestationRequest,
-    ModelAttestation, ModelAttestationForSignatureRequest, ModelAttestationsRequest, SdkError,
-    SignatureUnavailable, SigningAlgo, SigningIdentity, VerificationError,
+    find_model_attestation_for_signature, ApiError, AttestationClient, AttestationEventLog,
+    AttestationEvidence, CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
+    GatewayAttestationPolicy, ModelAttestation, SdkError, SignatureUnavailable, SigningAlgo,
+    SigningIdentity, VerificationError,
 };
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
@@ -81,6 +80,10 @@ fn test_api_key() -> &'static str {
         std::env::set_var("no_proxy", "127.0.0.1,localhost");
     });
     "test-key"
+}
+
+fn client(server: &MockServer) -> AttestationClient {
+    AttestationClient::with_base_url(test_api_key().to_owned(), &base_url(server)).unwrap()
 }
 
 fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
@@ -181,8 +184,8 @@ fn rejects_a_gateway_signature_when_selecting_model_attestation() {
 }
 
 #[test]
-fn request_builders_reject_an_invalid_base_url() {
-    let result = ModelAttestationsRequest::new("test-key", "glm-5.2").base_url("://invalid");
+fn client_rejects_an_invalid_base_url() {
+    let result = AttestationClient::with_base_url("test-key".to_owned(), "://invalid");
 
     assert!(matches!(
         result,
@@ -191,7 +194,7 @@ fn request_builders_reject_an_invalid_base_url() {
 }
 
 #[tokio::test]
-async fn model_attestation_request_treats_a_missing_candidate_list_as_empty() {
+async fn client_treats_a_missing_model_candidate_list_as_empty() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -199,10 +202,8 @@ async fn model_attestation_request_treats_a_missing_candidate_list_as_empty() {
         .mount(&server)
         .await;
 
-    let error = ModelAttestationsRequest::new(test_api_key(), "glm-5.2")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let error = client(&server)
+        .fetch_model_attestations("glm-5.2", None, None)
         .await
         .unwrap_err();
 
@@ -213,7 +214,7 @@ async fn model_attestation_request_treats_a_missing_candidate_list_as_empty() {
 }
 
 #[tokio::test]
-async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence() {
+async fn client_fetches_model_attestations_with_a_fresh_nonce() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -227,10 +228,8 @@ async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence
         .mount(&server)
         .await;
 
-    let fetched = ModelAttestationsRequest::new(test_api_key(), "glm-5.2")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let fetched = client(&server)
+        .fetch_model_attestations("glm-5.2", None, None)
         .await
         .unwrap();
 
@@ -243,31 +242,7 @@ async fn model_attestation_request_returns_a_fresh_nonce_and_normalized_evidence
 }
 
 #[tokio::test]
-async fn model_attestation_request_applies_signer_filters() {
-    let server = MockServer::start().await;
-    let signing_address = "22".repeat(20);
-    Mock::given(method("GET"))
-        .and(path("/v1/attestation/report"))
-        .and(query_param("signing_algo", "ecdsa"))
-        .and(query_param("signing_address", signing_address.clone()))
-        .respond_with(ModelAttestationResponder)
-        .mount(&server)
-        .await;
-
-    let fetched = ModelAttestationsRequest::new(test_api_key(), "glm-5.2")
-        .base_url(base_url(&server))
-        .unwrap()
-        .signing_algo(SigningAlgo::Ecdsa)
-        .signing_address(signing_address)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(fetched.attestations.len(), 1);
-}
-
-#[tokio::test]
-async fn model_attestation_for_signature_request_uses_the_signature_signer() {
+async fn client_fetches_model_attestation_for_a_provider_signature() {
     let server = MockServer::start().await;
     let signing_address = "22".repeat(20);
     Mock::given(method("GET"))
@@ -286,10 +261,8 @@ async fn model_attestation_for_signature_request_uses_the_signature_signer() {
         },
     );
 
-    let fetched = ModelAttestationForSignatureRequest::new(test_api_key(), "glm-5.2", &signature)
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let fetched = client(&server)
+        .fetch_model_attestation_for_signature("glm-5.2", &signature)
         .await
         .unwrap();
 
@@ -297,7 +270,7 @@ async fn model_attestation_for_signature_request_uses_the_signature_signer() {
 }
 
 #[tokio::test]
-async fn gateway_attestation_request_requests_tls_bound_evidence() {
+async fn client_fetches_tls_bound_gateway_evidence() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -307,10 +280,8 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
         .mount(&server)
         .await;
 
-    let fetched = GatewayAttestationRequest::new(test_api_key())
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let fetched = client(&server)
+        .fetch_gateway_attestation(None, Default::default())
         .await
         .unwrap();
 
@@ -327,7 +298,7 @@ async fn gateway_attestation_request_requests_tls_bound_evidence() {
 }
 
 #[tokio::test]
-async fn gateway_attestation_request_can_disable_tls_binding() {
+async fn client_can_fetch_gateway_evidence_without_tls_binding() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -340,11 +311,8 @@ async fn gateway_attestation_request_can_disable_tls_binding() {
         ..Default::default()
     };
 
-    let fetched = GatewayAttestationRequest::new(test_api_key())
-        .base_url(base_url(&server))
-        .unwrap()
-        .policy(policy)
-        .send()
+    let fetched = client(&server)
+        .fetch_gateway_attestation(None, policy)
         .await
         .unwrap();
 
@@ -353,7 +321,7 @@ async fn gateway_attestation_request_can_disable_tls_binding() {
 }
 
 #[tokio::test]
-async fn gateway_attestation_request_rejects_missing_tls_fingerprint_when_enabled() {
+async fn client_rejects_gateway_evidence_missing_requested_tls_fingerprint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -372,10 +340,8 @@ async fn gateway_attestation_request_rejects_missing_tls_fingerprint_when_enable
         .mount(&server)
         .await;
 
-    let error = GatewayAttestationRequest::new(test_api_key())
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let error = client(&server)
+        .fetch_gateway_attestation(None, Default::default())
         .await
         .unwrap_err();
 
@@ -387,7 +353,7 @@ async fn gateway_attestation_request_rejects_missing_tls_fingerprint_when_enable
 }
 
 #[tokio::test]
-async fn gateway_attestation_request_applies_a_signing_algorithm_filter() {
+async fn client_applies_a_gateway_signing_algorithm_filter() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -397,17 +363,14 @@ async fn gateway_attestation_request_applies_a_signing_algorithm_filter() {
         .mount(&server)
         .await;
 
-    GatewayAttestationRequest::new(test_api_key())
-        .base_url(base_url(&server))
-        .unwrap()
-        .signing_algo(SigningAlgo::Ed25519)
-        .send()
+    client(&server)
+        .fetch_gateway_attestation(Some(SigningAlgo::Ed25519), Default::default())
         .await
         .unwrap();
 }
 
 #[tokio::test]
-async fn completion_signature_request_preserves_kind_and_unavailable_response() {
+async fn client_preserves_completion_signature_kind_and_unavailable_response() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/signature/found"))
@@ -429,10 +392,9 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
         .mount(&server)
         .await;
 
-    let found = CompletionSignatureRequest::new(test_api_key(), "found")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let client = client(&server);
+    let found = client
+        .lookup_completion_signature("found", None)
         .await
         .unwrap();
     assert!(matches!(
@@ -443,10 +405,8 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
         })
     ));
 
-    let pending = CompletionSignatureRequest::new(test_api_key(), "pending")
-        .base_url(base_url(&server))
-        .unwrap()
-        .send()
+    let pending = client
+        .lookup_completion_signature("pending", None)
         .await
         .unwrap();
     assert!(matches!(
@@ -454,10 +414,20 @@ async fn completion_signature_request_preserves_kind_and_unavailable_response() 
         CompletionSignatureLookup::Unavailable(SignatureUnavailable { ref error_code, .. })
             if error_code == "pending"
     ));
+
+    let error = client
+        .fetch_completion_signature("pending", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        SdkError::Api(ApiError::CompletionSignatureUnavailable { ref provider_error_code })
+            if provider_error_code == "pending"
+    ));
 }
 
 #[tokio::test]
-async fn completion_signature_request_applies_a_signing_algorithm() {
+async fn client_applies_a_completion_signature_algorithm_filter() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/signature/found"))
@@ -472,11 +442,8 @@ async fn completion_signature_request_applies_a_signing_algorithm() {
         .mount(&server)
         .await;
 
-    CompletionSignatureRequest::new(test_api_key(), "found")
-        .base_url(base_url(&server))
-        .unwrap()
-        .signing_algo(SigningAlgo::Ed25519)
-        .send()
+    client(&server)
+        .lookup_completion_signature("found", Some(SigningAlgo::Ed25519))
         .await
         .unwrap();
 }

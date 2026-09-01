@@ -16,28 +16,43 @@ use x509_cert::{
     Certificate,
 };
 
-/// Default production endpoint used when a helper does not select another one.
+/// Default production endpoint used by [`AttestationClient::new`].
 pub const DEFAULT_NEAR_AI_CLOUD_BASE_URL: &str = "https://cloud-api.near.ai/v1";
 
 /// Set this on model-attestation requests to reject aliases before dispatch.
 pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 
-/// Internal transport and endpoint settings owned by an individual request
-/// builder. It is intentionally not a reusable client configuration type:
-/// callers pass their API key to each operation they make.
-struct CloudApiRequestConfig {
+/// Client for retrieving attestation evidence and completion signatures from
+/// NEAR AI Cloud.
+///
+/// The client owns its API key, base URL, and HTTP clients. Reuse one instance
+/// for related evidence requests instead of passing the API key to each call.
+pub struct AttestationClient {
     api_key: String,
     base_url: Url,
     client: Client,
     gateway_client: Client,
 }
 
-impl CloudApiRequestConfig {
-    fn new(api_key: impl Into<String>) -> Self {
+impl AttestationClient {
+    /// Create a client for the production Cloud API endpoint.
+    pub fn new(api_key: String) -> Self {
+        let base_url = parse_base_url(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
+            .expect("the SDK's default Cloud API URL is valid");
+        Self::from_parts(api_key, base_url)
+    }
+
+    /// Create a client for an absolute Cloud API base URL, such as a staging
+    /// endpoint. The base URL may include a path prefix such as `/v1`.
+    pub fn with_base_url(api_key: String, base_url: &str) -> Result<Self, VerificationError> {
+        let base_url = parse_base_url(base_url)?;
+        Ok(Self::from_parts(api_key, base_url))
+    }
+
+    fn from_parts(api_key: String, base_url: Url) -> Self {
         Self {
-            api_key: api_key.into(),
-            base_url: parse_base_url(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
-                .expect("the SDK's default Cloud API URL is valid"),
+            api_key,
+            base_url,
             client: Client::new(),
             // A Gateway TLS binding must observe the Gateway's own peer, not
             // a system-configured HTTPS proxy. Other Cloud API requests keep
@@ -50,11 +65,6 @@ impl CloudApiRequestConfig {
         }
     }
 
-    fn set_base_url(&mut self, base_url: impl AsRef<str>) -> Result<(), VerificationError> {
-        self.base_url = parse_base_url(base_url.as_ref())?;
-        Ok(())
-    }
-
     fn endpoint(&self, path: &str) -> Result<Url, VerificationError> {
         self.base_url
             .join(path)
@@ -63,246 +73,199 @@ impl CloudApiRequestConfig {
                 reason: "cannot resolve API endpoint".to_owned(),
             })
     }
-}
-
-/// Build a request for NEAR model evidence. The builder starts with the
-/// production endpoint; use its methods only when the request needs filters
-/// or another endpoint.
-pub struct ModelAttestationsRequest {
-    config: CloudApiRequestConfig,
-    model: String,
-    signing_algo: Option<SigningAlgo>,
-    signing_address: Option<String>,
-}
-
-impl ModelAttestationsRequest {
-    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            config: CloudApiRequestConfig::new(api_key),
-            model: model.into(),
-            signing_algo: None,
-            signing_address: None,
+    /// Fetch model attestations for a canonical NEAR model ID.
+    ///
+    /// The result preserves Cloud API's `model_attestations` array and has a
+    /// fresh nonce in its client binding. The current API contract requires
+    /// exactly one returned candidate. The optional signer fields only narrow
+    /// the API response; local selection still matches the evidence signer.
+    pub async fn fetch_model_attestations(
+        &self,
+        model: &str,
+        signing_algo: Option<SigningAlgo>,
+        signing_address: Option<&str>,
+    ) -> Result<FetchedModelAttestations, SdkError> {
+        let nonce = generate_nonce();
+        let mut url = self.endpoint("attestation/report")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("model", model);
+            query.append_pair("provider", "near");
+            query.append_pair("nonce", &nonce);
+            query.append_pair("include_tls_fingerprint", "false");
+            if let Some(signing_algo) = signing_algo {
+                query.append_pair("signing_algo", &signing_algo.to_string());
+            }
+            if let Some(signing_address) = signing_address {
+                query.append_pair("signing_address", signing_address);
+            }
         }
-    }
-
-    /// Use another absolute Cloud API base URL.
-    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
-        self.config.set_base_url(base_url)?;
-        Ok(self)
-    }
-
-    /// Restrict the report to attestations using this signing algorithm.
-    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
-        self.signing_algo = Some(signing_algo);
-        self
-    }
-
-    /// Restrict the report to attestations using this signing address.
-    pub fn signing_address(mut self, signing_address: impl Into<String>) -> Self {
-        self.signing_address = Some(signing_address.into());
-        self
-    }
-
-    /// Fetch evidence with a fresh nonce. Cloud API currently returns exactly
-    /// one candidate, and this helper enforces that contract.
-    pub async fn send(self) -> Result<FetchedModelAttestations, SdkError> {
-        fetch_model_attestations_with_config(
-            &self.config,
-            &self.model,
-            self.signing_algo,
-            self.signing_address.as_deref(),
+        let cloud_response = get_cloud_api_response(
+            self,
+            url,
+            ApiResource::ModelAttestation,
+            Some((NO_ALIASING_HEADER, "true")),
         )
-        .await
-    }
-}
-
-/// Build a request for the model evidence associated with one `provider_tee`
-/// signature. The builder owns the signature kind and signer it needs for
-/// selection, so the caller does not need to keep the signature borrowed.
-pub struct ModelAttestationForSignatureRequest {
-    request: ModelAttestationsRequest,
-    signature_kind: CompletionSignatureKind,
-    signer: SigningIdentity,
-}
-
-impl ModelAttestationForSignatureRequest {
-    pub fn new(
-        api_key: impl Into<String>,
-        model: impl Into<String>,
-        signature: &CompletionSignature,
-    ) -> Self {
-        let request = ModelAttestationsRequest::new(api_key, model)
-            .signing_algo(signature.signer.signing_algo)
-            .signing_address(&signature.signer.signing_address);
-        Self {
-            request,
-            signature_kind: signature.kind,
-            signer: signature.signer.clone(),
+        .await?;
+        let response: WireModelAttestationResponse = decode_wire_response(
+            &cloud_response.body,
+            ApiResource::ModelAttestation,
+            "model_attestations",
+        )?;
+        if response.model_attestations.len() != 1 {
+            return Err(ApiError::UnexpectedModelAttestationCount {
+                actual_count: response.model_attestations.len(),
+            }
+            .into());
         }
+        let attestations = response
+            .model_attestations
+            .into_iter()
+            .enumerate()
+            .map(|(index, attestation)| {
+                map_model_attestation(attestation, &format!("model_attestations[{index}]"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for attestation in &attestations {
+            require_matching_api_nonce(
+                &attestation.evidence.nonce,
+                &nonce,
+                ApiResource::ModelAttestation,
+            )?;
+        }
+        Ok(FetchedModelAttestations {
+            attestations,
+            client_binding: ModelClientBinding { nonce },
+        })
     }
 
-    /// Use another absolute Cloud API base URL.
-    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
-        self.request = self.request.base_url(base_url)?;
-        Ok(self)
-    }
-
-    /// Fetch model evidence and select the candidate matching the signature
-    /// signer.
-    pub async fn send(self) -> Result<FetchedModelAttestation, SdkError> {
-        let Self {
-            request,
-            signature_kind,
-            signer,
-        } = self;
-        require_provider_signature_kind(signature_kind)?;
-        let mut fetched = request.send().await?;
-        let index = find_model_attestation_index_for_signer(&fetched.attestations, &signer)?;
+    /// Fetch the model attestation selected by a `provider_tee` signature.
+    ///
+    /// This sends the signature's signer as Cloud API filters and then makes
+    /// the authoritative local signer match. It does not verify the quote or
+    /// the response signature.
+    pub async fn fetch_model_attestation_for_signature(
+        &self,
+        model: &str,
+        signature: &CompletionSignature,
+    ) -> Result<FetchedModelAttestation, SdkError> {
+        let mut fetched = self
+            .fetch_model_attestations(
+                model,
+                Some(signature.signer.signing_algo),
+                Some(&signature.signer.signing_address),
+            )
+            .await?;
+        let index = find_model_attestation_index_for_signature(&fetched.attestations, signature)?;
         let attestation = fetched.attestations.swap_remove(index);
         Ok(FetchedModelAttestation {
             attestation,
             client_binding: fetched.client_binding,
         })
     }
-}
 
-/// Build a request for standalone Gateway evidence.
-pub struct GatewayAttestationRequest {
-    config: CloudApiRequestConfig,
-    signing_algo: Option<SigningAlgo>,
-    policy: GatewayAttestationPolicy,
-}
-
-impl GatewayAttestationRequest {
-    pub fn new(api_key: impl Into<String>) -> Self {
-        Self {
-            config: CloudApiRequestConfig::new(api_key),
-            signing_algo: None,
-            policy: GatewayAttestationPolicy::default(),
+    /// Fetch standalone Gateway evidence using the requested signing algorithm
+    /// or Cloud API's selected algorithm when `signing_algo` is `None`.
+    ///
+    /// The built-in Gateway client records the TLS peer certificate for this
+    /// exact HTTPS request when the runtime exposes it.
+    pub async fn fetch_gateway_attestation(
+        &self,
+        signing_algo: Option<SigningAlgo>,
+        policy: GatewayAttestationPolicy,
+    ) -> Result<FetchedGatewayAttestation, SdkError> {
+        let nonce = generate_nonce();
+        let mut url = self.endpoint("attestation/report")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("nonce", &nonce);
+            if let Some(signing_algo) = signing_algo {
+                query.append_pair("signing_algo", &signing_algo.to_string());
+            }
+            query.append_pair(
+                "include_tls_fingerprint",
+                if policy.verify_tls_binding {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
         }
-    }
-
-    /// Use another absolute Cloud API base URL.
-    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
-        self.config.set_base_url(base_url)?;
-        Ok(self)
-    }
-
-    /// Request evidence for this Gateway signing algorithm.
-    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
-        self.signing_algo = Some(signing_algo);
-        self
-    }
-
-    /// Set the TLS and TCB policy to use for this evidence request. The TLS
-    /// setting controls both `include_tls_fingerprint` and the report-data
-    /// layout that must later be verified.
-    pub fn policy(mut self, policy: GatewayAttestationPolicy) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    /// Fetch Gateway evidence with a fresh nonce and the TLS peer observed by
-    /// reqwest for this exact HTTPS request, when the runtime exposes it.
-    pub async fn send(self) -> Result<FetchedGatewayAttestation, SdkError> {
-        fetch_gateway_attestation_with_config(&self.config, self.signing_algo, self.policy).await
-    }
-}
-
-/// Build a request for a completion signature.
-pub struct CompletionSignatureRequest {
-    config: CloudApiRequestConfig,
-    completion_id: String,
-    signing_algo: Option<SigningAlgo>,
-}
-
-impl CompletionSignatureRequest {
-    pub fn new(api_key: impl Into<String>, completion_id: impl Into<String>) -> Self {
-        Self {
-            config: CloudApiRequestConfig::new(api_key),
-            completion_id: completion_id.into(),
-            signing_algo: None,
+        let cloud_response =
+            get_cloud_api_response(self, url, ApiResource::GatewayAttestation, None).await?;
+        let response: WireGatewayAttestationResponse = decode_wire_response(
+            &cloud_response.body,
+            ApiResource::GatewayAttestation,
+            "gateway_attestation",
+        )?;
+        let attestation =
+            map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
+        if policy.verify_tls_binding && attestation.tls_spki_fingerprint.is_none() {
+            return Err(ApiError::InvalidResponse {
+                path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
+                expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
+            }
+            .into());
         }
+        require_matching_api_nonce(
+            &attestation.evidence.nonce,
+            &nonce,
+            ApiResource::GatewayAttestation,
+        )?;
+        Ok(FetchedGatewayAttestation {
+            attestation,
+            client_binding: GatewayClientBinding {
+                nonce,
+                peer_spki_fingerprint: cloud_response.peer_spki_fingerprint,
+            },
+            policy,
+        })
     }
 
-    /// Use another absolute Cloud API base URL.
-    pub fn base_url(mut self, base_url: impl AsRef<str>) -> Result<Self, VerificationError> {
-        self.config.set_base_url(base_url)?;
-        Ok(self)
+    /// Look up a completion signature, optionally filtered by signing
+    /// algorithm, without treating a 2xx unavailable envelope as an error. A
+    /// pending 404 remains a retryable HTTP error.
+    pub async fn lookup_completion_signature(
+        &self,
+        completion_id: &str,
+        signing_algo: Option<SigningAlgo>,
+    ) -> Result<CompletionSignatureLookup, SdkError> {
+        let mut url = self.endpoint("signature")?;
+        url.path_segments_mut()
+            .map_err(|_| VerificationError::InvalidInput {
+                field: "base_url".to_owned(),
+                reason: "cannot construct signature endpoint".to_owned(),
+            })?
+            .push(completion_id);
+        if let Some(signing_algo) = signing_algo {
+            url.query_pairs_mut()
+                .append_pair("signing_algo", &signing_algo.to_string());
+        }
+        let cloud_response =
+            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None).await?;
+        let response: WireCompletionSignatureResponse = decode_wire_response(
+            &cloud_response.body,
+            ApiResource::CompletionSignature,
+            "signature",
+        )?;
+        map_completion_signature_lookup(response).map_err(Into::into)
     }
 
-    /// Request a completion signature using this signing algorithm.
-    pub fn signing_algo(mut self, signing_algo: SigningAlgo) -> Self {
-        self.signing_algo = Some(signing_algo);
-        self
-    }
-
-    /// Send the request without treating a 2xx unavailable envelope as an
-    /// error. A pending 404 remains a retryable HTTP error.
-    pub async fn send(self) -> Result<CompletionSignatureLookup, SdkError> {
-        lookup_completion_signature_with_config(
-            &self.config,
-            &self.completion_id,
-            self.signing_algo,
+    /// Fetch a completion signature, optionally filtered by signing algorithm,
+    /// treating a 2xx unavailable envelope as an API error. Use
+    /// [`Self::lookup_completion_signature`] when that unavailable state is
+    /// ordinary application control flow.
+    pub async fn fetch_completion_signature(
+        &self,
+        completion_id: &str,
+        signing_algo: Option<SigningAlgo>,
+    ) -> Result<CompletionSignature, SdkError> {
+        require_completion_signature(
+            self.lookup_completion_signature(completion_id, signing_algo)
+                .await?,
         )
-        .await
-    }
-}
-
-/// Fetch NEAR model evidence using the production endpoint. Use
-/// [`ModelAttestationsRequest`] to add request filters or select a different
-/// base URL.
-pub async fn fetch_model_attestations(
-    api_key: &str,
-    model: &str,
-) -> Result<FetchedModelAttestations, SdkError> {
-    ModelAttestationsRequest::new(api_key, model).send().await
-}
-
-/// Fetch model evidence for a `provider_tee` completion signature using the
-/// production endpoint. Use [`ModelAttestationForSignatureRequest`] to select
-/// a different base URL.
-pub async fn fetch_model_attestation_for_signature(
-    api_key: &str,
-    model: &str,
-    signature: &CompletionSignature,
-) -> Result<FetchedModelAttestation, SdkError> {
-    ModelAttestationForSignatureRequest::new(api_key, model, signature)
-        .send()
-        .await
-}
-
-/// Fetch standalone Gateway evidence using the production endpoint. The
-/// built-in reqwest client records the TLS peer certificate for the evidence
-/// request when the runtime exposes it. Use [`GatewayAttestationRequest`] to
-/// select another signing algorithm, policy, or endpoint.
-pub async fn fetch_gateway_attestation(
-    api_key: &str,
-) -> Result<FetchedGatewayAttestation, SdkError> {
-    GatewayAttestationRequest::new(api_key).send().await
-}
-
-/// Look up a completion signature using the production endpoint and built-in
-/// reqwest transport. Use [`CompletionSignatureRequest`] to select a different
-/// base URL or signing algorithm.
-pub async fn lookup_completion_signature(
-    api_key: &str,
-    completion_id: &str,
-) -> Result<CompletionSignatureLookup, SdkError> {
-    CompletionSignatureRequest::new(api_key, completion_id)
-        .send()
-        .await
-}
-
-/// Fetch a completion signature using the production endpoint and built-in
-/// reqwest transport. Use [`lookup_completion_signature`] when a 2xx
-/// unavailable envelope is an ordinary application state.
-pub async fn fetch_completion_signature(
-    api_key: &str,
-    completion_id: &str,
-) -> Result<CompletionSignature, SdkError> {
-    require_completion_signature(lookup_completion_signature(api_key, completion_id).await?)
         .map_err(Into::into)
+    }
 }
 
 fn require_completion_signature(
@@ -358,166 +321,27 @@ fn find_model_attestation_index_for_signer(
     .into())
 }
 
-async fn fetch_model_attestations_with_config(
-    config: &CloudApiRequestConfig,
-    model: &str,
-    signing_algo: Option<SigningAlgo>,
-    signing_address: Option<&str>,
-) -> Result<FetchedModelAttestations, SdkError> {
-    let nonce = generate_nonce();
-    let mut url = config.endpoint("attestation/report")?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("model", model);
-        query.append_pair("provider", "near");
-        query.append_pair("nonce", &nonce);
-        query.append_pair("include_tls_fingerprint", "false");
-        if let Some(signing_algo) = signing_algo {
-            query.append_pair("signing_algo", &signing_algo.to_string());
-        }
-        if let Some(signing_address) = signing_address {
-            query.append_pair("signing_address", signing_address);
-        }
-    }
-    let cloud_response = get_cloud_api_response(
-        config,
-        url,
-        ApiResource::ModelAttestation,
-        Some((NO_ALIASING_HEADER, "true")),
-    )
-    .await?;
-    let response: WireModelAttestationResponse = decode_wire_response(
-        &cloud_response.body,
-        ApiResource::ModelAttestation,
-        "model_attestations",
-    )?;
-    if response.model_attestations.len() != 1 {
-        return Err(ApiError::UnexpectedModelAttestationCount {
-            actual_count: response.model_attestations.len(),
-        }
-        .into());
-    }
-    let attestations = response
-        .model_attestations
-        .into_iter()
-        .enumerate()
-        .map(|(index, attestation)| {
-            map_model_attestation(attestation, &format!("model_attestations[{index}]"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    for attestation in &attestations {
-        require_matching_api_nonce(
-            &attestation.evidence.nonce,
-            &nonce,
-            ApiResource::ModelAttestation,
-        )?;
-    }
-    Ok(FetchedModelAttestations {
-        attestations,
-        client_binding: ModelClientBinding { nonce },
-    })
-}
-
-async fn fetch_gateway_attestation_with_config(
-    config: &CloudApiRequestConfig,
-    signing_algo: Option<SigningAlgo>,
-    policy: GatewayAttestationPolicy,
-) -> Result<FetchedGatewayAttestation, SdkError> {
-    let nonce = generate_nonce();
-    let mut url = config.endpoint("attestation/report")?;
-    {
-        let mut query = url.query_pairs_mut();
-        query.append_pair("nonce", &nonce);
-        if let Some(signing_algo) = signing_algo {
-            query.append_pair("signing_algo", &signing_algo.to_string());
-        }
-        query.append_pair(
-            "include_tls_fingerprint",
-            if policy.verify_tls_binding {
-                "true"
-            } else {
-                "false"
-            },
-        );
-    }
-    let cloud_response =
-        get_cloud_api_response(config, url, ApiResource::GatewayAttestation, None).await?;
-    let response: WireGatewayAttestationResponse = decode_wire_response(
-        &cloud_response.body,
-        ApiResource::GatewayAttestation,
-        "gateway_attestation",
-    )?;
-    let attestation = map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
-    if policy.verify_tls_binding && attestation.tls_spki_fingerprint.is_none() {
-        return Err(ApiError::InvalidResponse {
-            path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
-            expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
-        }
-        .into());
-    }
-    require_matching_api_nonce(
-        &attestation.evidence.nonce,
-        &nonce,
-        ApiResource::GatewayAttestation,
-    )?;
-    Ok(FetchedGatewayAttestation {
-        attestation,
-        client_binding: GatewayClientBinding {
-            nonce,
-            peer_spki_fingerprint: cloud_response.peer_spki_fingerprint,
-        },
-        policy,
-    })
-}
-
-async fn lookup_completion_signature_with_config(
-    config: &CloudApiRequestConfig,
-    completion_id: &str,
-    signing_algo: Option<SigningAlgo>,
-) -> Result<CompletionSignatureLookup, SdkError> {
-    let mut url = config.endpoint("signature")?;
-    url.path_segments_mut()
-        .map_err(|_| VerificationError::InvalidInput {
-            field: "base_url".to_owned(),
-            reason: "cannot construct signature endpoint".to_owned(),
-        })?
-        .push(completion_id);
-    if let Some(signing_algo) = signing_algo {
-        url.query_pairs_mut()
-            .append_pair("signing_algo", &signing_algo.to_string());
-    }
-    let cloud_response =
-        get_cloud_api_response(config, url, ApiResource::CompletionSignature, None).await?;
-    let response: WireCompletionSignatureResponse = decode_wire_response(
-        &cloud_response.body,
-        ApiResource::CompletionSignature,
-        "signature",
-    )?;
-    map_completion_signature_lookup(response).map_err(Into::into)
-}
-
 async fn get_cloud_api_response(
-    config: &CloudApiRequestConfig,
+    client: &AttestationClient,
     url: Url,
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
 ) -> Result<CloudApiResponse, SdkError> {
-    let headers = build_cloud_api_headers(config, extra_header)?;
-    let client = if resource == ApiResource::GatewayAttestation {
-        &config.gateway_client
+    let headers = build_cloud_api_headers(client, extra_header)?;
+    let http_client = if resource == ApiResource::GatewayAttestation {
+        &client.gateway_client
     } else {
-        &config.client
+        &client.client
     };
-    let response =
-        client
-            .get(url)
-            .headers(headers)
-            .send()
-            .await
-            .map_err(|_| ApiError::Transport {
-                resource,
-                reason: ApiTransportReason::Request,
-            })?;
+    let response = http_client
+        .get(url)
+        .headers(headers)
+        .send()
+        .await
+        .map_err(|_| ApiError::Transport {
+            resource,
+            reason: ApiTransportReason::Request,
+        })?;
     let status = response.status().as_u16();
     let peer_spki_fingerprint = (resource == ApiResource::GatewayAttestation)
         .then(|| peer_spki_fingerprint(&response))
@@ -536,12 +360,12 @@ async fn get_cloud_api_response(
 }
 
 fn build_cloud_api_headers(
-    config: &CloudApiRequestConfig,
+    client: &AttestationClient,
     extra_header: Option<(&str, &str)>,
 ) -> Result<HeaderMap, VerificationError> {
     let mut headers = HeaderMap::new();
     let authorization =
-        HeaderValue::from_str(&format!("Bearer {}", config.api_key)).map_err(|_| {
+        HeaderValue::from_str(&format!("Bearer {}", client.api_key)).map_err(|_| {
             VerificationError::InvalidInput {
                 field: "api_key".to_owned(),
                 reason: "expected an HTTP header value".to_owned(),
@@ -594,15 +418,16 @@ fn invalid_base_url() -> VerificationError {
 }
 
 fn require_provider_signature(signature: &CompletionSignature) -> Result<(), VerificationError> {
-    require_provider_signature_kind(signature.kind)
+    require_signature_kind(signature.kind, CompletionSignatureKind::ProviderTee)
 }
 
-fn require_provider_signature_kind(
+fn require_signature_kind(
     signature_kind: CompletionSignatureKind,
+    expected: CompletionSignatureKind,
 ) -> Result<(), VerificationError> {
-    if signature_kind != CompletionSignatureKind::ProviderTee {
+    if signature_kind != expected {
         return Err(VerificationError::SignatureKindMismatch {
-            expected: CompletionSignatureKind::ProviderTee,
+            expected,
             actual: signature_kind,
         });
     }
@@ -967,10 +792,10 @@ mod tests {
 
     #[test]
     fn default_base_url_preserves_the_v1_path_when_resolving_an_endpoint() {
-        let config = CloudApiRequestConfig::new("test-key");
+        let client = AttestationClient::new("test-key".to_owned());
 
         assert_eq!(
-            config.endpoint("attestation/report").unwrap().as_str(),
+            client.endpoint("attestation/report").unwrap().as_str(),
             "https://cloud-api.near.ai/v1/attestation/report",
         );
     }

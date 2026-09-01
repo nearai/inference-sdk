@@ -4,12 +4,8 @@ from .core.attestation_gateway import verify_gateway_attestation
 from .core.attestation_model import verify_model_attestation
 from .core.chat import verify_gateway_response, verify_model_response
 from .core.cloud_api import (
-    fetch_completion_signature,
-    fetch_gateway_attestation,
-    fetch_model_attestation_for_signature,
-    fetch_model_attestations,
+    AttestationClient,
     find_model_attestation_for_signature,
-    lookup_completion_signature,
 )
 from .types.attestation_common import (
     AttestationEvidence,
@@ -64,12 +60,8 @@ from .utils.errors import (
 __all__ = [
     'DEFAULT_NEAR_AI_CLOUD_BASE_URL',
     'NO_ALIASING_HEADER',
-    'fetch_completion_signature',
-    'fetch_gateway_attestation',
-    'fetch_model_attestation_for_signature',
-    'fetch_model_attestations',
+    'AttestationClient',
     'find_model_attestation_for_signature',
-    'lookup_completion_signature',
     'verify_model_attestation',
     'verify_gateway_attestation',
     'verify_model_response',

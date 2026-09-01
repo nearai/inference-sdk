@@ -1,10 +1,13 @@
 # Python verification guide
 
 Use this SDK to verify NEAR AI Cloud attestations and completion signatures.
+Create `client = AttestationClient(api_key)` once to retrieve Cloud API
+signatures and evidence; selection and verification remain standalone
+functions.
 
 ## Completion signature kinds
 
-`fetch_completion_signature` exposes Cloud API's `signature_kind` as
+`client.fetch_completion_signature()` exposes Cloud API's `signature_kind` as
 `signature.kind`. Cloud API selects one of two kinds for each returned
 signature. The kind selects a verification path: it changes the trust boundary
 and what a successful verification establishes, not only which key signed.
@@ -28,13 +31,13 @@ signature is needed only when the claim is about a particular response.
 
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
-| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetch_model_attestations` → `verify_model_attestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That a particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | By default, the Gateway signer, deployment evidence, and quote-bound TLS identity match the TLS peer observed for the evidence request. | That a particular completion was served by the Gateway, or that a model executed the request. |
-| Verify a model-issued response | The completion signature has `kind == 'provider_tee'`. | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or TLS endpoint. |
-| Verify a Gateway-issued response | The completion signature has `kind == 'gateway'`. | `fetch_completion_signature` → `fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
+| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetch_model_attestations` → `verify_model_attestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That a particular response came from this deployment, or that the client connected directly to its CVM. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and its TLS service identity. | `client.fetch_gateway_attestation` → `verify_gateway_attestation` | By default, the Gateway signer, deployment evidence, and quote-bound TLS identity match the TLS peer observed for the evidence request. | That a particular completion was served by the Gateway, or that a model executed the request. |
+| Verify a model-issued response | The completion signature has `kind == 'provider_tee'`. | `client.fetch_completion_signature` → `client.fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or TLS endpoint. |
+| Verify a Gateway-issued response | The completion signature has `kind == 'gateway'`. | `client.fetch_completion_signature` → `client.fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
-`fetch_model_attestations` preserves Cloud API's `model_attestations` array and
-currently requires it to contain one item. It always requests
+`client.fetch_model_attestations()` preserves Cloud API's `model_attestations`
+array and currently requires it to contain one item. It always requests
 `include_tls_fingerprint=false`: model quote report data binds the signer and
 fresh nonce, not client TLS. The result carries a `ModelClientBinding` for the
 matching verification call.
@@ -43,8 +46,8 @@ matching verification call.
 narrow what Cloud returns, but do not prove which result matches a completion.
 For a `provider_tee` signature, always use
 `find_model_attestation_for_signature` to perform the local signer selection.
-`fetch_model_attestation_for_signature` is the convenience version that applies
-those request filters and then performs the same local selection.
+`client.fetch_model_attestation_for_signature()` is the convenience version
+that applies those request filters and then performs the same local selection.
 
 For complete parameter and result definitions, see the
 [API reference](./api-reference.md).
@@ -61,8 +64,7 @@ whitespace, key ordering, framing, or encoding changes the signed bytes.
 
 ```python
 from verifiable_ai_sdk import (
-    fetch_completion_signature,
-    fetch_model_attestations,
+    AttestationClient,
     find_model_attestation_for_signature,
     verify_model_attestation,
     verify_model_response,
@@ -70,12 +72,13 @@ from verifiable_ai_sdk import (
 
 # model, completion_id, request_body, and response_body were retained by your
 # application's inference request.
+client = AttestationClient(api_key)
 
-signature = await fetch_completion_signature(api_key, completion_id)
+signature = await client.fetch_completion_signature(completion_id)
 if signature.kind != 'provider_tee':
     raise RuntimeError('Use the Gateway flow for this completion')
 
-fetched_attestations = await fetch_model_attestations(api_key, model)
+fetched_attestations = await client.fetch_model_attestations(model)
 attestation = find_model_attestation_for_signature(
     fetched_attestations.attestations,
     signature,
@@ -94,8 +97,8 @@ verify_model_response(
 
 When `verify_model_response` returns, the model signature is valid for those
 exact bytes and its signing identity matches `verified_attestation.signer`.
-`fetch_model_attestations` creates a fresh client nonce, checks the service's
-echo, and returns it inside `client_binding` with the evidence.
+`client.fetch_model_attestations()` creates a fresh client nonce, checks the
+service's echo, and returns it inside `client_binding` with the evidence.
 
 `verify_model_response` verifies response bytes and matches the signature to
 the verified signer; it does not repeat quote, policy, or deployment
@@ -123,16 +126,18 @@ client-to-model TLS claim.
 
 A Gateway attestation verifies a Cloud API Gateway deployment. Its TLS policy
 selects both the evidence request and the quote layout used at verification.
-`fetch_gateway_attestation` sends a fresh nonce, checks the echoed nonce, and
-returns raw evidence, a `GatewayClientBinding`, and the resolved policy.
+`client.fetch_gateway_attestation()` sends a fresh nonce, checks the echoed
+nonce, and returns raw evidence, a `GatewayClientBinding`, and the resolved
+policy.
 
 ```python
 from verifiable_ai_sdk import (
-    fetch_gateway_attestation,
+    AttestationClient,
     verify_gateway_attestation,
 )
 
-gateway_evidence = await fetch_gateway_attestation(api_key)
+client = AttestationClient(api_key)
+gateway_evidence = await client.fetch_gateway_attestation()
 verified_gateway_attestation = await verify_gateway_attestation(
     gateway_evidence.attestation,
     gateway_evidence.client_binding,
@@ -151,10 +156,10 @@ If a runtime cannot observe the peer certificate, choose the no-TLS policy
 before fetching evidence and pass the returned policy into verification:
 
 ```python
-from verifiable_ai_sdk import GatewayAttestationPolicy
+from verifiable_ai_sdk import AttestationClient, GatewayAttestationPolicy
 
-gateway_evidence = await fetch_gateway_attestation(
-    api_key,
+client = AttestationClient(api_key)
+gateway_evidence = await client.fetch_gateway_attestation(
     policy=GatewayAttestationPolicy(verify_tls_binding=False),
 )
 verified_gateway_attestation = await verify_gateway_attestation(
@@ -176,13 +181,13 @@ response:
 
 ```python
 from verifiable_ai_sdk import (
-    fetch_gateway_attestation,
+    AttestationClient,
     verify_gateway_attestation,
     verify_gateway_response,
 )
 
-gateway_evidence = await fetch_gateway_attestation(
-    api_key,
+client = AttestationClient(api_key)
+gateway_evidence = await client.fetch_gateway_attestation(
     signing_algo=signature.signer.signing_algo,
 )
 verified_gateway_attestation = await verify_gateway_attestation(
@@ -252,10 +257,10 @@ service. Every verifier callback must return only for evidence it accepts.
 
 ## Handle signature lookup and verification errors
 
-`fetch_completion_signature` is the strict path: it returns one completion
-signature or raises a structured error. Use `lookup_completion_signature` when
-the application needs to handle a successful unavailable envelope itself. It
-returns either:
+`client.fetch_completion_signature()` is the strict path: it returns one
+completion signature or raises a structured error. Use
+`client.lookup_completion_signature()` when the application needs to handle a
+successful unavailable envelope itself. It returns either:
 
 - `status == 'found'`, with a completion signature; or
 - `status == 'unavailable'`, with the service error code and message.
@@ -263,7 +268,7 @@ returns either:
 A pending or unknown signature can instead produce HTTP 404. That remains a
 retryable `api.http_status` error; it is not an unavailable lookup result.
 
-Cloud API request helpers and evidence selection raise `ApiError` for request,
+`AttestationClient` methods and evidence selection raise `ApiError` for request,
 HTTP, response-format, nonce, unavailable-signature, or candidate-selection
 failures. Verification functions and local input or signature-contract checks
 raise `VerificationError`.
@@ -274,20 +279,23 @@ raise `VerificationError`.
 | `error.failure.details` (when present) | Code-specific diagnostic context. Do not parse `error.message`. |
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
 
-A 2xx unavailable response from `fetch_completion_signature` is an `ApiError`
-with code `api.completion_signature_unavailable`: the strict helper could not
-return the signature it promises. Prefer `lookup_completion_signature` when
-unavailability is an ordinary application state.
+A 2xx unavailable response from `client.fetch_completion_signature()` is an
+`ApiError` with code `api.completion_signature_unavailable`: the strict helper
+could not return the signature it promises. Prefer
+`client.lookup_completion_signature()` when unavailability is an ordinary
+application state.
 
 ```python
 from verifiable_ai_sdk import (
+    AttestationClient,
     ApiError,
     VerificationError,
-    fetch_completion_signature,
 )
 
+client = AttestationClient(api_key)
+
 try:
-    signature = await fetch_completion_signature(api_key, completion_id)
+    signature = await client.fetch_completion_signature(completion_id)
 except ApiError as error:
     match error.failure.code:
         case 'api.completion_signature_unavailable':

@@ -1,4 +1,4 @@
-"""NEAR AI Cloud evidence and completion-signature request helpers."""
+"""NEAR AI Cloud evidence retrieval and local signer selection."""
 
 from __future__ import annotations
 
@@ -57,6 +57,8 @@ SIGNATURE_RESPONSE_FIELDS = {
     'signature_kind',
 }
 
+__all__ = ['AttestationClient', 'find_model_attestation_for_signature']
+
 
 @dataclass(frozen=True)
 class _CloudApiJsonResponse:
@@ -64,64 +66,166 @@ class _CloudApiJsonResponse:
     peer_spki_fingerprint: str | None
 
 
-async def fetch_model_attestations(
-    api_key: str,
-    model: str,
-    *,
-    signing_algo: SigningAlgo | None = None,
-    signing_address: str | None = None,
-    base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-) -> FetchedModelAttestations:
-    """Fetch the current NEAR model evidence with a fresh client nonce."""
+class AttestationClient:
+    """Asynchronous NEAR AI Cloud client for evidence and signature retrieval.
 
-    nonce = generate_nonce()
-    query: dict[str, str] = {
-        'model': model,
-        'provider': 'near',
-        'nonce': nonce,
-        'include_tls_fingerprint': 'false',
-    }
-    if signing_algo is not None:
-        query['signing_algo'] = signing_algo
-    if signing_address is not None:
-        query['signing_address'] = signing_address
-    response = await _get_cloud_api_json(
-        api_key,
-        _endpoint(base_url, 'attestation/report', query),
-        'model_attestation',
-        extra_headers={NO_ALIASING_HEADER: 'true'},
-    )
-    attestations = _decode_model_attestation_report(response.json)
-    for attestation in attestations:
-        _require_matching_api_nonce(attestation.nonce, nonce, 'model_attestation')
-    return FetchedModelAttestations(
-        attestations=attestations,
-        client_binding=ModelClientBinding(nonce=nonce),
-    )
+    The client owns the Cloud API credentials and base URL. Its methods create
+    a fresh nonce for every attestation request; they do not send completion
+    requests or retain completion data.
+    """
 
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+    ) -> None:
+        self._api_key = api_key
+        self._base_url = base_url
 
-async def fetch_model_attestation_for_signature(
-    api_key: str,
-    model: str,
-    signature: CompletionSignatureReference,
-    *,
-    base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-) -> FetchedModelAttestation:
-    """Fetch and select evidence for a ``provider_tee`` completion signature."""
+    async def fetch_model_attestations(
+        self,
+        model: str,
+        *,
+        signing_algo: SigningAlgo | None = None,
+        signing_address: str | None = None,
+    ) -> FetchedModelAttestations:
+        """Fetch the current NEAR model evidence with a fresh client nonce."""
 
-    fetched = await fetch_model_attestations(
-        api_key,
-        model,
-        signing_algo=signature.signer.signing_algo,
-        signing_address=signature.signer.signing_address,
-        base_url=base_url,
-    )
-    return FetchedModelAttestation(
-        attestation=find_model_attestation_for_signature(
-            fetched.attestations, signature
-        ),
-        client_binding=fetched.client_binding,
-    )
+        nonce = generate_nonce()
+        query: dict[str, str] = {
+            'model': model,
+            'provider': 'near',
+            'nonce': nonce,
+            'include_tls_fingerprint': 'false',
+        }
+        if signing_algo is not None:
+            query['signing_algo'] = signing_algo
+        if signing_address is not None:
+            query['signing_address'] = signing_address
+        response = await _get_cloud_api_json(
+            self._api_key,
+            _endpoint(self._base_url, 'attestation/report', query),
+            'model_attestation',
+            extra_headers={NO_ALIASING_HEADER: 'true'},
+        )
+        attestations = _decode_model_attestation_report(response.json)
+        for attestation in attestations:
+            _require_matching_api_nonce(attestation.nonce, nonce, 'model_attestation')
+        return FetchedModelAttestations(
+            attestations=attestations,
+            client_binding=ModelClientBinding(nonce=nonce),
+        )
+
+    async def fetch_model_attestation_for_signature(
+        self,
+        model: str,
+        signature: CompletionSignatureReference,
+    ) -> FetchedModelAttestation:
+        """Fetch and select evidence for a ``provider_tee`` completion signature."""
+
+        fetched = await self.fetch_model_attestations(
+            model,
+            signing_algo=signature.signer.signing_algo,
+            signing_address=signature.signer.signing_address,
+        )
+        return FetchedModelAttestation(
+            attestation=find_model_attestation_for_signature(
+                fetched.attestations, signature
+            ),
+            client_binding=fetched.client_binding,
+        )
+
+    async def fetch_gateway_attestation(
+        self,
+        *,
+        signing_algo: SigningAlgo | None = None,
+        policy: GatewayAttestationPolicy | None = None,
+    ) -> FetchedGatewayAttestation:
+        """Fetch Gateway evidence using the requested TLS-binding policy."""
+
+        resolved_policy = GatewayAttestationPolicy() if policy is None else policy
+        nonce = generate_nonce()
+        query = {
+            'nonce': nonce,
+            'include_tls_fingerprint': str(resolved_policy.verify_tls_binding).lower(),
+        }
+        if signing_algo is not None:
+            query['signing_algo'] = signing_algo
+        response = await _get_cloud_api_json(
+            self._api_key,
+            _endpoint(
+                self._base_url,
+                'attestation/report',
+                query,
+            ),
+            'gateway_attestation',
+            capture_peer_spki=resolved_policy.verify_tls_binding,
+        )
+        attestation = _decode_gateway_attestation_report(response.json)
+        if (
+            resolved_policy.verify_tls_binding
+            and attestation.tls_spki_fingerprint is None
+        ):
+            raise api_failure(
+                'api.invalid_response',
+                {
+                    'path': 'gateway_attestation.tls_cert_fingerprint',
+                    'expected': '32-byte hexadecimal string',
+                    'actual': 'missing',
+                },
+            )
+        _require_matching_api_nonce(attestation.nonce, nonce, 'gateway_attestation')
+        return FetchedGatewayAttestation(
+            attestation=attestation,
+            client_binding=GatewayClientBinding(
+                nonce=nonce,
+                peer_spki_fingerprint=response.peer_spki_fingerprint,
+            ),
+            policy=resolved_policy,
+        )
+
+    async def lookup_completion_signature(
+        self,
+        completion_id: str,
+        *,
+        signing_algo: SigningAlgo | None = None,
+    ) -> CompletionSignatureLookup:
+        """Look up one signature without treating a 2xx unavailable envelope as an error."""
+
+        query: dict[str, str] = {}
+        if signing_algo is not None:
+            query['signing_algo'] = signing_algo
+        response = await _get_cloud_api_json(
+            self._api_key,
+            _endpoint(
+                self._base_url,
+                f'signature/{quote(completion_id, safe="")}',
+                query,
+            ),
+            'completion_signature',
+        )
+        return _decode_completion_signature_lookup(response.json)
+
+    async def fetch_completion_signature(
+        self,
+        completion_id: str,
+        *,
+        signing_algo: SigningAlgo | None = None,
+    ) -> CompletionSignature:
+        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
+
+        lookup = await self.lookup_completion_signature(
+            completion_id,
+            signing_algo=signing_algo,
+        )
+        if lookup.status == 'found' and lookup.signature is not None:
+            return lookup.signature
+        assert lookup.unavailable is not None
+        raise api_failure(
+            'api.completion_signature_unavailable',
+            {'providerErrorCode': lookup.unavailable.error_code},
+        )
 
 
 def find_model_attestation_for_signature(
@@ -131,103 +235,7 @@ def find_model_attestation_for_signature(
     """Select the sole model attestation advertised by a provider signature."""
 
     _require_provider_signature(signature)
-    return find_model_attestation_for_signer(attestations, signature.signer)
-
-
-async def fetch_gateway_attestation(
-    api_key: str,
-    *,
-    signing_algo: SigningAlgo | None = None,
-    policy: GatewayAttestationPolicy | None = None,
-    base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-) -> FetchedGatewayAttestation:
-    """Fetch Gateway evidence using the requested TLS-binding policy."""
-
-    resolved_policy = GatewayAttestationPolicy() if policy is None else policy
-    nonce = generate_nonce()
-    query = {
-        'nonce': nonce,
-        'include_tls_fingerprint': str(resolved_policy.verify_tls_binding).lower(),
-    }
-    if signing_algo is not None:
-        query['signing_algo'] = signing_algo
-    response = await _get_cloud_api_json(
-        api_key,
-        _endpoint(
-            base_url,
-            'attestation/report',
-            query,
-        ),
-        'gateway_attestation',
-        capture_peer_spki=resolved_policy.verify_tls_binding,
-    )
-    attestation = _decode_gateway_attestation_report(response.json)
-    if resolved_policy.verify_tls_binding and attestation.tls_spki_fingerprint is None:
-        raise api_failure(
-            'api.invalid_response',
-            {
-                'path': 'gateway_attestation.tls_cert_fingerprint',
-                'expected': '32-byte hexadecimal string',
-                'actual': 'missing',
-            },
-        )
-    _require_matching_api_nonce(attestation.nonce, nonce, 'gateway_attestation')
-    return FetchedGatewayAttestation(
-        attestation=attestation,
-        client_binding=GatewayClientBinding(
-            nonce=nonce,
-            peer_spki_fingerprint=response.peer_spki_fingerprint,
-        ),
-        policy=resolved_policy,
-    )
-
-
-async def lookup_completion_signature(
-    api_key: str,
-    completion_id: str,
-    *,
-    signing_algo: SigningAlgo | None = None,
-    base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-) -> CompletionSignatureLookup:
-    """Look up one signature without treating a 2xx unavailable envelope as an error."""
-
-    query: dict[str, str] = {}
-    if signing_algo is not None:
-        query['signing_algo'] = signing_algo
-    response = await _get_cloud_api_json(
-        api_key,
-        _endpoint(
-            base_url,
-            f'signature/{quote(completion_id, safe="")}',
-            query,
-        ),
-        'completion_signature',
-    )
-    return _decode_completion_signature_lookup(response.json)
-
-
-async def fetch_completion_signature(
-    api_key: str,
-    completion_id: str,
-    *,
-    signing_algo: SigningAlgo | None = None,
-    base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-) -> CompletionSignature:
-    """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
-
-    lookup = await lookup_completion_signature(
-        api_key,
-        completion_id,
-        signing_algo=signing_algo,
-        base_url=base_url,
-    )
-    if lookup.status == 'found' and lookup.signature is not None:
-        return lookup.signature
-    assert lookup.unavailable is not None
-    raise api_failure(
-        'api.completion_signature_unavailable',
-        {'providerErrorCode': lookup.unavailable.error_code},
-    )
+    return _find_model_attestation_for_signer(attestations, signature.signer)
 
 
 async def _get_cloud_api_json(
@@ -409,7 +417,7 @@ def _api_signer(algorithm: SigningAlgo, address: str, label: str) -> SigningIden
     return SigningIdentity(signing_algo=algorithm, signing_address=address)
 
 
-def find_model_attestation_for_signer(
+def _find_model_attestation_for_signer(
     attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
     signer: SigningIdentity,
 ) -> ModelAttestation:

@@ -1,8 +1,9 @@
 # Verifiable AI SDK for TypeScript
 
-Verify NEAR AI Cloud completion signatures and attestation evidence. The SDK
-fetches and verifies evidence; your application sends completion requests and
-retains their exact request and response bytes when it verifies a response.
+Verify NEAR AI Cloud completion signatures and attestation evidence.
+`AttestationClient` fetches signatures and evidence; standalone functions
+verify them. Your application sends completion requests and retains their exact
+request and response bytes when it verifies a response.
 
 ## What the SDK verifies
 
@@ -79,7 +80,7 @@ model execution.
   `clientBinding`, and `policy` directly to `verifyGatewayAttestation`. By
   default it requires a TLS peer fingerprint; Node captures it for the evidence
   request. Browser callers must pass `policy: { verifyTlsBinding: false }` to
-  `fetchGatewayAttestation`.
+  `client.fetchGatewayAttestation`.
 - Verify raw evidence before using its result for response verification. Decide
   where to verify it again after storage or transfer.
 - Supply a deployment verifier when the application must restrict acceptable
@@ -95,7 +96,7 @@ model execution.
 ## Runtime
 
 The package publishes ESM and is developed with Node.js 24. In Node,
-`fetchGatewayAttestation` uses HTTPS to capture the TLS peer fingerprint for
+`AttestationClient.fetchGatewayAttestation` uses HTTPS to capture the TLS peer fingerprint for
 the evidence request, satisfying the default Gateway policy. Browser consumers
 can bundle the SDK, but browser fetch does not expose peer certificates. They
 must use `verifyTlsBinding: false` when fetching Gateway evidence; that path

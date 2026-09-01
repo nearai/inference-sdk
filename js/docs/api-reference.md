@@ -8,46 +8,42 @@ This page describes the Cloud request and verification APIs exported by
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `fetchCompletionSignature` | `(params: FetchCompletionSignatureParams) => Promise<CompletionSignature>` | Fetches a completion signature. |
-| `lookupCompletionSignature` | `(params: LookupCompletionSignatureParams) => Promise<CompletionSignatureLookup>` | Fetches a completion signature or an unavailable state. |
-| `fetchModelAttestations` | `(params: FetchModelAttestationsParams) => Promise<FetchedModelAttestations>` | Fetches model-attestation evidence. |
-| `fetchModelAttestationForSignature` | `(params: FetchModelAttestationForSignatureParams) => Promise<FetchedModelAttestation>` | Fetches model evidence selected for a `provider_tee` signer. |
-| `fetchGatewayAttestation` | `(params: FetchGatewayAttestationParams) => Promise<FetchedGatewayAttestation>` | Fetches gateway-attestation evidence. |
+| `AttestationClient` | `new AttestationClient(options)` | Fetches Cloud API signatures and attestation evidence. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and, when enabled by policy, its TLS binding. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
 
-## NEAR AI Cloud request functions
+## `AttestationClient`
 
-The request helpers do not send completion requests or retain completion
-bytes. Each accepts one named `...Params` object with its Cloud API request
-configuration and operation-specific fields at the same level.
+`AttestationClient` owns Cloud API configuration. Construct it once, then use
+its methods to retrieve signatures and evidence. It does not send completion
+requests or retain their request or response bytes.
 
-### Shared request fields
+### Constructor
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Cloud API base URL. Include the API path when using a custom endpoint. |
 
-### Functions
+### Methods
 
-| Function | Params | Resolves to | Behavior |
+| Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `lookupCompletionSignature(params)` | `LookupCompletionSignatureParams` | `CompletionSignatureLookup` | Returns either a signature or a service-provided unavailable state. |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
-| `fetchGatewayAttestation(params)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its TLS policy selects both `include_tls_fingerprint` and the quote layout later verified. In Node, TLS-enabled fetches capture the peer fingerprint for that HTTPS request. |
+| `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its TLS policy selects both `include_tls_fingerprint` and the quote layout later verified. In Node, TLS-enabled fetches capture the peer fingerprint for that HTTPS request. |
 
 ### Operation-specific parameter fields
 
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `FetchCompletionSignatureParams` and `LookupCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
-|  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it requests the service default, `ecdsa`. |
+|  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it follows the service default. |
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Cloud API response. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Cloud API response. `findModelAttestationForSignature` still performs the local signer match. |
@@ -58,7 +54,7 @@ configuration and operation-specific fields at the same level.
 
 ### Attestation fetch result types
 
-Every attestation fetch helper generates and sends a fresh 32-byte client nonce
+Every attestation fetch method generates and sends a fresh 32-byte client nonce
 and checks the service's echoed nonce. Each result places its client values in
 `clientBinding`. Pair that value with the result's attestation in the matching
 attestation verifier.
@@ -80,16 +76,16 @@ attestation verifier.
 
 ### `findModelAttestationForSignature`
 
-Use this function after `fetchModelAttestations` to select the evidence for a
+Use this function after `client.fetchModelAttestations` to select the evidence for a
 `provider_tee` signature. It requires exactly one signer match but does not
-verify the attestation. `fetchModelAttestationForSignature` is the convenience
+verify the attestation. `client.fetchModelAttestationForSignature` is the convenience
 form of these two operations.
 
 #### `FindModelAttestationForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly ModelAttestation[]` | Yes | Model attestations returned by `fetchModelAttestations`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly ModelAttestation[]` | Yes | Model attestations returned by `client.fetchModelAttestations`. Exactly one item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
@@ -115,7 +111,7 @@ form of these two operations.
 |  | `verifiers?` | `AttestationVerifiers` | No | Quote and deployment verifier overrides. |
 
 `clientBinding.nonce` must be the nonce returned with the matching evidence.
-`verifyTlsBinding` defaults to `true`: the fetch helper requests a TLS
+`verifyTlsBinding` defaults to `true`: the fetch method requests a TLS
 fingerprint, and verification requires it to match the client-observed peer.
 Set it to `false` when fetching in a browser. The helper then requests no
 fingerprint and verification uses the signer-and-nonce quote layout, returning
@@ -190,7 +186,7 @@ because a byte-exact provider signature would no longer match those bytes.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `nonce` | `string` | Nonce echoed by the service. The fetch helper validates it against, and separately returns, its client nonce. |
+| `nonce` | `string` | Nonce echoed by the service. The client method validates it against, and separately returns, its client nonce. |
 | `signer` | `SigningIdentity` | Advertised signing identity. |
 | `intelQuote` | `string` | Intel TDX quote. |
 | `eventLog` | `AttestationEventLog` | Input used to replay RTMR3 measurements. |

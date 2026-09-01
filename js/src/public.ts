@@ -1,13 +1,10 @@
 export {
   DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-  fetchCompletionSignature,
-  fetchModelAttestationForSignature,
-  fetchModelAttestations,
   findModelAttestationForSignature,
-  lookupCompletionSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export type {
+  AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestation,

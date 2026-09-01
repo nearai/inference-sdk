@@ -6,9 +6,9 @@ exact request and response bytes, then supplies them to the response verifier.
 
 ## Completion signature kinds
 
-`fetch_completion_signature` exposes Cloud API's `signature_kind` as
-`CompletionSignature.kind`. It selects the verification path and the resulting
-trust guarantee, not merely the key that signed.
+`AttestationClient::fetch_completion_signature` exposes Cloud API's
+`signature_kind` as `CompletionSignature.kind`. It selects the verification
+path and the resulting trust guarantee, not merely the key that signed.
 
 | `signature.kind` | Trust boundary | A successful response verification establishes | It does not establish |
 | --- | --- | --- | --- | --- |
@@ -28,18 +28,18 @@ needed only when the claim concerns one particular response.
 
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- |
-| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default TLS policy, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
-| Verify a model-issued response | The completion signature has `ProviderTee` kind. | `fetch_completion_signature` → `fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
-| Verify a Gateway-issued response | The completion signature has `Gateway` kind. | `fetch_completion_signature` → `GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
+| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default TLS policy, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
+| Verify a model-issued response | The completion signature has `ProviderTee` kind. | `client.fetch_completion_signature` → `client.fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
+| Verify a Gateway-issued response | The completion signature has `Gateway` kind. | `client.fetch_completion_signature` → `client.fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
-`fetch_model_attestations` returns `FetchedModelAttestations`, preserving the
+`AttestationClient::fetch_model_attestations` returns `FetchedModelAttestations`, preserving the
 Cloud API `model_attestations` field. The SDK currently requires exactly one
 candidate. For a deployment audit, verify its sole item with the returned
 `client_binding`. Use `find_model_attestation_for_signature` only when a `ProviderTee`
 signature must select matching evidence.
 
-For all constructors, functions, policies, and result types, see the
+For the client, functions, policies, and result types, see the
 [API reference](./api-reference.md).
 
 ## Verify a model response
@@ -54,9 +54,8 @@ whitespace, key ordering, framing, or encoding changes the signed bytes.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    fetch_completion_signature, fetch_model_attestations,
-    find_model_attestation_for_signature, verify_model_attestation,
-    verify_model_response, CompletionSignatureKind,
+    find_model_attestation_for_signature, verify_model_attestation, verify_model_response,
+    AttestationClient, CompletionSignatureKind,
 };
 
 async fn verify_model_completion(
@@ -66,7 +65,8 @@ async fn verify_model_completion(
     request_body: &[u8],
     response_body: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let signature = fetch_completion_signature(api_key, completion_id).await?;
+    let client = AttestationClient::new(api_key.to_owned());
+    let signature = client.fetch_completion_signature(completion_id, None).await?;
     if signature.kind != CompletionSignatureKind::ProviderTee {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -75,7 +75,7 @@ async fn verify_model_completion(
         .into());
     }
 
-    let fetched_attestations = fetch_model_attestations(api_key, model).await?;
+    let fetched_attestations = client.fetch_model_attestations(model, None, None).await?;
     let attestation = find_model_attestation_for_signature(
         &fetched_attestations.attestations,
         &signature,
@@ -114,17 +114,21 @@ connects to the model on the client's behalf, so model verification checks the
 signer-and-nonce quote layout but does not establish a client-to-model TLS
 binding.
 
-`ModelAttestationsRequest::signing_algo` and `signing_address` are optional
-Cloud API request filters. They can narrow the response, but they do not
-replace `find_model_attestation_for_signature`, which performs the authoritative
-local match against the `ProviderTee` signature signer.
+The `signing_algo` and `signing_address` arguments of
+`AttestationClient::fetch_model_attestations` are optional Cloud API request
+filters. They can narrow the response, but they do not replace
+`find_model_attestation_for_signature`, which performs the authoritative local
+match against the `ProviderTee` signature signer. Use
+`fetch_model_attestation_for_signature(model, &signature)` when the selected
+candidate is all that the caller needs.
 
 ## Verify a Gateway attestation or response
 
-For an independent Gateway endpoint audit, `fetch_gateway_attestation` requests
-the Gateway's TLS fingerprint using the Cloud API default signing algorithm. It
-configures reqwest to expose the leaf certificate for that exact HTTPS request,
-then returns the certificate's SHA-256 SPKI fingerprint with the fresh nonce in
+For an independent Gateway endpoint audit,
+`client.fetch_gateway_attestation(None, policy)` requests the Gateway's TLS
+fingerprint using the Cloud API default signing algorithm. It configures reqwest
+to expose the leaf certificate for that exact HTTPS request, then returns the
+certificate's SHA-256 SPKI fingerprint with the fresh nonce in
 `FetchedGatewayAttestation.client_binding`.
 
 `verify_gateway_attestation` requires that observed peer fingerprint by
@@ -133,14 +137,14 @@ quote-bound key with the client-observed peer. Do not replace the observed peer
 fingerprint with the field inside the attestation: that would only compare the
 evidence with itself.
 
-For a `CompletionSignatureKind::Gateway` response, use
-`GatewayAttestationRequest` with `signature.signer.signing_algo`; do not rely on
-the standalone helper's service-selected signer:
+For a `CompletionSignatureKind::Gateway` response, pass
+`Some(signature.signer.signing_algo)` to `fetch_gateway_attestation`; do not
+rely on the service-selected signing algorithm:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    fetch_completion_signature, verify_gateway_attestation, verify_gateway_response,
-    CompletionSignatureKind, GatewayAttestationRequest,
+    verify_gateway_attestation, verify_gateway_response, AttestationClient,
+    CompletionSignatureKind,
 };
 
 async fn verify_gateway_completion(
@@ -149,7 +153,8 @@ async fn verify_gateway_completion(
     request_body: &[u8],
     response_body: &[u8],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let signature = fetch_completion_signature(api_key, completion_id).await?;
+    let client = AttestationClient::new(api_key.to_owned());
+    let signature = client.fetch_completion_signature(completion_id, None).await?;
     if signature.kind != CompletionSignatureKind::Gateway {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -158,9 +163,8 @@ async fn verify_gateway_completion(
         .into());
     }
 
-    let fetched = GatewayAttestationRequest::new(api_key)
-        .signing_algo(signature.signer.signing_algo)
-        .send()
+    let fetched = client
+        .fetch_gateway_attestation(Some(signature.signer.signing_algo), Default::default())
         .await?;
     let verified_attestation = verify_gateway_attestation(
         &fetched.attestation,
@@ -189,17 +193,17 @@ fingerprint.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    verify_gateway_attestation, GatewayAttestationPolicy, GatewayAttestationRequest,
+    verify_gateway_attestation, AttestationClient, GatewayAttestationPolicy,
 };
 
 async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let client = AttestationClient::new(api_key.to_owned());
     let policy = GatewayAttestationPolicy {
         verify_tls_binding: false,
         ..Default::default()
     };
-    let fetched = GatewayAttestationRequest::new(api_key)
-        .policy(policy)
-        .send()
+    let fetched = client
+        .fetch_gateway_attestation(None, policy)
         .await?;
     let _verified = verify_gateway_attestation(
         &fetched.attestation,
@@ -225,8 +229,9 @@ mandatory.
 
 `GatewayAttestationPolicy::verify_tls_binding` defaults to `true`. Set it to
 `false` only for a runtime that cannot obtain the peer certificate for the
-Gateway evidence request. Pass the same policy to `GatewayAttestationRequest`
-that is later passed to verification; `FetchedGatewayAttestation.policy`
+Gateway evidence request. Pass the same policy to
+`AttestationClient::fetch_gateway_attestation` that is later passed to
+verification; `FetchedGatewayAttestation.policy`
 contains the resolved value for that request.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
@@ -238,7 +243,7 @@ result; it does not locally validate the returned JWT/EAT signature.
 
 ## Handle errors
 
-Cloud request and evidence-selection helpers return `Result<T, SdkError>`.
+Cloud client methods and evidence selection return `Result<T, SdkError>`.
 `SdkError::Api(ApiError)` represents a Cloud API request, response, nonce, or
 candidate-selection failure. `SdkError::Verification(VerificationError)`
 represents local input validation or verification that arose while preparing a
@@ -252,30 +257,30 @@ must not be parsed. `retryable()` means a new attempt at the failed external
 operation may succeed. It does not mean that re-verifying the same evidence
 will succeed or that an inference request should be replayed.
 
-`fetch_completion_signature` is the strict path: it returns a signature or an
-`SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })` with code
-`api.completion_signature_unavailable` when Cloud API returns a valid 2xx
-unavailable envelope. Use `lookup_completion_signature` when that unavailable
-state is normal application control flow:
+`AttestationClient::fetch_completion_signature` is the strict path: it returns
+a signature or an `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`
+with code `api.completion_signature_unavailable` when Cloud API returns a valid
+2xx unavailable envelope. Use `AttestationClient::lookup_completion_signature`
+when that unavailable state is normal application control flow:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    fetch_completion_signature, lookup_completion_signature, ApiError,
-    CompletionSignatureLookup, SdkError,
+    ApiError, AttestationClient, CompletionSignatureLookup, SdkError,
 };
 
 async fn look_up_completion_signature(
     api_key: &str,
     completion_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    match lookup_completion_signature(api_key, completion_id).await? {
+    let client = AttestationClient::new(api_key.to_owned());
+    match client.lookup_completion_signature(completion_id, None).await? {
         CompletionSignatureLookup::Found(_signature) => {}
         CompletionSignatureLookup::Unavailable(unavailable) => {
             eprintln!("signature unavailable: {}", unavailable.error_code);
         }
     }
 
-    if let Err(SdkError::Api(error)) = fetch_completion_signature(api_key, completion_id).await {
+    if let Err(SdkError::Api(error)) = client.fetch_completion_signature(completion_id, None).await {
         match error {
             ApiError::CompletionSignatureUnavailable { provider_error_code } => {
                 eprintln!("no usable signature: {provider_error_code}");

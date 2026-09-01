@@ -2,33 +2,25 @@ import { createHash, X509Certificate } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import type { TLSSocket } from 'node:tls';
-import { fetchGatewayAttestationWithRequester } from '../core/cloud-api';
-import type {
-  FetchedGatewayAttestation,
-  FetchGatewayAttestationParams,
-} from '../types/cloud-api';
-
-type GatewayAttestationResponse = {
-  readonly response: Response;
-  readonly peerSpkiFingerprint?: string;
-};
+import {
+  AttestationClient as BaseAttestationClient,
+  type GatewayAttestationHttpResponse,
+} from '../core/cloud-api';
 
 /**
- * Fetch Gateway evidence through Node HTTPS so the TLS peer for the exact
- * request can be included in the client binding.
+ * Node client that captures the TLS peer for Gateway attestation requests.
  */
-export function fetchGatewayAttestation(
-  params: FetchGatewayAttestationParams,
-): Promise<FetchedGatewayAttestation> {
-  return fetchGatewayAttestationWithRequester(
-    params,
-    requestGatewayAttestation,
-  );
+export class AttestationClient extends BaseAttestationClient {
+  protected override requestGatewayAttestation(
+    request: Request,
+  ): Promise<GatewayAttestationHttpResponse> {
+    return requestGatewayAttestation(request);
+  }
 }
 
 function requestGatewayAttestation(
   request: Request,
-): Promise<GatewayAttestationResponse> {
+): Promise<GatewayAttestationHttpResponse> {
   return new Promise((resolve, reject) => {
     const nativeRequest = httpsRequest(
       request.url,

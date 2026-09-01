@@ -4,53 +4,39 @@ This page lists the public Rust request and verification APIs exported by
 `verifiable_ai_sdk`. For workflows and complete examples, see the
 [verification guide](./verification-guide.md).
 
-## Cloud API requests
+## Cloud API client
 
-Each Cloud API helper takes its `api_key` directly. It uses
-`DEFAULT_NEAR_AI_CLOUD_BASE_URL` and the built-in reqwest client. There is
-no shared Cloud client or configuration object to retain.
+`AttestationClient` owns the API key, Cloud API base URL, and its internal
+reqwest clients. Create it once and reuse it for all signature and evidence
+requests in a flow. The client only fetches evidence; it does not send
+inference requests or retain completion bytes.
 
-For a custom base URL or request filter, construct the matching request
-builder. Builders own configuration for one request and finish with `send()`.
-
-| Builder | Required constructor arguments | Optional methods | Terminal operation |
+| Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
-| `ModelAttestationsRequest` | `new(api_key, model)` | `base_url`, `signing_algo`, `signing_address` | `send()` → `FetchedModelAttestations` |
-| `ModelAttestationForSignatureRequest` | `new(api_key, model, signature: &CompletionSignature)` | `base_url` | `send()` → `FetchedModelAttestation` |
-| `GatewayAttestationRequest` | `new(api_key)` | `base_url`, `signing_algo`, `policy` | `send()` → `FetchedGatewayAttestation` |
-| `CompletionSignatureRequest` | `new(api_key, completion_id)` | `base_url`, `signing_algo` | `send()` → `CompletionSignatureLookup` |
+| `AttestationClient::new` | `api_key: String` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. |
+| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, VerificationError>` | Uses an absolute base URL, such as staging. The URL may include a path prefix such as `/v1`. |
 
-`base_url` parses an absolute Cloud API base URL and returns
-`Result<Self, VerificationError>`. The `signing_algo` and `signing_address`
-methods add the corresponding Cloud API query filters. For Gateway evidence,
-`policy` controls both `include_tls_fingerprint` on the request and the
-report-data layout later verified.
+All client methods below are asynchronous and return `Result<_, SdkError>`.
 
-`CompletionSignatureRequest::send()` preserves Cloud API's unavailable result.
-Use `fetch_completion_signature()` when an unavailable signature should instead
-be returned as `ApiError::CompletionSignatureUnavailable`.
+| Method | Parameters after `&self` | Returns | Description |
+| --- | --- | --- | --- |
+| `lookup_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignatureLookup` | Returns a completion signature or a service-provided unavailable state. |
+| `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Strict form: returns a signature or `ApiError::CompletionSignatureUnavailable` for a 2xx unavailable envelope. |
+| `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
+| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Requires a `ProviderTee` signature, applies its signer as API filters, and selects the exact matching candidate locally. It does not verify the evidence. |
+| `fetch_gateway_attestation` | `signing_algo: Option<SigningAlgo>`, `policy: GatewayAttestationPolicy` | `FetchedGatewayAttestation` | Fetches Gateway evidence. `None` follows the service-selected signing algorithm; use a signature's algorithm when verifying a Gateway response. |
 
-## Cloud API functions
+`signing_algo` and `signing_address` only narrow the Cloud API response. They
+do not replace `find_model_attestation_for_signature`, which performs the local,
+exact signer match for a `ProviderTee` signature. The
+`fetch_model_attestation_for_signature` method is the convenience form that
+applies those filters and then delegates to that same selector.
 
-These convenience functions take only required normal arguments and return
-`Result<_, SdkError>`. They fetch evidence or signatures only; they do not send
-an inference request or retain completion bytes.
+### Evidence selection
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `lookup_completion_signature` | `api_key: &str`, `completion_id: &str` | `CompletionSignatureLookup` | Returns a completion signature or a service-provided unavailable state. |
-| `fetch_completion_signature` | `api_key`, `completion_id` | `CompletionSignature` | Strict form: returns a signature or `ApiError::CompletionSignatureUnavailable` for a 2xx unavailable envelope. |
-| `fetch_model_attestations` | `api_key`, `model: &str` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. It currently requires exactly one candidate. |
-| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `&ModelAttestation` | Selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
-| `fetch_model_attestation_for_signature` | `api_key`, `model`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Fetches model evidence for a `ProviderTee` signer and selects the sole matching candidate. |
-| `fetch_gateway_attestation` | `api_key` | `FetchedGatewayAttestation` | Standalone Gateway-evidence helper. It uses the default TLS-binding policy, requests TLS-fingerprint evidence with a fresh nonce, and captures the SHA-256 SPKI fingerprint from that HTTPS request's peer certificate. |
-
-`ModelAttestationsRequest::signing_algo` and `signing_address` only narrow the
-Cloud API response. They do not replace
-`find_model_attestation_for_signature`, which performs the local, exact signer
-match for a `ProviderTee` signature. `ModelAttestationForSignatureRequest` is
-the convenience form: it applies those request filters and then delegates to
-that same local selector.
+| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `&ModelAttestation` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -65,7 +51,7 @@ attestation verifier.
 
 | Type | Field | Description |
 | --- | --- | --- |
-| `FetchedModelAttestations` | `attestations` | Returned `Vec<ModelAttestation>`. The current helper requires exactly one item. |
+| `FetchedModelAttestations` | `attestations` | Returned `Vec<ModelAttestation>`. The current client method requires exactly one item. |
 |  | `client_binding` | `ModelClientBinding` returned with these attestations. |
 | `FetchedModelAttestation` | `attestation` | Candidate selected for the supplied `ProviderTee` signer. |
 |  | `client_binding` | `ModelClientBinding` returned with the selected attestation. |
@@ -113,10 +99,10 @@ model request body must contain a non-empty JSON `model` string. The signature
 kind must match the verifier (`ProviderTee` or `Gateway`), and the verified
 attestation must bind the signature signer.
 
-For a `Gateway` response, fetch evidence through
-`GatewayAttestationRequest::new(api_key).signing_algo(signature.signer.signing_algo).send()`.
-The convenience `fetch_gateway_attestation(api_key)` follows the Cloud API
-default, so do not use it when the response requires a specific signer.
+For a `Gateway` response, call
+`client.fetch_gateway_attestation(Some(signature.signer.signing_algo), policy)`.
+Passing `None` follows the Cloud API default, so do not use it when the response
+requires a specific signer.
 
 ## Signatures and evidence
 
@@ -145,7 +131,7 @@ Gateway `reported_quote_data` is required.
 
 | `AttestationEvidence` field | Description |
 | --- | --- |
-| `nonce` | Nonce echoed by Cloud API. The fetch helper validates it against its generated nonce. |
+| `nonce` | Nonce echoed by Cloud API. The client method validates it against its generated nonce. |
 | `signer` | Advertised signing identity. |
 | `intel_quote` | Intel TDX quote. |
 | `event_log` | `AttestationEventLog::Json(String)` or `AttestationEventLog::Entries(Vec<serde_json::Value>)`, used to replay RTMR3. |
