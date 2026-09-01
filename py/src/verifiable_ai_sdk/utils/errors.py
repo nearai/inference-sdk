@@ -309,12 +309,5 @@ def _format_input_failure(details: ErrorDetails) -> str:
                 if expected is not None
                 else f'{field} is not a valid HTTP header'
             )
-        case 'unsupported_value':
-            expected = details.get('expected')
-            return (
-                f'{field} must be {expected}'
-                if expected is not None
-                else f'{field} has an unsupported value'
-            )
         case _:
             return f'Invalid {field}'

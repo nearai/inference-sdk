@@ -11,7 +11,7 @@ from eth_account.messages import encode_defunct
 from pydantic import ValidationError
 
 from ..schemas import CompletionRequestModelSchema
-from ..types.attestation_common import SigningAlgo, SigningIdentity
+from ..types.attestation_common import SigningIdentity
 from ..types.chat import CompletionSignature, CompletionSignatureKind
 from ..types.verification import (
     VerifiedGatewayAttestation,
@@ -103,20 +103,16 @@ def _verify_signature_matches_attestation(
     signature: CompletionSignature, attestation_signer: SigningIdentity
 ) -> None:
     signature_signer = signature.signer
-    signature_algo = _require_signing_algo(
-        signature_signer.signing_algo,
-        'signature.signer.signing_algo',
-    )
-    attestation_algo = _require_signing_algo(
-        attestation_signer.signing_algo,
-        'attestation.signer.signing_algo',
-    )
-    signer_matches = signature_algo == attestation_algo and hex_to_bytes(
-        signature_signer.signing_address,
-        'signature.signer.signing_address',
-    ) == hex_to_bytes(
-        attestation_signer.signing_address,
-        'attestation.signer.signing_address',
+    signer_matches = (
+        signature_signer.signing_algo == attestation_signer.signing_algo
+        and hex_to_bytes(
+            signature_signer.signing_address,
+            'signature.signer.signing_address',
+        )
+        == hex_to_bytes(
+            attestation_signer.signing_address,
+            'attestation.signer.signing_address',
+        )
     )
     if not signer_matches:
         raise verification_failure('signature.signer_mismatch')
@@ -125,10 +121,7 @@ def _verify_signature_matches_attestation(
 def _verify_signature_bytes(signature: CompletionSignature) -> None:
     signer = signature.signer
     signed_text = signature.signed_text
-    algorithm = _require_signing_algo(
-        signer.signing_algo, 'signature.signer.signing_algo'
-    )
-    if algorithm == 'ecdsa':
+    if signer.signing_algo == 'ecdsa':
         signature_bytes = _parse_signature_hex(signature.signature, 'signature')
         signing_address = _parse_signature_hex(
             signer.signing_address, 'signer.signing_address'
@@ -146,33 +139,14 @@ def _verify_signature_bytes(signature: CompletionSignature) -> None:
             raise _invalid_signature('ecdsa')
         return
 
-    if algorithm == 'ed25519':
-        public_key = _parse_signature_hex(
-            signer.signing_address, 'signer.signing_address'
-        )
-        signed = _parse_signature_hex(signature.signature, 'signature')
-        _require_signature_length('signer.signing_address', public_key, 32)
-        _require_signature_length('signature', signed, 64)
-        try:
-            nacl.signing.VerifyKey(public_key).verify(
-                signed_text.encode('utf-8'), signed
-            )
-        except (nacl.exceptions.BadSignatureError, ValueError) as error:
-            raise _invalid_signature('ed25519', error) from error
-        return
-
-
-def _require_signing_algo(value: object, field: str) -> SigningAlgo:
-    if isinstance(value, str) and value in {'ecdsa', 'ed25519'}:
-        return value
-    raise verification_failure(
-        'input.invalid',
-        {
-            'field': field,
-            'reason': 'unsupported_value',
-            'expected': "'ecdsa' or 'ed25519'",
-        },
-    )
+    public_key = _parse_signature_hex(signer.signing_address, 'signer.signing_address')
+    signed = _parse_signature_hex(signature.signature, 'signature')
+    _require_signature_length('signer.signing_address', public_key, 32)
+    _require_signature_length('signature', signed, 64)
+    try:
+        nacl.signing.VerifyKey(public_key).verify(signed_text.encode('utf-8'), signed)
+    except (nacl.exceptions.BadSignatureError, ValueError) as error:
+        raise _invalid_signature('ed25519', error) from error
 
 
 def _parse_signature_hex(value: str, field: str) -> bytes:

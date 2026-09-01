@@ -16,10 +16,6 @@ T = TypeVar('T')
 
 
 def hex_to_bytes(value: str, field: str = 'hex') -> bytes:
-    if not isinstance(value, str):
-        raise verification_failure(
-            'input.invalid', {'field': field, 'reason': 'invalid_hex'}
-        )
     normalized = trim_hex_prefix(value)
     if (
         not normalized

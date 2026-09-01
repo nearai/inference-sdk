@@ -72,31 +72,10 @@ async def _verify_nvidia_evidence(
     verifier: NvidiaEvidenceVerifier | None,
 ) -> str:
     requirement = 'if-present' if policy is None else policy.gpu_evidence
-    if not isinstance(requirement, str) or requirement not in {
-        'if-present',
-        'required',
-    }:
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'policy.gpu_evidence',
-                'reason': 'unsupported_value',
-                'expected': "'if-present' or 'required'",
-            },
-        )
     if payload is None:
         if requirement == 'required':
             raise verification_failure('policy.gpu_evidence_required')
         return 'not_provided'
-    if not isinstance(payload, str):
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'attestation.nvidia_payload',
-                'reason': 'unsupported_value',
-                'expected': 'string',
-            },
-        )
 
     try:
         parsed = NvidiaPayloadNonceSchema.model_validate_json(payload)

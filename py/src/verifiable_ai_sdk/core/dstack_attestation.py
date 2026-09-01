@@ -51,7 +51,12 @@ async def verify_dstack_quote(
     quote_verifier: QuoteVerifier | None,
 ) -> VerifiedDstackQuote:
     verify_reported_nonce(attestation.nonce, nonce)
-    signer = _verify_signing_identity(attestation.signer)
+    signer = attestation.signer
+    require_byte_length(
+        signer.signing_address,
+        20 if signer.signing_algo == 'ecdsa' else 32,
+        'attestation.signer.signing_address',
+    )
 
     verifier = verify_dcap_quote if quote_verifier is None else quote_verifier
     try:
@@ -120,55 +125,10 @@ async def verify_dstack_deployment(
     )
 
 
-def _verify_signing_identity(signer: SigningIdentity) -> SigningIdentity:
-    if not isinstance(signer.signing_algo, str) or signer.signing_algo not in {
-        'ecdsa',
-        'ed25519',
-    }:
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'attestation.signer.signing_algo',
-                'reason': 'unsupported_value',
-                'expected': "'ecdsa' or 'ed25519'",
-            },
-        )
-    require_byte_length(
-        signer.signing_address,
-        20 if signer.signing_algo == 'ecdsa' else 32,
-        'attestation.signer.signing_address',
-    )
-    return signer
-
-
 def _accepted_tcb_statuses(policy: AttestationPolicy | None) -> tuple[TcbStatus, ...]:
     if policy is None or policy.accepted_tcb_statuses is None:
         return DEFAULT_ACCEPTED_TCB_STATUSES
-    try:
-        statuses = tuple(policy.accepted_tcb_statuses)
-    except TypeError as error:
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'policy.accepted_tcb_statuses',
-                'reason': 'unsupported_value',
-                'expected': 'supported TCB statuses',
-            },
-            cause=error,
-        ) from error
-    if not all(
-        isinstance(status, str) and status in SUPPORTED_TCB_STATUSES
-        for status in statuses
-    ):
-        raise verification_failure(
-            'input.invalid',
-            {
-                'field': 'policy.accepted_tcb_statuses',
-                'reason': 'unsupported_value',
-                'expected': 'supported TCB statuses',
-            },
-        )
-    return statuses
+    return policy.accepted_tcb_statuses
 
 
 def _validate_quote_result(quote: QuoteVerificationResult) -> None:

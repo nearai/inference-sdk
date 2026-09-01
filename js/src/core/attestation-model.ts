@@ -7,11 +7,7 @@ import type {
 } from '../types/verification';
 import * as v from 'valibot';
 import { NvidiaPayloadNonceSchema } from '../schemas';
-import {
-  VerificationError,
-  inputError,
-  wrapVerificationError,
-} from '../utils/errors';
+import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
   verifyReportDataBinding,
@@ -124,16 +120,5 @@ async function verifyNvidiaEvidence(
 function getGpuEvidenceRequirement(
   policy: ModelAttestationPolicy | undefined,
 ): 'if-present' | 'required' {
-  const requirement = policy?.gpuEvidence;
-  if (requirement === undefined || requirement === 'if-present') {
-    return 'if-present';
-  }
-  if (requirement === 'required') {
-    return requirement;
-  }
-  throw inputError({
-    field: 'policy.gpuEvidence',
-    reason: 'unsupported_value',
-    details: { expected: "'if-present' or 'required'" },
-  });
+  return policy?.gpuEvidence ?? 'if-present';
 }
