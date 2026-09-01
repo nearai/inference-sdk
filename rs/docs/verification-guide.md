@@ -56,7 +56,7 @@ whitespace, key ordering, framing, or encoding changes the signed bytes.
 use verifiable_ai_sdk::{
     fetch_completion_signature, fetch_model_attestations,
     find_model_attestation_for_signature, verify_model_attestation,
-    verify_model_response, CompletionSignatureKind, CompletionSignatureReference,
+    verify_model_response, CompletionSignatureKind,
 };
 
 async fn verify_model_completion(
@@ -75,14 +75,10 @@ async fn verify_model_completion(
         .into());
     }
 
-    let signature_reference = CompletionSignatureReference {
-        kind: signature.kind,
-        signer: signature.signer.clone(),
-    };
     let model_evidence = fetch_model_attestations(api_key, model).await?;
     let attestation = find_model_attestation_for_signature(
         &model_evidence.attestations,
-        &signature_reference,
+        &signature,
     )?;
     let verified_attestation = verify_model_attestation(
         attestation,

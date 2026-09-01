@@ -16,7 +16,7 @@ builder. Builders own configuration for one request and finish with `send()`.
 | Builder | Required constructor arguments | Optional methods | Terminal operation |
 | --- | --- | --- | --- |
 | `ModelAttestationsRequest` | `new(api_key, model)` | `base_url`, `signing_algo`, `signing_address` | `send()` → `FetchedModelAttestations` |
-| `ModelAttestationForSignatureRequest` | `new(api_key, model, signature)` | `base_url` | `send()` → `FetchedModelAttestation` |
+| `ModelAttestationForSignatureRequest` | `new(api_key, model, signature: &CompletionSignature)` | `base_url` | `send()` → `FetchedModelAttestation` |
 | `GatewayAttestationRequest` | `new(api_key)` | `base_url`, `signing_algo`, `policy` | `send()` → `FetchedGatewayAttestation` |
 | `CompletionSignatureRequest` | `new(api_key, completion_id)` | `base_url`, `signing_algo` | `send()` → `CompletionSignatureLookup` |
 
@@ -41,8 +41,8 @@ an inference request or retain completion bytes.
 | `lookup_completion_signature` | `api_key: &str`, `completion_id: &str` | `CompletionSignatureLookup` | Returns a completion signature or a service-provided unavailable state. |
 | `fetch_completion_signature` | `api_key`, `completion_id` | `CompletionSignature` | Strict form: returns a signature or `ApiError::CompletionSignatureUnavailable` for a 2xx unavailable envelope. |
 | `fetch_model_attestations` | `api_key`, `model: &str` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. It currently requires exactly one candidate. |
-| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignatureReference` | `&ModelAttestation` | Selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
-| `fetch_model_attestation_for_signature` | `api_key`, `model`, `signature: &CompletionSignatureReference` | `FetchedModelAttestation` | Fetches model evidence for a `ProviderTee` signer and selects the sole matching candidate. |
+| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `&ModelAttestation` | Selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
+| `fetch_model_attestation_for_signature` | `api_key`, `model`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Fetches model evidence for a `ProviderTee` signer and selects the sole matching candidate. |
 | `fetch_gateway_attestation` | `api_key` | `FetchedGatewayAttestation` | Standalone Gateway-evidence helper. It uses the default TLS-binding policy, requests TLS-fingerprint evidence with a fresh nonce, and captures the SHA-256 SPKI fingerprint from that HTTPS request's peer certificate. |
 
 `ModelAttestationsRequest::signing_algo` and `signing_address` only narrow the
@@ -130,8 +130,6 @@ default, so do not use it when the response requires a specific signer.
 |  | `signed_text` | Text covered by the signature. |
 |  | `signature` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | Signing identity that must match verified evidence. |
-| `CompletionSignatureReference` | `kind` | Signature kind used for evidence selection. `find_model_attestation_for_signature` accepts only `ProviderTee`. |
-|  | `signer` | Signing identity used to select matching model evidence. |
 | `CompletionSignatureLookup` | `Found(CompletionSignature)` | A signature was returned. |
 |  | `Unavailable(SignatureUnavailable)` | A 2xx service response reported no signature. `SignatureUnavailable` carries `error_code` and `message`. |
 

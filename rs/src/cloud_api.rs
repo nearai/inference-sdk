@@ -1,10 +1,9 @@
 use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    CompletionSignatureLookup, CompletionSignatureReference, FetchedGatewayAttestation,
-    FetchedModelAttestation, FetchedModelAttestations, GatewayAttestation,
-    GatewayAttestationPolicy, GatewayClientBinding, ModelAttestation, ModelClientBinding,
-    SignatureUnavailable, SigningAlgo, SigningIdentity,
+    CompletionSignatureLookup, FetchedGatewayAttestation, FetchedModelAttestation,
+    FetchedModelAttestations, GatewayAttestation, GatewayAttestationPolicy, GatewayClientBinding,
+    ModelAttestation, ModelClientBinding, SignatureUnavailable, SigningAlgo, SigningIdentity,
 };
 use crate::util::{decode_hex, generate_nonce, require_hex_length, sha256};
 use reqwest::{
@@ -118,22 +117,28 @@ impl ModelAttestationsRequest {
 }
 
 /// Build a request for the model evidence associated with one `provider_tee`
-/// signature.
-pub struct ModelAttestationForSignatureRequest<'a> {
+/// signature. The builder owns the signature kind and signer it needs for
+/// selection, so the caller does not need to keep the signature borrowed.
+pub struct ModelAttestationForSignatureRequest {
     request: ModelAttestationsRequest,
-    signature: &'a CompletionSignatureReference,
+    signature_kind: CompletionSignatureKind,
+    signer: SigningIdentity,
 }
 
-impl<'a> ModelAttestationForSignatureRequest<'a> {
+impl ModelAttestationForSignatureRequest {
     pub fn new(
         api_key: impl Into<String>,
         model: impl Into<String>,
-        signature: &'a CompletionSignatureReference,
+        signature: &CompletionSignature,
     ) -> Self {
         let request = ModelAttestationsRequest::new(api_key, model)
             .signing_algo(signature.signer.signing_algo)
             .signing_address(&signature.signer.signing_address);
-        Self { request, signature }
+        Self {
+            request,
+            signature_kind: signature.kind,
+            signer: signature.signer.clone(),
+        }
     }
 
     /// Use another absolute Cloud API base URL.
@@ -145,9 +150,15 @@ impl<'a> ModelAttestationForSignatureRequest<'a> {
     /// Fetch model evidence and select the candidate matching the signature
     /// signer.
     pub async fn send(self) -> Result<FetchedModelAttestation, SdkError> {
-        let fetched = self.request.send().await?;
-        let attestation =
-            find_model_attestation_for_signature(&fetched.attestations, self.signature)?.clone();
+        let Self {
+            request,
+            signature_kind,
+            signer,
+        } = self;
+        require_provider_signature_kind(signature_kind)?;
+        let mut fetched = request.send().await?;
+        let index = find_model_attestation_index_for_signer(&fetched.attestations, &signer)?;
+        let attestation = fetched.attestations.swap_remove(index);
         Ok(FetchedModelAttestation {
             attestation,
             client_binding: fetched.client_binding,
@@ -254,7 +265,7 @@ pub async fn fetch_model_attestations(
 pub async fn fetch_model_attestation_for_signature(
     api_key: &str,
     model: &str,
-    signature: &CompletionSignatureReference,
+    signature: &CompletionSignature,
 ) -> Result<FetchedModelAttestation, SdkError> {
     ModelAttestationForSignatureRequest::new(api_key, model, signature)
         .send()
@@ -311,31 +322,40 @@ fn require_completion_signature(
 /// performs no quote or response-signature verification itself.
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [ModelAttestation],
-    signature: &CompletionSignatureReference,
+    signature: &CompletionSignature,
 ) -> Result<&'a ModelAttestation, SdkError> {
-    require_provider_signature(signature)?;
-    find_model_attestation_for_signer(attestations, &signature.signer)
+    let index = find_model_attestation_index_for_signature(attestations, signature)?;
+    Ok(&attestations[index])
 }
 
-fn find_model_attestation_for_signer<'a>(
-    attestations: &'a [ModelAttestation],
+fn find_model_attestation_index_for_signature(
+    attestations: &[ModelAttestation],
+    signature: &CompletionSignature,
+) -> Result<usize, SdkError> {
+    require_provider_signature(signature)?;
+    find_model_attestation_index_for_signer(attestations, &signature.signer)
+}
+
+fn find_model_attestation_index_for_signer(
+    attestations: &[ModelAttestation],
     signer: &SigningIdentity,
-) -> Result<&'a ModelAttestation, SdkError> {
-    let mut matches = Vec::new();
-    for attestation in attestations {
-        if signer_matches(&attestation.evidence.signer, signer) {
-            matches.push(attestation);
-        }
+) -> Result<usize, SdkError> {
+    let mut matches = attestations
+        .iter()
+        .enumerate()
+        .filter(|(_, attestation)| signer_matches(&attestation.evidence.signer, signer));
+    let Some((index, _)) = matches.next() else {
+        return Err(ApiError::ModelAttestationSignerNotFound.into());
+    };
+    if matches.next().is_none() {
+        return Ok(index);
     }
-    match matches.len() {
-        0 => Err(ApiError::ModelAttestationSignerNotFound.into()),
-        1 => Ok(matches[0]),
-        matching_count => Err(ApiError::AmbiguousModelAttestationSigner {
-            matching_count,
-            total_count: attestations.len(),
-        }
-        .into()),
+    let matching_count = 2 + matches.count();
+    Err(ApiError::AmbiguousModelAttestationSigner {
+        matching_count,
+        total_count: attestations.len(),
     }
+    .into())
 }
 
 async fn fetch_model_attestations_with_config(
@@ -573,13 +593,17 @@ fn invalid_base_url() -> VerificationError {
     }
 }
 
-fn require_provider_signature(
-    signature: &CompletionSignatureReference,
+fn require_provider_signature(signature: &CompletionSignature) -> Result<(), VerificationError> {
+    require_provider_signature_kind(signature.kind)
+}
+
+fn require_provider_signature_kind(
+    signature_kind: CompletionSignatureKind,
 ) -> Result<(), VerificationError> {
-    if signature.kind != CompletionSignatureKind::ProviderTee {
+    if signature_kind != CompletionSignatureKind::ProviderTee {
         return Err(VerificationError::SignatureKindMismatch {
             expected: CompletionSignatureKind::ProviderTee,
-            actual: signature.kind,
+            actual: signature_kind,
         });
     }
     Ok(())

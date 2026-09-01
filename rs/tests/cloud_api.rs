@@ -3,10 +3,9 @@ use std::sync::Once;
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, ApiError, AttestationEventLog, AttestationEvidence,
     CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
-    CompletionSignatureReference, CompletionSignatureRequest, GatewayAttestationPolicy,
-    GatewayAttestationRequest, ModelAttestation, ModelAttestationForSignatureRequest,
-    ModelAttestationsRequest, SdkError, SignatureUnavailable, SigningAlgo, SigningIdentity,
-    VerificationError,
+    CompletionSignatureRequest, GatewayAttestationPolicy, GatewayAttestationRequest,
+    ModelAttestation, ModelAttestationForSignatureRequest, ModelAttestationsRequest, SdkError,
+    SignatureUnavailable, SigningAlgo, SigningIdentity, VerificationError,
 };
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
@@ -98,15 +97,27 @@ fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
     }
 }
 
+fn signature_for_evidence_selection(
+    kind: CompletionSignatureKind,
+    signer: SigningIdentity,
+) -> CompletionSignature {
+    CompletionSignature {
+        kind,
+        signer,
+        signed_text: "not used when selecting evidence".to_owned(),
+        signature: "00".repeat(64),
+    }
+}
+
 #[test]
 fn model_attestation_selection_rejects_zero_or_multiple_matches() {
-    let signature = CompletionSignatureReference {
-        kind: CompletionSignatureKind::ProviderTee,
-        signer: SigningIdentity {
+    let signature = signature_for_evidence_selection(
+        CompletionSignatureKind::ProviderTee,
+        SigningIdentity {
             signing_algo: SigningAlgo::Ecdsa,
             signing_address: "22".repeat(20),
         },
-    };
+    );
     let candidate = model_attestation_for_signer(signature.signer.clone());
     let candidates = vec![candidate.clone(), candidate];
 
@@ -130,13 +141,13 @@ fn model_attestation_selection_rejects_zero_or_multiple_matches() {
 
 #[test]
 fn finds_a_signer_with_an_equivalent_hex_address() {
-    let signature = CompletionSignatureReference {
-        kind: CompletionSignatureKind::ProviderTee,
-        signer: SigningIdentity {
+    let signature = signature_for_evidence_selection(
+        CompletionSignatureKind::ProviderTee,
+        SigningIdentity {
             signing_algo: SigningAlgo::Ecdsa,
             signing_address: format!("0X{}", "AB".repeat(20)),
         },
-    };
+    );
     let candidate = model_attestation_for_signer(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "ab".repeat(20),
@@ -150,13 +161,13 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
 
 #[test]
 fn rejects_a_gateway_signature_when_selecting_model_attestation() {
-    let signature = CompletionSignatureReference {
-        kind: CompletionSignatureKind::Gateway,
-        signer: SigningIdentity {
+    let signature = signature_for_evidence_selection(
+        CompletionSignatureKind::Gateway,
+        SigningIdentity {
             signing_algo: SigningAlgo::Ecdsa,
             signing_address: "22".repeat(20),
         },
-    };
+    );
 
     let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
 
@@ -267,13 +278,13 @@ async fn model_attestation_for_signature_request_uses_the_signature_signer() {
         .respond_with(ModelAttestationResponder)
         .mount(&server)
         .await;
-    let signature = CompletionSignatureReference {
-        kind: CompletionSignatureKind::ProviderTee,
-        signer: SigningIdentity {
+    let signature = signature_for_evidence_selection(
+        CompletionSignatureKind::ProviderTee,
+        SigningIdentity {
             signing_algo: SigningAlgo::Ecdsa,
             signing_address,
         },
-    };
+    );
 
     let fetched = ModelAttestationForSignatureRequest::new(test_api_key(), "glm-5.2", &signature)
         .base_url(base_url(&server))

@@ -247,13 +247,6 @@ pub enum CompletionSignatureKind {
     Gateway,
 }
 
-/// The signing identity and kind required to select matching evidence.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompletionSignatureReference {
-    pub kind: CompletionSignatureKind,
-    pub signer: SigningIdentity,
-}
-
 /// Completion signature normalized from the Cloud API wire response.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompletionSignature {
