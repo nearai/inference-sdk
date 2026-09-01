@@ -52,8 +52,12 @@ pub enum ApiError {
     #[error("Cloud API {resource} returned invalid JSON")]
     InvalidJson { resource: ApiResource },
 
-    #[error("Cloud API response has an invalid {path}: expected {expected}")]
-    InvalidResponse { path: String, expected: String },
+    #[error("Cloud API response has an invalid {path}: expected {expected}, received {actual}")]
+    InvalidResponse {
+        path: String,
+        expected: String,
+        actual: String,
+    },
 
     #[error("{resource} response nonce does not match the request")]
     NonceMismatch { resource: ApiResource },
@@ -145,8 +149,8 @@ pub enum VerificationError {
     #[error("GPU evidence is required by policy but was not provided")]
     GpuEvidenceRequired,
 
-    #[error("Gateway TLS binding is required by policy")]
-    TlsBindingRequired,
+    #[error("Gateway attestation requires an observed TLS peer fingerprint")]
+    SpkiFingerprintRequired,
 
     #[error("attestation nonce binding did not match ({binding})")]
     NonceMismatch { binding: &'static str },
@@ -225,7 +229,7 @@ impl VerificationError {
             Self::DebugEnabled => "policy.debug_enabled",
             Self::TcbStatusNotAllowed { .. } => "policy.tcb_status_not_allowed",
             Self::GpuEvidenceRequired => "policy.gpu_evidence_required",
-            Self::TlsBindingRequired => "policy.tls_binding_required",
+            Self::SpkiFingerprintRequired => "binding.spki_fingerprint_required",
             Self::NonceMismatch { .. } => "binding.nonce_mismatch",
             Self::ReportDataInvalid { .. } => "binding.report_data_invalid",
             Self::ReportDataMismatch { .. } => "binding.report_data_mismatch",

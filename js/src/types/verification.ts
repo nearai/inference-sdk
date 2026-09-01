@@ -53,15 +53,6 @@ export type ModelAttestationPolicy = AttestationPolicy & {
   readonly gpuEvidence?: 'if-present' | 'required';
 };
 
-export type GatewayAttestationPolicy = AttestationPolicy & {
-  /**
-   * Defaults to true. Request TLS fingerprint evidence and require it to match
-   * the TLS peer observed by the client. When false, verify the signer-and-
-   * nonce report-data layout instead and ignore any peer fingerprint.
-   */
-  readonly verifyTlsBinding?: boolean;
-};
-
 export type AttestationVerifiers = {
   readonly quote?: QuoteVerifier;
   readonly deployment?: DeploymentVerifier;
@@ -95,7 +86,8 @@ export type GatewayClientBinding = {
 export type VerifyGatewayAttestationParams = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
-  readonly policy?: GatewayAttestationPolicy;
+  /** TCB statuses accepted for this Gateway attestation. */
+  readonly policy?: AttestationPolicy;
   readonly verifiers?: AttestationVerifiers;
 };
 
@@ -145,7 +137,7 @@ export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
-  /** TLS binding selected by the Gateway verification policy. */
+  /** TLS binding established from the quote layout returned by Cloud API. */
   readonly tlsBinding: GatewayTlsBinding;
 };
 

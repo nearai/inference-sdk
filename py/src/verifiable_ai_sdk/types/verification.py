@@ -49,15 +49,6 @@ class ModelAttestationPolicy(AttestationPolicy):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GatewayAttestationPolicy(AttestationPolicy):
-    """Policy controls specific to Gateway evidence verification."""
-
-    #: Request and verify TLS fingerprint evidence. When false, use the
-    #: signer-and-nonce report-data layout instead.
-    verify_tls_binding: bool = True
-
-
-@dataclass(frozen=True, kw_only=True)
 class AttestationVerifiers:
     quote: QuoteVerifier | None = None
     deployment: DeploymentVerifier | None = None
@@ -117,7 +108,6 @@ __all__ = [
     'DeploymentVerifier',
     'AttestationPolicy',
     'ModelAttestationPolicy',
-    'GatewayAttestationPolicy',
     'AttestationVerifiers',
     'ModelAttestationVerifiers',
     'ModelClientBinding',

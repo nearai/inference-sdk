@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from .attestation_gateway import GatewayAttestation
 from .attestation_model import ModelAttestation
 from .verification import (
-    GatewayAttestationPolicy,
     GatewayClientBinding,
     ModelClientBinding,
 )
@@ -27,8 +26,6 @@ class FetchedModelAttestation:
 class FetchedGatewayAttestation:
     attestation: GatewayAttestation
     client_binding: GatewayClientBinding
-    #: The policy that selected this evidence request's quote layout.
-    policy: GatewayAttestationPolicy
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -13,13 +13,15 @@ import {
 export class AttestationClient extends BaseAttestationClient {
   protected override requestGatewayAttestation(
     request: Request,
+    capturePeerSpkiFingerprint: boolean,
   ): Promise<GatewayAttestationHttpResponse> {
-    return requestGatewayAttestation(request);
+    return requestGatewayAttestation(request, capturePeerSpkiFingerprint);
   }
 }
 
 function requestGatewayAttestation(
   request: Request,
+  capturePeerSpkiFingerprint: boolean,
 ): Promise<GatewayAttestationHttpResponse> {
   return new Promise((resolve, reject) => {
     const nativeRequest = httpsRequest(
@@ -31,7 +33,9 @@ function requestGatewayAttestation(
       },
       (incoming) => {
         try {
-          const certificate = peerCertificate(incoming.socket as TLSSocket);
+          const certificate = capturePeerSpkiFingerprint
+            ? peerCertificate(incoming.socket as TLSSocket)
+            : undefined;
           const peerSpkiFingerprint =
             certificate === undefined
               ? undefined

@@ -7,11 +7,7 @@ import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
-import type {
-  GatewayAttestationPolicy,
-  GatewayClientBinding,
-  ModelClientBinding,
-} from './verification';
+import type { GatewayClientBinding, ModelClientBinding } from './verification';
 
 /** Configuration shared by all Cloud API evidence requests. */
 export type AttestationClientOptions = {
@@ -38,10 +34,10 @@ export type FindModelAttestationForSignatureParams = {
 export type FetchGatewayAttestationParams = {
   readonly signingAlgo?: SigningAlgo;
   /**
-   * The policy returned with the fetched evidence. Its TLS setting controls
-   * both the Cloud API request and the later quote binding check.
+   * Request a TLS SPKI fingerprint in the Gateway attestation. Defaults to
+   * `true`. Node captures the matching peer fingerprint for this request.
    */
-  readonly policy?: GatewayAttestationPolicy;
+  readonly includeSpkiFingerprint?: boolean;
 };
 
 export type FetchCompletionSignatureParams = {
@@ -69,8 +65,6 @@ export type FetchedModelAttestation = {
 export type FetchedGatewayAttestation = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
-  /** Pass this object directly to `verifyGatewayAttestation`. */
-  readonly policy: GatewayAttestationPolicy;
 };
 export type FetchedModelAttestations = {
   readonly attestations: readonly ModelAttestation[];

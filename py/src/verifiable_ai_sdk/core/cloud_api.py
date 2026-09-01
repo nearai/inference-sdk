@@ -35,7 +35,6 @@ from ..types.cloud_api import (
     FetchedModelAttestations,
 )
 from ..types.verification import (
-    GatewayAttestationPolicy,
     GatewayClientBinding,
     ModelClientBinding,
 )
@@ -140,15 +139,14 @@ class AttestationClient:
         self,
         *,
         signing_algo: SigningAlgo | None = None,
-        policy: GatewayAttestationPolicy | None = None,
+        include_spki_fingerprint: bool = True,
     ) -> FetchedGatewayAttestation:
-        """Fetch Gateway evidence using the requested TLS-binding policy."""
+        """Fetch Gateway evidence, optionally including its TLS fingerprint."""
 
-        resolved_policy = GatewayAttestationPolicy() if policy is None else policy
         nonce = generate_nonce()
         query = {
             'nonce': nonce,
-            'include_tls_fingerprint': str(resolved_policy.verify_tls_binding).lower(),
+            'include_tls_fingerprint': str(include_spki_fingerprint).lower(),
         }
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
@@ -160,16 +158,19 @@ class AttestationClient:
                 query,
             ),
             'gateway_attestation',
-            capture_peer_spki=resolved_policy.verify_tls_binding,
+            capture_peer_spki=include_spki_fingerprint,
         )
         attestation = _decode_gateway_attestation_report(response.json)
-        if resolved_policy.verify_tls_binding and attestation.spki_fingerprint is None:
+        response_includes_spki_fingerprint = attestation.spki_fingerprint is not None
+        if response_includes_spki_fingerprint != include_spki_fingerprint:
             raise api_failure(
                 'api.invalid_response',
                 {
-                    'path': 'gateway_attestation.spki_fingerprint',
-                    'expected': '32-byte hexadecimal string',
-                    'actual': 'missing',
+                    'path': 'gateway_attestation.tls_cert_fingerprint',
+                    'expected': ('present' if include_spki_fingerprint else 'missing'),
+                    'actual': (
+                        'present' if response_includes_spki_fingerprint else 'missing'
+                    ),
                 },
             )
         _require_matching_api_nonce(attestation.nonce, nonce, 'gateway_attestation')
@@ -179,7 +180,6 @@ class AttestationClient:
                 nonce=nonce,
                 spki_fingerprint=response.peer_spki_fingerprint,
             ),
-            policy=resolved_policy,
         )
 
     async def lookup_completion_signature(

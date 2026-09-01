@@ -43,6 +43,7 @@ type GetCloudApiJsonParams = {
 };
 type GetGatewayAttestationJsonParams = {
   readonly url: URL;
+  readonly capturePeerSpkiFingerprint: boolean;
 };
 type GatewayAttestationJson = {
   readonly json: unknown;
@@ -147,18 +148,13 @@ export class AttestationClient {
   }
 
   /**
-   * Fetch standalone Gateway evidence. The TLS policy controls both whether
-   * the service returns TLS evidence and the quote layout later verified by
-   * `verifyGatewayAttestation`.
+   * Fetch standalone Gateway evidence. A returned SPKI fingerprint selects
+   * the TLS-bound quote layout during `verifyGatewayAttestation`.
    */
   async fetchGatewayAttestation({
     signingAlgo,
-    policy: requestedPolicy,
+    includeSpkiFingerprint = true,
   }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
-    const policy = {
-      ...requestedPolicy,
-      verifyTlsBinding: requestedPolicy?.verifyTlsBinding ?? true,
-    };
     const clientNonce = generateNonce();
     const url = new URL('attestation/report', this.baseUrl);
     url.searchParams.set('nonce', clientNonce);
@@ -167,20 +163,22 @@ export class AttestationClient {
     }
     url.searchParams.set(
       'include_tls_fingerprint',
-      String(policy.verifyTlsBinding),
+      String(includeSpkiFingerprint),
     );
-    const result = await this.getGatewayAttestationJson({ url });
+    const result = await this.getGatewayAttestationJson({
+      url,
+      capturePeerSpkiFingerprint: includeSpkiFingerprint,
+    });
     const attestation = decodeGatewayAttestationReport(result.json);
-    if (
-      policy.verifyTlsBinding &&
-      attestation.spkiFingerprint === undefined
-    ) {
+    const responseIncludesSpkiFingerprint =
+      attestation.spkiFingerprint !== undefined;
+    if (responseIncludesSpkiFingerprint !== includeSpkiFingerprint) {
       throw new ApiError({
         code: 'api.invalid_response',
         details: {
           path: 'gateway_attestation.tls_cert_fingerprint',
-          expected: '32-byte hexadecimal string',
-          actual: 'missing',
+          expected: includeSpkiFingerprint ? 'present' : 'missing',
+          actual: responseIncludesSpkiFingerprint ? 'present' : 'missing',
         },
       });
     }
@@ -197,7 +195,6 @@ export class AttestationClient {
           ? {}
           : { spkiFingerprint: result.peerSpkiFingerprint }),
       },
-      policy,
     };
   }
 
@@ -248,6 +245,7 @@ export class AttestationClient {
    */
   protected async requestGatewayAttestation(
     request: Request,
+    _capturePeerSpkiFingerprint: boolean,
   ): Promise<GatewayAttestationHttpResponse> {
     return { response: await fetch(request) };
   }
@@ -276,11 +274,15 @@ export class AttestationClient {
 
   private async getGatewayAttestationJson({
     url,
+    capturePeerSpkiFingerprint,
   }: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
     const request = this.createCloudApiRequest({ url });
     let result: GatewayAttestationHttpResponse;
     try {
-      result = await this.requestGatewayAttestation(request);
+      result = await this.requestGatewayAttestation(
+        request,
+        capturePeerSpkiFingerprint,
+      );
     } catch (cause) {
       throw new ApiError(
         {

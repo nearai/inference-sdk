@@ -3,7 +3,7 @@ use std::sync::Once;
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, ApiError, AttestationClient, AttestationEventLog,
     AttestationEvidence, CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
-    GatewayAttestationPolicy, ModelAttestation, SdkError, SignatureUnavailable, SigningAlgo,
+    GatewayAttestationFetchOptions, ModelAttestation, SdkError, SignatureUnavailable, SigningAlgo,
     SigningIdentity, VerificationError,
 };
 use wiremock::{
@@ -270,7 +270,7 @@ async fn client_fetches_model_attestation_for_a_provider_signature() {
 }
 
 #[tokio::test]
-async fn client_fetches_tls_bound_gateway_evidence() {
+async fn client_fetches_tls_bound_gateway_attestation() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -281,7 +281,7 @@ async fn client_fetches_tls_bound_gateway_evidence() {
         .await;
 
     let fetched = client(&server)
-        .fetch_gateway_attestation(None, Default::default())
+        .fetch_gateway_attestation(Default::default())
         .await
         .unwrap();
 
@@ -291,11 +291,10 @@ async fn client_fetches_tls_bound_gateway_evidence() {
     );
     assert_eq!(fetched.attestation.spki_fingerprint, Some("33".repeat(32)));
     assert_eq!(fetched.client_binding.spki_fingerprint, None);
-    assert!(fetched.policy.verify_tls_binding);
 }
 
 #[tokio::test]
-async fn client_can_fetch_gateway_evidence_without_tls_binding() {
+async fn client_can_fetch_gateway_attestation_without_an_spki_fingerprint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -303,22 +302,22 @@ async fn client_can_fetch_gateway_evidence_without_tls_binding() {
         .respond_with(GatewayAttestationResponder)
         .mount(&server)
         .await;
-    let policy = GatewayAttestationPolicy {
-        verify_tls_binding: false,
+    let options = GatewayAttestationFetchOptions {
+        include_spki_fingerprint: false,
         ..Default::default()
     };
 
     let fetched = client(&server)
-        .fetch_gateway_attestation(None, policy)
+        .fetch_gateway_attestation(options)
         .await
         .unwrap();
 
     assert_eq!(fetched.attestation.spki_fingerprint, None);
-    assert!(!fetched.policy.verify_tls_binding);
+    assert_eq!(fetched.client_binding.spki_fingerprint, None);
 }
 
 #[tokio::test]
-async fn client_rejects_gateway_evidence_missing_requested_tls_fingerprint() {
+async fn client_rejects_gateway_attestation_missing_requested_tls_fingerprint() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -338,14 +337,61 @@ async fn client_rejects_gateway_evidence_missing_requested_tls_fingerprint() {
         .await;
 
     let error = client(&server)
-        .fetch_gateway_attestation(None, Default::default())
+        .fetch_gateway_attestation(Default::default())
         .await
         .unwrap_err();
 
     assert!(matches!(
         error,
-        SdkError::Api(ApiError::InvalidResponse { ref path, .. })
-            if path == "gateway_attestation.tls_cert_fingerprint"
+        SdkError::Api(ApiError::InvalidResponse {
+            ref path,
+            ref expected,
+            ref actual,
+        }) if path == "gateway_attestation.tls_cert_fingerprint"
+            && expected == "present"
+            && actual == "missing"
+    ));
+}
+
+#[tokio::test]
+async fn client_rejects_an_unrequested_gateway_spki_fingerprint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .and(query_param("include_tls_fingerprint", "false"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "gateway_attestation": {
+                "request_nonce": "00".repeat(32),
+                "signing_algo": "ed25519",
+                "signing_address": "22".repeat(32),
+                "intel_quote": "aa",
+                "event_log": [],
+                "report_data": "00".repeat(64),
+                "tls_cert_fingerprint": "33".repeat(32),
+                "info": {"tcb_info": {"app_compose": "{}"}},
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let options = GatewayAttestationFetchOptions {
+        include_spki_fingerprint: false,
+        ..Default::default()
+    };
+    let error = client(&server)
+        .fetch_gateway_attestation(options)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::Api(ApiError::InvalidResponse {
+            ref path,
+            ref expected,
+            ref actual,
+        }) if path == "gateway_attestation.tls_cert_fingerprint"
+            && expected == "missing"
+            && actual == "present"
     ));
 }
 
@@ -361,7 +407,10 @@ async fn client_applies_a_gateway_signing_algorithm_filter() {
         .await;
 
     client(&server)
-        .fetch_gateway_attestation(Some(SigningAlgo::Ed25519), Default::default())
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+            signing_algo: Some(SigningAlgo::Ed25519),
+            ..Default::default()
+        })
         .await
         .unwrap();
 }

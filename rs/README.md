@@ -31,14 +31,15 @@ verified signers. Its `CompletionSignatureKind` selects which path applies:
 `ProviderTee` establishes model-issued bytes, while `Gateway` establishes
 Gateway-issued client-visible bytes and does not establish model execution.
 
-Gateway TLS binding is enabled by default. The Rust client requests the
-Gateway TLS fingerprint, captures the peer certificate for that same HTTPS
-request, and returns the resolved policy with the evidence. Runtimes without
-peer-certificate access must use
-`GatewayAttestationPolicy { verify_tls_binding: false, ..Default::default() }`
-when calling `AttestationClient::fetch_gateway_attestation`. The request then
-uses the signer-and-nonce quote layout instead and verification returns
-`GatewayTlsBinding::None`; it makes no TLS claim.
+Gateway SPKI fingerprint evidence is requested by default. The Rust client
+captures the peer certificate for that same HTTPS request. Runtimes without
+peer-certificate access must call
+`AttestationClient::fetch_gateway_attestation` with
+`GatewayAttestationFetchOptions { include_spki_fingerprint: false, ..Default::default() }`.
+That request uses the signer-and-nonce quote layout and verification returns
+`GatewayTlsBinding::None`; it makes no TLS claim. Gateway verification derives
+the layout from the fetched attestation, while an optional `AttestationPolicy`
+only controls accepted TCB statuses.
 `GatewayAttestation::spki_fingerprint` is Gateway-reported,
 `GatewayClientBinding::spki_fingerprint` is client-observed, and
 `GatewayTlsBinding::Attested { spki_fingerprint }` is their verified match.

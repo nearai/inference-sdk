@@ -2,8 +2,9 @@ use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, Verific
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     CompletionSignatureLookup, FetchedGatewayAttestation, FetchedModelAttestation,
-    FetchedModelAttestations, GatewayAttestation, GatewayAttestationPolicy, GatewayClientBinding,
-    ModelAttestation, ModelClientBinding, SignatureUnavailable, SigningAlgo, SigningIdentity,
+    FetchedModelAttestations, GatewayAttestation, GatewayAttestationFetchOptions,
+    GatewayClientBinding, ModelAttestation, ModelClientBinding, SignatureUnavailable, SigningAlgo,
+    SigningIdentity,
 };
 use crate::util::{decode_hex, generate_nonce, require_hex_length, sha256};
 use reqwest::{
@@ -105,6 +106,7 @@ impl AttestationClient {
             url,
             ApiResource::ModelAttestation,
             Some((NO_ALIASING_HEADER, "true")),
+            false,
         )
         .await?;
         let response: WireModelAttestationResponse = decode_wire_response(
@@ -164,35 +166,39 @@ impl AttestationClient {
         })
     }
 
-    /// Fetch standalone Gateway evidence using the requested signing algorithm
-    /// or Cloud API's selected algorithm when `signing_algo` is `None`.
+    /// Fetch standalone Gateway evidence using the requested options.
     ///
-    /// The built-in Gateway client records the TLS peer certificate for this
-    /// exact HTTPS request when the runtime exposes it.
+    /// When `include_spki_fingerprint` is enabled, the built-in Gateway client
+    /// also records the TLS peer certificate for this exact HTTPS request.
     pub async fn fetch_gateway_attestation(
         &self,
-        signing_algo: Option<SigningAlgo>,
-        policy: GatewayAttestationPolicy,
+        options: GatewayAttestationFetchOptions,
     ) -> Result<FetchedGatewayAttestation, SdkError> {
         let nonce = generate_nonce();
         let mut url = self.endpoint("attestation/report")?;
         {
             let mut query = url.query_pairs_mut();
             query.append_pair("nonce", &nonce);
-            if let Some(signing_algo) = signing_algo {
+            if let Some(signing_algo) = options.signing_algo {
                 query.append_pair("signing_algo", &signing_algo.to_string());
             }
             query.append_pair(
                 "include_tls_fingerprint",
-                if policy.verify_tls_binding {
+                if options.include_spki_fingerprint {
                     "true"
                 } else {
                     "false"
                 },
             );
         }
-        let cloud_response =
-            get_cloud_api_response(self, url, ApiResource::GatewayAttestation, None).await?;
+        let cloud_response = get_cloud_api_response(
+            self,
+            url,
+            ApiResource::GatewayAttestation,
+            None,
+            options.include_spki_fingerprint,
+        )
+        .await?;
         let response: WireGatewayAttestationResponse = decode_wire_response(
             &cloud_response.body,
             ApiResource::GatewayAttestation,
@@ -200,12 +206,27 @@ impl AttestationClient {
         )?;
         let attestation =
             map_gateway_attestation(response.gateway_attestation, "gateway_attestation")?;
-        if policy.verify_tls_binding && attestation.spki_fingerprint.is_none() {
-            return Err(ApiError::InvalidResponse {
-                path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
-                expected: "a 32-byte hexadecimal SPKI fingerprint".to_owned(),
+        match (
+            options.include_spki_fingerprint,
+            attestation.spki_fingerprint.is_some(),
+        ) {
+            (true, false) => {
+                return Err(ApiError::InvalidResponse {
+                    path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
+                    expected: "present".to_owned(),
+                    actual: "missing".to_owned(),
+                }
+                .into());
             }
-            .into());
+            (false, true) => {
+                return Err(ApiError::InvalidResponse {
+                    path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
+                    expected: "missing".to_owned(),
+                    actual: "present".to_owned(),
+                }
+                .into());
+            }
+            _ => {}
         }
         require_matching_api_nonce(
             &attestation.evidence.nonce,
@@ -218,7 +239,6 @@ impl AttestationClient {
                 nonce,
                 spki_fingerprint: cloud_response.peer_spki_fingerprint,
             },
-            policy,
         })
     }
 
@@ -242,7 +262,8 @@ impl AttestationClient {
                 .append_pair("signing_algo", &signing_algo.to_string());
         }
         let cloud_response =
-            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None).await?;
+            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None, false)
+                .await?;
         let response: WireCompletionSignatureResponse = decode_wire_response(
             &cloud_response.body,
             ApiResource::CompletionSignature,
@@ -326,9 +347,10 @@ async fn get_cloud_api_response(
     url: Url,
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
+    capture_peer_spki_fingerprint: bool,
 ) -> Result<CloudApiResponse, SdkError> {
     let headers = build_cloud_api_headers(client, extra_header)?;
-    let http_client = if resource == ApiResource::GatewayAttestation {
+    let http_client = if capture_peer_spki_fingerprint {
         &client.gateway_client
     } else {
         &client.client
@@ -343,7 +365,7 @@ async fn get_cloud_api_response(
             reason: ApiTransportReason::Request,
         })?;
     let status = response.status().as_u16();
-    let peer_spki_fingerprint = (resource == ApiResource::GatewayAttestation)
+    let peer_spki_fingerprint = capture_peer_spki_fingerprint
         .then(|| peer_spki_fingerprint(&response))
         .flatten();
     let body = response.text().await.map_err(|_| ApiError::Transport {
@@ -481,6 +503,7 @@ where
         ApiError::InvalidResponse {
             path: response_error_path(root_path, &error.path().to_string()),
             expected: "the documented Cloud API response shape".to_owned(),
+            actual: "invalid".to_owned(),
         }
     })?;
     deserializer
@@ -527,6 +550,7 @@ fn map_gateway_attestation(
     let reported_quote_data = reported_quote_data.ok_or_else(|| ApiError::InvalidResponse {
         path: format!("{path}.report_data"),
         expected: "a string".to_owned(),
+        actual: "missing".to_owned(),
     })?;
     Ok(GatewayAttestation {
         evidence,
@@ -564,6 +588,7 @@ fn validate_api_nonce(value: &str, path: &str) -> Result<(), ApiError> {
     require_hex_length(value, 32).map_err(|_| ApiError::InvalidResponse {
         path: path.to_owned(),
         expected: "a 32-byte hexadecimal nonce".to_owned(),
+        actual: "invalid".to_owned(),
     })?;
     Ok(())
 }
@@ -580,6 +605,7 @@ fn validate_api_signing_identity(
     require_hex_length(signing_address, expected).map_err(|_| ApiError::InvalidResponse {
         path: path.to_owned(),
         expected: format!("a {expected}-byte hexadecimal signing address"),
+        actual: "invalid".to_owned(),
     })?;
     Ok(())
 }
@@ -776,12 +802,16 @@ fn require_completion_signature_field<T>(
 ) -> Result<T, ApiError> {
     match value {
         OptionalSignatureField::Value(value) => Ok(value),
-        OptionalSignatureField::Missing | OptionalSignatureField::Null => {
-            Err(ApiError::InvalidResponse {
-                path: format!("signature.{field}"),
-                expected: "the documented Cloud API response shape".to_owned(),
-            })
-        }
+        OptionalSignatureField::Missing => Err(ApiError::InvalidResponse {
+            path: format!("signature.{field}"),
+            expected: "the documented Cloud API response shape".to_owned(),
+            actual: "missing".to_owned(),
+        }),
+        OptionalSignatureField::Null => Err(ApiError::InvalidResponse {
+            path: format!("signature.{field}"),
+            expected: "the documented Cloud API response shape".to_owned(),
+            actual: "null".to_owned(),
+        }),
     }
 }
 

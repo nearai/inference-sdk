@@ -37,7 +37,7 @@ describe('gateway attestation verification', () => {
     });
   });
 
-  test('requires a peer observation by default', async () => {
+  test('requires a peer observation for TLS-bound evidence', async () => {
     await expect(
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
@@ -45,19 +45,18 @@ describe('gateway attestation verification', () => {
         verifiers: { quote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
-      failure: { code: 'policy.tls_binding_required' },
+      failure: { code: 'binding.spki_fingerprint_required' },
     });
   });
 
-  test('uses signer-and-nonce binding when TLS verification is disabled', async () => {
+  test('uses signer-and-nonce binding when the report has no TLS fingerprint', async () => {
     const quote = createModelQuote();
     const result = await verifyGatewayAttestation({
       attestation: {
         ...createModelAttestation(),
         reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
       },
-      clientBinding: { nonce, spkiFingerprint: '44'.repeat(32) },
-      policy: { verifyTlsBinding: false },
+      clientBinding: { nonce },
       verifiers: { quote: async () => quote },
     });
 

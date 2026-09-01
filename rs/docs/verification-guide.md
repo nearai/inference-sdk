@@ -29,7 +29,7 @@ needed only when the claim concerns one particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default TLS policy, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default fetch options, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
 | Verify a model-issued response | The completion signature has `ProviderTee` kind. | `client.fetch_completion_signature` → `client.fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `Gateway` kind. | `client.fetch_completion_signature` → `client.fetch_gateway_attestation` → `verify_gateway_attestation` → `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
@@ -125,26 +125,26 @@ candidate is all that the caller needs.
 ## Verify a Gateway attestation or response
 
 For an independent Gateway endpoint audit,
-`client.fetch_gateway_attestation(None, policy)` requests the Gateway's TLS
-fingerprint using the Cloud API default signing algorithm. It configures reqwest
-to expose the leaf certificate for that exact HTTPS request, then returns the
-certificate's SHA-256 SPKI fingerprint with the fresh nonce in
+`client.fetch_gateway_attestation(Default::default())` requests the Gateway's
+TLS fingerprint using the Cloud API default signing algorithm. It configures
+reqwest to expose the leaf certificate for that exact HTTPS request, then
+returns the certificate's SHA-256 SPKI fingerprint with the fresh nonce in
 `FetchedGatewayAttestation.client_binding`.
 
-`verify_gateway_attestation` requires that observed peer fingerprint by
-default. It verifies the quote's nonce and TLS binding, then compares the
-quote-bound key with the client-observed peer. Do not replace the observed peer
-fingerprint with the field inside the attestation: that would only compare the
-evidence with itself.
+`verify_gateway_attestation` selects its quote report-data layout from the
+attestation: a reported SPKI fingerprint requires the observed peer fingerprint
+and verifies the TLS binding; no reported fingerprint verifies the signer and
+nonce instead. Do not replace the observed peer fingerprint with the field
+inside the attestation: that would only compare the evidence with itself.
 
 For a `CompletionSignatureKind::Gateway` response, pass
-`Some(signature.signer.signing_algo)` to `fetch_gateway_attestation`; do not
-rely on the service-selected signing algorithm:
+the signature's signing algorithm in the fetch options; do not rely on the
+service-selected signing algorithm:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
     verify_gateway_attestation, verify_gateway_response, AttestationClient,
-    CompletionSignatureKind,
+    CompletionSignatureKind, GatewayAttestationFetchOptions,
 };
 
 async fn verify_gateway_completion(
@@ -163,13 +163,16 @@ async fn verify_gateway_completion(
         .into());
     }
 
-    let fetched = client
-        .fetch_gateway_attestation(Some(signature.signer.signing_algo), Default::default())
+    let fetched_gateway_attestation = client
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+            signing_algo: Some(signature.signer.signing_algo),
+            ..Default::default()
+        })
         .await?;
     let verified_attestation = verify_gateway_attestation(
-        &fetched.attestation,
-        &fetched.client_binding,
-        Some(&fetched.policy),
+        &fetched_gateway_attestation.attestation,
+        &fetched_gateway_attestation.client_binding,
+        None,
         Default::default(),
     )
     .await?;
@@ -184,31 +187,29 @@ async fn verify_gateway_completion(
 }
 ```
 
-If a runtime does not expose the TLS peer certificate, it must opt out before
-fetching the evidence. The policy controls both the request's
-`include_tls_fingerprint` value and the quote layout checked later. With TLS
-binding disabled, the SDK requests no fingerprint, verifies the signer-and-
-nonce layout, returns `GatewayTlsBinding::None`, and ignores a supplied peer
-fingerprint.
+If a runtime does not expose the TLS peer certificate, it must choose the
+signer-and-nonce layout before fetching the evidence. With
+`include_spki_fingerprint: false`, the SDK requests no fingerprint, requires
+Cloud API to omit it, verifies the signer-and-nonce layout, and returns
+`GatewayTlsBinding::None`.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    verify_gateway_attestation, AttestationClient, GatewayAttestationPolicy,
+    verify_gateway_attestation, AttestationClient, GatewayAttestationFetchOptions,
 };
 
 async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::error::Error>> {
     let client = AttestationClient::new(api_key.to_owned());
-    let policy = GatewayAttestationPolicy {
-        verify_tls_binding: false,
-        ..Default::default()
-    };
-    let fetched = client
-        .fetch_gateway_attestation(None, policy)
+    let fetched_gateway_attestation = client
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+            include_spki_fingerprint: false,
+            ..Default::default()
+        })
         .await?;
     let _verified = verify_gateway_attestation(
-        &fetched.attestation,
-        &fetched.client_binding,
-        Some(&fetched.policy),
+        &fetched_gateway_attestation.attestation,
+        &fetched_gateway_attestation.client_binding,
+        None,
         Default::default(),
     )
     .await?;
@@ -227,12 +228,11 @@ by default. Set `ModelAttestationPolicy { gpu_evidence:
 GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
 
-`GatewayAttestationPolicy::verify_tls_binding` defaults to `true`. Set it to
-`false` only for a runtime that cannot obtain the peer certificate for the
-Gateway evidence request. Pass the same policy to
-`AttestationClient::fetch_gateway_attestation` that is later passed to
-verification; `FetchedGatewayAttestation.policy`
-contains the resolved value for that request.
+`GatewayAttestationFetchOptions::include_spki_fingerprint` defaults to `true`.
+Set it to `false` before fetching only when the runtime cannot observe the peer
+certificate. The fetched attestation's SPKI fingerprint then determines which
+report-data layout `verify_gateway_attestation` verifies. An optional
+`AttestationPolicy` passed to that function controls accepted TCB statuses only.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
 quote, deployment, and (for models) NVIDIA evidence verifiers. A supplied

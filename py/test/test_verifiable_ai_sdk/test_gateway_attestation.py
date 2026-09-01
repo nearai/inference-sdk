@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from verifiable_ai_sdk import (
+    AttestationPolicy,
     AttestationVerifiers,
-    GatewayAttestationPolicy,
     GatewayClientBinding,
     VerificationError,
     verify_gateway_attestation,
@@ -32,14 +32,14 @@ async def test_gateway_attestation_binds_the_observed_tls_peer() -> None:
     assert result.tls_binding.spki_fingerprint == TLS_FINGERPRINT
 
 
-async def test_gateway_attestation_requires_a_peer_by_default() -> None:
+async def test_gateway_attestation_requires_a_peer_for_tls_bound_evidence() -> None:
     with pytest.raises(VerificationError) as missing_peer:
         await verify_gateway_attestation(
             create_gateway_attestation(),
             GatewayClientBinding(nonce=NONCE),
             verifiers=AttestationVerifiers(quote=lambda _: create_gateway_tls_quote()),
         )
-    assert missing_peer.value.failure.code == 'policy.tls_binding_required'
+    assert missing_peer.value.failure.code == 'binding.spki_fingerprint_required'
 
 
 async def test_gateway_attestation_rejects_a_different_peer() -> None:
@@ -55,7 +55,7 @@ async def test_gateway_attestation_rejects_a_different_peer() -> None:
     assert mismatch.value.failure.code == 'binding.spki_fingerprint_mismatch'
 
 
-async def test_gateway_attestation_uses_signer_nonce_binding_when_tls_is_disabled() -> (
+async def test_gateway_attestation_uses_signer_nonce_binding_without_tls_fingerprint() -> (
     None
 ):
     quote = create_model_quote()
@@ -64,11 +64,7 @@ async def test_gateway_attestation_uses_signer_nonce_binding_when_tls_is_disable
             spki_fingerprint=None,
             reported_quote_data=quote.report_data.hex(),
         ),
-        GatewayClientBinding(
-            nonce=NONCE,
-            spki_fingerprint='not-a-fingerprint',
-        ),
-        policy=GatewayAttestationPolicy(verify_tls_binding=False),
+        GatewayClientBinding(nonce=NONCE),
         verifiers=AttestationVerifiers(quote=lambda _: quote),
     )
 
@@ -84,7 +80,7 @@ async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
                 nonce=NONCE,
                 spki_fingerprint=TLS_FINGERPRINT,
             ),
-            policy=GatewayAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
+            policy=AttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
             verifiers=AttestationVerifiers(
                 quote=lambda _: create_gateway_tls_quote(tcb_status='OutOfDate')
             ),

@@ -26,16 +26,16 @@ evidence into a client-to-model TLS claim.
 Create an `AttestationClient` with the Cloud API key once. Its asynchronous
 methods retrieve signatures and evidence, while selection and verification stay
 as standalone functions. `client.fetch_gateway_attestation()` returns
-`FetchedGatewayAttestation` with raw evidence, `client_binding`, and the
-resolved `policy`. The native implementation obtains the SHA-256 SPKI
-fingerprint from the TLS connection for that exact HTTPS request. Pass both the
-binding and returned policy to `verify_gateway_attestation`; by default it
-requires the observed peer to match the fingerprint authenticated in the quote.
-A runtime
-without peer-certificate access must fetch with
-`GatewayAttestationPolicy(verify_tls_binding=False)`, then pass the returned
-policy to verification. That path requests no TLS fingerprint, verifies the
-signer-and-nonce quote layout, and returns `GatewayTlsBinding(kind='none')`.
+`FetchedGatewayAttestation` with raw attestation and `client_binding`. By
+default, it requests the Gateway's SPKI fingerprint and the native
+implementation obtains the SHA-256 SPKI fingerprint from the TLS connection
+for that exact HTTPS request. Pass both values to
+`verify_gateway_attestation`; an attestation with an SPKI fingerprint requires
+the observed peer to match the fingerprint authenticated in the quote. A
+runtime without peer-certificate access can fetch with
+`include_spki_fingerprint=False`. That path requests no TLS fingerprint,
+verifies the signer-and-nonce quote layout, and returns
+`GatewayTlsBinding(kind='none')`.
 `GatewayAttestation.spki_fingerprint` is Gateway-reported,
 `GatewayClientBinding.spki_fingerprint` is client-observed, and a successful
 `GatewayTlsBinding.spki_fingerprint` is their verified match.

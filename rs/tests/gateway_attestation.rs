@@ -6,8 +6,8 @@ use support::{
     FixtureQuoteVerifier, APP_COMPOSE, NONCE, TLS_FINGERPRINT,
 };
 use verifiable_ai_sdk::{
-    verify_gateway_attestation, AttestationVerifiers, DeploymentProvenanceStatus,
-    DeploymentVerifier, GatewayAttestationPolicy, GatewayClientBinding, GatewayTlsBinding,
+    verify_gateway_attestation, AttestationPolicy, AttestationVerifiers,
+    DeploymentProvenanceStatus, DeploymentVerifier, GatewayClientBinding, GatewayTlsBinding,
     MeasuredDeployment, TcbStatus, VerificationError,
 };
 
@@ -41,7 +41,7 @@ impl DeploymentVerifier for RejectingDeploymentVerifier {
 }
 
 #[tokio::test]
-async fn binds_the_observed_tls_peer_by_default() {
+async fn binds_the_observed_tls_peer_when_gateway_attestation_reports_an_spki_fingerprint() {
     let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
 
@@ -66,7 +66,7 @@ async fn binds_the_observed_tls_peer_by_default() {
 }
 
 #[tokio::test]
-async fn requires_an_observed_tls_peer_by_default() {
+async fn requires_an_observed_spki_fingerprint_when_gateway_attestation_reports_one() {
     let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
 
@@ -82,8 +82,8 @@ async fn requires_an_observed_tls_peer_by_default() {
     .await
     .unwrap_err();
 
-    assert!(matches!(error, VerificationError::TlsBindingRequired));
-    assert_eq!(error.code(), "policy.tls_binding_required");
+    assert!(matches!(error, VerificationError::SpkiFingerprintRequired));
+    assert_eq!(error.code(), "binding.spki_fingerprint_required");
 }
 
 #[tokio::test]
@@ -107,18 +107,14 @@ async fn rejects_another_tls_peer() {
 }
 
 #[tokio::test]
-async fn can_disable_tls_binding_and_verify_signer_and_nonce() {
+async fn uses_signer_and_nonce_binding_when_gateway_attestation_has_no_spki_fingerprint() {
     let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation_without_tls_binding();
-    let policy = GatewayAttestationPolicy {
-        verify_tls_binding: false,
-        ..Default::default()
-    };
 
     let verified = verify_gateway_attestation(
         &attestation,
         &client_binding(Some("44".repeat(32))),
-        Some(&policy),
+        None,
         AttestationVerifiers {
             quote: Some(&quote),
             ..Default::default()
@@ -128,27 +124,6 @@ async fn can_disable_tls_binding_and_verify_signer_and_nonce() {
     .unwrap();
 
     assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
-}
-
-#[tokio::test]
-async fn requires_a_tls_fingerprint_when_tls_binding_is_enabled() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
-    let mut attestation = gateway_attestation();
-    attestation.spki_fingerprint = None;
-
-    let error = verify_gateway_attestation(
-        &attestation,
-        &client_binding(Some(TLS_FINGERPRINT.to_owned())),
-        None,
-        AttestationVerifiers {
-            quote: Some(&quote),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap_err();
-
-    assert!(matches!(error, VerificationError::TlsBindingRequired));
 }
 
 #[tokio::test]
@@ -178,9 +153,8 @@ async fn rejects_an_invalid_tls_fingerprint() {
 async fn applies_an_explicit_gateway_tcb_policy() {
     let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
-    let policy = GatewayAttestationPolicy {
+    let policy = AttestationPolicy {
         accepted_tcb_statuses: Some(vec![TcbStatus::OutOfDate]),
-        ..Default::default()
     };
 
     let error = verify_gateway_attestation(

@@ -14,7 +14,7 @@ type VerifyReportDataBindingWithTlsFingerprintParams = {
   reportData: Uint8Array;
   nonce: string;
   signingAddress: string;
-  reportedSpkiFingerprint?: string;
+  reportedSpkiFingerprint: string;
   peerSpkiFingerprint: string;
 };
 
@@ -71,9 +71,6 @@ export async function verifyReportDataBindingWithTlsFingerprint(
     reportData: input.reportData,
     nonce: input.nonce,
   });
-  if (input.reportedSpkiFingerprint === undefined) {
-    throw new VerificationError({ code: 'policy.tls_binding_required' });
-  }
   const reportedSpkiFingerprint = requireByteLength({
     value: input.reportedSpkiFingerprint,
     byteLength: 32,

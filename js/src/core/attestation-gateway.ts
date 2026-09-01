@@ -1,5 +1,4 @@
 import type {
-  GatewayAttestationPolicy,
   VerifiedGatewayAttestation,
   VerifyGatewayAttestationParams,
 } from '../types/verification';
@@ -13,17 +12,13 @@ import {
   verifyDstackQuote,
 } from './dstack-attestation';
 
-/**
- * Verify Gateway evidence. TLS binding is required by default. When disabled,
- * verification uses the signer-and-nonce report-data layout instead.
- */
+/** Verify Gateway evidence using the report-data layout returned by Cloud API. */
 export async function verifyGatewayAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
 }: VerifyGatewayAttestationParams): Promise<VerifiedGatewayAttestation> {
-  const verifyTlsBinding = shouldVerifyTlsBinding(policy);
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce: clientBinding.nonce,
@@ -32,11 +27,11 @@ export async function verifyGatewayAttestation({
     advertisedReportData: attestation.reportedQuoteData,
   });
   let tlsBinding: VerifiedGatewayAttestation['tlsBinding'];
-  if (verifyTlsBinding) {
+  if (attestation.spkiFingerprint !== undefined) {
     const peerSpkiFingerprint = clientBinding.spkiFingerprint;
     if (peerSpkiFingerprint === undefined) {
       throw new VerificationError({
-        code: 'policy.tls_binding_required',
+        code: 'binding.spki_fingerprint_required',
       });
     }
     const spkiFingerprint = await verifyReportDataBindingWithTlsFingerprint({
@@ -61,10 +56,4 @@ export async function verifyGatewayAttestation({
   );
 
   return { ...evidence, tlsBinding };
-}
-
-function shouldVerifyTlsBinding(
-  policy: GatewayAttestationPolicy | undefined,
-): boolean {
-  return policy?.verifyTlsBinding ?? true;
 }

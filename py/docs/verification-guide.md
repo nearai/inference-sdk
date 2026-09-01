@@ -124,11 +124,9 @@ client-to-model TLS claim.
 
 ## Verify a Gateway attestation
 
-A Gateway attestation verifies a Cloud API Gateway deployment. Its TLS policy
-selects both the evidence request and the quote layout used at verification.
+A Gateway attestation verifies a Cloud API Gateway deployment.
 `client.fetch_gateway_attestation()` sends a fresh nonce, checks the echoed
-nonce, and returns raw evidence, a `GatewayClientBinding`, and the resolved
-policy.
+nonce, and returns raw attestation and a `GatewayClientBinding`.
 
 ```python
 from verifiable_ai_sdk import (
@@ -137,47 +135,44 @@ from verifiable_ai_sdk import (
 )
 
 client = AttestationClient(api_key)
-gateway_evidence = await client.fetch_gateway_attestation()
+fetched_gateway_attestation = await client.fetch_gateway_attestation()
 verified_gateway_attestation = await verify_gateway_attestation(
-    gateway_evidence.attestation,
-    gateway_evidence.client_binding,
-    policy=gateway_evidence.policy,
+    fetched_gateway_attestation.attestation,
+    fetched_gateway_attestation.client_binding,
 )
 ```
 
-The default policy has `verify_tls_binding=True`. The native fetch helper
-requests the TLS fingerprint and captures the SHA-256 SPKI fingerprint from the
-TLS connection used for this exact HTTPS evidence request. Verification then
-requires the quote-bound TLS fingerprint, the observed peer fingerprint, and
-the client nonce to agree. A successful result has
+By default, the fetch helper requests the Gateway TLS fingerprint and captures
+the SHA-256 SPKI fingerprint from the TLS connection used for this exact HTTPS
+evidence request. Verification uses the TLS-bound report-data layout whenever
+the returned attestation has an SPKI fingerprint. It then requires the
+quote-bound fingerprint, observed peer fingerprint, and client nonce to agree.
+A successful result has
 `tls_binding.kind == 'attested'`.
 
-If a runtime cannot observe the peer certificate, choose the no-TLS policy
-before fetching evidence and pass the returned policy into verification:
+If a runtime cannot observe the peer certificate, disable SPKI retrieval before
+fetching:
 
 ```python
-from verifiable_ai_sdk import AttestationClient, GatewayAttestationPolicy
+from verifiable_ai_sdk import AttestationClient, verify_gateway_attestation
 
 client = AttestationClient(api_key)
-gateway_evidence = await client.fetch_gateway_attestation(
-    policy=GatewayAttestationPolicy(verify_tls_binding=False),
+fetched_gateway_attestation = await client.fetch_gateway_attestation(
+    include_spki_fingerprint=False,
 )
 verified_gateway_attestation = await verify_gateway_attestation(
-    gateway_evidence.attestation,
-    gateway_evidence.client_binding,
-    policy=gateway_evidence.policy,
+    fetched_gateway_attestation.attestation,
+    fetched_gateway_attestation.client_binding,
 )
 assert verified_gateway_attestation.tls_binding.kind == 'none'
 ```
 
-With `verify_tls_binding=False`, the SDK sends
-`include_tls_fingerprint=false`, does not require a peer fingerprint, and
-verifies the signer-and-nonce report-data layout. It does not make or retain a
-Gateway TLS identity claim.
+With `include_spki_fingerprint=False`, the SDK requests no TLS fingerprint,
+does not capture a peer fingerprint, and verifies the signer-and-nonce
+report-data layout. It does not make a Gateway TLS identity claim.
 
 For a signature with `kind == 'gateway'`, fetch evidence for the signature's
-algorithm, verify it with the policy returned by that fetch, then verify the
-response:
+algorithm, verify it, then verify the response:
 
 ```python
 from verifiable_ai_sdk import (
@@ -187,13 +182,12 @@ from verifiable_ai_sdk import (
 )
 
 client = AttestationClient(api_key)
-gateway_evidence = await client.fetch_gateway_attestation(
+fetched_gateway_attestation = await client.fetch_gateway_attestation(
     signing_algo=signature.signer.signing_algo,
 )
 verified_gateway_attestation = await verify_gateway_attestation(
-    gateway_evidence.attestation,
-    gateway_evidence.client_binding,
-    policy=gateway_evidence.policy,
+    fetched_gateway_attestation.attestation,
+    fetched_gateway_attestation.client_binding,
 )
 verify_gateway_response(
     request_body,
@@ -242,11 +236,9 @@ deployment and must raise for every deployment the application does not accept.
 The SDK authenticates the measured values, but the callback decides which
 deployments are acceptable.
 
-`GatewayAttestationPolicy.verify_tls_binding` defaults to `True`. Set it to
-`False` only before a Gateway fetch when the runtime cannot obtain the peer
-certificate for that evidence request. Use the returned
-`FetchedGatewayAttestation.policy` for the paired verification so its quote
-layout stays aligned with the request.
+`verify_gateway_attestation` accepts `AttestationPolicy` when an application
+needs to restrict accepted Gateway TCB statuses. The report-data layout follows
+whether the fetched attestation contains an SPKI fingerprint, not the policy.
 
 `verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
 evidence, the default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and

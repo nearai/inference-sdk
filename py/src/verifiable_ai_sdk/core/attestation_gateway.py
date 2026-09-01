@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from ..types.attestation_gateway import GatewayAttestation
 from ..types.verification import (
+    AttestationPolicy,
     AttestationVerifiers,
-    GatewayAttestationPolicy,
     GatewayClientBinding,
     GatewayTlsBinding,
     VerifiedGatewayAttestation,
@@ -22,16 +22,10 @@ async def verify_gateway_attestation(
     attestation: GatewayAttestation,
     client_binding: GatewayClientBinding,
     *,
-    policy: GatewayAttestationPolicy | None = None,
+    policy: AttestationPolicy | None = None,
     verifiers: AttestationVerifiers | None = None,
 ) -> VerifiedGatewayAttestation:
-    """Verify Gateway evidence and, when enabled, its quote-bound TLS identity.
-
-    TLS binding is enabled by default. When disabled, the signer-and-nonce
-    report-data layout is verified instead.
-    """
-
-    verify_tls_binding = True if policy is None else policy.verify_tls_binding
+    """Verify Gateway evidence and its quote-bound TLS identity when present."""
 
     verified_quote = await verify_dstack_quote(
         attestation=attestation,
@@ -40,10 +34,10 @@ async def verify_gateway_attestation(
         policy=policy,
         quote_verifier=None if verifiers is None else verifiers.quote,
     )
-    if verify_tls_binding:
+    if attestation.spki_fingerprint is not None:
         peer_spki_fingerprint = client_binding.spki_fingerprint
         if peer_spki_fingerprint is None:
-            raise verification_failure('policy.tls_binding_required')
+            raise verification_failure('binding.spki_fingerprint_required')
         spki_fingerprint = verify_report_data_binding_with_tls_fingerprint(
             report_data=verified_quote.quote.report_data,
             nonce=client_binding.nonce,

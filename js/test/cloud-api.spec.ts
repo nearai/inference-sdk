@@ -416,7 +416,6 @@ describe('AttestationClient', () => {
           reportedQuoteData: '00'.repeat(64),
           spkiFingerprint: '33'.repeat(32),
         },
-        policy: { verifyTlsBinding: true },
       });
       const query = new URL(api.request().url).searchParams;
       expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
@@ -424,7 +423,7 @@ describe('AttestationClient', () => {
       expect(query.get('include_tls_fingerprint')).toBe('true');
     });
 
-    test('uses signer-and-nonce Gateway evidence when TLS binding is disabled', async () => {
+    test('omits the Gateway TLS fingerprint when requested', async () => {
       const api = cloudFor((request) =>
         jsonResponse(
           gatewayReport(requestNonce(request), {
@@ -434,10 +433,9 @@ describe('AttestationClient', () => {
       );
 
       const fetched = await api.client.fetchGatewayAttestation({
-        policy: { verifyTlsBinding: false },
+        includeSpkiFingerprint: false,
       });
 
-      expect(fetched.policy).toEqual({ verifyTlsBinding: false });
       expect(fetched.attestation).not.toHaveProperty('spkiFingerprint');
       expect(
         new URL(api.request().url).searchParams.get('include_tls_fingerprint'),
@@ -475,7 +473,30 @@ describe('AttestationClient', () => {
       await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
         failure: {
           code: 'api.invalid_response',
-          details: { path: 'gateway_attestation.tls_cert_fingerprint' },
+          details: {
+            path: 'gateway_attestation.tls_cert_fingerprint',
+            expected: 'present',
+            actual: 'missing',
+          },
+        },
+      });
+    });
+
+    test('rejects a Gateway TLS fingerprint returned when it was not requested', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(gatewayReport(requestNonce(request))),
+      );
+
+      await expect(
+        api.client.fetchGatewayAttestation({ includeSpkiFingerprint: false }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.invalid_response',
+          details: {
+            path: 'gateway_attestation.tls_cert_fingerprint',
+            expected: 'missing',
+            actual: 'present',
+          },
         },
       });
     });

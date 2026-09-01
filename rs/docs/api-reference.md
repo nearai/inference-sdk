@@ -24,13 +24,23 @@ All client methods below are asynchronous and return `Result<_, SdkError>`.
 | `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Strict form: returns a signature or `ApiError::CompletionSignatureUnavailable` for a 2xx unavailable envelope. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
 | `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Requires a `ProviderTee` signature, applies its signer as API filters, and selects the exact matching candidate locally. It does not verify the evidence. |
-| `fetch_gateway_attestation` | `signing_algo: Option<SigningAlgo>`, `policy: GatewayAttestationPolicy` | `FetchedGatewayAttestation` | Fetches Gateway evidence. `None` follows the service-selected signing algorithm; use a signature's algorithm when verifying a Gateway response. |
+| `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
 `signing_algo` and `signing_address` only narrow the Cloud API response. They
 do not replace `find_model_attestation_for_signature`, which performs the local,
 exact signer match for a `ProviderTee` signature. The
 `fetch_model_attestation_for_signature` method is the convenience form that
 applies those filters and then delegates to that same selector.
+
+### Gateway fetch options
+
+`GatewayAttestationFetchOptions::default()` uses the Cloud API's selected
+signing algorithm and requests SPKI fingerprint evidence.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `signing_algo` | `Option<SigningAlgo>` | `None` | Optional Gateway signing-algorithm filter. Use a Gateway completion signature's algorithm when verifying that response. |
+| `include_spki_fingerprint` | `bool` | `true` | When true, request Gateway SPKI fingerprint evidence and capture the peer certificate for that HTTPS request. When false, request no fingerprint and do not capture the peer. |
 
 ### Evidence selection
 
@@ -57,32 +67,29 @@ attestation verifier.
 |  | `client_binding` | `ModelClientBinding` returned with the selected attestation. |
 | `FetchedGatewayAttestation` | `attestation` | Returned Gateway attestation. |
 |  | `client_binding` | `GatewayClientBinding` returned with the evidence request. |
-|  | `policy` | Resolved `GatewayAttestationPolicy` for this request. Pass it to `verify_gateway_attestation`. |
 | `ModelClientBinding` | `nonce` | SDK-generated client nonce. |
 | `GatewayClientBinding` | `nonce` | SDK-generated client nonce. |
-|  | `spki_fingerprint` | Optional SHA-256 SPKI fingerprint observed for the exact HTTPS evidence request. The default Gateway policy requires it; set `verify_tls_binding` to `false` before fetching when it is unavailable. |
+|  | `spki_fingerprint` | Optional SHA-256 SPKI fingerprint observed for the exact HTTPS evidence request. It is present when `GatewayAttestationFetchOptions::include_spki_fingerprint` is true and the runtime exposes the peer certificate. |
 
 ## Attestation verification
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
 | `verify_model_attestation` | `attestation: &ModelAttestation`, `client_binding: &ModelClientBinding`, `policy: Option<&ModelAttestationPolicy>`, `verifiers: ModelAttestationVerifiers` | `VerifiedModelAttestation` | Verifies model evidence, policy, measured deployment, and GPU evidence when supplied. |
-| `verify_gateway_attestation` | `attestation: &GatewayAttestation`, `client_binding: &GatewayClientBinding`, `policy: Option<&GatewayAttestationPolicy>`, `verifiers: AttestationVerifiers` | `VerifiedGatewayAttestation` | Verifies Gateway evidence and its quote-bound TLS identity. By default, it also requires and verifies the client-observed TLS peer. |
+| `verify_gateway_attestation` | `attestation: &GatewayAttestation`, `client_binding: &GatewayClientBinding`, `policy: Option<&AttestationPolicy>`, `verifiers: AttestationVerifiers` | `VerifiedGatewayAttestation` | Verifies Gateway evidence. A returned Gateway SPKI fingerprint selects TLS-bound verification and requires the client-observed peer; no returned fingerprint selects signer-and-nonce verification. |
 
 Both functions are asynchronous and return `Result<_, VerificationError>`.
 
-Pass the matching fetch result's `client_binding`. `policy: None` uses defaults;
-pass `Default::default()` as `verifiers` to use built-in quote, deployment, and
-GPU verification.
+Pass the matching fetch result's `client_binding`. `policy: None` uses default
+TCB statuses; pass `Default::default()` as `verifiers` to use built-in quote,
+deployment, and GPU verification.
 
-`GatewayAttestationPolicy::verify_tls_binding` defaults to `true`. In that
-mode, `client_binding.spki_fingerprint` must be a 32-byte hexadecimal
-SHA-256 SPKI fingerprint independently observed for the TLS peer serving the
-Gateway attestation request. Do not use the attestation's fingerprint as the
-observed peer value. A runtime without peer-certificate access must set
-`verify_tls_binding` to `false` before fetching; the request then omits the
-fingerprint and verification checks signer-and-nonce report data, returning
-`GatewayTlsBinding::None`.
+When `GatewayAttestation.spki_fingerprint` is present,
+`client_binding.spki_fingerprint` must be the independently observed SHA-256
+SPKI fingerprint for the TLS peer that served the evidence request. Do not use
+the attestation's fingerprint as the observed peer value. When the attestation
+does not report an SPKI fingerprint, verification checks signer-and-nonce
+report data and returns `GatewayTlsBinding::None`.
 
 ## Response verification
 
@@ -99,10 +106,10 @@ model request body must contain a non-empty JSON `model` string. The signature
 kind must match the verifier (`ProviderTee` or `Gateway`), and the verified
 attestation must bind the signature signer.
 
-For a `Gateway` response, call
-`client.fetch_gateway_attestation(Some(signature.signer.signing_algo), policy)`.
-Passing `None` follows the Cloud API default, so do not use it when the response
-requires a specific signer.
+For a `Gateway` response, pass `GatewayAttestationFetchOptions` with
+`signing_algo: Some(signature.signer.signing_algo)` to
+`client.fetch_gateway_attestation`. Do not use the Cloud API default algorithm
+when the response requires a specific signer.
 
 ## Signatures and evidence
 
@@ -142,7 +149,7 @@ Gateway `reported_quote_data` is required.
 | `ModelAttestation` | `reported_quote_data` | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `nvidia_payload` | Optional NVIDIA evidence payload. |
 | `GatewayAttestation` | `reported_quote_data` | Required report-data copy cross-checked against the authenticated quote. |
-|  | `spki_fingerprint` | Optional Gateway TLS SPKI fingerprint. It is present when TLS binding was requested and must match the client-observed peer before verification returns an attested TLS binding. |
+|  | `spki_fingerprint` | Optional Gateway TLS SPKI fingerprint. Its presence selects the TLS-bound quote layout and requires a matching client-observed peer before verification returns an attested TLS binding. |
 
 ## Policies and verifier callbacks
 
@@ -150,8 +157,7 @@ Gateway `reported_quote_data` is required.
 | --- | --- | --- | --- |
 | `ModelAttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | Model TCB statuses accepted by verification. |
 |  | `gpu_evidence: GpuEvidenceRequirement` | `IfPresent` | `IfPresent` verifies supplied GPU evidence and accepts an absent payload; `Required` rejects absent evidence. |
-| `GatewayAttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | Gateway TCB statuses accepted by verification. |
-|  | `verify_tls_binding: bool` | `true` | When `true`, request the TLS fingerprint and require it to match the observed peer. When `false`, request no fingerprint and verify signer-and-nonce report data instead. |
+| `AttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | TCB statuses accepted by verification. |
 | `AttestationVerifiers<'a>` | `quote`, `deployment` | `None` | Optional `QuoteVerifier` and `DeploymentVerifier` overrides. |
 | `ModelAttestationVerifiers<'a>` | `quote`, `deployment`, `nvidia` | `None` | Optional `QuoteVerifier`, `DeploymentVerifier`, and `NvidiaEvidenceVerifier` overrides. |
 
@@ -176,7 +182,7 @@ and JWT/EAT-validation behavior.
 | `VerifiedModelAttestation` | `evidence` | Shared verified evidence above. |
 |  | `gpu_evidence` | `GpuEvidenceStatus::NotProvided` or `GpuEvidenceStatus::Verified`. |
 | `VerifiedGatewayAttestation` | `evidence` | Shared verified evidence above. |
-|  | `tls_binding` | `GatewayTlsBinding::Attested { spki_fingerprint }` when the quote-bound fingerprint matched the observed peer, or `GatewayTlsBinding::None` when TLS binding was disabled. |
+|  | `tls_binding` | `GatewayTlsBinding::Attested { spki_fingerprint }` when the quote-bound fingerprint matched the observed peer, or `GatewayTlsBinding::None` when the attestation had no SPKI fingerprint. |
 
 ## Errors
 

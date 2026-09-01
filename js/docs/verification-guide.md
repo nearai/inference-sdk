@@ -35,7 +35,7 @@ completion signature only when the claim is about a particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetchModelAttestations` → `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are verified. With the default TLS policy, the observed TLS peer also matches the fingerprint bound into the quote. | That any particular completion was served by the Gateway, or that a model executed the request. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are verified. By default, the observed TLS peer also matches the fingerprint bound into the quote. | That any particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `client.fetchCompletionSignature` → `client.fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `client.fetchCompletionSignature` → `client.fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
@@ -171,26 +171,25 @@ const verifiedGatewayAttestation = await verifyGatewayAttestation(
 ```
 
 In Node, the package captures the SHA-256 SPKI fingerprint of the TLS peer
-that served this evidence request. The default policy (`verifyTlsBinding: true`)
-requires it to match the fingerprint bound into the quote. A successful result
-then has `tlsBinding.kind: 'attested'`.
+that served this evidence request. The default fetch request includes the
+Gateway fingerprint, so verification requires the two to match. A successful
+result then has `tlsBinding.kind: 'attested'`.
 
-Browser fetch does not expose peer certificates. Disable TLS binding when
-fetching Gateway evidence; the returned policy is then passed directly to the
-verifier with the rest of the fetched result:
+Browser fetch does not expose peer certificates. Omit the fingerprint when
+fetching Gateway evidence:
 
 ```ts
 const fetchedGatewayAttestation = await client.fetchGatewayAttestation({
-  policy: { verifyTlsBinding: false },
+  includeSpkiFingerprint: false,
 });
 const verifiedGatewayAttestation = await verifyGatewayAttestation(
   fetchedGatewayAttestation,
 );
 ```
 
-With TLS binding disabled, the fetch request uses
-`include_tls_fingerprint=false` and verification checks the signer-and-nonce
-quote layout. The result has `tlsBinding.kind: 'none'`; it makes no TLS claim.
+This uses `include_tls_fingerprint=false`. Cloud API must return an attestation
+without an SPKI fingerprint, so verification checks the signer-and-nonce quote
+layout. The result has `tlsBinding.kind: 'none'`; it makes no TLS claim.
 
 For a signature with `kind: 'gateway'`, fetch fresh evidence for the
 signature's signing algorithm, verify it, then verify the response:
@@ -219,7 +218,7 @@ verifyGatewayResponse({
 ```
 
 For this flow in a browser, fetch Gateway evidence with
-`policy: { verifyTlsBinding: false }` as shown above before calling
+`includeSpkiFingerprint: false` as shown above before calling
 `verifyGatewayResponse`.
 
 This verifies gateway-service provenance and integrity for the exact completion
@@ -227,9 +226,9 @@ bytes: the signature is valid and its signer is bound to the verified gateway
 deployment evidence. It does not establish model execution; use a
 `provider_tee` signature and model evidence for that claim.
 
-Gateway attestation accepts the same quote and deployment policy options as
-model verification, except it has no GPU option. Its
-`GatewayAttestationPolicy` also controls whether Gateway TLS binding is used.
+Gateway attestation accepts `AttestationPolicy` for quote and deployment
+acceptance, except it has no GPU option. Whether TLS binding is present comes
+from the Gateway attestation returned by Cloud API.
 
 ## Set policy and trust roots
 

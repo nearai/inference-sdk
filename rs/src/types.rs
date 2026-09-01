@@ -61,9 +61,9 @@ pub struct ModelAttestation {
 #[derive(Clone, Debug)]
 pub struct GatewayAttestation {
     pub evidence: AttestationEvidence,
-    /// SPKI fingerprint reported by the Gateway when the evidence request
-    /// enables TLS binding. The quote authenticates this value only in that
-    /// mode.
+    /// SPKI fingerprint reported by the Gateway when evidence was fetched with
+    /// `include_spki_fingerprint`. The quote authenticates this value only in
+    /// the TLS-bound report-data layout.
     pub spki_fingerprint: Option<String>,
     /// Gateway reports always advertise the quote report-data copy.
     pub reported_quote_data: String,
@@ -124,9 +124,9 @@ pub trait DeploymentVerifier: Send + Sync {
     async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError>;
 }
 
-/// Internal quote policy shared by model and Gateway attestation verification.
+/// TCB statuses accepted during attestation verification.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AttestationPolicy {
+pub struct AttestationPolicy {
     /// Defaults to `UpToDate` and `OutOfDate` when omitted.
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
 }
@@ -145,26 +145,6 @@ pub enum GpuEvidenceRequirement {
 pub struct ModelAttestationPolicy {
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
     pub gpu_evidence: GpuEvidenceRequirement,
-}
-
-/// Gateway-specific verification policy.
-#[derive(Clone, Debug)]
-pub struct GatewayAttestationPolicy {
-    /// Defaults to `UpToDate` and `OutOfDate` when omitted.
-    pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
-    /// Defaults to `true`. When enabled, request TLS fingerprint evidence and
-    /// require it to match the TLS peer observed by the client. When disabled,
-    /// verify the signer-and-nonce report-data layout instead.
-    pub verify_tls_binding: bool,
-}
-
-impl Default for GatewayAttestationPolicy {
-    fn default() -> Self {
-        Self {
-            accepted_tcb_statuses: None,
-            verify_tls_binding: true,
-        }
-    }
 }
 
 /// Optional verifier implementations used by a Gateway verification call.
@@ -215,8 +195,8 @@ pub struct VerifiedAttestationEvidence {
 /// TLS information authenticated for a Gateway report.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GatewayTlsBinding {
-    /// TLS binding was disabled, so only the signer-and-nonce report-data
-    /// layout was verified.
+    /// The attestation omitted an SPKI fingerprint, so only the signer-and-
+    /// nonce report-data layout was verified.
     None,
     /// The quote-bound TLS fingerprint matched the peer observed by the
     /// client for this evidence request.
@@ -300,13 +280,28 @@ pub struct GatewayClientBinding {
     pub spki_fingerprint: Option<String>,
 }
 
+/// Options for fetching Gateway evidence from NEAR AI Cloud.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GatewayAttestationFetchOptions {
+    /// Optional Gateway signing algorithm filter.
+    pub signing_algo: Option<SigningAlgo>,
+    /// Request Gateway TLS fingerprint evidence and capture the TLS peer for
+    /// the same HTTPS request.
+    pub include_spki_fingerprint: bool,
+}
+
+impl Default for GatewayAttestationFetchOptions {
+    fn default() -> Self {
+        Self {
+            signing_algo: None,
+            include_spki_fingerprint: true,
+        }
+    }
+}
+
 /// Gateway evidence and the client values associated with its request.
 #[derive(Clone, Debug)]
 pub struct FetchedGatewayAttestation {
     pub attestation: GatewayAttestation,
     pub client_binding: GatewayClientBinding,
-    /// Resolved policy for this evidence request. Pass it to
-    /// `verify_gateway_attestation` so the fetch and verification modes stay
-    /// aligned.
-    pub policy: GatewayAttestationPolicy,
 }

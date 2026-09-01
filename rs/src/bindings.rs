@@ -93,12 +93,10 @@ pub fn verify_report_data_binding_with_tls_fingerprint(
     report_data: &[u8],
     nonce: &str,
     signing_address: &str,
-    reported_spki_fingerprint: Option<&str>,
+    reported_spki_fingerprint: &str,
     peer_spki_fingerprint: &str,
 ) -> Result<String, VerificationError> {
     verify_quote_report_data_nonce(report_data, nonce)?;
-    let reported_spki_fingerprint =
-        reported_spki_fingerprint.ok_or(VerificationError::TlsBindingRequired)?;
     let reported = require_hex_length(reported_spki_fingerprint, 32).map_err(|_| {
         VerificationError::InvalidInput {
             field: "attestation.spki_fingerprint".to_owned(),

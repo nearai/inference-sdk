@@ -83,14 +83,12 @@ def verify_report_data_binding_with_tls_fingerprint(
     report_data: bytes,
     nonce: str,
     signer: SigningIdentity,
-    reported_spki_fingerprint: str | None,
+    reported_spki_fingerprint: str,
     peer_spki_fingerprint: str,
 ) -> str:
     """Verify the signer-and-TLS report-data layout and return its fingerprint."""
 
     _verify_quote_report_data_length_and_nonce(report_data, nonce)
-    if reported_spki_fingerprint is None:
-        raise verification_failure('policy.tls_binding_required')
     reported = require_byte_length(
         reported_spki_fingerprint, 32, 'attestation.spki_fingerprint'
     )
