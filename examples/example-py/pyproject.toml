@@ -1,0 +1,11 @@
+[project]
+name = "example-py"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.0",
+    "verifiable-ai-sdk",
+]
+
+[tool.uv.sources]
+verifiable-ai-sdk = { path = "../../py", editable = true }

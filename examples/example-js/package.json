@@ -1,0 +1,15 @@
+{
+  "name": "example-js",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "verifiable-ai-sdk": "link:../../js"
+  }
+}
