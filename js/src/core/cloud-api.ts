@@ -1,5 +1,5 @@
 import type { ModelAttestation } from '../types/attestation-model';
-import type { SigningIdentity } from '../types/attestation-common';
+import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
@@ -45,6 +45,10 @@ type GetGatewayAttestationJsonParams = {
   readonly url: URL;
   readonly capturePeerSpkiFingerprint: boolean;
 };
+type FetchGatewayAttestationRequestParams = {
+  readonly signingAlgo?: SigningAlgo;
+  readonly includeSpkiFingerprint: boolean;
+};
 type GatewayAttestationJson = {
   readonly json: unknown;
   readonly peerSpkiFingerprint?: string;
@@ -66,11 +70,11 @@ type ReadCloudApiJsonParams = {
 };
 
 /**
- * Client for fetching attestation evidence and completion signatures from
- * NEAR AI Cloud. It owns the Cloud API configuration; verification functions
- * remain standalone.
+ * Shared Cloud API client implementation. Runtime-specific clients expose
+ * their own Gateway-attestation options while sharing model and signature
+ * requests.
  */
-export class AttestationClient {
+export class CloudApiClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
 
@@ -151,10 +155,10 @@ export class AttestationClient {
    * Fetch standalone Gateway evidence. A returned SPKI fingerprint selects
    * the TLS-bound quote layout during `verifyGatewayAttestation`.
    */
-  async fetchGatewayAttestation({
+  protected async fetchGatewayAttestationWithOptions({
     signingAlgo,
-    includeSpkiFingerprint = true,
-  }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
+    includeSpkiFingerprint,
+  }: FetchGatewayAttestationRequestParams): Promise<FetchedGatewayAttestation> {
     const clientNonce = generateNonce();
     const url = new URL('attestation/report', this.baseUrl);
     url.searchParams.set('nonce', clientNonce);
@@ -310,6 +314,25 @@ export class AttestationClient {
     const headers = new Headers(extraHeaders);
     headers.set('authorization', `Bearer ${this.apiKey}`);
     return new Request(url, { headers });
+  }
+}
+
+/**
+ * Generic client for fetching attestation evidence and completion signatures
+ * from NEAR AI Cloud. It owns the Cloud API configuration; verification
+ * functions remain standalone.
+ *
+ * Standard Fetch does not expose the TLS peer certificate. Gateway evidence
+ * therefore always uses the signer-and-nonce quote layout in this client.
+ */
+export class AttestationClient extends CloudApiClient {
+  async fetchGatewayAttestation({
+    signingAlgo,
+  }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
+    return this.fetchGatewayAttestationWithOptions({
+      signingAlgo,
+      includeSpkiFingerprint: false,
+    });
   }
 }
 

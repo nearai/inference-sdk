@@ -9,7 +9,6 @@ export type {
   FetchedGatewayAttestation,
   FetchedModelAttestation,
   FetchedModelAttestations,
-  FetchGatewayAttestationParams,
   FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,

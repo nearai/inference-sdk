@@ -403,27 +403,7 @@ describe('AttestationClient', () => {
   });
 
   describe('gateway attestations', () => {
-    test('fetches gateway evidence with its client nonce and no signing-algorithm filter', async () => {
-      const api = cloudFor((request) =>
-        jsonResponse(gatewayReport(requestNonce(request))),
-      );
-
-      const fetched = await api.client.fetchGatewayAttestation();
-
-      expect(fetched).toMatchObject({
-        clientBinding: { nonce: fetched.attestation.nonce },
-        attestation: {
-          reportedQuoteData: '00'.repeat(64),
-          spkiFingerprint: '33'.repeat(32),
-        },
-      });
-      const query = new URL(api.request().url).searchParams;
-      expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
-      expect(query.get('signing_algo')).toBeNull();
-      expect(query.get('include_tls_fingerprint')).toBe('true');
-    });
-
-    test('omits the Gateway TLS fingerprint when requested', async () => {
+    test('fetches gateway evidence without TLS binding', async () => {
       const api = cloudFor((request) =>
         jsonResponse(
           gatewayReport(requestNonce(request), {
@@ -432,14 +412,19 @@ describe('AttestationClient', () => {
         ),
       );
 
-      const fetched = await api.client.fetchGatewayAttestation({
-        includeSpkiFingerprint: false,
-      });
+      const fetched = await api.client.fetchGatewayAttestation();
 
+      expect(fetched).toMatchObject({
+        clientBinding: { nonce: fetched.attestation.nonce },
+        attestation: {
+          reportedQuoteData: '00'.repeat(64),
+        },
+      });
       expect(fetched.attestation).not.toHaveProperty('spkiFingerprint');
-      expect(
-        new URL(api.request().url).searchParams.get('include_tls_fingerprint'),
-      ).toBe('false');
+      const query = new URL(api.request().url).searchParams;
+      expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
+      expect(query.get('signing_algo')).toBeNull();
+      expect(query.get('include_tls_fingerprint')).toBe('false');
     });
 
     test('requests the gateway signing algorithm needed by a response signature', async () => {
@@ -448,6 +433,7 @@ describe('AttestationClient', () => {
           gatewayReport(requestNonce(request), {
             signing_algo: 'ecdsa',
             signing_address: signingAddress,
+            tls_cert_fingerprint: null,
           }),
         ),
       );
@@ -461,35 +447,12 @@ describe('AttestationClient', () => {
       );
     });
 
-    test('requires the Gateway TLS fingerprint requested by the helper', async () => {
-      const api = cloudFor((request) =>
-        jsonResponse(
-          gatewayReport(requestNonce(request), {
-            tls_cert_fingerprint: null,
-          }),
-        ),
-      );
-
-      await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
-        failure: {
-          code: 'api.invalid_response',
-          details: {
-            path: 'gateway_attestation.tls_cert_fingerprint',
-            expected: 'present',
-            actual: 'missing',
-          },
-        },
-      });
-    });
-
     test('rejects a Gateway TLS fingerprint returned when it was not requested', async () => {
       const api = cloudFor((request) =>
         jsonResponse(gatewayReport(requestNonce(request))),
       );
 
-      await expect(
-        api.client.fetchGatewayAttestation({ includeSpkiFingerprint: false }),
-      ).rejects.toMatchObject({
+      await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
         failure: {
           code: 'api.invalid_response',
           details: {
@@ -502,7 +465,11 @@ describe('AttestationClient', () => {
     });
 
     test('rejects gateway evidence whose nonce does not match the request', async () => {
-      const api = cloudFor(() => jsonResponse(gatewayReport('44'.repeat(32))));
+      const api = cloudFor(() =>
+        jsonResponse(
+          gatewayReport('44'.repeat(32), { tls_cert_fingerprint: null }),
+        ),
+      );
 
       await expect(api.client.fetchGatewayAttestation()).rejects.toMatchObject({
         failure: {

@@ -35,7 +35,7 @@ completion signature only when the claim is about a particular response.
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
 | --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetchModelAttestations` → `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are verified. By default, the observed TLS peer also matches the fingerprint bound into the quote. | That any particular completion was served by the Gateway, or that a model executed the request. |
+| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment, optionally including its TLS service identity in Node. | `client.fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are verified. The Node client also verifies the observed TLS peer by default. | That any particular completion was served by the Gateway, or that a model executed the request. |
 | Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `client.fetchCompletionSignature` → `client.fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
 | Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `client.fetchCompletionSignature` → `client.fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
 
@@ -152,10 +152,32 @@ binding.
 
 ## Verify a gateway attestation
 
-A Gateway attestation verifies a Cloud API Gateway deployment. By default, it
-also verifies the Gateway TLS identity: the client sends a fresh nonce,
-requests the TLS fingerprint, and checks it against the TLS peer that served
-the evidence request.
+A Gateway attestation verifies a Cloud API Gateway deployment. The Node entry
+point also verifies the Gateway TLS identity by default: it requests the TLS
+fingerprint and checks it against the TLS peer that served the evidence
+request.
+
+```ts
+import {
+  AttestationClient,
+  verifyGatewayAttestation,
+} from 'verifiable-ai-sdk/node';
+
+const client = new AttestationClient({ apiKey });
+const fetchedGatewayAttestation = await client.fetchGatewayAttestation();
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation: fetchedGatewayAttestation.attestation,
+  clientBinding: fetchedGatewayAttestation.clientBinding,
+});
+```
+
+The Node client captures the SHA-256 SPKI fingerprint of the TLS peer that
+served this evidence request. Its default request includes the Gateway
+fingerprint, so verification requires the two to match. A successful result
+then has `tlsBinding.kind: 'attested'`.
+
+The generic entry point, including browser use, cannot observe a peer
+certificate. It always requests the signer-and-nonce quote layout instead:
 
 ```ts
 import {
@@ -165,31 +187,17 @@ import {
 
 const client = new AttestationClient({ apiKey });
 const fetchedGatewayAttestation = await client.fetchGatewayAttestation();
-const verifiedGatewayAttestation = await verifyGatewayAttestation(
-  fetchedGatewayAttestation,
-);
-```
-
-In Node, the package captures the SHA-256 SPKI fingerprint of the TLS peer
-that served this evidence request. The default fetch request includes the
-Gateway fingerprint, so verification requires the two to match. A successful
-result then has `tlsBinding.kind: 'attested'`.
-
-Browser fetch does not expose peer certificates. Omit the fingerprint when
-fetching Gateway evidence:
-
-```ts
-const fetchedGatewayAttestation = await client.fetchGatewayAttestation({
-  includeSpkiFingerprint: false,
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation: fetchedGatewayAttestation.attestation,
+  clientBinding: fetchedGatewayAttestation.clientBinding,
 });
-const verifiedGatewayAttestation = await verifyGatewayAttestation(
-  fetchedGatewayAttestation,
-);
 ```
 
 This uses `include_tls_fingerprint=false`. Cloud API must return an attestation
 without an SPKI fingerprint, so verification checks the signer-and-nonce quote
-layout. The result has `tlsBinding.kind: 'none'`; it makes no TLS claim.
+layout. The result has `tlsBinding.kind: 'none'`; it makes no TLS claim. Its
+parameter type permits `includeSpkiFingerprint: false` only, to make that
+constraint visible at the call site.
 
 For a signature with `kind: 'gateway'`, fetch fresh evidence for the
 signature's signing algorithm, verify it, then verify the response:
@@ -199,15 +207,16 @@ import {
   AttestationClient,
   verifyGatewayAttestation,
   verifyGatewayResponse,
-} from 'verifiable-ai-sdk';
+} from 'verifiable-ai-sdk/node';
 
 const client = new AttestationClient({ apiKey });
 const fetchedGatewayAttestation = await client.fetchGatewayAttestation({
   signingAlgo: signature.signer.signingAlgo,
 });
-const verifiedGatewayAttestation = await verifyGatewayAttestation(
-  fetchedGatewayAttestation,
-);
+const verifiedGatewayAttestation = await verifyGatewayAttestation({
+  attestation: fetchedGatewayAttestation.attestation,
+  clientBinding: fetchedGatewayAttestation.clientBinding,
+});
 
 verifyGatewayResponse({
   requestBody,
@@ -217,8 +226,8 @@ verifyGatewayResponse({
 });
 ```
 
-For this flow in a browser, fetch Gateway evidence with
-`includeSpkiFingerprint: false` as shown above before calling
+For this flow in a generic or browser runtime, import from
+`verifiable-ai-sdk` instead. It follows the no-TLS flow above before calling
 `verifyGatewayResponse`.
 
 This verifies gateway-service provenance and integrity for the exact completion

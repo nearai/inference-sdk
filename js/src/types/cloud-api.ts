@@ -34,8 +34,18 @@ export type FindModelAttestationForSignatureParams = {
 export type FetchGatewayAttestationParams = {
   readonly signingAlgo?: SigningAlgo;
   /**
+   * The generic client cannot observe the TLS peer certificate, so this may
+   * only be disabled. It defaults to `false`.
+   */
+  readonly includeSpkiFingerprint?: false;
+};
+
+/** Gateway-attestation options supported by the Node-specific client. */
+export type NodeFetchGatewayAttestationParams = {
+  readonly signingAlgo?: SigningAlgo;
+  /**
    * Request a TLS SPKI fingerprint in the Gateway attestation. Defaults to
-   * `true`. Node captures the matching peer fingerprint for this request.
+   * `true`; the Node client captures the matching peer fingerprint.
    */
   readonly includeSpkiFingerprint?: boolean;
 };

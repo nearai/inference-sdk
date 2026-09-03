@@ -51,13 +51,13 @@ connected directly to the model CVM.
 
 ### Verify a gateway attestation
 
-Fetch fresh Gateway evidence to verify a Cloud API Gateway deployment. In
-Node, the SDK captures the SHA-256 SPKI fingerprint of the TLS peer serving
-that exact evidence request and checks it against the quote by default. Browser
-runtimes cannot access the peer certificate, so they must pass
-`includeSpkiFingerprint: false` when fetching; that verifies the
-signer-and-nonce quote layout without making a TLS claim. Gateway evidence does
-not establish model execution.
+Fetch fresh Gateway evidence to verify a Cloud API Gateway deployment. Import
+`AttestationClient` from `verifiable-ai-sdk/node` to capture the SHA-256 SPKI
+fingerprint of the TLS peer serving that exact evidence request and check it
+against the quote by default. The generic `verifiable-ai-sdk` entry point is
+also suitable for browsers; it always uses the signer-and-nonce quote layout
+without making a TLS claim. Gateway evidence does not establish model
+execution.
 
 [Follow the gateway-attestation guide](./docs/verification-guide.md#verify-a-gateway-attestation).
 
@@ -76,10 +76,9 @@ model execution.
 - For response verification, preserve exact request and response bytes; use
   the signature's explicit kind with its matching evidence and response
   verifier.
-- For Gateway attestation, pass the fetch result directly to
-  `verifyGatewayAttestation`. By default it requires a TLS peer fingerprint;
-  Node captures it for the evidence request. Browser callers must pass
-  `includeSpkiFingerprint: false` to `client.fetchGatewayAttestation`.
+- For Gateway attestation, pass the fetched `attestation` and `clientBinding`
+  to `verifyGatewayAttestation`. Use the `/node` client for TLS binding; use
+  the generic client when TLS peer observation is unavailable.
 - Verify raw evidence before using its result for response verification. Decide
   where to verify it again after storage or transfer.
 - Supply a deployment verifier when the application must restrict acceptable
@@ -94,13 +93,11 @@ model execution.
 
 ## Runtime
 
-The package publishes ESM and is developed with Node.js 24. In Node,
-`AttestationClient.fetchGatewayAttestation` uses HTTPS to capture the TLS peer fingerprint for
-the evidence request when `includeSpkiFingerprint` is enabled. Browser consumers
-can bundle the SDK, but browser fetch does not expose peer certificates. They
-must use `includeSpkiFingerprint: false` when fetching Gateway evidence; that
-path returns `tlsBinding.kind: 'none'` after signer-and-nonce quote verification.
-`GatewayAttestation.spkiFingerprint` is Gateway-reported,
+The package publishes ESM and is developed with Node.js 24. Import from
+`verifiable-ai-sdk/node` for the Node client, whose Gateway fetch defaults to
+TLS binding. Import from `verifiable-ai-sdk` for the generic client, whose
+Gateway fetch always returns the no-TLS layout and therefore verifies to
+`tlsBinding.kind: 'none'`. `GatewayAttestation.spkiFingerprint` is Gateway-reported,
 `GatewayClientBinding.spkiFingerprint` is client-observed, and a successful
 `GatewayTlsBinding.spkiFingerprint` is their verified match.
 The default Intel verifier may require `crypto`, `buffer`,

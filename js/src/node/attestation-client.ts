@@ -3,14 +3,28 @@ import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import type { TLSSocket } from 'node:tls';
 import {
-  AttestationClient as BaseAttestationClient,
+  CloudApiClient,
   type GatewayAttestationHttpResponse,
 } from '../core/cloud-api';
+import type {
+  FetchedGatewayAttestation,
+  NodeFetchGatewayAttestationParams,
+} from '../types/cloud-api';
 
 /**
  * Node client that captures the TLS peer for Gateway attestation requests.
  */
-export class AttestationClient extends BaseAttestationClient {
+export class AttestationClient extends CloudApiClient {
+  async fetchGatewayAttestation({
+    signingAlgo,
+    includeSpkiFingerprint = true,
+  }: NodeFetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
+    return this.fetchGatewayAttestationWithOptions({
+      signingAlgo,
+      includeSpkiFingerprint,
+    });
+  }
+
   protected override requestGatewayAttestation(
     request: Request,
     capturePeerSpkiFingerprint: boolean,

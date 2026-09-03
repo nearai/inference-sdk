@@ -4,6 +4,16 @@ This page describes the Cloud request and verification APIs exported by
 `verifiable-ai-sdk`. For workflows and complete code examples, see the
 [verification guide](./verification-guide.md).
 
+## Package entry points
+
+Both entry points export the same verification functions. Their
+`AttestationClient` differs only for Gateway TLS binding.
+
+| Import | Gateway attestation behavior |
+| --- | --- |
+| `verifiable-ai-sdk` | Generic client. It always requests `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Its `includeSpkiFingerprint` option can only be `false`. |
+| `verifiable-ai-sdk/node` | Node client. It captures the TLS peer for its evidence request and requests an SPKI fingerprint by default. Set `includeSpkiFingerprint: false` to use the generic no-TLS flow. |
+
 ## Runtime exports
 
 | Export | Signature or value | Purpose |
@@ -36,7 +46,7 @@ requests or retain their request or response bytes.
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
-| `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. By default it requests an SPKI fingerprint; in Node, that also captures the peer fingerprint for this HTTPS request. |
+| `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
 
@@ -50,7 +60,8 @@ requests or retain their request or response bytes.
 | `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Cloud API default; when verifying a gateway response, use its signature's signing algorithm. This does not select a gateway instance. |
-|  | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true`. When `false`, the response must omit the Gateway SPKI fingerprint and verification uses the signer-and-nonce quote layout. |
+| `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client always requests `include_tls_fingerprint=false`. |
+| `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
 
 ### Attestation fetch result types
 
@@ -69,7 +80,7 @@ attestation verifier.
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 | `GatewayClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
-|  | `spkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. Node supplies it when `includeSpkiFingerprint` is `true`; browser fetch does not expose it. |
+|  | `spkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. The Node client supplies it when `includeSpkiFingerprint` is `true`; the generic client does not. |
 
 ## Model attestation selection
 
@@ -112,10 +123,9 @@ form of these two operations.
 `clientBinding.nonce` must be the nonce returned with the matching evidence.
 The Gateway attestation itself selects the quote layout: a returned
 `spkiFingerprint` requires it to match the client-observed peer; no fingerprint
-uses the signer-and-nonce layout and returns `tlsBinding.kind: 'none'`.
-`fetchGatewayAttestation` requests the fingerprint by default. Browser callers
-should set `includeSpkiFingerprint: false` because browser fetch does not expose
-the peer certificate.
+uses the signer-and-nonce layout and returns `tlsBinding.kind: 'none'`. The
+generic client always uses the latter. The Node client requests and captures the
+fingerprint by default.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for
 the exact completion bytes. It matches the signature to the signer bound to
