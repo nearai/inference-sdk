@@ -23,7 +23,12 @@ import {
   decodeModelAttestationReport,
 } from '../boundaries/cloud-api';
 import { generateNonce, hexToBuffer } from '../utils/common';
-import { ApiError, type ApiFailure, VerificationError } from '../utils/errors';
+import {
+  ApiError,
+  type ApiFailure,
+  inputError,
+  VerificationError,
+} from '../utils/errors';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -436,11 +441,31 @@ function assertSignatureKind(
 function resolveCloudApiBaseUrl(
   baseUrl = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ): string {
-  const resolvedBaseUrl = new URL(baseUrl);
+  let resolvedBaseUrl: URL;
+  try {
+    resolvedBaseUrl = new URL(baseUrl);
+  } catch {
+    throw invalidBaseUrl();
+  }
+  if (
+    (resolvedBaseUrl.protocol !== 'http:' &&
+      resolvedBaseUrl.protocol !== 'https:') ||
+    resolvedBaseUrl.hostname === ''
+  ) {
+    throw invalidBaseUrl();
+  }
   if (!resolvedBaseUrl.pathname.endsWith('/')) {
     resolvedBaseUrl.pathname = `${resolvedBaseUrl.pathname}/`;
   }
   return resolvedBaseUrl.toString();
+}
+
+function invalidBaseUrl(): VerificationError {
+  return inputError({
+    field: 'baseUrl',
+    reason: 'invalid_url',
+    details: { expected: 'an absolute HTTP(S) URL' },
+  });
 }
 
 function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {

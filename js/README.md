@@ -13,9 +13,9 @@ A successful attestation establishes:
   configuration, and runtime measurements are valid;
 - supplied NVIDIA GPU evidence is accepted by the configured verifier for
   model attestations, or can be required by policy; and
-- gateway evidence verifies the Gateway signer and, by default, matches the
-  TLS peer observed by the client to the fingerprint bound into the verified
-  quote.
+- gateway evidence verifies the Gateway signer; the `/node` client also
+  matches the observed TLS peer to the fingerprint bound into the verified
+  quote by default.
 
 When verifying a response, the SDK additionally establishes that a signature
 covers the exact request and response bytes and its signer is bound to the

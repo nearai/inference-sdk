@@ -14,7 +14,7 @@ inference requests or retain completion bytes.
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: String` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. |
-| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, VerificationError>` | Uses an absolute base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, VerificationError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
 
 All client methods below are asynchronous and return `Result<_, SdkError>`.
 
@@ -42,11 +42,14 @@ signing algorithm and requests SPKI fingerprint evidence.
 | `signing_algo` | `Option<SigningAlgo>` | `None` | Optional Gateway signing-algorithm filter. Use a Gateway completion signature's algorithm when verifying that response. |
 | `include_spki_fingerprint` | `bool` | `true` | When true, request Gateway SPKI fingerprint evidence and capture the peer certificate for that HTTPS request. When false, request no fingerprint and do not capture the peer. |
 
+TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
+`false` for an HTTP custom endpoint.
+
 ### Evidence selection
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `&ModelAttestation` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
+| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `Result<&ModelAttestation, SdkError>` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -167,9 +170,36 @@ Gateway `reported_quote_data` is required.
 | `DeploymentVerifier` | `async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError>` | Returns `Ok(())` only for a deployment the application accepts. |
 | `NvidiaEvidenceVerifier` | `async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError>` | Returns `Ok(())` only for GPU evidence the application accepts. |
 
-The default NVIDIA implementation is `NrasNvidiaEvidenceVerifier`; the default
-Intel implementation is `DcapQuoteVerifier`. See the guide for their trust-root
-and JWT/EAT-validation behavior.
+`TcbStatus` is one of `UpToDate`, `SwHardeningNeeded`, `ConfigurationNeeded`,
+`ConfigurationAndSwHardeningNeeded`, `OutOfDate`,
+`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+
+### Built-in verifier helpers
+
+| Export | Construction or signature | Description |
+| --- | --- | --- |
+| `DcapQuoteVerifier` | `DcapQuoteVerifier::default()` or `DcapQuoteVerifier::new(pccs_url)` | Built-in Intel DCAP verifier. Pass a custom PCCS base URL when needed. |
+| `verify_dcap_quote` | `async fn verify_dcap_quote(pccs_url: &str, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | One-off Intel DCAP verification using the supplied PCCS URL. |
+| `NrasNvidiaEvidenceVerifier` | `NrasNvidiaEvidenceVerifier::default()`, `NrasNvidiaEvidenceVerifier::new(url)`, or `NrasNvidiaEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
+
+The default NVIDIA verifier accepts NRAS's documented boolean overall result; it
+does not locally validate the returned JWT/EAT signature. See the guide for the
+trust-root implications.
+
+### Quote and deployment values
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `QuoteVerificationResult` | `tcb_status` | `TcbStatus` | Authenticated TCB status. |
+|  | `advisory_ids` | `Vec<String>` | Authenticated advisory IDs. |
+|  | `debug_enabled` | `bool` | Whether the authenticated quote enables debug mode. |
+|  | `report_data` | `Vec<u8>` | Authenticated quote report data. |
+|  | `mr_config_id` | `Vec<u8>` | Authenticated quote MRCONFIGID. |
+|  | `rt_mr3` | `Vec<u8>` | Authenticated quote RTMR3. |
+| `MeasuredDeployment` | `app_compose` | `String` | Configuration text bound to MRCONFIGID. |
+|  | `runtime_measurements` | `RuntimeMeasurements` | Runtime measurements derived from verified event-log entries. |
+| `RuntimeMeasurements` | `os_image_hash` | `Option<String>` | Optional measured OS image hash. |
+|  | `compose_hash` | `Option<String>` | Optional measured compose hash. |
 
 ## Verified results
 

@@ -75,7 +75,7 @@ export type VerificationFailure =
       code: 'input.invalid';
       details: {
         field: string;
-        reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt';
+        reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt' | 'invalid_url';
         expected?: string;
         expectedBytes?: number;
         actualBytes?: number;
@@ -476,5 +476,7 @@ function formatInputFailure(
         : `${subject} must be ${details.expectedBytes} bytes; received ${details.actualBytes}`;
     case 'invalid_jwt':
       return `${subject} must be a valid JWT`;
+    case 'invalid_url':
+      return `${subject} must be an absolute HTTP(S) URL`;
   }
 }

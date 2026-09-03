@@ -14,6 +14,9 @@ Both entry points export the same verification functions. Their
 | `verifiable-ai-sdk` | Generic client. It defaults to `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Its `includeSpkiFingerprint` option can only be `false`. |
 | `verifiable-ai-sdk/node` | Node client. It captures the TLS peer for its evidence request and requests an SPKI fingerprint by default. Set `includeSpkiFingerprint: false` to use the generic no-TLS flow. |
 
+TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
+`includeSpkiFingerprint: false`.
+
 ## Runtime exports
 
 | Export | Signature or value | Purpose |
@@ -36,7 +39,7 @@ requests or retain their request or response bytes.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
-| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Cloud API base URL. Include the API path when using a custom endpoint. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Cloud API base URL. Include the API path when using a custom endpoint. |
 
 ### Methods
 
@@ -238,6 +241,9 @@ because a byte-exact provider signature would no longer match those bytes.
 | `QuoteVerifier` | `(quote: string) => Awaitable<QuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
 | `NvidiaEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
+
+`Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
+directly or asynchronously.
 
 The default NVIDIA verifier submits GPU evidence to NVIDIA NRAS over HTTPS and
 accepts its documented boolean overall result. It does not locally validate the

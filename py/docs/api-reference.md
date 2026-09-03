@@ -32,7 +32,7 @@ creates a fresh nonce for every attestation fetch.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `api_key` | `str` | Yes | — | Bearer token for signature and evidence requests. |
-| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Cloud API base URL. |
+| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Cloud API base URL. |
 
 ### Completion-signature methods
 
@@ -90,6 +90,7 @@ before verifying it.
 contain a TLS fingerprint and captures the SHA-256 SPKI fingerprint from the
 TLS connection for that exact HTTPS request. With `False`, it requires the
 attestation to omit the fingerprint and does not capture a peer fingerprint.
+TLS binding requires an HTTPS endpoint; use `False` for an HTTP custom endpoint.
 
 | `FetchedGatewayAttestation` field | Type | Description |
 | --- | --- | --- |
@@ -148,7 +149,8 @@ verification checks signer-and-nonce report data and returns
 |  | `signing_address` | `str` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
 | `CompletionSignatureReference` | `kind` | `CompletionSignatureKind` | `provider_tee` or `gateway`. Model-evidence selection accepts only `provider_tee`. |
 |  | `signer` | `SigningIdentity` | Identity used to select evidence. |
-| `CompletionSignature` | `signed_text` | `str` | Text covered by the signature. |
+| `CompletionSignature` | `kind`, `signer` | inherited | The `CompletionSignatureReference` fields that select its verification path and signer. |
+|  | `signed_text` | `str` | Text covered by the signature. |
 |  | `signature` | `str` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 | `AttestationEvidence` | `nonce` | `str` | Nonce echoed by Cloud API. The fetch helper compares it with its generated nonce. |
 |  | `signer` | `SigningIdentity` | Advertised signing identity. |
@@ -161,7 +163,20 @@ verification checks signer-and-nonce report data and returns
 |  | `reported_quote_data` | `str` | Gateway report-data copy required by Gateway verification. |
 
 `CompletionSignatureKind` is `Literal['provider_tee', 'gateway']` and
-`SigningAlgo` is `Literal['ecdsa', 'ed25519']`.
+`SigningAlgo` is `Literal['ecdsa', 'ed25519']`. `AttestationEventLog` is
+`str | list[object]`. `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
+`ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
+`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+
+### Completion signature lookup
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `CompletionSignatureLookup` | `status` | `'found' \| 'unavailable'` | Selects which result field is present. |
+|  | `signature` | `CompletionSignature \| None` | Present when `status == 'found'`. |
+|  | `unavailable` | `SignatureUnavailable \| None` | Present when `status == 'unavailable'`. |
+| `SignatureUnavailable` | `error_code` | `str` | Service-provided unavailable reason. |
+|  | `message` | `str` | Service-provided message. |
 
 ### Policies and verifier callbacks
 
@@ -172,7 +187,7 @@ verification checks signer-and-nonce report data and returns
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
 | `AttestationVerifiers` | `quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
 |  | `deployment` | absent | Optional deployment-acceptance verifier. |
-| `ModelAttestationVerifiers` | `nvidia` | built in | Optional replacement for the NVIDIA NRAS verifier. |
+| `ModelAttestationVerifiers` | `quote`, `deployment`, `nvidia` | built in / absent / built in | Optional quote, deployment, and NVIDIA verifier overrides. |
 | `QuoteVerifier` | `(quote: str) -> QuoteVerificationResult \| Awaitable[QuoteVerificationResult]` | — | Authenticates a quote and returns verified fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
 | `NvidiaEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |

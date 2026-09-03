@@ -185,12 +185,14 @@ fn rejects_a_gateway_signature_when_selecting_model_attestation() {
 
 #[test]
 fn client_rejects_an_invalid_base_url() {
-    let result = AttestationClient::with_base_url("test-key".to_owned(), "://invalid");
+    for base_url in ["://invalid", "/v1", "ftp://cloud.example/v1"] {
+        let result = AttestationClient::with_base_url("test-key".to_owned(), base_url);
 
-    assert!(matches!(
-        result,
-        Err(VerificationError::InvalidInput { ref field, .. }) if field == "base_url"
-    ));
+        assert!(matches!(
+            result,
+            Err(VerificationError::InvalidInput { ref field, .. }) if field == "base_url"
+        ));
+    }
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ exact request and response bytes, then supplies them to the response verifier.
 path and the resulting trust guarantee, not merely the key that signed.
 
 | `signature.kind` | Trust boundary | A successful response verification establishes | It does not establish |
-| --- | --- | --- | --- | --- |
+| --- | --- | --- | --- |
 | `ProviderTee` | The model-serving TEE | A verified model TEE signer signed the exact request and response bytes. | The Cloud API Gateway deployment or TLS identity. |
 | `Gateway` | The NEAR AI Cloud Gateway TEE | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
 
@@ -27,7 +27,7 @@ Both attestation kinds can be verified independently. A completion signature is
 needed only when the claim concerns one particular response.
 
 | Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- |
 | Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetch_model_attestations` → `verify_model_attestation` | The model quote, nonce, signer, measurements, and configured policy checks passed. | That a particular response came from this deployment or that the client connected directly to its CVM. |
 | Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment and, by default, its TLS service identity. | `client.fetch_gateway_attestation` → `verify_gateway_attestation` | The Gateway quote and deployment evidence are verified. With the default fetch options, the observed TLS peer also matches the fingerprint bound into the quote. | That a particular completion was served by that Gateway or that a model executed it. |
 | Verify a model-issued response | The completion signature has `ProviderTee` kind. | `client.fetch_completion_signature` → `client.fetch_model_attestations` → `find_model_attestation_for_signature` → `verify_model_attestation` → `verify_model_response` | A verified model TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS endpoint. |
@@ -187,6 +187,9 @@ async fn verify_gateway_completion(
 }
 ```
 
+This verifies Gateway-service provenance and integrity for the exact request
+and response bytes; it does not establish model execution.
+
 If a runtime does not expose the TLS peer certificate, it must choose the
 signer-and-nonce layout before fetching the evidence. With
 `include_spki_fingerprint: false`, the SDK requests no fingerprint, requires
@@ -217,8 +220,8 @@ async fn verify_without_a_tls_peer(api_key: &str) -> Result<(), Box<dyn std::err
 }
 ```
 
-This verifies Gateway-service provenance and integrity for those bytes; it does
-not establish model execution.
+This still verifies the Gateway deployment, but it does not make a TLS identity
+claim or bind the evidence to a completion response.
 
 ## Policy and trust roots
 

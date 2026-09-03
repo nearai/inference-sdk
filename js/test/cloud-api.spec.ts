@@ -1,5 +1,6 @@
 import type { CompletionSignature, ModelAttestation } from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
+import { AttestationClient as NodeAttestationClient } from '../src/node';
 import { nonce } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -134,6 +135,27 @@ describe('AttestationClient', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+
+  test.each(['not a URL', '/v1', 'ftp://cloud.example/v1'])(
+    'rejects an invalid base URL: %s',
+    (invalidBaseUrl) => {
+      expect(
+        () =>
+          new AttestationClient({ apiKey: 'test', baseUrl: invalidBaseUrl }),
+      ).toThrow(
+        expect.objectContaining({
+          failure: expect.objectContaining({
+            code: 'input.invalid',
+            details: expect.objectContaining({
+              field: 'baseUrl',
+              reason: 'invalid_url',
+              expected: 'an absolute HTTP(S) URL',
+            }),
+          }),
+        }),
+      );
+    },
+  );
 
   describe('model attestations', () => {
     test('fetches model evidence and selects the signer for a model response', async () => {
@@ -445,6 +467,75 @@ describe('AttestationClient', () => {
       expect(new URL(api.request().url).searchParams.get('signing_algo')).toBe(
         'ecdsa',
       );
+    });
+
+    test('Node client defaults to TLS binding and can opt out', async () => {
+      const capturedPeerRequests: boolean[] = [];
+      class TestNodeClient extends NodeAttestationClient {
+        protected override async requestGatewayAttestation(
+          request: Request,
+          capturePeerSpkiFingerprint: boolean,
+        ) {
+          capturedPeerRequests.push(capturePeerSpkiFingerprint);
+          const tlsCertFingerprint = capturePeerSpkiFingerprint
+            ? '33'.repeat(32)
+            : null;
+          return {
+            response: jsonResponse(
+              gatewayReport(requestNonce(request), {
+                tls_cert_fingerprint: tlsCertFingerprint,
+              }),
+            ),
+            ...(capturePeerSpkiFingerprint
+              ? { peerSpkiFingerprint: '33'.repeat(32) }
+              : {}),
+          };
+        }
+      }
+
+      const client = new TestNodeClient({ apiKey: 'test', baseUrl });
+      const withTls = await client.fetchGatewayAttestation();
+      const withoutTls = await client.fetchGatewayAttestation({
+        includeSpkiFingerprint: false,
+      });
+
+      expect(capturedPeerRequests).toEqual([true, false]);
+      expect(withTls.attestation.spkiFingerprint).toBe('33'.repeat(32));
+      expect(withTls.clientBinding.spkiFingerprint).toBe('33'.repeat(32));
+      expect(withoutTls.attestation.spkiFingerprint).toBeUndefined();
+      expect(withoutTls.clientBinding.spkiFingerprint).toBeUndefined();
+    });
+
+    test('Node client supports no-TLS Gateway evidence from an HTTP endpoint', async () => {
+      let receivedRequest: Request | undefined;
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          receivedRequest = new Request(input, init);
+          return jsonResponse(
+            gatewayReport(requestNonce(receivedRequest), {
+              tls_cert_fingerprint: null,
+            }),
+          );
+        });
+      const client = new NodeAttestationClient({
+        apiKey: 'test',
+        baseUrl: 'http://cloud.example/v1',
+      });
+
+      const fetched = await client.fetchGatewayAttestation({
+        includeSpkiFingerprint: false,
+      });
+
+      expect(fetched.attestation.spkiFingerprint).toBeUndefined();
+      if (receivedRequest === undefined) {
+        throw new Error('Expected an HTTP Gateway evidence request');
+      }
+      expect(
+        new URL(receivedRequest.url).searchParams.get(
+          'include_tls_fingerprint',
+        ),
+      ).toBe('false');
     });
 
     test('rejects a Gateway TLS fingerprint returned when it was not requested', async () => {

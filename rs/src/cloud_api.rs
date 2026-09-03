@@ -425,6 +425,9 @@ struct CloudApiResponse {
 
 fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
     let mut url = Url::parse(value).map_err(|_| invalid_base_url())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(invalid_base_url());
+    }
     if !url.path().ends_with('/') {
         let path = format!("{}/", url.path());
         url.set_path(&path);
@@ -435,7 +438,7 @@ fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
 fn invalid_base_url() -> VerificationError {
     VerificationError::InvalidInput {
         field: "base_url".to_owned(),
-        reason: "expected an absolute URL".to_owned(),
+        reason: "expected an absolute HTTP(S) URL".to_owned(),
     }
 }
 

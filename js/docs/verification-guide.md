@@ -235,9 +235,10 @@ bytes: the signature is valid and its signer is bound to the verified gateway
 deployment evidence. It does not establish model execution; use a
 `provider_tee` signature and model evidence for that claim.
 
-Gateway attestation accepts `AttestationPolicy` for quote and deployment
-acceptance, except it has no GPU option. Whether TLS binding is present comes
-from the Gateway attestation returned by Cloud API.
+For Gateway attestation, `AttestationPolicy` controls accepted TCB statuses.
+Use `verifiers.quote` or `verifiers.deployment` for custom quote or deployment
+acceptance. Whether TLS binding is present comes from the Gateway attestation
+returned by Cloud API.
 
 ## Set policy and trust roots
 

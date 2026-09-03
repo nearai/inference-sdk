@@ -29,11 +29,17 @@ export class AttestationClient extends CloudApiClient {
     request: Request,
     capturePeerSpkiFingerprint: boolean,
   ): Promise<GatewayAttestationHttpResponse> {
-    return requestGatewayAttestation(request, capturePeerSpkiFingerprint);
+    if (new URL(request.url).protocol !== 'https:') {
+      return super.requestGatewayAttestation(
+        request,
+        capturePeerSpkiFingerprint,
+      );
+    }
+    return requestHttpsGatewayAttestation(request, capturePeerSpkiFingerprint);
   }
 }
 
-function requestGatewayAttestation(
+function requestHttpsGatewayAttestation(
   request: Request,
   capturePeerSpkiFingerprint: boolean,
 ): Promise<GatewayAttestationHttpResponse> {
