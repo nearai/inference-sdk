@@ -55,7 +55,7 @@ Fetch fresh Gateway evidence to verify a Cloud API Gateway deployment. Import
 `AttestationClient` from `verifiable-ai-sdk/node` to capture the SHA-256 SPKI
 fingerprint of the TLS peer serving that exact evidence request and check it
 against the quote by default. The generic `verifiable-ai-sdk` entry point is
-also suitable for browsers; it always uses the signer-and-nonce quote layout
+also suitable for browsers; it defaults to the signer-and-nonce quote layout
 without making a TLS claim. Gateway evidence does not establish model
 execution.
 
@@ -96,7 +96,7 @@ model execution.
 The package publishes ESM and is developed with Node.js 24. Import from
 `verifiable-ai-sdk/node` for the Node client, whose Gateway fetch defaults to
 TLS binding. Import from `verifiable-ai-sdk` for the generic client, whose
-Gateway fetch always returns the no-TLS layout and therefore verifies to
+Gateway fetch defaults to the no-TLS layout and therefore verifies to
 `tlsBinding.kind: 'none'`. `GatewayAttestation.spkiFingerprint` is Gateway-reported,
 `GatewayClientBinding.spkiFingerprint` is client-observed, and a successful
 `GatewayTlsBinding.spkiFingerprint` is their verified match.

@@ -11,7 +11,7 @@ Both entry points export the same verification functions. Their
 
 | Import | Gateway attestation behavior |
 | --- | --- |
-| `verifiable-ai-sdk` | Generic client. It always requests `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Its `includeSpkiFingerprint` option can only be `false`. |
+| `verifiable-ai-sdk` | Generic client. It defaults to `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Its `includeSpkiFingerprint` option can only be `false`. |
 | `verifiable-ai-sdk/node` | Node client. It captures the TLS peer for its evidence request and requests an SPKI fingerprint by default. Set `includeSpkiFingerprint: false` to use the generic no-TLS flow. |
 
 ## Runtime exports
@@ -60,7 +60,7 @@ requests or retain their request or response bytes.
 | `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Cloud API default; when verifying a gateway response, use its signature's signing algorithm. This does not select a gateway instance. |
-| `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client always requests `include_tls_fingerprint=false`. |
+| `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
 
 ### Attestation fetch result types
@@ -124,7 +124,7 @@ form of these two operations.
 The Gateway attestation itself selects the quote layout: a returned
 `spkiFingerprint` requires it to match the client-observed peer; no fingerprint
 uses the signer-and-nonce layout and returns `tlsBinding.kind: 'none'`. The
-generic client always uses the latter. The Node client requests and captures the
+generic client defaults to the latter. The Node client requests and captures the
 fingerprint by default.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for

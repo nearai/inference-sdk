@@ -323,15 +323,16 @@ export class CloudApiClient {
  * functions remain standalone.
  *
  * Standard Fetch does not expose the TLS peer certificate. Gateway evidence
- * therefore always uses the signer-and-nonce quote layout in this client.
+ * therefore defaults to the signer-and-nonce quote layout in this client.
  */
 export class AttestationClient extends CloudApiClient {
   async fetchGatewayAttestation({
     signingAlgo,
+    includeSpkiFingerprint = false,
   }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
     return this.fetchGatewayAttestationWithOptions({
       signingAlgo,
-      includeSpkiFingerprint: false,
+      includeSpkiFingerprint,
     });
   }
 }

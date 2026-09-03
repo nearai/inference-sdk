@@ -177,7 +177,7 @@ fingerprint, so verification requires the two to match. A successful result
 then has `tlsBinding.kind: 'attested'`.
 
 The generic entry point, including browser use, cannot observe a peer
-certificate. It always requests the signer-and-nonce quote layout instead:
+certificate. It defaults to the signer-and-nonce quote layout instead:
 
 ```ts
 import {
