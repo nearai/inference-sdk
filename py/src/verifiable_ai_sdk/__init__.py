@@ -19,9 +19,7 @@ from .types.attestation_model import ModelAttestation
 from .types.chat import (
     CompletionSignature,
     CompletionSignatureKind,
-    CompletionSignatureLookup,
     CompletionSignatureReference,
-    SignatureUnavailable,
 )
 from .types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
@@ -78,8 +76,6 @@ __all__ = [
     'CompletionSignature',
     'CompletionSignatureKind',
     'CompletionSignatureReference',
-    'CompletionSignatureLookup',
-    'SignatureUnavailable',
     'AttestationPolicy',
     'ModelAttestationPolicy',
     'AttestationVerifiers',

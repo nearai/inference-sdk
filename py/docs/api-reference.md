@@ -11,8 +11,7 @@ verification is synchronous.
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
 | `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns Cloud API credentials and retrieves signatures and evidence. |
-| `client.lookup_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignatureLookup` | Fetches a signature or a service-provided unavailable result. |
-| `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature or raises when none is available. |
+| `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches model evidence; optional signer fields narrow the API response. |
 | `client.fetch_model_attestation_for_signature` | `(model, signature)` | `FetchedModelAttestation` | Fetches and locally selects model evidence for a `provider_tee` signer. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway evidence, optionally including its TLS fingerprint. |
@@ -38,14 +37,13 @@ creates a fresh nonce for every attestation fetch.
 
 | API | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `lookup_completion_signature` and `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
+| `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Omit it for the service default. |
 
-`client.lookup_completion_signature()` returns `CompletionSignatureLookup`,
-whose `status` is either `'found'` with `signature`, or `'unavailable'` with
-the service's `unavailable` error. `client.fetch_completion_signature()` is the
-strict form: an unavailable 2xx response raises `ApiError` with
-`api.completion_signature_unavailable`.
+`client.fetch_completion_signature()` raises `ApiError` when Cloud API returns
+an unavailable 2xx response. The error code is
+`api.completion_signature_unavailable`; its details contain
+`providerErrorCode` and `providerMessage` from the service response.
 
 ### Model-attestation methods
 
@@ -167,16 +165,6 @@ verification checks signer-and-nonce report data and returns
 `str | list[object]`. `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
 `OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
-
-### Completion signature lookup
-
-| Type | Field | Type | Description |
-| --- | --- | --- | --- |
-| `CompletionSignatureLookup` | `status` | `'found' \| 'unavailable'` | Selects which result field is present. |
-|  | `signature` | `CompletionSignature \| None` | Present when `status == 'found'`. |
-|  | `unavailable` | `SignatureUnavailable \| None` | Present when `status == 'unavailable'`. |
-| `SignatureUnavailable` | `error_code` | `str` | Service-provided unavailable reason. |
-|  | `message` | `str` | Service-provided message. |
 
 ### Policies and verifier callbacks
 

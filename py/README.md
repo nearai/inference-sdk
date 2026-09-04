@@ -58,11 +58,10 @@ when it is present; never parse the human-readable message.
 succeed. It does not mean that re-verifying the same evidence will succeed or
 that an inference should be replayed.
 
-`client.fetch_completion_signature()` is the strict method: a successful Cloud
-API unavailable envelope raises `ApiError` with
-`api.completion_signature_unavailable`. Use
-`client.lookup_completion_signature()` when that unavailable state is a normal
-application outcome.
+`client.fetch_completion_signature()` returns a completion signature or raises
+`ApiError`. A successful Cloud API unavailable envelope raises
+`api.completion_signature_unavailable`; its details preserve the provider's
+error code and message.
 
 ## Development checks
 

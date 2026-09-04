@@ -247,18 +247,17 @@ returned JWT/EAT signature. Set `verifiers.nvidia` when your trust model needs
 local JWT/EAT validation, different trust roots, or another verification
 service. Every verifier callback must return only for evidence it accepts.
 
-## Handle signature lookup and verification errors
+## Handle signature retrieval and verification errors
 
-`client.fetch_completion_signature()` is the strict path: it returns one
-completion signature or raises a structured error. Use
-`client.lookup_completion_signature()` when the application needs to handle a
-successful unavailable envelope itself. It returns either:
+`client.fetch_completion_signature()` returns one completion signature or
+raises a structured error. A successful unavailable response raises `ApiError`
+with `api.completion_signature_unavailable`; its details contain the service's
+`providerErrorCode` and `providerMessage`.
 
-- `status == 'found'`, with a completion signature; or
-- `status == 'unavailable'`, with the service error code and message.
-
-A pending or unknown signature can instead produce HTTP 404. That remains a
-retryable `api.http_status` error; it is not an unavailable lookup result.
+An HTTP 404 also raises `api.http_status` and remains retryable. It means Cloud
+API has no stored signature for that ID at that time. Retry only when the
+application has reason to expect a later signature, such as before the
+completion has reached its terminal state.
 
 `AttestationClient` methods and evidence selection raise `ApiError` for request,
 HTTP, response-format, nonce, unavailable-signature, or candidate-selection
@@ -270,12 +269,6 @@ raise `VerificationError`.
 | `error.failure.code` | Stable code for an application to branch on. |
 | `error.failure.details` (when present) | Code-specific diagnostic context. Do not parse `error.message`. |
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
-
-A 2xx unavailable response from `client.fetch_completion_signature()` is an
-`ApiError` with code `api.completion_signature_unavailable`: the strict helper
-could not return the signature it promises. Prefer
-`client.lookup_completion_signature()` when unavailability is an ordinary
-application state.
 
 ```python
 from verifiable_ai_sdk import (
@@ -293,7 +286,7 @@ except ApiError as error:
         case 'api.completion_signature_unavailable':
             print('The completion has no usable signature')
         case 'api.http_status' if error.retryable:
-            print('A later signature lookup may succeed')
+            print('A later signature request may succeed')
         case _:
             raise
 except VerificationError as error:

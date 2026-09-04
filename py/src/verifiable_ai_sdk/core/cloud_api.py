@@ -23,9 +23,7 @@ from ..types.attestation_gateway import GatewayAttestation
 from ..types.attestation_model import ModelAttestation
 from ..types.chat import (
     CompletionSignature,
-    CompletionSignatureLookup,
     CompletionSignatureReference,
-    SignatureUnavailable,
 )
 from ..types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
@@ -182,13 +180,13 @@ class AttestationClient:
             ),
         )
 
-    async def lookup_completion_signature(
+    async def fetch_completion_signature(
         self,
         completion_id: str,
         *,
         signing_algo: SigningAlgo | None = None,
-    ) -> CompletionSignatureLookup:
-        """Look up one signature without treating a 2xx unavailable envelope as an error."""
+    ) -> CompletionSignature:
+        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
 
         query: dict[str, str] = {}
         if signing_algo is not None:
@@ -202,27 +200,7 @@ class AttestationClient:
             ),
             'completion_signature',
         )
-        return _decode_completion_signature_lookup(response.json)
-
-    async def fetch_completion_signature(
-        self,
-        completion_id: str,
-        *,
-        signing_algo: SigningAlgo | None = None,
-    ) -> CompletionSignature:
-        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
-
-        lookup = await self.lookup_completion_signature(
-            completion_id,
-            signing_algo=signing_algo,
-        )
-        if lookup.status == 'found' and lookup.signature is not None:
-            return lookup.signature
-        assert lookup.unavailable is not None
-        raise api_failure(
-            'api.completion_signature_unavailable',
-            {'providerErrorCode': lookup.unavailable.error_code},
-        )
+        return _decode_completion_signature(response.json)
 
 
 def find_model_attestation_for_signature(
@@ -337,30 +315,28 @@ def _map_gateway_attestation(
     )
 
 
-def _decode_completion_signature_lookup(value: object) -> CompletionSignatureLookup:
+def _decode_completion_signature(value: object) -> CompletionSignature:
     if isinstance(value, dict) and not (SIGNATURE_RESPONSE_FIELDS & set(value)):
         try:
             unavailable = CloudUnavailableSignatureSchema.model_validate(value)
         except ValidationError as error:
             _raise_invalid_wire_response(error, root='signature')
-        return CompletionSignatureLookup(
-            status='unavailable',
-            unavailable=SignatureUnavailable(
-                error_code=unavailable.error_code, message=unavailable.message
-            ),
+        raise api_failure(
+            'api.completion_signature_unavailable',
+            {
+                'providerErrorCode': unavailable.error_code,
+                'providerMessage': unavailable.message,
+            },
         )
     try:
         raw = CloudCompletionSignatureSchema.model_validate(value)
     except ValidationError as error:
         _raise_invalid_wire_response(error, root='signature')
-    return CompletionSignatureLookup(
-        status='found',
-        signature=CompletionSignature(
-            kind=raw.signature_kind,
-            signed_text=raw.text,
-            signature=raw.signature,
-            signer=_api_signer(raw.signing_algo, raw.signing_address, 'signature'),
-        ),
+    return CompletionSignature(
+        kind=raw.signature_kind,
+        signed_text=raw.text,
+        signature=raw.signature,
+        signer=_api_signer(raw.signing_algo, raw.signing_address, 'signature'),
     )
 
 

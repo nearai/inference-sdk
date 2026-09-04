@@ -162,7 +162,8 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
         case 'api.completion_signature_unavailable':
             return (
                 f'[{code}] Cloud API did not provide a completion signature '
-                f'({_detail(details, "providerErrorCode")})'
+                f'({_detail(details, "providerErrorCode")}): '
+                f'{_detail(details, "providerMessage")}'
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'

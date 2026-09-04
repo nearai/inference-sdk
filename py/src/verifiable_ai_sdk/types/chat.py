@@ -23,18 +23,3 @@ class CompletionSignature(CompletionSignatureReference):
 
     signed_text: str
     signature: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class SignatureUnavailable:
-    error_code: str
-    message: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class CompletionSignatureLookup:
-    """Either a found signature or the service's non-error unavailable state."""
-
-    status: Literal['found', 'unavailable']
-    signature: CompletionSignature | None = None
-    unavailable: SignatureUnavailable | None = None

@@ -467,27 +467,51 @@ async def test_gateway_helper_rejects_spki_fingerprint_when_not_requested(
     }
 
 
-async def test_completion_signature_lookup_preserves_unavailable_state(
+async def test_fetch_completion_signature_maps_unavailable_response_to_api_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def unavailable(_: str, __: Mapping[str, str]) -> FetchResponse:
         return FetchResponse(
             status=200,
-            body=json.dumps({'error_code': 'pending', 'message': 'wait'}).encode(),
+            body=json.dumps(
+                {
+                    'error_code': 'STREAM_DISCONNECTED',
+                    'message': 'Verification not available due to disconnection.',
+                }
+            ).encode(),
         )
 
     use_fake_cloud_api_fetch(monkeypatch, unavailable)
 
-    lookup = await cloud_client().lookup_completion_signature('completion-id')
-    assert lookup.status == 'unavailable'
-    assert lookup.unavailable is not None
-    assert lookup.unavailable.error_code == 'pending'
     with pytest.raises(ApiError) as unavailable_error:
         await cloud_client().fetch_completion_signature('completion-id')
     assert (
         unavailable_error.value.failure.code == 'api.completion_signature_unavailable'
     )
-    assert unavailable_error.value.failure.details == {'providerErrorCode': 'pending'}
+    assert unavailable_error.value.failure.details == {
+        'providerErrorCode': 'STREAM_DISCONNECTED',
+        'providerMessage': 'Verification not available due to disconnection.',
+    }
+    assert unavailable_error.value.retryable is False
+
+
+async def test_fetch_completion_signature_marks_not_found_as_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def not_found(_: str, __: Mapping[str, str]) -> FetchResponse:
+        return FetchResponse(status=404, body=b'not found')
+
+    use_fake_cloud_api_fetch(monkeypatch, not_found)
+
+    with pytest.raises(ApiError) as not_found_error:
+        await cloud_client().fetch_completion_signature('completion-id')
+
+    assert not_found_error.value.failure.code == 'api.http_status'
+    assert not_found_error.value.failure.details == {
+        'resource': 'completion_signature',
+        'status': 404,
+    }
+    assert not_found_error.value.retryable is True
 
 
 @pytest.mark.parametrize(
@@ -497,7 +521,7 @@ async def test_completion_signature_lookup_preserves_unavailable_state(
         ('ed25519', 'gateway', '55' * 32),
     ],
 )
-async def test_completion_signature_lookup_returns_found_signature(
+async def test_fetch_completion_signature_returns_found_signature(
     monkeypatch: pytest.MonkeyPatch,
     signing_algo: str,
     kind: str,
@@ -517,15 +541,13 @@ async def test_completion_signature_lookup_returns_found_signature(
 
     use_fake_cloud_api_fetch(monkeypatch, found)
 
-    lookup = await cloud_client().lookup_completion_signature(
+    signature = await cloud_client().fetch_completion_signature(
         'completion-id',
         signing_algo=signing_algo,
     )
 
-    assert lookup.status == 'found'
-    assert lookup.signature is not None
-    assert lookup.signature.kind == kind
-    assert lookup.signature.signer == SigningIdentity(
+    assert signature.kind == kind
+    assert signature.signer == SigningIdentity(
         signing_algo=signing_algo,
         signing_address=signing_address,
     )
@@ -533,31 +555,7 @@ async def test_completion_signature_lookup_returns_found_signature(
     assert parse_qs(urlsplit(seen_url).query) == {'signing_algo': [signing_algo]}
 
 
-async def test_fetch_completion_signature_returns_a_found_signature(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    expected = CompletionSignature(
-        kind='provider_tee',
-        signed_text='provider_tee:request:response',
-        signature='aa',
-        signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
-    )
-
-    async def found(_: str, __: Mapping[str, str]) -> FetchResponse:
-        return completion_signature_response(
-            signing_algo='ecdsa',
-            kind='provider_tee',
-            signing_address=SIGNING_ADDRESS,
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, found)
-
-    signature = await cloud_client().fetch_completion_signature('completion-id')
-
-    assert signature == expected
-
-
-async def test_completion_signature_lookup_requires_signature_kind(
+async def test_fetch_completion_signature_requires_signature_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def missing_kind(_: str, __: Mapping[str, str]) -> FetchResponse:
