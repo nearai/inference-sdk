@@ -5,7 +5,8 @@ import os
 import aiohttp
 from verifiable_ai_sdk import (
     AttestationClient,
-    find_model_attestation_for_signature,
+    VerifiedGatewayAttestation,
+    VerifiedModelAttestation,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
@@ -13,8 +14,32 @@ from verifiable_ai_sdk import (
 )
 
 
-API_URL = "https://cloud-api.near.ai/v1/chat/completions"
-MODEL = "z-ai/glm-5.2"
+API_URL = 'https://cloud-api.near.ai/v1/chat/completions'
+MODEL = 'z-ai/glm-5.2'
+SIGNING_ALGO = 'ecdsa'
+
+
+async def verify_gateway_deployment(
+    client: AttestationClient,
+) -> VerifiedGatewayAttestation:
+    fetched = await client.fetch_gateway_attestation(signing_algo=SIGNING_ALGO)
+    return await verify_gateway_attestation(
+        fetched.attestation,
+        fetched.client_binding,
+    )
+
+
+async def verify_model_deployment(
+    client: AttestationClient,
+) -> VerifiedModelAttestation:
+    fetched = await client.fetch_model_attestations(
+        MODEL,
+        signing_algo=SIGNING_ALGO,
+    )
+    return await verify_model_attestation(
+        fetched.attestations[0],
+        fetched.client_binding,
+    )
 
 
 async def fetch_completion(
@@ -22,25 +47,25 @@ async def fetch_completion(
 ) -> tuple[bytes, bytes, str]:
     request_body = json.dumps(
         {
-            "model": MODEL,
-            "messages": [{"role": "user", "content": "Reply with the word ok."}],
-            "stream": stream,
-            "max_tokens": 8,
+            'model': MODEL,
+            'messages': [{'role': 'user', 'content': 'Reply with the word ok.'}],
+            'stream': stream,
+            'max_tokens': 8,
         },
-        separators=(",", ":"),
+        separators=(',', ':'),
     ).encode()
     headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept-Encoding": "identity",
-        "x-no-aliasing": "true",
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'identity',
+        'x-no-aliasing': 'true',
     }
     async with session.post(API_URL, data=request_body, headers=headers) as response:
         response_body = await response.read()
         if not response.ok:
             raise RuntimeError(
-                f"Completion request failed ({response.status}): "
-                f"{response_body.decode(errors='replace')}"
+                f'Completion request failed ({response.status}): '
+                f'{response_body.decode(errors="replace")}'
             )
 
     # Keep these original bytes unchanged for response-signature verification.
@@ -50,22 +75,22 @@ async def fetch_completion(
 def read_completion_id(response_body: bytes, stream: bool) -> str:
     if not stream:
         completion = json.loads(response_body)
-        completion_id = completion.get("id") if isinstance(completion, dict) else None
+        completion_id = completion.get('id') if isinstance(completion, dict) else None
         if isinstance(completion_id, str):
             return completion_id
-        raise RuntimeError("Completion response did not contain an id")
+        raise RuntimeError('Completion response did not contain an id')
 
     for line in response_body.decode().splitlines():
-        if not line.startswith("data: ") or line == "data: [DONE]":
+        if not line.startswith('data: ') or line == 'data: [DONE]':
             continue
         try:
-            event = json.loads(line.removeprefix("data: "))
+            event = json.loads(line.removeprefix('data: '))
         except json.JSONDecodeError:
             continue
-        completion_id = event.get("id") if isinstance(event, dict) else None
+        completion_id = event.get('id') if isinstance(event, dict) else None
         if isinstance(completion_id, str):
             return completion_id
-    raise RuntimeError("Streaming completion response did not contain an id")
+    raise RuntimeError('Streaming completion response did not contain an id')
 
 
 async def verify_completion(
@@ -73,49 +98,64 @@ async def verify_completion(
     session: aiohttp.ClientSession,
     api_key: str,
     stream: bool,
+    verified_gateway_attestation: VerifiedGatewayAttestation,
+    verified_model_attestation: VerifiedModelAttestation,
 ) -> None:
     request_body, response_body, completion_id = await fetch_completion(
         session, api_key, stream
     )
-    signature = await client.fetch_completion_signature(completion_id)
-    label = "Streaming" if stream else "Non-streaming"
+    signature = await client.fetch_completion_signature(
+        completion_id,
+        signing_algo=SIGNING_ALGO,
+    )
+    label = 'Streaming' if stream else 'Non-streaming'
 
-    if signature.kind == "provider_tee":
-        fetched = await client.fetch_model_attestations(MODEL)
-        attestation = find_model_attestation_for_signature(
-            fetched.attestations, signature
-        )
-        verified_attestation = await verify_model_attestation(
-            attestation, fetched.client_binding
-        )
+    if signature.kind == 'provider_tee':
         verify_model_response(
-            request_body, response_body, signature, verified_attestation
+            request_body,
+            response_body,
+            signature,
+            verified_model_attestation,
         )
-        print(f"{label}: verified a model-serving TEE signature.")
+        print(f'{label}: verified a model-serving TEE signature.')
         return
 
-    fetched = await client.fetch_gateway_attestation(
-        signing_algo=signature.signer.signing_algo
-    )
-    verified_attestation = await verify_gateway_attestation(
-        fetched.attestation, fetched.client_binding
-    )
     verify_gateway_response(
-        request_body, response_body, signature, verified_attestation
+        request_body,
+        response_body,
+        signature,
+        verified_gateway_attestation,
     )
-    print(f"{label}: verified a Gateway signature.")
+    print(f'{label}: verified a Gateway signature.')
 
 
 async def main() -> None:
-    api_key = os.environ.get("NEARAI_API_KEY")
+    api_key = os.environ.get('NEARAI_API_KEY')
     if not api_key:
-        raise RuntimeError("NEARAI_API_KEY is required")
+        raise RuntimeError('NEARAI_API_KEY is required')
 
     client = AttestationClient(api_key)
     async with aiohttp.ClientSession(auto_decompress=False) as session:
-        await verify_completion(client, session, api_key, stream=False)
-        await verify_completion(client, session, api_key, stream=True)
+        verified_gateway_attestation = await verify_gateway_deployment(client)
+        verified_model_attestation = await verify_model_deployment(client)
+        print('Gateway and model deployments verified. Sending completions.')
+        await verify_completion(
+            client,
+            session,
+            api_key,
+            stream=False,
+            verified_gateway_attestation=verified_gateway_attestation,
+            verified_model_attestation=verified_model_attestation,
+        )
+        await verify_completion(
+            client,
+            session,
+            api_key,
+            stream=True,
+            verified_gateway_attestation=verified_gateway_attestation,
+            verified_model_attestation=verified_model_attestation,
+        )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
