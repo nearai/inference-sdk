@@ -237,18 +237,6 @@ pub struct CompletionSignature {
     pub signer: SigningIdentity,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SignatureUnavailable {
-    pub error_code: String,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CompletionSignatureLookup {
-    Found(CompletionSignature),
-    Unavailable(SignatureUnavailable),
-}
-
 /// Model evidence and the client values used to obtain it.
 #[derive(Clone, Debug)]
 pub struct FetchedModelAttestation {

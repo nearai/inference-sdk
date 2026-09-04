@@ -1,10 +1,9 @@
 use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    CompletionSignatureLookup, FetchedGatewayAttestation, FetchedModelAttestation,
-    FetchedModelAttestations, GatewayAttestation, GatewayAttestationFetchOptions,
-    GatewayClientBinding, ModelAttestation, ModelClientBinding, SignatureUnavailable, SigningAlgo,
-    SigningIdentity,
+    FetchedGatewayAttestation, FetchedModelAttestation, FetchedModelAttestations,
+    GatewayAttestation, GatewayAttestationFetchOptions, GatewayClientBinding, ModelAttestation,
+    ModelClientBinding, SigningAlgo, SigningIdentity,
 };
 use crate::util::{decode_hex, generate_nonce, require_hex_length, sha256};
 use reqwest::{
@@ -242,14 +241,17 @@ impl AttestationClient {
         })
     }
 
-    /// Look up a completion signature, optionally filtered by signing
-    /// algorithm, without treating a 2xx unavailable envelope as an error. A
-    /// pending 404 remains a retryable HTTP error.
-    pub async fn lookup_completion_signature(
+    /// Fetch a completion signature, optionally filtered by signing algorithm.
+    ///
+    /// A valid 2xx unavailable envelope becomes
+    /// [`ApiError::CompletionSignatureUnavailable`]. A 404 remains a
+    /// retryable HTTP error because the completion may not have reached its
+    /// terminal state yet.
+    pub async fn fetch_completion_signature(
         &self,
         completion_id: &str,
         signing_algo: Option<SigningAlgo>,
-    ) -> Result<CompletionSignatureLookup, SdkError> {
+    ) -> Result<CompletionSignature, SdkError> {
         let mut url = self.endpoint("signature")?;
         url.path_segments_mut()
             .map_err(|_| VerificationError::InvalidInput {
@@ -269,36 +271,7 @@ impl AttestationClient {
             ApiResource::CompletionSignature,
             "signature",
         )?;
-        map_completion_signature_lookup(response).map_err(Into::into)
-    }
-
-    /// Fetch a completion signature, optionally filtered by signing algorithm,
-    /// treating a 2xx unavailable envelope as an API error. Use
-    /// [`Self::lookup_completion_signature`] when that unavailable state is
-    /// ordinary application control flow.
-    pub async fn fetch_completion_signature(
-        &self,
-        completion_id: &str,
-        signing_algo: Option<SigningAlgo>,
-    ) -> Result<CompletionSignature, SdkError> {
-        require_completion_signature(
-            self.lookup_completion_signature(completion_id, signing_algo)
-                .await?,
-        )
-        .map_err(Into::into)
-    }
-}
-
-fn require_completion_signature(
-    lookup: CompletionSignatureLookup,
-) -> Result<CompletionSignature, ApiError> {
-    match lookup {
-        CompletionSignatureLookup::Found(signature) => Ok(signature),
-        CompletionSignatureLookup::Unavailable(unavailable) => {
-            Err(ApiError::CompletionSignatureUnavailable {
-                provider_error_code: unavailable.error_code,
-            })
-        }
+        map_completion_signature(response).map_err(Into::into)
     }
 }
 
@@ -613,11 +586,14 @@ fn validate_api_signing_identity(
     Ok(())
 }
 
-fn map_completion_signature_lookup(
+fn map_completion_signature(
     value: WireCompletionSignatureResponse,
-) -> Result<CompletionSignatureLookup, ApiError> {
-    if let Some(unavailable) = value.unavailable() {
-        return Ok(CompletionSignatureLookup::Unavailable(unavailable));
+) -> Result<CompletionSignature, ApiError> {
+    if let Some((provider_error_code, provider_message)) = value.unavailable() {
+        return Err(ApiError::CompletionSignatureUnavailable {
+            provider_error_code: provider_error_code.to_owned(),
+            provider_message: provider_message.to_owned(),
+        });
     }
     let signature = value.require_signature()?;
     validate_api_signing_identity(
@@ -625,7 +601,7 @@ fn map_completion_signature_lookup(
         &signature.signing_address,
         "signature.signing_address",
     )?;
-    Ok(CompletionSignatureLookup::Found(CompletionSignature {
+    Ok(CompletionSignature {
         kind: signature.signature_kind,
         signed_text: signature.text,
         signature: signature.signature,
@@ -633,7 +609,7 @@ fn map_completion_signature_lookup(
             signing_algo: signature.signing_algo,
             signing_address: signature.signing_address,
         },
-    }))
+    })
 }
 
 #[derive(Deserialize)]
@@ -724,7 +700,7 @@ struct WireCompletionSignatureResponse {
 }
 
 impl WireCompletionSignatureResponse {
-    fn unavailable(&self) -> Option<SignatureUnavailable> {
+    fn unavailable(&self) -> Option<(&str, &str)> {
         let (Some(error_code), Some(message)) = (&self.error_code, &self.message) else {
             return None;
         };
@@ -734,27 +710,18 @@ impl WireCompletionSignatureResponse {
             && self.signing_algo.is_missing()
             && self.signature_kind.is_missing()
         {
-            return Some(SignatureUnavailable {
-                error_code: error_code.clone(),
-                message: message.clone(),
-            });
+            return Some((error_code, message));
         }
         None
     }
 
     fn require_signature(self) -> Result<WireCompletionSignature, ApiError> {
         Ok(WireCompletionSignature {
-            text: require_completion_signature_field(self.text, "text")?,
-            signature: require_completion_signature_field(self.signature, "signature")?,
-            signing_address: require_completion_signature_field(
-                self.signing_address,
-                "signing_address",
-            )?,
-            signing_algo: require_completion_signature_field(self.signing_algo, "signing_algo")?,
-            signature_kind: require_completion_signature_field(
-                self.signature_kind,
-                "signature_kind",
-            )?,
+            text: require_signature_field(self.text, "text")?,
+            signature: require_signature_field(self.signature, "signature")?,
+            signing_address: require_signature_field(self.signing_address, "signing_address")?,
+            signing_algo: require_signature_field(self.signing_algo, "signing_algo")?,
+            signature_kind: require_signature_field(self.signature_kind, "signature_kind")?,
         })
     }
 }
@@ -799,7 +766,7 @@ struct WireCompletionSignature {
     signature_kind: CompletionSignatureKind,
 }
 
-fn require_completion_signature_field<T>(
+fn require_signature_field<T>(
     value: OptionalSignatureField<T>,
     field: &str,
 ) -> Result<T, ApiError> {
@@ -1080,7 +1047,7 @@ mod tests {
                 ApiResource::CompletionSignature,
                 "signature",
             )
-            .and_then(map_completion_signature_lookup)
+            .and_then(map_completion_signature)
             .unwrap_err();
             assert!(matches!(error, ApiError::InvalidResponse { .. }));
         }
@@ -1090,40 +1057,21 @@ mod tests {
     fn signature_fields_prevent_an_error_envelope_from_being_treated_as_unavailable() {
         for response in [
             json!({
-                "error_code": "pending",
-                "message": "not ready",
+                "error_code": "SIGNATURE_UNSUPPORTED",
+                "message": "the provider does not support completion signatures",
                 "text": "partial signature",
             }),
             json!({
-                "error_code": "pending",
-                "message": "not ready",
+                "error_code": "SIGNATURE_UNSUPPORTED",
+                "message": "the provider does not support completion signatures",
                 "signature": null,
             }),
         ] {
             let response: WireCompletionSignatureResponse =
                 decode_test_wire(response, ApiResource::CompletionSignature, "signature").unwrap();
 
-            let error = map_completion_signature_lookup(response).unwrap_err();
+            let error = map_completion_signature(response).unwrap_err();
             assert!(matches!(error, ApiError::InvalidResponse { .. }));
         }
-    }
-
-    #[test]
-    fn strict_signature_fetch_maps_an_unavailable_lookup_to_an_api_error() {
-        let error = require_completion_signature(CompletionSignatureLookup::Unavailable(
-            SignatureUnavailable {
-                error_code: "pending".to_owned(),
-                message: "not ready".to_owned(),
-            },
-        ))
-        .unwrap_err();
-
-        assert!(matches!(
-            error,
-            ApiError::CompletionSignatureUnavailable { ref provider_error_code }
-                if provider_error_code == "pending"
-        ));
-        assert_eq!(error.code(), "api.completion_signature_unavailable");
-        assert!(!error.retryable());
     }
 }

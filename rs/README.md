@@ -54,5 +54,5 @@ Cloud client methods return `SdkError`, which distinguishes `ApiError` from
 `VerificationError`. Local verification functions return `VerificationError`.
 Match error variants when practical, or use `code()` and `retryable()` for a
 stable machine-readable classification; never parse display text. See the
-[error-handling section](./docs/verification-guide.md#handle-errors) for the
-strict and non-strict completion-signature lookup behavior.
+[error-handling section](./docs/verification-guide.md#handle-errors) for
+completion-signature failures.

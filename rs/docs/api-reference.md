@@ -20,8 +20,7 @@ All client methods below are asynchronous and return `Result<_, SdkError>`.
 
 | Method | Parameters after `&self` | Returns | Description |
 | --- | --- | --- | --- |
-| `lookup_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignatureLookup` | Returns a completion signature or a service-provided unavailable state. |
-| `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Strict form: returns a signature or `ApiError::CompletionSignatureUnavailable` for a 2xx unavailable envelope. |
+| `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches a completion signature. A valid 2xx unavailable envelope returns `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`, preserving the service's code and message. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
 | `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Requires a `ProviderTee` signature, applies its signer as API filters, and selects the exact matching candidate locally. It does not verify the evidence. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
@@ -126,8 +125,6 @@ when the response requires a specific signer.
 |  | `signed_text` | Text covered by the signature. |
 |  | `signature` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | Signing identity that must match verified evidence. |
-| `CompletionSignatureLookup` | `Found(CompletionSignature)` | A signature was returned. |
-|  | `Unavailable(SignatureUnavailable)` | A 2xx service response reported no signature. `SignatureUnavailable` carries `error_code` and `message`. |
 
 ### Attestation evidence
 
@@ -219,4 +216,6 @@ trust-root implications.
 See [Handle errors](./verification-guide.md#handle-errors). The public error
 surface is `ApiError`, `VerificationError`, and `SdkError`; this reference
 intentionally focuses on request and verification APIs rather than enumerating
-each error variant.
+each error variant. `fetch_completion_signature` maps a valid 2xx unavailable
+response to `SdkError::Api(ApiError::CompletionSignatureUnavailable {
+provider_error_code, provider_message })`.

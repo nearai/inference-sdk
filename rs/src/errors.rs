@@ -76,8 +76,13 @@ pub enum ApiError {
         total_count: usize,
     },
 
-    #[error("Cloud API did not provide a completion signature ({provider_error_code})")]
-    CompletionSignatureUnavailable { provider_error_code: String },
+    #[error(
+        "Cloud API did not provide a completion signature ({provider_error_code}): {provider_message}"
+    )]
+    CompletionSignatureUnavailable {
+        provider_error_code: String,
+        provider_message: String,
+    },
 }
 
 impl ApiError {

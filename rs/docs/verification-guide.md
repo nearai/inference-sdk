@@ -260,48 +260,42 @@ must not be parsed. `retryable()` means a new attempt at the failed external
 operation may succeed. It does not mean that re-verifying the same evidence
 will succeed or that an inference request should be replayed.
 
-`AttestationClient::fetch_completion_signature` is the strict path: it returns
-a signature or an `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`
-with code `api.completion_signature_unavailable` when Cloud API returns a valid
-2xx unavailable envelope. Use `AttestationClient::lookup_completion_signature`
-when that unavailable state is normal application control flow:
+`AttestationClient::fetch_completion_signature` returns a signature or an
+`SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })` with code
+`api.completion_signature_unavailable` when Cloud API returns a valid 2xx
+unavailable envelope. The error preserves the service's
+`provider_error_code` and `provider_message`.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    ApiError, AttestationClient, CompletionSignatureLookup, SdkError,
+    ApiError, AttestationClient, SdkError,
 };
 
-async fn look_up_completion_signature(
+async fn fetch_completion_signature(
     api_key: &str,
     completion_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let client = AttestationClient::new(api_key.to_owned());
-    match client.lookup_completion_signature(completion_id, None).await? {
-        CompletionSignatureLookup::Found(_signature) => {}
-        CompletionSignatureLookup::Unavailable(unavailable) => {
-            eprintln!("signature unavailable: {}", unavailable.error_code);
+    match client.fetch_completion_signature(completion_id, None).await {
+        Ok(_signature) => {}
+        Err(SdkError::Api(ApiError::CompletionSignatureUnavailable {
+            provider_error_code,
+            provider_message,
+        })) => {
+            eprintln!("no usable signature ({provider_error_code}): {provider_message}");
         }
-    }
-
-    if let Err(SdkError::Api(error)) = client.fetch_completion_signature(completion_id, None).await {
-        match error {
-            ApiError::CompletionSignatureUnavailable { provider_error_code } => {
-                eprintln!("no usable signature: {provider_error_code}");
-            }
-            error => {
-                if error.retryable() {
-                    eprintln!("a later signature lookup may succeed");
-                } else {
-                    return Err(error.into());
-                }
-            }
+        Err(SdkError::Api(error)) if error.retryable() => {
+            eprintln!("the signature request may succeed on a later attempt");
         }
+        Err(error) => return Err(error.into()),
     }
     Ok(())
 }
 ```
 
-A `completion_signature` HTTP 404 is retryable, including when the signature
-is still being recorded or is unknown. A valid 2xx unavailable envelope is an
-ordinary `CompletionSignatureLookup::Unavailable` result only through the
-non-strict helper.
+A completion-signature HTTP 404 is classified as retryable because it can be
+observed before a completion reaches its terminal state. It can also mean an
+unknown completion ID, so retry only when the application knows that the
+completion may still be finishing. A valid 2xx unavailable envelope is not
+retryable: it reports that Cloud API cannot provide a usable signature for that
+completion.

@@ -2,9 +2,9 @@ use serde_json::json;
 use std::sync::Once;
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, ApiError, AttestationClient, AttestationEventLog,
-    AttestationEvidence, CompletionSignature, CompletionSignatureKind, CompletionSignatureLookup,
-    GatewayAttestationFetchOptions, ModelAttestation, SdkError, SignatureUnavailable, SigningAlgo,
-    SigningIdentity, VerificationError,
+    AttestationEvidence, CompletionSignature, CompletionSignatureKind,
+    GatewayAttestationFetchOptions, ModelAttestation, SdkError, SigningAlgo, SigningIdentity,
+    VerificationError,
 };
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
@@ -418,7 +418,7 @@ async fn client_applies_a_gateway_signing_algorithm_filter() {
 }
 
 #[tokio::test]
-async fn client_preserves_completion_signature_kind_and_unavailable_response() {
+async fn client_fetches_a_completion_signature_and_reports_an_unavailable_response() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/signature/found"))
@@ -432,46 +432,64 @@ async fn client_preserves_completion_signature_kind_and_unavailable_response() {
         .mount(&server)
         .await;
     Mock::given(method("GET"))
-        .and(path("/v1/signature/pending"))
+        .and(path("/v1/signature/unavailable"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "error_code": "pending",
-            "message": "not ready",
+            "error_code": "SIGNATURE_UNSUPPORTED",
+            "message": "the provider does not support completion signatures",
         })))
         .mount(&server)
         .await;
 
     let client = client(&server);
     let found = client
-        .lookup_completion_signature("found", None)
+        .fetch_completion_signature("found", None)
         .await
         .unwrap();
     assert!(matches!(
         found,
-        CompletionSignatureLookup::Found(CompletionSignature {
+        CompletionSignature {
             kind: CompletionSignatureKind::Gateway,
             ..
-        })
-    ));
-
-    let pending = client
-        .lookup_completion_signature("pending", None)
-        .await
-        .unwrap();
-    assert!(matches!(
-        pending,
-        CompletionSignatureLookup::Unavailable(SignatureUnavailable { ref error_code, .. })
-            if error_code == "pending"
+        }
     ));
 
     let error = client
-        .fetch_completion_signature("pending", None)
+        .fetch_completion_signature("unavailable", None)
         .await
         .unwrap_err();
+    let SdkError::Api(error) = error else {
+        panic!("an unavailable signature must return an ApiError");
+    };
+    assert_eq!(error.code(), "api.completion_signature_unavailable");
+    assert!(!error.retryable());
     assert!(matches!(
         error,
-        SdkError::Api(ApiError::CompletionSignatureUnavailable { ref provider_error_code })
-            if provider_error_code == "pending"
+        ApiError::CompletionSignatureUnavailable {
+            ref provider_error_code,
+            ref provider_message,
+        } if provider_error_code == "SIGNATURE_UNSUPPORTED"
+            && provider_message == "the provider does not support completion signatures"
     ));
+}
+
+#[tokio::test]
+async fn client_marks_a_completion_signature_404_as_retryable() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/signature/missing"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let error = client(&server)
+        .fetch_completion_signature("missing", None)
+        .await
+        .unwrap_err();
+    let SdkError::Api(error) = error else {
+        panic!("a missing signature must return an ApiError");
+    };
+    assert_eq!(error.code(), "api.http_status");
+    assert!(error.retryable());
 }
 
 #[tokio::test]
@@ -491,7 +509,7 @@ async fn client_applies_a_completion_signature_algorithm_filter() {
         .await;
 
     client(&server)
-        .lookup_completion_signature("found", Some(SigningAlgo::Ed25519))
+        .fetch_completion_signature("found", Some(SigningAlgo::Ed25519))
         .await
         .unwrap();
 }
