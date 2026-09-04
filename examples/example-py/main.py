@@ -23,10 +23,12 @@ async def verify_gateway_deployment(
     client: AttestationClient,
 ) -> VerifiedGatewayAttestation:
     fetched = await client.fetch_gateway_attestation(signing_algo=SIGNING_ALGO)
-    return await verify_gateway_attestation(
+    verified = await verify_gateway_attestation(
         fetched.attestation,
         fetched.client_binding,
     )
+    print('Gateway deployment: verified.')
+    return verified
 
 
 async def verify_model_deployment(
@@ -36,10 +38,12 @@ async def verify_model_deployment(
         MODEL,
         signing_algo=SIGNING_ALGO,
     )
-    return await verify_model_attestation(
+    verified = await verify_model_attestation(
         fetched.attestations[0],
         fetched.client_binding,
     )
+    print('Model deployment: verified.')
+    return verified
 
 
 async def fetch_completion(
@@ -138,7 +142,6 @@ async def main() -> None:
     async with aiohttp.ClientSession(auto_decompress=False) as session:
         verified_gateway_attestation = await verify_gateway_deployment(client)
         verified_model_attestation = await verify_model_deployment(client)
-        print('Gateway and model deployments verified. Sending completions.')
         await verify_completion(
             client,
             session,

@@ -3,8 +3,8 @@
 Each project follows the same three-stage flow against the canonical
 `z-ai/glm-5.2` model:
 
-1. Verify the Gateway deployment and, where the runtime supports it, its TLS
-   endpoint identity.
+1. Verify the Gateway deployment and, where the runtime supports it, the TLS
+   peer observed while fetching its attestation.
 2. Verify the selected model deployment.
 3. Send one non-streaming and one streaming completion, retain the exact
    request and response bytes, then verify the returned response receipt.

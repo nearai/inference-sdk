@@ -38,10 +38,12 @@ async function verifyGatewayDeployment() {
 	const fetched = await client.fetchGatewayAttestation({
 		signingAlgo: SIGNING_ALGO,
 	});
-	return verifyGatewayAttestation({
+	const verified = await verifyGatewayAttestation({
 		attestation: fetched.attestation,
 		clientBinding: fetched.clientBinding,
 	});
+	console.log("Gateway deployment: verified.");
+	return verified;
 }
 
 async function verifyModelDeployment() {
@@ -53,10 +55,12 @@ async function verifyModelDeployment() {
 	if (!attestation) {
 		throw new Error("Cloud API returned no model attestation");
 	}
-	return verifyModelAttestation({
+	const verified = await verifyModelAttestation({
 		attestation,
 		clientBinding: fetched.clientBinding,
 	});
+	console.log("Model deployment: verified.");
+	return verified;
 }
 
 async function verifyCompletion({
