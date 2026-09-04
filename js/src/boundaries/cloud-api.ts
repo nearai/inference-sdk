@@ -1,6 +1,6 @@
 import * as v from 'valibot';
 import {
-  CloudApiCompletionSignatureLookupSchema,
+  CloudApiCompletionSignatureResultSchema,
   CloudApiGatewayAttestationResponseSchema,
   CloudApiModelAttestationResponseSchema,
 } from '../schemas';
@@ -14,10 +14,7 @@ import type {
   CloudApiGatewayAttestation,
   CloudApiModelAttestation,
 } from '../types/cloud-api';
-import type {
-  CompletionSignatureLookup,
-  SignatureUnavailable,
-} from '../types/chat';
+import type { CompletionSignature } from '../types/chat';
 import { trimHexPrefix } from '../utils/common';
 import { ApiError } from '../utils/errors';
 
@@ -86,11 +83,9 @@ export function decodeGatewayAttestationReport(
   );
 }
 
-/** Decode Cloud API's found-or-unavailable completion-signature response. */
-export function decodeCompletionSignatureLookup(
-  value: unknown,
-): CompletionSignatureLookup {
-  const parsed = v.safeParse(CloudApiCompletionSignatureLookupSchema, value);
+/** Decode a Cloud API completion signature or report an unavailable signature. */
+export function decodeCompletionSignature(value: unknown): CompletionSignature {
+  const parsed = v.safeParse(CloudApiCompletionSignatureResultSchema, value);
   if (!parsed.success) {
     throw invalidCloudApiResponse({
       issue: parsed.issues[0],
@@ -99,26 +94,25 @@ export function decodeCompletionSignatureLookup(
   }
   const response = parsed.output;
   if ('error_code' in response) {
-    const unavailable: SignatureUnavailable = {
-      errorCode: response.error_code,
-      message: response.message,
-    };
-    return { status: 'unavailable', unavailable };
+    throw new ApiError({
+      code: 'api.completion_signature_unavailable',
+      details: {
+        providerErrorCode: response.error_code,
+        providerMessage: response.message,
+      },
+    });
   }
   return {
-    status: 'found',
-    signature: {
-      kind: response.signature_kind,
-      signedText: response.text,
-      signature: response.signature,
-      signer: {
+    kind: response.signature_kind,
+    signedText: response.text,
+    signature: response.signature,
+    signer: {
+      signingAlgo: response.signing_algo,
+      signingAddress: validateWireSigningAddress({
+        signingAddress: response.signing_address,
         signingAlgo: response.signing_algo,
-        signingAddress: validateWireSigningAddress({
-          signingAddress: response.signing_address,
-          signingAlgo: response.signing_algo,
-          label: 'signature.signing_address',
-        }),
-      },
+        label: 'signature.signing_address',
+      }),
     },
   };
 }

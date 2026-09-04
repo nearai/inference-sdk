@@ -602,7 +602,7 @@ describe('AttestationClient', () => {
       );
     });
 
-    test('lets callers choose between an unavailable result and an error', async () => {
+    test('reports an unavailable completion signature as an API error', async () => {
       const api = cloudFor(() =>
         jsonResponse({
           error_code: 'SIGNATURE_UNSUPPORTED',
@@ -610,17 +610,6 @@ describe('AttestationClient', () => {
         }),
       );
 
-      const lookup = await api.client.lookupCompletionSignature({
-        completionId: 'chat-1',
-      });
-
-      expect(lookup).toEqual({
-        status: 'unavailable',
-        unavailable: {
-          errorCode: 'SIGNATURE_UNSUPPORTED',
-          message: 'No provider signature',
-        },
-      });
       await expect(
         api.client.fetchCompletionSignature({
           completionId: 'chat-1',
@@ -628,16 +617,19 @@ describe('AttestationClient', () => {
       ).rejects.toMatchObject({
         failure: {
           code: 'api.completion_signature_unavailable',
-          details: { providerErrorCode: 'SIGNATURE_UNSUPPORTED' },
+          details: {
+            providerErrorCode: 'SIGNATURE_UNSUPPORTED',
+            providerMessage: 'No provider signature',
+          },
         },
       });
     });
 
-    test('marks a pending completion signature lookup as retryable', async () => {
+    test('marks a 404 completion-signature response as retryable', async () => {
       const api = cloudFor(() => new Response('', { status: 404 }));
 
       await expect(
-        api.client.lookupCompletionSignature({
+        api.client.fetchCompletionSignature({
           completionId: 'chat-1',
         }),
       ).rejects.toMatchObject({

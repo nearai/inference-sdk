@@ -60,7 +60,7 @@ export type ApiFailure =
     }
   | {
       code: 'api.completion_signature_unavailable';
-      details: { providerErrorCode: string };
+      details: { providerErrorCode: string; providerMessage: string };
     };
 
 /** A JSON-safe description of a local verification failure.
@@ -392,7 +392,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'api.model_attestation_signer_not_found':
       return `[${failure.code}] Cloud API returned no model attestation for the requested signer`;
     case 'api.completion_signature_unavailable':
-      return `[${failure.code}] Cloud API did not provide a completion signature (${failure.details.providerErrorCode})`;
+      return `[${failure.code}] Cloud API did not provide a completion signature (${failure.details.providerErrorCode}): ${failure.details.providerMessage}`;
     case 'quote.collateral_unavailable':
       return `[${failure.code}] Intel quote collateral is unavailable`;
     case 'quote.verification_failed':

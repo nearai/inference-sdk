@@ -177,7 +177,7 @@ export const CloudApiCompletionSignatureResponseSchema = objectSchema({
   signature_kind: v.picklist(CompletionSignatureKindValues),
 });
 
-export const CloudApiCompletionSignatureLookupSchema = v.union([
+export const CloudApiCompletionSignatureResultSchema = v.union([
   CloudApiCompletionSignatureResponseSchema,
   CloudApiUnavailableSignatureResponseSchema,
 ]);

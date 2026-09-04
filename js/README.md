@@ -4,6 +4,8 @@ Verify NEAR AI Cloud completion signatures and attestation evidence.
 `AttestationClient` fetches signatures and evidence; standalone functions
 verify them. Your application sends completion requests and retains their exact
 request and response bytes when it verifies a response.
+`fetchCompletionSignature` returns a signature or throws a structured `ApiError`
+when Cloud API cannot provide one.
 
 ## What the SDK verifies
 

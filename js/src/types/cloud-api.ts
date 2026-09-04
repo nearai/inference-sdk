@@ -54,11 +54,6 @@ export type FetchCompletionSignatureParams = {
   readonly completionId: string;
   readonly signingAlgo?: SigningAlgo;
 };
-
-export type LookupCompletionSignatureParams = {
-  readonly completionId: string;
-  readonly signingAlgo?: SigningAlgo;
-};
 export type CloudApiModelAttestation = v.InferOutput<
   typeof CloudApiModelAttestationSchema
 >;

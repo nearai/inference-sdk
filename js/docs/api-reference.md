@@ -45,8 +45,7 @@ requests or retain their request or response bytes.
 
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
-| `lookupCompletionSignature(params)` | `LookupCompletionSignatureParams` | `CompletionSignatureLookup` | Returns either a signature or a service-provided unavailable state. |
-| `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns a signature; use `lookupCompletionSignature` when the application needs to handle an unavailable state itself. |
+| `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the Cloud API model-attestation response, optionally filtered by signing algorithm and signing address. Use `findModelAttestationForSignature` to bind that result to a `provider_tee` signature. |
 | `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
@@ -55,7 +54,7 @@ requests or retain their request or response bytes.
 
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `FetchCompletionSignatureParams` and `LookupCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
+| `FetchCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it follows the service default. |
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Cloud API response. |
@@ -182,16 +181,6 @@ because a byte-exact provider signature would no longer match those bytes.
 
 `CompletionSignatureKind` is the union `'provider_tee' | 'gateway'`.
 `SigningAlgo` is the union `'ecdsa' | 'ed25519'`.
-
-### Completion signature lookup
-
-| Type or variant | Field | Type | Description |
-| --- | --- | --- | --- |
-| `CompletionSignatureLookup` | `status` | `'found' \| 'unavailable'` | Discriminant. |
-| `CompletionSignatureLookup` when `status === 'found'` | `signature` | `CompletionSignature` | Returned completion signature. |
-| `CompletionSignatureLookup` when `status === 'unavailable'` | `unavailable` | `SignatureUnavailable` | Service-provided unavailable state from a 2xx response. |
-| `SignatureUnavailable` | `errorCode` | `string` | Service error code. |
-|  | `message` | `string` | Service message. |
 
 ### Attestation evidence
 

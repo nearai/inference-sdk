@@ -3,7 +3,6 @@ import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
-  CompletionSignatureLookup,
 } from '../types/chat';
 import type {
   AttestationClientOptions,
@@ -15,10 +14,9 @@ import type {
   FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
-  LookupCompletionSignatureParams,
 } from '../types/cloud-api';
 import {
-  decodeCompletionSignatureLookup,
+  decodeCompletionSignature,
   decodeGatewayAttestationReport,
   decodeModelAttestationReport,
 } from '../boundaries/cloud-api';
@@ -207,14 +205,11 @@ export class CloudApiClient {
     };
   }
 
-  /**
-   * Look up one completion signature without polling. Use this when an
-   * application needs to handle an unavailable signature itself.
-   */
-  async lookupCompletionSignature({
+  /** Fetch one completion signature or throw when Cloud API does not provide one. */
+  async fetchCompletionSignature({
     completionId,
     signingAlgo,
-  }: LookupCompletionSignatureParams): Promise<CompletionSignatureLookup> {
+  }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
     const url = new URL(
       `signature/${encodeURIComponent(completionId)}`,
       this.baseUrl,
@@ -222,30 +217,12 @@ export class CloudApiClient {
     if (signingAlgo !== undefined) {
       url.searchParams.set('signing_algo', signingAlgo);
     }
-    return decodeCompletionSignatureLookup(
+    return decodeCompletionSignature(
       await this.getCloudApiJson({
         url,
         resource: 'completion_signature',
       }),
     );
-  }
-
-  /** Fetch one completion signature or throw when Cloud API does not provide one. */
-  async fetchCompletionSignature({
-    completionId,
-    signingAlgo,
-  }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
-    const lookup = await this.lookupCompletionSignature({
-      completionId,
-      signingAlgo,
-    });
-    if (lookup.status === 'found') {
-      return lookup.signature;
-    }
-    throw new ApiError({
-      code: 'api.completion_signature_unavailable',
-      details: { providerErrorCode: lookup.unavailable.errorCode },
-    });
   }
 
   /**

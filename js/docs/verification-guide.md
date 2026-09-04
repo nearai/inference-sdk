@@ -124,9 +124,9 @@ verification. Call `verifyModelAttestation` first. The result is ordinary data,
 so your application decides when raw evidence must be verified again after
 storage or transfer.
 
-The client retrieves signatures and evidence only. Your application
-sends the completion request, retains its raw bytes, and decides whether or
-when to retry a completion or signature lookup.
+The client retrieves signatures and evidence only. Your application sends the
+completion request, retains its raw bytes, and decides whether or when to retry
+a completion or signature request.
 
 The client defaults to `https://cloud-api.near.ai/v1`, so
 `new AttestationClient({ apiKey })` is enough for production. Add `baseUrl` to
@@ -290,20 +290,20 @@ it when your application needs local JWT/EAT validation, different trust roots,
 or another verification service. Each verifier must resolve only for evidence
 it accepts and throw or reject for all other outcomes.
 
-## Handle signature lookup and verification errors
+## Handle signature and verification errors
 
-`client.fetchCompletionSignature` is the simple path: it returns one completion
-signature or throws a structured error. It follows the Cloud API default unless
-you pass `signingAlgo`.
+`client.fetchCompletionSignature` returns one completion signature or throws a
+structured error. It follows the Cloud API default unless you pass
+`signingAlgo`.
 
-Use `client.lookupCompletionSignature` when the application needs to handle those
-2xx unavailable envelopes itself. It returns one of:
+A 2xx unavailable response is an `ApiError` with code
+`api.completion_signature_unavailable`: Cloud API cannot provide a usable
+signature for that completion. Its details include the service's
+`providerErrorCode` and `providerMessage`.
 
-- `found`, with a completion signature; or
-- `unavailable`, with the service's error code and message.
-
-A pending or unknown signature can instead produce an HTTP 404. That remains a
-retryable `api.http_status` error; it is not an `unavailable` result.
+An HTTP 404 is also an `api.http_status` error. It remains retryable because a
+signature request made before a completion reaches its terminal state can later
+succeed; an unknown completion ID can produce the same status.
 
 For a found signature, `kind` is `provider_tee` or `gateway`, matching Cloud
 API's `signature_kind`. A response without a recognized kind is rejected: the
@@ -320,11 +320,6 @@ signature-contract checks throw `VerificationError`.
 | `error.failure.code` | Stable code for a program to branch on. TypeScript narrows `error.failure.details` from this code. |
 | `error.failure.details` (when present) | Code-specific diagnostic context, such as a response field, status, or signer-selection count. Do not parse `error.message`. |
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
-
-A 2xx unavailable response from `client.fetchCompletionSignature` is an `ApiError`
-with code `api.completion_signature_unavailable`: the strict helper could not
-return the completion signature it promises. Prefer
-`client.lookupCompletionSignature` when this is an ordinary application state.
 
 ```ts
 import {
@@ -345,7 +340,7 @@ try {
         break;
       case 'api.http_status':
         if (error.retryable) {
-          console.log('A later signature lookup may succeed');
+          console.log('A later signature request may succeed');
         }
         break;
     }
@@ -356,6 +351,3 @@ try {
   }
 }
 ```
-
-A `completion_signature` HTTP 404 is retryable, including when the signature
-is still being recorded or is unknown.

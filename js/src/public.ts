@@ -12,7 +12,6 @@ export type {
   FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
-  LookupCompletionSignatureParams,
 } from './types/cloud-api';
 export type { Awaitable } from './types/shared';
 
@@ -31,9 +30,7 @@ export type { ModelAttestation } from './types/attestation-model';
 export type {
   CompletionSignature,
   CompletionSignatureKind,
-  CompletionSignatureLookup,
   CompletionSignatureReference,
-  SignatureUnavailable,
 } from './types/chat';
 export type {
   AttestationPolicy,
