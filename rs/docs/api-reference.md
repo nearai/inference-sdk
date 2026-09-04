@@ -217,5 +217,5 @@ See [Handle errors](./verification-guide.md#handle-errors). The public error
 surface is `ApiError`, `VerificationError`, and `SdkError`; this reference
 intentionally focuses on request and verification APIs rather than enumerating
 each error variant. `fetch_completion_signature` maps a valid 2xx unavailable
-response to `SdkError::Api(ApiError::CompletionSignatureUnavailable {
-provider_error_code, provider_message })`.
+response to `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`.
+The error preserves the service's code and message.

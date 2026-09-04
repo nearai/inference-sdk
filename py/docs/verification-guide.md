@@ -250,9 +250,9 @@ service. Every verifier callback must return only for evidence it accepts.
 ## Handle signature retrieval and verification errors
 
 `client.fetch_completion_signature()` returns one completion signature or
-raises a structured error. A successful unavailable response raises `ApiError`
-with `api.completion_signature_unavailable`; its details contain the service's
-`providerErrorCode` and `providerMessage`.
+raises a structured error. A 2xx response that reports an unavailable signature
+raises `ApiError` with `api.completion_signature_unavailable`; its details
+contain the service's `providerErrorCode` and `providerMessage`.
 
 An HTTP 404 also raises `api.http_status` and remains retryable. It means Cloud
 API has no stored signature for that ID at that time. Retry only when the
