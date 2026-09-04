@@ -1,17 +1,45 @@
 # verifiable-ai-sdk (Rust)
 
-`verifiable-ai-sdk` verifies NEAR AI Cloud deployment attestations and the
-completion signatures returned by Cloud API. It separates evidence retrieval,
-deployment verification, and verification of an exact completion's request and
-response bytes.
+`verifiable-ai-sdk` verifies three distinct kinds of NEAR AI Cloud evidence:
+
+- a Gateway deployment attestation, including its TLS endpoint binding when
+  available;
+- a model-serving deployment attestation; and
+- a completion signature over exact request and response bytes.
+
+The recommended lifecycle is:
+
+1. Verify the Gateway deployment you intend to use.
+2. Verify the canonical model deployment you intend to use.
+3. Send the chat request and retain its exact request and response bytes.
+4. Fetch the completion signature and verify that response receipt against the
+   corresponding preflight result.
+
+The Gateway and model checks are both useful preflight controls. A completion
+signature's `CompletionSignatureKind` only selects the final response-receipt
+verifier:
+
+| Kind | Verify with | A successful receipt proves |
+| --- | --- | --- |
+| `ProviderTee` | `verify_model_response` | The verified model signer signed the exact request and response bytes. |
+| `Gateway` | `verify_gateway_response` | The verified Gateway signer signed the exact client-visible request and response bytes. |
+
+The current Cloud API evidence does not yet provide a cryptographic chain from
+a particular model response through a Gateway transformation to the final
+response. In particular, preflight Gateway and model attestations do not prove
+that they served a particular chat completion. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
+tracks a provider-signature plus Gateway-receipt design for that complete
+chain. Verify both deployments before the request, but do not claim more than
+the evidence currently proves.
 
 ## Documentation
 
-- [Verification guide](./docs/verification-guide.md) explains which evidence
-  and response-verification path to use for `provider_tee` and `gateway`
-  signatures.
-- [API reference](./docs/api-reference.md) lists the Cloud API client,
+- [Verification guide](./docs/verification-guide.md) walks through the
+  preflight, chat, and response-receipt stages.
+- [API reference](./docs/api-reference.md) lists the client, verification
   functions, return values, policies, and callback traits.
+- [`examples/example-rs`](../examples/example-rs) is a runnable end-to-end
+  example.
 
 ## Install
 
@@ -20,33 +48,16 @@ response bytes.
 verifiable-ai-sdk = "0.1"
 ```
 
-The guide includes complete model and Gateway verification flows. In both
-cases, retain the exact bytes sent to and received from the completion endpoint:
-the SDK verifies those bytes without reserializing them.
-
-There are two attestation classes. Model evidence verifies a model-serving TEE
-deployment; Gateway evidence verifies the Cloud API Gateway deployment. A
-completion signature binds exact request and response bytes to one of those
-verified signers. Its `CompletionSignatureKind` selects which path applies:
-`ProviderTee` establishes model-issued bytes, while `Gateway` establishes
-Gateway-issued client-visible bytes and does not establish model execution.
+Retain the exact bytes sent to and received from the completion endpoint. The
+SDK verifies those bytes without reserializing them.
 
 Gateway SPKI fingerprint evidence is requested by default. The Rust client
-captures the peer certificate for that same HTTPS request. Runtimes without
-peer-certificate access must call
-`AttestationClient::fetch_gateway_attestation` with
+captures the peer certificate for that same HTTPS attestation request. A
+runtime without peer-certificate access must use
 `GatewayAttestationFetchOptions { include_spki_fingerprint: false, ..Default::default() }`.
-That request uses the signer-and-nonce quote layout and verification returns
-`GatewayTlsBinding::None`; it makes no TLS claim. Gateway verification derives
-the layout from the fetched attestation, while an optional `AttestationPolicy`
-only controls accepted TCB statuses.
-`GatewayAttestation::spki_fingerprint` is Gateway-reported,
-`GatewayClientBinding::spki_fingerprint` is client-observed, and
-`GatewayTlsBinding::Attested { spki_fingerprint }` is their verified match.
-
-Cloud model fetches always request `include_tls_fingerprint=false`. They verify
-the signer-and-nonce quote layout and deliberately do not claim a direct
-client-to-model TLS connection.
+That still verifies Gateway deployment evidence, but makes no TLS identity
+claim. Model attestation fetches always omit TLS fingerprint evidence because
+Cloud API, rather than the client, connects to the model.
 
 ## Error handling
 
