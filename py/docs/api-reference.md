@@ -3,6 +3,21 @@
 This page describes the public APIs exported by `verifiable_ai_sdk`. For
 workflows and complete examples, see the [verification guide](./verification-guide.md).
 
+## Recommended lifecycle
+
+Most applications use the public APIs in three stages:
+
+1. Before a completion, fetch and verify both Gateway and target-model
+   deployment evidence.
+2. Send the completion outside this SDK, retaining its completion ID and exact
+   request and response bytes.
+3. Fetch the completion signature and dispatch on `signature.kind` to verify
+   the exact bytes with the preverified model or Gateway evidence.
+
+The signature kind selects a response verifier; it does not select or replace
+the deployment checks. See the guide for the evidence boundary of this current
+one-signature design.
+
 ## Public API
 
 Cloud retrieval and attestation verification are asynchronous. Response
@@ -10,16 +25,16 @@ verification is synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
-| `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns Cloud API credentials and retrieves signatures and evidence. |
-| `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature. |
-| `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches model evidence; optional signer fields narrow the API response. |
+| `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns Cloud API credentials and retrieves deployment evidence and completion signatures. |
+| `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
+| `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_model_attestation_for_signature` | `(model, signature)` | `FetchedModelAttestation` | Fetches and locally selects model evidence for a `provider_tee` signer. |
-| `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway evidence, optionally including its TLS fingerprint. |
+| `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
 | `find_model_attestation_for_signature` | `(attestations, signature)` | `ModelAttestation` | Locally selects the sole evidence item for a `provider_tee` signer. |
-| `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies model attestation evidence. |
-| `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway evidence using the layout in the attestation. |
-| `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes signed by a `provider_tee` signer. |
-| `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies exact bytes signed by a `gateway` signer. |
+| `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |
+| `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
+| `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
+| `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
 
 ## AttestationClient
 
@@ -37,30 +52,32 @@ creates a fresh nonce for every attestation fetch.
 
 | API | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. |
-|  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Omit it for the service default. |
+| `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. Fetch after the completion reaches a terminal state. |
+|  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Set it when the application requires a particular algorithm; omit it for the service default. |
 
 `client.fetch_completion_signature()` raises `ApiError` when Cloud API returns
 an unavailable 2xx response. The error code is
 `api.completion_signature_unavailable`; its details contain
 `providerErrorCode` and `providerMessage` from the service response.
 
-### Model-attestation methods
+### Target-model deployment methods
 
 | API | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `fetch_model_attestations` | `model` | `str` | Yes | Canonical model ID. |
-|  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the advertised signing algorithm. |
+| `fetch_model_attestations` | `model` | `str` | Yes | Canonical target model ID. Use before sending its completion. |
+|  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the required signing algorithm. |
 |  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. |
 | `fetch_model_attestation_for_signature` | `model` | `str` | Yes | Canonical model ID. |
-|  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. The method uses its signer as request filters and then performs local selection. |
+|  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. The method uses its signer as request filters and then performs local selection. This is a signature-driven convenience, not the deployment-first workflow. |
 
 Every model-attestation fetch generates a fresh 32-byte client nonce, requests
 `include_tls_fingerprint=false`, checks Cloud API's echoed nonce, and returns a
 `ModelClientBinding` with the raw evidence. `signing_algo` and
-`signing_address` only narrow the remote response: use
-`find_model_attestation_for_signature` to match a completion signature locally
-before verifying it.
+`signing_address` only narrow the remote response. The SDK currently requires
+Cloud API to return exactly one model attestation, so deployment-first callers
+can verify `fetched.attestations[0]` before the completion. Use
+`find_model_attestation_for_signature` only when doing signature-driven local
+selection after a `provider_tee` signature is available.
 
 ### Local model selection
 
@@ -76,11 +93,11 @@ before verifying it.
 | `FetchedModelAttestation` | `attestation` | `ModelAttestation` | Evidence selected for the `provider_tee` signer. |
 |  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
 
-### Gateway-attestation method
+### Gateway deployment method
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
-| `signing_algo` | `SigningAlgo \| None` | No | Gateway signing algorithm. For a Gateway response, pass `signature.signer.signing_algo`. |
+| `signing_algo` | `SigningAlgo \| None` | No | Gateway signing algorithm required by the deployment check. In a deployment-first flow, set it before the completion. |
 | `include_spki_fingerprint` | `bool` | No | `True` by default. Requests the Gateway TLS fingerprint and captures the peer fingerprint from this HTTPS request. |
 
 `client.fetch_gateway_attestation()` checks its echoed nonce. With the default
@@ -124,7 +141,7 @@ from `client_binding` to match. Without an SPKI fingerprint, Gateway
 verification checks signer-and-nonce report data and returns
 `GatewayTlsBinding(kind='none')`.
 
-### Response verification
+### Completion-signature verification
 
 | Function | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
@@ -137,6 +154,19 @@ verification checks signer-and-nonce report data and returns
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind='gateway'`. |
 |  | `attestation` | `VerifiedGatewayAttestation` | Yes | Verified Gateway evidence whose signer must match the signature. |
 
+Dispatch only after fetching the completion signature: pass a `provider_tee` signature to
+`verify_model_response` with the model deployment result, and a `gateway`
+signature to `verify_gateway_response` with the Gateway deployment result.
+Each function verifies exact bytes and requires its signature signer to match
+the supplied verified result.
+
+The two deployment results and a single completion signature do not currently
+prove a complete model-to-Gateway-to-final-bytes chain. A `provider_tee`
+signature does not identify the Gateway that returned the bytes; a `gateway`
+signature does not prove that an attested model generated them. [Cloud API issue
+#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
+provider-signature and Gateway-receipt chain.
+
 ## Evidence, signatures, policies, and results
 
 ### Signatures and raw evidence
@@ -145,9 +175,9 @@ verification checks signer-and-nonce report data and returns
 | --- | --- | --- | --- |
 | `SigningIdentity` | `signing_algo` | `SigningAlgo` | `ecdsa` or `ed25519`. |
 |  | `signing_address` | `str` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
-| `CompletionSignatureReference` | `kind` | `CompletionSignatureKind` | `provider_tee` or `gateway`. Model-evidence selection accepts only `provider_tee`. |
+| `CompletionSignatureReference` | `kind` | `CompletionSignatureKind` | `provider_tee` or `gateway`. It selects the response verifier. Model-evidence selection accepts only `provider_tee`. |
 |  | `signer` | `SigningIdentity` | Identity used to select evidence. |
-| `CompletionSignature` | `kind`, `signer` | inherited | The `CompletionSignatureReference` fields that select its verification path and signer. |
+| `CompletionSignature` | `kind`, `signer` | inherited | The `CompletionSignatureReference` fields that select its response verifier and signer. |
 |  | `signed_text` | `str` | Text covered by the signature. |
 |  | `signature` | `str` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 | `AttestationEvidence` | `nonce` | `str` | Nonce echoed by Cloud API. The fetch helper compares it with its generated nonce. |
