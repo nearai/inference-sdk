@@ -17,6 +17,9 @@ bytes, and retry policy.
 Use a canonical model ID and choose one signing algorithm for this operation.
 Verify the Gateway and model evidence before the completion request. The Node
 client below also checks the TLS peer for the Gateway evidence request.
+Pass the same explicit algorithm to both attestation fetches and the completion
+signature fetch: Cloud API's report and signature endpoints have different
+defaults.
 
 ```ts
 import {
@@ -92,9 +95,7 @@ const { completionId, requestBody, responseBody } = await sendCompletion({
 
 `sendCompletion` is application code. It must return the completion ID and
 unaltered `Uint8Array` values for the HTTP request and response. For streams,
-`responseBody` includes the original SSE framing. See the runnable
-[JavaScript example](../../examples/example-js/index.mjs) for an implementation
-that verifies both non-streaming and streaming completions.
+`responseBody` includes the original SSE framing.
 
 ## Verify the completion receipt
 

@@ -35,6 +35,10 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 its methods to retrieve signatures and evidence. It does not send completion
 requests or retain their request or response bytes.
 
+For one three-stage verification operation, pass the same explicit
+`signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
+Cloud API's report and signature endpoints have different defaults.
+
 ### Constructor
 
 | Field | Type | Required | Default | Description |

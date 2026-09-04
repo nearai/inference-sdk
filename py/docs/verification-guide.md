@@ -27,7 +27,9 @@ that evidence.
 
 Verify both deployments before sending the completion. Choose the signing
 algorithm your application expects; this example uses ECDSA for all three
-requests.
+requests. Pass the same explicit algorithm to both attestation fetches and the
+completion-signature fetch: Cloud API's report and signature endpoints have
+different defaults.
 
 ```python
 from verifiable_ai_sdk import (

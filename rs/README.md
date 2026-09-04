@@ -7,12 +7,12 @@
 - a model-serving deployment attestation; and
 - a completion signature over exact request and response bytes.
 
-The recommended lifecycle is:
+The recommended lifecycle has three stages:
 
-1. Verify the Gateway deployment you intend to use.
-2. Verify the canonical model deployment you intend to use.
-3. Send the chat request and retain its exact request and response bytes.
-4. Fetch the completion signature and verify that response receipt against the
+1. Before the request, verify both the Gateway deployment and the canonical
+   model deployment.
+2. Send the chat request and retain its exact request and response bytes.
+3. Fetch the completion signature and verify that response receipt against the
    corresponding preflight result.
 
 The Gateway and model checks are both useful preflight controls. A completion
@@ -38,8 +38,6 @@ the evidence currently proves.
   preflight, chat, and response-receipt stages.
 - [API reference](./docs/api-reference.md) lists the client, verification
   functions, return values, policies, and callback traits.
-- [`examples/example-rs`](../examples/example-rs) is a runnable end-to-end
-  example.
 
 ## Install
 

@@ -6,18 +6,21 @@ This page lists the public Rust request and verification APIs exported by
 
 ## Verification lifecycle
 
-The public APIs support four separate stages:
+The public APIs support three stages:
 
-1. Fetch and verify Gateway deployment evidence.
-2. Fetch and verify model deployment evidence.
-3. Send chat using the canonical model ID and retain its exact request and
+1. Fetch and verify both Gateway and model deployment evidence.
+2. Send chat using the canonical model ID and retain its exact request and
    response bytes.
-4. Fetch a completion signature and verify that receipt against one of the
+3. Fetch a completion signature and verify that receipt against one of the
    previously verified deployments.
 
-Do stages 1 and 2 before chat. `CompletionSignatureKind` matters only in stage
-4: `ProviderTee` selects `verify_model_response`; `Gateway` selects
+Complete stage 1 before chat. `CompletionSignatureKind` matters only in stage
+3: `ProviderTee` selects `verify_model_response`; `Gateway` selects
 `verify_gateway_response`. It does not replace either preflight check.
+
+For one three-stage verification operation, pass the same explicit
+`SigningAlgo` to both attestation fetches and `fetch_completion_signature`.
+Cloud API's report and signature endpoints have different defaults.
 
 Current Cloud API evidence does not cryptographically bind both preflight
 attestations to one completion or link a model signature through a Gateway
@@ -42,7 +45,7 @@ All client methods below are asynchronous and return `Result<_, SdkError>`.
 | --- | --- | --- | --- |
 | `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`, preserving the service's code and message. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches model deployment evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
-| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Convenience method for a `ProviderTee` receipt: applies its signer as API filters and selects the matching candidate locally. It does not verify the evidence. |
+| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Post-completion recovery convenience for a `ProviderTee` receipt: applies its signer as API filters and selects the matching candidate locally. It does not verify evidence and is not the deployment-first workflow. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
 `signing_algo` and `signing_address` only narrow the Cloud API response. They
@@ -133,9 +136,9 @@ attestation must bind the signature signer.
 For a `Gateway` response, `verify_gateway_response` requires a
 `VerifiedGatewayAttestation` with the same signer. For a `ProviderTee`
 response, `verify_model_response` requires a `VerifiedModelAttestation` with
-the same signer. If evidence was not preflighted, fetch it using the signature
-signing algorithm; do not use Cloud API's default algorithm when the receipt
-requires a specific signer.
+the same signer. `fetch_model_attestation_for_signature` can help inspect a
+historical `ProviderTee` receipt, but a post-completion fetch cannot replace a
+deployment check performed before chat.
 
 ## Signatures and evidence
 

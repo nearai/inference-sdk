@@ -41,6 +41,10 @@ verification is synchronous.
 The client does not send completion requests or retain completion bytes. It
 creates a fresh nonce for every attestation fetch.
 
+For one three-stage verification operation, pass the same explicit
+`signing_algo` to both attestation fetches and `fetch_completion_signature`.
+Cloud API's report and signature endpoints have different defaults.
+
 ### Constructor
 
 | Field | Type | Required | Default | Description |

@@ -86,7 +86,7 @@ succeed. It does not mean that re-verifying the same evidence will succeed or
 that an inference should be replayed.
 
 `client.fetch_completion_signature()` returns a completion signature or raises
-`ApiError`. A successful Cloud API unavailable envelope raises
+`ApiError`. A 2xx response that reports an unavailable signature raises
 `api.completion_signature_unavailable`; its details preserve the provider's
 error code and message.
 

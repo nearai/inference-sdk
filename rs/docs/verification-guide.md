@@ -11,24 +11,22 @@ Treat deployment verification and response verification as separate stages.
 
 | Stage | SDK calls | What it establishes |
 | --- | --- | --- |
-| Verify the Gateway deployment | `fetch_gateway_attestation` → `verify_gateway_attestation` | Gateway quote, nonce, policy, deployment measurements, and—by default—the TLS peer binding. |
-| Verify the model deployment | `fetch_model_attestations` → `verify_model_attestation` | Model quote, nonce, policy, deployment measurements, signer, and available GPU evidence. |
-| Send chat | Your HTTP client | An inference request using the model whose deployment you checked. Retain the exact request and response bytes. |
+| Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway and model deployments each satisfy their quote, policy, measurement, and signer checks; Gateway verification includes TLS peer binding by default. |
+| Send chat | Your HTTP client | A request naming the canonical model ID used during preflight. Retain the exact request and response bytes. |
 | Verify the completion receipt | `fetch_completion_signature` → response verifier selected by `signature.kind` | The exact bytes were signed by the corresponding verified signer. |
 
-Do the first two stages before sending chat. Retain their verified results for
-the final stage rather than fetching new attestations after the completion.
+Complete both deployment checks before sending chat. Retain their verified
+results for the final stage rather than fetching new attestations after the completion.
 Use a canonical model ID and send `x-no-aliasing: true` with the completion
 request so the preflight model and request name the same deployment.
-
-The runnable [`example-rs`](../../examples/example-rs/src/main.rs) follows this
-flow for both a non-streaming and a streaming completion.
 
 ## Verify Gateway and model deployments
 
 This example explicitly selects `SigningAlgo::Ecdsa` for all evidence and
-signature requests. Use the signing algorithm required by your integration;
-the APIs also accept `None` to let Cloud API choose its default.
+signature requests. Pass the same explicit algorithm to both attestation
+fetches and the completion-signature fetch: Cloud API's report and signature
+endpoints have different defaults. The APIs also accept `None` for individual
+calls, but omitting the algorithm is not suitable for this three-stage flow.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
@@ -92,14 +90,16 @@ Model fetches always request `include_tls_fingerprint=false`: Cloud API
 connects to the model on the client's behalf, so a client cannot make a direct
 model TLS binding.
 
-## Send chat and verify its receipt
+## Send chat
 
 After both preflight checks succeed, send the completion with the canonical
 model ID and retain the original bytes. For streaming responses, retain the
 original SSE bytes, including framing; do not parse and serialize them again.
 
-Then fetch the completion signature and select the only part that depends on
-`signature.kind`:
+## Verify the completion receipt
+
+Fetch the completion signature after the chat request completes. The only part
+of this stage that depends on `signature.kind` is the response verifier:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
