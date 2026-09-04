@@ -1,252 +1,169 @@
 # TypeScript verification guide
 
-Use this SDK to verify NEAR AI Cloud attestations and completion signatures.
-Create `const client = new AttestationClient({ apiKey })` once to retrieve
-Cloud API signatures and evidence; selection and verification remain standalone
-functions.
+Verify a completion in three stages:
 
-## Completion signature kinds
+1. Verify the Gateway deployment and target model deployment before sending
+   the completion.
+2. Send the completion and preserve its exact request and response bytes.
+3. Fetch the completion signature and use its `kind` to verify the bytes
+   against the corresponding preflight result.
 
-`client.fetchCompletionSignature` exposes Cloud API's `signature_kind` as
-`signature.kind`. Cloud API selects one of two kinds for each returned
-signature. The kind selects a verification path: it changes the trust boundary
-and what a successful verification establishes, not only which key signed.
+`AttestationClient` retrieves Cloud API evidence and signatures. The SDK does
+not send completions itself; your application owns the inference request, raw
+bytes, and retry policy.
 
-| `signature.kind` | Trust boundary | A successful response verification establishes | It does not establish |
-| --- | --- | --- | --- |
-| `provider_tee` | The model-serving TEE | A verified model TEE signer signed the exact request and response bytes. | The Cloud API Gateway's deployment or TLS identity. |
-| `gateway` | The NEAR AI Cloud Gateway TEE | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated the response. |
+## Before the completion: verify both deployments
 
-Cloud API may rewrite a response before returning it—for example, when it
-normalizes a stream for OpenAI compatibility. Rewriting changes the
-client-visible bytes, so a byte-exact provider signature cannot verify them.
-For that case, Cloud API can return a `gateway` signature for the rewritten
-bytes. Use the signature kind returned for that completion; a `gateway`
-signature is not evidence of model execution.
-
-Use `provider_tee` with the model-response flow below, and `gateway` with the
-Gateway-response flow.
-
-## Choose what to verify
-
-Both model and gateway attestations can be verified independently. You need a
-completion signature only when the claim is about a particular response.
-
-| Goal | Use it when | SDK calls | A successful result establishes | It does not establish |
-| --- | --- | --- | --- | --- |
-| Audit a model deployment | You want to inspect a model-serving CVM's TCB status, measurements, GPU evidence, or deployment configuration. | `client.fetchModelAttestations` → `verifyModelAttestation` | The quote, nonce, signer, measured deployment, and configured policy checks passed. | That any particular response came from this deployment, or that the client connected directly to its CVM. |
-| Audit a Gateway endpoint | You want to inspect a Cloud API Gateway deployment, optionally including its TLS service identity in Node. | `client.fetchGatewayAttestation` → `verifyGatewayAttestation` | The Gateway signer and deployment evidence are verified. The Node client also verifies the observed TLS peer by default. | That any particular completion was served by the Gateway, or that a model executed the request. |
-| Verify a model-issued response | The completion signature has `kind: 'provider_tee'`. | `client.fetchCompletionSignature` → `client.fetchModelAttestations` → `findModelAttestationForSignature` → `verifyModelAttestation` → `verifyModelResponse` | A verified model TEE signer signed these exact request and response bytes. | The Gateway deployment or its TLS endpoint. |
-| Verify a Gateway-issued response | The completion signature has `kind: 'gateway'`. | `client.fetchCompletionSignature` → `client.fetchGatewayAttestation` → `verifyGatewayAttestation` → `verifyGatewayResponse` | A verified Gateway signer signed these exact request and response bytes. | That an attested model executed or generated the response. |
-
-`client.fetchModelAttestations` preserves the Cloud API's `model_attestations` array.
-The SDK currently requires exactly one returned attestation. For a deployment
-audit, verify that sole item with the returned `clientBinding`; use
-`findModelAttestationForSignature` only when selecting evidence for a
-`provider_tee` response signature.
-
-For Cloud request and verification functions, their parameter fields, and result
-types, see the [API reference](./api-reference.md).
-
-For normal inference verification, use the model-response flow. Use an
-independent attestation flow when deployment evidence itself is the claim you
-need to establish.
-
-## Verify a model response
-
-Use this flow only when the completion signature has `kind: 'provider_tee'`.
-
-The SDK does not send inference requests. Before this flow, your application
-must have sent a completion with `x-no-aliasing: true` using a canonical model
-ID, then retained that model ID, the completion ID, and the exact request and
-response bytes. Do not parse and serialize those bytes again: changing JSON
-whitespace, key ordering, framing, or encoding changes the signed bytes.
+Use a canonical model ID and choose one signing algorithm for this operation.
+Verify the Gateway and model evidence before the completion request. The Node
+client below also checks the TLS peer for the Gateway evidence request.
 
 ```ts
 import {
   AttestationClient,
-  findModelAttestationForSignature,
+  verifyGatewayAttestation,
   verifyModelAttestation,
-  verifyModelResponse,
-} from 'verifiable-ai-sdk';
+} from 'verifiable-ai-sdk/node';
 
 const apiKey = process.env.NEARAI_API_KEY;
 if (!apiKey) {
   throw new Error('NEARAI_API_KEY is required');
 }
+
+const MODEL = 'z-ai/glm-5.2';
+const SIGNING_ALGO = 'ecdsa';
 const client = new AttestationClient({ apiKey });
 
-// model, completionId, requestBody, and responseBody were retained by your
-// application's inference request.
+const verifiedGatewayAttestation = await verifyGatewayDeployment();
+const verifiedModelAttestation = await verifyModelDeployment();
+
+async function verifyGatewayDeployment() {
+  const fetched = await client.fetchGatewayAttestation({
+    signingAlgo: SIGNING_ALGO,
+  });
+  return verifyGatewayAttestation({
+    attestation: fetched.attestation,
+    clientBinding: fetched.clientBinding,
+  });
+}
+
+async function verifyModelDeployment() {
+  const fetched = await client.fetchModelAttestations({
+    model: MODEL,
+    signingAlgo: SIGNING_ALGO,
+  });
+  const [attestation] = fetched.attestations;
+  if (!attestation) {
+    throw new Error('Cloud API returned no model attestation');
+  }
+  return verifyModelAttestation({
+    attestation,
+    clientBinding: fetched.clientBinding,
+  });
+}
+```
+
+`fetchModelAttestations` currently requires Cloud API to return exactly one
+model attestation. It generates a fresh nonce and returns it as
+`clientBinding`; pass that binding to `verifyModelAttestation`.
+
+Model evidence always uses the signer-and-nonce quote layout. Cloud API makes
+the model connection on the client's behalf, so model verification does not
+make a client-to-model TLS claim.
+
+The generic `verifiable-ai-sdk` entry point is suitable when TLS peer
+observation is unavailable, including browsers. Its Gateway request uses the
+same signer-and-nonce layout and returns `tlsBinding.kind: 'none'`. The Node
+entry point above requests and verifies the Gateway TLS SPKI fingerprint by
+default.
+
+## Send the completion
+
+Only after both deployment checks succeed, send the completion. Use the same
+canonical model ID and `x-no-aliasing: true`. Retain the exact bytes sent and
+received; parsing and serializing JSON or SSE again changes the signed payload.
+
+```ts
+const { completionId, requestBody, responseBody } = await sendCompletion({
+  model: MODEL,
+  headers: { 'x-no-aliasing': 'true' },
+});
+```
+
+`sendCompletion` is application code. It must return the completion ID and
+unaltered `Uint8Array` values for the HTTP request and response. For streams,
+`responseBody` includes the original SSE framing. See the runnable
+[JavaScript example](../../examples/example-js/index.mjs) for an implementation
+that verifies both non-streaming and streaming completions.
+
+## Verify the completion receipt
+
+Fetch the signature after the completion returns. `signature.kind` selects the
+response verifier; it does not decide which deployments to verify. Both
+preflight values remain part of the operation.
+
+```ts
+import {
+  verifyGatewayResponse,
+  verifyModelResponse,
+} from 'verifiable-ai-sdk/node';
 
 const signature = await client.fetchCompletionSignature({
   completionId,
+  signingAlgo: SIGNING_ALGO,
 });
-if (signature.kind !== 'provider_tee') {
-  throw new Error('This completion has a Gateway signature; use the Gateway flow.');
+
+if (signature.kind === 'provider_tee') {
+  verifyModelResponse({
+    requestBody,
+    responseBody,
+    signature,
+    attestation: verifiedModelAttestation,
+  });
+} else {
+  verifyGatewayResponse({
+    requestBody,
+    responseBody,
+    signature,
+    attestation: verifiedGatewayAttestation,
+  });
 }
-
-const { attestations, clientBinding } = await client.fetchModelAttestations({
-  model,
-});
-const attestation = findModelAttestationForSignature({
-  attestations,
-  signature,
-});
-
-const verifiedAttestation = await verifyModelAttestation({
-  attestation,
-  clientBinding,
-});
-
-verifyModelResponse({
-  requestBody,
-  responseBody,
-  signature,
-  attestation: verifiedAttestation,
-});
 ```
 
-When `verifyModelResponse` returns, the model signature is valid for those
-exact bytes and its signing identity matches `verifiedAttestation.signer`.
-`client.fetchModelAttestations` creates a fresh client nonce, checks the service's
-echo, and returns it in `clientBinding` with the evidence.
-`findModelAttestationForSignature` requires exactly one returned attestation to
-match the signature's signer.
+`verifyModelResponse` requires a `provider_tee` signature and matches its
+signer to `verifiedModelAttestation`. `verifyGatewayResponse` requires a
+`gateway` signature and matches its signer to `verifiedGatewayAttestation`.
+Each verifier also verifies the signature over the exact request and response
+bytes. A signer mismatch fails naturally; do not fetch unrelated evidence to
+make the check pass.
 
-`signingAlgo` and `signingAddress` are optional Cloud API request filters. They
-can narrow the evidence response, but they do not replace the local signer
-match above.
+Cloud API returns `gateway` when it signs client-visible bytes that a provider
+signature cannot cover, such as a rewritten response. It returns `provider_tee`
+when the model-serving TEE signs those bytes directly.
 
-`verifyModelResponse` verifies the response bytes and matches the signature to
-`verifiedAttestation.signer`; it does not repeat quote, policy, or deployment
-verification. Call `verifyModelAttestation` first. The result is ordinary data,
-so your application decides when raw evidence must be verified again after
-storage or transfer.
+## Current evidence boundary
 
-The client retrieves signatures and evidence only. Your application sends the
-completion request, retains its raw bytes, and decides whether or when to retry
-a completion or signature request.
+The preflight Gateway and model attestations establish two verified deployments.
+The completion signature binds the returned bytes to one of their signers,
+according to `kind`. They do not yet prove a complete chain from the model's
+upstream response through a Gateway transformation to the final bytes.
 
-The client defaults to `https://cloud-api.near.ai/v1`, so
-`new AttestationClient({ apiKey })` is enough for production. Add `baseUrl` to
-the constructor options only when you need another Cloud API environment.
+For a `gateway` signature, a successful result proves that the verified Gateway
+signed the exact final bytes. It does not cryptographically prove that the
+verified model produced the upstream response. For a `provider_tee` signature,
+a successful result proves model-signature provenance for the bytes, but does
+not cryptographically bind it to the preflight Gateway evidence.
 
-### What the model-attestation result contains
-
-`verifyModelAttestation` checks the nonce, Intel TDX quote, TCB policy, runtime
-measurements, and the model signing identity. Its result includes:
-
-- `signer`, the identity that must match the completion signature;
-- `tcbStatus` and `advisoryIds` from quote verification;
-- `deployment`, containing the measured configuration text and runtime
-  measurements;
-- `gpuEvidence`, either `verified` or `not_provided`; and
-- `deploymentProvenance`, either `verified` when your deployment verifier ran
-  successfully or `not_checked` when none was supplied.
-
-Model fetches always request `include_tls_fingerprint=false`. Cloud API
-connects to the model on the client's behalf, so this flow verifies the
-signer-and-nonce quote binding but does not establish a client-to-model TLS
-binding.
-
-## Verify a gateway attestation
-
-A Gateway attestation verifies a Cloud API Gateway deployment. The Node entry
-point also verifies the Gateway TLS identity by default: it requests the TLS
-fingerprint and checks it against the TLS peer that served the evidence
-request.
-
-```ts
-import {
-  AttestationClient,
-  verifyGatewayAttestation,
-} from 'verifiable-ai-sdk/node';
-
-const client = new AttestationClient({ apiKey });
-const fetchedGatewayAttestation = await client.fetchGatewayAttestation();
-const verifiedGatewayAttestation = await verifyGatewayAttestation({
-  attestation: fetchedGatewayAttestation.attestation,
-  clientBinding: fetchedGatewayAttestation.clientBinding,
-});
-```
-
-The Node client captures the SHA-256 SPKI fingerprint of the TLS peer that
-served this evidence request. Its default request includes the Gateway
-fingerprint, so verification requires the two to match. A successful result
-then has `tlsBinding.kind: 'attested'`.
-
-The generic entry point, including browser use, cannot observe a peer
-certificate. It defaults to the signer-and-nonce quote layout instead:
-
-```ts
-import {
-  AttestationClient,
-  verifyGatewayAttestation,
-} from 'verifiable-ai-sdk';
-
-const client = new AttestationClient({ apiKey });
-const fetchedGatewayAttestation = await client.fetchGatewayAttestation();
-const verifiedGatewayAttestation = await verifyGatewayAttestation({
-  attestation: fetchedGatewayAttestation.attestation,
-  clientBinding: fetchedGatewayAttestation.clientBinding,
-});
-```
-
-This uses `include_tls_fingerprint=false`. Cloud API must return an attestation
-without an SPKI fingerprint, so verification checks the signer-and-nonce quote
-layout. The result has `tlsBinding.kind: 'none'`; it makes no TLS claim. Its
-parameter type permits `includeSpkiFingerprint: false` only, to make that
-constraint visible at the call site.
-
-For a signature with `kind: 'gateway'`, fetch fresh evidence for the
-signature's signing algorithm, verify it, then verify the response:
-
-```ts
-import {
-  AttestationClient,
-  verifyGatewayAttestation,
-  verifyGatewayResponse,
-} from 'verifiable-ai-sdk/node';
-
-const client = new AttestationClient({ apiKey });
-const fetchedGatewayAttestation = await client.fetchGatewayAttestation({
-  signingAlgo: signature.signer.signingAlgo,
-});
-const verifiedGatewayAttestation = await verifyGatewayAttestation({
-  attestation: fetchedGatewayAttestation.attestation,
-  clientBinding: fetchedGatewayAttestation.clientBinding,
-});
-
-verifyGatewayResponse({
-  requestBody,
-  responseBody,
-  signature,
-  attestation: verifiedGatewayAttestation,
-});
-```
-
-For this flow in a generic or browser runtime, import from
-`verifiable-ai-sdk` instead. It follows the no-TLS flow above before calling
-`verifyGatewayResponse`.
-
-This verifies gateway-service provenance and integrity for the exact completion
-bytes: the signature is valid and its signer is bound to the verified gateway
-deployment evidence. It does not establish model execution; use a
-`provider_tee` signature and model evidence for that claim.
-
-For Gateway attestation, `AttestationPolicy` controls accepted TCB statuses.
-Use `verifiers.quote` or `verifiers.deployment` for custom quote or deployment
-acceptance. Whether TLS binding is present comes from the Gateway attestation
-returned by Cloud API.
+Cloud API tracks a paired provider signature and Gateway receipt for rewritten
+responses in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
+Until that exists, do not claim the complete chain from these separate pieces of
+evidence.
 
 ## Set policy and trust roots
 
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU
-evidence is verified when the report provides it; a report without GPU evidence
-is accepted by default. Require GPU evidence when your application needs it:
-
-Add these options to the `verifyModelAttestation` call in the model flow above.
+The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. Model GPU
+evidence is verified when present and is optional by default. Require it when
+your application needs that guarantee:
 
 ```ts
 import type {
@@ -260,11 +177,11 @@ const policy: ModelAttestationPolicy = {
 };
 
 const verifiers: ModelAttestationVerifiers = {
-  // An application function that resolves only for approved deployments.
+  // Resolve only for deployments your application accepts.
   deployment: verifyDeploymentRelease,
 };
 
-const verifiedAttestation = await verifyModelAttestation({
+return verifyModelAttestation({
   attestation,
   clientBinding,
   policy,
@@ -272,78 +189,39 @@ const verifiedAttestation = await verifyModelAttestation({
 });
 ```
 
-Here `verifyDeploymentRelease` is an application function. It receives the
-measured deployment and must throw or reject for every deployment that your
-release policy does not approve. The SDK provides the raw measured
-configuration text; your policy should interpret it according to the
-configuration format it expects rather than relying on a derived image list.
+Use these options in `verifyModelDeployment` when constructing the preflight
+result. `verifiers.deployment` receives authenticated measured deployment data
+and must reject every deployment your release policy does not accept. The SDK
+authenticates measured values; your callback decides which values are trusted.
 
-Supplying `verifiers.deployment` makes deployment acceptance a required check:
-it must resolve for verification to succeed. The SDK authenticates the measured
-values, but your verifier decides which deployments are acceptable.
+`verifiers.quote` replaces the built-in Intel DCAP verifier. `verifiers.nvidia`
+replaces the default NVIDIA NRAS verifier. Each callback must resolve only for
+evidence it accepts and throw or reject every other outcome.
 
-`verifiers.quote` replaces the built-in Intel DCAP quote verifier. For model
-evidence, the default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and
-accepts its documented boolean overall result. It does not locally validate the
-returned JWT/EAT signature. `verifiers.nvidia` replaces that verifier; supply
-it when your application needs local JWT/EAT validation, different trust roots,
-or another verification service. Each verifier must resolve only for evidence
-it accepts and throw or reject for all other outcomes.
+## Handle errors
 
-## Handle signature and verification errors
+`fetchCompletionSignature` returns a signature or throws `ApiError`. A 2xx
+unavailable result is `api.completion_signature_unavailable` and includes
+`providerErrorCode` and `providerMessage`. An HTTP 404 is
+`api.http_status`; it is retryable because a request made before a completion
+reaches its terminal state can later succeed, although an unknown ID can also
+produce 404.
 
-`client.fetchCompletionSignature` returns one completion signature or throws a
-structured error. It follows the Cloud API default unless you pass
-`signingAlgo`.
-
-A 2xx unavailable response is an `ApiError` with code
-`api.completion_signature_unavailable`: Cloud API cannot provide a usable
-signature for that completion. Its details include the service's
-`providerErrorCode` and `providerMessage`.
-
-An HTTP 404 is also an `api.http_status` error. It remains retryable because a
-signature request made before a completion reaches its terminal state can later
-succeed; an unknown completion ID can produce the same status.
-
-For a found signature, `kind` is `provider_tee` or `gateway`, matching Cloud
-API's `signature_kind`. A response without a recognized kind is rejected: the
-SDK cannot select a trust boundary or response-verification path for it. Pass
-the signature unchanged to the verifier that matches its kind.
-
-Cloud API client methods and evidence selection can throw `ApiError` for
-transport, HTTP, response-format, nonce, unavailable-signature, or
-candidate-selection failures. Verification functions and local input or
-signature-contract checks throw `VerificationError`.
-
-| Field | Meaning |
-| --- | --- |
-| `error.failure.code` | Stable code for a program to branch on. TypeScript narrows `error.failure.details` from this code. |
-| `error.failure.details` (when present) | Code-specific diagnostic context, such as a response field, status, or signer-selection count. Do not parse `error.message`. |
-| `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
+Cloud request methods can also throw `ApiError` for transport, response-format,
+nonce, or attestation-selection failures. Verification functions and local
+input or signature-contract checks throw `VerificationError`.
 
 ```ts
 import {
-  AttestationClient,
   isApiError,
   isVerificationError,
 } from 'verifiable-ai-sdk';
-
-const client = new AttestationClient({ apiKey });
 
 try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
   if (isApiError(error)) {
-    switch (error.failure.code) {
-      case 'api.completion_signature_unavailable':
-        console.log('The completion has no usable signature');
-        break;
-      case 'api.http_status':
-        if (error.retryable) {
-          console.log('A later signature request may succeed');
-        }
-        break;
-    }
+    console.log(error.failure.code, error.failure.details);
   } else if (isVerificationError(error)) {
     console.log(error.failure.code);
   } else {
@@ -351,3 +229,5 @@ try {
   }
 }
 ```
+
+Use `error.failure.code` for program logic, not the error message.

@@ -1,107 +1,94 @@
 # Verifiable AI SDK for TypeScript
 
-Verify NEAR AI Cloud completion signatures and attestation evidence.
-`AttestationClient` fetches signatures and evidence; standalone functions
-verify them. Your application sends completion requests and retains their exact
-request and response bytes when it verifies a response.
-`fetchCompletionSignature` returns a signature or throws a structured `ApiError`
-when Cloud API cannot provide one.
+Verify NEAR AI Cloud deployment attestations and completion signatures.
+`AttestationClient` retrieves Cloud API evidence and signatures; standalone
+functions verify them. Your application sends completion requests and preserves
+their exact request and response bytes.
 
-## What the SDK verifies
+## Verification flow
 
-A successful attestation establishes:
+Use three stages for a verified completion:
 
-- the Intel TDX quote, nonce, accepted TCB status, measured compose
-  configuration, and runtime measurements are valid;
-- supplied NVIDIA GPU evidence is accepted by the configured verifier for
-  model attestations, or can be required by policy; and
-- gateway evidence verifies the Gateway signer; the `/node` client also
-  matches the observed TLS peer to the fingerprint bound into the verified
-  quote by default.
+1. Before sending the completion, fetch and verify both the Gateway deployment
+   and the target model deployment.
+2. Send a completion to the canonical model with `x-no-aliasing: true`, then
+   retain its completion ID and exact request and response bytes.
+3. Fetch the completion signature and verify those bytes with the preflight
+   evidence selected by `signature.kind`.
 
-When verifying a response, the SDK additionally establishes that a signature
-covers the exact request and response bytes and its signer is bound to the
-matching verified evidence.
+The signature kind is a receipt-dispatch value, not a choice between two
+workflows. Both deployments are checked before the request. It selects the
+evidence that can verify the returned bytes:
 
-The default NVIDIA verifier sends GPU evidence to NVIDIA NRAS over HTTPS and
-accepts its documented boolean overall result. It does not locally validate the
-returned JWT/EAT signature. Supply `verifiers.nvidia` when your trust model
-requires local JWT/EAT validation, different trust roots, or another
-verification service.
+| `signature.kind` | Response verifier | Successful result |
+| --- | --- | --- |
+| `provider_tee` | `verifyModelResponse` with the verified model attestation | The model-serving TEE signer bound to that attestation signed the exact request and response bytes. |
+| `gateway` | `verifyGatewayResponse` with the verified Gateway attestation | The Gateway signer bound to that attestation signed the exact client-visible request and response bytes. |
 
-The SDK does not send inference requests, choose retry behavior, or turn model
-evidence into a client-to-model TLS claim.
+If the relevant signing identity does not match the preflight result, response
+verification fails. Do not substitute unverified evidence for a failed match.
 
-## Choose the claim you need
+## What attestations establish
 
-The completion signature's explicit `kind` identifies the trust boundary that
-signed the completion and selects its verification flow. A `provider_tee`
-signature comes from the model-serving TEE; a `gateway` signature comes from
-the NEAR AI Cloud Gateway for the client-visible response.
+A successful model attestation verifies its quote, nonce, accepted TCB status,
+measured deployment, runtime measurements, model signer, and configured GPU
+evidence policy. A successful Gateway attestation verifies the equivalent
+Gateway deployment evidence and signer. The `/node` client also verifies the
+TLS peer observed while fetching Gateway evidence by default.
 
-### Verify a model response
+The default NVIDIA verifier sends supplied GPU evidence to NVIDIA NRAS over
+HTTPS and accepts its documented boolean overall result. It does not locally
+validate the returned JWT/EAT signature. Supply `verifiers.nvidia` when your
+trust model requires local JWT/EAT validation, different trust roots, or
+another verification service.
 
-Use a `provider_tee` signature with model attestation to verify that a
-model-serving TEE signed the exact completion bytes. This is the normal
-completion-verification flow. Keep the original bytes, use a canonical model ID
-with `x-no-aliasing: true`, fetch matching model attestation evidence, then
-verify the response. The model-attestation fetch returns the client binding used
-for that evidence request. A model attestation does not prove that the client
-connected directly to the model CVM.
+## Evidence boundary
 
-[Follow the model-response guide](./docs/verification-guide.md#verify-a-model-response).
+The two preflight attestations and one completion signature do not yet form a
+complete model-to-Gateway-to-final-response chain. In particular, a `gateway`
+signature proves the final client-visible bytes were signed by the verified
+Gateway, but does not cryptographically bind them to an upstream response from
+the verified model. A `provider_tee` signature verifies the model-signed bytes,
+but does not bind that signature to the preflight Gateway evidence.
 
-### Verify a gateway attestation
-
-Fetch fresh Gateway evidence to verify a Cloud API Gateway deployment. Import
-`AttestationClient` from `verifiable-ai-sdk/node` to capture the SHA-256 SPKI
-fingerprint of the TLS peer serving that exact evidence request and check it
-against the quote by default. The generic `verifiable-ai-sdk` entry point is
-also suitable for browsers; it defaults to the signer-and-nonce quote layout
-without making a TLS claim. Gateway evidence does not establish model
-execution.
-
-[Follow the gateway-attestation guide](./docs/verification-guide.md#verify-a-gateway-attestation).
-
-### Verify a gateway response
-
-Use a `gateway` signature with verified gateway evidence to verify the exact
-completion bytes and gateway-service provenance. This is the matching response
-verification flow when the signature kind is `gateway`; it does not establish
-model execution.
+This limitation matters when Cloud API rewrites a provider response before
+returning it. The planned paired provider signature and Gateway receipt are
+tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 
 ## Requirements
 
 - Use the `clientBinding` returned with each attestation fetch result when
   verifying that result. The SDK generates a fresh nonce for every evidence
   request.
-- For response verification, preserve exact request and response bytes; use
-  the signature's explicit kind with its matching evidence and response
-  verifier.
-- For Gateway attestation, pass the fetched `attestation` and `clientBinding`
-  to `verifyGatewayAttestation`. Use the `/node` client for TLS binding; use
-  the generic client when TLS peer observation is unavailable.
-- Verify raw evidence before using its result for response verification. Decide
-  where to verify it again after storage or transfer.
-- Supply a deployment verifier when the application must restrict acceptable
+- Verify Gateway and model evidence before sending the completion. Keep the
+  resulting verified values for the receipt-verification stage.
+- Preserve exact completion request and response bytes. Do not parse and
+  serialize them again before response verification.
+- Use the signature's explicit `kind` only to choose the matching response
+  verifier and preflight result.
+- Supply a deployment verifier when your application must restrict acceptable
   measured deployments.
+
+The SDK does not send inference requests, choose retry behavior, or turn model
+evidence into a client-to-model TLS claim.
 
 ## Documentation
 
-- [Verification guide](./docs/verification-guide.md) for complete model and
-  gateway workflows, policy configuration, and error handling.
-- [API reference](./docs/api-reference.md) for Cloud request and verification APIs,
-  types, and fields.
+- [Verification guide](./docs/verification-guide.md) explains the complete
+  three-stage flow, policies, and error handling.
+- [API reference](./docs/api-reference.md) documents Cloud request and
+  verification APIs, types, and fields.
 
 ## Runtime
 
 The package publishes ESM and is developed with Node.js 24. Import from
 `verifiable-ai-sdk/node` for the Node client, whose Gateway fetch defaults to
 TLS binding. Import from `verifiable-ai-sdk` for the generic client, whose
-Gateway fetch defaults to the no-TLS layout and therefore verifies to
-`tlsBinding.kind: 'none'`. `GatewayAttestation.spkiFingerprint` is Gateway-reported,
+Gateway fetch defaults to the no-TLS layout and returns `tlsBinding.kind:`
+`'none'`. `GatewayAttestation.spkiFingerprint` is Gateway-reported,
 `GatewayClientBinding.spkiFingerprint` is client-observed, and a successful
 `GatewayTlsBinding.spkiFingerprint` is their verified match.
-The default Intel verifier may require `crypto`, `buffer`,
-and `stream` polyfills in browsers. Supply a custom quote verifier when your
-runtime or trust model requires one.
+
+The default Intel verifier may require `crypto`, `buffer`, and `stream`
+polyfills in browsers. Supply a custom quote verifier when your runtime or
+trust model requires one.
