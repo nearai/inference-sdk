@@ -12,6 +12,12 @@ use verifiable_ai_sdk::{
 const API_URL: &str = "https://cloud-api.near.ai/v1/chat/completions";
 const MODEL: &str = "z-ai/glm-5.2";
 
+struct Completion {
+    completion_id: String,
+    request_body: Vec<u8>,
+    response_body: Vec<u8>,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let api_key =
@@ -22,19 +28,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let verified_gateway = verify_gateway_deployment(&attestation_client).await?;
     let verified_model = verify_model_deployment(&attestation_client).await?;
 
-    verify_completion(
-        &completion_client,
+    let non_streaming = send_completion(&completion_client, &api_key, false).await?;
+    verify_completion_receipt(
         &attestation_client,
-        &api_key,
+        &non_streaming,
         &verified_gateway,
         &verified_model,
         false,
     )
     .await?;
-    verify_completion(
-        &completion_client,
+
+    let streaming = send_completion(&completion_client, &api_key, true).await?;
+    verify_completion_receipt(
         &attestation_client,
-        &api_key,
+        &streaming,
         &verified_gateway,
         &verified_model,
         true,
@@ -84,14 +91,11 @@ async fn verify_model_deployment(
     Ok(verified)
 }
 
-async fn verify_completion(
+async fn send_completion(
     completion_client: &reqwest::Client,
-    attestation_client: &AttestationClient,
     api_key: &str,
-    verified_gateway: &VerifiedGatewayAttestation,
-    verified_model: &VerifiedModelAttestation,
     stream: bool,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Completion, Box<dyn Error>> {
     let request_body = serde_json::to_vec(&json!({
         "model": MODEL,
         "messages": [{ "role": "user", "content": "Reply with the word ok." }],
@@ -119,8 +123,22 @@ async fn verify_completion(
 
     // Keep these original bytes unchanged for response-signature verification.
     let completion_id = read_completion_id(&response_body, stream)?;
+    Ok(Completion {
+        completion_id,
+        request_body,
+        response_body,
+    })
+}
+
+async fn verify_completion_receipt(
+    attestation_client: &AttestationClient,
+    completion: &Completion,
+    verified_gateway: &VerifiedGatewayAttestation,
+    verified_model: &VerifiedModelAttestation,
+    stream: bool,
+) -> Result<(), Box<dyn Error>> {
     let signature = attestation_client
-        .fetch_completion_signature(&completion_id, Some(SigningAlgo::Ecdsa))
+        .fetch_completion_signature(&completion.completion_id, Some(SigningAlgo::Ecdsa))
         .await?;
     let label = if stream { "Streaming" } else { "Non-streaming" };
 
@@ -128,11 +146,21 @@ async fn verify_completion(
     // which verified signer covers these exact response bytes.
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            verify_model_response(&request_body, &response_body, &signature, verified_model)?;
+            verify_model_response(
+                &completion.request_body,
+                &completion.response_body,
+                &signature,
+                verified_model,
+            )?;
             println!("{label}: verified a model-serving TEE receipt.");
         }
         CompletionSignatureKind::Gateway => {
-            verify_gateway_response(&request_body, &response_body, &signature, verified_gateway)?;
+            verify_gateway_response(
+                &completion.request_body,
+                &completion.response_body,
+                &signature,
+                verified_gateway,
+            )?;
             println!("{label}: verified a Gateway receipt.");
         }
     }

@@ -23,13 +23,15 @@ const client = new AttestationClient({ apiKey });
 const verifiedGatewayAttestation = await verifyGatewayDeployment();
 const verifiedModelAttestation = await verifyModelDeployment();
 
-await verifyCompletion({
-	stream: false,
+const nonStreamingCompletion = await sendCompletion({ stream: false });
+await verifyCompletionReceipt({
+	completion: nonStreamingCompletion,
 	verifiedGatewayAttestation,
 	verifiedModelAttestation,
 });
-await verifyCompletion({
-	stream: true,
+const streamingCompletion = await sendCompletion({ stream: true });
+await verifyCompletionReceipt({
+	completion: streamingCompletion,
 	verifiedGatewayAttestation,
 	verifiedModelAttestation,
 });
@@ -63,11 +65,7 @@ async function verifyModelDeployment() {
 	return verified;
 }
 
-async function verifyCompletion({
-	stream,
-	verifiedGatewayAttestation,
-	verifiedModelAttestation,
-}) {
+async function sendCompletion({ stream }) {
 	const label = stream ? "Streaming" : "Non-streaming";
 	const requestBody = new TextEncoder().encode(
 		JSON.stringify({
@@ -96,29 +94,37 @@ async function verifyCompletion({
 
 	// Keep these original bytes unchanged for response-signature verification.
 	const completionId = readCompletionId(responseBody, stream);
+	return { completionId, label, requestBody, responseBody };
+}
+
+async function verifyCompletionReceipt({
+	completion,
+	verifiedGatewayAttestation,
+	verifiedModelAttestation,
+}) {
 	const signature = await client.fetchCompletionSignature({
-		completionId,
+		completionId: completion.completionId,
 		signingAlgo: SIGNING_ALGO,
 	});
 
 	if (signature.kind === "provider_tee") {
 		verifyModelResponse({
-			requestBody,
-			responseBody,
+			requestBody: completion.requestBody,
+			responseBody: completion.responseBody,
 			signature,
 			attestation: verifiedModelAttestation,
 		});
-		console.log(`${label}: verified a model-serving TEE signature.`);
+		console.log(`${completion.label}: verified a model-serving TEE signature.`);
 		return;
 	}
 
 	verifyGatewayResponse({
-		requestBody,
-		responseBody,
+		requestBody: completion.requestBody,
+		responseBody: completion.responseBody,
 		signature,
 		attestation: verifiedGatewayAttestation,
 	});
-	console.log(`${label}: verified a Gateway signature.`);
+	console.log(`${completion.label}: verified a Gateway signature.`);
 }
 
 function readCompletionId(responseBody, stream) {

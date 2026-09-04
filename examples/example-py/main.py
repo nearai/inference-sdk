@@ -46,7 +46,7 @@ async def verify_model_deployment(
     return verified
 
 
-async def fetch_completion(
+async def send_completion(
     session: aiohttp.ClientSession, api_key: str, stream: bool
 ) -> tuple[bytes, bytes, str]:
     request_body = json.dumps(
@@ -97,17 +97,16 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     raise RuntimeError('Streaming completion response did not contain an id')
 
 
-async def verify_completion(
+async def verify_completion_receipt(
     client: AttestationClient,
-    session: aiohttp.ClientSession,
-    api_key: str,
-    stream: bool,
+    request_body: bytes,
+    response_body: bytes,
+    completion_id: str,
     verified_gateway_attestation: VerifiedGatewayAttestation,
     verified_model_attestation: VerifiedModelAttestation,
+    *,
+    stream: bool,
 ) -> None:
-    request_body, response_body, completion_id = await fetch_completion(
-        session, api_key, stream
-    )
     signature = await client.fetch_completion_signature(
         completion_id,
         signing_algo=SIGNING_ALGO,
@@ -142,21 +141,35 @@ async def main() -> None:
     async with aiohttp.ClientSession(auto_decompress=False) as session:
         verified_gateway_attestation = await verify_gateway_deployment(client)
         verified_model_attestation = await verify_model_deployment(client)
-        await verify_completion(
-            client,
+
+        request_body, response_body, completion_id = await send_completion(
             session,
             api_key,
             stream=False,
+        )
+        await verify_completion_receipt(
+            client,
+            request_body,
+            response_body,
+            completion_id,
             verified_gateway_attestation=verified_gateway_attestation,
             verified_model_attestation=verified_model_attestation,
+            stream=False,
         )
-        await verify_completion(
-            client,
+
+        request_body, response_body, completion_id = await send_completion(
             session,
             api_key,
             stream=True,
+        )
+        await verify_completion_receipt(
+            client,
+            request_body,
+            response_body,
+            completion_id,
             verified_gateway_attestation=verified_gateway_attestation,
             verified_model_attestation=verified_model_attestation,
+            stream=True,
         )
 
 
