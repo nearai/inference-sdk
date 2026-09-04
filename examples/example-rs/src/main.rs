@@ -3,9 +3,10 @@ use std::{env, error::Error, io};
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde_json::{json, Value};
 use verifiable_ai_sdk::{
-    find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
-    verify_model_attestation, verify_model_response, AttestationClient, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, NO_ALIASING_HEADER,
+    verify_gateway_attestation, verify_gateway_response, verify_model_attestation,
+    verify_model_response, AttestationClient, CompletionSignatureKind,
+    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
+    VerifiedModelAttestation, NO_ALIASING_HEADER,
 };
 
 const API_URL: &str = "https://cloud-api.near.ai/v1/chat/completions";
@@ -18,15 +19,77 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let completion_client = reqwest::Client::new();
     let attestation_client = AttestationClient::new(api_key.clone());
 
-    verify_completion(&completion_client, &attestation_client, &api_key, false).await?;
-    verify_completion(&completion_client, &attestation_client, &api_key, true).await?;
+    let verified_gateway = verify_gateway_deployment(&attestation_client).await?;
+    let verified_model = verify_model_deployment(&attestation_client).await?;
+
+    verify_completion(
+        &completion_client,
+        &attestation_client,
+        &api_key,
+        &verified_gateway,
+        &verified_model,
+        false,
+    )
+    .await?;
+    verify_completion(
+        &completion_client,
+        &attestation_client,
+        &api_key,
+        &verified_gateway,
+        &verified_model,
+        true,
+    )
+    .await?;
     Ok(())
+}
+
+async fn verify_gateway_deployment(
+    client: &AttestationClient,
+) -> Result<VerifiedGatewayAttestation, Box<dyn Error>> {
+    let fetched = client
+        .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+            signing_algo: Some(SigningAlgo::Ecdsa),
+            ..Default::default()
+        })
+        .await?;
+    let verified = verify_gateway_attestation(
+        &fetched.attestation,
+        &fetched.client_binding,
+        None,
+        Default::default(),
+    )
+    .await?;
+    println!("Gateway deployment: verified.");
+    Ok(verified)
+}
+
+async fn verify_model_deployment(
+    client: &AttestationClient,
+) -> Result<VerifiedModelAttestation, Box<dyn Error>> {
+    let fetched = client
+        .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
+        .await?;
+    let attestation = fetched
+        .attestations
+        .first()
+        .ok_or_else(|| io::Error::other("Cloud API returned no model attestation"))?;
+    let verified = verify_model_attestation(
+        attestation,
+        &fetched.client_binding,
+        None,
+        Default::default(),
+    )
+    .await?;
+    println!("Model deployment: verified.");
+    Ok(verified)
 }
 
 async fn verify_completion(
     completion_client: &reqwest::Client,
     attestation_client: &AttestationClient,
     api_key: &str,
+    verified_gateway: &VerifiedGatewayAttestation,
+    verified_model: &VerifiedModelAttestation,
     stream: bool,
 ) -> Result<(), Box<dyn Error>> {
     let request_body = serde_json::to_vec(&json!({
@@ -57,53 +120,20 @@ async fn verify_completion(
     // Keep these original bytes unchanged for response-signature verification.
     let completion_id = read_completion_id(&response_body, stream)?;
     let signature = attestation_client
-        .fetch_completion_signature(&completion_id, None)
+        .fetch_completion_signature(&completion_id, Some(SigningAlgo::Ecdsa))
         .await?;
     let label = if stream { "Streaming" } else { "Non-streaming" };
 
+    // Both deployments were verified before chat. The receipt kind selects
+    // which verified signer covers these exact response bytes.
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let fetched = attestation_client
-                .fetch_model_attestations(MODEL, None, None)
-                .await?;
-            let attestation =
-                find_model_attestation_for_signature(&fetched.attestations, &signature)?;
-            let verified_attestation = verify_model_attestation(
-                attestation,
-                &fetched.client_binding,
-                None,
-                Default::default(),
-            )
-            .await?;
-            verify_model_response(
-                &request_body,
-                &response_body,
-                &signature,
-                &verified_attestation,
-            )?;
-            println!("{label}: verified a model-serving TEE signature.");
+            verify_model_response(&request_body, &response_body, &signature, verified_model)?;
+            println!("{label}: verified a model-serving TEE receipt.");
         }
         CompletionSignatureKind::Gateway => {
-            let fetched = attestation_client
-                .fetch_gateway_attestation(GatewayAttestationFetchOptions {
-                    signing_algo: Some(signature.signer.signing_algo),
-                    ..Default::default()
-                })
-                .await?;
-            let verified_attestation = verify_gateway_attestation(
-                &fetched.attestation,
-                &fetched.client_binding,
-                None,
-                Default::default(),
-            )
-            .await?;
-            verify_gateway_response(
-                &request_body,
-                &response_body,
-                &signature,
-                &verified_attestation,
-            )?;
-            println!("{label}: verified a Gateway signature.");
+            verify_gateway_response(&request_body, &response_body, &signature, verified_gateway)?;
+            println!("{label}: verified a Gateway receipt.");
         }
     }
 
