@@ -1,6 +1,5 @@
 import {
 	AttestationClient,
-	findModelAttestationForSignature,
 	verifyGatewayAttestation,
 	verifyGatewayResponse,
 	verifyModelAttestation,
@@ -9,6 +8,7 @@ import {
 
 const API_URL = "https://cloud-api.near.ai/v1/chat/completions";
 const MODEL = "z-ai/glm-5.2";
+const SIGNING_ALGO = "ecdsa";
 const decoder = new TextDecoder();
 
 const apiKey = process.env.NEARAI_API_KEY;
@@ -18,10 +18,52 @@ if (!apiKey) {
 
 const client = new AttestationClient({ apiKey });
 
-await verifyCompletion(false);
-await verifyCompletion(true);
+// Verify both deployments before sending either completion. These verified
+// results are later paired with the completion receipt according to its kind.
+const verifiedGatewayAttestation = await verifyGatewayDeployment();
+const verifiedModelAttestation = await verifyModelDeployment();
 
-async function verifyCompletion(stream) {
+await verifyCompletion({
+	stream: false,
+	verifiedGatewayAttestation,
+	verifiedModelAttestation,
+});
+await verifyCompletion({
+	stream: true,
+	verifiedGatewayAttestation,
+	verifiedModelAttestation,
+});
+
+async function verifyGatewayDeployment() {
+	const fetched = await client.fetchGatewayAttestation({
+		signingAlgo: SIGNING_ALGO,
+	});
+	return verifyGatewayAttestation({
+		attestation: fetched.attestation,
+		clientBinding: fetched.clientBinding,
+	});
+}
+
+async function verifyModelDeployment() {
+	const fetched = await client.fetchModelAttestations({
+		model: MODEL,
+		signingAlgo: SIGNING_ALGO,
+	});
+	const [attestation] = fetched.attestations;
+	if (!attestation) {
+		throw new Error("Cloud API returned no model attestation");
+	}
+	return verifyModelAttestation({
+		attestation,
+		clientBinding: fetched.clientBinding,
+	});
+}
+
+async function verifyCompletion({
+	stream,
+	verifiedGatewayAttestation,
+	verifiedModelAttestation,
+}) {
 	const label = stream ? "Streaming" : "Non-streaming";
 	const requestBody = new TextEncoder().encode(
 		JSON.stringify({
@@ -50,40 +92,27 @@ async function verifyCompletion(stream) {
 
 	// Keep these original bytes unchanged for response-signature verification.
 	const completionId = readCompletionId(responseBody, stream);
-	const signature = await client.fetchCompletionSignature({ completionId });
+	const signature = await client.fetchCompletionSignature({
+		completionId,
+		signingAlgo: SIGNING_ALGO,
+	});
 
 	if (signature.kind === "provider_tee") {
-		const fetched = await client.fetchModelAttestations({ model: MODEL });
-		const attestation = findModelAttestationForSignature({
-			attestations: fetched.attestations,
-			signature,
-		});
-		const verifiedAttestation = await verifyModelAttestation({
-			attestation,
-			clientBinding: fetched.clientBinding,
-		});
 		verifyModelResponse({
 			requestBody,
 			responseBody,
 			signature,
-			attestation: verifiedAttestation,
+			attestation: verifiedModelAttestation,
 		});
 		console.log(`${label}: verified a model-serving TEE signature.`);
 		return;
 	}
 
-	const fetched = await client.fetchGatewayAttestation({
-		signingAlgo: signature.signer.signingAlgo,
-	});
-	const verifiedAttestation = await verifyGatewayAttestation({
-		attestation: fetched.attestation,
-		clientBinding: fetched.clientBinding,
-	});
 	verifyGatewayResponse({
 		requestBody,
 		responseBody,
 		signature,
-		attestation: verifiedAttestation,
+		attestation: verifiedGatewayAttestation,
 	});
 	console.log(`${label}: verified a Gateway signature.`);
 }
