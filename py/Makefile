@@ -1,0 +1,15 @@
+.PHONY: lint fmt format check test
+
+lint: fmt check test
+
+fmt:
+	@uv run ruff format --check
+
+format:
+	@uv run ruff format
+
+check:
+	@uv run ruff check
+
+test:
+	@uv run pytest -q

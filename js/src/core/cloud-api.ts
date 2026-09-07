@@ -1,0 +1,477 @@
+import type { ModelAttestation } from '../types/attestation-model';
+import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
+import type {
+  CompletionSignature,
+  CompletionSignatureReference,
+} from '../types/chat';
+import type {
+  AttestationClientOptions,
+  FetchCompletionSignatureParams,
+  FetchedGatewayAttestation,
+  FetchedModelAttestation,
+  FetchedModelAttestations,
+  FetchGatewayAttestationParams,
+  FetchModelAttestationForSignatureParams,
+  FetchModelAttestationsParams,
+  FindModelAttestationForSignatureParams,
+} from '../types/cloud-api';
+import {
+  decodeCompletionSignature,
+  decodeGatewayAttestationReport,
+  decodeModelAttestationReport,
+} from '../boundaries/cloud-api';
+import { generateNonce, hexToBuffer } from '../utils/common';
+import {
+  ApiError,
+  type ApiFailure,
+  inputError,
+  VerificationError,
+} from '../utils/errors';
+
+/** Set this on completion requests to reject model aliases before dispatch. */
+export const NO_ALIASING_HEADER = 'x-no-aliasing';
+
+/** Default production endpoint used when a helper does not select another one. */
+export const DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1';
+
+type ApiResource = Extract<
+  ApiFailure,
+  { code: 'api.transport_failed' }
+>['details']['resource'];
+type AttestationResource = 'model_attestation' | 'gateway_attestation';
+type GetCloudApiJsonParams = {
+  readonly url: URL;
+  readonly resource: ApiResource;
+  readonly extraHeaders?: HeadersInit;
+};
+type GetGatewayAttestationJsonParams = {
+  readonly url: URL;
+  readonly capturePeerSpkiFingerprint: boolean;
+};
+type FetchGatewayAttestationRequestParams = {
+  readonly signingAlgo?: SigningAlgo;
+  readonly includeSpkiFingerprint: boolean;
+};
+type GatewayAttestationJson = {
+  readonly json: unknown;
+  readonly peerSpkiFingerprint?: string;
+};
+
+/** Internal response shape used by the Node client to attach its TLS peer. */
+export type GatewayAttestationHttpResponse = {
+  readonly response: Response;
+  readonly peerSpkiFingerprint?: string;
+};
+
+type CreateCloudApiRequestParams = {
+  readonly url: URL;
+  readonly extraHeaders?: HeadersInit;
+};
+type ReadCloudApiJsonParams = {
+  readonly response: Response;
+  readonly resource: ApiResource;
+};
+
+/**
+ * Shared Cloud API client implementation. Runtime-specific clients expose
+ * their own Gateway-attestation options while sharing model and signature
+ * requests.
+ */
+export class CloudApiClient {
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor({ apiKey, baseUrl }: AttestationClientOptions) {
+    this.apiKey = apiKey;
+    this.baseUrl = resolveCloudApiBaseUrl(baseUrl);
+  }
+
+  /**
+   * Fetch NEAR model attestation candidates with a fresh client nonce.
+   * Optionally narrow the report to a signing algorithm and signing address.
+   * Currently returns exactly one candidate.
+   */
+  async fetchModelAttestations({
+    model,
+    signingAlgo,
+    signingAddress,
+  }: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
+    const clientNonce = generateNonce();
+    const url = new URL('attestation/report', this.baseUrl);
+    url.searchParams.set('model', model);
+    url.searchParams.set('provider', 'near');
+    url.searchParams.set('nonce', clientNonce);
+    url.searchParams.set('include_tls_fingerprint', 'false');
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    if (signingAddress !== undefined) {
+      url.searchParams.set('signing_address', signingAddress);
+    }
+
+    const attestations = decodeModelAttestationReport(
+      await this.getCloudApiJson({
+        url,
+        resource: 'model_attestation',
+        extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
+      }),
+    );
+    if (attestations.length !== 1) {
+      throw new ApiError({
+        code: 'api.unexpected_model_attestation_count',
+        details: { actualCount: attestations.length },
+      });
+    }
+    for (const attestation of attestations) {
+      requireMatchingApiNonce({
+        reportedNonce: attestation.nonce,
+        requestedNonce: clientNonce,
+        resource: 'model_attestation',
+      });
+    }
+    return { attestations, clientBinding: { nonce: clientNonce } };
+  }
+
+  /**
+   * Fetch model attestation candidates for a provider_tee signature, then
+   * select the one whose advertised signer matches the signature signer.
+   */
+  async fetchModelAttestationForSignature({
+    model,
+    signature,
+  }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
+    const fetched = await this.fetchModelAttestations({
+      model,
+      signingAlgo: signature.signer.signingAlgo,
+      signingAddress: signature.signer.signingAddress,
+    });
+    return {
+      attestation: findModelAttestationForSignature({
+        attestations: fetched.attestations,
+        signature,
+      }),
+      clientBinding: fetched.clientBinding,
+    };
+  }
+
+  /**
+   * Fetch standalone Gateway evidence. A returned SPKI fingerprint selects
+   * the TLS-bound quote layout during `verifyGatewayAttestation`.
+   */
+  protected async fetchGatewayAttestationWithOptions({
+    signingAlgo,
+    includeSpkiFingerprint,
+  }: FetchGatewayAttestationRequestParams): Promise<FetchedGatewayAttestation> {
+    const clientNonce = generateNonce();
+    const url = new URL('attestation/report', this.baseUrl);
+    url.searchParams.set('nonce', clientNonce);
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    url.searchParams.set(
+      'include_tls_fingerprint',
+      String(includeSpkiFingerprint),
+    );
+    const result = await this.getGatewayAttestationJson({
+      url,
+      capturePeerSpkiFingerprint: includeSpkiFingerprint,
+    });
+    const attestation = decodeGatewayAttestationReport(result.json);
+    const responseIncludesSpkiFingerprint =
+      attestation.spkiFingerprint !== undefined;
+    if (responseIncludesSpkiFingerprint !== includeSpkiFingerprint) {
+      throw new ApiError({
+        code: 'api.invalid_response',
+        details: {
+          path: 'gateway_attestation.tls_cert_fingerprint',
+          expected: includeSpkiFingerprint ? 'present' : 'missing',
+          actual: responseIncludesSpkiFingerprint ? 'present' : 'missing',
+        },
+      });
+    }
+    requireMatchingApiNonce({
+      reportedNonce: attestation.nonce,
+      requestedNonce: clientNonce,
+      resource: 'gateway_attestation',
+    });
+    return {
+      attestation,
+      clientBinding: {
+        nonce: clientNonce,
+        ...(result.peerSpkiFingerprint === undefined
+          ? {}
+          : { spkiFingerprint: result.peerSpkiFingerprint }),
+      },
+    };
+  }
+
+  /** Fetch one completion signature or throw when Cloud API does not provide one. */
+  async fetchCompletionSignature({
+    completionId,
+    signingAlgo,
+  }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
+    const url = new URL(
+      `signature/${encodeURIComponent(completionId)}`,
+      this.baseUrl,
+    );
+    if (signingAlgo !== undefined) {
+      url.searchParams.set('signing_algo', signingAlgo);
+    }
+    return decodeCompletionSignature(
+      await this.getCloudApiJson({
+        url,
+        resource: 'completion_signature',
+      }),
+    );
+  }
+
+  /**
+   * Node overrides this to capture the TLS peer certificate for the exact
+   * Gateway attestation request. Browser clients use standard Fetch.
+   */
+  protected async requestGatewayAttestation(
+    request: Request,
+    _capturePeerSpkiFingerprint: boolean,
+  ): Promise<GatewayAttestationHttpResponse> {
+    return { response: await fetch(request) };
+  }
+
+  private async getCloudApiJson({
+    url,
+    resource,
+    extraHeaders = {},
+  }: GetCloudApiJsonParams): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await fetch(this.createCloudApiRequest({ url, extraHeaders }));
+    } catch (cause) {
+      throw new ApiError(
+        {
+          code: 'api.transport_failed',
+          details: { resource, reason: 'request' },
+          retryable: true,
+        },
+        { cause },
+      );
+    }
+
+    return readCloudApiJson({ response, resource });
+  }
+
+  private async getGatewayAttestationJson({
+    url,
+    capturePeerSpkiFingerprint,
+  }: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
+    const request = this.createCloudApiRequest({ url });
+    let result: GatewayAttestationHttpResponse;
+    try {
+      result = await this.requestGatewayAttestation(
+        request,
+        capturePeerSpkiFingerprint,
+      );
+    } catch (cause) {
+      throw new ApiError(
+        {
+          code: 'api.transport_failed',
+          details: { resource: 'gateway_attestation', reason: 'request' },
+          retryable: true,
+        },
+        { cause },
+      );
+    }
+
+    return {
+      json: await readCloudApiJson({
+        response: result.response,
+        resource: 'gateway_attestation',
+      }),
+      peerSpkiFingerprint: result.peerSpkiFingerprint,
+    };
+  }
+
+  private createCloudApiRequest({
+    url,
+    extraHeaders = {},
+  }: CreateCloudApiRequestParams): Request {
+    const headers = new Headers(extraHeaders);
+    headers.set('authorization', `Bearer ${this.apiKey}`);
+    return new Request(url, { headers });
+  }
+}
+
+/**
+ * Generic client for fetching attestation evidence and completion signatures
+ * from NEAR AI Cloud. It owns the Cloud API configuration; verification
+ * functions remain standalone.
+ *
+ * Standard Fetch does not expose the TLS peer certificate. Gateway evidence
+ * therefore defaults to the signer-and-nonce quote layout in this client.
+ */
+export class AttestationClient extends CloudApiClient {
+  async fetchGatewayAttestation({
+    signingAlgo,
+    includeSpkiFingerprint = false,
+  }: FetchGatewayAttestationParams = {}): Promise<FetchedGatewayAttestation> {
+    return this.fetchGatewayAttestationWithOptions({
+      signingAlgo,
+      includeSpkiFingerprint,
+    });
+  }
+}
+
+async function readCloudApiJson({
+  response,
+  resource,
+}: ReadCloudApiJsonParams): Promise<unknown> {
+  let body: string;
+  try {
+    body = await response.text();
+  } catch (cause) {
+    throw new ApiError(
+      {
+        code: 'api.transport_failed',
+        details: { resource, reason: 'response_body' },
+        retryable: true,
+      },
+      { cause },
+    );
+  }
+  if (!response.ok) {
+    throw new ApiError({
+      code: 'api.http_status',
+      details: { resource, status: response.status },
+      retryable: isRetryableHttpStatus(response.status, resource),
+    });
+  }
+  try {
+    return JSON.parse(body);
+  } catch (cause) {
+    throw new ApiError(
+      {
+        code: 'api.invalid_json',
+        details: { resource },
+      },
+      { cause },
+    );
+  }
+}
+
+/**
+ * Select the single model attestation whose advertised signer matches a
+ * provider_tee completion signature. It does not verify the quote or
+ * completion signature.
+ */
+export function findModelAttestationForSignature({
+  attestations,
+  signature,
+}: FindModelAttestationForSignatureParams): ModelAttestation {
+  assertSignatureKind(signature, 'provider_tee');
+  return findModelAttestationForSigner(attestations, signature.signer);
+}
+
+function findModelAttestationForSigner(
+  attestations: readonly ModelAttestation[],
+  signer: SigningIdentity,
+): ModelAttestation {
+  const matches: ModelAttestation[] = [];
+  for (const attestation of attestations) {
+    const candidateSigner = attestation.signer;
+    if (
+      candidateSigner.signingAlgo === signer.signingAlgo &&
+      hexToBuffer(candidateSigner.signingAddress).equals(
+        hexToBuffer(signer.signingAddress),
+      )
+    ) {
+      matches.push(attestation);
+    }
+  }
+
+  if (matches.length === 0) {
+    throw new ApiError({
+      code: 'api.model_attestation_signer_not_found',
+    });
+  }
+  if (matches.length !== 1) {
+    throw new ApiError({
+      code: 'api.ambiguous_model_attestation_signer',
+      details: {
+        matchingCount: matches.length,
+        totalCount: attestations.length,
+      },
+    });
+  }
+  return matches[0];
+}
+
+function assertSignatureKind(
+  signature: CompletionSignatureReference,
+  expectedKind: CompletionSignatureReference['kind'],
+): void {
+  if (signature.kind !== expectedKind) {
+    throw new VerificationError({
+      code: 'signature.kind_mismatch',
+      details: { expected: expectedKind, actual: signature.kind },
+    });
+  }
+}
+
+function resolveCloudApiBaseUrl(
+  baseUrl = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+): string {
+  let resolvedBaseUrl: URL;
+  try {
+    resolvedBaseUrl = new URL(baseUrl);
+  } catch {
+    throw invalidBaseUrl();
+  }
+  if (
+    (resolvedBaseUrl.protocol !== 'http:' &&
+      resolvedBaseUrl.protocol !== 'https:') ||
+    resolvedBaseUrl.hostname === ''
+  ) {
+    throw invalidBaseUrl();
+  }
+  if (!resolvedBaseUrl.pathname.endsWith('/')) {
+    resolvedBaseUrl.pathname = `${resolvedBaseUrl.pathname}/`;
+  }
+  return resolvedBaseUrl.toString();
+}
+
+function invalidBaseUrl(): VerificationError {
+  return inputError({
+    field: 'baseUrl',
+    reason: 'invalid_url',
+    details: { expected: 'an absolute HTTP(S) URL' },
+  });
+}
+
+function isRetryableHttpStatus(status: number, resource: ApiResource): boolean {
+  return (
+    (resource === 'completion_signature' && status === 404) ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  );
+}
+
+type RequireMatchingApiNonceParams = {
+  readonly reportedNonce: string;
+  readonly requestedNonce: string;
+  readonly resource: AttestationResource;
+};
+
+/** Reject a response that does not echo the nonce sent in its request. */
+function requireMatchingApiNonce({
+  reportedNonce,
+  requestedNonce,
+  resource,
+}: RequireMatchingApiNonceParams): void {
+  if (hexToBuffer(reportedNonce).equals(hexToBuffer(requestedNonce))) {
+    return;
+  }
+  throw new ApiError({
+    code: 'api.nonce_mismatch',
+    details: { resource },
+  });
+}

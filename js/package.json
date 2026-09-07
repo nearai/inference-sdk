@@ -1,0 +1,65 @@
+{
+  "name": "verifiable-ai-sdk",
+  "version": "0.1.0",
+  "description": "Verify NEAR AI Cloud attestation evidence in TypeScript",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nearai/verifiable-ai-sdk.git"
+  },
+  "homepage": "https://github.com/nearai/verifiable-ai-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/nearai/verifiable-ai-sdk/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.24.0",
+  "files": [
+    "dist",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsup --clean",
+    "typecheck": "tsc --project tsconfig.json",
+    "typecheck:test": "tsc --project tsconfig.test.json",
+    "test": "jest --runInBand",
+    "format": "biome format --write .",
+    "format:check": "biome check --formatter-enabled=true --linter-enabled=false --assist-enabled=false .",
+    "lint": "biome lint .",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm typecheck:test && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@phala/dcap-qvl": "0.6.2",
+    "buffer": "^6.0.3",
+    "ethers": "^6.17.0",
+    "tweetnacl": "^1.0.3",
+    "valibot": "1.4.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.10",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3"
+  }
+}
