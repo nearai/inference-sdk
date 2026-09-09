@@ -14,6 +14,21 @@ type ApiResource =
  */
 export type ApiFailure =
   | {
+      /** A value supplied to a Cloud API helper is not usable for that call. */
+      code: 'api.invalid_input';
+      details: {
+        field: string;
+        reason:
+          | 'invalid_url'
+          | 'invalid_hex'
+          | 'wrong_length'
+          | 'unsupported_value'
+          | 'invalid_header_value';
+        expected?: string;
+        actual?: string;
+      };
+    }
+  | {
       code: 'api.transport_failed';
       details: {
         resource: ApiResource;
@@ -46,10 +61,6 @@ export type ApiFailure =
       details: {
         resource: 'model_attestation' | 'gateway_attestation';
       };
-    }
-  | {
-      code: 'api.unexpected_model_attestation_count';
-      details: { actualCount: number };
     }
   | {
       code: 'api.ambiguous_model_attestation_signer';
@@ -369,6 +380,8 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'api.invalid_input':
+      return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':
       return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':
@@ -385,8 +398,6 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] Cloud API response has an invalid ${failure.details.path}: expected ${failure.details.expected}, received ${failure.details.actual}`;
     case 'api.nonce_mismatch':
       return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} nonce does not match the request`;
-    case 'api.unexpected_model_attestation_count':
-      return `[${failure.code}] Cloud API returned ${failure.details.actualCount} model attestations; expected exactly one`;
     case 'api.ambiguous_model_attestation_signer':
       return `[${failure.code}] Cloud API returned ${failure.details.matchingCount} model attestations for the requested signer (${failure.details.totalCount} total)`;
     case 'api.model_attestation_signer_not_found':

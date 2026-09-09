@@ -25,7 +25,6 @@ from .types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
     FetchedGatewayAttestation,
-    FetchedModelAttestation,
     FetchedModelAttestations,
 )
 from .types.verification import (
@@ -63,7 +62,6 @@ __all__ = [
     'verify_gateway_attestation',
     'verify_model_response',
     'verify_gateway_response',
-    'FetchedModelAttestation',
     'FetchedGatewayAttestation',
     'FetchedModelAttestations',
     'SigningAlgo',

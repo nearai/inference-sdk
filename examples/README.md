@@ -5,12 +5,12 @@ Each project follows the same three-stage flow against the canonical
 
 1. Verify the Gateway deployment and, where the runtime supports it, the TLS
    peer observed while fetching its attestation.
-2. Verify the selected model deployment.
+2. Verify every target-model deployment returned by the preflight request.
 3. Send one non-streaming and one streaming completion, retain the exact
    request and response bytes, then verify the returned response receipt.
 
 The examples use an explicit ECDSA signing algorithm for all three stages.
-Cloud API's report and signature endpoints currently have different defaults,
+The Gateway's report and signature endpoints currently have different defaults,
 so relying on those defaults could make the preflight evidence and response
 signer differ. They use only the `NEARAI_API_KEY` environment variable.
 

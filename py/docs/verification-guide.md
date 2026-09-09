@@ -6,15 +6,15 @@ sends a completion, then verifies the signature returned for that completion.
 `signature.kind` is used only in the final step to select the right response
 verifier.
 
-Create `client = AttestationClient(api_key)` once. It retrieves Cloud API
-evidence and signatures; your application sends the completion request and
-keeps the exact bytes it sends and receives.
+Create `client = AttestationClient(api_key)` once. It retrieves NEAR AI Cloud
+Gateway evidence and signatures; your application sends the completion request
+and keeps the exact bytes it sends and receives.
 
 ## Verification lifecycle
 
 | Stage | SDK calls | What a successful result establishes |
 | --- | --- | --- |
-| 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and target model deployment each satisfy your evidence and policy checks. |
+| 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and every returned target-model deployment satisfy your evidence and policy checks. |
 | 2. Send a completion | None | Your application retains the canonical model ID, completion ID, and exact request and response bytes. |
 | 3. Verify the response signature | `fetch_completion_signature` → verifier selected by `signature.kind` | The selected model or Gateway signer signed those exact bytes. |
 
@@ -28,7 +28,7 @@ that evidence.
 Verify both deployments before sending the completion. Choose the signing
 algorithm your application expects; this example uses ECDSA for all three
 requests. Pass the same explicit algorithm to both attestation fetches and the
-completion-signature fetch: Cloud API's report and signature endpoints have
+completion-signature fetch: the Gateway's report and signature endpoints have
 different defaults.
 
 ```python
@@ -55,16 +55,22 @@ async def verify_deployments(client: AttestationClient):
         MODEL,
         signing_algo=SIGNING_ALGO,
     )
-    # Cloud API currently returns exactly one model attestation per request.
-    verified_model = await verify_model_attestation(
-        fetched_model.attestations[0],
-        fetched_model.client_binding,
-    )
-    return verified_gateway, verified_model
+    if not fetched_model.attestations:
+        raise RuntimeError('Gateway returned no model attestations')
+
+    verified_models = []
+    for attestation in fetched_model.attestations:
+        verified_models.append(
+            await verify_model_attestation(
+                attestation,
+                fetched_model.client_binding,
+            )
+        )
+    return verified_gateway, tuple(verified_models)
 ```
 
 `fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
-Cloud API report endpoint, but ask for evidence with different client bindings:
+Gateway report endpoint, but ask for evidence with different client bindings:
 
 - Gateway evidence requests an SPKI fingerprint by default. The Python SDK
   captures the peer fingerprint from that same HTTPS evidence request, and
@@ -75,8 +81,10 @@ Cloud API report endpoint, but ask for evidence with different client bindings:
   signer and nonce binding without making a client-to-model TLS claim.
 
 The fetch helpers generate fresh nonces and reject a response whose echoed
-nonce does not match. `verify_*_attestation` then verifies the quote,
-measurements, deployment configuration, and policy.
+nonce does not match. `fetch_model_attestations()` preserves every returned
+model record. This deployment-first workflow rejects an empty collection and
+verifies every returned record before inference. `verify_*_attestation` then
+verifies the quote, measurements, deployment configuration, and policy.
 
 ### Gateway TLS identity
 
@@ -123,7 +131,7 @@ or text encoding changes the signed bytes.
 Your application must retain:
 
 - the canonical model ID;
-- the completion ID returned by Cloud API;
+- the completion ID returned by the Gateway;
 - the exact request bytes; and
 - the exact response bytes, including streaming framing when applicable.
 
@@ -132,24 +140,29 @@ behavior for it.
 
 ## 3. Verify the returned completion signature
 
-Fetch the signature after the completion has reached its terminal state. Pass
-the verified deployment result from stage 1 to the verifier selected by the
-returned kind.
+Fetch the signature after the completion has reached its terminal state. A
+provider signature selects exactly one verified model result from stage 1; a
+Gateway signature uses the verified Gateway result.
 
 ```python
 from verifiable_ai_sdk import (
+    find_model_attestation_for_signature,
     verify_gateway_response,
     verify_model_response,
 )
 
 # completion_id, request_body, and response_body came from your completion
-# request. verified_gateway and verified_model came from stage 1.
+# request. verified_gateway and verified_models came from stage 1.
 signature = await client.fetch_completion_signature(
     completion_id,
     signing_algo=SIGNING_ALGO,
 )
 
 if signature.kind == 'provider_tee':
+    verified_model = find_model_attestation_for_signature(
+        verified_models,
+        signature,
+    )
     verify_model_response(
         request_body,
         response_body,
@@ -165,7 +178,7 @@ else:
     )
 ```
 
-Cloud API provides two signature kinds. They are different response signatures,
+The Gateway provides two signature kinds. They are different response signatures,
 not two top-level deployment workflows:
 
 | `signature.kind` | Call | A successful result establishes | It does not establish |
@@ -173,9 +186,9 @@ not two top-level deployment workflows:
 | `provider_tee` | `verify_model_response` | A verified model-serving TEE signer signed the exact request and response bytes. | Which Gateway deployment or TLS endpoint returned them. |
 | `gateway` | `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated them. |
 
-Cloud API can rewrite a response before returning it, for example while
+The Gateway can rewrite a response before returning it, for example while
 normalizing a stream for OpenAI compatibility. A provider signature over the
-upstream bytes cannot verify rewritten bytes, so Cloud API may return a
+upstream bytes cannot verify rewritten bytes, so the Gateway may return a
 `gateway` signature for the final client-visible bytes. Always use the kind
 returned for that completion; never infer it from signed text.
 
@@ -192,7 +205,7 @@ form a complete model-to-Gateway-to-final-bytes cryptographic chain.
   connect an upstream model response to those bytes.
 
 Consequently, successfully verifying both preflight deployments must not be
-presented as proof that they served the same inference. [Cloud API issue #986](https://github.com/nearai/cloud-api/issues/986)
+presented as proof that they served the same inference. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks the missing chain: preserving a provider signature and adding a Gateway
 receipt that binds the upstream and final response hashes for the same
 inference.
@@ -217,12 +230,13 @@ verifiers = ModelAttestationVerifiers(
     deployment=verify_deployment_release,
 )
 
-verified_model = await verify_model_attestation(
-    fetched_model.attestations[0],
-    fetched_model.client_binding,
-    policy=policy,
-    verifiers=verifiers,
-)
+for attestation in fetched_model.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_model.client_binding,
+        policy=policy,
+        verifiers=verifiers,
+    )
 ```
 
 `verify_deployment_release` is application code. It receives the measured
@@ -245,15 +259,17 @@ structured error. A 2xx unavailable envelope raises `ApiError` with
 `api.completion_signature_unavailable`; its details contain the service's
 `providerErrorCode` and `providerMessage`.
 
-An HTTP 404 raises `api.http_status` and remains retryable. It means Cloud API
+An HTTP 404 raises `api.http_status` and remains retryable. It means the Gateway
 has no stored signature for that ID at that time. Retry only when the
 application has reason to expect a later signature, such as before the
 completion has reached its terminal state.
 
 `AttestationClient` methods and evidence selection raise `ApiError` for
-request, HTTP, response-format, nonce, unavailable-signature, or
-candidate-selection failures. Verification functions and local input or
-signature-contract checks raise `VerificationError`.
+request, HTTP, response-format, nonce, unavailable-signature,
+candidate-selection, or helper-input failures. Explicit verification functions
+raise `VerificationError` for local input, cryptographic, policy, and binding
+failures. Handle each stage separately: client and selection handlers catch
+`ApiError`, while explicit verification handlers catch `VerificationError`.
 
 | Field | Meaning |
 | --- | --- |
@@ -262,7 +278,7 @@ signature-contract checks raise `VerificationError`.
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
 
 ```python
-from verifiable_ai_sdk import ApiError, VerificationError
+from verifiable_ai_sdk import ApiError
 
 try:
     signature = await client.fetch_completion_signature(completion_id)
@@ -274,5 +290,4 @@ except ApiError as error:
             print('A later signature request may succeed')
         case _:
             raise
-except VerificationError as error:
-    print(error.failure.code)
+```

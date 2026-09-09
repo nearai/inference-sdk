@@ -17,12 +17,6 @@ NO_ALIASING_HEADER = 'x-no-aliasing'
 
 
 @dataclass(frozen=True, kw_only=True)
-class FetchedModelAttestation:
-    attestation: ModelAttestation
-    client_binding: ModelClientBinding
-
-
-@dataclass(frozen=True, kw_only=True)
 class FetchedGatewayAttestation:
     attestation: GatewayAttestation
     client_binding: GatewayClientBinding
@@ -37,7 +31,6 @@ class FetchedModelAttestations:
 __all__ = [
     'DEFAULT_NEAR_AI_CLOUD_BASE_URL',
     'NO_ALIASING_HEADER',
-    'FetchedModelAttestation',
     'FetchedGatewayAttestation',
     'FetchedModelAttestations',
 ]

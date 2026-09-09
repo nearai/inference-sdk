@@ -22,37 +22,39 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `AttestationClient` | `new AttestationClient(options)` | Fetches Cloud API signatures and attestation evidence. |
+| `AttestationClient` | `new AttestationClient(options)` | Fetches NEAR AI Cloud Gateway signatures and attestation evidence. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 
 ## `AttestationClient`
 
-`AttestationClient` owns Cloud API configuration. Construct it once, then use
+`AttestationClient` owns NEAR AI Cloud Gateway configuration. Construct it once, then use
 its methods to retrieve signatures and evidence. It does not send completion
-requests or retain their request or response bytes.
+requests or retain their request or response bytes. SDK-classified client and
+selection failures are `ApiError`; SDK-classified failures from explicit
+`verify…` functions are `VerificationError`. Unexpected runtime errors can
+still propagate unchanged.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
-Cloud API's report and signature endpoints have different defaults.
+The Gateway's report and signature endpoints have different defaults.
 
 ### Constructor
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
-| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Cloud API base URL. Include the API path when using a custom endpoint. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) NEAR AI Cloud Gateway base URL. Include the API path when using a custom endpoint. |
 
 ### Methods
 
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify its sole result for a deployment preflight. |
-| `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Post-completion convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment preflight. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -62,11 +64,9 @@ Cloud API's report and signature endpoints have different defaults.
 | `FetchCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it follows the service default. |
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
-|  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Cloud API response. |
-|  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Cloud API response. `findModelAttestationForSignature` still performs the local signer match. |
-| `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Canonical model ID. |
-|  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
-| `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Cloud API default. For a preflight operation that selects an algorithm, use the same value when fetching the completion signature. This does not select a gateway instance. |
+|  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Gateway response. |
+|  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Gateway response. It must be hexadecimal: 20 or 32 bytes without `signingAlgo`, or the matching length when an algorithm is selected. Invalid input throws `ApiError` before a request. |
+| `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Gateway default. For a preflight operation that selects an algorithm, use the same value when fetching the completion signature. This does not select a gateway instance. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
 
@@ -80,9 +80,7 @@ attestation verifier.
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The SDK currently requires exactly one item. |
-| `FetchedModelAttestation` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
+|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations`. The collection may be empty or contain multiple candidates; verify every candidate before a completion. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
@@ -93,17 +91,16 @@ attestation verifier.
 
 ### `findModelAttestationForSignature`
 
-Use this function after `client.fetchModelAttestations` to select evidence for a
-`provider_tee` signature. It requires exactly one signer match but does not
-verify the attestation. `client.fetchModelAttestationForSignature` is the
-convenience form of these two operations. The normal preflight workflow verifies
-the fetched model attestation before the completion instead.
+Use this function after verifying every candidate returned by
+`client.fetchModelAttestations`. It selects the one verified result whose
+signer matches a `provider_tee` signature. It requires exactly one signer
+match and performs no additional cryptographic verification.
 
 #### `FindModelAttestationForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly ModelAttestation[]` | Yes | Model attestations returned by `client.fetchModelAttestations`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
@@ -161,7 +158,7 @@ again after storage, transfer, or reconstruction in another language.
 
 ### Receipt verifier dispatch
 
-`CompletionSignature.kind` is Cloud API's explicit response-receipt
+`CompletionSignature.kind` is the Gateway's explicit response-receipt
 discriminant. It selects the response verifier after both Gateway and model
 deployments have been verified; it is not a choice between two deployment
 verification workflows.
@@ -171,7 +168,7 @@ verification workflows.
 | `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response bytes. |
 | `gateway` | NEAR AI Cloud Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response bytes. It does not establish model execution. |
 
-Cloud API can return `gateway` when it rewrites the client-visible response,
+The Gateway can return `gateway` when it rewrites the client-visible response,
 because a byte-exact provider signature would no longer match those bytes. A
 `gateway` receipt does not cryptographically link the final bytes to an
 upstream model response. The missing paired provider signature and Gateway
@@ -183,7 +180,7 @@ receipt are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issue
 | --- | --- | --- | --- |
 | `SigningIdentity` | `signingAlgo` | `SigningAlgo` | Signing algorithm. |
 |  | `signingAddress` | `string` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
-| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Cloud API receipt kind that selects the matching preflight result and response verifier. |
+| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Gateway receipt kind that selects the matching preflight result and response verifier. |
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |

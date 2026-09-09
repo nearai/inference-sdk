@@ -11,12 +11,14 @@ Treat deployment verification and response verification as separate stages.
 
 | Stage | SDK calls | What it establishes |
 | --- | --- | --- |
-| Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway and model deployments each satisfy their quote, policy, measurement, and signer checks; Gateway verification includes TLS peer binding by default. |
+| Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway and every returned model deployment satisfy their quote, policy, measurement, and signer checks; Gateway verification includes TLS peer binding by default. |
 | Send chat | Your HTTP client | A request naming the canonical model ID used during preflight. Retain the exact request and response bytes. |
 | Verify the completion receipt | `fetch_completion_signature` → response verifier selected by `signature.kind` | The exact bytes were signed by the corresponding verified signer. |
 
-Complete both deployment checks before sending chat. Retain their verified
-results for the final stage rather than fetching new attestations after the completion.
+Complete both deployment checks before sending chat. The Gateway may return zero
+or more model-attestation candidates: reject an empty preflight and verify every
+returned candidate. Retain their verified results for the final stage rather
+than fetching new attestations after the completion.
 Use a canonical model ID and send `x-no-aliasing: true` with the completion
 request so the preflight model and request name the same deployment.
 
@@ -24,14 +26,15 @@ request so the preflight model and request name the same deployment.
 
 This example explicitly selects `SigningAlgo::Ecdsa` for all evidence and
 signature requests. Pass the same explicit algorithm to both attestation
-fetches and the completion-signature fetch: Cloud API's report and signature
+fetches and the completion-signature fetch: the Gateway's report and signature
 endpoints have different defaults. The APIs also accept `None` for individual
 calls, but omitting the algorithm is not suitable for this three-stage flow.
 
 ```rust,no_run
 use verifiable_ai_sdk::{
     verify_gateway_attestation, verify_model_attestation, AttestationClient,
-    GatewayAttestationFetchOptions, SigningAlgo,
+    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
+    VerifiedModelAttestation,
 };
 
 const MODEL: &str = "z-ai/glm-5.2";
@@ -40,8 +43,8 @@ async fn verify_deployments(
     client: &AttestationClient,
 ) -> Result<
     (
-        verifiable_ai_sdk::VerifiedGatewayAttestation,
-        verifiable_ai_sdk::VerifiedModelAttestation,
+        VerifiedGatewayAttestation,
+        Vec<VerifiedModelAttestation>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -62,20 +65,27 @@ async fn verify_deployments(
     let fetched_models = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
-    // The current client contract requires exactly one model candidate.
-    let model_attestation = fetched_models
-        .attestations
-        .first()
-        .expect("fetch_model_attestations returned one candidate");
-    let verified_model = verify_model_attestation(
-        model_attestation,
-        &fetched_models.client_binding,
-        None,
-        Default::default(),
-    )
-    .await?;
+    if fetched_models.attestations.is_empty() {
+        return Err(std::io::Error::other("Gateway returned no model attestations").into());
+    }
 
-    Ok((verified_gateway, verified_model))
+    let mut verified = Vec::with_capacity(fetched_models.attestations.len());
+    for attestation in &fetched_models.attestations {
+        verified.push(
+            verify_model_attestation(
+                attestation,
+                &fetched_models.client_binding,
+                None,
+                Default::default(),
+            )
+            .await?,
+        );
+    }
+
+    Ok((
+        verified_gateway,
+        verified,
+    ))
 }
 ```
 
@@ -86,7 +96,7 @@ If the runtime cannot expose the TLS peer certificate, set
 `include_spki_fingerprint: false` before fetching. That verifies the Gateway
 quote's signer-and-nonce layout but makes no TLS identity claim.
 
-Model fetches always request `include_tls_fingerprint=false`: Cloud API
+Model fetches always request `include_tls_fingerprint=false`: the Gateway
 connects to the model on the client's behalf, so a client cannot make a direct
 model TLS binding.
 
@@ -103,7 +113,8 @@ of this stage that depends on `signature.kind` is the response verifier:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    verify_gateway_response, verify_model_response, AttestationClient,
+    find_model_attestation_for_signature, verify_gateway_response,
+    verify_model_response, AttestationClient, CompletionSignature,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
@@ -114,7 +125,7 @@ async fn verify_completion_receipt(
     request_body: &[u8],
     response_body: &[u8],
     gateway: &VerifiedGatewayAttestation,
-    model: &VerifiedModelAttestation,
+    models: &[VerifiedModelAttestation],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signature = client
         .fetch_completion_signature(completion_id, Some(SigningAlgo::Ecdsa))
@@ -122,6 +133,7 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
+            let model = find_model_attestation_for_signature(models, &signature)?;
             verify_model_response(request_body, response_body, &signature, model)?;
         }
         CompletionSignatureKind::Gateway => {
@@ -132,8 +144,9 @@ async fn verify_completion_receipt(
 }
 ```
 
-`ProviderTee` proves that the preflight-verified model signer signed the exact
-request and response bytes. `Gateway` proves that the preflight-verified
+`ProviderTee` proves that one preflight-verified model signer signed the exact
+request and response bytes. Use `find_model_attestation_for_signature` to
+require exactly one verified result for that signer. `Gateway` proves that the preflight-verified
 Gateway signer signed the exact client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's
@@ -150,7 +163,7 @@ The preflight attestations and receipt answer complementary questions:
 | `ProviderTee` receipt | The verified model signer signed these exact bytes. | Gateway deployment or TLS provenance. |
 | `Gateway` receipt | The verified Gateway signer signed these exact client-visible bytes. | That an attested model produced those bytes. |
 
-Cloud API currently returns one response signature, not a cryptographically
+The Gateway currently returns one response signature, not a cryptographically
 linked provider signature and Gateway receipt. As a result, independently
 verified preflight evidence plus one current receipt does not prove a complete
 model → Gateway → final-response chain for a particular inference.
@@ -175,46 +188,48 @@ result; it does not locally validate the returned JWT/EAT signature.
 
 ## Handle errors
 
-Cloud client methods and evidence selection return `Result<T, SdkError>`.
-`SdkError::Api(ApiError)` represents a Cloud API request, response, nonce, or
-candidate-selection failure. `SdkError::Verification(VerificationError)`
-represents local input validation or verification that arose while preparing a
-Cloud request. Attestation and response verification functions return
-`VerificationError` directly.
+Cloud client methods and evidence selection return `Result<T, ApiError>`.
+That includes client configuration and input errors, such as an invalid custom
+base URL, an API key that cannot be used in an HTTP header, or a non-provider
+signature passed to model-evidence selection. These helpers retrieve or select
+evidence; they do not verify it. Attestation and response verification
+functions return `VerificationError` directly. Keep the boundaries separate:
+client and selection code only handles `ApiError`, while explicit verification
+code only handles `VerificationError`.
 
-Match an error enum variant when practical. `ApiError::code()` and
-`VerificationError::code()` provide stable machine-readable codes; enum fields
-contain code-specific diagnostic details. Display text is for people and must
-not be parsed. `retryable()` means a new attempt at the failed external
-operation may succeed. It does not mean that re-verifying the same evidence
-will succeed or that an inference request should be replayed.
+At either boundary, match the relevant error enum variant when practical. Its
+`code()` provides a stable machine-readable code, and enum fields contain
+code-specific diagnostic details. Display text is for people and must not be
+parsed. `retryable()` means a new attempt at the failed external operation may
+succeed. It does not mean that re-verifying the same evidence will succeed or
+that an inference request should be replayed.
 
 `AttestationClient::fetch_completion_signature` returns a signature or an
-`SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })` with code
-`api.completion_signature_unavailable` when Cloud API returns a valid 2xx
+`ApiError::CompletionSignatureUnavailable { .. }` with code
+`api.completion_signature_unavailable` when the Gateway returns a valid 2xx
 unavailable envelope. The error preserves the service's
 `provider_error_code` and `provider_message`.
 
 ```rust,no_run
-use verifiable_ai_sdk::{ApiError, AttestationClient, SdkError};
+use verifiable_ai_sdk::{ApiError, AttestationClient};
 
 async fn fetch_completion_signature(
     api_key: &str,
     completion_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ApiError> {
     let client = AttestationClient::new(api_key.to_owned());
     match client.fetch_completion_signature(completion_id, None).await {
         Ok(_signature) => {}
-        Err(SdkError::Api(ApiError::CompletionSignatureUnavailable {
+        Err(ApiError::CompletionSignatureUnavailable {
             provider_error_code,
             provider_message,
-        })) => {
+        }) => {
             eprintln!("no usable signature ({provider_error_code}): {provider_message}");
         }
-        Err(SdkError::Api(error)) if error.retryable() => {
+        Err(error) if error.retryable() => {
             eprintln!("the signature request may succeed on a later attempt");
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     }
     Ok(())
 }
@@ -224,5 +239,5 @@ A completion-signature HTTP 404 is classified as retryable because it can be
 observed before a completion reaches its terminal state. It can also mean an
 unknown completion ID, so retry only when the application knows that the
 completion may still be finishing. A valid 2xx unavailable envelope is not
-retryable: it reports that Cloud API cannot provide a usable signature for that
+retryable: it reports that the Gateway cannot provide a usable signature for that
 completion.

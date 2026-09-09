@@ -1,7 +1,6 @@
-import type { CompletionSignature, ModelAttestation } from '../src';
+import type { CompletionSignature, VerifiedModelAttestation } from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
 import { AttestationClient as NodeAttestationClient } from '../src/node';
-import { nonce } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
@@ -26,16 +25,16 @@ function gatewaySignature(): CompletionSignature {
   };
 }
 
-function modelAttestation(
-  overrides: Partial<ModelAttestation> = {},
-): ModelAttestation {
+function verifiedModelAttestation(
+  overrides: Partial<VerifiedModelAttestation> = {},
+): VerifiedModelAttestation {
   return {
-    nonce,
     signer: { signingAlgo: 'ecdsa', signingAddress },
-    intelQuote: 'aa',
-    eventLog: [],
-    appCompose: '{}',
-    reportedQuoteData: '44'.repeat(64),
+    tcbStatus: 'UpToDate',
+    advisoryIds: [],
+    deployment: { appCompose: '{}', runtimeMeasurements: {} },
+    deploymentProvenance: 'not_checked',
+    gpuEvidence: 'not_provided',
     ...overrides,
   };
 }
@@ -145,7 +144,7 @@ describe('AttestationClient', () => {
       ).toThrow(
         expect.objectContaining({
           failure: expect.objectContaining({
-            code: 'input.invalid',
+            code: 'api.invalid_input',
             details: expect.objectContaining({
               field: 'baseUrl',
               reason: 'invalid_url',
@@ -157,14 +156,38 @@ describe('AttestationClient', () => {
     },
   );
 
+  test('reports an invalid API key as client input', async () => {
+    const client = new AttestationClient({
+      apiKey: 'invalid\nheader',
+      baseUrl,
+    });
+
+    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: {
+        code: 'api.invalid_input',
+        details: {
+          field: 'apiKey',
+          reason: 'invalid_header_value',
+          expected: 'an HTTP header value',
+        },
+      },
+    });
+  });
+
   describe('model attestations', () => {
-    test('fetches model evidence and selects the signer for a model response', async () => {
+    test('preserves every model candidate', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
+      const otherSigningAddress = `0x${'55'.repeat(20)}`;
       const signature = modelSignature(selectedSigningAddress);
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
         return jsonResponse(
           modelReport(clientNonce, [
+            cloudAttestation(clientNonce, {
+              signing_address: otherSigningAddress,
+              report_data: '55'.repeat(64),
+            }),
             cloudAttestation(clientNonce, {
               signing_address: selectedSigningAddress,
               report_data: '44'.repeat(64),
@@ -179,17 +202,12 @@ describe('AttestationClient', () => {
           signingAlgo: signature.signer.signingAlgo,
           signingAddress: signature.signer.signingAddress,
         });
-      const attestation = findModelAttestationForSignature({
-        attestations,
-        signature,
-      });
-
-      expect(attestation).toMatchObject({
-        nonce: clientBinding.nonce,
-        signer: signature.signer,
-        appCompose: '{}',
-        reportedQuoteData: '44'.repeat(64),
-      });
+      expect(attestations).toHaveLength(2);
+      expect(
+        attestations.every(
+          (candidate) => candidate.nonce === clientBinding.nonce,
+        ),
+      ).toBe(true);
 
       const request = api.request();
       const query = new URL(request.url).searchParams;
@@ -203,27 +221,9 @@ describe('AttestationClient', () => {
       expect(request.headers.get('x-no-aliasing')).toBe('true');
     });
 
-    test('fetches the single model attestation for a provider signature', async () => {
-      const signature = modelSignature();
-      const api = cloudFor((request) => {
-        const clientNonce = requestNonce(request);
-        return jsonResponse(modelReport(clientNonce));
-      });
-
-      const fetched = await api.client.fetchModelAttestationForSignature({
-        model: 'canonical-model',
-        signature,
-      });
-
-      expect(fetched).toMatchObject({
-        clientBinding: { nonce: fetched.attestation.nonce },
-        attestation: { signer: signature.signer },
-      });
-    });
-
-    test('matches signer encodings by bytes', () => {
+    test('selects a verified model attestation by signer bytes', () => {
       const signature = modelSignature(`0x${'ab'.repeat(20)}`);
-      const attestation = modelAttestation({
+      const attestation = verifiedModelAttestation({
         signer: {
           signingAlgo: 'ecdsa',
           signingAddress: `0X${'AB'.repeat(20)}`,
@@ -253,6 +253,28 @@ describe('AttestationClient', () => {
       expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
       expect(query.has('signing_algo')).toBe(false);
       expect(query.has('signing_address')).toBe(false);
+    });
+
+    test('rejects an invalid signer filter before requesting model evidence', async () => {
+      const api = cloudFor(() => {
+        throw new Error('The client must reject this before making a request');
+      });
+
+      await expect(
+        api.client.fetchModelAttestations({
+          model: 'canonical-model',
+          signingAddress: 'not hexadecimal',
+        }),
+      ).rejects.toMatchObject({
+        name: 'ApiError',
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'signingAddress',
+            reason: 'invalid_hex',
+          },
+        },
+      });
     });
 
     test('normalizes nullable service evidence to absent optional fields', async () => {
@@ -324,8 +346,16 @@ describe('AttestationClient', () => {
       });
     });
 
-    test('rejects a model report whose nonce does not match the request', async () => {
-      const api = cloudFor(() => jsonResponse(modelReport('44'.repeat(32))));
+    test('checks every model candidate nonce', async () => {
+      const api = cloudFor((request) => {
+        const clientNonce = requestNonce(request);
+        return jsonResponse(
+          modelReport(clientNonce, [
+            cloudAttestation(clientNonce),
+            cloudAttestation('44'.repeat(32)),
+          ]),
+        );
+      });
 
       await expect(
         api.client.fetchModelAttestations({
@@ -352,7 +382,17 @@ describe('AttestationClient', () => {
       expect(attestations[0].nonce).toMatch(/^0X[0-9A-F]{64}$/);
     });
 
-    test('requires exactly one model attestation when Cloud API returns multiple candidates', async () => {
+    test('returns an empty model-attestation collection when Cloud API omits it', async () => {
+      const api = cloudFor(() => jsonResponse({}));
+
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+      });
+
+      expect(fetched.attestations).toEqual([]);
+    });
+
+    test('returns all model attestations when Cloud API returns multiple candidates', async () => {
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
         return jsonResponse(
@@ -363,37 +403,22 @@ describe('AttestationClient', () => {
         );
       });
 
-      await expect(
-        api.client.fetchModelAttestations({
-          model: 'canonical-model',
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'api.unexpected_model_attestation_count',
-          details: { actualCount: 2 },
-        },
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
       });
-    });
 
-    test('treats an omitted model-attestations field as zero candidates', async () => {
-      const api = cloudFor(() => jsonResponse({}));
-
-      await expect(
-        api.client.fetchModelAttestations({
-          model: 'canonical-model',
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'api.unexpected_model_attestation_count',
-          details: { actualCount: 0 },
-        },
-      });
+      expect(fetched.attestations).toHaveLength(2);
+      expect(
+        fetched.attestations.every(
+          (attestation) => attestation.nonce === fetched.clientBinding.nonce,
+        ),
+      ).toBe(true);
     });
 
     test.each([
       {
         label: 'a provider signer with no matching attestation',
-        attestations: [modelAttestation()],
+        attestations: [verifiedModelAttestation()],
         signature: modelSignature(`0x${'44'.repeat(20)}`),
         failure: {
           code: 'api.model_attestation_signer_not_found',
@@ -401,7 +426,7 @@ describe('AttestationClient', () => {
       },
       {
         label: 'multiple attestations for the same signer',
-        attestations: [modelAttestation(), modelAttestation()],
+        attestations: [verifiedModelAttestation(), verifiedModelAttestation()],
         signature: modelSignature(),
         failure: {
           code: 'api.ambiguous_model_attestation_signer',
@@ -410,17 +435,44 @@ describe('AttestationClient', () => {
       },
       {
         label: 'a gateway signature',
-        attestations: [modelAttestation()],
+        attestations: [verifiedModelAttestation()],
         signature: gatewaySignature(),
         failure: {
-          code: 'signature.kind_mismatch',
-          details: { expected: 'provider_tee', actual: 'gateway' },
+          code: 'api.invalid_input',
+          details: {
+            field: 'signature.kind',
+            reason: 'unsupported_value',
+            expected: 'provider_tee',
+            actual: 'gateway',
+          },
         },
       },
     ])('rejects $label', ({ attestations, signature, failure }) => {
       expect(() =>
         findModelAttestationForSignature({ attestations, signature }),
       ).toThrow(expect.objectContaining({ failure }));
+    });
+
+    test('reports malformed manually supplied signers as an API helper input error', () => {
+      const signature = modelSignature('not hexadecimal');
+
+      expect(() =>
+        findModelAttestationForSignature({
+          attestations: [verifiedModelAttestation()],
+          signature,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          name: 'ApiError',
+          failure: expect.objectContaining({
+            code: 'api.invalid_input',
+            details: expect.objectContaining({
+              field: 'signature.signer.signingAddress',
+              reason: 'invalid_hex',
+            }),
+          }),
+        }),
+      );
     });
   });
 

@@ -7,6 +7,7 @@ from verifiable_ai_sdk import (
     AttestationClient,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
+    find_model_attestation_for_signature,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
@@ -31,19 +32,26 @@ async def verify_gateway_deployment(
     return verified
 
 
-async def verify_model_deployment(
+async def verify_model_deployments(
     client: AttestationClient,
-) -> VerifiedModelAttestation:
+) -> tuple[VerifiedModelAttestation, ...]:
     fetched = await client.fetch_model_attestations(
         MODEL,
         signing_algo=SIGNING_ALGO,
     )
-    verified = await verify_model_attestation(
-        fetched.attestations[0],
-        fetched.client_binding,
-    )
-    print('Model deployment: verified.')
-    return verified
+    if not fetched.attestations:
+        raise RuntimeError('Cloud API returned no model attestations')
+
+    verified_attestations = []
+    for attestation in fetched.attestations:
+        verified_attestations.append(
+            await verify_model_attestation(
+                attestation,
+                fetched.client_binding,
+            )
+        )
+    print(f'Model deployments: verified {len(verified_attestations)}.')
+    return tuple(verified_attestations)
 
 
 async def send_completion(
@@ -103,7 +111,7 @@ async def verify_completion_receipt(
     response_body: bytes,
     completion_id: str,
     verified_gateway_attestation: VerifiedGatewayAttestation,
-    verified_model_attestation: VerifiedModelAttestation,
+    verified_model_attestations: tuple[VerifiedModelAttestation, ...],
     *,
     stream: bool,
 ) -> None:
@@ -114,6 +122,10 @@ async def verify_completion_receipt(
     label = 'Streaming' if stream else 'Non-streaming'
 
     if signature.kind == 'provider_tee':
+        verified_model_attestation = find_model_attestation_for_signature(
+            verified_model_attestations,
+            signature,
+        )
         verify_model_response(
             request_body,
             response_body,
@@ -140,7 +152,7 @@ async def main() -> None:
     client = AttestationClient(api_key)
     async with aiohttp.ClientSession(auto_decompress=False) as session:
         verified_gateway_attestation = await verify_gateway_deployment(client)
-        verified_model_attestation = await verify_model_deployment(client)
+        verified_model_attestations = await verify_model_deployments(client)
 
         request_body, response_body, completion_id = await send_completion(
             session,
@@ -153,7 +165,7 @@ async def main() -> None:
             response_body,
             completion_id,
             verified_gateway_attestation=verified_gateway_attestation,
-            verified_model_attestation=verified_model_attestation,
+            verified_model_attestations=verified_model_attestations,
             stream=False,
         )
 
@@ -168,7 +180,7 @@ async def main() -> None:
             response_body,
             completion_id,
             verified_gateway_attestation=verified_gateway_attestation,
-            verified_model_attestation=verified_model_attestation,
+            verified_model_attestations=verified_model_attestations,
             stream=True,
         )
 

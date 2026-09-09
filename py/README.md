@@ -8,12 +8,16 @@ completion request and retains its exact request and response bytes.
 
 For a completion, use three stages:
 
-1. Before sending it, verify both the Cloud API Gateway deployment and the
-   target model deployment.
+1. Before sending it, verify the NEAR AI Cloud Gateway deployment and every
+   returned target-model deployment.
 2. Send the completion and retain its canonical model ID, completion ID, and
    exact request and response bytes.
 3. Fetch the completion signature and use its `kind` to verify the exact
    response bytes with the already verified model or Gateway evidence.
+
+`fetch_model_attestations()` can return zero or multiple candidates. Reject an
+empty result, verify every returned candidate, and retain every verified result
+for receipt verification.
 
 The deployment checks are useful admission and audit evidence before an
 inference. They are independent checks: do not treat them as proof that a
@@ -32,24 +36,24 @@ Gateway deployment.
 - A completion signature: the exact request and response bytes signed by the
   signer named in the returned signature.
 
-Cloud API returns an explicit kind for each completion signature:
+The Gateway returns an explicit kind for each completion signature:
 
 | `signature.kind` | Response verification establishes | It does not establish |
 | --- | --- | --- |
 | `provider_tee` | A verified model-serving TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS identity that returned those bytes. |
 | `gateway` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated those bytes. |
 
-Cloud API currently exposes one signature for a completion. Separately
+The Gateway currently exposes one signature for a completion. Separately
 verified model and Gateway deployments plus that one signature do **not** form a
 complete cryptographic chain from model execution through Gateway processing to
 the final bytes. In particular, the current Gateway signature over rewritten
-bytes has no provider-response link. [Cloud API issue #986](https://github.com/nearai/cloud-api/issues/986)
+bytes has no provider-response link. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks the proposed provider signature plus Gateway receipt chain.
 
 The SDK does not send completion requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
 
-Create an `AttestationClient` with the Cloud API key once. Its asynchronous
+Create an `AttestationClient` with the Gateway API key once. Its asynchronous
 methods retrieve signatures and evidence; selection and verification are
 standalone functions. `client.fetch_gateway_attestation()` returns a
 `FetchedGatewayAttestation` with raw attestation and `client_binding`. By
@@ -76,10 +80,13 @@ verifies the signer-and-nonce quote layout, and returns
 
 ## Errors
 
-Cloud retrieval and evidence-selection failures raise `ApiError`. Local input,
-cryptographic, policy, and binding failures raise `VerificationError`. For
-both, branch on `error.failure.code` and inspect `error.failure.details` only
-when it is present; never parse the human-readable message.
+Handle retrieval and verification at separate call sites.
+`AttestationClient` and evidence-selection failures raise `ApiError`, including
+invalid helper input. Explicit verification functions raise
+`VerificationError` for local input, cryptographic, policy, and binding
+failures. Each handler has one SDK error type. Branch on its
+`error.failure.code` and inspect `error.failure.details` only when it is
+present; never parse the human-readable message.
 
 `error.retryable` means a new attempt at the failed external operation may
 succeed. It does not mean that re-verifying the same evidence will succeed or
@@ -101,4 +108,4 @@ uv build
 ```
 
 The test suite is deterministic and uses local fixtures; it does not contact
-Cloud API, Intel PCCS, or NVIDIA NRAS.
+the NEAR AI Cloud Gateway, Intel PCCS, or NVIDIA NRAS.

@@ -29,19 +29,18 @@ from ..types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
     FetchedGatewayAttestation,
-    FetchedModelAttestation,
     FetchedModelAttestations,
 )
 from ..types.verification import (
     GatewayClientBinding,
     ModelClientBinding,
+    VerifiedModelAttestation,
 )
 from ..utils.common import generate_nonce, hex_to_bytes
 from ..utils.errors import (
     ApiError,
     VerificationError,
     api_failure,
-    verification_failure,
 )
 from ..utils.fetch import fetch as default_fetch
 
@@ -89,6 +88,12 @@ class AttestationClient:
     ) -> FetchedModelAttestations:
         """Fetch the current NEAR model evidence with a fresh client nonce."""
 
+        if signing_address is not None:
+            _validate_input_signing_address(
+                signing_address,
+                signing_algo,
+                'signing_address',
+            )
         nonce = generate_nonce()
         query: dict[str, str] = {
             'model': model,
@@ -112,25 +117,6 @@ class AttestationClient:
         return FetchedModelAttestations(
             attestations=attestations,
             client_binding=ModelClientBinding(nonce=nonce),
-        )
-
-    async def fetch_model_attestation_for_signature(
-        self,
-        model: str,
-        signature: CompletionSignatureReference,
-    ) -> FetchedModelAttestation:
-        """Fetch and select evidence for a ``provider_tee`` completion signature."""
-
-        fetched = await self.fetch_model_attestations(
-            model,
-            signing_algo=signature.signer.signing_algo,
-            signing_address=signature.signer.signing_address,
-        )
-        return FetchedModelAttestation(
-            attestation=find_model_attestation_for_signature(
-                fetched.attestations, signature
-            ),
-            client_binding=fetched.client_binding,
         )
 
     async def fetch_gateway_attestation(
@@ -204,13 +190,43 @@ class AttestationClient:
 
 
 def find_model_attestation_for_signature(
-    attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
+    attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
-) -> ModelAttestation:
-    """Select the sole model attestation advertised by a provider signature."""
+) -> VerifiedModelAttestation:
+    """Select exactly one verified model deployment for a provider signature."""
 
-    _require_provider_signature(signature)
-    return _find_model_attestation_for_signer(attestations, signature.signer)
+    if signature.kind != 'provider_tee':
+        raise _invalid_input(
+            'signature.kind',
+            'unsupported_value',
+            expected='provider_tee',
+            actual=signature.kind,
+        )
+
+    signer = signature.signer
+    requested_signing_address = _validate_input_signer(
+        signer,
+        'signature.signer',
+    )
+    matches: list[VerifiedModelAttestation] = []
+    for index, attestation in enumerate(attestations):
+        attestation_signing_address = _validate_input_signer(
+            attestation.signer,
+            f'attestations[{index}].signer',
+        )
+        if (
+            attestation.signer.signing_algo == signer.signing_algo
+            and attestation_signing_address == requested_signing_address
+        ):
+            matches.append(attestation)
+    if not matches:
+        raise api_failure('api.model_attestation_signer_not_found')
+    if len(matches) != 1:
+        raise api_failure(
+            'api.ambiguous_model_attestation_signer',
+            {'matchingCount': len(matches), 'totalCount': len(attestations)},
+        )
+    return matches[0]
 
 
 async def _get_cloud_api_json(
@@ -221,7 +237,7 @@ async def _get_cloud_api_json(
     capture_peer_spki: bool = False,
     extra_headers: Mapping[str, str] | None = None,
 ) -> _CloudApiJsonResponse:
-    headers = {'authorization': f'Bearer {api_key}'}
+    headers = {'authorization': _authorization_header(api_key)}
     if extra_headers is not None:
         headers.update(extra_headers)
     try:
@@ -255,6 +271,17 @@ async def _get_cloud_api_json(
     )
 
 
+def _authorization_header(api_key: str) -> str:
+    value = f'Bearer {api_key}'
+    if any(byte != 0x09 and (byte < 0x20 or byte == 0x7F) for byte in value.encode()):
+        raise _invalid_input(
+            'api_key',
+            'invalid_header_value',
+            expected='an HTTP header value',
+        )
+    return value
+
+
 def _decode_model_attestation_report(value: object) -> tuple[ModelAttestation, ...]:
     try:
         report = CloudModelAttestationResponseSchema.model_validate(value)
@@ -263,11 +290,6 @@ def _decode_model_attestation_report(value: object) -> tuple[ModelAttestation, .
             error,
             root='model attestation report',
             nested_record_field='model_attestations',
-        )
-    if len(report.model_attestations) != 1:
-        raise api_failure(
-            'api.unexpected_model_attestation_count',
-            {'actualCount': len(report.model_attestations)},
         )
     return tuple(
         _map_model_attestation(raw, f'model_attestations[{index}]')
@@ -390,38 +412,6 @@ def _api_signer(algorithm: SigningAlgo, address: str, label: str) -> SigningIden
     return SigningIdentity(signing_algo=algorithm, signing_address=address)
 
 
-def _find_model_attestation_for_signer(
-    attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
-    signer: SigningIdentity,
-) -> ModelAttestation:
-    matches: list[ModelAttestation] = []
-    for attestation in attestations:
-        if attestation.signer.signing_algo == signer.signing_algo and hex_to_bytes(
-            attestation.signer.signing_address,
-            'attestation.signer.signing_address',
-        ) == hex_to_bytes(
-            signer.signing_address,
-            'signature.signer.signing_address',
-        ):
-            matches.append(attestation)
-    if not matches:
-        raise api_failure('api.model_attestation_signer_not_found')
-    if len(matches) != 1:
-        raise api_failure(
-            'api.ambiguous_model_attestation_signer',
-            {'matchingCount': len(matches), 'totalCount': len(attestations)},
-        )
-    return matches[0]
-
-
-def _require_provider_signature(signature: CompletionSignatureReference) -> None:
-    if signature.kind != 'provider_tee':
-        raise verification_failure(
-            'signature.kind_mismatch',
-            {'expected': 'provider_tee', 'actual': signature.kind},
-        )
-
-
 def _endpoint(base_url: str, path: str, query: Mapping[str, str]) -> str:
     parsed = urlsplit(base_url)
     normalized_path = f'{parsed.path.rstrip("/")}/{path}'
@@ -445,15 +435,50 @@ def _validate_base_url(base_url: str) -> str:
     return base_url
 
 
-def _invalid_base_url() -> VerificationError:
-    return verification_failure(
-        'input.invalid',
-        {
-            'field': 'base_url',
-            'reason': 'invalid_url',
-            'expected': 'an absolute HTTP(S) URL',
-        },
+def _invalid_base_url() -> ApiError:
+    return _invalid_input(
+        'base_url',
+        'invalid_url',
+        expected='an absolute HTTP(S) URL',
     )
+
+
+def _validate_input_signer(signer: SigningIdentity, field: str) -> bytes:
+    return _validate_input_signing_address(
+        signer.signing_address,
+        signer.signing_algo,
+        f'{field}.signing_address',
+    )
+
+
+def _validate_input_signing_address(
+    address: str,
+    algorithm: SigningAlgo | None,
+    field: str,
+) -> bytes:
+    address_bytes = _input_hex_to_bytes(address, field)
+    if algorithm is None:
+        valid_lengths = (20, 32)
+        expected = 'a 20- or 32-byte hexadecimal signing address'
+    else:
+        expected_length = 20 if algorithm == 'ecdsa' else 32
+        valid_lengths = (expected_length,)
+        expected = f'{expected_length}-byte hexadecimal signing address'
+    if len(address_bytes) not in valid_lengths:
+        raise _invalid_input(
+            field,
+            'wrong_length',
+            expected=expected,
+            actual=f'{len(address_bytes)} bytes',
+        )
+    return address_bytes
+
+
+def _input_hex_to_bytes(value: str, field: str) -> bytes:
+    try:
+        return hex_to_bytes(value, field)
+    except VerificationError as error:
+        raise _invalid_input(field, 'invalid_hex') from error
 
 
 def _validate_api_signing_address(
@@ -506,6 +531,21 @@ def _invalid_response(
         {'path': path, 'expected': expected, 'actual': _describe_value(value)},
         cause=cause,
     )
+
+
+def _invalid_input(
+    field: str,
+    reason: str,
+    *,
+    expected: str | None = None,
+    actual: str | None = None,
+) -> ApiError:
+    details: dict[str, object] = {'field': field, 'reason': reason}
+    if expected is not None:
+        details['expected'] = expected
+    if actual is not None:
+        details['actual'] = actual
+    return api_failure('api.invalid_input', details)
 
 
 def _describe_value(value: object) -> str:

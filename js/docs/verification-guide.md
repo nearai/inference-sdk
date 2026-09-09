@@ -8,7 +8,7 @@ Verify a completion in three stages:
 3. Fetch the completion signature and use its `kind` to verify the bytes
    against the corresponding preflight result.
 
-`AttestationClient` retrieves Cloud API evidence and signatures. The SDK does
+`AttestationClient` retrieves NEAR AI Cloud Gateway evidence and signatures. The SDK does
 not send completions itself; your application owns the inference request, raw
 bytes, and retry policy.
 
@@ -18,7 +18,7 @@ Use a canonical model ID and choose one signing algorithm for this operation.
 Verify the Gateway and model evidence before the completion request. The Node
 client below also checks the TLS peer for the Gateway evidence request.
 Pass the same explicit algorithm to both attestation fetches and the completion
-signature fetch: Cloud API's report and signature endpoints have different
+signature fetch: the Gateway's report and signature endpoints have different
 defaults.
 
 ```ts
@@ -38,7 +38,7 @@ const SIGNING_ALGO = 'ecdsa';
 const client = new AttestationClient({ apiKey });
 
 const verifiedGatewayAttestation = await verifyGatewayDeployment();
-const verifiedModelAttestation = await verifyModelDeployment();
+const verifiedModelAttestations = await verifyModelDeployments();
 
 async function verifyGatewayDeployment() {
   const fetched = await client.fetchGatewayAttestation({
@@ -50,27 +50,33 @@ async function verifyGatewayDeployment() {
   });
 }
 
-async function verifyModelDeployment() {
+async function verifyModelDeployments() {
   const fetched = await client.fetchModelAttestations({
     model: MODEL,
     signingAlgo: SIGNING_ALGO,
   });
-  const [attestation] = fetched.attestations;
-  if (!attestation) {
-    throw new Error('Cloud API returned no model attestation');
+  if (fetched.attestations.length === 0) {
+    throw new Error('Gateway returned no model attestations');
   }
-  return verifyModelAttestation({
-    attestation,
-    clientBinding: fetched.clientBinding,
-  });
+  const verifiedAttestations = [];
+  for (const attestation of fetched.attestations) {
+    verifiedAttestations.push(
+      await verifyModelAttestation({
+        attestation,
+        clientBinding: fetched.clientBinding,
+      }),
+    );
+  }
+  return verifiedAttestations;
 }
 ```
 
-`fetchModelAttestations` currently requires Cloud API to return exactly one
-model attestation. It generates a fresh nonce and returns it as
-`clientBinding`; pass that binding to `verifyModelAttestation`.
+The Gateway may return zero or multiple model attestations. The fetch helper
+preserves the collection and checks the returned nonce on every item. This
+deployment-first flow rejects an empty collection, verifies every candidate,
+and retains every verified result for receipt selection.
 
-Model evidence always uses the signer-and-nonce quote layout. Cloud API makes
+Model evidence always uses the signer-and-nonce quote layout. The Gateway makes
 the model connection on the client's behalf, so model verification does not
 make a client-to-model TLS claim.
 
@@ -105,6 +111,7 @@ preflight values remain part of the operation.
 
 ```ts
 import {
+  findModelAttestationForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
 } from 'verifiable-ai-sdk/node';
@@ -115,6 +122,10 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
+  const verifiedModelAttestation = findModelAttestationForSignature({
+    attestations: verifiedModelAttestations,
+    signature,
+  );
   verifyModelResponse({
     requestBody,
     responseBody,
@@ -132,13 +143,14 @@ if (signature.kind === 'provider_tee') {
 ```
 
 `verifyModelResponse` requires a `provider_tee` signature and matches its
-signer to `verifiedModelAttestation`. `verifyGatewayResponse` requires a
+signer to the selected result in `verifiedModelAttestations`.
+`verifyGatewayResponse` requires a
 `gateway` signature and matches its signer to `verifiedGatewayAttestation`.
 Each verifier also verifies the signature over the exact request and response
 bytes. A signer mismatch fails naturally; do not fetch unrelated evidence to
 make the check pass.
 
-Cloud API returns `gateway` when it signs client-visible bytes that a provider
+The Gateway returns `gateway` when it signs client-visible bytes that a provider
 signature cannot cover, such as a rewritten response. It returns `provider_tee`
 when the model-serving TEE signs those bytes directly.
 
@@ -155,8 +167,8 @@ verified model produced the upstream response. For a `provider_tee` signature,
 a successful result proves model-signature provenance for the bytes, but does
 not cryptographically bind it to the preflight Gateway evidence.
 
-Cloud API tracks a paired provider signature and Gateway receipt for rewritten
-responses in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
+The planned paired provider signature and Gateway receipt for rewritten
+responses are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 Until that exists, do not claim the complete chain from these separate pieces of
 evidence.
 
@@ -181,19 +193,13 @@ const verifiers: ModelAttestationVerifiers = {
   // Resolve only for deployments your application accepts.
   deployment: verifyDeploymentRelease,
 };
-
-return verifyModelAttestation({
-  attestation,
-  clientBinding,
-  policy,
-  verifiers,
-});
 ```
 
-Use these options in `verifyModelDeployment` when constructing the preflight
-result. `verifiers.deployment` receives authenticated measured deployment data
-and must reject every deployment your release policy does not accept. The SDK
-authenticates measured values; your callback decides which values are trusted.
+Pass `policy` and `verifiers` to every `verifyModelAttestation` call in
+`verifyModelDeployments`. `verifiers.deployment` receives authenticated
+measured deployment data and must reject every deployment your release policy
+does not accept. The SDK authenticates measured values; your callback decides
+which values are trusted.
 
 `verifiers.quote` replaces the built-in Intel DCAP verifier. `verifiers.nvidia`
 replaces the default NVIDIA NRAS verifier. Each callback must resolve only for
@@ -208,26 +214,21 @@ unavailable result is `api.completion_signature_unavailable` and includes
 reaches its terminal state can later succeed, although an unknown ID can also
 produce 404.
 
-Cloud request methods can also throw `ApiError` for transport, response-format,
-nonce, or attestation-selection failures. Verification functions and local
-input or signature-contract checks throw `VerificationError`.
+`AttestationClient` and `findModelAttestationForSignature` report
+SDK-classified caller-input, transport, response-format, nonce, and
+attestation-selection failures as `ApiError`. Explicit `verify…` calls report
+SDK-classified verification failures as `VerificationError`. Runtime errors
+outside those contracts can still propagate unchanged, so rethrow errors that
+are not the class your handler expects.
 
 ```ts
-import {
-  isApiError,
-  isVerificationError,
-} from 'verifiable-ai-sdk';
+import { ApiError } from 'verifiable-ai-sdk';
 
 try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
-  if (isApiError(error)) {
-    console.log(error.failure.code, error.failure.details);
-  } else if (isVerificationError(error)) {
-    console.log(error.failure.code);
-  } else {
-    throw error;
-  }
+  if (!(error instanceof ApiError)) throw error;
+  console.log(error.failure.code, error.failure.details);
 }
 ```
 

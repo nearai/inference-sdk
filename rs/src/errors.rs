@@ -36,10 +36,18 @@ impl std::fmt::Display for ApiResource {
     }
 }
 
-/// Failures while calling NEAR AI Cloud or selecting evidence returned by it.
-/// These are deliberately distinct from local input and verification failures.
+/// Failures while configuring or calling NEAR AI Cloud, or selecting evidence
+/// returned by it.
 #[derive(Debug, Error)]
 pub enum ApiError {
+    #[error("invalid Cloud API input {field}: {reason}")]
+    InvalidInput {
+        field: String,
+        reason: String,
+        expected: Option<String>,
+        actual: Option<String>,
+    },
+
     #[error("Cloud API {resource} {reason} failed")]
     Transport {
         resource: ApiResource,
@@ -61,9 +69,6 @@ pub enum ApiError {
 
     #[error("{resource} response nonce does not match the request")]
     NonceMismatch { resource: ApiResource },
-
-    #[error("Cloud API returned {actual_count} model attestations; expected exactly one")]
-    UnexpectedModelAttestationCount { actual_count: usize },
 
     #[error("Cloud API returned no model attestation for the requested signer")]
     ModelAttestationSignerNotFound,
@@ -89,14 +94,12 @@ impl ApiError {
     /// Stable machine-readable error code shared with the TypeScript SDK.
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::InvalidInput { .. } => "api.invalid_input",
             Self::Transport { .. } => "api.transport_failed",
             Self::HttpStatus { .. } => "api.http_status",
             Self::InvalidJson { .. } => "api.invalid_json",
             Self::InvalidResponse { .. } => "api.invalid_response",
             Self::NonceMismatch { .. } => "api.nonce_mismatch",
-            Self::UnexpectedModelAttestationCount { .. } => {
-                "api.unexpected_model_attestation_count"
-            }
             Self::ModelAttestationSignerNotFound => "api.model_attestation_signer_not_found",
             Self::AmbiguousModelAttestationSigner { .. } => {
                 "api.ambiguous_model_attestation_signer"
@@ -262,25 +265,6 @@ impl VerificationError {
             Self::QuoteCollateralUnavailable => true,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
             _ => false,
-        }
-    }
-}
-
-/// A small convenience wrapper for APIs which can fail while both fetching
-/// Cloud evidence and applying a local signature rule.
-#[derive(Debug, Error)]
-pub enum SdkError {
-    #[error(transparent)]
-    Api(#[from] ApiError),
-    #[error(transparent)]
-    Verification(#[from] VerificationError),
-}
-
-impl SdkError {
-    pub fn retryable(&self) -> bool {
-        match self {
-            Self::Api(error) => error.retryable(),
-            Self::Verification(error) => error.retryable(),
         }
     }
 }

@@ -13,7 +13,7 @@ ErrorDetails = dict[str, object]
 
 @dataclass(frozen=True, kw_only=True)
 class ApiFailure:
-    """A Cloud API request, response, or evidence-selection failure."""
+    """A Cloud API helper-input, request, response, or selection failure."""
 
     code: str
     details: ErrorDetails | None = None
@@ -30,7 +30,7 @@ class VerificationFailure:
 
 
 class ApiError(Exception):
-    """A machine-readable failure while retrieving Cloud API evidence."""
+    """A machine-readable Cloud API retrieval or evidence-selection failure."""
 
     def __init__(self, failure: ApiFailure, *, cause: BaseException | None = None):
         self.failure = failure
@@ -117,7 +117,7 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
     code = failure.code
 
     match code:
-        case 'input.invalid':
+        case 'input.invalid' | 'api.invalid_input':
             return f'[{code}] {_format_input_failure(details)}'
         case 'api.transport_failed':
             resource = _api_resource(details)
@@ -145,11 +145,6 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             return (
                 f'[{code}] Cloud API {_api_resource(details)} nonce does not match '
                 'the request'
-            )
-        case 'api.unexpected_model_attestation_count':
-            return (
-                f'[{code}] Cloud API returned {_detail(details, "actualCount")} '
-                'model attestations; expected exactly one'
             )
         case 'api.ambiguous_model_attestation_signer':
             return (
@@ -286,7 +281,12 @@ def _format_input_failure(details: ErrorDetails) -> str:
         case 'wrong_length':
             expected_text = details.get('expected')
             if expected_text is not None:
-                return f'{field} must be {expected_text}'
+                actual = details.get('actual')
+                return (
+                    f'{field} must be {expected_text}; received {actual}'
+                    if actual is not None
+                    else f'{field} must be {expected_text}'
+                )
             expected = details.get('expectedBytes')
             actual = details.get('actualBytes')
             if expected is not None and actual is not None:
@@ -310,5 +310,11 @@ def _format_input_failure(details: ErrorDetails) -> str:
                 if expected is not None
                 else f'{field} is not a valid HTTP header'
             )
+        case 'unsupported_value':
+            expected = details.get('expected')
+            actual = details.get('actual')
+            if expected is not None and actual is not None:
+                return f'{field} must be {expected}; received {actual}'
+            return f'{field} has an unsupported value'
         case _:
             return f'Invalid {field}'

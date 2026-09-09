@@ -7,7 +7,11 @@ import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
 import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignatureReference } from './chat';
-import type { GatewayClientBinding, ModelClientBinding } from './verification';
+import type {
+  GatewayClientBinding,
+  ModelClientBinding,
+  VerifiedModelAttestation,
+} from './verification';
 
 /** Configuration shared by all Cloud API evidence requests. */
 export type AttestationClientOptions = {
@@ -21,13 +25,9 @@ export type FetchModelAttestationsParams = {
   readonly signingAddress?: string;
 };
 
-export type FetchModelAttestationForSignatureParams = {
-  readonly model: string;
-  readonly signature: CompletionSignatureReference;
-};
-
 export type FindModelAttestationForSignatureParams = {
-  readonly attestations: readonly ModelAttestation[];
+  /** Successful results returned by `verifyModelAttestation`. */
+  readonly attestations: readonly VerifiedModelAttestation[];
   readonly signature: CompletionSignatureReference;
 };
 
@@ -60,12 +60,6 @@ export type CloudApiModelAttestation = v.InferOutput<
 export type CloudApiGatewayAttestation = v.InferOutput<
   typeof CloudApiGatewayAttestationSchema
 >;
-
-export type FetchedModelAttestation = {
-  readonly attestation: ModelAttestation;
-  /** Client values associated with this model-attestation request. */
-  readonly clientBinding: ModelClientBinding;
-};
 
 export type FetchedGatewayAttestation = {
   readonly attestation: GatewayAttestation;

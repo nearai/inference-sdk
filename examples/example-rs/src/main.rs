@@ -3,10 +3,10 @@ use std::{env, error::Error, io};
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde_json::{json, Value};
 use verifiable_ai_sdk::{
-    verify_gateway_attestation, verify_gateway_response, verify_model_attestation,
-    verify_model_response, AttestationClient, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
-    VerifiedModelAttestation, NO_ALIASING_HEADER,
+    find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
+    verify_model_attestation, verify_model_response, AttestationClient, CompletionSignatureKind,
+    GatewayAttestationFetchOptions, SigningAlgo,
+    VerifiedGatewayAttestation, VerifiedModelAttestation, NO_ALIASING_HEADER,
 };
 
 const API_URL: &str = "https://cloud-api.near.ai/v1/chat/completions";
@@ -26,14 +26,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let attestation_client = AttestationClient::new(api_key.clone());
 
     let verified_gateway = verify_gateway_deployment(&attestation_client).await?;
-    let verified_model = verify_model_deployment(&attestation_client).await?;
+    let verified_models = verify_model_deployments(&attestation_client).await?;
 
     let non_streaming = send_completion(&completion_client, &api_key, false).await?;
     verify_completion_receipt(
         &attestation_client,
         &non_streaming,
         &verified_gateway,
-        &verified_model,
+        &verified_models,
         false,
     )
     .await?;
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         &attestation_client,
         &streaming,
         &verified_gateway,
-        &verified_model,
+        &verified_models,
         true,
     )
     .await?;
@@ -70,24 +70,30 @@ async fn verify_gateway_deployment(
     Ok(verified)
 }
 
-async fn verify_model_deployment(
+async fn verify_model_deployments(
     client: &AttestationClient,
-) -> Result<VerifiedModelAttestation, Box<dyn Error>> {
+) -> Result<Vec<VerifiedModelAttestation>, Box<dyn Error>> {
     let fetched = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
-    let attestation = fetched
-        .attestations
-        .first()
-        .ok_or_else(|| io::Error::other("Cloud API returned no model attestation"))?;
-    let verified = verify_model_attestation(
-        attestation,
-        &fetched.client_binding,
-        None,
-        Default::default(),
-    )
-    .await?;
-    println!("Model deployment: verified.");
+    if fetched.attestations.is_empty() {
+        return Err(io::Error::other("Cloud API returned no model attestations").into());
+    }
+
+    let mut verified = Vec::with_capacity(fetched.attestations.len());
+    for attestation in &fetched.attestations {
+        verified.push(
+            verify_model_attestation(
+                attestation,
+                &fetched.client_binding,
+                None,
+                Default::default(),
+            )
+            .await?,
+        );
+    }
+
+    println!("Model deployments: verified {}.", verified.len());
     Ok(verified)
 }
 
@@ -134,7 +140,7 @@ async fn verify_completion_receipt(
     attestation_client: &AttestationClient,
     completion: &Completion,
     verified_gateway: &VerifiedGatewayAttestation,
-    verified_model: &VerifiedModelAttestation,
+    verified_models: &[VerifiedModelAttestation],
     stream: bool,
 ) -> Result<(), Box<dyn Error>> {
     let signature = attestation_client
@@ -146,6 +152,8 @@ async fn verify_completion_receipt(
     // which verified signer covers these exact response bytes.
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
+            let verified_model =
+                find_model_attestation_for_signature(verified_models, &signature)?;
             verify_model_response(
                 &completion.request_body,
                 &completion.response_body,
