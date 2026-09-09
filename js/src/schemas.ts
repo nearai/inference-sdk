@@ -137,8 +137,7 @@ export const CloudApiGatewayAttestationSchema = objectSchema({
 
 export const CloudApiModelAttestationResponseSchema = objectSchema({
   // Cloud API omits this field when no model provider produced evidence.
-  // Normalize that wire form before the fetch helper reports the expected
-  // candidate-count error.
+  // Normalize that wire form to an empty candidate collection.
   model_attestations: v.optional(v.array(CloudApiModelAttestationSchema), []),
 });
 

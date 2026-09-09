@@ -38,7 +38,7 @@ const SIGNING_ALGO = 'ecdsa';
 const client = new AttestationClient({ apiKey });
 
 const verifiedGatewayAttestation = await verifyGatewayDeployment();
-const verifiedModelAttestation = await verifyModelDeployment();
+const verifiedModelAttestations = await verifyModelDeployments();
 
 async function verifyGatewayDeployment() {
   const fetched = await client.fetchGatewayAttestation({
@@ -50,25 +50,30 @@ async function verifyGatewayDeployment() {
   });
 }
 
-async function verifyModelDeployment() {
+async function verifyModelDeployments() {
   const fetched = await client.fetchModelAttestations({
     model: MODEL,
     signingAlgo: SIGNING_ALGO,
   });
-  const [attestation] = fetched.attestations;
-  if (!attestation) {
-    throw new Error('Cloud API returned no model attestation');
+  if (fetched.attestations.length === 0) {
+    throw new Error('Cloud API returned no model attestations');
   }
-  return verifyModelAttestation({
-    attestation,
-    clientBinding: fetched.clientBinding,
-  });
+  return Promise.all(
+    fetched.attestations.map(async (attestation) => ({
+      attestation,
+      verified: await verifyModelAttestation({
+        attestation,
+        clientBinding: fetched.clientBinding,
+      }),
+    })),
+  );
 }
 ```
 
-`fetchModelAttestations` currently requires Cloud API to return exactly one
-model attestation. It generates a fresh nonce and returns it as
-`clientBinding`; pass that binding to `verifyModelAttestation`.
+Cloud API may return zero or multiple model attestations. The fetch helper
+preserves the collection and checks the returned nonce on every item. This
+deployment-first flow rejects an empty collection, verifies every candidate,
+and retains each candidate with its verified result for receipt selection.
 
 Model evidence always uses the signer-and-nonce quote layout. Cloud API makes
 the model connection on the client's behalf, so model verification does not
@@ -105,6 +110,7 @@ preflight values remain part of the operation.
 
 ```ts
 import {
+  findModelAttestationForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
 } from 'verifiable-ai-sdk/node';
@@ -115,11 +121,23 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
+  const attestation = findModelAttestationForSignature({
+    attestations: verifiedModelAttestations.map(
+      ({ attestation }) => attestation,
+    ),
+    signature,
+  );
+  const selected = verifiedModelAttestations.find(
+    (candidate) => candidate.attestation === attestation,
+  );
+  if (selected === undefined) {
+    throw new Error('Selected model attestation was not preflight verified');
+  }
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation: verifiedModelAttestation,
+    attestation: selected.verified,
   });
 } else {
   verifyGatewayResponse({
@@ -132,7 +150,8 @@ if (signature.kind === 'provider_tee') {
 ```
 
 `verifyModelResponse` requires a `provider_tee` signature and matches its
-signer to `verifiedModelAttestation`. `verifyGatewayResponse` requires a
+signer to the selected result in `verifiedModelAttestations`.
+`verifyGatewayResponse` requires a
 `gateway` signature and matches its signer to `verifiedGatewayAttestation`.
 Each verifier also verifies the signature over the exact request and response
 bytes. A signer mismatch fails naturally; do not fetch unrelated evidence to
@@ -190,7 +209,7 @@ return verifyModelAttestation({
 });
 ```
 
-Use these options in `verifyModelDeployment` when constructing the preflight
+Use these options in `verifyModelDeployments` when constructing the preflight
 result. `verifiers.deployment` receives authenticated measured deployment data
 and must reject every deployment your release policy does not accept. The SDK
 authenticates measured values; your callback decides which values are trusted.

@@ -177,13 +177,18 @@ describe('AttestationClient', () => {
   });
 
   describe('model attestations', () => {
-    test('fetches model evidence and selects the signer for a model response', async () => {
+    test('preserves every model candidate and selects the matching signer', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
+      const otherSigningAddress = `0x${'55'.repeat(20)}`;
       const signature = modelSignature(selectedSigningAddress);
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
         return jsonResponse(
           modelReport(clientNonce, [
+            cloudAttestation(clientNonce, {
+              signing_address: otherSigningAddress,
+              report_data: '55'.repeat(64),
+            }),
             cloudAttestation(clientNonce, {
               signing_address: selectedSigningAddress,
               report_data: '44'.repeat(64),
@@ -203,6 +208,12 @@ describe('AttestationClient', () => {
         signature,
       });
 
+      expect(attestations).toHaveLength(2);
+      expect(
+        attestations.every(
+          (candidate) => candidate.nonce === clientBinding.nonce,
+        ),
+      ).toBe(true);
       expect(attestation).toMatchObject({
         nonce: clientBinding.nonce,
         signer: signature.signer,
@@ -222,11 +233,18 @@ describe('AttestationClient', () => {
       expect(request.headers.get('x-no-aliasing')).toBe('true');
     });
 
-    test('fetches the single model attestation for a provider signature', async () => {
+    test('fetches the matching model attestation for a provider signature', async () => {
       const signature = modelSignature();
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
-        return jsonResponse(modelReport(clientNonce));
+        return jsonResponse(
+          modelReport(clientNonce, [
+            cloudAttestation(clientNonce, {
+              signing_address: `0x${'44'.repeat(20)}`,
+            }),
+            cloudAttestation(clientNonce),
+          ]),
+        );
       });
 
       const fetched = await api.client.fetchModelAttestationForSignature({
@@ -419,7 +437,17 @@ describe('AttestationClient', () => {
       expect(attestations[0].nonce).toMatch(/^0X[0-9A-F]{64}$/);
     });
 
-    test('requires exactly one model attestation when Cloud API returns multiple candidates', async () => {
+    test('returns an empty model-attestation collection when Cloud API omits it', async () => {
+      const api = cloudFor(() => jsonResponse({}));
+
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+      });
+
+      expect(fetched.attestations).toEqual([]);
+    });
+
+    test('returns all model attestations when Cloud API returns multiple candidates', async () => {
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
         return jsonResponse(
@@ -430,31 +458,16 @@ describe('AttestationClient', () => {
         );
       });
 
-      await expect(
-        api.client.fetchModelAttestations({
-          model: 'canonical-model',
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'api.unexpected_model_attestation_count',
-          details: { actualCount: 2 },
-        },
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
       });
-    });
 
-    test('treats an omitted model-attestations field as zero candidates', async () => {
-      const api = cloudFor(() => jsonResponse({}));
-
-      await expect(
-        api.client.fetchModelAttestations({
-          model: 'canonical-model',
-        }),
-      ).rejects.toMatchObject({
-        failure: {
-          code: 'api.unexpected_model_attestation_count',
-          details: { actualCount: 0 },
-        },
-      });
+      expect(fetched.attestations).toHaveLength(2);
+      expect(
+        fetched.attestations.every(
+          (attestation) => attestation.nonce === fetched.clientBinding.nonce,
+        ),
+      ).toBe(true);
     });
 
     test.each([

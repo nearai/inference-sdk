@@ -63,10 +63,6 @@ export type ApiFailure =
       };
     }
   | {
-      code: 'api.unexpected_model_attestation_count';
-      details: { actualCount: number };
-    }
-  | {
       code: 'api.ambiguous_model_attestation_signer';
       details: { matchingCount: number; totalCount: number };
     }
@@ -402,8 +398,6 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] Cloud API response has an invalid ${failure.details.path}: expected ${failure.details.expected}, received ${failure.details.actual}`;
     case 'api.nonce_mismatch':
       return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} nonce does not match the request`;
-    case 'api.unexpected_model_attestation_count':
-      return `[${failure.code}] Cloud API returned ${failure.details.actualCount} model attestations; expected exactly one`;
     case 'api.ambiguous_model_attestation_signer':
       return `[${failure.code}] Cloud API returned ${failure.details.matchingCount} model attestations for the requested signer (${failure.details.totalCount} total)`;
     case 'api.model_attestation_signer_not_found':

@@ -9,8 +9,8 @@ their exact request and response bytes.
 
 Use three stages for a verified completion:
 
-1. Before sending the completion, fetch and verify both the Gateway deployment
-   and the target model deployment.
+1. Before sending the completion, fetch and verify the Gateway deployment and
+   every returned target-model attestation.
 2. Send a completion to the canonical model with `x-no-aliasing: true`, then
    retain its completion ID and exact request and response bytes.
 3. Fetch the completion signature and verify those bytes with the preflight
@@ -60,8 +60,9 @@ tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 - Use the `clientBinding` returned with each attestation fetch result when
   verifying that result. The SDK generates a fresh nonce for every evidence
   request.
-- Verify Gateway and model evidence before sending the completion. Keep the
-  resulting verified values for the receipt-verification stage.
+- Verify Gateway evidence and every returned model attestation before sending
+  the completion. Keep each verified model result with its source attestation
+  for the receipt-verification stage.
 - Preserve exact completion request and response bytes. Do not parse and
   serialize them again before response verification.
 - Use the signature's explicit `kind` only to choose the matching response

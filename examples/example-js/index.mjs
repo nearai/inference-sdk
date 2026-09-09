@@ -1,5 +1,6 @@
 import {
 	AttestationClient,
+	findModelAttestationForSignature,
 	verifyGatewayAttestation,
 	verifyGatewayResponse,
 	verifyModelAttestation,
@@ -21,19 +22,19 @@ const client = new AttestationClient({ apiKey });
 // Verify both deployments before sending either completion. These verified
 // results are later paired with the completion receipt according to its kind.
 const verifiedGatewayAttestation = await verifyGatewayDeployment();
-const verifiedModelAttestation = await verifyModelDeployment();
+const verifiedModelAttestations = await verifyModelDeployments();
 
 const nonStreamingCompletion = await sendCompletion({ stream: false });
 await verifyCompletionReceipt({
 	completion: nonStreamingCompletion,
 	verifiedGatewayAttestation,
-	verifiedModelAttestation,
+	verifiedModelAttestations,
 });
 const streamingCompletion = await sendCompletion({ stream: true });
 await verifyCompletionReceipt({
 	completion: streamingCompletion,
 	verifiedGatewayAttestation,
-	verifiedModelAttestation,
+	verifiedModelAttestations,
 });
 
 async function verifyGatewayDeployment() {
@@ -48,21 +49,25 @@ async function verifyGatewayDeployment() {
 	return verified;
 }
 
-async function verifyModelDeployment() {
+async function verifyModelDeployments() {
 	const fetched = await client.fetchModelAttestations({
 		model: MODEL,
 		signingAlgo: SIGNING_ALGO,
 	});
-	const [attestation] = fetched.attestations;
-	if (!attestation) {
-		throw new Error("Cloud API returned no model attestation");
+	if (fetched.attestations.length === 0) {
+		throw new Error("Cloud API returned no model attestations");
 	}
-	const verified = await verifyModelAttestation({
-		attestation,
-		clientBinding: fetched.clientBinding,
-	});
-	console.log("Model deployment: verified.");
-	return verified;
+	const preflight = await Promise.all(
+		fetched.attestations.map(async (attestation) => ({
+			attestation,
+			verified: await verifyModelAttestation({
+				attestation,
+				clientBinding: fetched.clientBinding,
+			}),
+		})),
+	);
+	console.log(`Model deployments: verified ${preflight.length}.`);
+	return preflight;
 }
 
 async function sendCompletion({ stream }) {
@@ -100,7 +105,7 @@ async function sendCompletion({ stream }) {
 async function verifyCompletionReceipt({
 	completion,
 	verifiedGatewayAttestation,
-	verifiedModelAttestation,
+	verifiedModelAttestations,
 }) {
 	const signature = await client.fetchCompletionSignature({
 		completionId: completion.completionId,
@@ -108,6 +113,10 @@ async function verifyCompletionReceipt({
 	});
 
 	if (signature.kind === "provider_tee") {
+		const verifiedModelAttestation = selectVerifiedModelAttestation(
+			signature,
+			verifiedModelAttestations,
+		);
 		verifyModelResponse({
 			requestBody: completion.requestBody,
 			responseBody: completion.responseBody,
@@ -125,6 +134,20 @@ async function verifyCompletionReceipt({
 		attestation: verifiedGatewayAttestation,
 	});
 	console.log(`${completion.label}: verified a Gateway signature.`);
+}
+
+function selectVerifiedModelAttestation(signature, preflight) {
+	const attestation = findModelAttestationForSignature({
+		attestations: preflight.map(({ attestation }) => attestation),
+		signature,
+	});
+	const selected = preflight.find(
+		(candidate) => candidate.attestation === attestation,
+	);
+	if (!selected) {
+		throw new Error("Selected model attestation was not preflight verified");
+	}
+	return selected.verified;
 }
 
 function readCompletionId(responseBody, stream) {

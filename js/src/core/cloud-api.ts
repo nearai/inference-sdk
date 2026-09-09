@@ -89,7 +89,7 @@ export class CloudApiClient {
   /**
    * Fetch NEAR model attestation candidates with a fresh client nonce.
    * Optionally narrow the report to a signing algorithm and signing address.
-   * Currently returns exactly one candidate.
+   * Every returned candidate is bound to the same fresh client nonce.
    */
   async fetchModelAttestations({
     model,
@@ -123,12 +123,6 @@ export class CloudApiClient {
         extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
       }),
     );
-    if (attestations.length !== 1) {
-      throw new ApiError({
-        code: 'api.unexpected_model_attestation_count',
-        details: { actualCount: attestations.length },
-      });
-    }
     for (const attestation of attestations) {
       requireMatchingApiNonce({
         reportedNonce: attestation.nonce,

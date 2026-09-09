@@ -55,7 +55,7 @@ Cloud API's report and signature endpoints have different defaults.
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify its sole result for a deployment preflight. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment preflight. |
 | `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Post-completion convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
@@ -84,7 +84,7 @@ attestation verifier.
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The SDK currently requires exactly one item. |
+|  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The collection may be empty or contain multiple candidates; verify every candidate before a completion. |
 | `FetchedModelAttestation` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
 |  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
@@ -100,8 +100,9 @@ attestation verifier.
 Use this function after `client.fetchModelAttestations` to select evidence for a
 `provider_tee` signature. It requires exactly one signer match but does not
 verify the attestation. `client.fetchModelAttestationForSignature` is the
-convenience form of these two operations. The normal preflight workflow verifies
-the fetched model attestation before the completion instead.
+convenience form of these two operations. For a preflight, verify every fetched
+candidate and retain each verified result with its source attestation so the
+matching one can be selected after the completion.
 
 #### `FindModelAttestationForSignatureParams`
 
