@@ -10,12 +10,12 @@
 The recommended lifecycle has three stages:
 
 1. Before the request, verify the Gateway deployment and every canonical-model
-   deployment candidate returned by Cloud API.
+   deployment candidate returned by the Gateway.
 2. Send the chat request and retain its exact request and response bytes.
 3. Fetch the completion signature and verify that response receipt against the
    corresponding preflight result.
 
-Cloud API may return zero or multiple model candidates. Reject an empty
+The Gateway may return zero or multiple model candidates. Reject an empty
 preflight, verify every returned candidate, and retain the verified results for
 response-receipt selection.
 
@@ -28,7 +28,7 @@ verifier:
 | `ProviderTee` | `verify_model_response` | The verified model signer signed the exact request and response bytes. |
 | `Gateway` | `verify_gateway_response` | The verified Gateway signer signed the exact client-visible request and response bytes. |
 
-The current Cloud API evidence does not yet provide a cryptographic chain from
+The current Gateway interface does not yet provide a cryptographic chain from
 a particular model response through a Gateway transformation to the final
 response. In particular, preflight Gateway and model attestation candidates do not prove
 that they served a particular chat completion. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
@@ -59,7 +59,7 @@ runtime without peer-certificate access must use
 `GatewayAttestationFetchOptions { include_spki_fingerprint: false, ..Default::default() }`.
 That still verifies Gateway deployment evidence, but makes no TLS identity
 claim. Model attestation fetches always omit TLS fingerprint evidence because
-Cloud API, rather than the client, connects to the model.
+the Gateway, rather than the client, connects to the model.
 
 ## Error handling
 

@@ -8,7 +8,7 @@ Verify a completion in three stages:
 3. Fetch the completion signature and use its `kind` to verify the bytes
    against the corresponding preflight result.
 
-`AttestationClient` retrieves Cloud API evidence and signatures. The SDK does
+`AttestationClient` retrieves NEAR AI Cloud Gateway evidence and signatures. The SDK does
 not send completions itself; your application owns the inference request, raw
 bytes, and retry policy.
 
@@ -18,7 +18,7 @@ Use a canonical model ID and choose one signing algorithm for this operation.
 Verify the Gateway and model evidence before the completion request. The Node
 client below also checks the TLS peer for the Gateway evidence request.
 Pass the same explicit algorithm to both attestation fetches and the completion
-signature fetch: Cloud API's report and signature endpoints have different
+signature fetch: the Gateway's report and signature endpoints have different
 defaults.
 
 ```ts
@@ -56,7 +56,7 @@ async function verifyModelDeployments() {
     signingAlgo: SIGNING_ALGO,
   });
   if (fetched.attestations.length === 0) {
-    throw new Error('Cloud API returned no model attestations');
+    throw new Error('Gateway returned no model attestations');
   }
   const verifiedAttestations = [];
   for (const attestation of fetched.attestations) {
@@ -71,12 +71,12 @@ async function verifyModelDeployments() {
 }
 ```
 
-Cloud API may return zero or multiple model attestations. The fetch helper
+The Gateway may return zero or multiple model attestations. The fetch helper
 preserves the collection and checks the returned nonce on every item. This
 deployment-first flow rejects an empty collection, verifies every candidate,
 and retains every verified result for receipt selection.
 
-Model evidence always uses the signer-and-nonce quote layout. Cloud API makes
+Model evidence always uses the signer-and-nonce quote layout. The Gateway makes
 the model connection on the client's behalf, so model verification does not
 make a client-to-model TLS claim.
 
@@ -150,7 +150,7 @@ Each verifier also verifies the signature over the exact request and response
 bytes. A signer mismatch fails naturally; do not fetch unrelated evidence to
 make the check pass.
 
-Cloud API returns `gateway` when it signs client-visible bytes that a provider
+The Gateway returns `gateway` when it signs client-visible bytes that a provider
 signature cannot cover, such as a rewritten response. It returns `provider_tee`
 when the model-serving TEE signs those bytes directly.
 
@@ -167,8 +167,8 @@ verified model produced the upstream response. For a `provider_tee` signature,
 a successful result proves model-signature provenance for the bytes, but does
 not cryptographically bind it to the preflight Gateway evidence.
 
-Cloud API tracks a paired provider signature and Gateway receipt for rewritten
-responses in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
+The planned paired provider signature and Gateway receipt for rewritten
+responses are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 Until that exists, do not claim the complete chain from these separate pieces of
 evidence.
 

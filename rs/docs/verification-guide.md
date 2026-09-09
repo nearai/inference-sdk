@@ -15,7 +15,7 @@ Treat deployment verification and response verification as separate stages.
 | Send chat | Your HTTP client | A request naming the canonical model ID used during preflight. Retain the exact request and response bytes. |
 | Verify the completion receipt | `fetch_completion_signature` → response verifier selected by `signature.kind` | The exact bytes were signed by the corresponding verified signer. |
 
-Complete both deployment checks before sending chat. Cloud API may return zero
+Complete both deployment checks before sending chat. The Gateway may return zero
 or more model-attestation candidates: reject an empty preflight and verify every
 returned candidate. Retain their verified results for the final stage rather
 than fetching new attestations after the completion.
@@ -26,7 +26,7 @@ request so the preflight model and request name the same deployment.
 
 This example explicitly selects `SigningAlgo::Ecdsa` for all evidence and
 signature requests. Pass the same explicit algorithm to both attestation
-fetches and the completion-signature fetch: Cloud API's report and signature
+fetches and the completion-signature fetch: the Gateway's report and signature
 endpoints have different defaults. The APIs also accept `None` for individual
 calls, but omitting the algorithm is not suitable for this three-stage flow.
 
@@ -66,7 +66,7 @@ async fn verify_deployments(
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
     if fetched_models.attestations.is_empty() {
-        return Err(std::io::Error::other("Cloud API returned no model attestations").into());
+        return Err(std::io::Error::other("Gateway returned no model attestations").into());
     }
 
     let mut verified = Vec::with_capacity(fetched_models.attestations.len());
@@ -96,7 +96,7 @@ If the runtime cannot expose the TLS peer certificate, set
 `include_spki_fingerprint: false` before fetching. That verifies the Gateway
 quote's signer-and-nonce layout but makes no TLS identity claim.
 
-Model fetches always request `include_tls_fingerprint=false`: Cloud API
+Model fetches always request `include_tls_fingerprint=false`: the Gateway
 connects to the model on the client's behalf, so a client cannot make a direct
 model TLS binding.
 
@@ -163,7 +163,7 @@ The preflight attestations and receipt answer complementary questions:
 | `ProviderTee` receipt | The verified model signer signed these exact bytes. | Gateway deployment or TLS provenance. |
 | `Gateway` receipt | The verified Gateway signer signed these exact client-visible bytes. | That an attested model produced those bytes. |
 
-Cloud API currently returns one response signature, not a cryptographically
+The Gateway currently returns one response signature, not a cryptographically
 linked provider signature and Gateway receipt. As a result, independently
 verified preflight evidence plus one current receipt does not prove a complete
 model → Gateway → final-response chain for a particular inference.
@@ -206,7 +206,7 @@ that an inference request should be replayed.
 
 `AttestationClient::fetch_completion_signature` returns a signature or an
 `ApiError::CompletionSignatureUnavailable { .. }` with code
-`api.completion_signature_unavailable` when Cloud API returns a valid 2xx
+`api.completion_signature_unavailable` when the Gateway returns a valid 2xx
 unavailable envelope. The error preserves the service's
 `provider_error_code` and `provider_message`.
 
@@ -239,5 +239,5 @@ A completion-signature HTTP 404 is classified as retryable because it can be
 observed before a completion reaches its terminal state. It can also mean an
 unknown completion ID, so retry only when the application knows that the
 completion may still be finishing. A valid 2xx unavailable envelope is not
-retryable: it reports that Cloud API cannot provide a usable signature for that
+retryable: it reports that the Gateway cannot provide a usable signature for that
 completion.

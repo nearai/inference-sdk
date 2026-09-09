@@ -20,16 +20,16 @@ Complete stage 1 before chat. `CompletionSignatureKind` matters only in stage
 
 For one three-stage verification operation, pass the same explicit
 `SigningAlgo` to both attestation fetches and `fetch_completion_signature`.
-Cloud API's report and signature endpoints have different defaults.
+The Gateway's report and signature endpoints have different defaults.
 
-Current Cloud API evidence does not cryptographically bind both preflight
+The current Gateway interface does not cryptographically bind both preflight
 attestations to one completion or link a model signature through a Gateway
 transformation. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks a complete provider-signature and Gateway-receipt chain.
 
-## Cloud API client
+## Gateway client
 
-`AttestationClient` owns the API key, Cloud API base URL, and its internal
+`AttestationClient` owns the API key, Gateway base URL, and its internal
 reqwest clients. Create it once and reuse it for all signature and evidence
 requests in a flow. The client only fetches evidence; it does not send
 inference requests or retain completion bytes.
@@ -47,7 +47,7 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches every model deployment candidate returned for a canonical model ID, including an empty list. The filters only narrow the API response. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
-`signing_algo` and `signing_address` only narrow the Cloud API response. They
+`signing_algo` and `signing_address` only narrow the Gateway response. They
 do not replace local selection from verified model results. Use
 `find_model_attestation_for_signature` after verifying every fetched candidate.
 
@@ -57,7 +57,7 @@ return `ApiError::InvalidInput` before a request is sent.
 
 ### Gateway fetch options
 
-`GatewayAttestationFetchOptions::default()` uses the Cloud API's selected
+`GatewayAttestationFetchOptions::default()` uses the Gateway's selected
 signing algorithm and requests SPKI fingerprint evidence.
 
 | Field | Type | Default | Description |
@@ -163,7 +163,7 @@ Gateway `reported_quote_data` is required.
 
 | `AttestationEvidence` field | Description |
 | --- | --- |
-| `nonce` | Nonce echoed by Cloud API. The client method validates it against its generated nonce. |
+| `nonce` | Nonce echoed by the Gateway. The client method validates it against its generated nonce. |
 | `signer` | Advertised signing identity. |
 | `intel_quote` | Intel TDX quote. |
 | `event_log` | `AttestationEventLog::Json(String)` or `AttestationEventLog::Entries(Vec<serde_json::Value>)`, used to replay RTMR3. |

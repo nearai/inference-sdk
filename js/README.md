@@ -1,7 +1,7 @@
 # Verifiable AI SDK for TypeScript
 
 Verify NEAR AI Cloud deployment attestations and completion signatures.
-`AttestationClient` retrieves Cloud API evidence and signatures; standalone
+`AttestationClient` retrieves NEAR AI Cloud Gateway evidence and signatures; standalone
 functions verify them. Your application sends completion requests and preserves
 their exact request and response bytes.
 
@@ -53,7 +53,7 @@ them to an upstream response from the verified model. A `provider_tee` signature
 verifies the model-signed bytes, but does not bind that signature to the
 preflight Gateway evidence.
 
-This limitation matters when Cloud API rewrites a provider response before
+This limitation matters when the Gateway rewrites a provider response before
 returning it. The planned paired provider signature and Gateway receipt are
 tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 

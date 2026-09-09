@@ -20,12 +20,12 @@ one-signature design.
 
 ## Public API
 
-Cloud retrieval and attestation verification are asynchronous. Response
+Gateway retrieval and attestation verification are asynchronous. Response
 verification is synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
-| `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns Cloud API credentials and retrieves deployment evidence and completion signatures. |
+| `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns NEAR AI Cloud credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
@@ -42,18 +42,18 @@ creates a fresh nonce for every attestation fetch.
 
 For one three-stage verification operation, pass the same explicit
 `signing_algo` to both attestation fetches and `fetch_completion_signature`.
-Cloud API's report and signature endpoints have different defaults.
+The Gateway's report and signature endpoints have different defaults.
 
 ### Constructor
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `api_key` | `str` | Yes | — | Bearer token for signature and evidence requests. |
-| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Cloud API base URL. |
+| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) NEAR AI Cloud Gateway base URL. |
 
 `AttestationClient` construction and methods, plus
 `find_model_attestation_for_signature`, raise `ApiError` for invalid helper
-input as well as Cloud API and selection failures. The `verify_*` functions
+input as well as Gateway and selection failures. The `verify_*` functions
 raise `VerificationError` instead. Handle each operation at its own boundary;
 the client and selection helpers never require an `ApiError` versus
 `VerificationError` dispatch after catching an error.
@@ -65,7 +65,7 @@ the client and selection helpers never require an `ApiError` versus
 | `fetch_completion_signature` | `completion_id` | `str` | Yes | Completion ID returned by the API response. Fetch after the completion reaches a terminal state. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Signing algorithm to request. Set it when the application requires a particular algorithm; omit it for the service default. |
 
-`client.fetch_completion_signature()` raises `ApiError` when Cloud API returns
+`client.fetch_completion_signature()` raises `ApiError` when the Gateway returns
 an unavailable 2xx response. The error code is
 `api.completion_signature_unavailable`; its details contain
 `providerErrorCode` and `providerMessage` from the service response.
@@ -79,10 +79,10 @@ an unavailable 2xx response. The error code is
 |  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. It must be hexadecimal: 20 or 32 bytes without `signing_algo`, or the matching length when an algorithm is selected. Invalid input raises `ApiError` before a request. |
 
 Every model-attestation fetch generates a fresh 32-byte client nonce, requests
-`include_tls_fingerprint=false`, checks Cloud API's echoed nonce, and returns a
+`include_tls_fingerprint=false`, checks the Gateway's echoed nonce, and returns a
 `ModelClientBinding` with the raw evidence. `signing_algo` and
 `signing_address` only narrow the remote response. The result preserves every
-model attestation Cloud API returns, including an empty collection. Verify each
+model attestation the Gateway returns, including an empty collection. Verify each
 returned item before inference. Use `find_model_attestation_for_signature`
 after a `provider_tee` signature is available to select exactly one matching
 verified result for response verification.
@@ -96,7 +96,7 @@ verified result for response verification.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Every model attestation returned by Cloud API. It may be empty or contain multiple items. |
+| `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Every model attestation returned by the Gateway. It may be empty or contain multiple items. |
 |  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
 
 ### Gateway deployment method
@@ -169,8 +169,7 @@ the supplied verified result.
 The two deployment results and a single completion signature do not currently
 prove a complete model-to-Gateway-to-final-bytes chain. A `provider_tee`
 signature does not identify the Gateway that returned the bytes; a `gateway`
-signature does not prove that an attested model generated them. [Cloud API issue
-#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
+signature does not prove that an attested model generated them. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
 provider-signature and Gateway-receipt chain.
 
 ## Evidence, signatures, policies, and results
@@ -186,7 +185,7 @@ provider-signature and Gateway-receipt chain.
 | `CompletionSignature` | `kind`, `signer` | inherited | The `CompletionSignatureReference` fields that select its response verifier and signer. |
 |  | `signed_text` | `str` | Text covered by the signature. |
 |  | `signature` | `str` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
-| `AttestationEvidence` | `nonce` | `str` | Nonce echoed by Cloud API. The fetch helper compares it with its generated nonce. |
+| `AttestationEvidence` | `nonce` | `str` | Nonce echoed by the Gateway. The fetch helper compares it with its generated nonce. |
 |  | `signer` | `SigningIdentity` | Advertised signing identity. |
 |  | `intel_quote` | `str` | Intel TDX quote. |
 |  | `event_log` | `AttestationEventLog` | Input used to replay RTMR3 measurements. |

@@ -8,7 +8,7 @@ completion request and retains its exact request and response bytes.
 
 For a completion, use three stages:
 
-1. Before sending it, verify the Cloud API Gateway deployment and every
+1. Before sending it, verify the NEAR AI Cloud Gateway deployment and every
    returned target-model deployment.
 2. Send the completion and retain its canonical model ID, completion ID, and
    exact request and response bytes.
@@ -36,24 +36,24 @@ Gateway deployment.
 - A completion signature: the exact request and response bytes signed by the
   signer named in the returned signature.
 
-Cloud API returns an explicit kind for each completion signature:
+The Gateway returns an explicit kind for each completion signature:
 
 | `signature.kind` | Response verification establishes | It does not establish |
 | --- | --- | --- |
 | `provider_tee` | A verified model-serving TEE signer signed the exact request and response bytes. | The Gateway deployment or TLS identity that returned those bytes. |
 | `gateway` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated those bytes. |
 
-Cloud API currently exposes one signature for a completion. Separately
+The Gateway currently exposes one signature for a completion. Separately
 verified model and Gateway deployments plus that one signature do **not** form a
 complete cryptographic chain from model execution through Gateway processing to
 the final bytes. In particular, the current Gateway signature over rewritten
-bytes has no provider-response link. [Cloud API issue #986](https://github.com/nearai/cloud-api/issues/986)
+bytes has no provider-response link. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks the proposed provider signature plus Gateway receipt chain.
 
 The SDK does not send completion requests, choose retry behavior, or turn model
 evidence into a client-to-model TLS claim.
 
-Create an `AttestationClient` with the Cloud API key once. Its asynchronous
+Create an `AttestationClient` with the Gateway API key once. Its asynchronous
 methods retrieve signatures and evidence; selection and verification are
 standalone functions. `client.fetch_gateway_attestation()` returns a
 `FetchedGatewayAttestation` with raw attestation and `client_binding`. By
@@ -108,4 +108,4 @@ uv build
 ```
 
 The test suite is deterministic and uses local fixtures; it does not contact
-Cloud API, Intel PCCS, or NVIDIA NRAS.
+the NEAR AI Cloud Gateway, Intel PCCS, or NVIDIA NRAS.

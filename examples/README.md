@@ -10,7 +10,7 @@ Each project follows the same three-stage flow against the canonical
    request and response bytes, then verify the returned response receipt.
 
 The examples use an explicit ECDSA signing algorithm for all three stages.
-Cloud API's report and signature endpoints currently have different defaults,
+The Gateway's report and signature endpoints currently have different defaults,
 so relying on those defaults could make the preflight evidence and response
 signer differ. They use only the `NEARAI_API_KEY` environment variable.
 

@@ -6,9 +6,9 @@ sends a completion, then verifies the signature returned for that completion.
 `signature.kind` is used only in the final step to select the right response
 verifier.
 
-Create `client = AttestationClient(api_key)` once. It retrieves Cloud API
-evidence and signatures; your application sends the completion request and
-keeps the exact bytes it sends and receives.
+Create `client = AttestationClient(api_key)` once. It retrieves NEAR AI Cloud
+Gateway evidence and signatures; your application sends the completion request
+and keeps the exact bytes it sends and receives.
 
 ## Verification lifecycle
 
@@ -28,7 +28,7 @@ that evidence.
 Verify both deployments before sending the completion. Choose the signing
 algorithm your application expects; this example uses ECDSA for all three
 requests. Pass the same explicit algorithm to both attestation fetches and the
-completion-signature fetch: Cloud API's report and signature endpoints have
+completion-signature fetch: the Gateway's report and signature endpoints have
 different defaults.
 
 ```python
@@ -56,7 +56,7 @@ async def verify_deployments(client: AttestationClient):
         signing_algo=SIGNING_ALGO,
     )
     if not fetched_model.attestations:
-        raise RuntimeError('Cloud API returned no model attestations')
+        raise RuntimeError('Gateway returned no model attestations')
 
     verified_models = []
     for attestation in fetched_model.attestations:
@@ -70,7 +70,7 @@ async def verify_deployments(client: AttestationClient):
 ```
 
 `fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
-Cloud API report endpoint, but ask for evidence with different client bindings:
+Gateway report endpoint, but ask for evidence with different client bindings:
 
 - Gateway evidence requests an SPKI fingerprint by default. The Python SDK
   captures the peer fingerprint from that same HTTPS evidence request, and
@@ -131,7 +131,7 @@ or text encoding changes the signed bytes.
 Your application must retain:
 
 - the canonical model ID;
-- the completion ID returned by Cloud API;
+- the completion ID returned by the Gateway;
 - the exact request bytes; and
 - the exact response bytes, including streaming framing when applicable.
 
@@ -178,7 +178,7 @@ else:
     )
 ```
 
-Cloud API provides two signature kinds. They are different response signatures,
+The Gateway provides two signature kinds. They are different response signatures,
 not two top-level deployment workflows:
 
 | `signature.kind` | Call | A successful result establishes | It does not establish |
@@ -186,9 +186,9 @@ not two top-level deployment workflows:
 | `provider_tee` | `verify_model_response` | A verified model-serving TEE signer signed the exact request and response bytes. | Which Gateway deployment or TLS endpoint returned them. |
 | `gateway` | `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated them. |
 
-Cloud API can rewrite a response before returning it, for example while
+The Gateway can rewrite a response before returning it, for example while
 normalizing a stream for OpenAI compatibility. A provider signature over the
-upstream bytes cannot verify rewritten bytes, so Cloud API may return a
+upstream bytes cannot verify rewritten bytes, so the Gateway may return a
 `gateway` signature for the final client-visible bytes. Always use the kind
 returned for that completion; never infer it from signed text.
 
@@ -205,7 +205,7 @@ form a complete model-to-Gateway-to-final-bytes cryptographic chain.
   connect an upstream model response to those bytes.
 
 Consequently, successfully verifying both preflight deployments must not be
-presented as proof that they served the same inference. [Cloud API issue #986](https://github.com/nearai/cloud-api/issues/986)
+presented as proof that they served the same inference. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks the missing chain: preserving a provider signature and adding a Gateway
 receipt that binds the upstream and final response hashes for the same
 inference.
@@ -259,7 +259,7 @@ structured error. A 2xx unavailable envelope raises `ApiError` with
 `api.completion_signature_unavailable`; its details contain the service's
 `providerErrorCode` and `providerMessage`.
 
-An HTTP 404 raises `api.http_status` and remains retryable. It means Cloud API
+An HTTP 404 raises `api.http_status` and remains retryable. It means the Gateway
 has no stored signature for that ID at that time. Retry only when the
 application has reason to expect a later signature, such as before the
 completion has reached its terminal state.
