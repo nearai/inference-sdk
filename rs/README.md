@@ -60,8 +60,9 @@ Cloud API, rather than the client, connects to the model.
 ## Error handling
 
 Cloud client methods and model-evidence selection return `ApiError`. Local
-verification functions return `VerificationError`. Match error variants when
-practical, or use `code()` and `retryable()` for a stable machine-readable
-classification; never parse display text. See the
+verification functions return `VerificationError`. Handle each at its own call
+site: a client or selection operation never needs to dispatch between the two
+error types. Match variants when practical, or use `code()` and `retryable()`
+for a stable machine-readable classification; never parse display text. See the
 [error-handling section](./docs/verification-guide.md#handle-errors) for
 completion-signature failures.

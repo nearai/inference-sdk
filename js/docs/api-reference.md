@@ -35,7 +35,9 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 its methods to retrieve signatures and evidence. It does not send completion
 requests or retain their request or response bytes. Its methods, and
 `findModelAttestationForSignature`, throw `ApiError`; verification begins only
-when an explicit `verify…` function is called.
+when an explicit `verify…` function is called. Handle these operations at
+separate call sites: the client and selection helpers use `ApiError`, while
+explicit `verify…` functions use `VerificationError`.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.

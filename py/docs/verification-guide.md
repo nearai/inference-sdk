@@ -254,7 +254,8 @@ completion has reached its terminal state.
 request, HTTP, response-format, nonce, unavailable-signature,
 candidate-selection, or helper-input failures. Explicit verification functions
 raise `VerificationError` for local input, cryptographic, policy, and binding
-failures.
+failures. Handle each stage separately: client and selection handlers catch
+`ApiError`, while explicit verification handlers catch `VerificationError`.
 
 | Field | Meaning |
 | --- | --- |

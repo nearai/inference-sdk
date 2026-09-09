@@ -210,19 +210,18 @@ produce 404.
 
 `AttestationClient` and `findModelAttestationForSignature` throw `ApiError`
 for caller input, transport, response-format, nonce, or attestation-selection
-failures. `VerificationError` is reserved for explicit `verify…` calls.
+failures. Handle those calls separately from explicit `verify…` calls, which
+throw `VerificationError`. A client or selection handler only needs to handle
+`ApiError`; a verification handler only needs to handle `VerificationError`.
 
 ```ts
-import { isApiError } from 'verifiable-ai-sdk';
+import type { ApiError } from 'verifiable-ai-sdk';
 
 try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
-  if (isApiError(error)) {
-    console.log(error.failure.code, error.failure.details);
-  } else {
-    throw error;
-  }
+  const apiError = error as ApiError;
+  console.log(apiError.failure.code, apiError.failure.details);
 }
 ```
 

@@ -180,14 +180,16 @@ That includes client configuration and input errors, such as an invalid custom
 base URL, an API key that cannot be used in an HTTP header, or a non-provider
 signature passed to model-evidence selection. These helpers retrieve or select
 evidence; they do not verify it. Attestation and response verification
-functions return `VerificationError` directly.
+functions return `VerificationError` directly. Keep the boundaries separate:
+client and selection code only handles `ApiError`, while explicit verification
+code only handles `VerificationError`.
 
-Match an error enum variant when practical. `ApiError::code()` and
-`VerificationError::code()` provide stable machine-readable codes; enum fields
-contain code-specific diagnostic details. Display text is for people and must
-not be parsed. `retryable()` means a new attempt at the failed external
-operation may succeed. It does not mean that re-verifying the same evidence
-will succeed or that an inference request should be replayed.
+At either boundary, match the relevant error enum variant when practical. Its
+`code()` provides a stable machine-readable code, and enum fields contain
+code-specific diagnostic details. Display text is for people and must not be
+parsed. `retryable()` means a new attempt at the failed external operation may
+succeed. It does not mean that re-verifying the same evidence will succeed or
+that an inference request should be replayed.
 
 `AttestationClient::fetch_completion_signature` returns a signature or an
 `ApiError::CompletionSignatureUnavailable { .. }` with code
@@ -201,7 +203,7 @@ use verifiable_ai_sdk::{ApiError, AttestationClient};
 async fn fetch_completion_signature(
     api_key: &str,
     completion_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ApiError> {
     let client = AttestationClient::new(api_key.to_owned());
     match client.fetch_completion_signature(completion_id, None).await {
         Ok(_signature) => {}
@@ -214,7 +216,7 @@ async fn fetch_completion_signature(
         Err(error) if error.retryable() => {
             eprintln!("the signature request may succeed on a later attempt");
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(error),
     }
     Ok(())
 }

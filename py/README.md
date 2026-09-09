@@ -76,12 +76,13 @@ verifies the signer-and-nonce quote layout, and returns
 
 ## Errors
 
+Handle retrieval and verification at separate call sites.
 `AttestationClient` and evidence-selection failures raise `ApiError`, including
 invalid helper input. Explicit verification functions raise
 `VerificationError` for local input, cryptographic, policy, and binding
-failures. For both, branch on `error.failure.code` and inspect
-`error.failure.details` only when it is present; never parse the human-readable
-message.
+failures. Each handler has one SDK error type. Branch on its
+`error.failure.code` and inspect `error.failure.details` only when it is
+present; never parse the human-readable message.
 
 `error.retryable` means a new attempt at the failed external operation may
 succeed. It does not mean that re-verifying the same evidence will succeed or

@@ -55,7 +55,9 @@ Cloud API's report and signature endpoints have different defaults.
 `AttestationClient` construction and methods, plus
 `find_model_attestation_for_signature`, raise `ApiError` for invalid helper
 input as well as Cloud API and selection failures. The `verify_*` functions
-raise `VerificationError` instead.
+raise `VerificationError` instead. Handle each operation at its own boundary;
+the client and selection helpers never require an `ApiError` versus
+`VerificationError` dispatch after catching an error.
 
 ### Completion-signature methods
 

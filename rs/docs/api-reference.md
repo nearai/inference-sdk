@@ -246,8 +246,10 @@ trust-root implications.
 
 See [Handle errors](./verification-guide.md#handle-errors). Cloud retrieval
 and evidence selection use `ApiError`; explicit verification uses
-`VerificationError`. This reference intentionally focuses on request and
-verification APIs rather than enumerating each error variant.
+`VerificationError`. Handle each operation at its own boundary, so a client or
+selection handler never needs to distinguish the two. This reference
+intentionally focuses on request and verification APIs rather than enumerating
+each error variant.
 `fetch_completion_signature` maps a valid 2xx unavailable response to
 `ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
 service's code and message.
