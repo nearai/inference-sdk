@@ -22,7 +22,8 @@ export type ApiFailure =
           | 'invalid_url'
           | 'invalid_hex'
           | 'wrong_length'
-          | 'unsupported_value';
+          | 'unsupported_value'
+          | 'invalid_header_value';
         expected?: string;
         actual?: string;
       };

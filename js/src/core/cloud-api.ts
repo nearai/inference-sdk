@@ -246,9 +246,10 @@ export class CloudApiClient {
     resource,
     extraHeaders = {},
   }: GetCloudApiJsonParams): Promise<unknown> {
+    const request = this.createCloudApiRequest({ url, extraHeaders });
     let response: Response;
     try {
-      response = await fetch(this.createCloudApiRequest({ url, extraHeaders }));
+      response = await fetch(request);
     } catch (cause) {
       throw new ApiError(
         {
@@ -298,9 +299,23 @@ export class CloudApiClient {
     url,
     extraHeaders = {},
   }: CreateCloudApiRequestParams): Request {
-    const headers = new Headers(extraHeaders);
-    headers.set('authorization', `Bearer ${this.apiKey}`);
-    return new Request(url, { headers });
+    try {
+      const headers = new Headers(extraHeaders);
+      headers.set('authorization', `Bearer ${this.apiKey}`);
+      return new Request(url, { headers });
+    } catch (cause) {
+      throw new ApiError(
+        {
+          code: 'api.invalid_input',
+          details: {
+            field: 'apiKey',
+            reason: 'invalid_header_value',
+            expected: 'an HTTP header value',
+          },
+        },
+        { cause },
+      );
+    }
   }
 }
 

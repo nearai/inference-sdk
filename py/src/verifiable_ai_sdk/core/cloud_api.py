@@ -133,8 +133,8 @@ class AttestationClient:
             signing_address=signature.signer.signing_address,
         )
         return FetchedModelAttestation(
-            attestation=find_model_attestation_for_signature(
-                fetched.attestations, signature
+            attestation=_find_model_attestation_for_signer(
+                fetched.attestations, signature.signer
             ),
             client_binding=fetched.client_binding,
         )

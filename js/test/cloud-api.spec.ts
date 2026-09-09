@@ -157,6 +157,25 @@ describe('AttestationClient', () => {
     },
   );
 
+  test('reports an invalid API key as client input', async () => {
+    const client = new AttestationClient({
+      apiKey: 'invalid\nheader',
+      baseUrl,
+    });
+
+    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: {
+        code: 'api.invalid_input',
+        details: {
+          field: 'apiKey',
+          reason: 'invalid_header_value',
+          expected: 'an HTTP header value',
+        },
+      },
+    });
+  });
+
   describe('model attestations', () => {
     test('fetches model evidence and selects the signer for a model response', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
