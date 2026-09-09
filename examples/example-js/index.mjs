@@ -57,15 +57,16 @@ async function verifyModelDeployments() {
 	if (fetched.attestations.length === 0) {
 		throw new Error("Cloud API returned no model attestations");
 	}
-	const preflight = await Promise.all(
-		fetched.attestations.map(async (attestation) => ({
+	const preflight = [];
+	for (const attestation of fetched.attestations) {
+		preflight.push({
 			attestation,
 			verified: await verifyModelAttestation({
 				attestation,
 				clientBinding: fetched.clientBinding,
 			}),
-		})),
-	);
+		});
+	}
 	console.log(`Model deployments: verified ${preflight.length}.`);
 	return preflight;
 }

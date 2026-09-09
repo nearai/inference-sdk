@@ -183,7 +183,9 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
     assert selected.nonce == fetched.client_binding.nonce
     assert selected.app_compose == '{}'
     assert not hasattr(selected, 'spki_fingerprint')
-    assert len(fetched.attestations) == 2
+    assert tuple(
+        attestation.signer.signing_address for attestation in fetched.attestations
+    ) == (SIGNING_ADDRESS, '33' * 20)
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)
