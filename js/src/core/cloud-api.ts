@@ -66,8 +66,9 @@ type ReadCloudApiJsonParams = {
   readonly response: Response;
   readonly resource: ApiResource;
 };
-type DecodeApiHexParams = {
-  readonly value: string;
+type ValidateApiSigningAddressParams = {
+  readonly signingAddress: string;
+  readonly signingAlgo?: SigningAlgo;
   readonly field: string;
 };
 
@@ -95,6 +96,13 @@ export class CloudApiClient {
     signingAlgo,
     signingAddress,
   }: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
+    if (signingAddress !== undefined) {
+      validateApiSigningAddress({
+        signingAddress,
+        signingAlgo,
+        field: 'signingAddress',
+      });
+    }
     const clientNonce = generateNonce();
     const url = new URL('attestation/report', this.baseUrl);
     url.searchParams.set('model', model);
@@ -139,21 +147,14 @@ export class CloudApiClient {
     model,
     signature,
   }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
-    requireProviderSignature(signature);
-    decodeApiHex({
-      value: signature.signer.signingAddress,
-      field: 'signature.signer.signingAddress',
-    });
+    const signer = requireProviderSignature(signature);
     const fetched = await this.fetchModelAttestations({
       model,
-      signingAlgo: signature.signer.signingAlgo,
-      signingAddress: signature.signer.signingAddress,
+      signingAlgo: signer.signingAlgo,
+      signingAddress: signer.signingAddress,
     });
     return {
-      attestation: findModelAttestationForSignature({
-        attestations: fetched.attestations,
-        signature,
-      }),
+      attestation: findModelAttestationForSigner(fetched.attestations, signer),
       clientBinding: fetched.clientBinding,
     };
   }
@@ -369,16 +370,19 @@ export function findModelAttestationForSignature({
   attestations,
   signature,
 }: FindModelAttestationForSignatureParams): ModelAttestation {
-  requireProviderSignature(signature);
-  return findModelAttestationForSigner(attestations, signature.signer);
+  return findModelAttestationForSigner(
+    attestations,
+    requireProviderSignature(signature),
+  );
 }
 
 function findModelAttestationForSigner(
   attestations: readonly ModelAttestation[],
   signer: SigningIdentity,
 ): ModelAttestation {
-  const signerAddress = decodeApiHex({
-    value: signer.signingAddress,
+  const signerAddress = validateApiSigningAddress({
+    signingAddress: signer.signingAddress,
+    signingAlgo: signer.signingAlgo,
     field: 'signature.signer.signingAddress',
   });
   const matches: ModelAttestation[] = [];
@@ -386,8 +390,9 @@ function findModelAttestationForSigner(
     const candidateSigner = attestation.signer;
     if (
       candidateSigner.signingAlgo === signer.signingAlgo &&
-      decodeApiHex({
-        value: candidateSigner.signingAddress,
+      validateApiSigningAddress({
+        signingAddress: candidateSigner.signingAddress,
+        signingAlgo: candidateSigner.signingAlgo,
         field: `attestations[${index}].signer.signingAddress`,
       }).equals(signerAddress)
     ) {
@@ -414,7 +419,7 @@ function findModelAttestationForSigner(
 
 function requireProviderSignature(
   signature: CompletionSignatureReference,
-): void {
+): SigningIdentity {
   if (signature.kind !== 'provider_tee') {
     throw new ApiError({
       code: 'api.invalid_input',
@@ -426,14 +431,22 @@ function requireProviderSignature(
       },
     });
   }
+  validateApiSigningAddress({
+    signingAddress: signature.signer.signingAddress,
+    signingAlgo: signature.signer.signingAlgo,
+    field: 'signature.signer.signingAddress',
+  });
+  return signature.signer;
 }
 
-function decodeApiHex({
-  value,
+function validateApiSigningAddress({
+  signingAddress,
+  signingAlgo,
   field,
-}: DecodeApiHexParams): ReturnType<typeof hexToBuffer> {
+}: ValidateApiSigningAddressParams): ReturnType<typeof hexToBuffer> {
+  let address: ReturnType<typeof hexToBuffer>;
   try {
-    return hexToBuffer(value);
+    address = hexToBuffer(signingAddress);
   } catch (cause) {
     throw new ApiError(
       {
@@ -441,12 +454,30 @@ function decodeApiHex({
         details: {
           field,
           reason: 'invalid_hex',
-          expected: 'hexadecimal text',
+          expected: 'a hexadecimal signing address',
         },
       },
       { cause },
     );
   }
+  const allowedLengths =
+    signingAlgo === undefined ? [20, 32] : [signingAlgo === 'ecdsa' ? 20 : 32];
+  if (!allowedLengths.includes(address.length)) {
+    const expected =
+      allowedLengths.length === 1
+        ? `${allowedLengths[0]}-byte hexadecimal signing address`
+        : '20- or 32-byte hexadecimal signing address';
+    throw new ApiError({
+      code: 'api.invalid_input',
+      details: {
+        field,
+        reason: 'wrong_length',
+        expected,
+        actual: `${address.length} bytes`,
+      },
+    });
+  }
+  return address;
 }
 
 function resolveCloudApiBaseUrl(
@@ -505,10 +536,9 @@ function requireMatchingApiNonce({
   resource,
 }: RequireMatchingApiNonceParams): void {
   if (
-    decodeApiHex({
-      value: reportedNonce,
-      field: `${resource}.request_nonce`,
-    }).equals(decodeApiHex({ value: requestedNonce, field: 'nonce' }))
+    decodeApiNonce(reportedNonce, `${resource}.request_nonce`).equals(
+      decodeApiNonce(requestedNonce, 'nonce'),
+    )
   ) {
     return;
   }
@@ -516,4 +546,25 @@ function requireMatchingApiNonce({
     code: 'api.nonce_mismatch',
     details: { resource },
   });
+}
+
+function decodeApiNonce(
+  value: string,
+  path: string,
+): ReturnType<typeof hexToBuffer> {
+  try {
+    return hexToBuffer(value);
+  } catch (cause) {
+    throw new ApiError(
+      {
+        code: 'api.invalid_response',
+        details: {
+          path,
+          expected: 'a hexadecimal nonce',
+          actual: 'invalid',
+        },
+      },
+      { cause },
+    );
+  }
 }

@@ -281,6 +281,28 @@ describe('AttestationClient', () => {
       expect(query.has('signing_address')).toBe(false);
     });
 
+    test('rejects an invalid signer filter before requesting model evidence', async () => {
+      const api = cloudFor(() => {
+        throw new Error('The client must reject this before making a request');
+      });
+
+      await expect(
+        api.client.fetchModelAttestations({
+          model: 'canonical-model',
+          signingAddress: 'not hexadecimal',
+        }),
+      ).rejects.toMatchObject({
+        name: 'ApiError',
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'signingAddress',
+            reason: 'invalid_hex',
+          },
+        },
+      });
+    });
+
     test('normalizes nullable service evidence to absent optional fields', async () => {
       const api = cloudFor((request) => {
         const clientNonce = requestNonce(request);
