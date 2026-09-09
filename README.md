@@ -11,3 +11,5 @@ Language-specific implementations and verification guides:
 
 For small end-to-end projects that send a completion and verify its returned
 signature, see the [examples](./examples/README.md).
+
+Maintainers can follow the [release process](./RELEASING.md).
