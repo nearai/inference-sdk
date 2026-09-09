@@ -84,11 +84,11 @@ an unavailable 2xx response. The error code is
 Every model-attestation fetch generates a fresh 32-byte client nonce, requests
 `include_tls_fingerprint=false`, checks Cloud API's echoed nonce, and returns a
 `ModelClientBinding` with the raw evidence. `signing_algo` and
-`signing_address` only narrow the remote response. The SDK currently requires
-Cloud API to return exactly one model attestation, so deployment-first callers
-can verify `fetched.attestations[0]` before the completion. Use
-`find_model_attestation_for_signature` only when doing signature-driven local
-selection after a `provider_tee` signature is available.
+`signing_address` only narrow the remote response. The result preserves every
+model attestation Cloud API returns, including an empty collection. Verify each
+returned item before inference. Use `find_model_attestation_for_signature`
+after a `provider_tee` signature is available to select exactly one matching
+raw item, then use its paired verified result for response verification.
 
 ### Local model selection
 
@@ -99,7 +99,7 @@ selection after a `provider_tee` signature is available.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Cloud API model attestations. The SDK currently requires exactly one item. |
+| `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Every model attestation returned by Cloud API. It may be empty or contain multiple items. |
 |  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
 | `FetchedModelAttestation` | `attestation` | `ModelAttestation` | Evidence selected for the `provider_tee` signer. |
 |  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |

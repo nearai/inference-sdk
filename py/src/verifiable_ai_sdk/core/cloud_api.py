@@ -281,11 +281,6 @@ def _decode_model_attestation_report(value: object) -> tuple[ModelAttestation, .
             root='model attestation report',
             nested_record_field='model_attestations',
         )
-    if len(report.model_attestations) != 1:
-        raise api_failure(
-            'api.unexpected_model_attestation_count',
-            {'actualCount': len(report.model_attestations)},
-        )
     return tuple(
         _map_model_attestation(raw, f'model_attestations[{index}]')
         for index, raw in enumerate(report.model_attestations)

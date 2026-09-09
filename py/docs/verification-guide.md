@@ -55,12 +55,21 @@ async def verify_deployments(client: AttestationClient):
         MODEL,
         signing_algo=SIGNING_ALGO,
     )
-    # Cloud API currently returns exactly one model attestation per request.
-    verified_model = await verify_model_attestation(
-        fetched_model.attestations[0],
-        fetched_model.client_binding,
-    )
-    return verified_gateway, verified_model
+    if not fetched_model.attestations:
+        raise RuntimeError('Cloud API returned no model attestations')
+
+    verified_models = []
+    for attestation in fetched_model.attestations:
+        verified_models.append(
+            (
+                attestation,
+                await verify_model_attestation(
+                    attestation,
+                    fetched_model.client_binding,
+                ),
+            )
+        )
+    return verified_gateway, tuple(verified_models)
 ```
 
 `fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
@@ -75,8 +84,10 @@ Cloud API report endpoint, but ask for evidence with different client bindings:
   signer and nonce binding without making a client-to-model TLS claim.
 
 The fetch helpers generate fresh nonces and reject a response whose echoed
-nonce does not match. `verify_*_attestation` then verifies the quote,
-measurements, deployment configuration, and policy.
+nonce does not match. `fetch_model_attestations()` preserves every returned
+model record. This deployment-first workflow rejects an empty collection and
+verifies every returned record before inference. `verify_*_attestation` then
+verifies the quote, measurements, deployment configuration, and policy.
 
 ### Gateway TLS identity
 
@@ -132,24 +143,35 @@ behavior for it.
 
 ## 3. Verify the returned completion signature
 
-Fetch the signature after the completion has reached its terminal state. Pass
-the verified deployment result from stage 1 to the verifier selected by the
-returned kind.
+Fetch the signature after the completion has reached its terminal state. Keep
+each raw model record paired with its verified result from stage 1. A provider
+signature first selects exactly one raw record, then uses that paired result;
+a Gateway signature uses the verified Gateway result.
 
 ```python
 from verifiable_ai_sdk import (
+    find_model_attestation_for_signature,
     verify_gateway_response,
     verify_model_response,
 )
 
 # completion_id, request_body, and response_body came from your completion
-# request. verified_gateway and verified_model came from stage 1.
+# request. verified_gateway and verified_models came from stage 1.
 signature = await client.fetch_completion_signature(
     completion_id,
     signing_algo=SIGNING_ALGO,
 )
 
 if signature.kind == 'provider_tee':
+    model_attestation = find_model_attestation_for_signature(
+        [attestation for attestation, _ in verified_models],
+        signature,
+    )
+    verified_model = next(
+        verified
+        for attestation, verified in verified_models
+        if attestation == model_attestation
+    )
     verify_model_response(
         request_body,
         response_body,
@@ -217,12 +239,13 @@ verifiers = ModelAttestationVerifiers(
     deployment=verify_deployment_release,
 )
 
-verified_model = await verify_model_attestation(
-    fetched_model.attestations[0],
-    fetched_model.client_binding,
-    policy=policy,
-    verifiers=verifiers,
-)
+for attestation in fetched_model.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_model.client_binding,
+        policy=policy,
+        verifiers=verifiers,
+    )
 ```
 
 `verify_deployment_release` is application code. It receives the measured

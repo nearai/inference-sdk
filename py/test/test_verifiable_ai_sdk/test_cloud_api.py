@@ -158,7 +158,12 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
             body=json.dumps(
                 {
                     'model_attestations': [
-                        cloud_attestation(nonce, report_data='44' * 64)
+                        cloud_attestation(nonce, report_data='44' * 64),
+                        cloud_attestation(
+                            nonce,
+                            signing_address='33' * 20,
+                            report_data='44' * 64,
+                        ),
                     ]
                 }
             ).encode(),
@@ -178,6 +183,7 @@ async def test_model_helpers_request_fresh_evidence_and_select_signer(
     assert selected.nonce == fetched.client_binding.nonce
     assert selected.app_compose == '{}'
     assert not hasattr(selected, 'spki_fingerprint')
+    assert len(fetched.attestations) == 2
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)
@@ -251,7 +257,9 @@ async def test_model_helper_decodes_serialized_tcb_info(
 
     fetched = await cloud_client().fetch_model_attestations('canonical-model')
 
-    assert fetched.attestations[0].app_compose == '{"services": {}}'
+    assert tuple(attestation.app_compose for attestation in fetched.attestations) == (
+        '{"services": {}}',
+    )
 
 
 async def test_fetch_model_attestation_for_signature_adds_signer_filters(
@@ -268,7 +276,12 @@ async def test_fetch_model_attestation_for_signature_adds_signer_filters(
             body=json.dumps(
                 {
                     'model_attestations': [
-                        cloud_attestation(nonce, report_data='44' * 64)
+                        cloud_attestation(nonce, report_data='44' * 64),
+                        cloud_attestation(
+                            nonce,
+                            signing_address='33' * 20,
+                            report_data='44' * 64,
+                        ),
                     ]
                 }
             ).encode(),
@@ -756,7 +769,7 @@ def test_model_selection_rejects_malformed_manual_signer_input_as_api_error(
     assert raised.value.failure.details == details
 
 
-async def test_missing_model_attestations_are_zero_candidates(
+async def test_model_attestation_fetch_preserves_an_empty_collection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def no_attestations(_: str, __: Mapping[str, str]) -> FetchResponse:
@@ -764,13 +777,12 @@ async def test_missing_model_attestations_are_zero_candidates(
 
     use_fake_cloud_api_fetch(monkeypatch, no_attestations)
 
-    with pytest.raises(ApiError) as empty_error:
-        await cloud_client().fetch_model_attestations('canonical-model')
-    assert empty_error.value.failure.code == 'api.unexpected_model_attestation_count'
-    assert empty_error.value.failure.details == {'actualCount': 0}
+    fetched = await cloud_client().fetch_model_attestations('canonical-model')
+
+    assert fetched.attestations == ()
 
 
-async def test_model_report_count_and_nonce_are_checked_before_returning(
+async def test_model_attestation_fetch_preserves_multiple_records(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def two_attestations(url: str, _: Mapping[str, str]) -> FetchResponse:
@@ -789,16 +801,29 @@ async def test_model_report_count_and_nonce_are_checked_before_returning(
 
     use_fake_cloud_api_fetch(monkeypatch, two_attestations)
 
-    with pytest.raises(ApiError) as count_error:
-        await cloud_client().fetch_model_attestations('canonical-model')
-    assert count_error.value.failure.code == 'api.unexpected_model_attestation_count'
+    fetched = await cloud_client().fetch_model_attestations('canonical-model')
 
+    assert len(fetched.attestations) == 2
+    assert all(
+        attestation.nonce == fetched.client_binding.nonce
+        for attestation in fetched.attestations
+    )
+
+
+async def test_model_attestation_fetch_checks_every_nonce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def wrong_nonce(url: str, _: Mapping[str, str]) -> FetchResponse:
-        _ = url
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
         return FetchResponse(
             status=200,
             body=json.dumps(
-                {'model_attestations': [cloud_attestation('44' * 32)]}
+                {
+                    'model_attestations': [
+                        cloud_attestation(nonce),
+                        cloud_attestation('44' * 32),
+                    ]
+                }
             ).encode(),
         )
 

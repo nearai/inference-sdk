@@ -146,11 +146,6 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
                 f'[{code}] Cloud API {_api_resource(details)} nonce does not match '
                 'the request'
             )
-        case 'api.unexpected_model_attestation_count':
-            return (
-                f'[{code}] Cloud API returned {_detail(details, "actualCount")} '
-                'model attestations; expected exactly one'
-            )
         case 'api.ambiguous_model_attestation_signer':
             return (
                 f'[{code}] Cloud API returned {_detail(details, "matchingCount")} '
