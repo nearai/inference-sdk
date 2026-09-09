@@ -76,10 +76,12 @@ verifies the signer-and-nonce quote layout, and returns
 
 ## Errors
 
-Cloud retrieval and evidence-selection failures raise `ApiError`. Local input,
-cryptographic, policy, and binding failures raise `VerificationError`. For
-both, branch on `error.failure.code` and inspect `error.failure.details` only
-when it is present; never parse the human-readable message.
+`AttestationClient` and evidence-selection failures raise `ApiError`, including
+invalid helper input. Explicit verification functions raise
+`VerificationError` for local input, cryptographic, policy, and binding
+failures. For both, branch on `error.failure.code` and inspect
+`error.failure.details` only when it is present; never parse the human-readable
+message.
 
 `error.retryable` means a new attempt at the failed external operation may
 succeed. It does not mean that re-verifying the same evidence will succeed or

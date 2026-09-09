@@ -251,9 +251,10 @@ application has reason to expect a later signature, such as before the
 completion has reached its terminal state.
 
 `AttestationClient` methods and evidence selection raise `ApiError` for
-request, HTTP, response-format, nonce, unavailable-signature, or
-candidate-selection failures. Verification functions and local input or
-signature-contract checks raise `VerificationError`.
+request, HTTP, response-format, nonce, unavailable-signature,
+candidate-selection, or helper-input failures. Explicit verification functions
+raise `VerificationError` for local input, cryptographic, policy, and binding
+failures.
 
 | Field | Meaning |
 | --- | --- |
@@ -262,7 +263,7 @@ signature-contract checks raise `VerificationError`.
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
 
 ```python
-from verifiable_ai_sdk import ApiError, VerificationError
+from verifiable_ai_sdk import ApiError
 
 try:
     signature = await client.fetch_completion_signature(completion_id)
@@ -274,5 +275,3 @@ except ApiError as error:
             print('A later signature request may succeed')
         case _:
             raise
-except VerificationError as error:
-    print(error.failure.code)

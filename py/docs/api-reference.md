@@ -52,6 +52,11 @@ Cloud API's report and signature endpoints have different defaults.
 | `api_key` | `str` | Yes | — | Bearer token for signature and evidence requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Cloud API base URL. |
 
+`AttestationClient` construction and methods, plus
+`find_model_attestation_for_signature`, raise `ApiError` for invalid helper
+input as well as Cloud API and selection failures. The `verify_*` functions
+raise `VerificationError` instead.
+
 ### Completion-signature methods
 
 | API | Parameter | Type | Required | Description |

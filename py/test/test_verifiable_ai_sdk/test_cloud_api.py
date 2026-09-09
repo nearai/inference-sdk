@@ -13,7 +13,6 @@ from verifiable_ai_sdk import (
     CompletionSignatureReference,
     ModelAttestation,
     SigningIdentity,
-    VerificationError,
     find_model_attestation_for_signature,
 )
 from verifiable_ai_sdk.core import cloud_api
@@ -41,10 +40,10 @@ def cloud_client() -> AttestationClient:
     ),
 )
 def test_client_rejects_invalid_base_urls_at_construction(base_url: str) -> None:
-    with pytest.raises(VerificationError) as raised:
+    with pytest.raises(ApiError) as raised:
         AttestationClient(API_KEY, base_url=base_url)
 
-    assert raised.value.failure.code == 'input.invalid'
+    assert raised.value.failure.code == 'api.invalid_input'
     assert raised.value.failure.details == {
         'field': 'base_url',
         'reason': 'invalid_url',
@@ -627,30 +626,30 @@ def test_find_model_attestation_for_signature_rejects_a_gateway_signature() -> N
         signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
     )
 
-    with pytest.raises(VerificationError) as raised:
+    with pytest.raises(ApiError) as raised:
         find_model_attestation_for_signature(
             [model_attestation_for_signer(signature.signer)],
             signature,
         )
 
-    assert raised.value.failure.code == 'signature.kind_mismatch'
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert raised.value.failure.details == {
+        'field': 'signature.kind',
+        'reason': 'unsupported_value',
+        'expected': 'provider_tee',
+        'actual': 'gateway',
+    }
 
 
-async def test_fetch_model_attestation_for_signature_delegates_kind_check_to_find(
+async def test_fetch_model_attestation_for_signature_rejects_gateway_signature_before_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     requests = 0
 
-    async def fake_fetch(url: str, **__: object) -> FetchResponse:
+    async def fake_fetch(*_: object, **__: object) -> FetchResponse:
         nonlocal requests
         requests += 1
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {'model_attestations': [cloud_attestation(nonce)]}
-            ).encode(),
-        )
+        raise AssertionError('invalid helper input must not make a request')
 
     monkeypatch.setattr(cloud_api, 'default_fetch', fake_fetch)
     signature = CompletionSignatureReference(
@@ -658,13 +657,78 @@ async def test_fetch_model_attestation_for_signature_delegates_kind_check_to_fin
         signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
     )
 
-    with pytest.raises(VerificationError) as raised:
+    with pytest.raises(ApiError) as raised:
         await cloud_client().fetch_model_attestation_for_signature(
             'canonical-model', signature
         )
 
-    assert raised.value.failure.code == 'signature.kind_mismatch'
-    assert requests == 1
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert requests == 0
+
+
+async def test_model_attestation_fetch_rejects_invalid_signing_address_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = 0
+
+    async def fake_fetch(*_: object, **__: object) -> FetchResponse:
+        nonlocal requests
+        requests += 1
+        raise AssertionError('invalid helper input must not make a request')
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_fetch)
+
+    with pytest.raises(ApiError) as raised:
+        await cloud_client().fetch_model_attestations(
+            'canonical-model',
+            signing_address='not-hex',
+        )
+
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert raised.value.failure.details == {
+        'field': 'signing_address',
+        'reason': 'invalid_hex',
+    }
+    assert requests == 0
+
+
+@pytest.mark.parametrize(
+    ('signing_address', 'details'),
+    (
+        pytest.param(
+            'not-hex',
+            {
+                'field': 'signature.signer.signing_address',
+                'reason': 'invalid_hex',
+            },
+            id='invalid-hex',
+        ),
+        pytest.param(
+            '11' * 19,
+            {
+                'field': 'signature.signer.signing_address',
+                'reason': 'wrong_length',
+                'expected': '20-byte hexadecimal signing address',
+                'actual': '19 bytes',
+            },
+            id='wrong-length',
+        ),
+    ),
+)
+def test_model_selection_rejects_malformed_manual_signer_input_as_api_error(
+    signing_address: str,
+    details: dict[str, str],
+) -> None:
+    signature = CompletionSignatureReference(
+        kind='provider_tee',
+        signer=SigningIdentity(signing_algo='ecdsa', signing_address=signing_address),
+    )
+
+    with pytest.raises(ApiError) as raised:
+        find_model_attestation_for_signature([], signature)
+
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert raised.value.failure.details == details
 
 
 async def test_missing_model_attestations_are_zero_candidates(
