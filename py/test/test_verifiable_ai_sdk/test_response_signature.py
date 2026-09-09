@@ -8,6 +8,7 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 
 from verifiable_ai_sdk import (
+    AttestationVerifiers,
     CompletionSignature,
     GatewayClientBinding,
     ModelAttestationVerifiers,
@@ -132,7 +133,7 @@ async def test_gateway_response_verifies_ed25519_signature() -> None:
             nonce=NONCE,
             spki_fingerprint=TLS_FINGERPRINT,
         ),
-        verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+        verifiers=AttestationVerifiers(quote=lambda _: quote),
     )
 
     verify_gateway_response(

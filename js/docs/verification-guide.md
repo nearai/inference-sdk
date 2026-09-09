@@ -193,19 +193,13 @@ const verifiers: ModelAttestationVerifiers = {
   // Resolve only for deployments your application accepts.
   deployment: verifyDeploymentRelease,
 };
-
-return verifyModelAttestation({
-  attestation,
-  clientBinding,
-  policy,
-  verifiers,
-});
 ```
 
-Use these options in `verifyModelDeployments` when constructing the preflight
-result. `verifiers.deployment` receives authenticated measured deployment data
-and must reject every deployment your release policy does not accept. The SDK
-authenticates measured values; your callback decides which values are trusted.
+Pass `policy` and `verifiers` to every `verifyModelAttestation` call in
+`verifyModelDeployments`. `verifiers.deployment` receives authenticated
+measured deployment data and must reject every deployment your release policy
+does not accept. The SDK authenticates measured values; your callback decides
+which values are trusted.
 
 `verifiers.quote` replaces the built-in Intel DCAP verifier. `verifiers.nvidia`
 replaces the default NVIDIA NRAS verifier. Each callback must resolve only for
@@ -220,11 +214,12 @@ unavailable result is `api.completion_signature_unavailable` and includes
 reaches its terminal state can later succeed, although an unknown ID can also
 produce 404.
 
-`AttestationClient` and `findModelAttestationForSignature` throw `ApiError`
-for caller input, transport, response-format, nonce, or attestation-selection
-failures. Handle those calls separately from explicit `verify…` calls, which
-throw `VerificationError`. A client or selection handler only needs to handle
-`ApiError`; a verification handler only needs to handle `VerificationError`.
+`AttestationClient` and `findModelAttestationForSignature` report
+SDK-classified caller-input, transport, response-format, nonce, and
+attestation-selection failures as `ApiError`. Explicit `verify…` calls report
+SDK-classified verification failures as `VerificationError`. Runtime errors
+outside those contracts can still propagate unchanged, so rethrow errors that
+are not the class your handler expects.
 
 ```ts
 import { ApiError } from 'verifiable-ai-sdk';

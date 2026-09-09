@@ -8,12 +8,16 @@ completion request and retains its exact request and response bytes.
 
 For a completion, use three stages:
 
-1. Before sending it, verify both the Cloud API Gateway deployment and the
-   target model deployment.
+1. Before sending it, verify the Cloud API Gateway deployment and every
+   returned target-model deployment.
 2. Send the completion and retain its canonical model ID, completion ID, and
    exact request and response bytes.
 3. Fetch the completion signature and use its `kind` to verify the exact
    response bytes with the already verified model or Gateway evidence.
+
+`fetch_model_attestations()` can return zero or multiple candidates. Reject an
+empty result, verify every returned candidate, and retain every verified result
+for receipt verification.
 
 The deployment checks are useful admission and audit evidence before an
 inference. They are independent checks: do not treat them as proof that a
