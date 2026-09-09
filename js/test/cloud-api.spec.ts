@@ -409,8 +409,16 @@ describe('AttestationClient', () => {
       });
     });
 
-    test('rejects a model report whose nonce does not match the request', async () => {
-      const api = cloudFor(() => jsonResponse(modelReport('44'.repeat(32))));
+    test('checks every model candidate nonce', async () => {
+      const api = cloudFor((request) => {
+        const clientNonce = requestNonce(request);
+        return jsonResponse(
+          modelReport(clientNonce, [
+            cloudAttestation(clientNonce),
+            cloudAttestation('44'.repeat(32)),
+          ]),
+        );
+      });
 
       await expect(
         api.client.fetchModelAttestations({

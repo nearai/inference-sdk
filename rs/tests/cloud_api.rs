@@ -1,8 +1,8 @@
 use serde_json::json;
 use std::sync::Once;
 use verifiable_ai_sdk::{
-    find_model_attestation_for_signature, ApiError, AttestationClient, AttestationEventLog,
-    AttestationEvidence, CompletionSignature, CompletionSignatureKind,
+    find_model_attestation_for_signature, ApiError, ApiResource, AttestationClient,
+    AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     GatewayAttestationFetchOptions, ModelAttestation, SigningAlgo, SigningIdentity,
 };
 use wiremock::{
@@ -38,6 +38,7 @@ impl Respond for ModelAttestationResponder {
 #[derive(Clone)]
 struct ModelAttestationsResponder {
     signing_addresses: Vec<String>,
+    mismatch_second_nonce: bool,
 }
 
 impl Respond for ModelAttestationsResponder {
@@ -51,9 +52,15 @@ impl Respond for ModelAttestationsResponder {
         let model_attestations = self
             .signing_addresses
             .iter()
-            .map(|signing_address| {
+            .enumerate()
+            .map(|(index, signing_address)| {
+                let request_nonce = if self.mismatch_second_nonce && index == 1 {
+                    "44".repeat(32)
+                } else {
+                    nonce.clone()
+                };
                 json!({
-                    "request_nonce": nonce,
+                    "request_nonce": request_nonce,
                     "signing_algo": "ecdsa",
                     "signing_address": signing_address,
                     "intel_quote": "aa",
@@ -402,6 +409,7 @@ async fn client_preserves_every_model_attestation_candidate() {
         .and(path("/v1/attestation/report"))
         .respond_with(ModelAttestationsResponder {
             signing_addresses: signing_addresses.clone(),
+            mismatch_second_nonce: false,
         })
         .mount(&server)
         .await;
@@ -430,6 +438,32 @@ async fn client_preserves_every_model_attestation_candidate() {
 }
 
 #[tokio::test]
+async fn client_checks_every_model_attestation_nonce() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .respond_with(ModelAttestationsResponder {
+            signing_addresses: vec!["22".repeat(20), "33".repeat(20)],
+            mismatch_second_nonce: true,
+        })
+        .mount(&server)
+        .await;
+
+    let error = client(&server)
+        .fetch_model_attestations("glm-5.2", None, None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ApiError::NonceMismatch {
+            resource: ApiResource::ModelAttestation,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
 async fn client_fetches_model_attestation_for_a_provider_signature() {
     let server = MockServer::start().await;
     let signing_address = "22".repeat(20);
@@ -440,6 +474,7 @@ async fn client_fetches_model_attestation_for_a_provider_signature() {
         .and(query_param("signing_address", signing_address.clone()))
         .respond_with(ModelAttestationsResponder {
             signing_addresses: vec!["33".repeat(20), signing_address.clone()],
+            mismatch_second_nonce: false,
         })
         .mount(&server)
         .await;

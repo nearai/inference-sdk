@@ -213,7 +213,7 @@ def find_model_attestation_for_signature(
     attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
     signature: CompletionSignatureReference,
 ) -> ModelAttestation:
-    """Select the sole model attestation advertised by a provider signature."""
+    """Select exactly one candidate whose signer matches a provider signature."""
 
     _require_provider_signature(signature)
     return _find_model_attestation_for_signer(attestations, signature.signer)

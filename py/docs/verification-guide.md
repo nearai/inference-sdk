@@ -14,7 +14,7 @@ keeps the exact bytes it sends and receives.
 
 | Stage | SDK calls | What a successful result establishes |
 | --- | --- | --- |
-| 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and target model deployment each satisfy your evidence and policy checks. |
+| 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and every returned target-model deployment satisfy your evidence and policy checks. |
 | 2. Send a completion | None | Your application retains the canonical model ID, completion ID, and exact request and response bytes. |
 | 3. Verify the response signature | `fetch_completion_signature` → verifier selected by `signature.kind` | The selected model or Gateway signer signed those exact bytes. |
 
