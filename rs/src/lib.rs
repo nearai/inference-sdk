@@ -23,7 +23,7 @@ pub use cloud_api::{
     find_model_attestation_for_signature, AttestationClient, DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
 };
-pub use errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
+pub use errors::{ApiError, ApiResource, ApiTransportReason, VerificationError};
 pub use gateway::verify_gateway_attestation;
 pub use model::verify_model_attestation;
 pub use nvidia::{NrasNvidiaEvidenceVerifier, DEFAULT_NVIDIA_NRAS_URL};

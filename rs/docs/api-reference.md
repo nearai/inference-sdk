@@ -37,13 +37,13 @@ inference requests or retain completion bytes.
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: String` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. |
-| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, VerificationError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
 
-All client methods below are asynchronous and return `Result<_, SdkError>`.
+All client methods below are asynchronous and return `Result<_, ApiError>`.
 
 | Method | Parameters after `&self` | Returns | Description |
 | --- | --- | --- | --- |
-| `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`, preserving the service's code and message. |
+| `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `ApiError::CompletionSignatureUnavailable { .. }`, preserving the service's code and message. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches model deployment evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
 | `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Post-completion recovery convenience for a `ProviderTee` receipt: applies its signer as API filters and selects the matching candidate locally. It does not verify evidence and is not the deployment-first workflow. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
@@ -71,7 +71,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `Result<&ModelAttestation, SdkError>` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
+| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `Result<&ModelAttestation, ApiError>` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -240,9 +240,10 @@ trust-root implications.
 
 ## Errors
 
-See [Handle errors](./verification-guide.md#handle-errors). The public error
-surface is `ApiError`, `VerificationError`, and `SdkError`; this reference
-intentionally focuses on request and verification APIs rather than enumerating
-each error variant. `fetch_completion_signature` maps a valid 2xx unavailable
-response to `SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })`.
-The error preserves the service's code and message.
+See [Handle errors](./verification-guide.md#handle-errors). Cloud retrieval
+and evidence selection use `ApiError`; explicit verification uses
+`VerificationError`. This reference intentionally focuses on request and
+verification APIs rather than enumerating each error variant.
+`fetch_completion_signature` maps a valid 2xx unavailable response to
+`ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
+service's code and message.

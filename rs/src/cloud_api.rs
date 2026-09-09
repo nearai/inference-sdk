@@ -1,4 +1,4 @@
-use crate::errors::{ApiError, ApiResource, ApiTransportReason, SdkError, VerificationError};
+use crate::errors::{ApiError, ApiResource, ApiTransportReason};
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     FetchedGatewayAttestation, FetchedModelAttestation, FetchedModelAttestations,
@@ -44,7 +44,7 @@ impl AttestationClient {
 
     /// Create a client for an absolute Cloud API base URL, such as a staging
     /// endpoint. The base URL may include a path prefix such as `/v1`.
-    pub fn with_base_url(api_key: String, base_url: &str) -> Result<Self, VerificationError> {
+    pub fn with_base_url(api_key: String, base_url: &str) -> Result<Self, ApiError> {
         let base_url = parse_base_url(base_url)?;
         Ok(Self::from_parts(api_key, base_url))
     }
@@ -65,13 +65,8 @@ impl AttestationClient {
         }
     }
 
-    fn endpoint(&self, path: &str) -> Result<Url, VerificationError> {
-        self.base_url
-            .join(path)
-            .map_err(|_| VerificationError::InvalidInput {
-                field: "base_url".to_owned(),
-                reason: "cannot resolve API endpoint".to_owned(),
-            })
+    fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
+        self.base_url.join(path).map_err(|_| invalid_base_url())
     }
     /// Fetch model attestations for a canonical NEAR model ID.
     ///
@@ -84,7 +79,7 @@ impl AttestationClient {
         model: &str,
         signing_algo: Option<SigningAlgo>,
         signing_address: Option<&str>,
-    ) -> Result<FetchedModelAttestations, SdkError> {
+    ) -> Result<FetchedModelAttestations, ApiError> {
         let nonce = generate_nonce();
         let mut url = self.endpoint("attestation/report")?;
         {
@@ -116,8 +111,7 @@ impl AttestationClient {
         if response.model_attestations.len() != 1 {
             return Err(ApiError::UnexpectedModelAttestationCount {
                 actual_count: response.model_attestations.len(),
-            }
-            .into());
+            });
         }
         let attestations = response
             .model_attestations
@@ -149,7 +143,8 @@ impl AttestationClient {
         &self,
         model: &str,
         signature: &CompletionSignature,
-    ) -> Result<FetchedModelAttestation, SdkError> {
+    ) -> Result<FetchedModelAttestation, ApiError> {
+        validate_model_attestation_signature(signature)?;
         let mut fetched = self
             .fetch_model_attestations(
                 model,
@@ -157,7 +152,8 @@ impl AttestationClient {
                 Some(&signature.signer.signing_address),
             )
             .await?;
-        let index = find_model_attestation_index_for_signature(&fetched.attestations, signature)?;
+        let index =
+            find_model_attestation_index_for_signer(&fetched.attestations, &signature.signer)?;
         let attestation = fetched.attestations.swap_remove(index);
         Ok(FetchedModelAttestation {
             attestation,
@@ -172,7 +168,7 @@ impl AttestationClient {
     pub async fn fetch_gateway_attestation(
         &self,
         options: GatewayAttestationFetchOptions,
-    ) -> Result<FetchedGatewayAttestation, SdkError> {
+    ) -> Result<FetchedGatewayAttestation, ApiError> {
         let nonce = generate_nonce();
         let mut url = self.endpoint("attestation/report")?;
         {
@@ -214,16 +210,14 @@ impl AttestationClient {
                     path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
                     expected: "present".to_owned(),
                     actual: "missing".to_owned(),
-                }
-                .into());
+                });
             }
             (false, true) => {
                 return Err(ApiError::InvalidResponse {
                     path: "gateway_attestation.tls_cert_fingerprint".to_owned(),
                     expected: "missing".to_owned(),
                     actual: "present".to_owned(),
-                }
-                .into());
+                });
             }
             _ => {}
         }
@@ -251,13 +245,10 @@ impl AttestationClient {
         &self,
         completion_id: &str,
         signing_algo: Option<SigningAlgo>,
-    ) -> Result<CompletionSignature, SdkError> {
+    ) -> Result<CompletionSignature, ApiError> {
         let mut url = self.endpoint("signature")?;
         url.path_segments_mut()
-            .map_err(|_| VerificationError::InvalidInput {
-                field: "base_url".to_owned(),
-                reason: "cannot construct signature endpoint".to_owned(),
-            })?
+            .map_err(|_| invalid_base_url())?
             .push(completion_id);
         if let Some(signing_algo) = signing_algo {
             url.query_pairs_mut()
@@ -271,7 +262,7 @@ impl AttestationClient {
             ApiResource::CompletionSignature,
             "signature",
         )?;
-        map_completion_signature(response).map_err(Into::into)
+        map_completion_signature(response)
     }
 }
 
@@ -280,7 +271,7 @@ impl AttestationClient {
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [ModelAttestation],
     signature: &CompletionSignature,
-) -> Result<&'a ModelAttestation, SdkError> {
+) -> Result<&'a ModelAttestation, ApiError> {
     let index = find_model_attestation_index_for_signature(attestations, signature)?;
     Ok(&attestations[index])
 }
@@ -288,21 +279,21 @@ pub fn find_model_attestation_for_signature<'a>(
 fn find_model_attestation_index_for_signature(
     attestations: &[ModelAttestation],
     signature: &CompletionSignature,
-) -> Result<usize, SdkError> {
-    require_provider_signature(signature)?;
+) -> Result<usize, ApiError> {
+    validate_model_attestation_signature(signature)?;
     find_model_attestation_index_for_signer(attestations, &signature.signer)
 }
 
 fn find_model_attestation_index_for_signer(
     attestations: &[ModelAttestation],
     signer: &SigningIdentity,
-) -> Result<usize, SdkError> {
+) -> Result<usize, ApiError> {
     let mut matches = attestations
         .iter()
         .enumerate()
         .filter(|(_, attestation)| signer_matches(&attestation.evidence.signer, signer));
     let Some((index, _)) = matches.next() else {
-        return Err(ApiError::ModelAttestationSignerNotFound.into());
+        return Err(ApiError::ModelAttestationSignerNotFound);
     };
     if matches.next().is_none() {
         return Ok(index);
@@ -311,8 +302,7 @@ fn find_model_attestation_index_for_signer(
     Err(ApiError::AmbiguousModelAttestationSigner {
         matching_count,
         total_count: attestations.len(),
-    }
-    .into())
+    })
 }
 
 async fn get_cloud_api_response(
@@ -321,7 +311,7 @@ async fn get_cloud_api_response(
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
     capture_peer_spki_fingerprint: bool,
-) -> Result<CloudApiResponse, SdkError> {
+) -> Result<CloudApiResponse, ApiError> {
     let headers = build_cloud_api_headers(client, extra_header)?;
     let http_client = if capture_peer_spki_fingerprint {
         &client.gateway_client
@@ -346,7 +336,7 @@ async fn get_cloud_api_response(
         reason: ApiTransportReason::ResponseBody,
     })?;
     if !(200..300).contains(&status) {
-        return Err(ApiError::HttpStatus { resource, status }.into());
+        return Err(ApiError::HttpStatus { resource, status });
     }
     Ok(CloudApiResponse {
         body,
@@ -357,14 +347,16 @@ async fn get_cloud_api_response(
 fn build_cloud_api_headers(
     client: &AttestationClient,
     extra_header: Option<(&str, &str)>,
-) -> Result<HeaderMap, VerificationError> {
+) -> Result<HeaderMap, ApiError> {
     let mut headers = HeaderMap::new();
     let authorization =
         HeaderValue::from_str(&format!("Bearer {}", client.api_key)).map_err(|_| {
-            VerificationError::InvalidInput {
-                field: "api_key".to_owned(),
-                reason: "expected an HTTP header value".to_owned(),
-            }
+            invalid_api_input(
+                "api_key",
+                "invalid_header_value",
+                Some("an HTTP header value".to_owned()),
+                None,
+            )
         })?;
     headers.insert(AUTHORIZATION, authorization);
     if let Some((name, value)) = extra_header {
@@ -396,7 +388,7 @@ struct CloudApiResponse {
     peer_spki_fingerprint: Option<String>,
 }
 
-fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
+fn parse_base_url(value: &str) -> Result<Url, ApiError> {
     let mut url = Url::parse(value).map_err(|_| invalid_base_url())?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
         return Err(invalid_base_url());
@@ -408,28 +400,86 @@ fn parse_base_url(value: &str) -> Result<Url, VerificationError> {
     Ok(url)
 }
 
-fn invalid_base_url() -> VerificationError {
-    VerificationError::InvalidInput {
-        field: "base_url".to_owned(),
-        reason: "expected an absolute HTTP(S) URL".to_owned(),
-    }
+fn invalid_base_url() -> ApiError {
+    invalid_api_input(
+        "base_url",
+        "invalid_url",
+        Some("an absolute HTTP(S) URL".to_owned()),
+        None,
+    )
 }
 
-fn require_provider_signature(signature: &CompletionSignature) -> Result<(), VerificationError> {
-    require_signature_kind(signature.kind, CompletionSignatureKind::ProviderTee)
+fn validate_model_attestation_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
+    require_provider_signature(signature)?;
+    validate_client_signing_identity(&signature.signer, "signature.signer.signing_address")
 }
 
 fn require_signature_kind(
     signature_kind: CompletionSignatureKind,
     expected: CompletionSignatureKind,
-) -> Result<(), VerificationError> {
+) -> Result<(), ApiError> {
     if signature_kind != expected {
-        return Err(VerificationError::SignatureKindMismatch {
-            expected,
-            actual: signature_kind,
-        });
+        return Err(invalid_api_input(
+            "signature.kind",
+            "unsupported_value",
+            Some(completion_signature_kind_name(expected).to_owned()),
+            Some(completion_signature_kind_name(signature_kind).to_owned()),
+        ));
     }
     Ok(())
+}
+
+fn require_provider_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
+    require_signature_kind(signature.kind, CompletionSignatureKind::ProviderTee)
+}
+
+fn validate_client_signing_identity(signer: &SigningIdentity, field: &str) -> Result<(), ApiError> {
+    let expected_bytes = match signer.signing_algo {
+        SigningAlgo::Ecdsa => 20,
+        SigningAlgo::Ed25519 => 32,
+    };
+    let address = decode_hex(&signer.signing_address).map_err(|_| {
+        invalid_api_input(
+            field,
+            "invalid_hex",
+            Some(format!(
+                "a {expected_bytes}-byte hexadecimal signing address"
+            )),
+            None,
+        )
+    })?;
+    if address.len() != expected_bytes {
+        return Err(invalid_api_input(
+            field,
+            "wrong_length",
+            Some(format!(
+                "a {expected_bytes}-byte hexadecimal signing address"
+            )),
+            Some(format!("{} bytes", address.len())),
+        ));
+    }
+    Ok(())
+}
+
+fn completion_signature_kind_name(kind: CompletionSignatureKind) -> &'static str {
+    match kind {
+        CompletionSignatureKind::ProviderTee => "provider_tee",
+        CompletionSignatureKind::Gateway => "gateway",
+    }
+}
+
+fn invalid_api_input(
+    field: impl Into<String>,
+    reason: impl Into<String>,
+    expected: Option<String>,
+    actual: Option<String>,
+) -> ApiError {
+    ApiError::InvalidInput {
+        field: field.into(),
+        reason: reason.into(),
+        expected,
+        actual,
+    }
 }
 
 fn signer_matches(left: &SigningIdentity, right: &SigningIdentity) -> bool {

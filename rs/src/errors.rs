@@ -36,10 +36,18 @@ impl std::fmt::Display for ApiResource {
     }
 }
 
-/// Failures while calling NEAR AI Cloud or selecting evidence returned by it.
-/// These are deliberately distinct from local input and verification failures.
+/// Failures while configuring or calling NEAR AI Cloud, or selecting evidence
+/// returned by it.
 #[derive(Debug, Error)]
 pub enum ApiError {
+    #[error("invalid Cloud API input {field}: {reason}")]
+    InvalidInput {
+        field: String,
+        reason: String,
+        expected: Option<String>,
+        actual: Option<String>,
+    },
+
     #[error("Cloud API {resource} {reason} failed")]
     Transport {
         resource: ApiResource,
@@ -89,6 +97,7 @@ impl ApiError {
     /// Stable machine-readable error code shared with the TypeScript SDK.
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::InvalidInput { .. } => "api.invalid_input",
             Self::Transport { .. } => "api.transport_failed",
             Self::HttpStatus { .. } => "api.http_status",
             Self::InvalidJson { .. } => "api.invalid_json",
@@ -262,25 +271,6 @@ impl VerificationError {
             Self::QuoteCollateralUnavailable => true,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
             _ => false,
-        }
-    }
-}
-
-/// A small convenience wrapper for APIs which can fail while both fetching
-/// Cloud evidence and applying a local signature rule.
-#[derive(Debug, Error)]
-pub enum SdkError {
-    #[error(transparent)]
-    Api(#[from] ApiError),
-    #[error(transparent)]
-    Verification(#[from] VerificationError),
-}
-
-impl SdkError {
-    pub fn retryable(&self) -> bool {
-        match self {
-            Self::Api(error) => error.retryable(),
-            Self::Verification(error) => error.retryable(),
         }
     }
 }

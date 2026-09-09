@@ -175,12 +175,12 @@ result; it does not locally validate the returned JWT/EAT signature.
 
 ## Handle errors
 
-Cloud client methods and evidence selection return `Result<T, SdkError>`.
-`SdkError::Api(ApiError)` represents a Cloud API request, response, nonce, or
-candidate-selection failure. `SdkError::Verification(VerificationError)`
-represents local input validation or verification that arose while preparing a
-Cloud request. Attestation and response verification functions return
-`VerificationError` directly.
+Cloud client methods and evidence selection return `Result<T, ApiError>`.
+That includes client configuration and input errors, such as an invalid custom
+base URL, an API key that cannot be used in an HTTP header, or a non-provider
+signature passed to model-evidence selection. These helpers retrieve or select
+evidence; they do not verify it. Attestation and response verification
+functions return `VerificationError` directly.
 
 Match an error enum variant when practical. `ApiError::code()` and
 `VerificationError::code()` provide stable machine-readable codes; enum fields
@@ -190,13 +190,13 @@ operation may succeed. It does not mean that re-verifying the same evidence
 will succeed or that an inference request should be replayed.
 
 `AttestationClient::fetch_completion_signature` returns a signature or an
-`SdkError::Api(ApiError::CompletionSignatureUnavailable { .. })` with code
+`ApiError::CompletionSignatureUnavailable { .. }` with code
 `api.completion_signature_unavailable` when Cloud API returns a valid 2xx
 unavailable envelope. The error preserves the service's
 `provider_error_code` and `provider_message`.
 
 ```rust,no_run
-use verifiable_ai_sdk::{ApiError, AttestationClient, SdkError};
+use verifiable_ai_sdk::{ApiError, AttestationClient};
 
 async fn fetch_completion_signature(
     api_key: &str,
@@ -205,13 +205,13 @@ async fn fetch_completion_signature(
     let client = AttestationClient::new(api_key.to_owned());
     match client.fetch_completion_signature(completion_id, None).await {
         Ok(_signature) => {}
-        Err(SdkError::Api(ApiError::CompletionSignatureUnavailable {
+        Err(ApiError::CompletionSignatureUnavailable {
             provider_error_code,
             provider_message,
-        })) => {
+        }) => {
             eprintln!("no usable signature ({provider_error_code}): {provider_message}");
         }
-        Err(SdkError::Api(error)) if error.retryable() => {
+        Err(error) if error.retryable() => {
             eprintln!("the signature request may succeed on a later attempt");
         }
         Err(error) => return Err(error.into()),
