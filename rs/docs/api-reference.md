@@ -54,6 +54,10 @@ exact signer match for a `ProviderTee` signature. The
 `fetch_model_attestation_for_signature` method is the convenience form that
 applies those filters and then delegates to that same selector.
 
+When supplied, `signing_address` must be hexadecimal: 20 or 32 bytes without
+`signing_algo`, or the exact length for the selected algorithm. Invalid filters
+return `ApiError::InvalidInput` before a request is sent.
+
 ### Gateway fetch options
 
 `GatewayAttestationFetchOptions::default()` uses the Cloud API's selected

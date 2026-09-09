@@ -80,6 +80,9 @@ impl AttestationClient {
         signing_algo: Option<SigningAlgo>,
         signing_address: Option<&str>,
     ) -> Result<FetchedModelAttestations, ApiError> {
+        if let Some(signing_address) = signing_address {
+            validate_input_signing_address(signing_address, signing_algo, "signing_address")?;
+        }
         let nonce = generate_nonce();
         let mut url = self.endpoint("attestation/report")?;
         {
@@ -144,7 +147,7 @@ impl AttestationClient {
         model: &str,
         signature: &CompletionSignature,
     ) -> Result<FetchedModelAttestation, ApiError> {
-        validate_model_attestation_signature(signature)?;
+        require_provider_signature(signature)?;
         let mut fetched = self
             .fetch_model_attestations(
                 model,
@@ -280,7 +283,7 @@ fn find_model_attestation_index_for_signature(
     attestations: &[ModelAttestation],
     signature: &CompletionSignature,
 ) -> Result<usize, ApiError> {
-    validate_model_attestation_signature(signature)?;
+    require_provider_signature(signature)?;
     find_model_attestation_index_for_signer(attestations, &signature.signer)
 }
 
@@ -288,17 +291,29 @@ fn find_model_attestation_index_for_signer(
     attestations: &[ModelAttestation],
     signer: &SigningIdentity,
 ) -> Result<usize, ApiError> {
-    let mut matches = attestations
-        .iter()
-        .enumerate()
-        .filter(|(_, attestation)| signer_matches(&attestation.evidence.signer, signer));
-    let Some((index, _)) = matches.next() else {
+    let requested_signing_address = validate_input_signer(signer, "signature.signer")?;
+    let mut matching_index = None;
+    let mut matching_count = 0;
+
+    for (index, attestation) in attestations.iter().enumerate() {
+        let attestation_signing_address = validate_input_signer(
+            &attestation.evidence.signer,
+            &format!("attestations[{index}].signer"),
+        )?;
+        if attestation.evidence.signer.signing_algo == signer.signing_algo
+            && attestation_signing_address == requested_signing_address
+        {
+            matching_index.get_or_insert(index);
+            matching_count += 1;
+        }
+    }
+
+    let Some(index) = matching_index else {
         return Err(ApiError::ModelAttestationSignerNotFound);
     };
-    if matches.next().is_none() {
+    if matching_count == 1 {
         return Ok(index);
     }
-    let matching_count = 2 + matches.count();
     Err(ApiError::AmbiguousModelAttestationSigner {
         matching_count,
         total_count: attestations.len(),
@@ -409,11 +424,6 @@ fn invalid_base_url() -> ApiError {
     )
 }
 
-fn validate_model_attestation_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
-    require_provider_signature(signature)?;
-    validate_client_signing_identity(&signature.signer, "signature.signer.signing_address")
-}
-
 fn require_signature_kind(
     signature_kind: CompletionSignatureKind,
     expected: CompletionSignatureKind,
@@ -433,32 +443,45 @@ fn require_provider_signature(signature: &CompletionSignature) -> Result<(), Api
     require_signature_kind(signature.kind, CompletionSignatureKind::ProviderTee)
 }
 
-fn validate_client_signing_identity(signer: &SigningIdentity, field: &str) -> Result<(), ApiError> {
-    let expected_bytes = match signer.signing_algo {
-        SigningAlgo::Ecdsa => 20,
-        SigningAlgo::Ed25519 => 32,
+fn validate_input_signer(signer: &SigningIdentity, field: &str) -> Result<Vec<u8>, ApiError> {
+    validate_input_signing_address(
+        &signer.signing_address,
+        Some(signer.signing_algo),
+        &format!("{field}.signing_address"),
+    )
+}
+
+fn validate_input_signing_address(
+    signing_address: &str,
+    signing_algo: Option<SigningAlgo>,
+    field: &str,
+) -> Result<Vec<u8>, ApiError> {
+    let signing_address = decode_hex(signing_address)
+        .map_err(|_| invalid_api_input(field, "invalid_hex", None, None))?;
+
+    let (is_valid_length, expected) = match signing_algo {
+        Some(SigningAlgo::Ecdsa) => (
+            signing_address.len() == 20,
+            "20-byte hexadecimal signing address",
+        ),
+        Some(SigningAlgo::Ed25519) => (
+            signing_address.len() == 32,
+            "32-byte hexadecimal signing address",
+        ),
+        None => (
+            matches!(signing_address.len(), 20 | 32),
+            "a 20- or 32-byte hexadecimal signing address",
+        ),
     };
-    let address = decode_hex(&signer.signing_address).map_err(|_| {
-        invalid_api_input(
-            field,
-            "invalid_hex",
-            Some(format!(
-                "a {expected_bytes}-byte hexadecimal signing address"
-            )),
-            None,
-        )
-    })?;
-    if address.len() != expected_bytes {
-        return Err(invalid_api_input(
-            field,
-            "wrong_length",
-            Some(format!(
-                "a {expected_bytes}-byte hexadecimal signing address"
-            )),
-            Some(format!("{} bytes", address.len())),
-        ));
+    if is_valid_length {
+        return Ok(signing_address);
     }
-    Ok(())
+    Err(invalid_api_input(
+        field,
+        "wrong_length",
+        Some(expected.to_owned()),
+        Some(format!("{} bytes", signing_address.len())),
+    ))
 }
 
 fn completion_signature_kind_name(kind: CompletionSignatureKind) -> &'static str {
@@ -480,16 +503,6 @@ fn invalid_api_input(
         expected,
         actual,
     }
-}
-
-fn signer_matches(left: &SigningIdentity, right: &SigningIdentity) -> bool {
-    let (Ok(left_address), Ok(right_address)) = (
-        decode_hex(&left.signing_address),
-        decode_hex(&right.signing_address),
-    ) else {
-        return false;
-    };
-    left.signing_algo == right.signing_algo && left_address == right_address
 }
 
 fn require_matching_api_nonce(

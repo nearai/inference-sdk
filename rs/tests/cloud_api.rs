@@ -220,11 +220,37 @@ fn selection_rejects_a_malformed_signer_as_api_input() {
         ApiError::InvalidInput {
             ref field,
             ref reason,
-            expected: Some(ref expected),
+            expected: None,
             actual: None,
         } if field == "signature.signer.signing_address"
             && reason == "invalid_hex"
-            && expected == "a 20-byte hexadecimal signing address"
+    ));
+}
+
+#[test]
+fn selection_rejects_a_malformed_candidate_signer_as_api_input() {
+    let signature = signature_for_evidence_selection(
+        CompletionSignatureKind::ProviderTee,
+        SigningIdentity {
+            signing_algo: SigningAlgo::Ecdsa,
+            signing_address: "22".repeat(20),
+        },
+    );
+    let candidates = [model_attestation_for_signer(SigningIdentity {
+        signing_algo: SigningAlgo::Ecdsa,
+        signing_address: "not hexadecimal".to_owned(),
+    })];
+
+    let error = find_model_attestation_for_signature(&candidates, &signature).unwrap_err();
+
+    assert!(matches!(
+        error,
+        ApiError::InvalidInput {
+            ref field,
+            ref reason,
+            expected: None,
+            actual: None,
+        } if field == "attestations[0].signer.signing_address" && reason == "invalid_hex"
     ));
 }
 
@@ -286,6 +312,80 @@ async fn client_treats_a_missing_model_candidate_list_as_empty() {
     assert!(matches!(
         error,
         ApiError::UnexpectedModelAttestationCount { actual_count: 0 }
+    ));
+}
+
+#[tokio::test]
+async fn client_accepts_both_unfiltered_signing_address_lengths() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .respond_with(ModelAttestationResponder)
+        .mount(&server)
+        .await;
+    let client = client(&server);
+
+    for signing_address in ["22".repeat(20), "22".repeat(32)] {
+        client
+            .fetch_model_attestations("glm-5.2", None, Some(&signing_address))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn client_rejects_invalid_model_signing_address_filters_before_request() {
+    let server = MockServer::start().await;
+    let client = client(&server);
+    let unsupported_length = "22".repeat(19);
+
+    let error = client
+        .fetch_model_attestations("glm-5.2", None, Some(&unsupported_length))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ApiError::InvalidInput {
+            ref field,
+            ref reason,
+            expected: Some(ref expected),
+            actual: Some(ref actual),
+        } if field == "signing_address"
+            && reason == "wrong_length"
+            && expected == "a 20- or 32-byte hexadecimal signing address"
+            && actual == "19 bytes"
+    ));
+
+    let ecdsa_mismatch = "22".repeat(32);
+    let error = client
+        .fetch_model_attestations("glm-5.2", Some(SigningAlgo::Ecdsa), Some(&ecdsa_mismatch))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ApiError::InvalidInput {
+            ref field,
+            ref reason,
+            expected: Some(ref expected),
+            actual: Some(ref actual),
+        } if field == "signing_address"
+            && reason == "wrong_length"
+            && expected == "20-byte hexadecimal signing address"
+            && actual == "32 bytes"
+    ));
+
+    let error = client
+        .fetch_model_attestations("glm-5.2", None, Some("not hexadecimal"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ApiError::InvalidInput {
+            ref field,
+            ref reason,
+            expected: None,
+            actual: None,
+        } if field == "signing_address" && reason == "invalid_hex"
     ));
 }
 
