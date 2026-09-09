@@ -237,13 +237,6 @@ pub struct CompletionSignature {
     pub signer: SigningIdentity,
 }
 
-/// Model evidence and the client values used to obtain it.
-#[derive(Clone, Debug)]
-pub struct FetchedModelAttestation {
-    pub attestation: ModelAttestation,
-    pub client_binding: ModelClientBinding,
-}
-
 /// Model evidence candidates and the client values used to obtain them.
 #[derive(Clone, Debug)]
 pub struct FetchedModelAttestations {

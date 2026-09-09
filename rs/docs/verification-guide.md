@@ -33,23 +33,18 @@ calls, but omitting the algorithm is not suitable for this three-stage flow.
 ```rust,no_run
 use verifiable_ai_sdk::{
     verify_gateway_attestation, verify_model_attestation, AttestationClient,
-    GatewayAttestationFetchOptions, ModelAttestation, SigningAlgo,
-    VerifiedGatewayAttestation, VerifiedModelAttestation,
+    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
+    VerifiedModelAttestation,
 };
 
 const MODEL: &str = "z-ai/glm-5.2";
-
-struct VerifiedModelDeployments {
-    attestations: Vec<ModelAttestation>,
-    verified: Vec<VerifiedModelAttestation>,
-}
 
 async fn verify_deployments(
     client: &AttestationClient,
 ) -> Result<
     (
         VerifiedGatewayAttestation,
-        VerifiedModelDeployments,
+        Vec<VerifiedModelAttestation>,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -89,10 +84,7 @@ async fn verify_deployments(
 
     Ok((
         verified_gateway,
-        VerifiedModelDeployments {
-            attestations: fetched_models.attestations,
-            verified,
-        },
+        verified,
     ))
 }
 ```
@@ -133,7 +125,7 @@ async fn verify_completion_receipt(
     request_body: &[u8],
     response_body: &[u8],
     gateway: &VerifiedGatewayAttestation,
-    models: &VerifiedModelDeployments,
+    models: &[VerifiedModelAttestation],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signature = client
         .fetch_completion_signature(completion_id, Some(SigningAlgo::Ecdsa))
@@ -141,7 +133,7 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let model = select_verified_model_attestation(models, &signature)?;
+            let model = find_model_attestation_for_signature(models, &signature)?;
             verify_model_response(request_body, response_body, &signature, model)?;
         }
         CompletionSignatureKind::Gateway => {
@@ -150,29 +142,11 @@ async fn verify_completion_receipt(
     }
     Ok(())
 }
-
-fn select_verified_model_attestation<'a>(
-    deployments: &'a VerifiedModelDeployments,
-    signature: &CompletionSignature,
-) -> Result<&'a VerifiedModelAttestation, Box<dyn std::error::Error>> {
-    let selected = find_model_attestation_for_signature(&deployments.attestations, signature)?;
-    deployments
-        .attestations
-        .iter()
-        .zip(&deployments.verified)
-        .find(|(attestation, _)| attestation.evidence.signer == selected.evidence.signer)
-        .map(|(_, verified)| verified)
-        .ok_or_else(|| {
-            std::io::Error::other("The selected model attestation was not verified during preflight")
-                .into()
-        })
-}
 ```
 
 `ProviderTee` proves that one preflight-verified model signer signed the exact
 request and response bytes. Use `find_model_attestation_for_signature` to
-require exactly one raw preflight candidate for that signer, then use its
-paired verified result. `Gateway` proves that the preflight-verified
+require exactly one verified result for that signer. `Gateway` proves that the preflight-verified
 Gateway signer signed the exact client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's

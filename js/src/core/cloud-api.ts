@@ -4,7 +4,6 @@ import {
   decodeModelAttestationReport,
 } from '../boundaries/cloud-api';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { ModelAttestation } from '../types/attestation-model';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
@@ -13,13 +12,12 @@ import type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
-  FetchedModelAttestation,
   FetchedModelAttestations,
   FetchGatewayAttestationParams,
-  FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
 } from '../types/cloud-api';
+import type { VerifiedModelAttestation } from '../types/verification';
 import { generateNonce, hexToBuffer } from '../utils/common';
 import { ApiError, type ApiFailure } from '../utils/errors';
 
@@ -131,26 +129,6 @@ export class CloudApiClient {
       });
     }
     return { attestations, clientBinding: { nonce: clientNonce } };
-  }
-
-  /**
-   * Fetch model attestation candidates for a provider_tee signature, then
-   * select the one whose advertised signer matches the signature signer.
-   */
-  async fetchModelAttestationForSignature({
-    model,
-    signature,
-  }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
-    const signer = requireProviderSignature(signature);
-    const fetched = await this.fetchModelAttestations({
-      model,
-      signingAlgo: signer.signingAlgo,
-      signingAddress: signer.signingAddress,
-    });
-    return {
-      attestation: findModelAttestationForSigner(fetched.attestations, signer),
-      clientBinding: fetched.clientBinding,
-    };
   }
 
   /**
@@ -371,30 +349,21 @@ async function readCloudApiJson({
 }
 
 /**
- * Select the single model attestation whose advertised signer matches a
- * provider_tee completion signature. It does not verify the quote or
- * completion signature.
+ * Select the single verified model attestation whose signer matches a
+ * provider_tee completion signature. This is a selection helper; it does not
+ * perform another attestation or completion-signature verification.
  */
 export function findModelAttestationForSignature({
   attestations,
   signature,
-}: FindModelAttestationForSignatureParams): ModelAttestation {
-  return findModelAttestationForSigner(
-    attestations,
-    requireProviderSignature(signature),
-  );
-}
-
-function findModelAttestationForSigner(
-  attestations: readonly ModelAttestation[],
-  signer: SigningIdentity,
-): ModelAttestation {
+}: FindModelAttestationForSignatureParams): VerifiedModelAttestation {
+  const signer = requireProviderSignature(signature);
   const signerAddress = validateApiSigningAddress({
     signingAddress: signer.signingAddress,
     signingAlgo: signer.signingAlgo,
     field: 'signature.signer.signingAddress',
   });
-  const matches: ModelAttestation[] = [];
+  const matches: VerifiedModelAttestation[] = [];
   for (const [index, attestation] of attestations.entries()) {
     const candidateSigner = attestation.signer;
     if (
@@ -440,11 +409,6 @@ function requireProviderSignature(
       },
     });
   }
-  validateApiSigningAddress({
-    signingAddress: signature.signer.signingAddress,
-    signingAlgo: signature.signer.signingAlgo,
-    field: 'signature.signer.signingAddress',
-  });
   return signature.signer;
 }
 

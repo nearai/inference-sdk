@@ -61,8 +61,8 @@ tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
   verifying that result. The SDK generates a fresh nonce for every evidence
   request.
 - Verify Gateway evidence and every returned model attestation before sending
-  the completion. Keep each verified model result with its source attestation
-  for the receipt-verification stage.
+  the completion. Keep every verified model result for the
+  receipt-verification stage.
 - Preserve exact completion request and response bytes. Do not parse and
   serialize them again before response verification.
 - Use the signature's explicit `kind` only to choose the matching response

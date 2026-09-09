@@ -1,7 +1,6 @@
-import type { CompletionSignature, ModelAttestation } from '../src';
+import type { CompletionSignature, VerifiedModelAttestation } from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
 import { AttestationClient as NodeAttestationClient } from '../src/node';
-import { nonce } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
@@ -26,16 +25,16 @@ function gatewaySignature(): CompletionSignature {
   };
 }
 
-function modelAttestation(
-  overrides: Partial<ModelAttestation> = {},
-): ModelAttestation {
+function verifiedModelAttestation(
+  overrides: Partial<VerifiedModelAttestation> = {},
+): VerifiedModelAttestation {
   return {
-    nonce,
     signer: { signingAlgo: 'ecdsa', signingAddress },
-    intelQuote: 'aa',
-    eventLog: [],
-    appCompose: '{}',
-    reportedQuoteData: '44'.repeat(64),
+    tcbStatus: 'UpToDate',
+    advisoryIds: [],
+    deployment: { appCompose: '{}', runtimeMeasurements: {} },
+    deploymentProvenance: 'not_checked',
+    gpuEvidence: 'not_provided',
     ...overrides,
   };
 }
@@ -177,7 +176,7 @@ describe('AttestationClient', () => {
   });
 
   describe('model attestations', () => {
-    test('preserves every model candidate and selects the matching signer', async () => {
+    test('preserves every model candidate', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;
       const otherSigningAddress = `0x${'55'.repeat(20)}`;
       const signature = modelSignature(selectedSigningAddress);
@@ -203,23 +202,12 @@ describe('AttestationClient', () => {
           signingAlgo: signature.signer.signingAlgo,
           signingAddress: signature.signer.signingAddress,
         });
-      const attestation = findModelAttestationForSignature({
-        attestations,
-        signature,
-      });
-
       expect(attestations).toHaveLength(2);
       expect(
         attestations.every(
           (candidate) => candidate.nonce === clientBinding.nonce,
         ),
       ).toBe(true);
-      expect(attestation).toMatchObject({
-        nonce: clientBinding.nonce,
-        signer: signature.signer,
-        appCompose: '{}',
-        reportedQuoteData: '44'.repeat(64),
-      });
 
       const request = api.request();
       const query = new URL(request.url).searchParams;
@@ -233,60 +221,9 @@ describe('AttestationClient', () => {
       expect(request.headers.get('x-no-aliasing')).toBe('true');
     });
 
-    test('fetches the matching model attestation for a provider signature', async () => {
-      const signature = modelSignature();
-      const api = cloudFor((request) => {
-        const clientNonce = requestNonce(request);
-        return jsonResponse(
-          modelReport(clientNonce, [
-            cloudAttestation(clientNonce, {
-              signing_address: `0x${'44'.repeat(20)}`,
-            }),
-            cloudAttestation(clientNonce),
-          ]),
-        );
-      });
-
-      const fetched = await api.client.fetchModelAttestationForSignature({
-        model: 'canonical-model',
-        signature,
-      });
-
-      expect(fetched).toMatchObject({
-        clientBinding: { nonce: fetched.attestation.nonce },
-        attestation: { signer: signature.signer },
-      });
-    });
-
-    test('rejects a non-model signature before requesting model evidence', async () => {
-      const api = cloudFor(() => {
-        throw new Error('The client must reject this before making a request');
-      });
-
-      await expect(
-        api.client.fetchModelAttestationForSignature({
-          model: 'canonical-model',
-          signature: gatewaySignature(),
-        }),
-      ).rejects.toEqual(
-        expect.objectContaining({
-          name: 'ApiError',
-          failure: {
-            code: 'api.invalid_input',
-            details: {
-              field: 'signature.kind',
-              reason: 'unsupported_value',
-              expected: 'provider_tee',
-              actual: 'gateway',
-            },
-          },
-        }),
-      );
-    });
-
-    test('matches signer encodings by bytes', () => {
+    test('selects a verified model attestation by signer bytes', () => {
       const signature = modelSignature(`0x${'ab'.repeat(20)}`);
-      const attestation = modelAttestation({
+      const attestation = verifiedModelAttestation({
         signer: {
           signingAlgo: 'ecdsa',
           signingAddress: `0X${'AB'.repeat(20)}`,
@@ -481,7 +418,7 @@ describe('AttestationClient', () => {
     test.each([
       {
         label: 'a provider signer with no matching attestation',
-        attestations: [modelAttestation()],
+        attestations: [verifiedModelAttestation()],
         signature: modelSignature(`0x${'44'.repeat(20)}`),
         failure: {
           code: 'api.model_attestation_signer_not_found',
@@ -489,7 +426,7 @@ describe('AttestationClient', () => {
       },
       {
         label: 'multiple attestations for the same signer',
-        attestations: [modelAttestation(), modelAttestation()],
+        attestations: [verifiedModelAttestation(), verifiedModelAttestation()],
         signature: modelSignature(),
         failure: {
           code: 'api.ambiguous_model_attestation_signer',
@@ -498,7 +435,7 @@ describe('AttestationClient', () => {
       },
       {
         label: 'a gateway signature',
-        attestations: [modelAttestation()],
+        attestations: [verifiedModelAttestation()],
         signature: gatewaySignature(),
         failure: {
           code: 'api.invalid_input',
@@ -521,7 +458,7 @@ describe('AttestationClient', () => {
 
       expect(() =>
         findModelAttestationForSignature({
-          attestations: [modelAttestation()],
+          attestations: [verifiedModelAttestation()],
           signature,
         }),
       ).toThrow(

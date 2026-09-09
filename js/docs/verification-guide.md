@@ -58,24 +58,23 @@ async function verifyModelDeployments() {
   if (fetched.attestations.length === 0) {
     throw new Error('Cloud API returned no model attestations');
   }
-  const preflight = [];
+  const verifiedAttestations = [];
   for (const attestation of fetched.attestations) {
-    preflight.push({
-      attestation,
-      verified: await verifyModelAttestation({
+    verifiedAttestations.push(
+      await verifyModelAttestation({
         attestation,
         clientBinding: fetched.clientBinding,
       }),
-    });
+    );
   }
-  return preflight;
+  return verifiedAttestations;
 }
 ```
 
 Cloud API may return zero or multiple model attestations. The fetch helper
 preserves the collection and checks the returned nonce on every item. This
 deployment-first flow rejects an empty collection, verifies every candidate,
-and retains each candidate with its verified result for receipt selection.
+and retains every verified result for receipt selection.
 
 Model evidence always uses the signer-and-nonce quote layout. Cloud API makes
 the model connection on the client's behalf, so model verification does not
@@ -123,23 +122,15 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
-  const attestation = findModelAttestationForSignature({
-    attestations: verifiedModelAttestations.map(
-      ({ attestation }) => attestation,
-    ),
+  const verifiedModelAttestation = findModelAttestationForSignature({
+    attestations: verifiedModelAttestations,
     signature,
   );
-  const selected = verifiedModelAttestations.find(
-    (candidate) => candidate.attestation === attestation,
-  );
-  if (selected === undefined) {
-    throw new Error('Selected model attestation was not preflight verified');
-  }
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation: selected.verified,
+    attestation: verifiedModelAttestation,
   });
 } else {
   verifyGatewayResponse({

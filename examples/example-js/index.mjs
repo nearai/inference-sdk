@@ -57,18 +57,17 @@ async function verifyModelDeployments() {
 	if (fetched.attestations.length === 0) {
 		throw new Error("Cloud API returned no model attestations");
 	}
-	const preflight = [];
+	const verifiedAttestations = [];
 	for (const attestation of fetched.attestations) {
-		preflight.push({
-			attestation,
-			verified: await verifyModelAttestation({
+		verifiedAttestations.push(
+			await verifyModelAttestation({
 				attestation,
 				clientBinding: fetched.clientBinding,
 			}),
-		});
+		);
 	}
-	console.log(`Model deployments: verified ${preflight.length}.`);
-	return preflight;
+	console.log(`Model deployments: verified ${verifiedAttestations.length}.`);
+	return verifiedAttestations;
 }
 
 async function sendCompletion({ stream }) {
@@ -114,10 +113,10 @@ async function verifyCompletionReceipt({
 	});
 
 	if (signature.kind === "provider_tee") {
-		const verifiedModelAttestation = selectVerifiedModelAttestation(
+		const verifiedModelAttestation = findModelAttestationForSignature({
+			attestations: verifiedModelAttestations,
 			signature,
-			verifiedModelAttestations,
-		);
+		});
 		verifyModelResponse({
 			requestBody: completion.requestBody,
 			responseBody: completion.responseBody,
@@ -135,20 +134,6 @@ async function verifyCompletionReceipt({
 		attestation: verifiedGatewayAttestation,
 	});
 	console.log(`${completion.label}: verified a Gateway signature.`);
-}
-
-function selectVerifiedModelAttestation(signature, preflight) {
-	const attestation = findModelAttestationForSignature({
-		attestations: preflight.map(({ attestation }) => attestation),
-		signature,
-	});
-	const selected = preflight.find(
-		(candidate) => candidate.attestation === attestation,
-	);
-	if (!selected) {
-		throw new Error("Selected model attestation was not preflight verified");
-	}
-	return selected.verified;
 }
 
 function readCompletionId(responseBody, stream) {

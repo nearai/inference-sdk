@@ -28,9 +28,8 @@ verification is synchronous.
 | `AttestationClient` | `(api_key, *, base_url=...)` | client | Owns Cloud API credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
-| `client.fetch_model_attestation_for_signature` | `(model, signature)` | `FetchedModelAttestation` | Fetches and locally selects model evidence for a `provider_tee` signer. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
-| `find_model_attestation_for_signature` | `(attestations, signature)` | `ModelAttestation` | Locally selects the sole evidence item for a `provider_tee` signer. |
+| `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Locally selects the sole preverified model deployment for a `provider_tee` signer. |
 | `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
@@ -78,8 +77,6 @@ an unavailable 2xx response. The error code is
 | `fetch_model_attestations` | `model` | `str` | Yes | Canonical target model ID. Use before sending its completion. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the required signing algorithm. |
 |  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. It must be hexadecimal: 20 or 32 bytes without `signing_algo`, or the matching length when an algorithm is selected. Invalid input raises `ApiError` before a request. |
-| `fetch_model_attestation_for_signature` | `model` | `str` | Yes | Canonical model ID. |
-|  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. The method uses its signer as request filters and then performs local selection. This is a signature-driven convenience, not the deployment-first workflow. |
 
 Every model-attestation fetch generates a fresh 32-byte client nonce, requests
 `include_tls_fingerprint=false`, checks Cloud API's echoed nonce, and returns a
@@ -88,20 +85,18 @@ Every model-attestation fetch generates a fresh 32-byte client nonce, requests
 model attestation Cloud API returns, including an empty collection. Verify each
 returned item before inference. Use `find_model_attestation_for_signature`
 after a `provider_tee` signature is available to select exactly one matching
-raw item, then use its paired verified result for response verification.
+verified result for response verification.
 
 ### Local model selection
 
 | Function | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations` | `tuple[ModelAttestation, ...] \| list[ModelAttestation]` | Yes | Evidence returned by `client.fetch_model_attestations()`. Exactly one item must match the signer. |
+| `find_model_attestation_for_signature` | `attestations` | `tuple[VerifiedModelAttestation, ...] \| list[VerifiedModelAttestation]` | Yes | Results returned by verifying every item from `client.fetch_model_attestations()`. Exactly one item must match the signer. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `attestations` | `tuple[ModelAttestation, ...]` | Every model attestation returned by Cloud API. It may be empty or contain multiple items. |
-|  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
-| `FetchedModelAttestation` | `attestation` | `ModelAttestation` | Evidence selected for the `provider_tee` signer. |
 |  | `client_binding` | `ModelClientBinding` | Client nonce associated with this evidence request. |
 
 ### Gateway deployment method

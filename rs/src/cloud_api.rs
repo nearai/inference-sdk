@@ -1,9 +1,9 @@
 use crate::errors::{ApiError, ApiResource, ApiTransportReason};
 use crate::types::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    FetchedGatewayAttestation, FetchedModelAttestation, FetchedModelAttestations,
-    GatewayAttestation, GatewayAttestationFetchOptions, GatewayClientBinding, ModelAttestation,
-    ModelClientBinding, SigningAlgo, SigningIdentity,
+    FetchedGatewayAttestation, FetchedModelAttestations, GatewayAttestation,
+    GatewayAttestationFetchOptions, GatewayClientBinding, ModelAttestation, ModelClientBinding,
+    SigningAlgo, SigningIdentity, VerifiedModelAttestation,
 };
 use crate::util::{decode_hex, generate_nonce, require_hex_length, sha256};
 use reqwest::{
@@ -132,33 +132,6 @@ impl AttestationClient {
         })
     }
 
-    /// Fetch the model attestation selected by a `provider_tee` signature.
-    ///
-    /// This sends the signature's signer as Cloud API filters and then makes
-    /// the authoritative local signer match. It does not verify the quote or
-    /// the response signature.
-    pub async fn fetch_model_attestation_for_signature(
-        &self,
-        model: &str,
-        signature: &CompletionSignature,
-    ) -> Result<FetchedModelAttestation, ApiError> {
-        require_provider_signature(signature)?;
-        let mut fetched = self
-            .fetch_model_attestations(
-                model,
-                Some(signature.signer.signing_algo),
-                Some(&signature.signer.signing_address),
-            )
-            .await?;
-        let index =
-            find_model_attestation_index_for_signer(&fetched.attestations, &signature.signer)?;
-        let attestation = fetched.attestations.swap_remove(index);
-        Ok(FetchedModelAttestation {
-            attestation,
-            client_binding: fetched.client_binding,
-        })
-    }
-
     /// Fetch standalone Gateway evidence using the requested options.
     ///
     /// When `include_spki_fingerprint` is enabled, the built-in Gateway client
@@ -264,29 +237,14 @@ impl AttestationClient {
     }
 }
 
-/// Select the exact model evidence matching a `provider_tee` signature. It
-/// performs no quote or response-signature verification itself.
+/// Select the exact verified model attestation matching a `provider_tee`
+/// signature. It performs no response-signature verification itself.
 pub fn find_model_attestation_for_signature<'a>(
-    attestations: &'a [ModelAttestation],
+    attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
-) -> Result<&'a ModelAttestation, ApiError> {
-    let index = find_model_attestation_index_for_signature(attestations, signature)?;
-    Ok(&attestations[index])
-}
-
-fn find_model_attestation_index_for_signature(
-    attestations: &[ModelAttestation],
-    signature: &CompletionSignature,
-) -> Result<usize, ApiError> {
+) -> Result<&'a VerifiedModelAttestation, ApiError> {
     require_provider_signature(signature)?;
-    find_model_attestation_index_for_signer(attestations, &signature.signer)
-}
-
-fn find_model_attestation_index_for_signer(
-    attestations: &[ModelAttestation],
-    signer: &SigningIdentity,
-) -> Result<usize, ApiError> {
-    let requested_signing_address = validate_input_signer(signer, "signature.signer")?;
+    let requested_signing_address = validate_input_signer(&signature.signer, "signature.signer")?;
     let mut matching_index = None;
     let mut matching_count = 0;
 
@@ -295,7 +253,7 @@ fn find_model_attestation_index_for_signer(
             &attestation.evidence.signer,
             &format!("attestations[{index}].signer"),
         )?;
-        if attestation.evidence.signer.signing_algo == signer.signing_algo
+        if attestation.evidence.signer.signing_algo == signature.signer.signing_algo
             && attestation_signing_address == requested_signing_address
         {
             matching_index.get_or_insert(index);
@@ -307,7 +265,7 @@ fn find_model_attestation_index_for_signer(
         return Err(ApiError::ModelAttestationSignerNotFound);
     };
     if matching_count == 1 {
-        return Ok(index);
+        return Ok(&attestations[index]);
     }
     Err(ApiError::AmbiguousModelAttestationSigner {
         matching_count,

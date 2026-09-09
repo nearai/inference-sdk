@@ -29,12 +29,12 @@ from ..types.cloud_api import (
     DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
     FetchedGatewayAttestation,
-    FetchedModelAttestation,
     FetchedModelAttestations,
 )
 from ..types.verification import (
     GatewayClientBinding,
     ModelClientBinding,
+    VerifiedModelAttestation,
 )
 from ..utils.common import generate_nonce, hex_to_bytes
 from ..utils.errors import (
@@ -119,26 +119,6 @@ class AttestationClient:
             client_binding=ModelClientBinding(nonce=nonce),
         )
 
-    async def fetch_model_attestation_for_signature(
-        self,
-        model: str,
-        signature: CompletionSignatureReference,
-    ) -> FetchedModelAttestation:
-        """Fetch and select evidence for a ``provider_tee`` completion signature."""
-
-        _require_provider_signature(signature)
-        fetched = await self.fetch_model_attestations(
-            model,
-            signing_algo=signature.signer.signing_algo,
-            signing_address=signature.signer.signing_address,
-        )
-        return FetchedModelAttestation(
-            attestation=_find_model_attestation_for_signer(
-                fetched.attestations, signature.signer
-            ),
-            client_binding=fetched.client_binding,
-        )
-
     async def fetch_gateway_attestation(
         self,
         *,
@@ -210,13 +190,43 @@ class AttestationClient:
 
 
 def find_model_attestation_for_signature(
-    attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
+    attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
-) -> ModelAttestation:
-    """Select exactly one candidate whose signer matches a provider signature."""
+) -> VerifiedModelAttestation:
+    """Select exactly one verified model deployment for a provider signature."""
 
-    _require_provider_signature(signature)
-    return _find_model_attestation_for_signer(attestations, signature.signer)
+    if signature.kind != 'provider_tee':
+        raise _invalid_input(
+            'signature.kind',
+            'unsupported_value',
+            expected='provider_tee',
+            actual=signature.kind,
+        )
+
+    signer = signature.signer
+    requested_signing_address = _validate_input_signer(
+        signer,
+        'signature.signer',
+    )
+    matches: list[VerifiedModelAttestation] = []
+    for index, attestation in enumerate(attestations):
+        attestation_signing_address = _validate_input_signer(
+            attestation.signer,
+            f'attestations[{index}].signer',
+        )
+        if (
+            attestation.signer.signing_algo == signer.signing_algo
+            and attestation_signing_address == requested_signing_address
+        ):
+            matches.append(attestation)
+    if not matches:
+        raise api_failure('api.model_attestation_signer_not_found')
+    if len(matches) != 1:
+        raise api_failure(
+            'api.ambiguous_model_attestation_signer',
+            {'matchingCount': len(matches), 'totalCount': len(attestations)},
+        )
+    return matches[0]
 
 
 async def _get_cloud_api_json(
@@ -400,46 +410,6 @@ def _format_api_path(location: tuple[object, ...]) -> str:
 def _api_signer(algorithm: SigningAlgo, address: str, label: str) -> SigningIdentity:
     _validate_api_signing_address(address, algorithm, f'{label}.signing_address')
     return SigningIdentity(signing_algo=algorithm, signing_address=address)
-
-
-def _find_model_attestation_for_signer(
-    attestations: tuple[ModelAttestation, ...] | list[ModelAttestation],
-    signer: SigningIdentity,
-) -> ModelAttestation:
-    requested_signing_address = _validate_input_signer(
-        signer,
-        'signature.signer',
-    )
-    matches: list[ModelAttestation] = []
-    for index, attestation in enumerate(attestations):
-        attestation_signing_address = _validate_input_signer(
-            attestation.signer,
-            f'attestations[{index}].signer',
-        )
-        if (
-            attestation.signer.signing_algo == signer.signing_algo
-            and attestation_signing_address == requested_signing_address
-        ):
-            matches.append(attestation)
-    if not matches:
-        raise api_failure('api.model_attestation_signer_not_found')
-    if len(matches) != 1:
-        raise api_failure(
-            'api.ambiguous_model_attestation_signer',
-            {'matchingCount': len(matches), 'totalCount': len(attestations)},
-        )
-    return matches[0]
-
-
-def _require_provider_signature(signature: CompletionSignatureReference) -> None:
-    if signature.kind != 'provider_tee':
-        raise _invalid_input(
-            'signature.kind',
-            'unsupported_value',
-            expected='provider_tee',
-            actual=signature.kind,
-        )
-    _validate_input_signer(signature.signer, 'signature.signer')
 
 
 def _endpoint(base_url: str, path: str, query: Mapping[str, str]) -> str:

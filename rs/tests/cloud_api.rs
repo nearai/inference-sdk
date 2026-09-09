@@ -2,8 +2,9 @@ use serde_json::json;
 use std::sync::Once;
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, ApiError, ApiResource, AttestationClient,
-    AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, ModelAttestation, SigningAlgo, SigningIdentity,
+    CompletionSignature, CompletionSignatureKind, DeploymentProvenanceStatus,
+    GatewayAttestationFetchOptions, GpuEvidenceStatus, MeasuredDeployment, RuntimeMeasurements,
+    SigningAlgo, SigningIdentity, TcbStatus, VerifiedAttestationEvidence, VerifiedModelAttestation,
 };
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
@@ -126,17 +127,19 @@ fn client(server: &MockServer) -> AttestationClient {
     AttestationClient::with_base_url(test_api_key().to_owned(), &base_url(server)).unwrap()
 }
 
-fn model_attestation_for_signer(signer: SigningIdentity) -> ModelAttestation {
-    ModelAttestation {
-        evidence: AttestationEvidence {
-            nonce: "11".repeat(32),
+fn verified_model_attestation_for_signer(signer: SigningIdentity) -> VerifiedModelAttestation {
+    VerifiedModelAttestation {
+        evidence: VerifiedAttestationEvidence {
             signer,
-            intel_quote: "aa".to_owned(),
-            event_log: AttestationEventLog::Entries(vec![]),
-            app_compose: "{}".to_owned(),
+            tcb_status: TcbStatus::UpToDate,
+            advisory_ids: vec![],
+            deployment: MeasuredDeployment {
+                app_compose: "{}".to_owned(),
+                runtime_measurements: RuntimeMeasurements::default(),
+            },
+            deployment_provenance: DeploymentProvenanceStatus::NotChecked,
         },
-        reported_quote_data: None,
-        nvidia_payload: None,
+        gpu_evidence: GpuEvidenceStatus::NotProvided,
     }
 }
 
@@ -153,7 +156,7 @@ fn signature_for_evidence_selection(
 }
 
 #[test]
-fn model_attestation_selection_rejects_zero_or_multiple_matches() {
+fn verified_model_attestation_selection_rejects_zero_or_multiple_matches() {
     let signature = signature_for_evidence_selection(
         CompletionSignatureKind::ProviderTee,
         SigningIdentity {
@@ -161,7 +164,7 @@ fn model_attestation_selection_rejects_zero_or_multiple_matches() {
             signing_address: "22".repeat(20),
         },
     );
-    let candidate = model_attestation_for_signer(signature.signer.clone());
+    let candidate = verified_model_attestation_for_signer(signature.signer.clone());
     let candidates = vec![candidate.clone(), candidate];
 
     let error = find_model_attestation_for_signature(&candidates, &signature).unwrap_err();
@@ -188,7 +191,7 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
             signing_address: format!("0X{}", "AB".repeat(20)),
         },
     );
-    let candidate = model_attestation_for_signer(SigningIdentity {
+    let candidate = verified_model_attestation_for_signer(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "ab".repeat(20),
     });
@@ -199,8 +202,8 @@ fn finds_a_signer_with_an_equivalent_hex_address() {
     assert_eq!(selected.evidence.signer.signing_address, "ab".repeat(20));
 }
 
-#[tokio::test]
-async fn selection_and_client_reject_a_non_provider_signature_as_api_input() {
+#[test]
+fn selection_rejects_a_non_provider_signature_as_api_input() {
     let signature = signature_for_evidence_selection(
         CompletionSignatureKind::Gateway,
         SigningIdentity {
@@ -210,25 +213,6 @@ async fn selection_and_client_reject_a_non_provider_signature_as_api_input() {
     );
 
     let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
-
-    assert!(matches!(
-        error,
-        ApiError::InvalidInput {
-            ref field,
-            ref reason,
-            expected: Some(ref expected),
-            actual: Some(ref actual),
-        } if field == "signature.kind"
-            && reason == "unsupported_value"
-            && expected == "provider_tee"
-            && actual == "gateway"
-    ));
-
-    let server = MockServer::start().await;
-    let error = client(&server)
-        .fetch_model_attestation_for_signature("glm-5.2", &signature)
-        .await
-        .unwrap_err();
 
     assert!(matches!(
         error,
@@ -277,7 +261,7 @@ fn selection_rejects_a_malformed_candidate_signer_as_api_input() {
             signing_address: "22".repeat(20),
         },
     );
-    let candidates = [model_attestation_for_signer(SigningIdentity {
+    let candidates = [verified_model_attestation_for_signer(SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,
         signing_address: "not hexadecimal".to_owned(),
     })];
@@ -461,37 +445,6 @@ async fn client_checks_every_model_attestation_nonce() {
             ..
         }
     ));
-}
-
-#[tokio::test]
-async fn client_fetches_model_attestation_for_a_provider_signature() {
-    let server = MockServer::start().await;
-    let signing_address = "22".repeat(20);
-    Mock::given(method("GET"))
-        .and(path("/v1/attestation/report"))
-        .and(query_param("model", "glm-5.2"))
-        .and(query_param("signing_algo", "ecdsa"))
-        .and(query_param("signing_address", signing_address.clone()))
-        .respond_with(ModelAttestationsResponder {
-            signing_addresses: vec!["33".repeat(20), signing_address.clone()],
-            mismatch_second_nonce: false,
-        })
-        .mount(&server)
-        .await;
-    let signature = signature_for_evidence_selection(
-        CompletionSignatureKind::ProviderTee,
-        SigningIdentity {
-            signing_algo: SigningAlgo::Ecdsa,
-            signing_address,
-        },
-    );
-
-    let fetched = client(&server)
-        .fetch_model_attestation_for_signature("glm-5.2", &signature)
-        .await
-        .unwrap();
-
-    assert_eq!(fetched.attestation.evidence.signer, signature.signer);
 }
 
 #[tokio::test]

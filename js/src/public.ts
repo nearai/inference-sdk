@@ -7,9 +7,7 @@ export type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
-  FetchedModelAttestation,
   FetchedModelAttestations,
-  FetchModelAttestationForSignatureParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
 } from './types/cloud-api';

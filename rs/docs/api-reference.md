@@ -45,14 +45,11 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 | --- | --- | --- | --- |
 | `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `ApiError::CompletionSignatureUnavailable { .. }`, preserving the service's code and message. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches every model deployment candidate returned for a canonical model ID, including an empty list. The filters only narrow the API response. |
-| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Post-completion recovery convenience for a `ProviderTee` receipt: applies its signer as API filters and selects exactly one matching candidate locally. It does not verify evidence and is not the deployment-first workflow. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
 `signing_algo` and `signing_address` only narrow the Cloud API response. They
-do not replace `find_model_attestation_for_signature`, which performs the local,
-exact signer match for a `ProviderTee` signature. The
-`fetch_model_attestation_for_signature` method is the convenience form that
-applies those filters and then delegates to that same selector.
+do not replace local selection from verified model results. Use
+`find_model_attestation_for_signature` after verifying every fetched candidate.
 
 When supplied, `signing_address` must be hexadecimal: 20 or 32 bytes without
 `signing_algo`, or the exact length for the selected algorithm. Invalid filters
@@ -75,7 +72,7 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations: &[ModelAttestation]`, `signature: &CompletionSignature` | `Result<&ModelAttestation, ApiError>` | Free pure function that selects the single attestation matching a `ProviderTee` signer. It does not verify evidence. |
+| `find_model_attestation_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<&VerifiedModelAttestation, ApiError>` | Free pure function that selects the single verified result matching a `ProviderTee` signer. It does not verify the response signature. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -92,8 +89,6 @@ attestation verifier.
 | --- | --- | --- |
 | `FetchedModelAttestations` | `attestations` | Every returned `ModelAttestation` candidate, possibly empty. Verify each item during a deployment preflight. |
 |  | `client_binding` | `ModelClientBinding` returned with these attestations. |
-| `FetchedModelAttestation` | `attestation` | Candidate selected for the supplied `ProviderTee` signer. |
-|  | `client_binding` | `ModelClientBinding` returned with the selected attestation. |
 | `FetchedGatewayAttestation` | `attestation` | Returned Gateway attestation. |
 |  | `client_binding` | `GatewayClientBinding` returned with the evidence request. |
 | `ModelClientBinding` | `nonce` | SDK-generated client nonce. |
@@ -140,9 +135,8 @@ attestation must bind the signature signer.
 For a `Gateway` response, `verify_gateway_response` requires a
 `VerifiedGatewayAttestation` with the same signer. For a `ProviderTee`
 response, `verify_model_response` requires a `VerifiedModelAttestation` with
-the same signer. `fetch_model_attestation_for_signature` can help inspect a
-historical `ProviderTee` receipt, but a post-completion fetch cannot replace a
-deployment check performed before chat.
+the same signer. Select it from the verified preflight results with
+`find_model_attestation_for_signature`.
 
 ## Signatures and evidence
 

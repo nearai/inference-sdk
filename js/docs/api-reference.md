@@ -27,7 +27,7 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => ModelAttestation` | Selects the single model attestation matching a `provider_tee` signature. It does not verify evidence. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 
 ## `AttestationClient`
 
@@ -56,7 +56,6 @@ Cloud API's report and signature endpoints have different defaults.
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment preflight. |
-| `fetchModelAttestationForSignature(params)` | `FetchModelAttestationForSignatureParams` | `FetchedModelAttestation` | Post-completion convenience equivalent of `fetchModelAttestations` followed by `findModelAttestationForSignature`. Requires a `provider_tee` signature and requests evidence for its signer. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -68,8 +67,6 @@ Cloud API's report and signature endpoints have different defaults.
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Cloud API response. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Cloud API response. It must be hexadecimal: 20 or 32 bytes without `signingAlgo`, or the matching length when an algorithm is selected. Invalid input throws `ApiError` before a request. |
-| `FetchModelAttestationForSignatureParams` | `model` | `string` | Yes | Canonical model ID. |
-|  | `signature` | `CompletionSignatureReference` | Yes | Signature kind and signer with `kind: 'provider_tee'`; its signer selects the result. A full `CompletionSignature` can be passed directly. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Cloud API default. For a preflight operation that selects an algorithm, use the same value when fetching the completion signature. This does not select a gateway instance. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
@@ -85,8 +82,6 @@ attestation verifier.
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
 |  | `attestations` | `readonly ModelAttestation[]` | Cloud API `model_attestations`. The collection may be empty or contain multiple candidates; verify every candidate before a completion. |
-| `FetchedModelAttestation` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestation` | `ModelAttestation` | Model attestation selected for the requested `provider_tee` signer. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
@@ -97,18 +92,16 @@ attestation verifier.
 
 ### `findModelAttestationForSignature`
 
-Use this function after `client.fetchModelAttestations` to select evidence for a
-`provider_tee` signature. It requires exactly one signer match but does not
-verify the attestation. `client.fetchModelAttestationForSignature` is the
-convenience form of these two operations. For a preflight, verify every fetched
-candidate and retain each verified result with its source attestation so the
-matching one can be selected after the completion.
+Use this function after verifying every candidate returned by
+`client.fetchModelAttestations`. It selects the one verified result whose
+signer matches a `provider_tee` signature. It requires exactly one signer
+match and performs no additional cryptographic verification.
 
 #### `FindModelAttestationForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly ModelAttestation[]` | Yes | Model attestations returned by `client.fetchModelAttestations`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions

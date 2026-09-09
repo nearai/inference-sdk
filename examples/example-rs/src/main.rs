@@ -4,8 +4,8 @@ use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde_json::{json, Value};
 use verifiable_ai_sdk::{
     find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
-    verify_model_attestation, verify_model_response, AttestationClient, CompletionSignature,
-    CompletionSignatureKind, GatewayAttestationFetchOptions, ModelAttestation, SigningAlgo,
+    verify_model_attestation, verify_model_response, AttestationClient, CompletionSignatureKind,
+    GatewayAttestationFetchOptions, SigningAlgo,
     VerifiedGatewayAttestation, VerifiedModelAttestation, NO_ALIASING_HEADER,
 };
 
@@ -16,11 +16,6 @@ struct Completion {
     completion_id: String,
     request_body: Vec<u8>,
     response_body: Vec<u8>,
-}
-
-struct VerifiedModelDeployments {
-    attestations: Vec<ModelAttestation>,
-    verified: Vec<VerifiedModelAttestation>,
 }
 
 #[tokio::main]
@@ -77,7 +72,7 @@ async fn verify_gateway_deployment(
 
 async fn verify_model_deployments(
     client: &AttestationClient,
-) -> Result<VerifiedModelDeployments, Box<dyn Error>> {
+) -> Result<Vec<VerifiedModelAttestation>, Box<dyn Error>> {
     let fetched = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
@@ -99,10 +94,7 @@ async fn verify_model_deployments(
     }
 
     println!("Model deployments: verified {}.", verified.len());
-    Ok(VerifiedModelDeployments {
-        attestations: fetched.attestations,
-        verified,
-    })
+    Ok(verified)
 }
 
 async fn send_completion(
@@ -148,7 +140,7 @@ async fn verify_completion_receipt(
     attestation_client: &AttestationClient,
     completion: &Completion,
     verified_gateway: &VerifiedGatewayAttestation,
-    verified_models: &VerifiedModelDeployments,
+    verified_models: &[VerifiedModelAttestation],
     stream: bool,
 ) -> Result<(), Box<dyn Error>> {
     let signature = attestation_client
@@ -160,7 +152,8 @@ async fn verify_completion_receipt(
     // which verified signer covers these exact response bytes.
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let verified_model = select_verified_model_attestation(verified_models, &signature)?;
+            let verified_model =
+                find_model_attestation_for_signature(verified_models, &signature)?;
             verify_model_response(
                 &completion.request_body,
                 &completion.response_body,
@@ -181,23 +174,6 @@ async fn verify_completion_receipt(
     }
 
     Ok(())
-}
-
-fn select_verified_model_attestation<'a>(
-    deployments: &'a VerifiedModelDeployments,
-    signature: &CompletionSignature,
-) -> Result<&'a VerifiedModelAttestation, Box<dyn Error>> {
-    let selected = find_model_attestation_for_signature(&deployments.attestations, signature)?;
-    deployments
-        .attestations
-        .iter()
-        .zip(&deployments.verified)
-        .find(|(attestation, _)| attestation.evidence.signer == selected.evidence.signer)
-        .map(|(_, verified)| verified)
-        .ok_or_else(|| {
-            io::Error::other("The selected model attestation was not verified during preflight")
-                .into()
-        })
 }
 
 fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<dyn Error>> {

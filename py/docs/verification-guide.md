@@ -61,12 +61,9 @@ async def verify_deployments(client: AttestationClient):
     verified_models = []
     for attestation in fetched_model.attestations:
         verified_models.append(
-            (
+            await verify_model_attestation(
                 attestation,
-                await verify_model_attestation(
-                    attestation,
-                    fetched_model.client_binding,
-                ),
+                fetched_model.client_binding,
             )
         )
     return verified_gateway, tuple(verified_models)
@@ -143,10 +140,9 @@ behavior for it.
 
 ## 3. Verify the returned completion signature
 
-Fetch the signature after the completion has reached its terminal state. Keep
-each raw model record paired with its verified result from stage 1. A provider
-signature first selects exactly one raw record, then uses that paired result;
-a Gateway signature uses the verified Gateway result.
+Fetch the signature after the completion has reached its terminal state. A
+provider signature selects exactly one verified model result from stage 1; a
+Gateway signature uses the verified Gateway result.
 
 ```python
 from verifiable_ai_sdk import (
@@ -163,14 +159,9 @@ signature = await client.fetch_completion_signature(
 )
 
 if signature.kind == 'provider_tee':
-    model_attestation = find_model_attestation_for_signature(
-        [attestation for attestation, _ in verified_models],
+    verified_model = find_model_attestation_for_signature(
+        verified_models,
         signature,
-    )
-    verified_model = next(
-        verified
-        for attestation, verified in verified_models
-        if attestation == model_attestation
     )
     verify_model_response(
         request_body,
