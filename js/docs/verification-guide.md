@@ -215,13 +215,13 @@ throw `VerificationError`. A client or selection handler only needs to handle
 `ApiError`; a verification handler only needs to handle `VerificationError`.
 
 ```ts
-import type { ApiError } from 'verifiable-ai-sdk';
+import { ApiError } from 'verifiable-ai-sdk';
 
 try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
-  const apiError = error as ApiError;
-  console.log(apiError.failure.code, apiError.failure.details);
+  if (!(error instanceof ApiError)) throw error;
+  console.log(error.failure.code, error.failure.details);
 }
 ```
 
