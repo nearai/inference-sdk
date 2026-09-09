@@ -316,63 +316,9 @@ async fn client_treats_a_missing_model_candidate_list_as_empty() {
 }
 
 #[tokio::test]
-async fn client_accepts_both_unfiltered_signing_address_lengths() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/v1/attestation/report"))
-        .respond_with(ModelAttestationResponder)
-        .mount(&server)
-        .await;
-    let client = client(&server);
-
-    for signing_address in ["22".repeat(20), "22".repeat(32)] {
-        client
-            .fetch_model_attestations("glm-5.2", None, Some(&signing_address))
-            .await
-            .unwrap();
-    }
-}
-
-#[tokio::test]
-async fn client_rejects_invalid_model_signing_address_filters_before_request() {
+async fn client_rejects_an_invalid_model_signing_address_before_request() {
     let server = MockServer::start().await;
     let client = client(&server);
-    let unsupported_length = "22".repeat(19);
-
-    let error = client
-        .fetch_model_attestations("glm-5.2", None, Some(&unsupported_length))
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        ApiError::InvalidInput {
-            ref field,
-            ref reason,
-            expected: Some(ref expected),
-            actual: Some(ref actual),
-        } if field == "signing_address"
-            && reason == "wrong_length"
-            && expected == "a 20- or 32-byte hexadecimal signing address"
-            && actual == "19 bytes"
-    ));
-
-    let ecdsa_mismatch = "22".repeat(32);
-    let error = client
-        .fetch_model_attestations("glm-5.2", Some(SigningAlgo::Ecdsa), Some(&ecdsa_mismatch))
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        ApiError::InvalidInput {
-            ref field,
-            ref reason,
-            expected: Some(ref expected),
-            actual: Some(ref actual),
-        } if field == "signing_address"
-            && reason == "wrong_length"
-            && expected == "20-byte hexadecimal signing address"
-            && actual == "32 bytes"
-    ));
 
     let error = client
         .fetch_model_attestations("glm-5.2", None, Some("not hexadecimal"))

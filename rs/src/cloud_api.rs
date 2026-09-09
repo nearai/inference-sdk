@@ -424,23 +424,16 @@ fn invalid_base_url() -> ApiError {
     )
 }
 
-fn require_signature_kind(
-    signature_kind: CompletionSignatureKind,
-    expected: CompletionSignatureKind,
-) -> Result<(), ApiError> {
-    if signature_kind != expected {
+fn require_provider_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
+    if signature.kind != CompletionSignatureKind::ProviderTee {
         return Err(invalid_api_input(
             "signature.kind",
             "unsupported_value",
-            Some(completion_signature_kind_name(expected).to_owned()),
-            Some(completion_signature_kind_name(signature_kind).to_owned()),
+            Some("provider_tee".to_owned()),
+            Some(completion_signature_kind_name(signature.kind).to_owned()),
         ));
     }
     Ok(())
-}
-
-fn require_provider_signature(signature: &CompletionSignature) -> Result<(), ApiError> {
-    require_signature_kind(signature.kind, CompletionSignatureKind::ProviderTee)
 }
 
 fn validate_input_signer(signer: &SigningIdentity, field: &str) -> Result<Vec<u8>, ApiError> {

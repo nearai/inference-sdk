@@ -75,7 +75,7 @@ an unavailable 2xx response. The error code is
 | --- | --- | --- | --- | --- |
 | `fetch_model_attestations` | `model` | `str` | Yes | Canonical target model ID. Use before sending its completion. |
 |  | `signing_algo` | `SigningAlgo \| None` | No | Optional API request filter for the required signing algorithm. |
-|  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. |
+|  | `signing_address` | `str \| None` | No | Optional API request filter for the advertised signing address. It must be hexadecimal: 20 or 32 bytes without `signing_algo`, or the matching length when an algorithm is selected. Invalid input raises `ApiError` before a request. |
 | `fetch_model_attestation_for_signature` | `model` | `str` | Yes | Canonical model ID. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature. The method uses its signer as request filters and then performs local selection. This is a signature-driven convenience, not the deployment-first workflow. |
 
