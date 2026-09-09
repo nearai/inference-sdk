@@ -14,6 +14,20 @@ type ApiResource =
  */
 export type ApiFailure =
   | {
+      /** A value supplied to a Cloud API helper is not usable for that call. */
+      code: 'api.invalid_input';
+      details: {
+        field: string;
+        reason:
+          | 'invalid_url'
+          | 'invalid_hex'
+          | 'wrong_length'
+          | 'unsupported_value';
+        expected?: string;
+        actual?: string;
+      };
+    }
+  | {
       code: 'api.transport_failed';
       details: {
         resource: ApiResource;
@@ -369,6 +383,8 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'api.invalid_input':
+      return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':
       return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':

@@ -145,7 +145,7 @@ describe('AttestationClient', () => {
       ).toThrow(
         expect.objectContaining({
           failure: expect.objectContaining({
-            code: 'input.invalid',
+            code: 'api.invalid_input',
             details: expect.objectContaining({
               field: 'baseUrl',
               reason: 'invalid_url',
@@ -219,6 +219,32 @@ describe('AttestationClient', () => {
         clientBinding: { nonce: fetched.attestation.nonce },
         attestation: { signer: signature.signer },
       });
+    });
+
+    test('rejects a non-model signature before requesting model evidence', async () => {
+      const api = cloudFor(() => {
+        throw new Error('The client must reject this before making a request');
+      });
+
+      await expect(
+        api.client.fetchModelAttestationForSignature({
+          model: 'canonical-model',
+          signature: gatewaySignature(),
+        }),
+      ).rejects.toEqual(
+        expect.objectContaining({
+          name: 'ApiError',
+          failure: {
+            code: 'api.invalid_input',
+            details: {
+              field: 'signature.kind',
+              reason: 'unsupported_value',
+              expected: 'provider_tee',
+              actual: 'gateway',
+            },
+          },
+        }),
+      );
     });
 
     test('matches signer encodings by bytes', () => {
@@ -413,14 +439,41 @@ describe('AttestationClient', () => {
         attestations: [modelAttestation()],
         signature: gatewaySignature(),
         failure: {
-          code: 'signature.kind_mismatch',
-          details: { expected: 'provider_tee', actual: 'gateway' },
+          code: 'api.invalid_input',
+          details: {
+            field: 'signature.kind',
+            reason: 'unsupported_value',
+            expected: 'provider_tee',
+            actual: 'gateway',
+          },
         },
       },
     ])('rejects $label', ({ attestations, signature, failure }) => {
       expect(() =>
         findModelAttestationForSignature({ attestations, signature }),
       ).toThrow(expect.objectContaining({ failure }));
+    });
+
+    test('reports malformed manually supplied signers as an API helper input error', () => {
+      const signature = modelSignature('not hexadecimal');
+
+      expect(() =>
+        findModelAttestationForSignature({
+          attestations: [modelAttestation()],
+          signature,
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          name: 'ApiError',
+          failure: expect.objectContaining({
+            code: 'api.invalid_input',
+            details: expect.objectContaining({
+              field: 'signature.signer.signingAddress',
+              reason: 'invalid_hex',
+            }),
+          }),
+        }),
+      );
     });
   });
 

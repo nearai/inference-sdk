@@ -208,23 +208,18 @@ unavailable result is `api.completion_signature_unavailable` and includes
 reaches its terminal state can later succeed, although an unknown ID can also
 produce 404.
 
-Cloud request methods can also throw `ApiError` for transport, response-format,
-nonce, or attestation-selection failures. Verification functions and local
-input or signature-contract checks throw `VerificationError`.
+`AttestationClient` and `findModelAttestationForSignature` throw `ApiError`
+for caller input, transport, response-format, nonce, or attestation-selection
+failures. `VerificationError` is reserved for explicit `verify…` calls.
 
 ```ts
-import {
-  isApiError,
-  isVerificationError,
-} from 'verifiable-ai-sdk';
+import { isApiError } from 'verifiable-ai-sdk';
 
 try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
   if (isApiError(error)) {
     console.log(error.failure.code, error.failure.details);
-  } else if (isVerificationError(error)) {
-    console.log(error.failure.code);
   } else {
     throw error;
   }

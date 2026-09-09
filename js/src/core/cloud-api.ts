@@ -1,5 +1,10 @@
-import type { ModelAttestation } from '../types/attestation-model';
+import {
+  decodeCompletionSignature,
+  decodeGatewayAttestationReport,
+  decodeModelAttestationReport,
+} from '../boundaries/cloud-api';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
+import type { ModelAttestation } from '../types/attestation-model';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
@@ -15,18 +20,8 @@ import type {
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
 } from '../types/cloud-api';
-import {
-  decodeCompletionSignature,
-  decodeGatewayAttestationReport,
-  decodeModelAttestationReport,
-} from '../boundaries/cloud-api';
 import { generateNonce, hexToBuffer } from '../utils/common';
-import {
-  ApiError,
-  type ApiFailure,
-  inputError,
-  VerificationError,
-} from '../utils/errors';
+import { ApiError, type ApiFailure } from '../utils/errors';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -70,6 +65,10 @@ type CreateCloudApiRequestParams = {
 type ReadCloudApiJsonParams = {
   readonly response: Response;
   readonly resource: ApiResource;
+};
+type DecodeApiHexParams = {
+  readonly value: string;
+  readonly field: string;
 };
 
 /**
@@ -140,6 +139,11 @@ export class CloudApiClient {
     model,
     signature,
   }: FetchModelAttestationForSignatureParams): Promise<FetchedModelAttestation> {
+    requireProviderSignature(signature);
+    decodeApiHex({
+      value: signature.signer.signingAddress,
+      field: 'signature.signer.signingAddress',
+    });
     const fetched = await this.fetchModelAttestations({
       model,
       signingAlgo: signature.signer.signingAlgo,
@@ -365,7 +369,7 @@ export function findModelAttestationForSignature({
   attestations,
   signature,
 }: FindModelAttestationForSignatureParams): ModelAttestation {
-  assertSignatureKind(signature, 'provider_tee');
+  requireProviderSignature(signature);
   return findModelAttestationForSigner(attestations, signature.signer);
 }
 
@@ -373,14 +377,19 @@ function findModelAttestationForSigner(
   attestations: readonly ModelAttestation[],
   signer: SigningIdentity,
 ): ModelAttestation {
+  const signerAddress = decodeApiHex({
+    value: signer.signingAddress,
+    field: 'signature.signer.signingAddress',
+  });
   const matches: ModelAttestation[] = [];
-  for (const attestation of attestations) {
+  for (const [index, attestation] of attestations.entries()) {
     const candidateSigner = attestation.signer;
     if (
       candidateSigner.signingAlgo === signer.signingAlgo &&
-      hexToBuffer(candidateSigner.signingAddress).equals(
-        hexToBuffer(signer.signingAddress),
-      )
+      decodeApiHex({
+        value: candidateSigner.signingAddress,
+        field: `attestations[${index}].signer.signingAddress`,
+      }).equals(signerAddress)
     ) {
       matches.push(attestation);
     }
@@ -403,15 +412,40 @@ function findModelAttestationForSigner(
   return matches[0];
 }
 
-function assertSignatureKind(
+function requireProviderSignature(
   signature: CompletionSignatureReference,
-  expectedKind: CompletionSignatureReference['kind'],
 ): void {
-  if (signature.kind !== expectedKind) {
-    throw new VerificationError({
-      code: 'signature.kind_mismatch',
-      details: { expected: expectedKind, actual: signature.kind },
+  if (signature.kind !== 'provider_tee') {
+    throw new ApiError({
+      code: 'api.invalid_input',
+      details: {
+        field: 'signature.kind',
+        reason: 'unsupported_value',
+        expected: 'provider_tee',
+        actual: signature.kind,
+      },
     });
+  }
+}
+
+function decodeApiHex({
+  value,
+  field,
+}: DecodeApiHexParams): ReturnType<typeof hexToBuffer> {
+  try {
+    return hexToBuffer(value);
+  } catch (cause) {
+    throw new ApiError(
+      {
+        code: 'api.invalid_input',
+        details: {
+          field,
+          reason: 'invalid_hex',
+          expected: 'hexadecimal text',
+        },
+      },
+      { cause },
+    );
   }
 }
 
@@ -437,11 +471,14 @@ function resolveCloudApiBaseUrl(
   return resolvedBaseUrl.toString();
 }
 
-function invalidBaseUrl(): VerificationError {
-  return inputError({
-    field: 'baseUrl',
-    reason: 'invalid_url',
-    details: { expected: 'an absolute HTTP(S) URL' },
+function invalidBaseUrl(): ApiError {
+  return new ApiError({
+    code: 'api.invalid_input',
+    details: {
+      field: 'baseUrl',
+      reason: 'invalid_url',
+      expected: 'an absolute HTTP(S) URL',
+    },
   });
 }
 
@@ -467,7 +504,12 @@ function requireMatchingApiNonce({
   requestedNonce,
   resource,
 }: RequireMatchingApiNonceParams): void {
-  if (hexToBuffer(reportedNonce).equals(hexToBuffer(requestedNonce))) {
+  if (
+    decodeApiHex({
+      value: reportedNonce,
+      field: `${resource}.request_nonce`,
+    }).equals(decodeApiHex({ value: requestedNonce, field: 'nonce' }))
+  ) {
     return;
   }
   throw new ApiError({

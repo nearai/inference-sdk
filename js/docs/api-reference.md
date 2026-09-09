@@ -33,7 +33,9 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 
 `AttestationClient` owns Cloud API configuration. Construct it once, then use
 its methods to retrieve signatures and evidence. It does not send completion
-requests or retain their request or response bytes.
+requests or retain their request or response bytes. Its methods, and
+`findModelAttestationForSignature`, throw `ApiError`; verification begins only
+when an explicit `verify…` function is called.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
