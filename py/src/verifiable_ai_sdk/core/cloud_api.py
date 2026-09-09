@@ -227,7 +227,7 @@ async def _get_cloud_api_json(
     capture_peer_spki: bool = False,
     extra_headers: Mapping[str, str] | None = None,
 ) -> _CloudApiJsonResponse:
-    headers = {'authorization': f'Bearer {api_key}'}
+    headers = {'authorization': _authorization_header(api_key)}
     if extra_headers is not None:
         headers.update(extra_headers)
     try:
@@ -259,6 +259,17 @@ async def _get_cloud_api_json(
         json=json_body,
         peer_spki_fingerprint=response.peer_spki_fingerprint,
     )
+
+
+def _authorization_header(api_key: str) -> str:
+    value = f'Bearer {api_key}'
+    if any(byte != 0x09 and (byte < 0x20 or byte == 0x7F) for byte in value.encode()):
+        raise _invalid_input(
+            'api_key',
+            'invalid_header_value',
+            expected='an HTTP header value',
+        )
+    return value
 
 
 def _decode_model_attestation_report(value: object) -> tuple[ModelAttestation, ...]:

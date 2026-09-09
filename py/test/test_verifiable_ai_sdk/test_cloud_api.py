@@ -52,6 +52,31 @@ def test_client_rejects_invalid_base_urls_at_construction(base_url: str) -> None
     assert raised.value.retryable is False
 
 
+async def test_client_rejects_an_invalid_api_key_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests = 0
+
+    async def fake_fetch(*_: object, **__: object) -> FetchResponse:
+        nonlocal requests
+        requests += 1
+        raise AssertionError('invalid helper input must not make a request')
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fake_fetch)
+    client = AttestationClient('invalid\nheader', base_url=BASE_URL)
+
+    with pytest.raises(ApiError) as raised:
+        await client.fetch_completion_signature('completion-id')
+
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert raised.value.failure.details == {
+        'field': 'api_key',
+        'reason': 'invalid_header_value',
+        'expected': 'an HTTP header value',
+    }
+    assert requests == 0
+
+
 def use_fake_cloud_api_fetch(
     monkeypatch: pytest.MonkeyPatch,
     responder: CloudApiResponder,
