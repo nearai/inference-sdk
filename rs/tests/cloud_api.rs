@@ -36,6 +36,40 @@ impl Respond for ModelAttestationResponder {
 }
 
 #[derive(Clone)]
+struct ModelAttestationsResponder {
+    signing_addresses: Vec<String>,
+}
+
+impl Respond for ModelAttestationsResponder {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let nonce = request
+            .url
+            .query_pairs()
+            .find(|(key, _)| key == "nonce")
+            .map(|(_, value)| value.into_owned())
+            .expect("request contains a nonce");
+        let model_attestations = self
+            .signing_addresses
+            .iter()
+            .map(|signing_address| {
+                json!({
+                    "request_nonce": nonce,
+                    "signing_algo": "ecdsa",
+                    "signing_address": signing_address,
+                    "intel_quote": "aa",
+                    "event_log": [],
+                    "info": {"tcb_info": {"app_compose": "{}"}},
+                    "nvidia_payload": null,
+                })
+            })
+            .collect::<Vec<_>>();
+        ResponseTemplate::new(200).set_body_json(json!({
+            "model_attestations": model_attestations,
+        }))
+    }
+}
+
+#[derive(Clone)]
 struct GatewayAttestationResponder;
 
 impl Respond for GatewayAttestationResponder {
@@ -296,7 +330,7 @@ async fn client_rejects_an_invalid_api_key_as_api_input() {
 }
 
 #[tokio::test]
-async fn client_treats_a_missing_model_candidate_list_as_empty() {
+async fn client_preserves_a_missing_model_candidate_list_as_empty() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
@@ -304,15 +338,12 @@ async fn client_treats_a_missing_model_candidate_list_as_empty() {
         .mount(&server)
         .await;
 
-    let error = client(&server)
+    let fetched = client(&server)
         .fetch_model_attestations("glm-5.2", None, None)
         .await
-        .unwrap_err();
+        .unwrap();
 
-    assert!(matches!(
-        error,
-        ApiError::UnexpectedModelAttestationCount { actual_count: 0 }
-    ));
+    assert!(fetched.attestations.is_empty());
 }
 
 #[tokio::test]
@@ -364,6 +395,41 @@ async fn client_fetches_model_attestations_with_a_fresh_nonce() {
 }
 
 #[tokio::test]
+async fn client_preserves_every_model_attestation_candidate() {
+    let server = MockServer::start().await;
+    let signing_addresses = vec!["22".repeat(20), "33".repeat(20)];
+    Mock::given(method("GET"))
+        .and(path("/v1/attestation/report"))
+        .respond_with(ModelAttestationsResponder {
+            signing_addresses: signing_addresses.clone(),
+        })
+        .mount(&server)
+        .await;
+
+    let fetched = client(&server)
+        .fetch_model_attestations("glm-5.2", None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(fetched.attestations.len(), signing_addresses.len());
+    assert_eq!(
+        fetched
+            .attestations
+            .iter()
+            .map(|attestation| attestation.evidence.signer.signing_address.as_str())
+            .collect::<Vec<_>>(),
+        signing_addresses
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+    );
+    assert!(fetched
+        .attestations
+        .iter()
+        .all(|attestation| attestation.evidence.nonce == fetched.client_binding.nonce));
+}
+
+#[tokio::test]
 async fn client_fetches_model_attestation_for_a_provider_signature() {
     let server = MockServer::start().await;
     let signing_address = "22".repeat(20);
@@ -372,7 +438,9 @@ async fn client_fetches_model_attestation_for_a_provider_signature() {
         .and(query_param("model", "glm-5.2"))
         .and(query_param("signing_algo", "ecdsa"))
         .and(query_param("signing_address", signing_address.clone()))
-        .respond_with(ModelAttestationResponder)
+        .respond_with(ModelAttestationsResponder {
+            signing_addresses: vec!["33".repeat(20), signing_address.clone()],
+        })
         .mount(&server)
         .await;
     let signature = signature_for_evidence_selection(

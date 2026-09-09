@@ -11,12 +11,14 @@ Treat deployment verification and response verification as separate stages.
 
 | Stage | SDK calls | What it establishes |
 | --- | --- | --- |
-| Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway and model deployments each satisfy their quote, policy, measurement, and signer checks; Gateway verification includes TLS peer binding by default. |
+| Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway and every returned model deployment satisfy their quote, policy, measurement, and signer checks; Gateway verification includes TLS peer binding by default. |
 | Send chat | Your HTTP client | A request naming the canonical model ID used during preflight. Retain the exact request and response bytes. |
 | Verify the completion receipt | `fetch_completion_signature` → response verifier selected by `signature.kind` | The exact bytes were signed by the corresponding verified signer. |
 
-Complete both deployment checks before sending chat. Retain their verified
-results for the final stage rather than fetching new attestations after the completion.
+Complete both deployment checks before sending chat. Cloud API may return zero
+or more model-attestation candidates: reject an empty preflight and verify every
+returned candidate. Retain their verified results for the final stage rather
+than fetching new attestations after the completion.
 Use a canonical model ID and send `x-no-aliasing: true` with the completion
 request so the preflight model and request name the same deployment.
 
@@ -31,17 +33,23 @@ calls, but omitting the algorithm is not suitable for this three-stage flow.
 ```rust,no_run
 use verifiable_ai_sdk::{
     verify_gateway_attestation, verify_model_attestation, AttestationClient,
-    GatewayAttestationFetchOptions, SigningAlgo,
+    GatewayAttestationFetchOptions, ModelAttestation, SigningAlgo,
+    VerifiedGatewayAttestation, VerifiedModelAttestation,
 };
 
 const MODEL: &str = "z-ai/glm-5.2";
+
+struct VerifiedModelDeployments {
+    attestations: Vec<ModelAttestation>,
+    verified: Vec<VerifiedModelAttestation>,
+}
 
 async fn verify_deployments(
     client: &AttestationClient,
 ) -> Result<
     (
-        verifiable_ai_sdk::VerifiedGatewayAttestation,
-        verifiable_ai_sdk::VerifiedModelAttestation,
+        VerifiedGatewayAttestation,
+        VerifiedModelDeployments,
     ),
     Box<dyn std::error::Error>,
 > {
@@ -62,20 +70,30 @@ async fn verify_deployments(
     let fetched_models = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
-    // The current client contract requires exactly one model candidate.
-    let model_attestation = fetched_models
-        .attestations
-        .first()
-        .expect("fetch_model_attestations returned one candidate");
-    let verified_model = verify_model_attestation(
-        model_attestation,
-        &fetched_models.client_binding,
-        None,
-        Default::default(),
-    )
-    .await?;
+    if fetched_models.attestations.is_empty() {
+        return Err(std::io::Error::other("Cloud API returned no model attestations").into());
+    }
 
-    Ok((verified_gateway, verified_model))
+    let mut verified = Vec::with_capacity(fetched_models.attestations.len());
+    for attestation in &fetched_models.attestations {
+        verified.push(
+            verify_model_attestation(
+                attestation,
+                &fetched_models.client_binding,
+                None,
+                Default::default(),
+            )
+            .await?,
+        );
+    }
+
+    Ok((
+        verified_gateway,
+        VerifiedModelDeployments {
+            attestations: fetched_models.attestations,
+            verified,
+        },
+    ))
 }
 ```
 
@@ -103,7 +121,8 @@ of this stage that depends on `signature.kind` is the response verifier:
 
 ```rust,no_run
 use verifiable_ai_sdk::{
-    verify_gateway_response, verify_model_response, AttestationClient,
+    find_model_attestation_for_signature, verify_gateway_response,
+    verify_model_response, AttestationClient, CompletionSignature,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
@@ -114,7 +133,7 @@ async fn verify_completion_receipt(
     request_body: &[u8],
     response_body: &[u8],
     gateway: &VerifiedGatewayAttestation,
-    model: &VerifiedModelAttestation,
+    models: &VerifiedModelDeployments,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signature = client
         .fetch_completion_signature(completion_id, Some(SigningAlgo::Ecdsa))
@@ -122,6 +141,7 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
+            let model = select_verified_model_attestation(models, &signature)?;
             verify_model_response(request_body, response_body, &signature, model)?;
         }
         CompletionSignatureKind::Gateway => {
@@ -130,10 +150,29 @@ async fn verify_completion_receipt(
     }
     Ok(())
 }
+
+fn select_verified_model_attestation<'a>(
+    deployments: &'a VerifiedModelDeployments,
+    signature: &CompletionSignature,
+) -> Result<&'a VerifiedModelAttestation, Box<dyn std::error::Error>> {
+    let selected = find_model_attestation_for_signature(&deployments.attestations, signature)?;
+    deployments
+        .attestations
+        .iter()
+        .zip(&deployments.verified)
+        .find(|(attestation, _)| attestation.evidence.signer == selected.evidence.signer)
+        .map(|(_, verified)| verified)
+        .ok_or_else(|| {
+            std::io::Error::other("The selected model attestation was not verified during preflight")
+                .into()
+        })
+}
 ```
 
-`ProviderTee` proves that the preflight-verified model signer signed the exact
-request and response bytes. `Gateway` proves that the preflight-verified
+`ProviderTee` proves that one preflight-verified model signer signed the exact
+request and response bytes. Use `find_model_attestation_for_signature` to
+require exactly one raw preflight candidate for that signer, then use its
+paired verified result. `Gateway` proves that the preflight-verified
 Gateway signer signed the exact client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's

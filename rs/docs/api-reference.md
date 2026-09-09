@@ -44,8 +44,8 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 | Method | Parameters after `&self` | Returns | Description |
 | --- | --- | --- | --- |
 | `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `ApiError::CompletionSignatureUnavailable { .. }`, preserving the service's code and message. |
-| `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches model deployment evidence for a canonical model ID. The filters only narrow the API response; it currently requires exactly one candidate. |
-| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Post-completion recovery convenience for a `ProviderTee` receipt: applies its signer as API filters and selects the matching candidate locally. It does not verify evidence and is not the deployment-first workflow. |
+| `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches every model deployment candidate returned for a canonical model ID, including an empty list. The filters only narrow the API response. |
+| `fetch_model_attestation_for_signature` | `model: &str`, `signature: &CompletionSignature` | `FetchedModelAttestation` | Post-completion recovery convenience for a `ProviderTee` receipt: applies its signer as API filters and selects exactly one matching candidate locally. It does not verify evidence and is not the deployment-first workflow. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
 
 `signing_algo` and `signing_address` only narrow the Cloud API response. They
@@ -90,7 +90,7 @@ attestation verifier.
 
 | Type | Field | Description |
 | --- | --- | --- |
-| `FetchedModelAttestations` | `attestations` | Returned `Vec<ModelAttestation>`. The current client method requires exactly one item. |
+| `FetchedModelAttestations` | `attestations` | Every returned `ModelAttestation` candidate, possibly empty. Verify each item during a deployment preflight. |
 |  | `client_binding` | `ModelClientBinding` returned with these attestations. |
 | `FetchedModelAttestation` | `attestation` | Candidate selected for the supplied `ProviderTee` signer. |
 |  | `client_binding` | `ModelClientBinding` returned with the selected attestation. |

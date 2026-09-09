@@ -71,9 +71,9 @@ impl AttestationClient {
     /// Fetch model attestations for a canonical NEAR model ID.
     ///
     /// The result preserves Cloud API's `model_attestations` array and has a
-    /// fresh nonce in its client binding. The current API contract requires
-    /// exactly one returned candidate. The optional signer fields only narrow
-    /// the API response; local selection still matches the evidence signer.
+    /// fresh nonce in its client binding. The optional signer fields only
+    /// narrow the API response; local selection still matches the evidence
+    /// signer.
     pub async fn fetch_model_attestations(
         &self,
         model: &str,
@@ -111,11 +111,6 @@ impl AttestationClient {
             ApiResource::ModelAttestation,
             "model_attestations",
         )?;
-        if response.model_attestations.len() != 1 {
-            return Err(ApiError::UnexpectedModelAttestationCount {
-                actual_count: response.model_attestations.len(),
-            });
-        }
         let attestations = response
             .model_attestations
             .into_iter()

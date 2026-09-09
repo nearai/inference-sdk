@@ -70,9 +70,6 @@ pub enum ApiError {
     #[error("{resource} response nonce does not match the request")]
     NonceMismatch { resource: ApiResource },
 
-    #[error("Cloud API returned {actual_count} model attestations; expected exactly one")]
-    UnexpectedModelAttestationCount { actual_count: usize },
-
     #[error("Cloud API returned no model attestation for the requested signer")]
     ModelAttestationSignerNotFound,
 
@@ -103,9 +100,6 @@ impl ApiError {
             Self::InvalidJson { .. } => "api.invalid_json",
             Self::InvalidResponse { .. } => "api.invalid_response",
             Self::NonceMismatch { .. } => "api.nonce_mismatch",
-            Self::UnexpectedModelAttestationCount { .. } => {
-                "api.unexpected_model_attestation_count"
-            }
             Self::ModelAttestationSignerNotFound => "api.model_attestation_signer_not_found",
             Self::AmbiguousModelAttestationSigner { .. } => {
                 "api.ambiguous_model_attestation_signer"
