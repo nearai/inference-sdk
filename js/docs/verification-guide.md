@@ -3,15 +3,15 @@
 Use `NearAiSecureClient` when the device should verify fresh deployment
 evidence and encrypt supported Chat Completions fields directly to a verified
 NEAR model key. Use `AttestationClient` plus the standalone verification
-functions when your application owns the request bytes or wants an
-asynchronous receipt audit.
+functions when your application owns the transport or needs to control each
+verification step itself.
 
 ## Send an E2EE chat completion
 
 `NearAiSecureClient` uses the official OpenAI request and response types. Its
 E2EE runtime transforms the fields covered by the protocol and forwards the
-rest to the Gateway. The configured `model` is canonical and every request
-must use that same ID.
+rest to the Gateway. Each Chat request names its model; before dispatch, the
+client verifies fresh evidence for that model and the Gateway.
 
 This direct-Gateway example is for a server-side API key. For a browser
 integration, use the aggregator configuration below with a browser-scoped
@@ -23,11 +23,7 @@ import { NearAiSecureClient } from 'verifiable-ai-sdk';
 const model = 'z-ai/glm-5.2';
 const client = new NearAiSecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
-  model,
 });
-
-// Optional: inspect one fresh verification result.
-await client.verify();
 
 const completion = await client.chat.completions.create({
   model,
@@ -37,12 +33,11 @@ const completion = await client.chat.completions.create({
 console.log(completion.choices[0].message.content);
 ```
 
-Calling `verify()` performs one fresh Gateway/model deployment verification
-without sending a Chat request. It does not cache a completed result. Each
-valid chat request starts or joins a fresh verification before dispatch. The
-client verifies every returned model candidate, then selects a verified Ed25519
-model key and sends that key in `X-Model-Pub-Key` so the Gateway routes the Chat
-request to a compatible model path.
+Each valid Chat request starts or joins a fresh verification for its `model`
+before dispatch. The client verifies every returned model candidate, then
+selects a verified Ed25519 model key and sends that key in `X-Model-Pub-Key` so
+the Gateway routes the Chat request to a compatible model path. Completed
+evidence is never cached.
 
 The key comes from `signing_public_key`. For the Ed25519 E2EE flow, the SDK
 requires it to match the signer already bound by the verified quote; it does
@@ -58,9 +53,12 @@ approve.
 ```ts
 const client = new NearAiSecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
-  model: 'z-ai/glm-5.2',
-  deploymentPolicy: ({ deployment }) => {
-    if (deployment.runtimeMeasurements.composeHash !== EXPECTED_COMPOSE_HASH) {
+  deploymentPolicy: ({ model, deployment }) => {
+    const expected = EXPECTED_COMPOSE_HASHES[model];
+    if (
+      expected === undefined ||
+      deployment.runtimeMeasurements.composeHash !== expected
+    ) {
       throw new Error('Unapproved model deployment');
     }
   },
@@ -69,9 +67,9 @@ const client = new NearAiSecureClient({
 
 Without a policy or `modelVerification.verifiers.deployment`, the SDK still
 verifies the quote, nonce, event log, measurements, and available GPU evidence.
-`session.modelDeploymentProvenance` is then `not_checked`, rather than
-claiming that a release is approved. A future published NEAR AI release policy
-can become the default without changing this calling pattern.
+It does not claim that a deployment is release-approved. A future published
+NEAR AI release policy can become the default without changing this calling
+pattern.
 
 ## Use an aggregator
 
@@ -84,7 +82,6 @@ verification and encrypts message fields before the aggregator receives them.
 const client = new NearAiSecureClient({
   baseUrl: 'https://api.example.com/v1',
   bearerToken: '<browser-scoped token>',
-  model: 'z-ai/glm-5.2',
 });
 ```
 
@@ -122,8 +119,9 @@ fields; it does not encrypt arbitrary request JSON.
 Each non-empty protocol-covered encrypted response field must pass its
 XChaCha20-Poly1305 AEAD integrity check before the client decrypts it. This
 checks the encrypted field within the E2EE protocol; it does not establish that
-a particular Gateway or model signer produced the response. The chat call does
-not fetch or verify a completion receipt before returning its decrypted result.
+a particular Gateway or model signer produced the response. Ordinary
+`chat.completions.create()` does not fetch or verify a completion receipt before
+returning its decrypted result.
 Field-level AEAD integrity checking is necessary before plaintext can be
 displayed; receipt verification is a separate byte-level check. A receipt cannot
 prevent a request that has already been sent, and waiting for one would
@@ -159,7 +157,6 @@ Gateway/model verification and runs `deploymentPolicy`.
 ```ts
 const client = new NearAiSecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
-  model: 'z-ai/glm-5.2',
   e2ee: false,
 });
 ```
@@ -171,12 +168,62 @@ supported by the secure client, even in plaintext mode. A successful deployment
 check does not prove that these particular request and response bytes were
 signed by an attested Gateway or model.
 
-If your application needs that byte-level claim, retain the exact body bytes
-sent and received and verify a separate completion receipt asynchronously. The
-byte-preservation requirement means `NearAiSecureClient` is not the right
-surface for that workflow; use the low-level APIs below.
+## Verify a response receipt
 
-## Advanced: verify deployments and a response receipt yourself
+Use `createWithReceipt()` when the application also needs to verify the exact
+Chat request and response bodies. It preserves the Fetch entity-body bytes
+before E2EE decryption, so the rendered completion can remain on the normal UI
+path while receipt verification happens later.
+
+```ts
+const { completion, receipt } =
+  await client.chat.completions.createWithReceipt({
+    model,
+    messages: [{ role: 'user', content: 'Hello' }],
+  });
+
+render(completion.choices[0]?.message.content);
+
+const verified = await receipt.verify();
+console.log(verified.signatureKind);
+```
+
+`receipt.requestBody` is immediately available. `receipt.responseBody` resolves
+to the exact response bytes after the response finishes; for E2EE, both are the
+encrypted bytes, not reconstructed plaintext JSON. Do not parse and reserialize
+either body. `receipt.verify()` waits for those bytes, retrieves the Ed25519
+completion signature, and selects the matching evidence from the fresh
+verification that preceded this Chat request.
+
+For `fetchWithReceipt()`, consume the returned `Response` body before calling
+`receipt.verify()`. For a stream, consume or drain the returned stream first.
+Until then, the receipt cannot have the complete response bytes.
+Receipt mode retains the complete request and response bodies in memory, so use
+it for bounded responses rather than unbounded streams.
+
+For a stream, the receipt is also available immediately and does not delay
+chunk rendering:
+
+```ts
+const { stream, receipt } = await client.chat.completions.createWithReceipt({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  renderIncrementally(chunk);
+}
+
+const verified = await receipt.verify();
+```
+
+`provider_tee` means the matching verified model signer signed these bytes.
+`gateway` means the verified Gateway signer signed the client-visible bytes.
+They establish different trust boundaries: a Gateway receipt does not by itself
+show which model produced the response.
+
+## Advanced: own the transport and verification steps
 
 The manual flow has distinct stages:
 

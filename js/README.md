@@ -6,7 +6,8 @@ model deployments that expose a quote-bound Ed25519 public key.
 
 The package has two layers:
 
-- `NearAiSecureClient` exposes the familiar OpenAI Chat Completions shape;
+- `NearAiSecureClient` exposes the familiar OpenAI Chat Completions shape,
+  including `createWithReceipt()` for an asynchronous response audit;
   `SecureClient` exposes the same deployment-checked request path as `fetch`.
 - `AttestationClient` and the standalone `verify…` functions let applications
   fetch, inspect, and verify evidence or completion receipts themselves.
@@ -14,13 +15,10 @@ The package has two layers:
 ## Secure Chat Completions
 
 Each valid `SecureClient.fetch()` call starts or joins a fresh Gateway/model
-verification before it sends the Chat request. It also runs any caller-supplied
-deployment policy. Completed evidence is never cached. If verification or
-policy approval fails, no inference request is sent.
-
-`verify()` runs the same Gateway/model verification once without sending a Chat
-request. It returns the verified session and never caches a completed result;
-a later `fetch()` starts or joins a new verification.
+verification for the `model` named in that Chat request before it sends it. It
+also runs any caller-supplied deployment policy with that model. Completed
+evidence is never cached. If verification or policy approval fails, no
+inference request is sent.
 
 E2EE is enabled by default:
 
@@ -50,12 +48,12 @@ checks its XChaCha20-Poly1305 AEAD tag. This field-level integrity check is not 
 completion receipt and does not establish that a particular Gateway or model
 signer produced the response.
 
-The secure clients do not fetch a completion receipt on the request path. A
-successful deployment check—whether E2EE is enabled or not—does not provide a
-separately signed, byte-exact response receipt. Retain exact body bytes and
-verify a separate receipt when an asynchronous byte-level audit is needed. A
-receipt cannot prevent an already-sent request and should not delay a
-user-visible response.
+Ordinary `create()` and `fetch()` calls do not fetch a completion receipt on the
+request path. Use `createWithReceipt()` or `fetchWithReceipt()` when an
+asynchronous byte-level audit is needed. They preserve Fetch entity-body bytes
+before E2EE decryption; `receipt.verify()` later retrieves and verifies the
+matching completion signature without reissuing inference. A receipt cannot
+prevent an already-sent request and should not delay a user-visible response.
 
 ## Documentation
 

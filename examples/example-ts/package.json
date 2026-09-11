@@ -1,0 +1,21 @@
+{
+  "name": "example-ts",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "start:bare": "node bare.ts",
+    "start:client": "node client.ts"
+  },
+  "dependencies": {
+    "verifiable-ai-sdk": "link:../../js"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}

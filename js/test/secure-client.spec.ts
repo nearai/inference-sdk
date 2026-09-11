@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import ed2curve from 'ed2curve';
 import nacl from 'tweetnacl';
 import {
@@ -12,6 +13,7 @@ import { appCompose, createGatewayTlsQuote } from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
 const model = 'glm-5.2';
+const secondModel = 'qwen-3.5';
 const bearerToken = 'aggregator-token';
 const eventLog = [
   {
@@ -32,6 +34,7 @@ type TestGatewayState = {
   completionRequests: number;
   gatewayAttestationRequests: number;
   modelAttestationRequests: number;
+  readonly modelAttestationModels: string[];
   readonly completionRequestsSeen: CompletionRequest[];
   readonly decryptedRequestContent: string[];
   readonly decryptedRequestReasoningContent: string[];
@@ -51,6 +54,10 @@ type TestGatewayState = {
 
 type TestGateway = {
   readonly fetch: typeof globalThis.fetch;
+  readonly createProviderSignature: (
+    requestBody: Uint8Array,
+    responseBody: Uint8Array,
+  ) => Record<string, string>;
   readonly quoteVerifier: (quote: string) => QuoteVerificationResult;
   readonly state: TestGatewayState;
 };
@@ -105,6 +112,10 @@ function keyHex(key: Uint8Array): string {
   return Buffer.from(key).toString('hex');
 }
 
+function hashBytes(value: Uint8Array): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
 function streamResponse(events: readonly string[]): Response {
   const encoder = new TextEncoder();
   let index = 0;
@@ -145,6 +156,7 @@ function createTestGateway({
     completionRequests: 0,
     gatewayAttestationRequests: 0,
     modelAttestationRequests: 0,
+    modelAttestationModels: [],
     completionRequestsSeen: [],
     decryptedRequestContent: [],
     decryptedRequestReasoningContent: [],
@@ -194,6 +206,7 @@ function createTestGateway({
       );
       if (url.searchParams.has('model')) {
         state.modelAttestationRequests += 1;
+        state.modelAttestationModels.push(url.searchParams.get('model') ?? '');
         return jsonResponse({
           model_attestations: [
             createAttestation(nonce, modelKeyPair, includeModelPublicKey),
@@ -477,12 +490,13 @@ function createTestGateway({
           },
         ],
       };
-      const firstEvent = `data: ${JSON.stringify(firstChunk)}\n\n`;
+      const firstEvent = `data: ${JSON.stringify(firstChunk)}\r\r`;
       return streamResponse([
         firstEvent.slice(0, 19),
         firstEvent.slice(19),
-        `data: ${JSON.stringify(secondChunk)}\n\n`,
-        'data: [DONE]\n\n',
+        `data: ${JSON.stringify(secondChunk)}\r\r`,
+        'data: [DONE]\r\r',
+        ': response complete\r\r',
       ]);
     }
 
@@ -552,6 +566,21 @@ function createTestGateway({
 
   return {
     fetch,
+    createProviderSignature(
+      requestBody: Uint8Array,
+      responseBody: Uint8Array,
+    ): Record<string, string> {
+      const text = `${model}:${hashBytes(requestBody)}:${hashBytes(responseBody)}`;
+      return {
+        text,
+        signature: keyHex(
+          nacl.sign.detached(Buffer.from(text), modelKeyPair.secretKey),
+        ),
+        signing_address: keyHex(modelKeyPair.publicKey),
+        signing_algo: 'ed25519',
+        signature_kind: 'provider_tee',
+      };
+    },
     quoteVerifier(quote: string): QuoteVerificationResult {
       const result = quotes.get(quote);
       if (result === undefined) {
@@ -567,7 +596,6 @@ function secureClientOptions(gateway: TestGateway): SecureClientOptions {
   return {
     baseUrl,
     bearerToken,
-    model,
     gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
     modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
   };
@@ -581,6 +609,47 @@ function chatRequest(body: Record<string, unknown>): RequestInit {
   };
 }
 
+function mockProviderReceipts(gateway: TestGateway): void {
+  const signatures = new Map<string, Promise<Record<string, string>>>();
+  jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.pathname.startsWith('/v1/signature/')) {
+      const completionId = url.pathname.slice('/v1/signature/'.length);
+      const signature = signatures.get(completionId);
+      if (signature === undefined) {
+        throw new Error(`No signature for ${completionId}`);
+      }
+      expect(url.searchParams.get('signing_algo')).toBe('ed25519');
+      return jsonResponse(await signature);
+    }
+    if (url.pathname !== '/v1/chat/completions') {
+      return gateway.fetch(request);
+    }
+
+    const requestBody = new Uint8Array(await request.clone().arrayBuffer());
+    const body = JSON.parse(new TextDecoder().decode(requestBody)) as {
+      stream?: boolean;
+    };
+    const completionId =
+      body.stream === true ? 'chatcmpl-stream' : 'chatcmpl-test';
+    const response = await gateway.fetch(request);
+    signatures.set(
+      completionId,
+      response
+        .clone()
+        .arrayBuffer()
+        .then((responseBody) =>
+          gateway.createProviderSignature(
+            requestBody,
+            new Uint8Array(responseBody),
+          ),
+        ),
+    );
+    return response;
+  });
+}
+
 function isChatCompletionRequest(input: RequestInfo | URL): boolean {
   const url = input instanceof Request ? input.url : input.toString();
   return new URL(url).pathname === '/v1/chat/completions';
@@ -591,64 +660,146 @@ describe('secure client', () => {
     jest.restoreAllMocks();
   });
 
-  test('verify performs one standalone attestation check', async () => {
-    const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
-
-    const session = await client.verify();
-
-    expect(session).toMatchObject({
-      model,
-      modelSigningPublicKey: expect.any(String),
-      modelDeploymentProvenance: 'not_checked',
-    });
-    expect(gateway.state).toMatchObject({
-      gatewayAttestationRequests: 1,
-      modelAttestationRequests: 1,
-      completionRequests: 0,
-    });
-  });
-
   test('accepts an API key for a direct Gateway connection', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new SecureClient({
       apiKey: bearerToken,
       baseUrl,
-      model,
       gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
       modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
     });
 
-    await client.verify();
-
-    expect(gateway.state).toMatchObject({
-      gatewayAttestationRequests: 1,
-      modelAttestationRequests: 1,
-      completionRequests: 0,
-    });
-  });
-
-  test('fetch obtains fresh evidence after a manual verify', async () => {
-    const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
-
-    await client.verify();
-    const response = await client.fetch(
+    await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
     );
 
-    await expect(response.json()).resolves.toMatchObject({
-      choices: [{ message: { content: 'hello client' } }],
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 1,
+      modelAttestationRequests: 1,
+      completionRequests: 1,
     });
+  });
+
+  test('fetch obtains fresh evidence for each request', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient(secureClientOptions(gateway));
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+    );
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
+    );
     expect(gateway.state).toMatchObject({
       gatewayAttestationRequests: 2,
       modelAttestationRequests: 2,
-      completionRequests: 1,
+      completionRequests: 2,
     });
+  });
+
+  test('verifies the requested model and passes it to the deployment policy', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const policyModels: string[] = [];
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      deploymentPolicy: ({ model: policyModel }) => {
+        policyModels.push(policyModel);
+      },
+    });
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'first model' }] }),
+    );
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({
+        model: secondModel,
+        messages: [{ role: 'user', content: 'second model' }],
+      }),
+    );
+
+    expect(gateway.state.modelAttestationModels).toEqual([model, secondModel]);
+    expect(policyModels).toEqual([model, secondModel]);
+  });
+
+  test('keeps concurrent verification separate for different models', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient(secureClientOptions(gateway));
+
+    await Promise.all([
+      client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'first model' }] }),
+      ),
+      client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({
+          model: secondModel,
+          messages: [{ role: 'user', content: 'second model' }],
+        }),
+      ),
+    ]);
+
+    expect(gateway.state.modelAttestationModels).toEqual(
+      expect.arrayContaining([model, secondModel]),
+    );
+    expect(gateway.state.modelAttestationRequests).toBe(2);
+  });
+
+  test('shares concurrent verification for the same model', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient(secureClientOptions(gateway));
+
+    await Promise.all([
+      client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'first request' }] }),
+      ),
+      client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({
+          messages: [{ role: 'user', content: 'second request' }],
+        }),
+      ),
+    ]);
+
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 1,
+      modelAttestationRequests: 1,
+      completionRequests: 2,
+    });
+  });
+
+  test('requires a model before it fetches attestation evidence', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient(secureClientOptions(gateway));
+
+    await expect(
+      client.fetch(`${baseUrl}chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: 'hello model' }],
+        }),
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'api.invalid_input',
+        details: { field: 'request body' },
+      },
+    });
+    expect(gateway.state.gatewayAttestationRequests).toBe(0);
+    expect(gateway.state.modelAttestationRequests).toBe(0);
   });
 
   test('blocks an E2EE request when model evidence has no signing public key', async () => {
@@ -777,6 +928,65 @@ describe('secure client', () => {
     }
 
     expect(content).toBe('hello client');
+  });
+
+  test('returns a non-streaming completion with verifiable entity bodies', async () => {
+    const gateway = createTestGateway();
+    mockProviderReceipts(gateway);
+    const client = new NearAiSecureClient(secureClientOptions(gateway));
+
+    const { completion, receipt } =
+      await client.chat.completions.createWithReceipt({
+        model,
+        messages: [{ role: 'user', content: 'hello model' }],
+      });
+
+    expect(completion.choices[0]?.message.content).toBe('hello client');
+    expect(new TextDecoder().decode(receipt.requestBody)).not.toContain(
+      'hello model',
+    );
+    expect(new TextDecoder().decode(await receipt.responseBody)).not.toContain(
+      'hello client',
+    );
+    await expect(receipt.verify()).resolves.toMatchObject({
+      completionId: 'chatcmpl-test',
+      signatureKind: 'provider_tee',
+    });
+  });
+
+  test('returns a streaming receipt before its entity body is complete', async () => {
+    const gateway = createTestGateway();
+    mockProviderReceipts(gateway);
+    const client = new NearAiSecureClient(secureClientOptions(gateway));
+
+    const { stream, receipt } = await client.chat.completions.createWithReceipt(
+      {
+        model,
+        messages: [{ role: 'user', content: 'hello model' }],
+        stream: true,
+      },
+    );
+    const responseBody = receipt.responseBody;
+    let responseBodyReady = false;
+    void responseBody.then(() => {
+      responseBodyReady = true;
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(responseBodyReady).toBe(false);
+
+    let content = '';
+    for await (const chunk of stream) {
+      content += chunk.choices[0]?.delta.content ?? '';
+    }
+
+    expect(content).toBe('hello client');
+    expect(new TextDecoder().decode(await responseBody)).toContain(
+      ': response complete',
+    );
+    await expect(receipt.verify()).resolves.toMatchObject({
+      completionId: 'chatcmpl-stream',
+      signatureKind: 'provider_tee',
+    });
   });
 
   test('supports a non-streaming OpenAI-compatible chat call', async () => {

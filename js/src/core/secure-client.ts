@@ -1,28 +1,39 @@
 import OpenAI from 'openai';
+import type { Stream } from 'openai/streaming';
 import * as v from 'valibot';
-import { ChatCompletionRequestSchema } from '../schemas';
+import {
+  ChatCompletionRequestSchema,
+  CompletionResponseIdSchema,
+} from '../schemas';
 import type {
   ModelAttestationVerifiers,
+  VerifiedGatewayAttestation,
   VerifiedModelAttestation,
 } from '../types/verification';
 import type {
-  ChatCompletionRequest,
+  CompletionReceipt,
   NearAiSecureClientOptions,
   SecureChat,
   SecureChatCompletionRequest,
   SecureChatCompletionResponse,
+  SecureChatCompletionStreamWithReceipt,
+  SecureChatCompletionWithReceipt,
+  SecureChatCompletions,
   SecureClientOptions,
-  VerifiedSecureSession,
+  SecureFetchWithReceipt,
+  VerifiedCompletionReceipt,
 } from '../types/secure-client';
 import { ApiError, VerificationError } from '../utils/errors';
 import {
   AttestationClient,
+  findModelAttestationForSignature,
   getAuthorizationToken,
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
 import { verifyGatewayAttestation } from './attestation-gateway';
 import { verifyModelAttestation } from './attestation-model';
+import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
   createE2eeChatSseTransform,
   decryptE2eeChatResponse,
@@ -32,17 +43,20 @@ import {
 import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
 
 type SecureSessionState = {
-  readonly session: VerifiedSecureSession;
+  readonly gatewayAttestation: VerifiedGatewayAttestation;
+  readonly modelAttestations: readonly VerifiedModelAttestation[];
   readonly modelSigningPublicKey: string;
 };
 
 type ParsedPlaintextRequest = {
   readonly e2ee: false;
+  readonly model: string;
   readonly request: Request;
 };
 
 type ParsedE2eeRequest = {
   readonly e2ee: true;
+  readonly model: string;
   readonly request: Request;
   readonly body: SecureChatCompletionRequest;
 };
@@ -73,12 +87,71 @@ type PreparePlaintextRequestParams = {
   readonly modelSigningPublicKey: string;
 };
 
+type SendSecureCompletionParams = {
+  readonly input: RequestInfo | URL;
+  readonly init?: RequestInit;
+  readonly captureReceipt: boolean;
+};
+
+type SendSecureCompletionWithReceiptParams = Omit<
+  SendSecureCompletionParams,
+  'captureReceipt'
+> & {
+  readonly captureReceipt: true;
+};
+
+type SendSecureCompletionWithoutReceiptParams = Omit<
+  SendSecureCompletionParams,
+  'captureReceipt'
+> & {
+  readonly captureReceipt: false;
+};
+
+type SentSecureCompletion = {
+  readonly response: Response;
+  readonly session: SecureSessionState;
+  readonly clientKeyPair?: E2eeClientKeyPair;
+};
+
+type CapturedSecureCompletion = SentSecureCompletion & {
+  readonly requestBody: Promise<Uint8Array>;
+  readonly responseBody: Promise<Uint8Array>;
+};
+
+type CapturedResponseEntityBody = {
+  readonly response: Response;
+  readonly responseBody: Promise<Uint8Array>;
+};
+
+type VerifyCapturedCompletionParams = {
+  readonly requestBody: Uint8Array;
+  readonly responseBody: Promise<Uint8Array>;
+  readonly session: SecureSessionState;
+  readonly contentType: string | null;
+};
+
+type ClearPendingVerificationParams = {
+  readonly model: string;
+  readonly verification: Promise<SecureSessionState>;
+};
+
+type CreateOpenAiClientParams = {
+  readonly authorizationToken: string;
+  readonly baseUrl: string;
+  readonly fetch: typeof globalThis.fetch;
+};
+
+type OpenAiChatCompletionCreateParamsBase = Parameters<
+  OpenAI.Chat.Completions['create']
+>[0];
+
 /**
  * A verified Chat Completions transport.
  *
- * Every `fetch()` call obtains and verifies fresh Gateway and model evidence
- * before dispatch. With the default `e2ee: true`, supported fields are then
- * encrypted to a quote-bound model key and integrity-checked on the way back.
+ * Every `fetch()` call reads its model from the Chat request, then obtains and
+ * verifies fresh Gateway and model evidence before dispatch. With the default
+ * `e2ee: true`, supported fields are then encrypted to a quote-bound model key
+ * and integrity-checked on the way back.
  * With `e2ee: false`, the same evidence and policy checks run, but the Chat
  * request and response remain plaintext while the request stays pinned to the
  * verified model key.
@@ -88,23 +161,19 @@ export class SecureClient {
   private readonly authorizationToken: string;
   private readonly baseUrl: string;
   private readonly e2eeEnabled: boolean;
-  private readonly model: string;
   private readonly options: SecureClientOptions;
-  /** Shares only an in-progress verification; completed evidence is never cached. */
-  private pendingVerification: Promise<SecureSessionState> | undefined;
+  /** Shares only same-model work already in progress; completed evidence is never cached. */
+  private readonly pendingVerifications = new Map<
+    string,
+    Promise<SecureSessionState>
+  >();
 
   constructor(options: SecureClientOptions) {
     this.attestationClient = new AttestationClient(options);
     this.authorizationToken = getAuthorizationToken(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.e2eeEnabled = options.e2ee !== false;
-    this.model = options.model;
     this.options = options;
-  }
-
-  /** Verify fresh Gateway and model evidence without sending a Chat Completions request. */
-  async verify(): Promise<VerifiedSecureSession> {
-    return (await this.startVerification()).session;
   }
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
@@ -119,60 +188,202 @@ export class SecureClient {
    * are accepted. Other API paths, including Responses, are rejected locally.
    */
   async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const parsed = await this.parseSecureRequest(input, init);
-    const session = await this.verify();
-    const modelSigningPublicKey = session.modelSigningPublicKey;
+    const completion = await this.sendSecureCompletion({
+      input,
+      init,
+      captureReceipt: false,
+    });
+    return this.toClientResponse(completion);
+  }
 
-    if (!parsed.e2ee) {
-      return this.sendCompletionRequest(
-        this.preparePlaintextRequest({
-          request: parsed.request,
-          modelSigningPublicKey,
-        }),
-      );
+  /**
+   * Send one verified Chat Completions request and retain its exact entity-body
+   * bytes for later completion-signature verification.
+   */
+  async fetchWithReceipt(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<SecureFetchWithReceipt> {
+    const completion = await this.sendSecureCompletion({
+      input,
+      init,
+      captureReceipt: true,
+    });
+    const requestBody = await completion.requestBody;
+    const responseBody = completion.responseBody;
+
+    return {
+      response: await this.toClientResponse(completion),
+      receipt: this.createCompletionReceipt({
+        requestBody,
+        responseBody,
+        session: completion.session,
+        contentType: completion.response.headers.get('content-type'),
+      }),
+    };
+  }
+
+  private sendSecureCompletion(
+    params: SendSecureCompletionWithReceiptParams,
+  ): Promise<CapturedSecureCompletion>;
+  private sendSecureCompletion(
+    params: SendSecureCompletionWithoutReceiptParams,
+  ): Promise<SentSecureCompletion>;
+  private async sendSecureCompletion({
+    input,
+    init,
+    captureReceipt,
+  }: SendSecureCompletionParams): Promise<
+    SentSecureCompletion | CapturedSecureCompletion
+  > {
+    const parsed = await this.parseSecureRequest(input, init);
+    const session = await this.startVerification(parsed.model);
+
+    const prepared = parsed.e2ee
+      ? this.encryptSecureRequest({
+          parsed,
+          modelSigningPublicKey: session.modelSigningPublicKey,
+        })
+      : {
+          request: this.preparePlaintextRequest({
+            request: parsed.request,
+            modelSigningPublicKey: session.modelSigningPublicKey,
+          }),
+        };
+    const clientKeyPair =
+      'clientKeyPair' in prepared ? prepared.clientKeyPair : undefined;
+    if (!captureReceipt) {
+      return {
+        response: await this.sendCompletionRequest(prepared.request),
+        session,
+        ...(clientKeyPair === undefined ? {} : { clientKeyPair }),
+      };
     }
 
-    const encrypted = this.encryptSecureRequest({
-      parsed,
-      modelSigningPublicKey,
-    });
-    const response = await this.sendCompletionRequest(encrypted.request);
-    if (!response.ok) {
+    const requestBody = captureRequestEntityBody(prepared.request);
+    const response = await this.sendCompletionRequest(prepared.request);
+    const capturedResponse = captureResponseEntityBody(response);
+    return {
+      response: capturedResponse.response,
+      session,
+      requestBody,
+      responseBody: capturedResponse.responseBody,
+      ...(clientKeyPair === undefined ? {} : { clientKeyPair }),
+    };
+  }
+
+  private async toClientResponse({
+    response,
+    clientKeyPair,
+  }: SentSecureCompletion): Promise<Response> {
+    if (clientKeyPair === undefined || !response.ok) {
       return response;
     }
     return this.decryptSecureResponse({
       response,
-      clientKeyPair: encrypted.clientKeyPair,
+      clientKeyPair,
     });
   }
 
-  private startVerification(): Promise<SecureSessionState> {
-    if (this.pendingVerification === undefined) {
-      const verification = this.createVerificationState();
-      this.pendingVerification = verification;
-      void verification.then(
-        () => this.clearPendingVerification(verification),
-        () => this.clearPendingVerification(verification),
-      );
-    }
-    return this.pendingVerification;
+  private createCompletionReceipt({
+    requestBody,
+    responseBody,
+    session,
+    contentType,
+  }: VerifyCapturedCompletionParams): CompletionReceipt {
+    return {
+      requestBody,
+      responseBody,
+      verify: () =>
+        this.verifyCapturedCompletion({
+          requestBody,
+          responseBody,
+          session,
+          contentType,
+        }),
+    };
   }
 
-  private clearPendingVerification(
-    verification: Promise<SecureSessionState>,
-  ): void {
-    if (this.pendingVerification === verification) {
-      this.pendingVerification = undefined;
+  private async verifyCapturedCompletion({
+    requestBody,
+    responseBody,
+    session,
+    contentType,
+  }: VerifyCapturedCompletionParams): Promise<VerifiedCompletionReceipt> {
+    const bytes = await responseBody;
+    const completionId = getCompletionId({ bytes, contentType });
+    const signature = await this.attestationClient.fetchCompletionSignature({
+      completionId,
+      signingAlgo: 'ed25519',
+    });
+
+    if (signature.kind === 'provider_tee') {
+      const attestation = findModelAttestationForSignature({
+        attestations: session.modelAttestations,
+        signature,
+      });
+      verifyModelResponse({
+        requestBody,
+        responseBody: bytes,
+        signature,
+        attestation,
+      });
+      return {
+        completionId,
+        signatureKind: 'provider_tee',
+        signature,
+        attestation,
+      };
+    }
+
+    verifyGatewayResponse({
+      requestBody,
+      responseBody: bytes,
+      signature,
+      attestation: session.gatewayAttestation,
+    });
+    return {
+      completionId,
+      signatureKind: 'gateway',
+      signature,
+      attestation: session.gatewayAttestation,
+    };
+  }
+
+  private startVerification(model: string): Promise<SecureSessionState> {
+    const existing = this.pendingVerifications.get(model);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const verification = this.createVerificationState(model);
+    this.pendingVerifications.set(model, verification);
+    void verification.then(
+      () => this.clearPendingVerification({ model, verification }),
+      () => this.clearPendingVerification({ model, verification }),
+    );
+    return verification;
+  }
+
+  private clearPendingVerification({
+    model,
+    verification,
+  }: ClearPendingVerificationParams): void {
+    if (this.pendingVerifications.get(model) === verification) {
+      this.pendingVerifications.delete(model);
     }
   }
 
-  private async createVerificationState(): Promise<SecureSessionState> {
+  private async createVerificationState(
+    model: string,
+  ): Promise<SecureSessionState> {
     const [gateway, fetchedModels] = await Promise.all([
       this.attestationClient.fetchGatewayAttestation({
+        signingAlgo: 'ed25519',
         includeSpkiFingerprint: false,
       }),
       this.attestationClient.fetchModelAttestations({
-        model: this.model,
+        model,
         signingAlgo: 'ed25519',
       }),
     ]);
@@ -182,7 +393,7 @@ export class SecureClient {
       });
     }
 
-    const modelVerifiers = this.getModelVerifiers();
+    const modelVerifiers = this.getModelVerifiers(model);
     const [gatewayAttestation, modelAttestations] = await Promise.all([
       verifyGatewayAttestation({
         attestation: gateway.attestation,
@@ -205,22 +416,15 @@ export class SecureClient {
       selectModelSigningPublicKey(modelAttestations);
 
     return {
+      gatewayAttestation,
+      modelAttestations,
       modelSigningPublicKey,
-      session: {
-        model: this.model,
-        gatewayAttestation,
-        modelAttestations,
-        modelSigningPublicKey,
-        modelDeploymentProvenance: modelAttestations.every(
-          (attestation) => attestation.deploymentProvenance === 'verified',
-        )
-          ? 'verified'
-          : 'not_checked',
-      },
     };
   }
 
-  private getModelVerifiers(): ModelAttestationVerifiers | undefined {
+  private getModelVerifiers(
+    model: string,
+  ): ModelAttestationVerifiers | undefined {
     const verifiers = this.options.modelVerification?.verifiers;
     const deploymentPolicy = this.options.deploymentPolicy;
     if (verifiers?.deployment === undefined && deploymentPolicy === undefined) {
@@ -230,7 +434,7 @@ export class SecureClient {
       ...verifiers,
       deployment: async (deployment) => {
         await verifiers?.deployment?.(deployment);
-        await deploymentPolicy?.({ model: this.model, deployment });
+        await deploymentPolicy?.({ model, deployment });
       },
     };
   }
@@ -250,27 +454,17 @@ export class SecureClient {
         expected: 'a JSON Chat Completions request with a string model',
       });
     }
-    this.requireConfiguredModel(generic.output);
+    const model = generic.output.model;
     if (this.e2eeEnabled) {
       const body = generic.output as SecureChatCompletionRequest;
       return {
         e2ee: true,
+        model,
         request,
         body,
       };
     }
-    return { e2ee: false, request };
-  }
-
-  private requireConfiguredModel(body: ChatCompletionRequest): void {
-    if (body.model !== this.model) {
-      throw invalidInput({
-        field: 'model',
-        reason: 'unsupported_value',
-        expected: this.model,
-        actual: body.model,
-      });
-    }
+    return { e2ee: false, model, request };
   }
 
   private requireSupportedEndpoint(request: Request): void {
@@ -381,20 +575,108 @@ export class NearAiSecureClient {
 
   constructor(options: NearAiSecureClientOptions) {
     this.secure = new SecureClient(options);
-    const client = new OpenAI({
-      apiKey: getAuthorizationToken(options),
-      baseURL: this.secure.getBaseUrl(),
-      dangerouslyAllowBrowser: true,
-      fetch: (input, init) => this.secure.fetch(input, init),
-      maxRetries: 0,
-    });
-    this.chat = client.chat;
+    this.chat = {
+      completions: new NearAiSecureChatCompletions({
+        secure: this.secure,
+        authorizationToken: getAuthorizationToken(options),
+      }),
+    };
+  }
+}
+
+type NearAiSecureChatCompletionsParams = {
+  readonly secure: SecureClient;
+  readonly authorizationToken: string;
+};
+
+class NearAiSecureChatCompletions implements SecureChatCompletions {
+  readonly create: OpenAI.Chat.Completions['create'];
+  private readonly authorizationToken: string;
+  private readonly secure: SecureClient;
+
+  constructor({
+    secure,
+    authorizationToken,
+  }: NearAiSecureChatCompletionsParams) {
+    this.secure = secure;
+    this.authorizationToken = authorizationToken;
+    const client = this.createOpenAiClient((input, init) =>
+      this.secure.fetch(input, init),
+    );
+    this.create = client.chat.completions.create.bind(client.chat.completions);
   }
 
-  /** Verify fresh Gateway and model evidence without sending a Chat Completions request. */
-  async verify(): Promise<VerifiedSecureSession> {
-    return this.secure.verify();
+  async createWithReceipt(
+    body: OpenAI.ChatCompletionCreateParamsNonStreaming,
+    options?: OpenAI.RequestOptions,
+  ): Promise<SecureChatCompletionWithReceipt>;
+  async createWithReceipt(
+    body: OpenAI.ChatCompletionCreateParamsStreaming,
+    options?: OpenAI.RequestOptions,
+  ): Promise<SecureChatCompletionStreamWithReceipt>;
+  async createWithReceipt(
+    body: OpenAiChatCompletionCreateParamsBase,
+    options?: OpenAI.RequestOptions,
+  ): Promise<
+    SecureChatCompletionWithReceipt | SecureChatCompletionStreamWithReceipt
+  >;
+  async createWithReceipt(
+    body: OpenAiChatCompletionCreateParamsBase,
+    options?: OpenAI.RequestOptions,
+  ): Promise<
+    SecureChatCompletionWithReceipt | SecureChatCompletionStreamWithReceipt
+  > {
+    let captured: SecureFetchWithReceipt | undefined;
+    const client = this.createOpenAiClient(async (input, init) => {
+      const result = await this.secure.fetchWithReceipt(input, init);
+      captured = result;
+      return result.response;
+    });
+    const result = await client.chat.completions.create(body, options);
+    if (captured === undefined) {
+      throw new ApiError({
+        code: 'api.invalid_response',
+        details: {
+          path: 'Chat Completions request',
+          expected: 'one response from the secure transport',
+          actual: 'no response',
+        },
+      });
+    }
+
+    if (body.stream === true) {
+      return {
+        stream: result as unknown as Stream<OpenAI.ChatCompletionChunk>,
+        receipt: captured.receipt,
+      };
+    }
+    return {
+      completion: result as OpenAI.ChatCompletion,
+      receipt: captured.receipt,
+    };
   }
+
+  private createOpenAiClient(fetch: typeof globalThis.fetch): OpenAI {
+    return createOpenAiClient({
+      authorizationToken: this.authorizationToken,
+      baseUrl: this.secure.getBaseUrl(),
+      fetch,
+    });
+  }
+}
+
+function createOpenAiClient({
+  authorizationToken,
+  baseUrl,
+  fetch,
+}: CreateOpenAiClientParams): OpenAI {
+  return new OpenAI({
+    apiKey: authorizationToken,
+    baseURL: baseUrl,
+    dangerouslyAllowBrowser: true,
+    fetch,
+    maxRetries: 0,
+  });
 }
 
 function selectModelSigningPublicKey(
@@ -509,13 +791,239 @@ function decryptSecureStreamResponse({
   );
 }
 
-function isServerSentEventResponse(response: Response): boolean {
-  return (
-    response.headers
-      .get('content-type')
-      ?.toLowerCase()
-      .startsWith('text/event-stream') ?? false
+function captureRequestEntityBody(request: Request): Promise<Uint8Array> {
+  const body = request
+    .clone()
+    .arrayBuffer()
+    .then((body) => new Uint8Array(body));
+  void body.catch(() => undefined);
+  return body;
+}
+
+function captureResponseEntityBody(
+  response: Response,
+): CapturedResponseEntityBody {
+  if (response.body === null) {
+    return {
+      response,
+      responseBody: Promise.resolve(new Uint8Array()),
+    };
+  }
+
+  let resolveBody: (body: Uint8Array) => void;
+  let rejectBody: (cause: unknown) => void;
+  const responseBody = new Promise<Uint8Array>((resolve, reject) => {
+    resolveBody = resolve;
+    rejectBody = reject;
+  });
+  // Receipt verification is optional. Preserve a rejection for a caller that
+  // later awaits it without reporting an unhandled rejection in the meantime.
+  void responseBody.catch(() => undefined);
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let settled = false;
+  const resolve = (): void => {
+    if (settled) return;
+    try {
+      const body = concatChunks(chunks);
+      settled = true;
+      resolveBody(body);
+    } catch (cause) {
+      reject(cause);
+    }
+  };
+  const reject = (cause: unknown): void => {
+    if (settled) return;
+    settled = true;
+    rejectBody(cause);
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          resolve();
+          controller.close();
+          return;
+        }
+        chunks.push(next.value.slice());
+        controller.enqueue(next.value);
+      } catch (cause) {
+        reject(cause);
+        controller.error(cause);
+      }
+    },
+    async cancel(reason) {
+      if (
+        hasSseCompletionSentinel({
+          chunks,
+          contentType: response.headers.get('content-type'),
+        })
+      ) {
+        void drainResponseEntityBody({ reader, chunks, resolve, reject });
+      } else {
+        reject(reason);
+        await reader.cancel(reason);
+      }
+    },
+  });
+
+  return {
+    response: new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+    responseBody,
+  };
+}
+
+function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
+  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const body = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+type GetCompletionIdParams = {
+  readonly bytes: Uint8Array;
+  readonly contentType: string | null;
+};
+
+function getCompletionId({
+  bytes,
+  contentType,
+}: GetCompletionIdParams): string {
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch (cause) {
+    throw invalidCompletionId(cause);
+  }
+  if (isServerSentEventContentType(contentType)) {
+    return getSseCompletionId(text);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (cause) {
+    throw invalidCompletionId(cause);
+  }
+  return parseCompletionId(value);
+}
+
+function getSseCompletionId(text: string): string {
+  for (const data of getSseDataRecords(text)) {
+    if (data === '' || data === '[DONE]') {
+      continue;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(data);
+    } catch (cause) {
+      throw invalidCompletionId(cause);
+    }
+    const parsed = v.safeParse(CompletionResponseIdSchema, value);
+    if (parsed.success) {
+      return parsed.output.id;
+    }
+  }
+  throw invalidCompletionId();
+}
+
+type HasSseCompletionSentinelParams = {
+  readonly chunks: readonly Uint8Array[];
+  readonly contentType: string | null;
+};
+
+function hasSseCompletionSentinel({
+  chunks,
+  contentType,
+}: HasSseCompletionSentinelParams): boolean {
+  if (!isServerSentEventContentType(contentType)) {
+    return false;
+  }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(
+      concatChunks(chunks),
+    );
+    return getSseDataRecords(text).some((data) => data === '[DONE]');
+  } catch {
+    return false;
+  }
+}
+
+type DrainResponseEntityBodyParams = {
+  readonly reader: ReadableStreamDefaultReader<Uint8Array>;
+  readonly chunks: Uint8Array[];
+  readonly resolve: () => void;
+  readonly reject: (cause: unknown) => void;
+};
+
+async function drainResponseEntityBody({
+  reader,
+  chunks,
+  resolve,
+  reject,
+}: DrainResponseEntityBodyParams): Promise<void> {
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) {
+        resolve();
+        return;
+      }
+      chunks.push(next.value.slice());
+    }
+  } catch (cause) {
+    reject(cause);
+  }
+}
+
+function getSseDataRecords(text: string): string[] {
+  return text.split(/\r\n\r\n|\n\n|\r\r/).map((record) =>
+    record
+      .split(/\r\n|\n|\r/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''))
+      .join('\n'),
   );
+}
+
+function parseCompletionId(value: unknown): string {
+  const parsed = v.safeParse(CompletionResponseIdSchema, value);
+  if (!parsed.success) {
+    throw invalidCompletionId();
+  }
+  return parsed.output.id;
+}
+
+function invalidCompletionId(cause?: unknown): ApiError {
+  return new ApiError(
+    {
+      code: 'api.invalid_response',
+      details: {
+        path: 'Chat Completions response.id',
+        expected: 'a non-empty completion ID',
+        actual: 'missing or invalid',
+      },
+    },
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function isServerSentEventResponse(response: Response): boolean {
+  return isServerSentEventContentType(response.headers.get('content-type'));
+}
+
+function isServerSentEventContentType(contentType: string | null): boolean {
+  return contentType?.toLowerCase().startsWith('text/event-stream') ?? false;
 }
 
 function removeE2eeHeaders(headers: Headers): void {

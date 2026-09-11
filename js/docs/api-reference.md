@@ -34,8 +34,9 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 
 `SecureClient` is the low-level native verified transport. Its `fetch` method
 accepts only `POST` requests to the configured Chat Completions endpoint. Each
-valid request starts or joins a fresh Gateway/model verification; completed
-evidence is never cached. With the
+valid request reads its `model` from the Chat body and starts or joins a fresh
+Gateway/model verification for that model; completed evidence is never cached.
+With the
 default `e2ee: true`, it uses the version 2 field-encryption protocol with a
 quote-bound Ed25519 model key, pins the request with `X-Model-Pub-Key`, and
 decrypts protocol-covered non-streaming or streaming response fields. It verifies
@@ -43,7 +44,7 @@ every returned model candidate before selecting
 a verified model key for the Chat request. With `e2ee: false`, the same
 deployment verification runs and the plaintext request is still routed to a
 verified model key; that does not prove the exact response bytes. Concurrent
-calls may share one in-flight verification.
+calls may share only an in-flight verification for the same model.
 
 `NearAiSecureClient` wraps `SecureClient` in the official OpenAI client shape:
 `client.chat.completions.create`. Its `create` overloads use the OpenAI Chat
@@ -58,12 +59,11 @@ entry point's peer-TLS check is available through its lower-level
 The secure client checks each non-empty protocol-covered E2EE response field
 with its AEAD tag before decrypting it. This field-level integrity check does not
 establish that a particular Gateway or model signer produced the response. It
-does not fetch or verify an optional completion receipt on the chat path.
-Deployment verification and E2EE field integrity checks do not make a
-byte-level claim about a particular response. Use
-`AttestationClient`, `verifyModelResponse`, and `verifyGatewayResponse`
-separately when an application retains exact body bytes for an asynchronous
-receipt audit.
+does not fetch or verify an optional completion receipt on ordinary `fetch()`
+or `create()` calls. `fetchWithReceipt()` and `createWithReceipt()` retain the
+exact Fetch entity-body bytes before E2EE decryption. Their `receipt.verify()`
+method later retrieves the Ed25519 completion signature and verifies it against
+the evidence collected for that request.
 
 ### E2EE Chat contract
 
@@ -83,7 +83,7 @@ fields but does not encrypt arbitrary request JSON.
 | `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. The Gateway determines which request shapes it accepts. |
 | Other Chat request-body fields | Preserved without E2EE transformation. The Gateway and model decide whether to accept them. Fields the protocol does not recognize are not automatically E2EE-protected. |
 | Responses | Non-empty protocol-covered Chat response values pass an AEAD integrity check before decryption. Streaming SSE events are transformed only after a complete event has arrived. |
-| `e2ee: false` | Keeps the fresh deployment check and sends plaintext Chat fields with a verified model-key routing header, but disables field encryption/decryption. It does not verify exact response bytes; use the separate receipt APIs for that. |
+| `e2ee: false` | Keeps the fresh deployment check and sends plaintext Chat fields with a verified model-key routing header, but disables field encryption/decryption. Use a receipt method for a byte-level response claim. |
 
 ### Constructor options
 
@@ -95,16 +95,15 @@ Exactly one of `apiKey` and `bearerToken` is required.
 | `apiKey` | `string` | One credential required | — | Bearer credential for a server-side integration. Do not supply it with `bearerToken`. |
 | `bearerToken` | `string` | One credential required | — | Bearer credential for a browser session or compatible aggregator. Do not supply it with `apiKey`. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL. This may be a compatible aggregator endpoint. |
-| `model` | `string` | Yes | — | Canonical model ID. It must return NEAR model evidence with a quote-bound Ed25519 key; secure requests may use only this model. |
 | `e2ee?` | `boolean` | No | `true` | Enables the Ed25519/version 2 secure Chat transport. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and omits a response-byte proof. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. Without it or a custom model deployment verifier, `modelDeploymentProvenance` is `not_checked`. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. It receives the model named by each Chat request. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation policy and verifier overrides. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
 
 | Type | Field or signature | Description |
 | --- | --- | --- |
 | `DeploymentPolicy` | `(params: DeploymentPolicyParams) => Awaitable<void>` | Resolves only for an accepted model deployment. |
-| `DeploymentPolicyParams` | `model: string` | Canonical model configured for the secure client. |
+| `DeploymentPolicyParams` | `model: string` | Model named by the current Chat request. |
 |  | `deployment: MeasuredDeployment` | Authenticated deployment measurements to approve or reject. |
 | `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
 |  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
@@ -115,17 +114,22 @@ Exactly one of `apiKey` and `bearerToken` is required.
 
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
-| `SecureClient.verify()` | `Promise<VerifiedSecureSession>` | Runs the same fresh Gateway/model verification and deployment policy as `fetch`, without sending a Chat Completions request. |
 | `SecureClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `SecureClient.fetch(input, init?)` | `Promise<Response>` | Performs fresh verification, then sends a Chat Completions request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
-| `NearAiSecureClient.verify()` | `Promise<VerifiedSecureSession>` | Runs the same operation through the OpenAI-compatible client. |
+| `SecureClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, performs fresh verification for it, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
+| `SecureClient.fetchWithReceipt(input, init?)` | `Promise<SecureFetchWithReceipt>` | Same request path as `fetch`, plus a receipt that preserves the request and pre-decryption response entity bodies. |
 | `NearAiSecureClient.secure` | `SecureClient` | Underlying verified transport for applications that need direct `fetch` access. |
-| `NearAiSecureClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
-| `VerifiedSecureSession.model` | `string` | Configured canonical model. |
-| `VerifiedSecureSession.gatewayAttestation` | `VerifiedGatewayAttestation` | Verified Gateway attestation result. |
-| `VerifiedSecureSession.modelAttestations` | `readonly VerifiedModelAttestation[]` | All verified model-attestation candidates returned by the Gateway. |
-| `VerifiedSecureSession.modelSigningPublicKey` | `string` | Verified Ed25519 model key selected to route this client's Chat requests, including when `e2ee` is `false`. |
-| `VerifiedSecureSession.modelDeploymentProvenance` | `'not_checked' \| 'verified'` | Whether a caller-supplied model deployment verifier or policy accepted every candidate. |
+| `NearAiSecureClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
+| `NearAiSecureClient.chat.completions.createWithReceipt(body, options?)` | Non-streaming or streaming receipt overloads | Returns `{ completion, receipt }` or `{ stream, receipt }`. It keeps the ordinary response path non-blocking while exposing byte-exact response evidence. |
+| `CompletionReceipt.requestBody` | `Uint8Array` | Exact Fetch request entity-body bytes. Under E2EE these are ciphertext bytes. |
+| `CompletionReceipt.responseBody` | `Promise<Uint8Array>` | Exact Fetch response entity-body bytes before E2EE decryption. It resolves after the caller consumes a streamed response. |
+| `CompletionReceipt.verify()` | `Promise<VerifiedCompletionReceipt>` | Extracts the completion ID from the preserved response, fetches its Ed25519 signature, and verifies the signature against the Gateway or matching model evidence from this request. |
+| `VerifiedCompletionReceipt.completionId` | `string` | Completion ID whose signature was verified. |
+| `VerifiedCompletionReceipt.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` uses matching model evidence; `gateway` uses Gateway evidence. |
+
+Consume the returned `Response` or stream before awaiting `responseBody` or
+calling `receipt.verify()`. Receipt capture follows the response's normal
+consumption path and does not pre-buffer a streamed response. It retains the
+complete request and response bodies in memory.
 
 For an aggregator, `bearerToken` is sent to the configured API base URL. The
 aggregator must forward the Chat request and its model key pin unchanged while

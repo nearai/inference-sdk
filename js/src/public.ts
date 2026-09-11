@@ -18,10 +18,16 @@ export type {
   GatewayVerificationOptions,
   ModelVerificationOptions,
   NearAiSecureClientOptions,
+  CompletionReceipt,
   SecureChat,
+  SecureChatCompletionStreamWithReceipt,
+  SecureChatCompletionWithReceipt,
   SecureChatCompletions,
   SecureClientOptions,
-  VerifiedSecureSession,
+  SecureFetchWithReceipt,
+  VerifiedCompletionReceipt,
+  VerifiedGatewayCompletionReceipt,
+  VerifiedModelCompletionReceipt,
 } from './types/secure-client';
 export type { Awaitable } from './types/shared';
 
