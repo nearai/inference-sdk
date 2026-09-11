@@ -12,35 +12,13 @@ import type {
   VerifiedModelAttestation,
 } from 'verifiable-ai-sdk/node';
 
-const apiUrl = 'https://cloud-api.near.ai/v1/chat/completions';
+const baseUrl = 'https://cloud-api.near.ai/v1/';
 const model = 'z-ai/glm-5.2';
 const signingAlgo = 'ed25519';
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-type Completion = {
-  readonly id: string;
-  readonly label: string;
-  readonly requestBody: Uint8Array;
-  readonly responseBody: Uint8Array;
-};
-
-type SendCompletionParams = {
-  readonly apiKey: string;
-  readonly stream: boolean;
-};
-
-type ReadCompletionIdParams = {
-  readonly responseBody: Uint8Array;
-  readonly stream: boolean;
-};
-
-type VerifyCompletionReceiptParams = {
-  readonly client: AttestationClient;
-  readonly completion: Completion;
-  readonly gateway: VerifiedGatewayAttestation;
-  readonly models: readonly VerifiedModelAttestation[];
-};
+await main();
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
@@ -107,7 +85,7 @@ async function sendCompletion({
       max_completion_tokens: 8,
     }),
   );
-  const response = await fetch(apiUrl, {
+  const response = await fetch(new URL('chat/completions', baseUrl), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -196,4 +174,26 @@ function readJsonCompletionId(text: string): string {
   return response.id;
 }
 
-await main();
+type Completion = {
+  readonly id: string;
+  readonly label: string;
+  readonly requestBody: Uint8Array;
+  readonly responseBody: Uint8Array;
+};
+
+type SendCompletionParams = {
+  readonly apiKey: string;
+  readonly stream: boolean;
+};
+
+type ReadCompletionIdParams = {
+  readonly responseBody: Uint8Array;
+  readonly stream: boolean;
+};
+
+type VerifyCompletionReceiptParams = {
+  readonly client: AttestationClient;
+  readonly completion: Completion;
+  readonly gateway: VerifiedGatewayAttestation;
+  readonly models: readonly VerifiedModelAttestation[];
+};
