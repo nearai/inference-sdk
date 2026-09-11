@@ -3,7 +3,7 @@
 These projects demonstrate attestation and response-receipt verification
 against the canonical `z-ai/glm-5.2` model.
 
-The TypeScript project includes two Node.js entry points:
+The JavaScript SDK's Node.js example includes two entry points:
 
 - `client.ts` uses `NearAiSecureClient`. Each Chat request supplies its model;
   the client verifies fresh Gateway and model evidence before sending it and
@@ -34,7 +34,7 @@ deployments and that signature is useful, but does not yet form a complete
 cryptographic model-to-Gateway-to-response chain for rewritten responses. That
 receipt-chain work is tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
 
-## TypeScript (Node.js)
+## JavaScript (Node.js)
 
 The SDK must be built first because the example imports the local package's
 published `dist` files.
@@ -42,10 +42,10 @@ published `dist` files.
 ```sh
 pnpm --dir js install --frozen-lockfile
 pnpm --dir js build
-pnpm --dir examples/example-ts install --frozen-lockfile
-pnpm --dir examples/example-ts check
-pnpm --dir examples/example-ts start:client
-pnpm --dir examples/example-ts start:bare
+pnpm --dir examples/example-js install --frozen-lockfile
+pnpm --dir examples/example-js check
+pnpm --dir examples/example-js start:client
+pnpm --dir examples/example-js start:bare
 ```
 
 Requires Node.js 24 or later.
