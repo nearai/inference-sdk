@@ -42,20 +42,22 @@ type VerifyCompletionReceiptParams = {
   readonly models: readonly VerifiedModelAttestation[];
 };
 
-const apiKey = process.env.NEARAI_API_KEY;
-if (!apiKey) {
-  throw new Error('NEARAI_API_KEY is required');
-}
+async function main(): Promise<void> {
+  const apiKey = process.env.NEARAI_API_KEY;
+  if (!apiKey) {
+    throw new Error('NEARAI_API_KEY is required');
+  }
 
-const client = new AttestationClient({ apiKey });
+  const client = new AttestationClient({ apiKey });
 
-// Verify both deployments before sending either Chat request.
-const gateway = await fetchAndVerifyGateway(client);
-const models = await fetchAndVerifyModelAttestations(client);
+  // Verify both deployments before sending either Chat request.
+  const gateway = await fetchAndVerifyGateway(client);
+  const models = await fetchAndVerifyModelAttestations(client);
 
-for (const stream of [false, true]) {
-  const completion = await sendCompletion({ apiKey, stream });
-  await verifyCompletionReceipt({ client, completion, gateway, models });
+  for (const stream of [false, true]) {
+    const completion = await sendCompletion({ apiKey, stream });
+    await verifyCompletionReceipt({ client, completion, gateway, models });
+  }
 }
 
 async function fetchAndVerifyGateway(
@@ -193,3 +195,5 @@ function readJsonCompletionId(text: string): string {
   }
   return response.id;
 }
+
+await main();
