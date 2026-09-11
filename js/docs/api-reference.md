@@ -36,6 +36,8 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 accepts only `POST` requests to the configured Chat Completions endpoint. Each
 valid request reads its `model` from the Chat body and starts or joins a fresh
 Gateway/model verification for that model; completed evidence is never cached.
+Secure clients use Ed25519 only for Gateway/model evidence and optional
+response receipts; the signing algorithm is not configurable.
 With the
 default `e2ee: true`, it uses the version 2 field-encryption protocol with a
 quote-bound Ed25519 model key, pins the request with `X-Model-Pub-Key`, and

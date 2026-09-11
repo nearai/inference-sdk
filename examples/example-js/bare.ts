@@ -12,11 +12,9 @@ import type {
   VerifiedModelAttestation,
 } from 'verifiable-ai-sdk/node';
 
-const baseUrl = 'https://cloud-api.near.ai/v1/';
-const model = 'z-ai/glm-5.2';
-const signingAlgo = 'ed25519';
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
+const BASE_URL = 'https://cloud-api.near.ai/v1/';
+const MODEL = 'z-ai/glm-5.2';
+const SIGNING_ALGO = 'ed25519';
 
 await main();
 
@@ -26,22 +24,57 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey });
+  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
 
+  // This bare example deliberately sends plaintext Chat JSON. It demonstrates
+  // attestation and response-receipt verification, not the E2EE protocol.
   // Verify both deployments before sending either Chat request.
   const gateway = await fetchAndVerifyGateway(client);
   const models = await fetchAndVerifyModelAttestations(client);
 
-  for (const stream of [false, true]) {
-    const completion = await sendCompletion({ apiKey, stream });
-    await verifyCompletionReceipt({ client, completion, gateway, models });
-  }
+  await runNonStreamingExample({ apiKey, client, gateway, models });
+  await runStreamingExample({ apiKey, client, gateway, models });
+}
+
+async function runNonStreamingExample({
+  apiKey,
+  client,
+  gateway,
+  models,
+}: BareExampleContext): Promise<void> {
+  const nonStreamingCompletion = await sendCompletion({
+    apiKey,
+    stream: false,
+  });
+  await verifyCompletionReceipt({
+    client,
+    completion: nonStreamingCompletion,
+    gateway,
+    models,
+  });
+}
+
+async function runStreamingExample({
+  apiKey,
+  client,
+  gateway,
+  models,
+}: BareExampleContext): Promise<void> {
+  const streamingCompletion = await sendCompletion({ apiKey, stream: true });
+  await verifyCompletionReceipt({
+    client,
+    completion: streamingCompletion,
+    gateway,
+    models,
+  });
 }
 
 async function fetchAndVerifyGateway(
   client: AttestationClient,
 ): Promise<VerifiedGatewayAttestation> {
-  const fetched = await client.fetchGatewayAttestation({ signingAlgo });
+  const fetched = await client.fetchGatewayAttestation({
+    signingAlgo: SIGNING_ALGO,
+  });
   const verified = await verifyGatewayAttestation({
     attestation: fetched.attestation,
     clientBinding: fetched.clientBinding,
@@ -54,8 +87,8 @@ async function fetchAndVerifyModelAttestations(
   client: AttestationClient,
 ): Promise<readonly VerifiedModelAttestation[]> {
   const fetched = await client.fetchModelAttestations({
-    model,
-    signingAlgo,
+    model: MODEL,
+    signingAlgo: SIGNING_ALGO,
   });
   if (fetched.attestations.length === 0) {
     throw new Error('Gateway returned no model attestations');
@@ -77,15 +110,15 @@ async function sendCompletion({
   apiKey,
   stream,
 }: SendCompletionParams): Promise<Completion> {
-  const requestBody = encoder.encode(
+  const requestBody = new TextEncoder().encode(
     JSON.stringify({
-      model,
+      model: MODEL,
       messages: [{ role: 'user', content: 'Reply with the word ok.' }],
       stream,
       max_completion_tokens: 8,
     }),
   );
-  const response = await fetch(new URL('chat/completions', baseUrl), {
+  const response = await fetch(new URL('chat/completions', BASE_URL), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -98,7 +131,7 @@ async function sendCompletion({
   const responseBody = new Uint8Array(await response.arrayBuffer());
   if (!response.ok) {
     throw new Error(
-      `Chat request failed (${response.status}): ${decoder.decode(responseBody)}`,
+      `Chat request failed (${response.status}): ${new TextDecoder().decode(responseBody)}`,
     );
   }
 
@@ -118,7 +151,7 @@ async function verifyCompletionReceipt({
 }: VerifyCompletionReceiptParams): Promise<void> {
   const signature = await client.fetchCompletionSignature({
     completionId: completion.id,
-    signingAlgo,
+    signingAlgo: SIGNING_ALGO,
   });
 
   if (signature.kind === 'provider_tee') {
@@ -133,27 +166,27 @@ async function verifyCompletionReceipt({
       attestation,
     });
     console.log(`${completion.label}: verified model response receipt.`);
-    return;
+  } else {
+    verifyGatewayResponse({
+      requestBody: completion.requestBody,
+      responseBody: completion.responseBody,
+      signature,
+      attestation: gateway,
+    });
+    console.log(`${completion.label}: verified Gateway response receipt.`);
   }
-
-  verifyGatewayResponse({
-    requestBody: completion.requestBody,
-    responseBody: completion.responseBody,
-    signature,
-    attestation: gateway,
-  });
-  console.log(`${completion.label}: verified Gateway response receipt.`);
 }
 
 function readCompletionId({
   responseBody,
   stream,
 }: ReadCompletionIdParams): string {
+  const responseText = new TextDecoder().decode(responseBody);
   if (!stream) {
-    return readJsonCompletionId(decoder.decode(responseBody));
+    return readJsonCompletionId(responseText);
   }
 
-  for (const line of decoder.decode(responseBody).split(/\r\n|\n|\r/)) {
+  for (const line of responseText.split(/\r\n|\n|\r/)) {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') {
       continue;
     }
@@ -194,6 +227,13 @@ type ReadCompletionIdParams = {
 type VerifyCompletionReceiptParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
+  readonly gateway: VerifiedGatewayAttestation;
+  readonly models: readonly VerifiedModelAttestation[];
+};
+
+type BareExampleContext = {
+  readonly apiKey: string;
+  readonly client: AttestationClient;
   readonly gateway: VerifiedGatewayAttestation;
   readonly models: readonly VerifiedModelAttestation[];
 };

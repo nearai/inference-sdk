@@ -20,6 +20,9 @@ also runs any caller-supplied deployment policy with that model. Completed
 evidence is never cached. If verification or policy approval fails, no
 inference request is sent.
 
+Secure clients use Ed25519 only for Gateway/model evidence and optional
+response receipts; the signing algorithm is not configurable.
+
 E2EE is enabled by default:
 
 | `e2ee` | What the client does after verification |

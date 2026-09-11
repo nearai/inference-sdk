@@ -8,7 +8,9 @@ verification step itself.
 
 ## Send an E2EE chat completion
 
-`NearAiSecureClient` uses the official OpenAI request and response types. Its
+`NearAiSecureClient` uses the official OpenAI request and response types. It
+uses Ed25519 only for Gateway/model evidence and optional response receipts;
+the signing algorithm is not configurable. E2EE is enabled by default. Its
 E2EE runtime transforms the fields covered by the protocol and forwards the
 rest to the Gateway. Each Chat request names its model; before dispatch, the
 client verifies fresh evidence for that model and the Gateway.
@@ -94,9 +96,9 @@ should use HTTPS because the browser token is sent to it.
 
 ## E2EE scope and response handling
 
-E2EE is enabled by default. It is not a generic Gateway encryption layer: it
-requires NEAR model evidence that supplies a quote-bound Ed25519 signing key,
-and uses the version 2 field-encryption protocol. The secure client accepts
+It is not a generic Gateway encryption layer: it requires NEAR model evidence
+that supplies a quote-bound Ed25519 signing key, and uses the version 2
+field-encryption protocol. The secure client accepts
 only `POST /v1/chat/completions`; Responses API and other endpoint paths are
 rejected locally before it requests attestation evidence.
 

@@ -150,8 +150,8 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
  *
  * Every `fetch()` call reads its model from the Chat request, then obtains and
  * verifies fresh Gateway and model evidence before dispatch. With the default
- * `e2ee: true`, supported fields are then encrypted to a quote-bound model key
- * and integrity-checked on the way back.
+ * `e2ee: true`, supported fields are then encrypted to a quote-bound Ed25519
+ * model key and integrity-checked on the way back.
  * With `e2ee: false`, the same evidence and policy checks run, but the Chat
  * request and response remain plaintext while the request stays pinned to the
  * verified model key.
@@ -334,20 +334,20 @@ export class SecureClient {
         signature,
         attestation,
       };
+    } else {
+      verifyGatewayResponse({
+        requestBody,
+        responseBody: bytes,
+        signature,
+        attestation: session.gatewayAttestation,
+      });
+      return {
+        completionId,
+        signatureKind: 'gateway',
+        signature,
+        attestation: session.gatewayAttestation,
+      };
     }
-
-    verifyGatewayResponse({
-      requestBody,
-      responseBody: bytes,
-      signature,
-      attestation: session.gatewayAttestation,
-    });
-    return {
-      completionId,
-      signatureKind: 'gateway',
-      signature,
-      attestation: session.gatewayAttestation,
-    };
   }
 
   private startVerification(model: string): Promise<SecureSessionState> {
