@@ -124,6 +124,15 @@ function mapModelAttestation(
   const evidence = mapAttestationEvidence({ attestation, label });
   return {
     ...evidence,
+    ...(attestation.signing_public_key === undefined
+      ? {}
+      : {
+          signingPublicKey: validateWireHex({
+            value: attestation.signing_public_key,
+            label: `${label}.signing_public_key`,
+            expected: 'non-empty hexadecimal model public key',
+          }),
+        }),
     ...(attestation.report_data === undefined
       ? {}
       : { reportedQuoteData: attestation.report_data }),
@@ -198,6 +207,33 @@ function validateWireSigningAddress({
     });
   }
   return signingAddress;
+}
+
+type ValidateWireHexParams = {
+  value: string;
+  label: string;
+  expected: string;
+  expectedBytes?: number;
+};
+
+function validateWireHex({
+  value,
+  label,
+  expected,
+  expectedBytes,
+}: ValidateWireHexParams): string {
+  const normalized = trimHexPrefix(value);
+  const hasExpectedLength =
+    expectedBytes === undefined || normalized.length === expectedBytes * 2;
+  if (
+    normalized.length === 0 ||
+    normalized.length % 2 !== 0 ||
+    !/^[0-9a-fA-F]+$/.test(normalized) ||
+    !hasExpectedLength
+  ) {
+    throw invalidCloudApiResponse({ path: label, expected, value });
+  }
+  return value;
 }
 
 function invalidCloudApiResponse({

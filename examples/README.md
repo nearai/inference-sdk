@@ -1,17 +1,22 @@
 # Verifiable AI SDK examples
 
-Each project follows the same three-stage flow against the canonical
-`z-ai/glm-5.2` model:
+These projects demonstrate the low-level deployment-evidence and response-
+receipt workflow against the canonical `z-ai/glm-5.2` model. They are separate
+from `SecureClient` and `NearAiSecureClient`: those clients perform fresh
+deployment verification before each Chat request, but do not retain exact body
+bytes or fetch a receipt automatically.
+
+Each project follows the same three-stage manual flow:
 
 1. Verify the Gateway deployment and, where the runtime supports it, the TLS
    peer observed while fetching its attestation.
-2. Verify every target-model deployment returned by the preflight request.
+2. Verify every target-model deployment returned by the attestation request.
 3. Send one non-streaming and one streaming completion, retain the exact
    request and response bytes, then verify the returned response receipt.
 
 The examples use an explicit ECDSA signing algorithm for all three stages.
 The Gateway's report and signature endpoints currently have different defaults,
-so relying on those defaults could make the preflight evidence and response
+so relying on those defaults could make the attestation evidence and response
 signer differ. They use only the `NEARAI_API_KEY` environment variable.
 
 ```sh
@@ -24,7 +29,7 @@ response verification. They send `x-no-aliasing: true` and
 `Accept-Encoding: identity` so the model identity and response bytes are not
 silently changed before verification. The returned `signature_kind` selects
 which previously verified signer checks the exact response bytes; it does not
-replace either deployment preflight.
+replace either deployment verification.
 
 The current API exposes one response signature at a time. Verifying both
 deployments and that signature is useful, but does not yet form a complete

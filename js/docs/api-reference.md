@@ -1,13 +1,12 @@
 # TypeScript SDK API reference
 
-This page describes the Cloud request and verification APIs exported by
-`verifiable-ai-sdk`. For the three-stage flow—verify Gateway and model
-deployments, send a completion, then verify its receipt—see the
+This page describes the Gateway attestation, E2EE, and receipt APIs exported by
+`verifiable-ai-sdk`. For integration flow and examples, see the
 [verification guide](./verification-guide.md).
 
 ## Package entry points
 
-Both entry points export the same verification functions. Their
+Both entry points export the same secure and verification APIs. Their
 `AttestationClient` differs only for Gateway TLS binding.
 
 | Import | Gateway attestation behavior |
@@ -22,17 +21,121 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `AttestationClient` | `new AttestationClient(options)` | Fetches NEAR AI Cloud Gateway signatures and attestation evidence. |
+| `SecureClient` | `new SecureClient(options)` | Native verified transport for Chat Completions. |
+| `NearAiSecureClient` | `new NearAiSecureClient(options)` | OpenAI-compatible Chat Completions surface backed by `SecureClient`. |
+| `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 
+## Secure clients
+
+`SecureClient` is the low-level native verified transport. Its `fetch` method
+accepts only `POST` requests to the configured Chat Completions endpoint. Each
+valid request starts or joins a fresh Gateway/model verification; completed
+evidence is never cached. With the
+default `e2ee: true`, it uses the version 2 field-encryption protocol with a
+quote-bound Ed25519 model key, pins the request with `X-Model-Pub-Key`, and
+decrypts protocol-covered non-streaming or streaming response fields. It verifies
+every returned model candidate before selecting
+a verified model key for the Chat request. With `e2ee: false`, the same
+deployment verification runs and the plaintext request is still routed to a
+verified model key; that does not prove the exact response bytes. Concurrent
+calls may share one in-flight verification.
+
+`NearAiSecureClient` wraps `SecureClient` in the official OpenAI client shape:
+`client.chat.completions.create`. Its `create` overloads use the OpenAI Chat
+types. When E2EE is enabled, it transforms the protocol-covered fields and
+forwards the remaining Chat values to the Gateway.
+
+For browser compatibility, both secure clients use the generic no-TLS Gateway
+verification path, even when they are imported from `verifiable-ai-sdk/node`. The Node
+entry point's peer-TLS check is available through its lower-level
+`AttestationClient`.
+
+The secure client checks each non-empty protocol-covered E2EE response field
+with its AEAD tag before decrypting it. This field-level integrity check does not
+establish that a particular Gateway or model signer produced the response. It
+does not fetch or verify an optional completion receipt on the chat path.
+Deployment verification and E2EE field integrity checks do not make a
+byte-level claim about a particular response. Use
+`AttestationClient`, `verifyModelResponse`, and `verifyGatewayResponse`
+separately when an application retains exact body bytes for an asynchronous
+receipt audit.
+
+### E2EE Chat contract
+
+The E2EE transport is intended for NEAR model evidence that supplies a
+quote-bound Ed25519 signing key. It is not a general-purpose encryption wrapper
+for arbitrary Gateway-backed providers or Chat fields. Every E2EE Chat request
+sends `X-Encrypt-All-Fields: true`; the extension enables additional documented
+fields but does not encrypt arbitrary request JSON.
+
+| Capability | E2EE behavior |
+| --- | --- |
+| Endpoint | Only `POST /chat/completions` is accepted. Responses API and other paths fail locally. |
+| Message text | String `messages[].content` values are encrypted independently. |
+| Rich message content | An array-valued `messages[].content` is serialized and encrypted as one value. |
+| Assistant context | String `reasoning_content`, `reasoning`, and `audio.data` message fields are encrypted. |
+| Function and tool fields | Recognized function definitions, function calls, and related message fields are encrypted. Other tool forms are preserved without E2EE transformation. |
+| `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. The Gateway determines which request shapes it accepts. |
+| Other Chat request-body fields | Preserved without E2EE transformation. The Gateway and model decide whether to accept them. Fields the protocol does not recognize are not automatically E2EE-protected. |
+| Responses | Non-empty protocol-covered Chat response values pass an AEAD integrity check before decryption. Streaming SSE events are transformed only after a complete event has arrived. |
+| `e2ee: false` | Keeps the fresh deployment check and sends plaintext Chat fields with a verified model-key routing header, but disables field encryption/decryption. It does not verify exact response bytes; use the separate receipt APIs for that. |
+
+### Constructor options
+
+`SecureClientOptions` and `NearAiSecureClientOptions` have the same fields.
+Exactly one of `apiKey` and `bearerToken` is required.
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `apiKey` | `string` | One credential required | — | Bearer credential for a server-side integration. Do not supply it with `bearerToken`. |
+| `bearerToken` | `string` | One credential required | — | Bearer credential for a browser session or compatible aggregator. Do not supply it with `apiKey`. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL. This may be a compatible aggregator endpoint. |
+| `model` | `string` | Yes | — | Canonical model ID. It must return NEAR model evidence with a quote-bound Ed25519 key; secure requests may use only this model. |
+| `e2ee?` | `boolean` | No | `true` | Enables the Ed25519/version 2 secure Chat transport. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and omits a response-byte proof. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. Without it or a custom model deployment verifier, `modelDeploymentProvenance` is `not_checked`. |
+| `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation policy and verifier overrides. |
+| `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
+
+| Type | Field or signature | Description |
+| --- | --- | --- |
+| `DeploymentPolicy` | `(params: DeploymentPolicyParams) => Awaitable<void>` | Resolves only for an accepted model deployment. |
+| `DeploymentPolicyParams` | `model: string` | Canonical model configured for the secure client. |
+|  | `deployment: MeasuredDeployment` | Authenticated deployment measurements to approve or reject. |
+| `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
+|  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
+| `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
+|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifier overrides. |
+
+### Methods and result
+
+| Method or type | Signature or field | Description |
+| --- | --- | --- |
+| `SecureClient.verify()` | `Promise<VerifiedSecureSession>` | Runs the same fresh Gateway/model verification and deployment policy as `fetch`, without sending a Chat Completions request. |
+| `SecureClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
+| `SecureClient.fetch(input, init?)` | `Promise<Response>` | Performs fresh verification, then sends a Chat Completions request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
+| `NearAiSecureClient.verify()` | `Promise<VerifiedSecureSession>` | Runs the same operation through the OpenAI-compatible client. |
+| `NearAiSecureClient.secure` | `SecureClient` | Underlying verified transport for applications that need direct `fetch` access. |
+| `NearAiSecureClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
+| `VerifiedSecureSession.model` | `string` | Configured canonical model. |
+| `VerifiedSecureSession.gatewayAttestation` | `VerifiedGatewayAttestation` | Verified Gateway attestation result. |
+| `VerifiedSecureSession.modelAttestations` | `readonly VerifiedModelAttestation[]` | All verified model-attestation candidates returned by the Gateway. |
+| `VerifiedSecureSession.modelSigningPublicKey` | `string` | Verified Ed25519 model key selected to route this client's Chat requests, including when `e2ee` is `false`. |
+| `VerifiedSecureSession.modelDeploymentProvenance` | `'not_checked' \| 'verified'` | Whether a caller-supplied model deployment verifier or policy accepted every candidate. |
+
+For an aggregator, `bearerToken` is sent to the configured API base URL. The
+aggregator must forward the Chat request and its model key pin unchanged while
+using its own upstream credential. With E2EE enabled, it must also forward the
+encrypted body and field-encryption headers unchanged.
+
 ## `AttestationClient`
 
-`AttestationClient` owns NEAR AI Cloud Gateway configuration. Construct it once, then use
-its methods to retrieve signatures and evidence. It does not send completion
+`AttestationClient` owns Gateway configuration. Construct it once, then use its
+methods to retrieve signatures and evidence. It does not send completion
 requests or retain their request or response bytes. SDK-classified client and
 selection failures are `ApiError`; SDK-classified failures from explicit
 `verify…` functions are `VerificationError`. Unexpected runtime errors can
@@ -46,15 +149,16 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey` | `string` | Yes | — | Bearer token for signature and evidence requests. |
-| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) NEAR AI Cloud Gateway base URL. Include the API path when using a custom endpoint. |
+| `apiKey` | `string` | One credential required | — | Bearer credential for signature and evidence requests. Do not supply it with `bearerToken`. |
+| `bearerToken` | `string` | One credential required | — | Alternative bearer credential. Do not supply it with `apiKey`. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL. Include the API path when using a custom endpoint. |
 
 ### Methods
 
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment preflight. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment check. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -66,7 +170,7 @@ The Gateway's report and signature endpoints have different defaults.
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Gateway response. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Gateway response. It must be hexadecimal: 20 or 32 bytes without `signingAlgo`, or the matching length when an algorithm is selected. Invalid input throws `ApiError` before a request. |
-| `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Gateway default. For a preflight operation that selects an algorithm, use the same value when fetching the completion signature. This does not select a gateway instance. |
+| `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit it to use the Gateway default. When pairing this evidence with a later completion receipt, use the same explicit value when fetching that signature. This does not select a gateway instance. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
 | `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
 
@@ -108,9 +212,9 @@ match and performs no additional cryptographic verification.
 | Function | Params | Returns | Description |
 | --- | --- | --- | --- |
 | `verifyModelAttestation(params)` | `VerifyModelAttestationParams` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
-| `verifyModelResponse(params)` | `VerifyModelResponseParams` | `void` | Verifies the exact completion bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
+| `verifyModelResponse(params)` | `VerifyModelResponseParams` | `void` | Verifies exact completion body bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
 | `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence. A returned `attestation.spkiFingerprint` requires and checks `clientBinding.spkiFingerprint`. |
-| `verifyGatewayResponse(params)` | `VerifyGatewayResponseParams` | `void` | Verifies the exact completion bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
+| `verifyGatewayResponse(params)` | `VerifyGatewayResponseParams` | `void` | Verifies exact completion body bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
 
 ### Attestation verification parameters
 
@@ -133,24 +237,25 @@ generic client defaults to the latter. The Node client requests and captures the
 fingerprint by default.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for
-the exact completion bytes. It matches the signature to the signer bound to
+the exact completion body bytes. It matches the signature to the signer bound to
 verified gateway deployment evidence; it does not establish model execution.
 
 ### Response verification parameters
 
 | Type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `VerifyModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact bytes sent to the completion endpoint. |
-|  | `responseBody` | `Uint8Array` | Yes | Exact bytes received from the completion endpoint. |
+| `VerifyModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request body bytes sent to the completion endpoint. |
+|  | `responseBody` | `Uint8Array` | Yes | Exact response body bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'provider_tee'`. |
 |  | `attestation` | `VerifiedModelAttestation` | Yes | Successful model-attestation result whose signer must match the signature. |
-| `VerifyGatewayResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact bytes sent to the completion endpoint. |
-|  | `responseBody` | `Uint8Array` | Yes | Exact bytes received from the completion endpoint. |
+| `VerifyGatewayResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request body bytes sent to the completion endpoint. |
+|  | `responseBody` | `Uint8Array` | Yes | Exact response body bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'gateway'`. |
 |  | `attestation` | `VerifiedGatewayAttestation` | Yes | Successful gateway-attestation result whose signer must match the signature. |
 
-Call both attestation verifiers before sending a completion, then pass the
-preflight result selected by `signature.kind` to the matching response verifier.
+Call both attestation verifiers before sending a completion. Later, pass the
+matching previously verified attestation selected by `signature.kind` to the
+response verifier.
 Results are ordinary data, so callers decide when raw evidence must be verified
 again after storage, transfer, or reconstruction in another language.
 
@@ -165,8 +270,8 @@ verification workflows.
 
 | Kind | Signed at | Required verified evidence | A successful response verification establishes |
 | --- | --- | --- | --- |
-| `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response bytes. |
-| `gateway` | NEAR AI Cloud Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response bytes. It does not establish model execution. |
+| `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response body bytes. |
+| `gateway` | Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response body bytes. It does not establish model execution. |
 
 The Gateway can return `gateway` when it rewrites the client-visible response,
 because a byte-exact provider signature would no longer match those bytes. A
@@ -180,7 +285,7 @@ receipt are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issue
 | --- | --- | --- | --- |
 | `SigningIdentity` | `signingAlgo` | `SigningAlgo` | Signing algorithm. |
 |  | `signingAddress` | `string` | Hexadecimal signing identity: 20 bytes for ECDSA or 32 bytes for Ed25519. |
-| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Gateway receipt kind that selects the matching preflight result and response verifier. |
+| `CompletionSignature` | `kind` | `'provider_tee' \| 'gateway'` | Explicit Gateway receipt kind that selects the matching previously verified attestation and response verifier. |
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |
@@ -208,6 +313,7 @@ receipt are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issue
 | Type | Additional field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
+|  | `signingPublicKey?` | `string` | No | E2EE model public key supplied by the service. For Ed25519 evidence, verification requires it to match the quote-bound signer before returning it. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
 |  | `reportedQuoteData` | `string` | Yes | Gateway report-data copy. |
@@ -277,6 +383,7 @@ JWT/EAT validation, different trust roots, or another verification service.
 | Type | Additional field | Type | Description |
 | --- | --- | --- | --- |
 | `VerifiedModelAttestation` | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence result. Cloud model verification does not establish a client-to-model TLS binding. |
+|  | `signingPublicKey?` | `string` | Quote-bound Ed25519 key available for E2EE. |
 | `VerifiedGatewayAttestation` | `tlsBinding` | `GatewayTlsBinding` | Gateway TLS binding established by the returned quote layout. |
 
 | Alias | Definition |

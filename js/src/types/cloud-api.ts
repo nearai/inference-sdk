@@ -13,11 +13,24 @@ import type {
   VerifiedModelAttestation,
 } from './verification';
 
-/** Configuration shared by all Cloud API evidence requests. */
-export type AttestationClientOptions = {
-  readonly apiKey: string;
+type AttestationClientBaseOptions = {
   readonly baseUrl?: string;
 };
+
+/**
+ * Credential used by attestation and receipt requests. An API key is suitable
+ * for a direct Gateway connection; a bearer token lets an aggregator inject
+ * its own upstream credential.
+ */
+export type AttestationClientOptions =
+  | (AttestationClientBaseOptions & {
+      readonly apiKey: string;
+      readonly bearerToken?: never;
+    })
+  | (AttestationClientBaseOptions & {
+      readonly bearerToken: string;
+      readonly apiKey?: never;
+    });
 
 export type FetchModelAttestationsParams = {
   readonly model: string;

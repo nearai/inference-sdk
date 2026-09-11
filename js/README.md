@@ -1,97 +1,76 @@
 # Verifiable AI SDK for TypeScript
 
-Verify NEAR AI Cloud deployment attestations and completion signatures.
-`AttestationClient` retrieves NEAR AI Cloud Gateway evidence and signatures; standalone
-functions verify them. Your application sends completion requests and preserves
-their exact request and response bytes.
+`verifiable-ai-sdk` verifies Gateway and model attestations in Node.js and
+browsers. It also provides secure Chat Completions clients for NEAR-backed
+model deployments that expose a quote-bound Ed25519 public key.
 
-## Verification flow
+The package has two layers:
 
-Use three stages for a verified completion:
+- `NearAiSecureClient` exposes the familiar OpenAI Chat Completions shape;
+  `SecureClient` exposes the same deployment-checked request path as `fetch`.
+- `AttestationClient` and the standalone `verify…` functions let applications
+  fetch, inspect, and verify evidence or completion receipts themselves.
 
-1. Before sending the completion, fetch and verify the Gateway deployment and
-   every returned target-model attestation.
-2. Send a completion to the canonical model with `x-no-aliasing: true`, then
-   retain its completion ID and exact request and response bytes.
-3. Fetch the completion signature and verify those bytes with the preflight
-   evidence selected by `signature.kind`.
+## Secure Chat Completions
 
-The signature kind is a receipt-dispatch value, not a choice between two
-workflows. Both deployments are checked before the request. It selects the
-evidence that can verify the returned bytes:
+Each valid `SecureClient.fetch()` call starts or joins a fresh Gateway/model
+verification before it sends the Chat request. It also runs any caller-supplied
+deployment policy. Completed evidence is never cached. If verification or
+policy approval fails, no inference request is sent.
 
-| `signature.kind` | Response verifier | Successful result |
-| --- | --- | --- |
-| `provider_tee` | `verifyModelResponse` with the verified model attestation | The model-serving TEE signer bound to that attestation signed the exact request and response bytes. |
-| `gateway` | `verifyGatewayResponse` with the verified Gateway attestation | The Gateway signer bound to that attestation signed the exact client-visible request and response bytes. |
+`verify()` runs the same Gateway/model verification once without sending a Chat
+request. It returns the verified session and never caches a completed result;
+a later `fetch()` starts or joins a new verification.
 
-If the relevant signing identity does not match the preflight result, response
-verification fails. Do not substitute unverified evidence for a failed match.
+E2EE is enabled by default:
 
-## What attestations establish
+| `e2ee` | What the client does after verification |
+| --- | --- |
+| `true` or omitted | Encrypts supported request fields to a quote-bound Ed25519 model key, pins the request to that key, and decrypts protocol-covered response fields. |
+| `false` | Sends plaintext Chat fields with a verified Ed25519 model-key routing header. Fresh attestation and deployment-policy checks still run, but this alone does not prove the exact response bytes. |
 
-A successful model attestation verifies its quote, nonce, accepted TCB status,
-measured deployment, runtime measurements, model signer, and configured GPU
-evidence policy. A successful Gateway attestation verifies the equivalent
-Gateway deployment evidence and signer. By default, the `/node` client captures
-the TLS peer while fetching Gateway evidence; `verifyGatewayAttestation` checks
-that peer against the Gateway quote.
+The E2EE transport uses NEAR model evidence with a quote-bound Ed25519 key and
+the version 2 field-encryption protocol. It supports only
+`POST /chat/completions`, in non-streaming and streaming modes. The client
+encrypts the request fields it recognizes: string message content,
+array-valued rich message content, assistant reasoning and audio data, and
+recognized function and tool values.
+Every E2EE Chat request sends `X-Encrypt-All-Fields: true`; that enables the
+protocol's additional documented fields but does not turn arbitrary JSON into
+ciphertext.
 
-The default NVIDIA verifier sends supplied GPU evidence to NVIDIA NRAS over
-HTTPS and accepts its documented boolean overall result. It does not locally
-validate the returned JWT/EAT signature. Supply `verifiers.nvidia` when your
-trust model requires local JWT/EAT validation, different trust roots, or
-another verification service.
+Other Chat fields and unrecognized values are preserved without E2EE
+transformation. The Gateway and model decide whether to accept them; the SDK is
+not a second Chat request validator. A field that the protocol does not
+recognize is not automatically encrypted, so place private data only in fields
+covered by the E2EE flow.
 
-## Evidence boundary
+Before decrypting a non-empty protocol-covered response field, the client
+checks its XChaCha20-Poly1305 AEAD tag. This field-level integrity check is not a
+completion receipt and does not establish that a particular Gateway or model
+signer produced the response.
 
-The Gateway preflight attestation, verified model-attestation candidates, and a
-completion signature do not yet form a complete model-to-Gateway-to-final-response
-chain. In particular, a `gateway` signature proves the final client-visible
-bytes were signed by the verified Gateway, but does not cryptographically bind
-them to an upstream response from the verified model. A `provider_tee` signature
-verifies the model-signed bytes, but does not bind that signature to the
-preflight Gateway evidence.
-
-This limitation matters when the Gateway rewrites a provider response before
-returning it. The planned paired provider signature and Gateway receipt are
-tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
-
-## Requirements
-
-- Use the `clientBinding` returned with each attestation fetch result when
-  verifying that result. The SDK generates a fresh nonce for every evidence
-  request.
-- Verify Gateway evidence and every returned model attestation before sending
-  the completion. Keep every verified model result for the
-  receipt-verification stage.
-- Preserve exact completion request and response bytes. Do not parse and
-  serialize them again before response verification.
-- Use the signature's explicit `kind` only to choose the matching response
-  verifier and preflight result.
-- Supply a deployment verifier when your application must restrict acceptable
-  measured deployments.
-
-The SDK does not send inference requests, choose retry behavior, or turn model
-evidence into a client-to-model TLS claim.
+The secure clients do not fetch a completion receipt on the request path. A
+successful deployment check—whether E2EE is enabled or not—does not provide a
+separately signed, byte-exact response receipt. Retain exact body bytes and
+verify a separate receipt when an asynchronous byte-level audit is needed. A
+receipt cannot prevent an already-sent request and should not delay a
+user-visible response.
 
 ## Documentation
 
-- [Verification guide](./docs/verification-guide.md) explains the complete
-  three-stage flow, policies, and error handling.
-- [API reference](./docs/api-reference.md) documents Cloud request and
-  verification APIs, types, and fields.
+- [Verification guide](./docs/verification-guide.md) explains secure Chat,
+  E2EE, aggregators, policies, and optional receipt verification.
+- [API reference](./docs/api-reference.md) lists the clients, types, and
+  standalone verification functions.
 
 ## Runtime
 
 The package publishes ESM and is developed with Node.js 24. Import from
-`verifiable-ai-sdk/node` for the Node client, whose Gateway evidence fetch
-captures a TLS peer and requests TLS-bound evidence by default. Import from
-`verifiable-ai-sdk` for the generic client, whose Gateway evidence fetch uses
-the no-TLS layout. In that layout, `verifyGatewayAttestation` returns
-`tlsBinding.kind: 'none'`. `GatewayAttestation.spkiFingerprint` is
-Gateway-reported, `GatewayClientBinding.spkiFingerprint` is client-observed,
-and a successful `GatewayTlsBinding.spkiFingerprint` is their verified match.
+`verifiable-ai-sdk/node` when a lower-level Gateway-attestation fetch should
+capture and verify the TLS peer. Import from `verifiable-ai-sdk` when peer
+certificate observation is unavailable, including browsers. The secure Chat
+clients use the generic Gateway-evidence path so they work in browsers.
 
 The default Intel verifier may require `crypto`, `buffer`, and `stream`
 polyfills in browsers. Supply a custom quote verifier when your runtime or

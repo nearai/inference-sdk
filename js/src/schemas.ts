@@ -22,12 +22,13 @@ function isUint8Array(value: unknown): boolean {
   return value instanceof Uint8Array;
 }
 
-function isNonArrayObject(value: unknown): value is object {
+function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 const Uint8ArraySchema = v.custom<Uint8Array>(isUint8Array);
-const NonArrayObjectSchema = v.custom<object>(isNonArrayObject);
+const NonArrayObjectSchema =
+  v.custom<Record<string, unknown>>(isNonArrayObject);
 
 function objectSchema<TEntries extends v.ObjectEntries>(entries: TEntries) {
   return v.pipe(NonArrayObjectSchema, v.object(entries));
@@ -79,6 +80,14 @@ export const NvidiaPayloadNonceSchema = looseObjectSchema({
 
 export const CompletionRequestModelSchema = looseObjectSchema({
   model: v.pipe(v.string(), v.minLength(1)),
+  stream: v.pipe(
+    v.optional(v.nullable(v.boolean())),
+    v.transform((value) => value ?? undefined),
+  ),
+});
+
+export const CompletionResponseIdSchema = objectSchema({
+  id: v.pipe(v.string(), v.minLength(1)),
 });
 
 export const QuoteVerificationResultSchema = objectSchema({
@@ -128,6 +137,7 @@ const CloudApiAttestationEntries = {
 export const CloudApiModelAttestationSchema = objectSchema({
   ...CloudApiAttestationEntries,
   nvidia_payload: OptionalCloudApiStringSchema,
+  signing_public_key: OptionalCloudApiStringSchema,
 });
 
 export const CloudApiGatewayAttestationSchema = objectSchema({
@@ -144,6 +154,23 @@ export const CloudApiModelAttestationResponseSchema = objectSchema({
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({
   gateway_attestation: CloudApiGatewayAttestationSchema,
 });
+
+// This is the minimal external boundary for secure Chat Completions requests.
+// The secure client knows how to encrypt selected protocol fields, but leaves
+// ordinary and future Chat fields to the Gateway and model to interpret.
+export const ChatCompletionRequestSchema = looseObjectSchema({
+  model: v.pipe(v.string(), v.minLength(1)),
+});
+
+// The server can add valid OpenAI-compatible fields faster than the SDK can
+// learn to transform them. These schemas only establish that a response/event
+// is a JSON object; the E2EE transformer selectively decrypts documented
+// fields and preserves everything else.
+export const SecureChatCompletionResponseSchema =
+  v.custom<Record<string, unknown>>(isNonArrayObject);
+
+export const SecureChatCompletionStreamChunkSchema =
+  v.custom<Record<string, unknown>>(isNonArrayObject);
 
 const CompletionSignatureFieldNames = [
   'text',

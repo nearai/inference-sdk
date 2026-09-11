@@ -76,12 +76,14 @@ type ValidateApiSigningAddressParams = {
  * requests.
  */
 export class CloudApiClient {
-  private readonly apiKey: string;
+  private readonly authorizationToken: string;
+  private readonly authorizationField: 'apiKey' | 'bearerToken';
   private readonly baseUrl: string;
 
-  constructor({ apiKey, baseUrl }: AttestationClientOptions) {
-    this.apiKey = apiKey;
-    this.baseUrl = resolveCloudApiBaseUrl(baseUrl);
+  constructor(options: AttestationClientOptions) {
+    this.authorizationToken = getAuthorizationToken(options);
+    this.authorizationField = getAuthorizationField(options);
+    this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
   }
 
   /**
@@ -273,14 +275,14 @@ export class CloudApiClient {
   }: CreateCloudApiRequestParams): Request {
     try {
       const headers = new Headers(extraHeaders);
-      headers.set('authorization', `Bearer ${this.apiKey}`);
+      headers.set('authorization', `Bearer ${this.authorizationToken}`);
       return new Request(url, { headers });
     } catch (cause) {
       throw new ApiError(
         {
           code: 'api.invalid_input',
           details: {
-            field: 'apiKey',
+            field: this.authorizationField,
             reason: 'invalid_header_value',
             expected: 'an HTTP header value',
           },
@@ -289,6 +291,19 @@ export class CloudApiClient {
       );
     }
   }
+}
+
+/** Shared by higher-level clients that need the relay's outer Bearer header. */
+export function getAuthorizationToken(
+  options: AttestationClientOptions,
+): string {
+  return options.apiKey ?? options.bearerToken;
+}
+
+function getAuthorizationField(
+  options: AttestationClientOptions,
+): 'apiKey' | 'bearerToken' {
+  return options.apiKey === undefined ? 'bearerToken' : 'apiKey';
 }
 
 /**
@@ -453,7 +468,7 @@ function validateApiSigningAddress({
   return address;
 }
 
-function resolveCloudApiBaseUrl(
+export function resolveCloudApiBaseUrl(
   baseUrl = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ): string {
   let resolvedBaseUrl: URL;

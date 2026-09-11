@@ -7,6 +7,7 @@ import type {
 } from '../types/verification';
 import * as v from 'valibot';
 import { NvidiaPayloadNonceSchema } from '../schemas';
+import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
 import {
@@ -54,7 +55,55 @@ export async function verifyModelAttestation({
     verifier: verifiers?.nvidia ?? nvidiaNrasVerifier,
   });
 
-  return { ...evidence, gpuEvidence };
+  const signingPublicKey = verifySigningPublicKey({
+    attestation,
+    signingAlgo: evidence.signer.signingAlgo,
+    signingAddress: evidence.signer.signingAddress,
+  });
+
+  return {
+    ...evidence,
+    gpuEvidence,
+    ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
+  };
+}
+
+type VerifySigningPublicKeyParams = {
+  readonly attestation: VerifyModelAttestationParams['attestation'];
+  readonly signingAlgo: 'ecdsa' | 'ed25519';
+  readonly signingAddress: string;
+};
+
+/**
+ * E2EE uses an Ed25519 public key. When Cloud API supplies it, require it to
+ * be the same key already authenticated as the model signer by quote report
+ * data. Other model-attestation flows do not require this field.
+ */
+function verifySigningPublicKey({
+  attestation,
+  signingAlgo,
+  signingAddress,
+}: VerifySigningPublicKeyParams): string | undefined {
+  if (attestation.signingPublicKey === undefined || signingAlgo !== 'ed25519') {
+    return undefined;
+  }
+  const signingPublicKey = hexToBuffer(
+    attestation.signingPublicKey,
+    'attestation.signingPublicKey',
+  );
+  const verifiedSigningAddress = hexToBuffer(
+    signingAddress,
+    'signer.signingAddress',
+  );
+  if (
+    signingPublicKey.length !== 32 ||
+    !signingPublicKey.equals(verifiedSigningAddress)
+  ) {
+    throw new VerificationError({
+      code: 'binding.model_public_key_mismatch',
+    });
+  }
+  return signingPublicKey.toString('hex');
 }
 
 type VerifyNvidiaEvidenceParams = {
