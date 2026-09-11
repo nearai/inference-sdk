@@ -106,7 +106,7 @@ async fn send_completion(
         "model": MODEL,
         "messages": [{ "role": "user", "content": "Reply with the word ok." }],
         "stream": stream,
-        "max_tokens": 8,
+        "max_completion_tokens": 8,
     }))?;
     let completion_response = completion_client
         .post(API_URL)

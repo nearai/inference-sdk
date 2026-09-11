@@ -102,7 +102,7 @@ async function sendCompletion({
       model,
       messages: [{ role: 'user', content: 'Reply with the word ok.' }],
       stream,
-      max_tokens: 8,
+      max_completion_tokens: 8,
     }),
   );
   const response = await fetch(apiUrl, {

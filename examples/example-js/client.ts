@@ -15,7 +15,7 @@ const { completion, receipt } =
   await client.chat.completions.createWithReceipt({
     model,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_tokens: 8,
+    max_completion_tokens: 8,
   });
 
 console.log(completion.choices[0]?.message.content ?? '');
