@@ -23,3 +23,19 @@ console.log(completion.choices[0]?.message.content ?? '');
 // Receipt verification is optional and runs after the completion is available.
 const verified = await receipt.verify();
 console.log(`Verified ${verified.signatureKind} response receipt.`);
+
+const { stream, receipt: streamingReceipt } =
+  await client.chat.completions.createWithReceipt({
+    model,
+    messages: [{ role: 'user', content: 'Reply with the word ok.' }],
+    max_completion_tokens: 8,
+    stream: true,
+  });
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta.content ?? '');
+}
+process.stdout.write('\n');
+
+const verifiedStream = await streamingReceipt.verify();
+console.log(`Verified ${verifiedStream.signatureKind} streaming receipt.`);
