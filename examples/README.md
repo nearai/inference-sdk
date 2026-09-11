@@ -8,8 +8,10 @@ The JavaScript SDK's Node.js example includes two entry points:
 - `client.ts` uses `NearAiSecureClient`, which uses Ed25519 for Gateway/model
   evidence and response receipts, and enables E2EE by default. Each Chat
   request supplies its model; the client verifies fresh Gateway and model
-  evidence before sending it. The example also verifies a response receipt
-  after the completion is available.
+  evidence before sending it. Because it imports the Node entry point and
+  connects directly to the Gateway, its Gateway evidence is TLS-bound by
+  default. The example also verifies a response receipt after the completion
+  is available.
 - `bare.ts` explicitly verifies Gateway evidence, every returned model
   attestation, and each response receipt. It deliberately sends plaintext Chat
   JSON and does not demonstrate E2EE.

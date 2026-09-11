@@ -15,7 +15,6 @@ export type {
 export type {
   DeploymentPolicy,
   DeploymentPolicyParams,
-  GatewayVerificationOptions,
   ModelVerificationOptions,
   NearAiSecureClientOptions,
   CompletionReceipt,

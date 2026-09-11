@@ -15,12 +15,13 @@ E2EE runtime transforms the fields covered by the protocol and forwards the
 rest to the Gateway. Each Chat request names its model; before dispatch, the
 client verifies fresh evidence for that model and the Gateway.
 
-This direct-Gateway example is for a server-side API key. For a browser
-integration, use the aggregator configuration below with a browser-scoped
-`bearerToken` instead.
+This direct-Gateway example is for a server-side API key. It uses the Node
+entry point, which binds Gateway evidence to the TLS peer that returned the
+attestation. For a browser integration, use the aggregator configuration below
+with a browser-scoped `bearerToken` instead.
 
 ```ts
-import { NearAiSecureClient } from 'verifiable-ai-sdk';
+import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
 
 const model = 'z-ai/glm-5.2';
 const client = new NearAiSecureClient({
@@ -81,6 +82,8 @@ with its own NEAR AI credential. The device still performs attestation
 verification and encrypts message fields before the aggregator receives them.
 
 ```ts
+import { NearAiSecureClient } from 'verifiable-ai-sdk';
+
 const client = new NearAiSecureClient({
   baseUrl: 'https://api.example.com/v1',
   bearerToken: '<browser-scoped token>',
@@ -93,6 +96,21 @@ own upstream credential. It must forward the Chat request and its model key pin
 unchanged. When E2EE is enabled, it must also forward the encrypted body and
 field-encryption headers unchanged. In production, the aggregator endpoint
 should use HTTPS because the browser token is sent to it.
+
+The generic entry point uses no TLS binding because browser Fetch cannot expose
+the peer certificate. In Node.js, the `/node` secure client enables Gateway
+TLS binding by default for a direct Gateway connection. If its `baseUrl` is an
+aggregator or proxy instead, disable that binding explicitly:
+
+```ts
+import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
+
+const client = new NearAiSecureClient({
+  baseUrl: 'https://api.example.com/v1',
+  bearerToken: '<server-scoped token>',
+  gatewayVerification: { includeSpkiFingerprint: false },
+});
+```
 
 ## E2EE scope and response handling
 

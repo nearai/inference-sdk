@@ -8,8 +8,18 @@ import {
   type QuoteVerificationResult,
   type SecureClientOptions,
 } from '../src';
+import {
+  AttestationClient as NodeAttestationClient,
+  SecureClient as NodeSecureClient,
+} from '../src/node';
+import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
-import { appCompose, createGatewayTlsQuote } from './fixtures';
+import {
+  appCompose,
+  createGatewayTlsQuote,
+  sha256,
+  tlsFingerprint,
+} from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
 const model = 'glm-5.2';
@@ -33,6 +43,7 @@ type CompletionRequest = {
 type TestGatewayState = {
   completionRequests: number;
   gatewayAttestationRequests: number;
+  readonly gatewayAttestationIncludeSpkiFingerprints: boolean[];
   modelAttestationRequests: number;
   readonly modelAttestationModels: string[];
   readonly completionRequestsSeen: CompletionRequest[];
@@ -155,6 +166,7 @@ function createTestGateway({
   const state: TestGatewayState = {
     completionRequests: 0,
     gatewayAttestationRequests: 0,
+    gatewayAttestationIncludeSpkiFingerprints: [],
     modelAttestationRequests: 0,
     modelAttestationModels: [],
     completionRequestsSeen: [],
@@ -169,13 +181,25 @@ function createTestGateway({
     nonce: string,
     signingKeyPair: nacl.SignKeyPair,
     includePublicKey: boolean,
+    gatewaySpkiFingerprint?: string,
   ) {
     const quoteId = `${keyHex(signingKeyPair.publicKey)}:${nonce}`;
     const quote = createGatewayTlsQuote({
-      reportData: Buffer.concat([
-        Buffer.from(signingKeyPair.publicKey),
-        Buffer.from(nonce, 'hex'),
-      ]),
+      reportData:
+        gatewaySpkiFingerprint === undefined
+          ? Buffer.concat([
+              Buffer.from(signingKeyPair.publicKey),
+              Buffer.from(nonce, 'hex'),
+            ])
+          : Buffer.concat([
+              sha256(
+                Buffer.concat([
+                  Buffer.from(signingKeyPair.publicKey),
+                  Buffer.from(gatewaySpkiFingerprint, 'hex'),
+                ]),
+              ),
+              Buffer.from(nonce, 'hex'),
+            ]),
     });
     quotes.set(quoteId, quote);
     return {
@@ -189,6 +213,9 @@ function createTestGateway({
       event_log: eventLog,
       info: { tcb_info: { app_compose: appCompose } },
       report_data: quote.reportData.toString('hex'),
+      ...(gatewaySpkiFingerprint === undefined
+        ? {}
+        : { tls_cert_fingerprint: gatewaySpkiFingerprint }),
     };
   }
 
@@ -223,8 +250,18 @@ function createTestGateway({
         });
       }
       state.gatewayAttestationRequests += 1;
+      const includeSpkiFingerprint =
+        url.searchParams.get('include_tls_fingerprint') === 'true';
+      state.gatewayAttestationIncludeSpkiFingerprints.push(
+        includeSpkiFingerprint,
+      );
       return jsonResponse({
-        gateway_attestation: createAttestation(nonce, gatewayKeyPair, false),
+        gateway_attestation: createAttestation(
+          nonce,
+          gatewayKeyPair,
+          false,
+          includeSpkiFingerprint ? tlsFingerprint : undefined,
+        ),
       });
     }
 
@@ -601,6 +638,38 @@ function secureClientOptions(gateway: TestGateway): SecureClientOptions {
   };
 }
 
+type NodeAttestationClientPrototype = {
+  requestGatewayAttestation: (
+    request: Request,
+    capturePeerSpkiFingerprint: boolean,
+  ) => Promise<GatewayAttestationHttpResponse>;
+};
+
+type MockNodeGatewayAttestationParams = {
+  readonly gateway: TestGateway;
+  readonly peerSpkiFingerprint?: string;
+};
+
+function mockNodeGatewayAttestation({
+  gateway,
+  peerSpkiFingerprint = tlsFingerprint,
+}: MockNodeGatewayAttestationParams): boolean[] {
+  const capturedPeerSpkiFingerprints: boolean[] = [];
+  const prototype =
+    NodeAttestationClient.prototype as unknown as NodeAttestationClientPrototype;
+  jest
+    .spyOn(prototype, 'requestGatewayAttestation')
+    .mockImplementation(async (request, capturePeerSpkiFingerprint) => {
+      capturedPeerSpkiFingerprints.push(capturePeerSpkiFingerprint);
+      const response = await gateway.fetch(request);
+      return {
+        response,
+        ...(capturePeerSpkiFingerprint ? { peerSpkiFingerprint } : {}),
+      };
+    });
+  return capturedPeerSpkiFingerprints;
+}
+
 function chatRequest(body: Record<string, unknown>): RequestInit {
   return {
     method: 'POST',
@@ -680,6 +749,9 @@ describe('secure client', () => {
       modelAttestationRequests: 1,
       completionRequests: 1,
     });
+    expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
+      false,
+    ]);
   });
 
   test('fetch obtains fresh evidence for each request', async () => {
@@ -1656,5 +1728,73 @@ describe('secure client', () => {
     });
     expect(gateway.state.gatewayAttestationRequests).toBe(0);
     expect(gateway.state.modelAttestationRequests).toBe(0);
+  });
+
+  describe('Node secure client', () => {
+    test('binds Gateway evidence to the TLS peer by default', async () => {
+      const gateway = createTestGateway();
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
+        gateway,
+      });
+      const client = new NodeSecureClient(secureClientOptions(gateway));
+
+      await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+      );
+
+      expect(capturedPeerSpkiFingerprints).toEqual([true]);
+      expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
+        true,
+      ]);
+      expect(gateway.state.completionRequests).toBe(1);
+    });
+
+    test('can disable Gateway TLS binding for an aggregator or proxy', async () => {
+      const gateway = createTestGateway();
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
+        gateway,
+      });
+      const client = new NodeSecureClient({
+        ...secureClientOptions(gateway),
+        gatewayVerification: {
+          includeSpkiFingerprint: false,
+          verifiers: { quote: gateway.quoteVerifier },
+        },
+      });
+
+      await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+      );
+
+      expect(capturedPeerSpkiFingerprints).toEqual([false]);
+      expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
+        false,
+      ]);
+      expect(gateway.state.completionRequests).toBe(1);
+    });
+
+    test('blocks the completion when the Gateway TLS peer does not match', async () => {
+      const gateway = createTestGateway();
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      mockNodeGatewayAttestation({
+        gateway,
+        peerSpkiFingerprint: '44'.repeat(32),
+      });
+      const client = new NodeSecureClient(secureClientOptions(gateway));
+
+      await expect(
+        client.fetch(
+          `${baseUrl}chat/completions`,
+          chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+        ),
+      ).rejects.toMatchObject({
+        failure: { code: 'binding.spki_fingerprint_mismatch' },
+      });
+      expect(gateway.state.completionRequests).toBe(0);
+    });
   });
 });

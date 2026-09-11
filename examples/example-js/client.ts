@@ -13,9 +13,10 @@ async function main(): Promise<void> {
 
   const client = new NearAiSecureClient({ apiKey, baseUrl: BASE_URL });
 
-  // NearAiSecureClient uses Ed25519 for Gateway/model evidence and response
+  // This Node client uses Ed25519 for Gateway/model evidence and response
   // receipts. Before sending each request, it verifies fresh evidence for
-  // `MODEL`. E2EE is enabled by default.
+  // `MODEL`, including the TLS peer that returned Gateway evidence. E2EE is
+  // enabled by default.
 
   await runNonStreamingExample(client);
   await runStreamingExample(client);

@@ -11,8 +11,16 @@ import type {
   VerifiedModelAttestation,
 } from '../types/verification';
 import type {
+  FetchCompletionSignatureParams,
+  FetchedGatewayAttestation,
+  FetchedModelAttestations,
+  FetchModelAttestationsParams,
+} from '../types/cloud-api';
+import type { CompletionSignature } from '../types/chat';
+import type {
   CompletionReceipt,
   NearAiSecureClientOptions,
+  NodeSecureClientOptions,
   SecureChat,
   SecureChatCompletionRequest,
   SecureChatCompletionResponse,
@@ -141,6 +149,23 @@ type CreateOpenAiClientParams = {
   readonly fetch: typeof globalThis.fetch;
 };
 
+/** Internal evidence operations shared by the generic and Node secure clients. */
+export type SecureEvidenceSource = {
+  readonly fetchGatewayAttestation: () => Promise<FetchedGatewayAttestation>;
+  readonly fetchModelAttestations: (
+    params: FetchModelAttestationsParams,
+  ) => Promise<FetchedModelAttestations>;
+  readonly fetchCompletionSignature: (
+    params: FetchCompletionSignatureParams,
+  ) => Promise<CompletionSignature>;
+};
+
+/** Construction parameters shared by the generic and Node secure clients. */
+export type SecureClientBaseParams = {
+  readonly options: NodeSecureClientOptions;
+  readonly evidence: SecureEvidenceSource;
+};
+
 type OpenAiChatCompletionCreateParamsBase = Parameters<
   OpenAI.Chat.Completions['create']
 >[0];
@@ -156,20 +181,20 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
  * request and response remain plaintext while the request stays pinned to the
  * verified model key.
  */
-export class SecureClient {
-  private readonly attestationClient: AttestationClient;
+export class SecureClientBase {
+  private readonly evidence: SecureEvidenceSource;
   private readonly authorizationToken: string;
   private readonly baseUrl: string;
   private readonly e2eeEnabled: boolean;
-  private readonly options: SecureClientOptions;
+  private readonly options: NodeSecureClientOptions;
   /** Shares only same-model work already in progress; completed evidence is never cached. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<SecureSessionState>
   >();
 
-  constructor(options: SecureClientOptions) {
-    this.attestationClient = new AttestationClient(options);
+  protected constructor({ options, evidence }: SecureClientBaseParams) {
+    this.evidence = evidence;
     this.authorizationToken = getAuthorizationToken(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.e2eeEnabled = options.e2ee !== false;
@@ -312,7 +337,7 @@ export class SecureClient {
   }: VerifyCapturedCompletionParams): Promise<VerifiedCompletionReceipt> {
     const bytes = await responseBody;
     const completionId = getCompletionId({ bytes, contentType });
-    const signature = await this.attestationClient.fetchCompletionSignature({
+    const signature = await this.evidence.fetchCompletionSignature({
       completionId,
       signingAlgo: 'ed25519',
     });
@@ -378,11 +403,8 @@ export class SecureClient {
     model: string,
   ): Promise<SecureSessionState> {
     const [gateway, fetchedModels] = await Promise.all([
-      this.attestationClient.fetchGatewayAttestation({
-        signingAlgo: 'ed25519',
-        includeSpkiFingerprint: false,
-      }),
-      this.attestationClient.fetchModelAttestations({
+      this.evidence.fetchGatewayAttestation(),
+      this.evidence.fetchModelAttestations({
         model,
         signingAlgo: 'ed25519',
       }),
@@ -568,6 +590,27 @@ export class SecureClient {
   }
 }
 
+/** Browser-compatible verified Chat Completions transport. */
+export class SecureClient extends SecureClientBase {
+  constructor(options: SecureClientOptions) {
+    const client = new AttestationClient(options);
+    super({
+      options,
+      evidence: {
+        fetchGatewayAttestation: () =>
+          client.fetchGatewayAttestation({
+            signingAlgo: 'ed25519',
+            includeSpkiFingerprint: false,
+          }),
+        fetchModelAttestations: (params) =>
+          client.fetchModelAttestations(params),
+        fetchCompletionSignature: (params) =>
+          client.fetchCompletionSignature(params),
+      },
+    });
+  }
+}
+
 /** OpenAI-compatible verified Chat Completions client. */
 export class NearAiSecureClient {
   readonly chat: SecureChat;
@@ -575,29 +618,37 @@ export class NearAiSecureClient {
 
   constructor(options: NearAiSecureClientOptions) {
     this.secure = new SecureClient(options);
-    this.chat = {
-      completions: new NearAiSecureChatCompletions({
-        secure: this.secure,
-        authorizationToken: getAuthorizationToken(options),
-      }),
-    };
+    this.chat = createNearAiSecureChat({
+      secure: this.secure,
+      authorizationToken: getAuthorizationToken(options),
+    });
   }
 }
 
-type NearAiSecureChatCompletionsParams = {
-  readonly secure: SecureClient;
+/** Internal OpenAI-compatible Chat wrapper shared by runtime-specific clients. */
+export type CreateNearAiSecureChatParams = {
+  readonly secure: SecureClientBase;
   readonly authorizationToken: string;
 };
+
+export function createNearAiSecureChat({
+  secure,
+  authorizationToken,
+}: CreateNearAiSecureChatParams): SecureChat {
+  return {
+    completions: new NearAiSecureChatCompletions({
+      secure,
+      authorizationToken,
+    }),
+  };
+}
 
 class NearAiSecureChatCompletions implements SecureChatCompletions {
   readonly create: OpenAI.Chat.Completions['create'];
   private readonly authorizationToken: string;
-  private readonly secure: SecureClient;
+  private readonly secure: SecureClientBase;
 
-  constructor({
-    secure,
-    authorizationToken,
-  }: NearAiSecureChatCompletionsParams) {
+  constructor({ secure, authorizationToken }: CreateNearAiSecureChatParams) {
     this.secure = secure;
     this.authorizationToken = authorizationToken;
     const client = this.createOpenAiClient((input, init) =>

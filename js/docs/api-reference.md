@@ -6,16 +6,18 @@ This page describes the Gateway attestation, E2EE, and receipt APIs exported by
 
 ## Package entry points
 
-Both entry points export the same secure and verification APIs. Their
-`AttestationClient` differs only for Gateway TLS binding.
+Both entry points export the same verification APIs. Their attestation and
+secure clients differ in whether they can bind Gateway evidence to the TLS peer
+that returned it.
 
-| Import | Gateway attestation behavior |
+| Import | Gateway evidence behavior |
 | --- | --- |
-| `verifiable-ai-sdk` | Generic client. It defaults to `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Its `includeSpkiFingerprint` option can only be `false`. |
-| `verifiable-ai-sdk/node` | Node client. It captures the TLS peer for its evidence request and requests an SPKI fingerprint by default. Set `includeSpkiFingerprint: false` to use the generic no-TLS flow. |
+| `verifiable-ai-sdk` | Generic `AttestationClient`, `SecureClient`, and `NearAiSecureClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
+| `verifiable-ai-sdk/node` | Node `AttestationClient`, `SecureClient`, and `NearAiSecureClient` capture the TLS peer for their Gateway-evidence request and request an SPKI fingerprint by default. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
 
-TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, use
-`includeSpkiFingerprint: false`.
+TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
+`gatewayVerification.includeSpkiFingerprint: false` on a secure client or
+`includeSpkiFingerprint: false` on `AttestationClient`.
 
 ## Runtime exports
 
@@ -53,10 +55,11 @@ calls may share only an in-flight verification for the same model.
 types. When E2EE is enabled, it transforms the protocol-covered fields and
 forwards the remaining Chat values to the Gateway.
 
-For browser compatibility, both secure clients use the generic no-TLS Gateway
-verification path, even when they are imported from `verifiable-ai-sdk/node`. The Node
-entry point's peer-TLS check is available through its lower-level
-`AttestationClient`.
+The generic secure clients use the no-TLS Gateway-evidence path because browser
+Fetch does not expose the peer certificate. The `/node` secure clients bind
+Gateway evidence to the TLS peer by default. Set
+`gatewayVerification.includeSpkiFingerprint: false` when the configured Node
+endpoint is an aggregator or proxy rather than the attested Gateway.
 
 The secure client checks each non-empty protocol-covered E2EE response field
 with its AEAD tag before decrypting it. This field-level integrity check does not
@@ -99,7 +102,7 @@ Exactly one of `apiKey` and `bearerToken` is required.
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL. This may be a compatible aggregator endpoint. |
 | `e2ee?` | `boolean` | No | `true` | Enables the Ed25519/version 2 secure Chat transport. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and omits a response-byte proof. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. It receives the model named by each Chat request. |
-| `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation policy and verifier overrides. |
+| `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
 
 | Type | Field or signature | Description |
@@ -109,6 +112,8 @@ Exactly one of `apiKey` and `bearerToken` is required.
 |  | `deployment: MeasuredDeployment` | Authenticated deployment measurements to approve or reject. |
 | `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
 |  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
+|  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
+| `GatewayVerificationOptions` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for an aggregator, proxy, or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
 |  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifier overrides. |
 

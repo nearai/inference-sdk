@@ -49,8 +49,26 @@ export type DeploymentPolicyParams = {
 
 /** Advanced verification settings for Gateway evidence used by `SecureClient`. */
 export type GatewayVerificationOptions = {
+  /**
+   * The generic client cannot observe an HTTPS peer certificate, so Gateway
+   * evidence always uses the no-TLS report-data layout.
+   */
+  readonly includeSpkiFingerprint?: false;
   readonly policy?: AttestationPolicy;
   readonly verifiers?: AttestationVerifiers;
+};
+
+/** Gateway-evidence settings supported by the Node-specific secure client. */
+export type NodeGatewayVerificationOptions = Omit<
+  GatewayVerificationOptions,
+  'includeSpkiFingerprint'
+> & {
+  /**
+   * Request and verify the Gateway TLS SPKI fingerprint. Defaults to `true`.
+   * Set this to `false` when the configured endpoint is an aggregator or
+   * proxy rather than the attested Gateway.
+   */
+  readonly includeSpkiFingerprint?: boolean;
 };
 
 /** Advanced verification settings for model evidence used by `SecureClient`. */
@@ -59,8 +77,8 @@ export type ModelVerificationOptions = {
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
-/** Configuration for verified Chat Completions. */
-export type SecureClientOptions = AttestationClientOptions & {
+/** Settings shared by generic and Node verified Chat clients. */
+type SecureClientCommonOptions = {
   /**
    * Encrypt supported Chat fields directly to the verified model key.
    * Defaults to `true`. Setting this to `false` keeps the fresh attestation
@@ -73,12 +91,26 @@ export type SecureClientOptions = AttestationClientOptions & {
    * It receives the model named by each Chat request.
    */
   readonly deploymentPolicy?: DeploymentPolicy;
-  readonly gatewayVerification?: GatewayVerificationOptions;
   readonly modelVerification?: ModelVerificationOptions;
 };
 
+/** Configuration for browser-compatible verified Chat Completions. */
+export type SecureClientOptions = AttestationClientOptions &
+  SecureClientCommonOptions & {
+    readonly gatewayVerification?: GatewayVerificationOptions;
+  };
+
+/** Options accepted by the Node-specific `SecureClient`. */
+export type NodeSecureClientOptions = AttestationClientOptions &
+  SecureClientCommonOptions & {
+    readonly gatewayVerification?: NodeGatewayVerificationOptions;
+  };
+
 /** Options accepted by the OpenAI-compatible `NearAiSecureClient`. */
 export type NearAiSecureClientOptions = SecureClientOptions;
+
+/** Options accepted by the Node-specific `NearAiSecureClient`. */
+export type NodeNearAiSecureClientOptions = NodeSecureClientOptions;
 
 /** A completion signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionReceipt = {
