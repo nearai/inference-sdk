@@ -87,6 +87,7 @@ type CreateTestGatewayParams = {
   readonly includeNullableResponseFields?: boolean;
   readonly includeSecondModelAttestation?: boolean;
   readonly encryptedRefusal?: string;
+  readonly streamRecordSeparators?: readonly string[];
 };
 
 type RequestedTool = {
@@ -161,6 +162,7 @@ function createTestGateway({
   includeNullableResponseFields = false,
   includeSecondModelAttestation = false,
   encryptedRefusal,
+  streamRecordSeparators,
 }: CreateTestGatewayParams = {}): TestGateway {
   const gatewayKeyPair = keyPair(1);
   const modelKeyPair = keyPair(2);
@@ -541,13 +543,15 @@ function createTestGateway({
           },
         ],
       };
-      const firstEvent = `data: ${JSON.stringify(firstChunk)}\r\r`;
+      const separator = (index: number): string =>
+        streamRecordSeparators?.[index] ?? '\r\r';
+      const firstEvent = `data: ${JSON.stringify(firstChunk)}${separator(0)}`;
       return streamResponse([
         firstEvent.slice(0, 19),
         firstEvent.slice(19),
-        `data: ${JSON.stringify(secondChunk)}\r\r`,
-        'data: [DONE]\r\r',
-        ': response complete\r\r',
+        `data: ${JSON.stringify(secondChunk)}${separator(1)}`,
+        `data: [DONE]${separator(2)}`,
+        `: response complete${separator(3)}`,
       ]);
     }
 
@@ -1048,7 +1052,9 @@ describe('secure client', () => {
   });
 
   test('returns a streaming receipt before its entity body is complete', async () => {
-    const gateway = createTestGateway();
+    const gateway = createTestGateway({
+      streamRecordSeparators: ['\n\r\n', '\r\n\n', '\n\r', '\r\n\r'],
+    });
     mockProviderReceipts(gateway);
     const client = new NearAiSecureClient(secureClientOptions(gateway));
 

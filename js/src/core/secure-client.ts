@@ -1063,7 +1063,7 @@ async function drainResponseEntityBody({
 }
 
 function getSseDataRecords(text: string): string[] {
-  return text.split(/\r\n\r\n|\n\n|\r\r/).map((record) =>
+  return text.split(/(?:\r\n|\n|\r)(?:\r\n|\n|\r)/).map((record) =>
     record
       .split(/\r\n|\n|\r/)
       .filter((line) => line.startsWith('data:'))

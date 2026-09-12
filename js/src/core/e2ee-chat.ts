@@ -1072,7 +1072,7 @@ function takeCompleteSseRecords(value: string): {
 function findSseRecordBoundary(
   value: string,
 ): { readonly index: number; readonly separator: string } | undefined {
-  const match = /\r\n\r\n|\n\n|\r\r/.exec(value);
+  const match = /(?:\r\n|\n|\r)(?:\r\n|\n|\r)/.exec(value);
   if (match === null || match.index === undefined) {
     return undefined;
   }
