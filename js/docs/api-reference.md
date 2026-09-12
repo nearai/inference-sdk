@@ -93,12 +93,13 @@ fields but does not encrypt arbitrary request JSON.
 ### Constructor options
 
 `SecureClientOptions` and `NearAiSecureClientOptions` have the same fields.
-Exactly one of `apiKey` and `bearerToken` is required.
+Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
+`headers` supports an aggregator or another compatible endpoint.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey` | `string` | One credential required | — | Bearer credential for a server-side integration. Do not supply it with `bearerToken`. |
-| `bearerToken` | `string` | One credential required | — | Bearer credential for a browser session or compatible aggregator. Do not supply it with `apiKey`. |
+| `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
+| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every evidence, signature, and Chat request. Use this for an aggregator's bearer token, API key, tenant header, or other authentication scheme. SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL. This may be a compatible aggregator endpoint. |
 | `e2ee?` | `boolean` | No | `true` | Enables the Ed25519/version 2 secure Chat transport. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and omits a response-byte proof. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. It receives the model named by each Chat request. |
@@ -138,10 +139,11 @@ calling `receipt.verify()`. Receipt capture follows the response's normal
 consumption path and does not pre-buffer a streamed response. It retains the
 complete request and response bodies in memory.
 
-For an aggregator, `bearerToken` is sent to the configured API base URL. The
-aggregator must forward the Chat request and its model key pin unchanged while
-using its own upstream credential. With E2EE enabled, it must also forward the
-encrypted body and field-encryption headers unchanged.
+For an aggregator, configured `headers` are sent to its API base URL for each
+evidence, signature, and Chat request. The aggregator must forward the Chat
+request and its model key pin unchanged while using its own upstream
+credential. With E2EE enabled, it must also forward the encrypted body and
+field-encryption headers unchanged.
 
 ## `AttestationClient`
 
@@ -160,8 +162,8 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey` | `string` | One credential required | — | Bearer credential for signature and evidence requests. Do not supply it with `bearerToken`. |
-| `bearerToken` | `string` | One credential required | — | Alternative bearer credential. Do not supply it with `apiKey`. |
+| `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
+| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every evidence and signature request. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL. Include the API path when using a custom endpoint. |
 
 ### Methods

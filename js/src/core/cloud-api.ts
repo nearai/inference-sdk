@@ -60,6 +60,10 @@ type CreateCloudApiRequestParams = {
   readonly url: URL;
   readonly extraHeaders?: HeadersInit;
 };
+type MergeCloudApiRequestHeadersParams = {
+  readonly configuration: CloudApiRequestConfiguration;
+  readonly requestHeaders?: HeadersInit;
+};
 type ReadCloudApiJsonParams = {
   readonly response: Response;
   readonly resource: ApiResource;
@@ -70,19 +74,61 @@ type ValidateApiSigningAddressParams = {
   readonly field: string;
 };
 
+/** Internal static request configuration shared by evidence and Chat clients. */
+export type CloudApiRequestConfiguration = {
+  readonly apiKey?: string;
+  readonly defaultHeaders: Headers;
+};
+
+/** Read the static headers used for every SDK request. */
+export function createCloudApiRequestConfiguration(
+  options: AttestationClientOptions,
+): CloudApiRequestConfiguration {
+  try {
+    return {
+      apiKey: options.apiKey,
+      defaultHeaders: new Headers(options.headers),
+    };
+  } catch (cause) {
+    throw invalidHeaderInput('headers', cause);
+  }
+}
+
+/** Merge configured and request-specific headers, with the direct API key last. */
+export function mergeCloudApiRequestHeaders({
+  configuration,
+  requestHeaders,
+}: MergeCloudApiRequestHeadersParams): Headers {
+  try {
+    const headers = new Headers(configuration.defaultHeaders);
+    if (requestHeaders !== undefined) {
+      for (const [name, value] of new Headers(requestHeaders)) {
+        headers.set(name, value);
+      }
+    }
+    if (configuration.apiKey !== undefined) {
+      headers.set('authorization', `Bearer ${configuration.apiKey}`);
+    }
+    return headers;
+  } catch (cause) {
+    throw invalidHeaderInput(
+      configuration.apiKey === undefined ? 'headers' : 'apiKey',
+      cause,
+    );
+  }
+}
+
 /**
  * Shared Cloud API client implementation. Runtime-specific clients expose
  * their own Gateway-attestation options while sharing model and signature
  * requests.
  */
 export class CloudApiClient {
-  private readonly authorizationToken: string;
-  private readonly authorizationField: 'apiKey' | 'bearerToken';
   private readonly baseUrl: string;
+  private readonly requestConfiguration: CloudApiRequestConfiguration;
 
   constructor(options: AttestationClientOptions) {
-    this.authorizationToken = getAuthorizationToken(options);
-    this.authorizationField = getAuthorizationField(options);
+    this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
   }
 
@@ -273,37 +319,29 @@ export class CloudApiClient {
     url,
     extraHeaders = {},
   }: CreateCloudApiRequestParams): Request {
-    try {
-      const headers = new Headers(extraHeaders);
-      headers.set('authorization', `Bearer ${this.authorizationToken}`);
-      return new Request(url, { headers });
-    } catch (cause) {
-      throw new ApiError(
-        {
-          code: 'api.invalid_input',
-          details: {
-            field: this.authorizationField,
-            reason: 'invalid_header_value',
-            expected: 'an HTTP header value',
-          },
-        },
-        { cause },
-      );
-    }
+    const headers = mergeCloudApiRequestHeaders({
+      configuration: this.requestConfiguration,
+      requestHeaders: extraHeaders,
+    });
+    return new Request(url, { headers });
   }
 }
 
-/** Shared by higher-level clients that need the relay's outer Bearer header. */
-export function getAuthorizationToken(
-  options: AttestationClientOptions,
-): string {
-  return options.apiKey ?? options.bearerToken;
-}
-
-function getAuthorizationField(
-  options: AttestationClientOptions,
-): 'apiKey' | 'bearerToken' {
-  return options.apiKey === undefined ? 'bearerToken' : 'apiKey';
+function invalidHeaderInput(
+  field: 'apiKey' | 'headers',
+  cause: unknown,
+): ApiError {
+  return new ApiError(
+    {
+      code: 'api.invalid_input',
+      details: {
+        field,
+        reason: 'invalid_header_value',
+        expected: 'an HTTP header value',
+      },
+    },
+    { cause },
+  );
 }
 
 /**

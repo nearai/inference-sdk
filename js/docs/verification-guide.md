@@ -18,7 +18,7 @@ client verifies fresh evidence for that model and the Gateway.
 This direct-Gateway example is for a server-side API key. It uses the Node
 entry point, which binds Gateway evidence to the TLS peer that returned the
 attestation. For a browser integration, use the aggregator configuration below
-with a browser-scoped `bearerToken` instead.
+with its browser authentication headers instead.
 
 ```ts
 import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
@@ -76,26 +76,29 @@ pattern.
 
 ## Use an aggregator
 
-Set `baseUrl` to the aggregator API base URL and give the SDK a browser-scoped
-`bearerToken`. The aggregator authenticates that token and forwards the request
-with its own NEAR AI credential. The device still performs attestation
-verification and encrypts message fields before the aggregator receives them.
+Set `baseUrl` to the aggregator API base URL and set the headers it expects.
+The SDK sends those static headers with evidence, signature, and Chat requests.
+The aggregator authenticates them and forwards requests with its own NEAR AI
+credential. The device still performs attestation verification and encrypts
+message fields before the aggregator receives them.
 
 ```ts
 import { NearAiSecureClient } from 'verifiable-ai-sdk';
 
 const client = new NearAiSecureClient({
   baseUrl: 'https://api.example.com/v1',
-  bearerToken: '<browser-scoped token>',
+  headers: {
+    Authorization: 'Bearer <browser-scoped token>',
+  },
 });
 ```
 
 A compatible aggregator must proxy `GET /v1/attestation/report`, authenticate
-the browser token from the ordinary `Authorization` header, and substitute its
-own upstream credential. It must forward the Chat request and its model key pin
-unchanged. When E2EE is enabled, it must also forward the encrypted body and
-field-encryption headers unchanged. In production, the aggregator endpoint
-should use HTTPS because the browser token is sent to it.
+the configured client headers, and substitute its own upstream credential. It
+must forward the Chat request and its model key pin unchanged. When E2EE is
+enabled, it must also forward the encrypted body and field-encryption headers
+unchanged. In production, the aggregator endpoint should use HTTPS because
+client credentials are sent to it.
 
 The generic entry point uses no TLS binding because browser Fetch cannot expose
 the peer certificate. In Node.js, the `/node` secure client enables Gateway
@@ -107,7 +110,9 @@ import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
 
 const client = new NearAiSecureClient({
   baseUrl: 'https://api.example.com/v1',
-  bearerToken: '<server-scoped token>',
+  headers: {
+    Authorization: 'Bearer <server-scoped token>',
+  },
   gatewayVerification: { includeSpkiFingerprint: false },
 });
 ```

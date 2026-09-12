@@ -18,18 +18,20 @@ type AttestationClientBaseOptions = {
 };
 
 /**
- * Credential used by attestation and receipt requests. An API key is suitable
- * for a direct Gateway connection; a bearer token lets an aggregator inject
- * its own upstream credential.
+ * Request authentication used by attestation and receipt requests. `apiKey`
+ * is the convenience form for a direct Gateway connection. `headers` supports
+ * an aggregator or another compatible endpoint with its own authentication.
  */
 export type AttestationClientOptions =
   | (AttestationClientBaseOptions & {
       readonly apiKey: string;
-      readonly bearerToken?: never;
+      /** Sent with every SDK request. `apiKey` overrides its Authorization value. */
+      readonly headers?: HeadersInit;
     })
   | (AttestationClientBaseOptions & {
-      readonly bearerToken: string;
       readonly apiKey?: never;
+      /** Sent with every SDK request. Required when no direct Gateway API key is used. */
+      readonly headers: HeadersInit;
     });
 
 export type FetchModelAttestationsParams = {

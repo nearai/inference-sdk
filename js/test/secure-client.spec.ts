@@ -24,7 +24,11 @@ import {
 const baseUrl = 'https://gateway.test/v1/';
 const model = 'glm-5.2';
 const secondModel = 'qwen-3.5';
-const bearerToken = 'aggregator-token';
+const aggregatorHeader = {
+  name: 'x-aggregator-token',
+  value: 'aggregator-token',
+};
+const directApiKey = 'direct-api-key';
 const eventLog = [
   {
     digest: '00'.repeat(48),
@@ -65,6 +69,7 @@ type TestGatewayState = {
 
 type TestGateway = {
   readonly fetch: typeof globalThis.fetch;
+  readonly expectRequestHeader: (request: Request) => void;
   readonly createProviderSignature: (
     requestBody: Uint8Array,
     responseBody: Uint8Array,
@@ -74,6 +79,10 @@ type TestGateway = {
 };
 
 type CreateTestGatewayParams = {
+  readonly expectedRequestHeader?: {
+    readonly name: string;
+    readonly value: string;
+  };
   readonly includeModelPublicKey?: boolean;
   readonly includeNullableResponseFields?: boolean;
   readonly includeSecondModelAttestation?: boolean;
@@ -147,6 +156,7 @@ function streamResponse(events: readonly string[]): Response {
 }
 
 function createTestGateway({
+  expectedRequestHeader = aggregatorHeader,
   includeModelPublicKey = true,
   includeNullableResponseFields = false,
   includeSecondModelAttestation = false,
@@ -219,18 +229,22 @@ function createTestGateway({
     };
   }
 
+  function expectRequestHeader(request: Request): void {
+    expect(request.headers.get(expectedRequestHeader.name)).toBe(
+      expectedRequestHeader.value,
+    );
+  }
+
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
+    expectRequestHeader(request);
 
     if (url.pathname === '/v1/attestation/report') {
       const nonce = url.searchParams.get('nonce');
       if (nonce === null) {
         throw new Error('Expected an attestation nonce');
       }
-      expect(request.headers.get('authorization')).toBe(
-        `Bearer ${bearerToken}`,
-      );
       if (url.searchParams.has('model')) {
         state.modelAttestationRequests += 1;
         state.modelAttestationModels.push(url.searchParams.get('model') ?? '');
@@ -603,6 +617,7 @@ function createTestGateway({
 
   return {
     fetch,
+    expectRequestHeader,
     createProviderSignature(
       requestBody: Uint8Array,
       responseBody: Uint8Array,
@@ -632,7 +647,7 @@ function createTestGateway({
 function secureClientOptions(gateway: TestGateway): SecureClientOptions {
   return {
     baseUrl,
-    bearerToken,
+    headers: { [aggregatorHeader.name]: aggregatorHeader.value },
     gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
     modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
   };
@@ -684,6 +699,7 @@ function mockProviderReceipts(gateway: TestGateway): void {
     const request = new Request(input, init);
     const url = new URL(request.url);
     if (url.pathname.startsWith('/v1/signature/')) {
+      gateway.expectRequestHeader(request);
       const completionId = url.pathname.slice('/v1/signature/'.length);
       const signature = signatures.get(completionId);
       if (signature === undefined) {
@@ -730,10 +746,15 @@ describe('secure client', () => {
   });
 
   test('accepts an API key for a direct Gateway connection', async () => {
-    const gateway = createTestGateway();
+    const gateway = createTestGateway({
+      expectedRequestHeader: {
+        name: 'authorization',
+        value: `Bearer ${directApiKey}`,
+      },
+    });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new SecureClient({
-      apiKey: bearerToken,
+      apiKey: directApiKey,
       baseUrl,
       gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
       modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
@@ -1062,9 +1083,19 @@ describe('secure client', () => {
   });
 
   test('supports a non-streaming OpenAI-compatible chat call', async () => {
-    const gateway = createTestGateway();
+    const gateway = createTestGateway({
+      expectedRequestHeader: {
+        name: 'authorization',
+        value: 'Bearer browser-token',
+      },
+    });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new NearAiSecureClient(secureClientOptions(gateway));
+    const client = new NearAiSecureClient({
+      baseUrl,
+      headers: { authorization: 'Bearer browser-token' },
+      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+    });
 
     const completion = await client.chat.completions.create({
       model,

@@ -3,7 +3,6 @@ import type {
   NodeSecureClientOptions,
   SecureChat,
 } from '../types/secure-client';
-import { getAuthorizationToken } from '../core/cloud-api';
 import {
   createNearAiSecureChat,
   SecureClientBase,
@@ -40,9 +39,6 @@ export class NodeNearAiSecureClient {
 
   constructor(options: NodeNearAiSecureClientOptions) {
     this.secure = new NodeSecureClient(options);
-    this.chat = createNearAiSecureChat({
-      secure: this.secure,
-      authorizationToken: getAuthorizationToken(options),
-    });
+    this.chat = createNearAiSecureChat({ options, secure: this.secure });
   }
 }

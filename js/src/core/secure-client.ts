@@ -34,11 +34,13 @@ import type {
 import { ApiError, VerificationError } from '../utils/errors';
 import {
   AttestationClient,
+  createCloudApiRequestConfiguration,
   findModelAttestationForSignature,
-  getAuthorizationToken,
+  mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
+import type { CloudApiRequestConfiguration } from './cloud-api';
 import { verifyGatewayAttestation } from './attestation-gateway';
 import { verifyModelAttestation } from './attestation-model';
 import { verifyGatewayResponse, verifyModelResponse } from './chat';
@@ -49,6 +51,11 @@ import {
   parseE2eeChatResponse,
 } from './e2ee-chat';
 import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
+
+// OpenAI's client requires an API key even when a compatible aggregator uses
+// another authentication header. `createOpenAiDefaultHeaders` removes this
+// placeholder before the secure transport receives the request.
+const OPENAI_WRAPPER_API_KEY = 'verifiable-ai-sdk-internal';
 
 type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
@@ -144,9 +151,9 @@ type ClearPendingVerificationParams = {
 };
 
 type CreateOpenAiClientParams = {
-  readonly authorizationToken: string;
   readonly baseUrl: string;
   readonly fetch: typeof globalThis.fetch;
+  readonly requestConfiguration: CloudApiRequestConfiguration;
 };
 
 /** Internal evidence operations shared by the generic and Node secure clients. */
@@ -183,10 +190,10 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
  */
 export class SecureClientBase {
   private readonly evidence: SecureEvidenceSource;
-  private readonly authorizationToken: string;
   private readonly baseUrl: string;
   private readonly e2eeEnabled: boolean;
   private readonly options: NodeSecureClientOptions;
+  private readonly requestConfiguration: CloudApiRequestConfiguration;
   /** Shares only same-model work already in progress; completed evidence is never cached. */
   private readonly pendingVerifications = new Map<
     string,
@@ -195,10 +202,10 @@ export class SecureClientBase {
 
   protected constructor({ options, evidence }: SecureClientBaseParams) {
     this.evidence = evidence;
-    this.authorizationToken = getAuthorizationToken(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.e2eeEnabled = options.e2ee !== false;
     this.options = options;
+    this.requestConfiguration = createCloudApiRequestConfiguration(options);
   }
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
@@ -511,8 +518,7 @@ export class SecureClientBase {
     request,
     modelSigningPublicKey,
   }: PreparePlaintextRequestParams): Request {
-    const headers = new Headers(request.headers);
-    headers.set('authorization', `Bearer ${this.authorizationToken}`);
+    const headers = this.createCompletionHeaders(request.headers);
     headers.set(NO_ALIASING_HEADER, 'true');
     removeE2eeHeaders(headers);
     // Cloud API uses this routing-only header to select the verified NEAR
@@ -530,11 +536,10 @@ export class SecureClientBase {
       body: parsed.body,
       modelSigningPublicKey,
     });
-    const headers = new Headers(parsed.request.headers);
+    const headers = this.createCompletionHeaders(parsed.request.headers);
     // The serialized encrypted JSON has a different byte length from the
     // caller's body. Let Fetch calculate the new value.
     headers.delete('content-length');
-    headers.set('authorization', `Bearer ${this.authorizationToken}`);
     headers.set('content-type', 'application/json');
     headers.set('x-signing-algo', 'ed25519');
     headers.set('x-client-pub-key', clientKeyPair.publicKey);
@@ -565,6 +570,13 @@ export class SecureClientBase {
         { cause },
       );
     }
+  }
+
+  private createCompletionHeaders(requestHeaders: HeadersInit): Headers {
+    return mergeCloudApiRequestHeaders({
+      configuration: this.requestConfiguration,
+      requestHeaders,
+    });
   }
 
   private async decryptSecureResponse({
@@ -618,39 +630,33 @@ export class NearAiSecureClient {
 
   constructor(options: NearAiSecureClientOptions) {
     this.secure = new SecureClient(options);
-    this.chat = createNearAiSecureChat({
-      secure: this.secure,
-      authorizationToken: getAuthorizationToken(options),
-    });
+    this.chat = createNearAiSecureChat({ options, secure: this.secure });
   }
 }
 
 /** Internal OpenAI-compatible Chat wrapper shared by runtime-specific clients. */
 export type CreateNearAiSecureChatParams = {
+  readonly options: NodeSecureClientOptions;
   readonly secure: SecureClientBase;
-  readonly authorizationToken: string;
 };
 
 export function createNearAiSecureChat({
+  options,
   secure,
-  authorizationToken,
 }: CreateNearAiSecureChatParams): SecureChat {
   return {
-    completions: new NearAiSecureChatCompletions({
-      secure,
-      authorizationToken,
-    }),
+    completions: new NearAiSecureChatCompletions({ options, secure }),
   };
 }
 
 class NearAiSecureChatCompletions implements SecureChatCompletions {
   readonly create: OpenAI.Chat.Completions['create'];
-  private readonly authorizationToken: string;
+  private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly secure: SecureClientBase;
 
-  constructor({ secure, authorizationToken }: CreateNearAiSecureChatParams) {
+  constructor({ options, secure }: CreateNearAiSecureChatParams) {
+    this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.secure = secure;
-    this.authorizationToken = authorizationToken;
     const client = this.createOpenAiClient((input, init) =>
       this.secure.fetch(input, init),
     );
@@ -709,25 +715,44 @@ class NearAiSecureChatCompletions implements SecureChatCompletions {
 
   private createOpenAiClient(fetch: typeof globalThis.fetch): OpenAI {
     return createOpenAiClient({
-      authorizationToken: this.authorizationToken,
       baseUrl: this.secure.getBaseUrl(),
       fetch,
+      requestConfiguration: this.requestConfiguration,
     });
   }
 }
 
 function createOpenAiClient({
-  authorizationToken,
   baseUrl,
   fetch,
+  requestConfiguration,
 }: CreateOpenAiClientParams): OpenAI {
   return new OpenAI({
-    apiKey: authorizationToken,
+    apiKey: requestConfiguration.apiKey ?? OPENAI_WRAPPER_API_KEY,
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
+    defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
     maxRetries: 0,
   });
+}
+
+function createOpenAiDefaultHeaders(
+  requestConfiguration: CloudApiRequestConfiguration,
+): Record<string, string | null> {
+  const headers: Record<string, string | null> = {};
+  for (const [name, value] of requestConfiguration.defaultHeaders) {
+    headers[name] = value;
+  }
+  if (requestConfiguration.apiKey !== undefined) {
+    delete headers.authorization;
+    delete headers['api-key'];
+  } else if (!requestConfiguration.defaultHeaders.has('authorization')) {
+    // OpenAI's wrapper requires an explicit authentication decision even when
+    // an aggregator uses a different header name.
+    headers.authorization = null;
+  }
+  return headers;
 }
 
 function selectModelSigningPublicKey(
