@@ -152,13 +152,33 @@ describe('AttestationClient', () => {
             details: expect.objectContaining({
               field: 'baseUrl',
               reason: 'invalid_url',
-              expected: 'an absolute HTTP(S) URL',
+              expected: 'an absolute HTTP(S) URL without a query or fragment',
             }),
           }),
         }),
       );
     },
   );
+
+  test.each([
+    ['query', 'https://cloud.example/v1?tenant=example'],
+    ['fragment', 'https://cloud.example/v1#attestation'],
+  ])('rejects a base URL with a %s', (_kind, invalidBaseUrl) => {
+    expect(
+      () => new AttestationClient({ apiKey: 'test', baseUrl: invalidBaseUrl }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'baseUrl',
+            reason: 'invalid_url',
+            expected: 'an absolute HTTP(S) URL without a query or fragment',
+          },
+        },
+      }),
+    );
+  });
 
   test('reports an invalid API key as client input', async () => {
     const client = new AttestationClient({

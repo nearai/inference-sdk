@@ -93,12 +93,15 @@ const client = new NearAiSecureClient({
 });
 ```
 
-A compatible aggregator must proxy `GET /v1/attestation/report`, authenticate
-the configured client headers, and substitute its own upstream credential. It
-must forward the Chat request and its model key pin unchanged. When E2EE is
-enabled, it must also forward the encrypted body and field-encryption headers
-unchanged. In production, the aggregator endpoint should use HTTPS because
-client credentials are sent to it.
+A compatible aggregator must proxy `GET /v1/attestation/report` and, when
+receipt verification is used, `GET /v1/signature/{completionId}`. It
+authenticates the configured client headers and substitutes its own upstream
+credential. It must forward the Chat request and its model key pin unchanged.
+For receipt verification, it must preserve the exact Chat request and response
+entity-body bytes without parsing, reserializing, or otherwise transforming
+them. When E2EE is enabled, it must also forward the encrypted body and
+field-encryption headers unchanged. In production, the aggregator endpoint
+should use HTTPS because client credentials are sent to it.
 
 The generic entry point uses no TLS binding because browser Fetch cannot expose
 the peer certificate. In Node.js, the `/node` secure client enables Gateway

@@ -518,7 +518,9 @@ export function resolveCloudApiBaseUrl(
   if (
     (resolvedBaseUrl.protocol !== 'http:' &&
       resolvedBaseUrl.protocol !== 'https:') ||
-    resolvedBaseUrl.hostname === ''
+    resolvedBaseUrl.hostname === '' ||
+    resolvedBaseUrl.search !== '' ||
+    resolvedBaseUrl.hash !== ''
   ) {
     throw invalidBaseUrl();
   }
@@ -534,7 +536,7 @@ function invalidBaseUrl(): ApiError {
     details: {
       field: 'baseUrl',
       reason: 'invalid_url',
-      expected: 'an absolute HTTP(S) URL',
+      expected: 'an absolute HTTP(S) URL without a query or fragment',
     },
   });
 }

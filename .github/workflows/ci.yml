@@ -23,6 +23,11 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Check JavaScript example
+        working-directory: examples/example-js
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
 
   python:
     runs-on: ubuntu-latest

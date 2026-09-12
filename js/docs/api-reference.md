@@ -100,7 +100,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
 | `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every evidence, signature, and Chat request. Use this for an aggregator's bearer token, API key, tenant header, or other authentication scheme. SDK protocol headers override conflicts. |
-| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL. This may be a compatible aggregator endpoint. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible aggregator endpoint. |
 | `e2ee?` | `boolean` | No | `true` | Enables the Ed25519/version 2 secure Chat transport. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and omits a response-byte proof. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. It receives the model named by each Chat request. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
@@ -143,7 +143,9 @@ For an aggregator, configured `headers` are sent to its API base URL for each
 evidence, signature, and Chat request. The aggregator must forward the Chat
 request and its model key pin unchanged while using its own upstream
 credential. With E2EE enabled, it must also forward the encrypted body and
-field-encryption headers unchanged.
+field-encryption headers unchanged. When receipt methods are used, it must
+proxy `GET /v1/signature/{completionId}` and preserve the exact Chat request
+and response entity-body bytes without transforming them.
 
 ## `AttestationClient`
 
@@ -164,7 +166,7 @@ The Gateway's report and signature endpoints have different defaults.
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
 | `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every evidence and signature request. |
-| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL. Include the API path when using a custom endpoint. |
+| `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
 
 ### Methods
 
