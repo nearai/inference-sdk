@@ -274,7 +274,7 @@ The manual flow has distinct stages:
 ```ts
 import {
   AttestationClient,
-  createPinnedGatewayFetch,
+  createPinnedTlsFetch,
   verifyGatewayAttestation,
   verifyModelAttestation,
 } from 'verifiable-ai-sdk/node';
@@ -292,7 +292,7 @@ const gateway = await verifyGatewayAttestation({
 if (gateway.tlsBinding.kind !== 'attested') {
   throw new Error('Expected TLS-bound Gateway evidence');
 }
-const gatewayFetch = createPinnedGatewayFetch({
+const pinnedTlsFetch = createPinnedTlsFetch({
   spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
 });
 
@@ -314,14 +314,14 @@ const models = await Promise.all(
 );
 ```
 
-Use `gatewayFetch` instead of `fetch` for raw direct-Gateway requests that
+Use `pinnedTlsFetch` instead of `fetch` for raw direct-Gateway requests that
 your application sends itself. It performs normal certificate and hostname
 verification, then requires each TLS peer to present the attested SPKI.
 
 The generic `verifiable-ai-sdk` entry point requests the no-TLS Gateway quote
 layout and is suitable for browsers. The `/node` `AttestationClient` observes
 only the peer for its Gateway-attestation request; it does not automatically
-apply `gatewayFetch` to its model or signature helpers. Use the Node secure
+apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
 receipt signature—must be pinned automatically.
 

@@ -16,7 +16,7 @@ import type {
   FetchedGatewayAttestation,
   NodeFetchGatewayAttestationParams,
 } from '../types/cloud-api';
-import type { CreatePinnedGatewayFetchParams } from '../types/node';
+import type { CreatePinnedTlsFetchParams } from '../types/node';
 import { requireByteLength } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 
@@ -68,9 +68,9 @@ export class AttestationClient extends CloudApiClient {
  * transport creates a new native HTTPS request for each call, so it does not
  * require reuse of the connection that returned the attestation.
  */
-export function createPinnedGatewayFetch({
+export function createPinnedTlsFetch({
   spkiFingerprint,
-}: CreatePinnedGatewayFetchParams): typeof globalThis.fetch {
+}: CreatePinnedTlsFetchParams): typeof globalThis.fetch {
   const expectedSpkiFingerprint = requireByteLength({
     value: spkiFingerprint,
     byteLength: 32,

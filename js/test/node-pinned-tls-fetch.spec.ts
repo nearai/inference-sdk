@@ -5,7 +5,7 @@ import * as https from 'node:https';
 import { Readable } from 'node:stream';
 import * as tls from 'node:tls';
 import type { DetailedPeerCertificate } from 'node:tls';
-import { createPinnedGatewayFetch } from '../src/node';
+import { createPinnedTlsFetch } from '../src/node';
 
 jest.mock('node:crypto', () => {
   const crypto =
@@ -117,7 +117,7 @@ function installHttpsRequests({
   return calls;
 }
 
-describe('createPinnedGatewayFetch', () => {
+describe('createPinnedTlsFetch', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -128,7 +128,7 @@ describe('createPinnedGatewayFetch', () => {
     const requests = installHttpsRequests({
       peerCertificates: [matchingSpki, unexpectedSpki],
     });
-    const fetch = createPinnedGatewayFetch({
+    const fetch = createPinnedTlsFetch({
       spkiFingerprint: spkiFingerprint(matchingSpki),
     });
 
@@ -176,7 +176,7 @@ describe('createPinnedGatewayFetch', () => {
       peerCertificates: [matchingSpki],
       waitForAbort: true,
     });
-    const fetch = createPinnedGatewayFetch({
+    const fetch = createPinnedTlsFetch({
       spkiFingerprint: spkiFingerprint(matchingSpki),
     });
     const controller = new AbortController();

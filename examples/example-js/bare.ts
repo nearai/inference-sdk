@@ -1,6 +1,6 @@
 import {
   AttestationClient,
-  createPinnedGatewayFetch,
+  createPinnedTlsFetch,
   findModelAttestationForSignature,
   NO_ALIASING_HEADER,
   verifyGatewayAttestation,
@@ -33,19 +33,19 @@ async function main(): Promise<void> {
   const gateway = await fetchAndVerifyGateway(client);
   const models = await fetchAndVerifyModelAttestations(client);
 
-  const gatewayFetch = createGatewayFetch(gateway);
+  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway);
   await runNonStreamingExample({
     apiKey,
     client,
     gateway,
-    gatewayFetch,
+    pinnedTlsFetch,
     models,
   });
   await runStreamingExample({
     apiKey,
     client,
     gateway,
-    gatewayFetch,
+    pinnedTlsFetch,
     models,
   });
 }
@@ -54,13 +54,13 @@ async function runNonStreamingExample({
   apiKey,
   client,
   gateway,
-  gatewayFetch,
+  pinnedTlsFetch,
   models,
 }: BareExampleContext): Promise<void> {
   const nonStreamingCompletion = await sendCompletion({
     apiKey,
     stream: false,
-    gatewayFetch,
+    pinnedTlsFetch,
   });
   await verifyCompletionReceipt({
     client,
@@ -74,13 +74,13 @@ async function runStreamingExample({
   apiKey,
   client,
   gateway,
-  gatewayFetch,
+  pinnedTlsFetch,
   models,
 }: BareExampleContext): Promise<void> {
   const streamingCompletion = await sendCompletion({
     apiKey,
     stream: true,
-    gatewayFetch,
+    pinnedTlsFetch,
   });
   await verifyCompletionReceipt({
     client,
@@ -130,7 +130,7 @@ async function fetchAndVerifyModelAttestations(
 async function sendCompletion({
   apiKey,
   stream,
-  gatewayFetch,
+  pinnedTlsFetch,
 }: SendCompletionParams): Promise<Completion> {
   const requestBody = new TextEncoder().encode(
     JSON.stringify({
@@ -140,7 +140,9 @@ async function sendCompletion({
       max_completion_tokens: 8,
     }),
   );
-  const response = await gatewayFetch(new URL('chat/completions', BASE_URL), {
+  const response = await pinnedTlsFetch(
+    new URL('chat/completions', BASE_URL),
+    {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -148,8 +150,9 @@ async function sendCompletion({
       'Accept-Encoding': 'identity',
       [NO_ALIASING_HEADER]: 'true',
     },
-    body: requestBody,
-  });
+      body: requestBody,
+    },
+  );
   const responseBody = new Uint8Array(await response.arrayBuffer());
   if (!response.ok) {
     throw new Error(
@@ -165,13 +168,13 @@ async function sendCompletion({
   };
 }
 
-function createGatewayFetch(
+function createGatewayPinnedTlsFetch(
   gateway: VerifiedGatewayAttestation,
 ): typeof globalThis.fetch {
   if (gateway.tlsBinding.kind !== 'attested') {
     throw new Error('Expected TLS-bound Gateway evidence');
   }
-  return createPinnedGatewayFetch({
+  return createPinnedTlsFetch({
     spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
   });
 }
@@ -250,7 +253,7 @@ type Completion = {
 type SendCompletionParams = {
   readonly apiKey: string;
   readonly stream: boolean;
-  readonly gatewayFetch: typeof globalThis.fetch;
+  readonly pinnedTlsFetch: typeof globalThis.fetch;
 };
 
 type ReadCompletionIdParams = {
@@ -269,6 +272,6 @@ type BareExampleContext = {
   readonly apiKey: string;
   readonly client: AttestationClient;
   readonly gateway: VerifiedGatewayAttestation;
-  readonly gatewayFetch: typeof globalThis.fetch;
+  readonly pinnedTlsFetch: typeof globalThis.fetch;
   readonly models: readonly VerifiedModelAttestation[];
 };

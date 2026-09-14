@@ -13,7 +13,7 @@ import {
   SecureClient as NodeSecureClient,
 } from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
-import type { CreatePinnedGatewayFetchParams } from '../src/types/node';
+import type { CreatePinnedTlsFetchParams } from '../src/types/node';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import {
   appCompose,
@@ -682,9 +682,9 @@ class TestNodeSecureClient extends NodeSecureClient {
     this.testPinnedFetch = testPinnedFetch;
   }
 
-  protected override createPinnedGatewayFetch({
+  protected override createPinnedTlsFetch({
     spkiFingerprint,
-  }: CreatePinnedGatewayFetchParams): typeof globalThis.fetch {
+  }: CreatePinnedTlsFetchParams): typeof globalThis.fetch {
     this.pinnedSpkiFingerprints.push(spkiFingerprint);
     return this.testPinnedFetch;
   }
