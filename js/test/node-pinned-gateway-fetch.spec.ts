@@ -135,6 +135,7 @@ describe('createPinnedGatewayFetch', () => {
       'content-type': 'application/json',
       'accept-encoding': 'identity',
     });
+    expect(firstRequest.body).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(firstRequest.body)).toBe(
       '{"model":"glm-5.2"}',
     );

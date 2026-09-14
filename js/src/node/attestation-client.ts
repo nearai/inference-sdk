@@ -148,7 +148,7 @@ function requestHttps({
       return;
     }
     void request.arrayBuffer().then(
-      (body) => nativeRequest.end(body),
+      (body) => nativeRequest.end(new Uint8Array(body)),
       (cause: unknown) =>
         nativeRequest.destroy(
           cause instanceof Error
