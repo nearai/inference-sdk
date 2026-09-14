@@ -19,7 +19,11 @@ import type {
 } from '../types/cloud-api';
 import type { VerifiedModelAttestation } from '../types/verification';
 import { generateNonce, hexToBuffer } from '../utils/common';
-import { ApiError, type ApiFailure } from '../utils/errors';
+import {
+  ApiError,
+  isVerificationError,
+  type ApiFailure,
+} from '../utils/errors';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -261,6 +265,11 @@ export class CloudApiClient {
     return { response: await fetch(request) };
   }
 
+  /** Override this in a runtime-specific client to control ordinary API requests. */
+  protected async requestCloudApi(request: Request): Promise<Response> {
+    return fetch(request);
+  }
+
   private async getCloudApiJson({
     url,
     resource,
@@ -269,8 +278,11 @@ export class CloudApiClient {
     const request = this.createCloudApiRequest({ url, extraHeaders });
     let response: Response;
     try {
-      response = await fetch(request);
+      response = await this.requestCloudApi(request);
     } catch (cause) {
+      if (isVerificationError(cause)) {
+        throw cause;
+      }
       throw new ApiError(
         {
           code: 'api.transport_failed',

@@ -1,5 +1,6 @@
 import {
   AttestationClient,
+  createPinnedGatewayFetch,
   findModelAttestationForSignature,
   NO_ALIASING_HEADER,
   verifyGatewayAttestation,
@@ -32,19 +33,34 @@ async function main(): Promise<void> {
   const gateway = await fetchAndVerifyGateway(client);
   const models = await fetchAndVerifyModelAttestations(client);
 
-  await runNonStreamingExample({ apiKey, client, gateway, models });
-  await runStreamingExample({ apiKey, client, gateway, models });
+  const gatewayFetch = createGatewayFetch(gateway);
+  await runNonStreamingExample({
+    apiKey,
+    client,
+    gateway,
+    gatewayFetch,
+    models,
+  });
+  await runStreamingExample({
+    apiKey,
+    client,
+    gateway,
+    gatewayFetch,
+    models,
+  });
 }
 
 async function runNonStreamingExample({
   apiKey,
   client,
   gateway,
+  gatewayFetch,
   models,
 }: BareExampleContext): Promise<void> {
   const nonStreamingCompletion = await sendCompletion({
     apiKey,
     stream: false,
+    gatewayFetch,
   });
   await verifyCompletionReceipt({
     client,
@@ -58,9 +74,14 @@ async function runStreamingExample({
   apiKey,
   client,
   gateway,
+  gatewayFetch,
   models,
 }: BareExampleContext): Promise<void> {
-  const streamingCompletion = await sendCompletion({ apiKey, stream: true });
+  const streamingCompletion = await sendCompletion({
+    apiKey,
+    stream: true,
+    gatewayFetch,
+  });
   await verifyCompletionReceipt({
     client,
     completion: streamingCompletion,
@@ -109,6 +130,7 @@ async function fetchAndVerifyModelAttestations(
 async function sendCompletion({
   apiKey,
   stream,
+  gatewayFetch,
 }: SendCompletionParams): Promise<Completion> {
   const requestBody = new TextEncoder().encode(
     JSON.stringify({
@@ -118,7 +140,7 @@ async function sendCompletion({
       max_completion_tokens: 8,
     }),
   );
-  const response = await fetch(new URL('chat/completions', BASE_URL), {
+  const response = await gatewayFetch(new URL('chat/completions', BASE_URL), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -141,6 +163,17 @@ async function sendCompletion({
     requestBody,
     responseBody,
   };
+}
+
+function createGatewayFetch(
+  gateway: VerifiedGatewayAttestation,
+): typeof globalThis.fetch {
+  if (gateway.tlsBinding.kind !== 'attested') {
+    throw new Error('Expected TLS-bound Gateway evidence');
+  }
+  return createPinnedGatewayFetch({
+    spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
+  });
 }
 
 async function verifyCompletionReceipt({
@@ -217,6 +250,7 @@ type Completion = {
 type SendCompletionParams = {
   readonly apiKey: string;
   readonly stream: boolean;
+  readonly gatewayFetch: typeof globalThis.fetch;
 };
 
 type ReadCompletionIdParams = {
@@ -235,5 +269,6 @@ type BareExampleContext = {
   readonly apiKey: string;
   readonly client: AttestationClient;
   readonly gateway: VerifiedGatewayAttestation;
+  readonly gatewayFetch: typeof globalThis.fetch;
   readonly models: readonly VerifiedModelAttestation[];
 };

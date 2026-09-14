@@ -68,12 +68,16 @@ prevent an already-sent request and should not delay a user-visible response.
 ## Runtime
 
 The package publishes ESM and is developed with Node.js 24. Import from
-`verifiable-ai-sdk/node` for a direct Gateway connection in Node.js: its
-attestation and secure Chat clients bind Gateway evidence to the observed TLS
-peer by default. Import from `verifiable-ai-sdk` when peer-certificate
-observation is unavailable, including browsers; its clients use the no-TLS
-Gateway-evidence layout. A Node client that connects through an aggregator or
-proxy should set `gatewayVerification.includeSpkiFingerprint` to `false`.
+`verifiable-ai-sdk/node` for a direct Gateway connection in Node.js. Its
+`AttestationClient` compares Gateway evidence with the peer that returned the
+attestation. After that check, its secure Chat clients pin model-evidence,
+Chat, and receipt-signature requests to the attested SPKI. Each request may
+use a new HTTPS connection; it does not need to reuse the attestation socket.
+Import from `verifiable-ai-sdk` when peer-certificate observation is
+unavailable, including browsers; its clients use the no-TLS Gateway-evidence
+layout. A Node client that connects through an aggregator or proxy should set
+`gatewayVerification.includeSpkiFingerprint` to `false`, which disables both
+the peer comparison and later request pinning.
 
 The default Intel verifier may require `crypto`, `buffer`, and `stream`
 polyfills in browsers. Supply a custom quote verifier when your runtime or

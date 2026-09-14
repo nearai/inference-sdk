@@ -13,11 +13,15 @@ that returned it.
 | Import | Gateway evidence behavior |
 | --- | --- |
 | `verifiable-ai-sdk` | Generic `AttestationClient`, `SecureClient`, and `NearAiSecureClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
-| `verifiable-ai-sdk/node` | Node `AttestationClient`, `SecureClient`, and `NearAiSecureClient` capture the TLS peer for their Gateway-evidence request and request an SPKI fingerprint by default. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
+| `verifiable-ai-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node secure clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 `gatewayVerification.includeSpkiFingerprint: false` on a secure client or
 `includeSpkiFingerprint: false` on `AttestationClient`.
+
+Node request pinning checks every later TLS peer. It permits a new HTTPS
+connection when that peer presents the attested SPKI; it does not require the
+Gateway-attestation socket to be reused.
 
 ## Runtime exports
 
@@ -26,6 +30,7 @@ TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 | `SecureClient` | `new SecureClient(options)` | Native verified transport for Chat Completions. |
 | `NearAiSecureClient` | `new NearAiSecureClient(options)` | OpenAI-compatible Chat Completions surface backed by `SecureClient`. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
+| `createPinnedGatewayFetch` from `verifiable-ai-sdk/node` | `({ spkiFingerprint }) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
@@ -56,10 +61,11 @@ types. When E2EE is enabled, it transforms the protocol-covered fields and
 forwards the remaining Chat values to the Gateway.
 
 The generic secure clients use the no-TLS Gateway-evidence path because browser
-Fetch does not expose the peer certificate. The `/node` secure clients bind
-Gateway evidence to the TLS peer by default. Set
-`gatewayVerification.includeSpkiFingerprint: false` when the configured Node
-endpoint is an aggregator or proxy rather than the attested Gateway.
+Fetch does not expose the peer certificate. The `/node` secure clients compare
+Gateway evidence with the TLS peer by default, then pin the model-evidence,
+Chat, and receipt-signature requests for that Chat flow to the attested SPKI.
+Set `gatewayVerification.includeSpkiFingerprint: false` when the configured
+Node endpoint is an aggregator or proxy rather than the attested Gateway.
 
 The secure client checks each non-empty protocol-covered E2EE response field
 with its AEAD tag before decrypting it. This field-level integrity check does not
@@ -156,6 +162,12 @@ selection failures are `ApiError`; SDK-classified failures from explicit
 `verify…` functions are `VerificationError`. Unexpected runtime errors can
 still propagate unchanged.
 
+The Node `AttestationClient` observes the TLS peer only for its Gateway
+attestation request. After `verifyGatewayAttestation` returns an
+`attested` TLS binding, pass its `spkiFingerprint` to
+`createPinnedGatewayFetch` for raw HTTPS requests your application owns. The
+Node secure clients apply this automatically to their complete Chat flow.
+
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
 The Gateway's report and signature endpoints have different defaults.
@@ -249,7 +261,8 @@ The Gateway attestation itself selects the quote layout: a returned
 `spkiFingerprint` requires it to match the client-observed peer; no fingerprint
 uses the signer-and-nonce layout and returns `tlsBinding.kind: 'none'`. The
 generic client defaults to the latter. The Node client requests and captures the
-fingerprint by default.
+fingerprint by default. An `attested` binding can be passed to
+`createPinnedGatewayFetch`; a `none` binding cannot pin later HTTPS requests.
 
 `verifyGatewayResponse` verifies gateway-service provenance and integrity for
 the exact completion body bytes. It matches the signature to the signer bound to
@@ -399,7 +412,7 @@ JWT/EAT validation, different trust roots, or another verification service.
 | --- | --- | --- | --- |
 | `VerifiedModelAttestation` | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence result. Cloud model verification does not establish a client-to-model TLS binding. |
 |  | `signingPublicKey?` | `string` | Quote-bound Ed25519 key available for E2EE. |
-| `VerifiedGatewayAttestation` | `tlsBinding` | `GatewayTlsBinding` | Gateway TLS binding established by the returned quote layout. |
+| `VerifiedGatewayAttestation` | `tlsBinding` | `GatewayTlsBinding` | Gateway TLS binding established by the returned quote layout. Its `attested` SPKI can pin later Node HTTPS requests. |
 
 | Alias | Definition |
 | --- | --- |

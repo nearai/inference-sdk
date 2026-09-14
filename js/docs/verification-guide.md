@@ -16,9 +16,12 @@ rest to the Gateway. Each Chat request names its model; before dispatch, the
 client verifies fresh evidence for that model and the Gateway.
 
 This direct-Gateway example is for a server-side API key. It uses the Node
-entry point, which binds Gateway evidence to the TLS peer that returned the
-attestation. For a browser integration, use the aggregator configuration below
-with its browser authentication headers instead.
+entry point, which compares Gateway evidence with the TLS peer that returned
+the attestation. After verification, the secure client pins its model-evidence,
+Chat, and receipt-signature requests to that attested SPKI. Those requests may
+use new HTTPS connections; the original TLS socket is not reused. For a browser
+integration, use the aggregator configuration below with its browser
+authentication headers instead.
 
 ```ts
 import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
@@ -104,9 +107,10 @@ field-encryption headers unchanged. In production, the aggregator endpoint
 should use HTTPS because client credentials are sent to it.
 
 The generic entry point uses no TLS binding because browser Fetch cannot expose
-the peer certificate. In Node.js, the `/node` secure client enables Gateway
-TLS binding by default for a direct Gateway connection. If its `baseUrl` is an
-aggregator or proxy instead, disable that binding explicitly:
+the peer certificate. In Node.js, the `/node` secure client compares Gateway
+evidence with the observed peer and pins later Gateway requests to the
+attested SPKI by default. If its `baseUrl` is an aggregator or proxy instead,
+disable both behaviors explicitly:
 
 ```ts
 import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
@@ -265,6 +269,7 @@ The manual flow has distinct stages:
 ```ts
 import {
   AttestationClient,
+  createPinnedGatewayFetch,
   verifyGatewayAttestation,
   verifyModelAttestation,
 } from 'verifiable-ai-sdk/node';
@@ -278,6 +283,12 @@ const fetchedGateway = await client.fetchGatewayAttestation({
 const gateway = await verifyGatewayAttestation({
   attestation: fetchedGateway.attestation,
   clientBinding: fetchedGateway.clientBinding,
+});
+if (gateway.tlsBinding.kind !== 'attested') {
+  throw new Error('Expected TLS-bound Gateway evidence');
+}
+const gatewayFetch = createPinnedGatewayFetch({
+  spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
 });
 
 const fetchedModels = await client.fetchModelAttestations({
@@ -298,11 +309,16 @@ const models = await Promise.all(
 );
 ```
 
+Use `gatewayFetch` instead of `fetch` for raw direct-Gateway requests that
+your application sends itself. It performs normal certificate and hostname
+verification, then requires each TLS peer to present the attested SPKI.
+
 The generic `verifiable-ai-sdk` entry point requests the no-TLS Gateway quote
-layout and is suitable for browsers. The `/node` entry point observes the TLS
-peer for its Gateway-attestation request and checks the returned SPKI
-fingerprint by default. Model evidence is verified independently of Gateway
-TLS because the client is not directly connected to the model endpoint.
+layout and is suitable for browsers. The `/node` `AttestationClient` observes
+only the peer for its Gateway-attestation request; it does not automatically
+apply `gatewayFetch` to its model or signature helpers. Use the Node secure
+client when the complete Chat flow—including model evidence, completion, and
+receipt signature—must be pinned automatically.
 
 ### Verify a later receipt
 

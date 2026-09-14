@@ -6,6 +6,7 @@ import {
   CompletionResponseIdSchema,
 } from '../schemas';
 import type {
+  GatewayTlsBinding,
   ModelAttestationVerifiers,
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
@@ -31,7 +32,11 @@ import type {
   SecureFetchWithReceipt,
   VerifiedCompletionReceipt,
 } from '../types/secure-client';
-import { ApiError, VerificationError } from '../utils/errors';
+import {
+  ApiError,
+  isVerificationError,
+  VerificationError,
+} from '../utils/errors';
 import {
   AttestationClient,
   createCloudApiRequestConfiguration,
@@ -61,6 +66,7 @@ type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
   readonly modelAttestations: readonly VerifiedModelAttestation[];
   readonly modelSigningPublicKey: string;
+  readonly transport: GatewaySessionTransport;
 };
 
 type ParsedPlaintextRequest = {
@@ -145,6 +151,11 @@ type VerifyCapturedCompletionParams = {
   readonly contentType: string | null;
 };
 
+type SendCompletionRequestParams = {
+  readonly request: Request;
+  readonly transport: GatewaySessionTransport;
+};
+
 type ClearPendingVerificationParams = {
   readonly model: string;
   readonly verification: Promise<SecureSessionState>;
@@ -156,9 +167,9 @@ type CreateOpenAiClientParams = {
   readonly requestConfiguration: CloudApiRequestConfiguration;
 };
 
-/** Internal evidence operations shared by the generic and Node secure clients. */
-export type SecureEvidenceSource = {
-  readonly fetchGatewayAttestation: () => Promise<FetchedGatewayAttestation>;
+/** Internal request operations bound to one verified Gateway session. */
+export type GatewaySessionTransport = {
+  readonly fetch: typeof globalThis.fetch;
   readonly fetchModelAttestations: (
     params: FetchModelAttestationsParams,
   ) => Promise<FetchedModelAttestations>;
@@ -167,10 +178,9 @@ export type SecureEvidenceSource = {
   ) => Promise<CompletionSignature>;
 };
 
-/** Construction parameters shared by the generic and Node secure clients. */
-export type SecureClientBaseParams = {
-  readonly options: NodeSecureClientOptions;
-  readonly evidence: SecureEvidenceSource;
+/** Parameters used to create an internal Gateway session transport. */
+export type CreateGatewaySessionTransportParams = {
+  readonly tlsBinding: GatewayTlsBinding;
 };
 
 type OpenAiChatCompletionCreateParamsBase = Parameters<
@@ -188,8 +198,7 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
  * request and response remain plaintext while the request stays pinned to the
  * verified model key.
  */
-export class SecureClientBase {
-  private readonly evidence: SecureEvidenceSource;
+export abstract class SecureClientBase {
   private readonly baseUrl: string;
   private readonly e2eeEnabled: boolean;
   private readonly options: NodeSecureClientOptions;
@@ -200,13 +209,20 @@ export class SecureClientBase {
     Promise<SecureSessionState>
   >();
 
-  protected constructor({ options, evidence }: SecureClientBaseParams) {
-    this.evidence = evidence;
+  protected constructor(options: NodeSecureClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.e2eeEnabled = options.e2ee !== false;
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
   }
+
+  /** Fetch fresh Gateway evidence before a verified Chat request. */
+  protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
+
+  /** Create the request transport for one successfully verified Gateway. */
+  protected abstract createGatewaySessionTransport(
+    params: CreateGatewaySessionTransportParams,
+  ): GatewaySessionTransport;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
@@ -286,14 +302,20 @@ export class SecureClientBase {
       'clientKeyPair' in prepared ? prepared.clientKeyPair : undefined;
     if (!captureReceipt) {
       return {
-        response: await this.sendCompletionRequest(prepared.request),
+        response: await this.sendCompletionRequest({
+          request: prepared.request,
+          transport: session.transport,
+        }),
         session,
         ...(clientKeyPair === undefined ? {} : { clientKeyPair }),
       };
     }
 
     const requestBody = captureRequestEntityBody(prepared.request);
-    const response = await this.sendCompletionRequest(prepared.request);
+    const response = await this.sendCompletionRequest({
+      request: prepared.request,
+      transport: session.transport,
+    });
     const capturedResponse = captureResponseEntityBody(response);
     return {
       response: capturedResponse.response,
@@ -344,7 +366,7 @@ export class SecureClientBase {
   }: VerifyCapturedCompletionParams): Promise<VerifiedCompletionReceipt> {
     const bytes = await responseBody;
     const completionId = getCompletionId({ bytes, contentType });
-    const signature = await this.evidence.fetchCompletionSignature({
+    const signature = await session.transport.fetchCompletionSignature({
       completionId,
       signingAlgo: 'ed25519',
     });
@@ -409,13 +431,20 @@ export class SecureClientBase {
   private async createVerificationState(
     model: string,
   ): Promise<SecureSessionState> {
-    const [gateway, fetchedModels] = await Promise.all([
-      this.evidence.fetchGatewayAttestation(),
-      this.evidence.fetchModelAttestations({
-        model,
-        signingAlgo: 'ed25519',
-      }),
-    ]);
+    const gateway = await this.fetchGatewayAttestation();
+    const gatewayAttestation = await verifyGatewayAttestation({
+      attestation: gateway.attestation,
+      clientBinding: gateway.clientBinding,
+      policy: this.options.gatewayVerification?.policy,
+      verifiers: this.options.gatewayVerification?.verifiers,
+    });
+    const transport = this.createGatewaySessionTransport({
+      tlsBinding: gatewayAttestation.tlsBinding,
+    });
+    const fetchedModels = await transport.fetchModelAttestations({
+      model,
+      signingAlgo: 'ed25519',
+    });
     if (fetchedModels.attestations.length === 0) {
       throw new VerificationError({
         code: 'policy.model_attestation_required',
@@ -423,24 +452,16 @@ export class SecureClientBase {
     }
 
     const modelVerifiers = this.getModelVerifiers(model);
-    const [gatewayAttestation, modelAttestations] = await Promise.all([
-      verifyGatewayAttestation({
-        attestation: gateway.attestation,
-        clientBinding: gateway.clientBinding,
-        policy: this.options.gatewayVerification?.policy,
-        verifiers: this.options.gatewayVerification?.verifiers,
-      }),
-      Promise.all(
-        fetchedModels.attestations.map((attestation) =>
-          verifyModelAttestation({
-            attestation,
-            clientBinding: fetchedModels.clientBinding,
-            policy: this.options.modelVerification?.policy,
-            verifiers: modelVerifiers,
-          }),
-        ),
+    const modelAttestations = await Promise.all(
+      fetchedModels.attestations.map((attestation) =>
+        verifyModelAttestation({
+          attestation,
+          clientBinding: fetchedModels.clientBinding,
+          policy: this.options.modelVerification?.policy,
+          verifiers: modelVerifiers,
+        }),
       ),
-    ]);
+    );
     const modelSigningPublicKey =
       selectModelSigningPublicKey(modelAttestations);
 
@@ -448,6 +469,7 @@ export class SecureClientBase {
       gatewayAttestation,
       modelAttestations,
       modelSigningPublicKey,
+      transport,
     };
   }
 
@@ -557,10 +579,16 @@ export class SecureClientBase {
     };
   }
 
-  private async sendCompletionRequest(request: Request): Promise<Response> {
+  private async sendCompletionRequest({
+    request,
+    transport,
+  }: SendCompletionRequestParams): Promise<Response> {
     try {
-      return await globalThis.fetch(request);
+      return await transport.fetch(request);
     } catch (cause) {
+      if (isVerificationError(cause)) {
+        throw cause;
+      }
       throw new ApiError(
         {
           code: 'api.transport_failed',
@@ -604,22 +632,30 @@ export class SecureClientBase {
 
 /** Browser-compatible verified Chat Completions transport. */
 export class SecureClient extends SecureClientBase {
+  private readonly attestationClient: AttestationClient;
+
   constructor(options: SecureClientOptions) {
-    const client = new AttestationClient(options);
-    super({
-      options,
-      evidence: {
-        fetchGatewayAttestation: () =>
-          client.fetchGatewayAttestation({
-            signingAlgo: 'ed25519',
-            includeSpkiFingerprint: false,
-          }),
-        fetchModelAttestations: (params) =>
-          client.fetchModelAttestations(params),
-        fetchCompletionSignature: (params) =>
-          client.fetchCompletionSignature(params),
-      },
+    super(options);
+    this.attestationClient = new AttestationClient(options);
+  }
+
+  protected override fetchGatewayAttestation(): Promise<FetchedGatewayAttestation> {
+    return this.attestationClient.fetchGatewayAttestation({
+      signingAlgo: 'ed25519',
+      includeSpkiFingerprint: false,
     });
+  }
+
+  protected override createGatewaySessionTransport(
+    _params: CreateGatewaySessionTransportParams,
+  ): GatewaySessionTransport {
+    return {
+      fetch: globalThis.fetch,
+      fetchModelAttestations: (params) =>
+        this.attestationClient.fetchModelAttestations(params),
+      fetchCompletionSignature: (params) =>
+        this.attestationClient.fetchCompletionSignature(params),
+    };
   }
 }
 

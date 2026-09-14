@@ -13,6 +13,7 @@ import {
   SecureClient as NodeSecureClient,
 } from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
+import type { CreatePinnedGatewayFetchParams } from '../src/types/node';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import {
   appCompose,
@@ -669,6 +670,26 @@ type MockNodeGatewayAttestationParams = {
   readonly peerSpkiFingerprint?: string;
 };
 
+class TestNodeSecureClient extends NodeSecureClient {
+  readonly pinnedSpkiFingerprints: string[] = [];
+  private readonly testPinnedFetch: typeof globalThis.fetch;
+
+  constructor(
+    options: SecureClientOptions,
+    testPinnedFetch: typeof globalThis.fetch,
+  ) {
+    super(options);
+    this.testPinnedFetch = testPinnedFetch;
+  }
+
+  protected override createPinnedGatewayFetch({
+    spkiFingerprint,
+  }: CreatePinnedGatewayFetchParams): typeof globalThis.fetch {
+    this.pinnedSpkiFingerprints.push(spkiFingerprint);
+    return this.testPinnedFetch;
+  }
+}
+
 function mockNodeGatewayAttestation({
   gateway,
   peerSpkiFingerprint = tlsFingerprint,
@@ -697,9 +718,11 @@ function chatRequest(body: Record<string, unknown>): RequestInit {
   };
 }
 
-function mockProviderReceipts(gateway: TestGateway): void {
+function createProviderReceiptFetch(
+  gateway: TestGateway,
+): typeof globalThis.fetch {
   const signatures = new Map<string, Promise<Record<string, string>>>();
-  jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+  return async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
     if (url.pathname.startsWith('/v1/signature/')) {
@@ -736,7 +759,13 @@ function mockProviderReceipts(gateway: TestGateway): void {
         ),
     );
     return response;
-  });
+  };
+}
+
+function mockProviderReceipts(gateway: TestGateway): void {
+  jest
+    .spyOn(globalThis, 'fetch')
+    .mockImplementation(createProviderReceiptFetch(gateway));
 }
 
 function isChatCompletionRequest(input: RequestInfo | URL): boolean {
@@ -1774,7 +1803,10 @@ describe('secure client', () => {
       const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
         gateway,
       });
-      const client = new NodeSecureClient(secureClientOptions(gateway));
+      const client = new TestNodeSecureClient(
+        secureClientOptions(gateway),
+        gateway.fetch,
+      );
 
       await client.fetch(
         `${baseUrl}chat/completions`,
@@ -1782,10 +1814,44 @@ describe('secure client', () => {
       );
 
       expect(capturedPeerSpkiFingerprints).toEqual([true]);
+      expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
         true,
       ]);
       expect(gateway.state.completionRequests).toBe(1);
+    });
+
+    test('uses the pinned transport for model evidence, completion, and its receipt signature', async () => {
+      const gateway = createTestGateway();
+      const providerFetch = createProviderReceiptFetch(gateway);
+      const pinnedPaths: string[] = [];
+      const pinnedFetch: typeof globalThis.fetch = async (input, init) => {
+        const url =
+          input instanceof Request ? input.url : new URL(input).toString();
+        pinnedPaths.push(new URL(url).pathname);
+        return providerFetch(input, init);
+      };
+      jest.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        throw new Error('Unexpected unpinned Gateway request');
+      });
+      mockNodeGatewayAttestation({ gateway });
+      const client = new TestNodeSecureClient(
+        secureClientOptions(gateway),
+        pinnedFetch,
+      );
+
+      const { receipt } = await client.fetchWithReceipt(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+      );
+      await receipt.verify();
+
+      expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
+      expect(pinnedPaths).toEqual([
+        '/v1/attestation/report',
+        '/v1/chat/completions',
+        '/v1/signature/chatcmpl-test',
+      ]);
     });
 
     test('can disable Gateway TLS binding for an aggregator or proxy', async () => {
@@ -1831,6 +1897,7 @@ describe('secure client', () => {
       ).rejects.toMatchObject({
         failure: { code: 'binding.spki_fingerprint_mismatch' },
       });
+      expect(gateway.state.modelAttestationRequests).toBe(0);
       expect(gateway.state.completionRequests).toBe(0);
     });
   });
