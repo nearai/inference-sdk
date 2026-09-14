@@ -1,7 +1,7 @@
 # Verifiable AI SDK examples
 
 These projects demonstrate attestation and response-receipt verification
-against the canonical `z-ai/glm-5.2` model.
+against the canonical `z-ai/glm-5.3-flash` model.
 
 The JavaScript SDK's Node.js example includes two entry points:
 

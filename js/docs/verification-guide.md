@@ -26,7 +26,7 @@ authentication headers instead.
 ```ts
 import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
 
-const model = 'z-ai/glm-5.2';
+const model = 'z-ai/glm-5.3-flash';
 const client = new NearAiSecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
 });
@@ -274,7 +274,7 @@ import {
   verifyModelAttestation,
 } from 'verifiable-ai-sdk/node';
 
-const model = 'z-ai/glm-5.2';
+const model = 'z-ai/glm-5.3-flash';
 const client = new AttestationClient({ apiKey: process.env.NEARAI_API_KEY! });
 
 const fetchedGateway = await client.fetchGatewayAttestation({

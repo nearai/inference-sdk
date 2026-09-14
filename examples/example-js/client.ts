@@ -1,7 +1,7 @@
 import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
 
 const BASE_URL = 'https://cloud-api.near.ai/v1/';
-const MODEL = 'z-ai/glm-5.2';
+const MODEL = 'z-ai/glm-5.3-flash';
 
 await main();
 
