@@ -61,12 +61,18 @@ import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
 // another authentication header. `createOpenAiDefaultHeaders` removes this
 // placeholder before the secure transport receives the request.
 const OPENAI_WRAPPER_API_KEY = 'verifiable-ai-sdk-internal';
+const DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS = 15 * 60 * 1000;
 
 type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
   readonly modelAttestations: readonly VerifiedModelAttestation[];
   readonly modelSigningPublicKey: string;
   readonly transport: GatewaySessionTransport;
+};
+
+type CachedVerification = {
+  readonly expiresAt: number;
+  readonly session: SecureSessionState;
 };
 
 type ParsedPlaintextRequest = {
@@ -190,20 +196,23 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
 /**
  * A verified Chat Completions transport.
  *
- * Every `fetch()` call reads its model from the Chat request, then obtains and
- * verifies fresh Gateway and model evidence before dispatch. With the default
- * `e2ee: true`, supported fields are then encrypted to a quote-bound Ed25519
- * model key and integrity-checked on the way back.
- * With `e2ee: false`, the same evidence and policy checks run, but the Chat
- * request and response remain plaintext while the request stays pinned to the
- * verified model key.
+ * Every `fetch()` call reads its model from the Chat request, then uses a
+ * successfully verified Gateway/model session for that model when it remains
+ * within the configured cache lifetime. With the default `e2ee: true`,
+ * supported fields are encrypted to a quote-bound Ed25519 model key and
+ * integrity-checked on the way back.
+ * With `e2ee: false`, the same evidence and policy checks run on a cache miss,
+ * but the Chat request and response remain plaintext while the request stays
+ * pinned to the verified model key.
  */
 export abstract class SecureClientBase {
   private readonly baseUrl: string;
+  private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
   private readonly options: NodeSecureClientOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
-  /** Shares only same-model work already in progress; completed evidence is never cached. */
+  private readonly cachedVerifications = new Map<string, CachedVerification>();
+  /** Shares same-model verification work while it is in progress. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<SecureSessionState>
@@ -211,12 +220,15 @@ export abstract class SecureClientBase {
 
   protected constructor(options: NodeSecureClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
+    this.attestationCacheTimeToLiveMs =
+      options.attestationCacheTimeToLiveMs ??
+      DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS;
     this.e2eeEnabled = options.e2ee !== false;
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
   }
 
-  /** Fetch fresh Gateway evidence before a verified Chat request. */
+  /** Fetch Gateway evidence when starting a new verification session. */
   protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
 
   /** Create the request transport for one successfully verified Gateway. */
@@ -405,6 +417,18 @@ export abstract class SecureClientBase {
   }
 
   private startVerification(model: string): Promise<SecureSessionState> {
+    const cached = this.cachedVerifications.get(model);
+    if (
+      this.attestationCacheTimeToLiveMs !== 0 &&
+      cached !== undefined &&
+      cached.expiresAt > Date.now()
+    ) {
+      return Promise.resolve(cached.session);
+    }
+    if (cached !== undefined) {
+      this.cachedVerifications.delete(model);
+    }
+
     const existing = this.pendingVerifications.get(model);
     if (existing !== undefined) {
       return existing;
@@ -413,7 +437,15 @@ export abstract class SecureClientBase {
     const verification = this.createVerificationState(model);
     this.pendingVerifications.set(model, verification);
     void verification.then(
-      () => this.clearPendingVerification({ model, verification }),
+      (session) => {
+        if (this.attestationCacheTimeToLiveMs !== 0) {
+          this.cachedVerifications.set(model, {
+            expiresAt: Date.now() + this.attestationCacheTimeToLiveMs,
+            session,
+          });
+        }
+        this.clearPendingVerification({ model, verification });
+      },
       () => this.clearPendingVerification({ model, verification }),
     );
     return verification;

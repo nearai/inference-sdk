@@ -808,7 +808,7 @@ describe('secure client', () => {
     ]);
   });
 
-  test('fetch obtains fresh evidence for each request', async () => {
+  test('reuses verified evidence for the same model by default', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new SecureClient(secureClientOptions(gateway));
@@ -821,6 +821,56 @@ describe('secure client', () => {
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
     );
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 1,
+      modelAttestationRequests: 1,
+      completionRequests: 2,
+    });
+  });
+
+  test('verifies every request when the attestation cache time-to-live is zero', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      attestationCacheTimeToLiveMs: 0,
+    });
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+    );
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
+    );
+
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 2,
+      modelAttestationRequests: 2,
+      completionRequests: 2,
+    });
+  });
+
+  test('refreshes verified evidence after its cache time-to-live expires', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      attestationCacheTimeToLiveMs: 100,
+    });
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+    );
+    now.mockReturnValue(100);
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
+    );
+
     expect(gateway.state).toMatchObject({
       gatewayAttestationRequests: 2,
       modelAttestationRequests: 2,
@@ -853,6 +903,37 @@ describe('secure client', () => {
 
     expect(gateway.state.modelAttestationModels).toEqual([model, secondModel]);
     expect(policyModels).toEqual([model, secondModel]);
+  });
+
+  test('caches verified sessions by exact model', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new SecureClient(secureClientOptions(gateway));
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'first model' }] }),
+    );
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({
+        model: secondModel,
+        messages: [{ role: 'user', content: 'second model' }],
+      }),
+    );
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({
+        messages: [{ role: 'user', content: 'first model again' }],
+      }),
+    );
+
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 2,
+      modelAttestationRequests: 2,
+      completionRequests: 3,
+    });
+    expect(gateway.state.modelAttestationModels).toEqual([model, secondModel]);
   });
 
   test('keeps concurrent verification separate for different models', async () => {

@@ -1,10 +1,10 @@
 # TypeScript verification guide
 
-Use `NearAiSecureClient` when the device should verify fresh deployment
-evidence and encrypt supported Chat Completions fields directly to a verified
-NEAR model key. Use `AttestationClient` plus the standalone verification
-functions when your application owns the transport or needs to control each
-verification step itself.
+Use `NearAiSecureClient` when the device should verify deployment evidence and
+encrypt supported Chat Completions fields directly to a verified NEAR model
+key. Use `AttestationClient` plus the standalone verification functions when
+your application owns the transport or needs to control each verification step
+itself.
 
 ## Send an E2EE chat completion
 
@@ -13,7 +13,7 @@ uses Ed25519 only for Gateway/model evidence and optional response receipts;
 the signing algorithm is not configurable. E2EE is enabled by default. Its
 E2EE runtime transforms the fields covered by the protocol and forwards the
 rest to the Gateway. Each Chat request names its model; before dispatch, the
-client verifies fresh evidence for that model and the Gateway.
+client uses a verified session for that model and the Gateway.
 
 This direct-Gateway example is for a server-side API key. It uses the Node
 entry point, which compares Gateway evidence with the TLS peer that returned
@@ -39,11 +39,16 @@ const completion = await client.chat.completions.create({
 console.log(completion.choices[0].message.content);
 ```
 
-Each valid Chat request starts or joins a fresh verification for its `model`
-before dispatch. The client verifies every returned model candidate, then
-selects a verified Ed25519 model key and sends that key in `X-Model-Pub-Key` so
-the Gateway routes the Chat request to a compatible model path. Completed
-evidence is never cached.
+Each valid Chat request starts or joins verification for its `model` when no
+valid session is cached. Successful sessions are reused for 15 minutes by
+default; set `attestationCacheTimeToLiveMs: 0` to verify every request. The
+client verifies every returned model candidate, then selects a verified Ed25519
+model key and sends that key in `X-Model-Pub-Key` so the Gateway routes the
+Chat request to a compatible model path.
+
+Session reuse does not detect a deployment change until the session expires.
+Set the cache lifetime to `0` when the application must re-check evidence
+before every request.
 
 The key comes from `signing_public_key`. For the Ed25519 E2EE flow, the SDK
 requires it to match the signer already bound by the verified quote; it does
@@ -183,8 +188,8 @@ for await (const chunk of stream) {
 ### Send plaintext after deployment verification
 
 Set `e2ee: false` only when field encryption is not needed. This does not turn
-off the deployment gate: each valid request still starts or joins a fresh
-Gateway/model verification and runs `deploymentPolicy`.
+off the deployment gate: verification and `deploymentPolicy` run whenever the
+model's cached session is missing or expired.
 
 ```ts
 const client = new NearAiSecureClient({
@@ -224,8 +229,8 @@ console.log(verified.signatureKind);
 to the exact response bytes after the response finishes; for E2EE, both are the
 encrypted bytes, not reconstructed plaintext JSON. Do not parse and reserialize
 either body. `receipt.verify()` waits for those bytes, retrieves the Ed25519
-completion signature, and selects the matching evidence from the fresh
-verification that preceded this Chat request.
+completion signature, and selects the matching evidence from the verified
+session used for this Chat request.
 
 For `fetchWithReceipt()`, consume the returned `Response` body before calling
 `receipt.verify()`. For a stream, consume or drain the returned stream first.

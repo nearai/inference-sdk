@@ -80,10 +80,15 @@ export type ModelVerificationOptions = {
 /** Settings shared by generic and Node verified Chat clients. */
 type SecureClientCommonOptions = {
   /**
+   * How long to reuse a successfully verified Gateway/model session for the
+   * same model. Defaults to 15 minutes. Set `0` to verify every request.
+   */
+  readonly attestationCacheTimeToLiveMs?: number;
+  /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `true`. Setting this to `false` keeps the fresh attestation
-   * and deployment-policy checks, but sends plaintext Chat fields with a
-   * verified Ed25519 model-key routing header.
+   * Defaults to `true`. Setting this to `false` keeps attestation and
+   * deployment-policy checks, but sends plaintext Chat fields with a verified
+   * Ed25519 model-key routing header.
    */
   readonly e2ee?: boolean;
   /**

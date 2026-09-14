@@ -7,8 +7,9 @@ The JavaScript SDK's Node.js example includes two entry points:
 
 - `client.ts` uses `NearAiSecureClient`, which uses Ed25519 for Gateway/model
   evidence and response receipts, and enables E2EE by default. Each Chat
-  request supplies its model; the client verifies fresh Gateway and model
-  evidence before sending it. Because it imports the Node entry point and
+  request supplies its model; the client verifies Gateway and model evidence
+  before its first request for that model, then reuses it for 15 minutes.
+  Because it imports the Node entry point and
   connects directly to the Gateway, it pins model evidence, Chat, and receipt
   requests to the SPKI bound by its verified Gateway evidence. This does not
   require reuse of the initial TLS connection. The example also verifies a

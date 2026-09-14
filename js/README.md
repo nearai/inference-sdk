@@ -14,11 +14,13 @@ The package has two layers:
 
 ## Secure Chat Completions
 
-Each valid `SecureClient.fetch()` call starts or joins a fresh Gateway/model
-verification for the `model` named in that Chat request before it sends it. It
-also runs any caller-supplied deployment policy with that model. Completed
-evidence is never cached. If verification or policy approval fails, no
-inference request is sent.
+Each valid `SecureClient.fetch()` call uses a successfully verified
+Gateway/model session for the `model` named in that Chat request. Sessions are
+retained for 15 minutes by default; set `attestationCacheTimeToLiveMs: 0` to
+verify every request. A cache miss runs any caller-supplied deployment policy.
+Reuse does not observe a deployment change until the session expires; use `0`
+when each request must re-check current evidence.
+If verification or policy approval fails, no inference request is sent.
 
 Secure clients use Ed25519 only for Gateway/model evidence and optional
 response receipts; the signing algorithm is not configurable.
@@ -28,7 +30,7 @@ E2EE is enabled by default:
 | `e2ee` | What the client does after verification |
 | --- | --- |
 | `true` or omitted | Encrypts supported request fields to a quote-bound Ed25519 model key, pins the request to that key, and decrypts protocol-covered response fields. |
-| `false` | Sends plaintext Chat fields with a verified Ed25519 model-key routing header. Fresh attestation and deployment-policy checks still run, but this alone does not prove the exact response bytes. |
+| `false` | Sends plaintext Chat fields with a verified Ed25519 model-key routing header. Attestation and deployment-policy checks still run on a cache miss, but this alone does not prove the exact response bytes. |
 
 The E2EE transport uses NEAR model evidence with a quote-bound Ed25519 key and
 the version 2 field-encryption protocol. It supports only
