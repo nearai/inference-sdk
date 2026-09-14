@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 import ed2curve from 'ed2curve';
 import nacl from 'tweetnacl';
-import { decryptE2eeText } from '../src/core/e2ee';
+import { createE2eeClientKeyPair, decryptE2eeText } from '../src/core/e2ee';
+import { createE2eeChatSseTransform } from '../src/core/e2ee-chat';
 
 const serverCiphertext =
   '07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7ca0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b743d22a6968fbbdf88cd066c79b3dacd53a6991f06ce8c564e03b7eb60e2376';
@@ -33,5 +34,23 @@ describe('Ed25519 v2 E2EE', () => {
         field: 'response.content',
       }),
     ).toBe('fixed v2 vector');
+  });
+
+  test('preserves empty SSE data records', async () => {
+    const input = 'data:\n\ndata\n\n';
+    const source = new Response(input).body;
+    if (source === null) {
+      throw new Error('Expected an SSE response body');
+    }
+
+    const transformed = new Response(
+      source.pipeThrough(
+        createE2eeChatSseTransform({
+          clientKeyPair: createE2eeClientKeyPair(),
+        }),
+      ),
+    );
+
+    await expect(transformed.text()).resolves.toBe(input);
   });
 });

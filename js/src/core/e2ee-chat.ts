@@ -948,7 +948,7 @@ function transformSseRecord({
   const data = dataLines
     .map((line) => getSseData(line.content) ?? '')
     .join('\n');
-  if (data === '[DONE]' || getSseEvent(lines) === 'error') {
+  if (data === '' || data === '[DONE]' || getSseEvent(lines) === 'error') {
     return record + separator;
   }
 

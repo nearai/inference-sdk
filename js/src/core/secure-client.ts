@@ -167,6 +167,11 @@ type ClearPendingVerificationParams = {
   readonly verification: Promise<SecureSessionState>;
 };
 
+type AwaitWithAbortParams<T> = {
+  readonly operation: Promise<T>;
+  readonly signal: AbortSignal;
+};
+
 type CreateOpenAiClientParams = {
   readonly baseUrl: string;
   readonly fetch: typeof globalThis.fetch;
@@ -297,7 +302,13 @@ export abstract class SecureClientBase {
     SentSecureCompletion | CapturedSecureCompletion
   > {
     const parsed = await this.parseSecureRequest(input, init);
-    const session = await this.startVerification(parsed.model);
+    if (parsed.request.signal.aborted) {
+      throw parsed.request.signal.reason;
+    }
+    const session = await awaitWithAbort({
+      operation: this.startVerification(parsed.model),
+      signal: parsed.request.signal,
+    });
 
     const prepared = parsed.e2ee
       ? this.encryptSecureRequest({
@@ -417,16 +428,11 @@ export abstract class SecureClientBase {
   }
 
   private startVerification(model: string): Promise<SecureSessionState> {
+    const now = Date.now();
+    this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(model);
-    if (
-      this.attestationCacheTimeToLiveMs !== 0 &&
-      cached !== undefined &&
-      cached.expiresAt > Date.now()
-    ) {
+    if (this.attestationCacheTimeToLiveMs !== 0 && cached !== undefined) {
       return Promise.resolve(cached.session);
-    }
-    if (cached !== undefined) {
-      this.cachedVerifications.delete(model);
     }
 
     const existing = this.pendingVerifications.get(model);
@@ -449,6 +455,14 @@ export abstract class SecureClientBase {
       () => this.clearPendingVerification({ model, verification }),
     );
     return verification;
+  }
+
+  private removeExpiredVerifications(now: number): void {
+    for (const [model, cached] of this.cachedVerifications) {
+      if (cached.expiresAt <= now) {
+        this.cachedVerifications.delete(model);
+      }
+    }
   }
 
   private clearPendingVerification({
@@ -833,6 +847,29 @@ function selectModelSigningPublicKey(
     }
   }
   throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+}
+
+function awaitWithAbort<T>({
+  operation,
+  signal,
+}: AwaitWithAbortParams<T>): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    void operation.then(
+      (value) => {
+        signal.removeEventListener('abort', abort);
+        resolve(value);
+      },
+      (cause: unknown) => {
+        signal.removeEventListener('abort', abort);
+        reject(cause);
+      },
+    );
+  });
 }
 
 function createRequest(

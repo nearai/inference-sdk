@@ -985,6 +985,59 @@ describe('secure client', () => {
     });
   });
 
+  test('aborts one caller without cancelling shared attestation verification', async () => {
+    const gateway = createTestGateway();
+    let gatewayAttestationRequest: Request | undefined;
+    let resolveGatewayAttestation: (response: Response) => void = () => {};
+    const gatewayAttestationResponse = new Promise<Response>((resolve) => {
+      resolveGatewayAttestation = resolve;
+    });
+    let notifyGatewayAttestationStarted: () => void = () => {};
+    const gatewayAttestationStarted = new Promise<void>((resolve) => {
+      notifyGatewayAttestationStarted = resolve;
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (
+        url.pathname === '/v1/attestation/report' &&
+        !url.searchParams.has('model')
+      ) {
+        gatewayAttestationRequest = request;
+        notifyGatewayAttestationStarted();
+        return gatewayAttestationResponse;
+      }
+      return gateway.fetch(request);
+    });
+    const client = new SecureClient(secureClientOptions(gateway));
+    const controller = new AbortController();
+
+    const aborted = client.fetch(`${baseUrl}chat/completions`, {
+      ...chatRequest({ messages: [{ role: 'user', content: 'cancel me' }] }),
+      signal: controller.signal,
+    });
+    await gatewayAttestationStarted;
+
+    const succeeding = client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'still send me' }] }),
+    );
+    controller.abort();
+
+    await expect(aborted).rejects.toMatchObject({ name: 'AbortError' });
+    if (gatewayAttestationRequest === undefined) {
+      throw new Error('Expected a Gateway attestation request');
+    }
+    resolveGatewayAttestation(await gateway.fetch(gatewayAttestationRequest));
+
+    await expect(succeeding).resolves.toBeInstanceOf(Response);
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 1,
+      modelAttestationRequests: 1,
+      completionRequests: 1,
+    });
+  });
+
   test('requires a model before it fetches attestation evidence', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
