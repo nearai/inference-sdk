@@ -128,9 +128,7 @@ describe('createPinnedTlsFetch', () => {
     const requests = installHttpsRequests({
       peerCertificates: [matchingSpki, unexpectedSpki],
     });
-    const fetch = createPinnedTlsFetch({
-      spkiFingerprint: spkiFingerprint(matchingSpki),
-    });
+    const fetch = createPinnedTlsFetch(spkiFingerprint(matchingSpki));
 
     const response = await fetch('https://gateway.test/v1/chat/completions', {
       method: 'POST',
@@ -176,9 +174,7 @@ describe('createPinnedTlsFetch', () => {
       peerCertificates: [matchingSpki],
       waitForAbort: true,
     });
-    const fetch = createPinnedTlsFetch({
-      spkiFingerprint: spkiFingerprint(matchingSpki),
-    });
+    const fetch = createPinnedTlsFetch(spkiFingerprint(matchingSpki));
     const controller = new AbortController();
 
     const pending = fetch('https://gateway.test/v1/chat/completions', {

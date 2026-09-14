@@ -292,9 +292,9 @@ const gateway = await verifyGatewayAttestation({
 if (gateway.tlsBinding.kind !== 'attested') {
   throw new Error('Expected TLS-bound Gateway evidence');
 }
-const pinnedTlsFetch = createPinnedTlsFetch({
-  spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
-});
+const pinnedTlsFetch = createPinnedTlsFetch(
+  gateway.tlsBinding.spkiFingerprint,
+);
 
 const fetchedModels = await client.fetchModelAttestations({
   model,

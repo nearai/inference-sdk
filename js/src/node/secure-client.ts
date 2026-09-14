@@ -6,7 +6,6 @@ import {
   type GatewaySessionTransport,
 } from '../core/secure-client';
 import type { FetchedGatewayAttestation } from '../types/cloud-api';
-import type { CreatePinnedTlsFetchParams } from '../types/node';
 import type {
   NodeNearAiSecureClientOptions,
   NodeSecureClientOptions,
@@ -57,9 +56,7 @@ export class NodeSecureClient extends SecureClientBase {
   }: CreateGatewaySessionTransportParams): GatewaySessionTransport {
     const gatewayFetch =
       tlsBinding.kind === 'attested'
-        ? this.createPinnedTlsFetch({
-            spkiFingerprint: tlsBinding.spkiFingerprint,
-          })
+        ? this.createPinnedTlsFetch(tlsBinding.spkiFingerprint)
         : globalThis.fetch;
     const client = new GatewaySessionEvidenceClient(
       this.nodeOptions,
@@ -74,10 +71,10 @@ export class NodeSecureClient extends SecureClientBase {
   }
 
   /** Isolated for the Node transport tests; runtime code delegates to the public helper. */
-  protected createPinnedTlsFetch({
-    spkiFingerprint,
-  }: CreatePinnedTlsFetchParams): typeof globalThis.fetch {
-    return createPinnedTlsFetch({ spkiFingerprint });
+  protected createPinnedTlsFetch(
+    spkiFingerprint: string,
+  ): typeof globalThis.fetch {
+    return createPinnedTlsFetch(spkiFingerprint);
   }
 }
 

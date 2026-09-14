@@ -8,7 +8,6 @@ export {
   NodeSecureClient as SecureClient,
 } from './node/secure-client';
 export type { NodeFetchGatewayAttestationParams as FetchGatewayAttestationParams } from './types/cloud-api';
-export type { CreatePinnedTlsFetchParams } from './types/node';
 export type {
   NodeGatewayVerificationOptions as GatewayVerificationOptions,
   NodeNearAiSecureClientOptions as NearAiSecureClientOptions,

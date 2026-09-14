@@ -174,9 +174,7 @@ function createGatewayPinnedTlsFetch(
   if (gateway.tlsBinding.kind !== 'attested') {
     throw new Error('Expected TLS-bound Gateway evidence');
   }
-  return createPinnedTlsFetch({
-    spkiFingerprint: gateway.tlsBinding.spkiFingerprint,
-  });
+  return createPinnedTlsFetch(gateway.tlsBinding.spkiFingerprint);
 }
 
 async function verifyCompletionReceipt({

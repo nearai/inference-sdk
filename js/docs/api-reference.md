@@ -30,7 +30,7 @@ Gateway-attestation socket to be reused.
 | `SecureClient` | `new SecureClient(options)` | Native verified transport for Chat Completions. |
 | `NearAiSecureClient` | `new NearAiSecureClient(options)` | OpenAI-compatible Chat Completions surface backed by `SecureClient`. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
-| `createPinnedTlsFetch` from `verifiable-ai-sdk/node` | `({ spkiFingerprint }) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
+| `createPinnedTlsFetch` from `verifiable-ai-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
