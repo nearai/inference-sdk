@@ -40,6 +40,11 @@ type NativeRequestCall = {
   body?: Uint8Array;
 };
 
+type InstallHttpsRequestsParams = {
+  readonly peerCertificates: readonly Uint8Array[];
+  readonly waitForAbort?: boolean;
+};
+
 function spkiFingerprint(value: Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
@@ -52,9 +57,10 @@ function incomingResponse(body: string): IncomingMessage {
   }) as unknown as IncomingMessage;
 }
 
-function installHttpsRequests(
-  peerCertificates: readonly Uint8Array[],
-): NativeRequestCall[] {
+function installHttpsRequests({
+  peerCertificates,
+  waitForAbort = false,
+}: InstallHttpsRequestsParams): NativeRequestCall[] {
   const calls: NativeRequestCall[] = [];
   let nextPeerCertificate = 0;
   jest.mocked(https.request).mockImplementation(((
@@ -74,6 +80,18 @@ function installHttpsRequests(
       },
       end(body?: Uint8Array) {
         call.body = body;
+        if (waitForAbort) {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              const error = new Error('Request aborted');
+              error.name = 'AbortError';
+              onError?.(error);
+            },
+            { once: true },
+          );
+          return;
+        }
         const peerCertificate = peerCertificates[nextPeerCertificate];
         nextPeerCertificate += 1;
         if (peerCertificate === undefined) {
@@ -107,7 +125,9 @@ describe('createPinnedGatewayFetch', () => {
   test('checks every TLS peer and preserves Fetch request and response data', async () => {
     const matchingSpki = Buffer.from('matching-spki');
     const unexpectedSpki = Buffer.from('unexpected-spki');
-    const requests = installHttpsRequests([matchingSpki, unexpectedSpki]);
+    const requests = installHttpsRequests({
+      peerCertificates: [matchingSpki, unexpectedSpki],
+    });
     const fetch = createPinnedGatewayFetch({
       spkiFingerprint: spkiFingerprint(matchingSpki),
     });
@@ -135,6 +155,7 @@ describe('createPinnedGatewayFetch', () => {
       'content-type': 'application/json',
       'accept-encoding': 'identity',
     });
+    expect(firstRequest.options?.rejectUnauthorized).toBe(true);
     expect(firstRequest.body).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(firstRequest.body)).toBe(
       '{"model":"glm-5.2"}',
@@ -147,5 +168,25 @@ describe('createPinnedGatewayFetch', () => {
     });
     expect(jest.mocked(tls.checkServerIdentity)).toHaveBeenCalledTimes(2);
     expect(requests).toHaveLength(2);
+  });
+
+  test('forwards an AbortSignal to the native HTTPS request', async () => {
+    const matchingSpki = Buffer.from('matching-spki');
+    const requests = installHttpsRequests({
+      peerCertificates: [matchingSpki],
+      waitForAbort: true,
+    });
+    const fetch = createPinnedGatewayFetch({
+      spkiFingerprint: spkiFingerprint(matchingSpki),
+    });
+    const controller = new AbortController();
+
+    const pending = fetch('https://gateway.test/v1/chat/completions', {
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(requests).toHaveLength(1);
   });
 });

@@ -103,6 +103,8 @@ function requestHttps({
         agent: false,
         method: request.method,
         headers: Object.fromEntries(headers),
+        rejectUnauthorized: true,
+        signal: request.signal,
         ...(expectedSpkiFingerprint === undefined
           ? {}
           : {
