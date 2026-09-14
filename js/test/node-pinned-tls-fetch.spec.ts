@@ -135,6 +135,7 @@ describe('createPinnedTlsFetch', () => {
       headers: {
         authorization: 'Bearer test',
         'content-type': 'application/json',
+        'accept-encoding': 'gzip',
       },
       body: '{"model":"glm-5.2"}',
     });

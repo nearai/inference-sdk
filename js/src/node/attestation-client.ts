@@ -91,9 +91,7 @@ function requestHttps({
   expectedSpkiFingerprint,
 }: RequestHttpsParams): Promise<GatewayAttestationHttpResponse> {
   const headers = new Headers(request.headers);
-  if (!headers.has('accept-encoding')) {
-    headers.set('accept-encoding', 'identity');
-  }
+  headers.set('accept-encoding', 'identity');
 
   return new Promise((resolve, reject) => {
     const nativeRequest = https.request(
