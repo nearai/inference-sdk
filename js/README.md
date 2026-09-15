@@ -2,7 +2,7 @@
 
 `verifiable-ai-sdk` verifies Gateway and model attestations in Node.js and
 browsers. It also provides secure Chat Completions clients for NEAR-backed
-model deployments that expose a quote-bound Ed25519 public key.
+model deployments that expose a quote-bound E2EE public key.
 
 The package has two layers:
 
@@ -22,20 +22,22 @@ Reuse does not observe a deployment change until the session expires; use `0`
 when each request must re-check current evidence.
 If verification or policy approval fails, no inference request is sent.
 
-Secure clients use Ed25519 only for Gateway/model evidence and optional
-response receipts; the signing algorithm is not configurable.
+`signingAlgo` selects the Gateway/model evidence, model-key routing, optional
+response receipt, and E2EE protocol. It defaults to `ed25519`; set it to
+`ecdsa` for a deployment that uses the legacy ECDSA protocol.
 
 E2EE is enabled by default:
 
 | `e2ee` | What the client does after verification |
 | --- | --- |
-| `true` or omitted | Encrypts supported request fields to a quote-bound Ed25519 model key, pins the request to that key, and decrypts protocol-covered response fields. |
-| `false` | Sends plaintext Chat fields with a verified Ed25519 model-key routing header. Attestation and deployment-policy checks still run on a cache miss, but this alone does not prove the exact response bytes. |
+| `true` or omitted | Encrypts supported request fields to a quote-bound model key for the selected algorithm, pins the request to that key, and decrypts protocol-covered response fields. |
+| `false` | Sends plaintext Chat fields with a verified model-key routing header for the selected algorithm. Attestation and deployment-policy checks still run on a cache miss, but this alone does not prove the exact response bytes. |
 
-The E2EE transport uses NEAR model evidence with a quote-bound Ed25519 key and
-the version 2 field-encryption protocol. It supports only
-`POST /chat/completions`, in non-streaming and streaming modes. The client
-encrypts the request fields it recognizes: string message content,
+The default Ed25519 transport uses the version 2 field-encryption protocol.
+ECDSA uses the legacy secp256k1 ECDH and AES-GCM protocol and does not send
+`X-Encryption-Version: 2`. Both use a key bound to verified model evidence.
+The client supports only `POST /chat/completions`, in non-streaming and
+streaming modes, and encrypts the request fields it recognizes: string message content,
 array-valued rich message content, assistant reasoning and audio data, and
 recognized function and tool values.
 Every E2EE Chat request sends `X-Encrypt-All-Fields: true`; that enables the
@@ -49,9 +51,9 @@ recognize is not automatically encrypted, so place private data only in fields
 covered by the E2EE flow.
 
 Before decrypting a non-empty protocol-covered response field, the client
-checks its XChaCha20-Poly1305 AEAD tag. This field-level integrity check is not a
-completion receipt and does not establish that a particular Gateway or model
-signer produced the response.
+checks its AEAD tag. This field-level integrity check is not a completion
+receipt and does not establish that a particular Gateway or model signer
+produced the response.
 
 Ordinary `create()` and `fetch()` calls do not fetch a completion receipt on the
 request path. Use `createWithReceipt()` or `fetchWithReceipt()` when an

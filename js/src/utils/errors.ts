@@ -470,7 +470,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'provenance.verification_failed':
       return `[${failure.code}] Deployment provenance verification failed`;
     case 'e2ee.model_public_key_required':
-      return `[${failure.code}] Verified model evidence does not provide an Ed25519 E2EE public key`;
+      return `[${failure.code}] Verified model evidence does not provide an E2EE public key`;
     case 'e2ee.model_public_key_invalid':
       return `[${failure.code}] Model E2EE public key cannot be used for encryption`;
     case 'e2ee.decryption_failed':

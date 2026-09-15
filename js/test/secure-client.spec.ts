@@ -13,7 +13,10 @@ import {
   SecureClient as NodeSecureClient,
 } from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
-import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
+import {
+  decryptE2eeText as decryptE2eeValue,
+  encryptE2eeText as encryptE2eeValue,
+} from '../src/core/e2ee';
 import {
   appCompose,
   createGatewayTlsQuote,
@@ -131,6 +134,44 @@ function keyPair(seed: number): nacl.SignKeyPair {
 
 function keyHex(key: Uint8Array): string {
   return Buffer.from(key).toString('hex');
+}
+
+type EncryptEd25519TextParams = {
+  readonly plaintext: string;
+  readonly recipientPublicKey: string;
+};
+
+function encryptE2eeText({
+  plaintext,
+  recipientPublicKey,
+}: EncryptEd25519TextParams): string {
+  return encryptE2eeValue({
+    plaintext,
+    modelKey: { signingAlgo: 'ed25519', publicKey: recipientPublicKey },
+  });
+}
+
+type DecryptEd25519TextParams = {
+  readonly ciphertext: string;
+  readonly recipientSecretKey: Uint8Array;
+  readonly field: string;
+};
+
+/** The in-memory Gateway fixture implements the Ed25519 v2 model side. */
+function decryptE2eeText({
+  ciphertext,
+  recipientSecretKey,
+  field,
+}: DecryptEd25519TextParams): string {
+  return decryptE2eeValue({
+    ciphertext,
+    clientKeyPair: {
+      signingAlgo: 'ed25519',
+      publicKey: '',
+      x25519SecretKey: recipientSecretKey,
+    },
+    field,
+  });
 }
 
 function hashBytes(value: Uint8Array): string {

@@ -9,9 +9,10 @@ itself.
 ## Send an E2EE chat completion
 
 `NearAiSecureClient` uses the official OpenAI request and response types. It
-uses Ed25519 only for Gateway/model evidence and optional response receipts;
-the signing algorithm is not configurable. E2EE is enabled by default. Its
-E2EE runtime transforms the fields covered by the protocol and forwards the
+uses `signingAlgo` for Gateway/model evidence, model-key routing, optional
+response receipts, and E2EE. It defaults to `ed25519`; set it to `ecdsa` for a
+deployment that uses the legacy ECDSA protocol. E2EE is enabled by default.
+Its E2EE runtime transforms the fields covered by the protocol and forwards the
 rest to the Gateway. Each Chat request names its model; before dispatch, the
 client uses a verified session for that model and the Gateway.
 
@@ -39,20 +40,30 @@ const completion = await client.chat.completions.create({
 console.log(completion.choices[0].message.content);
 ```
 
+To select ECDSA instead of the default Ed25519 protocol:
+
+```ts
+const client = new NearAiSecureClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+  signingAlgo: 'ecdsa',
+});
+```
+
 Each valid Chat request starts or joins verification for its `model` when no
 valid session is cached. Successful sessions are reused for 15 minutes by
 default; set `attestationCacheTimeToLiveMs: 0` to verify every request. The
-client verifies every returned model candidate, then selects a verified Ed25519
-model key and sends that key in `X-Model-Pub-Key` so the Gateway routes the
-Chat request to a compatible model path.
+client verifies every returned model candidate, then selects a verified model
+key for the configured algorithm and sends it in `X-Model-Pub-Key` so the
+Gateway routes the Chat request to a compatible model path.
 
 Session reuse does not detect a deployment change until the session expires.
 Set the cache lifetime to `0` when the application must re-check evidence
 before every request.
 
-The key comes from `signing_public_key`. For the Ed25519 E2EE flow, the SDK
-requires it to match the signer already bound by the verified quote; it does
-not use an unverified HTTP key as an encryption recipient.
+The key comes from `signing_public_key`. The SDK binds it to the signer already
+authenticated by the quote before using it as an encryption recipient: an
+Ed25519 key must equal the signer, while an ECDSA key must derive the signer's
+address.
 
 ## Decide which deployments to approve
 
@@ -132,10 +143,12 @@ const client = new NearAiSecureClient({
 ## E2EE scope and response handling
 
 It is not a generic Gateway encryption layer: it requires NEAR model evidence
-that supplies a quote-bound Ed25519 signing key, and uses the version 2
-field-encryption protocol. The secure client accepts
-only `POST /v1/chat/completions`; Responses API and other endpoint paths are
-rejected locally before it requests attestation evidence.
+that supplies a quote-bound key for the selected algorithm. Ed25519, the
+default, uses the version 2 field-encryption protocol. `X-Encryption-Version:
+2` selects that Ed25519 wire format; it does not define an ECDSA version. ECDSA
+therefore uses its secp256k1 ECDH and AES-GCM format without that header. The
+secure client accepts only `POST /v1/chat/completions`; Responses API and other
+endpoint paths are rejected locally before it requests attestation evidence.
 
 The SDK transforms protocol-covered fields; it does not validate every Chat
 option locally. The Gateway and model remain responsible for accepting a
@@ -153,10 +166,10 @@ fields; it does not encrypt arbitrary request JSON.
 | Other Chat request-body fields | Preserved without E2EE transformation. The Gateway and model decide whether to accept them. Fields outside the protocol are ordinary request data, not E2EE-protected values. |
 | Non-streaming and streaming Chat | The client checks the AEAD tag of each non-empty protocol-covered assistant and tool value before decrypting it. For streaming, it waits until each SSE event is complete, even when the event spans transport chunks. |
 
-Each non-empty protocol-covered encrypted response field must pass its
-XChaCha20-Poly1305 AEAD integrity check before the client decrypts it. This
-checks the encrypted field within the E2EE protocol; it does not establish that
-a particular Gateway or model signer produced the response. Ordinary
+Each non-empty protocol-covered encrypted response field must pass its AEAD
+integrity check before the client decrypts it. This checks the encrypted field
+within the E2EE protocol; it does not establish that a particular Gateway or
+model signer produced the response. Ordinary
 `chat.completions.create()` does not fetch or verify a completion receipt before
 returning its decrypted result.
 Field-level AEAD integrity checking is necessary before plaintext can be
@@ -199,11 +212,11 @@ const client = new NearAiSecureClient({
 ```
 
 In this mode the client sends plaintext Chat fields and response. It does not
-encrypt or decrypt fields, but still sends a model-key routing header for a
-verified Ed25519 model key. A model that does not expose that key is not
-supported by the secure client, even in plaintext mode. A successful deployment
-check does not prove that these particular request and response bytes were
-signed by an attested Gateway or model.
+encrypt or decrypt fields, but still sends a model-key routing header for the
+selected algorithm. A model that does not expose that key is not supported by
+the secure client, even in plaintext mode. A successful deployment check does
+not prove that these particular request and response bytes were signed by an
+attested Gateway or model.
 
 ## Verify a response receipt
 
@@ -228,9 +241,9 @@ console.log(verified.signatureKind);
 `receipt.requestBody` is immediately available. `receipt.responseBody` resolves
 to the exact response bytes after the response finishes; for E2EE, both are the
 encrypted bytes, not reconstructed plaintext JSON. Do not parse and reserialize
-either body. `receipt.verify()` waits for those bytes, retrieves the Ed25519
-completion signature, and selects the matching evidence from the verified
-session used for this Chat request.
+either body. `receipt.verify()` waits for those bytes, retrieves the completion
+signature for the configured algorithm, and selects the matching evidence from
+the verified session used for this Chat request.
 
 For `fetchWithReceipt()`, consume the returned `Response` body before calling
 `receipt.verify()`. For a stream, consume or drain the returned stream first.

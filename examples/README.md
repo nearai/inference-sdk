@@ -5,10 +5,12 @@ against the canonical `z-ai/glm-5.3-flash` model.
 
 The JavaScript SDK's Node.js example includes two entry points:
 
-- `client.ts` uses `NearAiSecureClient`, which uses Ed25519 for Gateway/model
-  evidence and response receipts, and enables E2EE by default. Each Chat
-  request supplies its model; the client verifies Gateway and model evidence
-  before its first request for that model, then reuses it for 15 minutes.
+- `client.ts` uses `NearAiSecureClient`, which enables E2EE by default. It
+  selects Ed25519 by default for Gateway/model evidence and response receipts;
+  change its `SIGNING_ALGO` constant to `'ecdsa'` to run the ECDSA flow. Each
+  Chat request supplies its model; the client verifies Gateway and model
+  evidence before its first request for that model, then reuses it for 15
+  minutes.
   Because it imports the Node entry point and
   connects directly to the Gateway, it pins model evidence, Chat, and receipt
   requests to the SPKI bound by its verified Gateway evidence. This does not
@@ -19,8 +21,9 @@ The JavaScript SDK's Node.js example includes two entry points:
   JSON and does not demonstrate E2EE.
 
 The bare example uses an explicit `ed25519` signing algorithm for Gateway,
-model, and response-signature requests. All examples use only the
-`NEARAI_API_KEY` environment variable.
+model, and response-signature requests. Change its `SIGNING_ALGO` constant to
+`'ecdsa'` to exercise the corresponding receipt-verification path. All
+examples use only the `NEARAI_API_KEY` environment variable.
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key

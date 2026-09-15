@@ -5,8 +5,11 @@ import type {
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
 } from '../types/verification';
+import { Buffer } from 'buffer';
 import * as v from 'valibot';
+import { computeAddress } from 'ethers';
 import { NvidiaPayloadNonceSchema } from '../schemas';
+import type { SigningAlgo } from '../types/attestation-common';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { nvidiaNrasVerifier } from '../utils/nvidia';
@@ -70,21 +73,22 @@ export async function verifyModelAttestation({
 
 type VerifySigningPublicKeyParams = {
   readonly attestation: VerifyModelAttestationParams['attestation'];
-  readonly signingAlgo: 'ecdsa' | 'ed25519';
+  readonly signingAlgo: SigningAlgo;
   readonly signingAddress: string;
 };
 
 /**
- * E2EE uses an Ed25519 public key. When Cloud API supplies it, require it to
- * be the same key already authenticated as the model signer by quote report
- * data. Other model-attestation flows do not require this field.
+ * When Cloud API supplies a model E2EE public key, bind it to the signer
+ * already authenticated by quote report data. Ed25519 signer addresses are
+ * the public key itself. ECDSA signer addresses are derived from the raw
+ * secp256k1 `X || Y` public key.
  */
 function verifySigningPublicKey({
   attestation,
   signingAlgo,
   signingAddress,
 }: VerifySigningPublicKeyParams): string | undefined {
-  if (attestation.signingPublicKey === undefined || signingAlgo !== 'ed25519') {
+  if (attestation.signingPublicKey === undefined) {
     return undefined;
   }
   const signingPublicKey = hexToBuffer(
@@ -95,15 +99,42 @@ function verifySigningPublicKey({
     signingAddress,
     'signer.signingAddress',
   );
-  if (
-    signingPublicKey.length !== 32 ||
-    !signingPublicKey.equals(verifiedSigningAddress)
-  ) {
+  const publicKeyMatchesSigner =
+    signingAlgo === 'ed25519'
+      ? signingPublicKey.length === 32 &&
+        signingPublicKey.equals(verifiedSigningAddress)
+      : ecdsaPublicKeyMatchesSigner(signingPublicKey, verifiedSigningAddress);
+  if (!publicKeyMatchesSigner) {
     throw new VerificationError({
       code: 'binding.model_public_key_mismatch',
     });
   }
-  return signingPublicKey.toString('hex');
+  return signingAlgo === 'ecdsa' && signingPublicKey.length === 65
+    ? signingPublicKey.subarray(1).toString('hex')
+    : signingPublicKey.toString('hex');
+}
+
+function ecdsaPublicKeyMatchesSigner(
+  signingPublicKey: Buffer,
+  signingAddress: Buffer,
+): boolean {
+  const rawPublicKey =
+    signingPublicKey.length === 65 && signingPublicKey[0] === 0x04
+      ? signingPublicKey.subarray(1)
+      : signingPublicKey;
+  if (rawPublicKey.length !== 64) {
+    return false;
+  }
+
+  try {
+    const derivedSigningAddress = Buffer.from(
+      computeAddress(`0x04${rawPublicKey.toString('hex')}`).slice(2),
+      'hex',
+    );
+    return derivedSigningAddress.equals(signingAddress);
+  } catch {
+    return false;
+  }
 }
 
 type VerifyNvidiaEvidenceParams = {
