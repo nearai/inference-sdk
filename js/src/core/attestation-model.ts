@@ -5,6 +5,7 @@ import type {
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
 } from '../types/verification';
+import { Buffer } from 'buffer';
 import * as v from 'valibot';
 import { computeAddress } from 'ethers';
 import { NvidiaPayloadNonceSchema } from '../schemas';
