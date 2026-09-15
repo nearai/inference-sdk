@@ -2,6 +2,8 @@ import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
 
 const BASE_URL = 'https://cloud-api.near.ai/v1/';
 const MODEL = 'z-ai/glm-5.3-flash';
+// Change this to 'ecdsa' to use the ECDSA E2EE protocol.
+const SIGNING_ALGO = 'ed25519';
 
 await main();
 
@@ -11,12 +13,16 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new NearAiSecureClient({ apiKey, baseUrl: BASE_URL });
+  const client = new NearAiSecureClient({
+    apiKey,
+    baseUrl: BASE_URL,
+    signingAlgo: SIGNING_ALGO,
+  });
 
-  // This Node client uses Ed25519 for Gateway/model evidence and response
-  // receipts. It verifies evidence for `MODEL`, including the TLS peer that
-  // returned Gateway evidence, then reuses the verified session for 15
-  // minutes. E2EE is enabled by default.
+  // This Node client uses the selected algorithm for Gateway/model evidence,
+  // response receipts, and E2EE. It verifies evidence for `MODEL`, including
+  // the TLS peer that returned Gateway evidence, then reuses the verified
+  // session for 15 minutes. E2EE is enabled by default.
 
   await runNonStreamingExample(client);
   await runStreamingExample(client);

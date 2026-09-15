@@ -144,8 +144,9 @@ const client = new NearAiSecureClient({
 
 It is not a generic Gateway encryption layer: it requires NEAR model evidence
 that supplies a quote-bound key for the selected algorithm. Ed25519, the
-default, uses the version 2 field-encryption protocol. ECDSA uses the legacy
-secp256k1 ECDH and AES-GCM protocol and omits `X-Encryption-Version: 2`. The
+default, uses the version 2 field-encryption protocol. `X-Encryption-Version:
+2` selects that Ed25519 wire format; it does not define an ECDSA version. ECDSA
+therefore uses its secp256k1 ECDH and AES-GCM format without that header. The
 secure client accepts only `POST /v1/chat/completions`; Responses API and other
 endpoint paths are rejected locally before it requests attestation evidence.
 
