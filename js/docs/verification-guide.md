@@ -1,6 +1,6 @@
 # TypeScript verification guide
 
-Use `NearAiSecureClient` when the device should verify deployment evidence and
+Use `SecureClient` when the device should verify deployment evidence and
 encrypt supported Chat Completions fields directly to a verified NEAR model
 key. Use `AttestationClient` plus the standalone verification functions when
 your application owns the transport or needs to control each verification step
@@ -8,7 +8,7 @@ itself.
 
 ## Send an E2EE chat completion
 
-`NearAiSecureClient` uses the official OpenAI request and response types. It
+`SecureClient` uses the official OpenAI request and response types. It
 uses `signingAlgo` for Gateway/model evidence, model-key routing, optional
 response receipts, and E2EE. It defaults to `ed25519`; set it to `ecdsa` for a
 deployment that uses the legacy ECDSA protocol. E2EE is enabled by default.
@@ -25,10 +25,10 @@ integration, use the aggregator configuration below with its browser
 authentication headers instead.
 
 ```ts
-import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
+import { SecureClient } from 'verifiable-ai-sdk/node';
 
 const model = 'z-ai/glm-5.3-flash';
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
 });
 
@@ -43,7 +43,7 @@ console.log(completion.choices[0].message.content);
 To select ECDSA instead of the default Ed25519 protocol:
 
 ```ts
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
   signingAlgo: 'ecdsa',
 });
@@ -73,7 +73,7 @@ measurements and must throw or reject values your application does not
 approve.
 
 ```ts
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
   deploymentPolicy: ({ model, deployment }) => {
     const expected = EXPECTED_COMPOSE_HASHES[model];
@@ -102,9 +102,9 @@ credential. The device still performs attestation verification and encrypts
 message fields before the aggregator receives them.
 
 ```ts
-import { NearAiSecureClient } from 'verifiable-ai-sdk';
+import { SecureClient } from 'verifiable-ai-sdk';
 
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
@@ -129,9 +129,9 @@ attested SPKI by default. If its `baseUrl` is an aggregator or proxy instead,
 disable both behaviors explicitly:
 
 ```ts
-import { NearAiSecureClient } from 'verifiable-ai-sdk/node';
+import { SecureClient } from 'verifiable-ai-sdk/node';
 
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <server-scoped token>',
@@ -205,7 +205,7 @@ off the deployment gate: verification and `deploymentPolicy` run whenever the
 model's cached session is missing or expired.
 
 ```ts
-const client = new NearAiSecureClient({
+const client = new SecureClient({
   apiKey: process.env.NEARAI_API_KEY!,
   e2ee: false,
 });
@@ -218,60 +218,76 @@ the secure client, even in plaintext mode. A successful deployment check does
 not prove that these particular request and response bytes were signed by an
 attested Gateway or model.
 
-## Verify a response receipt
+## Verify a response
 
-Use `createWithReceipt()` when the application also needs to verify the exact
-Chat request and response bodies. It preserves the Fetch entity-body bytes
-before E2EE decryption, so the rendered completion can remain on the normal UI
-path while receipt verification happens later.
+The client retains the exact request and response bytes before E2EE decryption.
+Display the completion normally, then verify its signature by ID:
 
 ```ts
-const { completion, receipt } =
-  await client.chat.completions.createWithReceipt({
-    model,
-    messages: [{ role: 'user', content: 'Hello' }],
-  });
-
+const completion = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
 render(completion.choices[0]?.message.content);
-
-const verified = await receipt.verify();
+const verified = await client.verifyResponse(completion.id);
 console.log(verified.signatureKind);
 ```
 
-`receipt.requestBody` is immediately available. `receipt.responseBody` resolves
-to the exact response bytes after the response finishes; for E2EE, both are the
-encrypted bytes, not reconstructed plaintext JSON. Do not parse and reserialize
-either body. `receipt.verify()` waits for those bytes, retrieves the completion
-signature for the configured algorithm, and selects the matching evidence from
-the verified session used for this Chat request.
-
-For `fetchWithReceipt()`, consume the returned `Response` body before calling
-`receipt.verify()`. For a stream, consume or drain the returned stream first.
-Until then, the receipt cannot have the complete response bytes.
-Receipt mode retains the complete request and response bodies in memory, so use
-it for bounded responses rather than unbounded streams.
-
-For a stream, the receipt is also available immediately and does not delay
-chunk rendering:
+For streams, consume the stream before awaiting verification:
 
 ```ts
-const { stream, receipt } = await client.chat.completions.createWithReceipt({
+const stream = await client.chat.completions.create({
   model,
   messages: [{ role: 'user', content: 'Hello' }],
   stream: true,
 });
-
+let completionId: string | undefined;
 for await (const chunk of stream) {
+  completionId = chunk.id;
   renderIncrementally(chunk);
 }
-
-const verified = await receipt.verify();
+if (completionId !== undefined) {
+  const verified = await client.verifyResponse(completionId);
+  console.log(verified.signatureKind);
+}
 ```
 
-`provider_tee` means the matching verified model signer signed these bytes.
-`gateway` means the verified Gateway signer signed the client-visible bytes.
-They establish different trust boundaries: a Gateway receipt does not by itself
-show which model produced the response.
+Each ID identifies its own request bytes, response bytes, and verified deployment
+evidence. Concurrent requests can finish in any order. Repeated verification of
+the same ID shares its result, including a verification failure.
+
+Records stay in memory for `responseCacheTimeToLiveMs` after the response finishes
+(default: 15 minutes), independently of the attestation cache. Expired or unknown
+IDs produce `ApiError` with code `api.completion_not_found`. Keep this retention
+period appropriate for your response sizes and request volume.
+
+A `provider_tee` signature binds the bytes to a verified model signer.
+A `gateway` signature binds them to a verified Gateway signer; it does not
+by itself prove model execution.
+
+### Use the official OpenAI SDK
+
+Create both clients once. The same Fetch adapter supports sequential and
+concurrent requests, with the standard OpenAI retry behavior:
+
+```ts
+import OpenAI from 'openai';
+
+const openai = new OpenAI({
+  apiKey,
+  baseURL: client.getBaseUrl(),
+  fetch: client.fetch,
+});
+const completion = await openai.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+render(completion.choices[0]?.message.content);
+const verified = await client.verifyResponse(completion.id);
+```
+
+Streaming uses the same ID-based verification as the built-in client.
+With raw `client.fetch()`, consume the returned response body before verification.
 
 ## Advanced: own the transport and verification steps
 

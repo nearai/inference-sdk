@@ -1,3 +1,4 @@
+import OpenAI from 'openai';
 import { SecureClient } from 'verifiable-ai-sdk/node';
 
 const BASE_URL = 'https://cloud-api.near.ai/v1/';
@@ -18,14 +19,22 @@ async function main(): Promise<void> {
     signingAlgo: SIGNING_ALGO,
   });
 
-  await runNonStreamingExample(secureClient);
-  await runStreamingExample(secureClient);
+  // Both clients are created once and reused, including for concurrent calls.
+  const openai = new OpenAI({
+    apiKey,
+    baseURL: BASE_URL,
+    fetch: secureClient.fetch,
+  });
+
+  await runNonStreamingExample(openai, secureClient);
+  await runStreamingExample(openai, secureClient);
 }
 
 async function runNonStreamingExample(
+  openai: OpenAI,
   secureClient: SecureClient,
 ): Promise<void> {
-  const completion = await secureClient.chat.completions.create({
+  const completion = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
     max_completion_tokens: 8,
@@ -36,8 +45,11 @@ async function runNonStreamingExample(
   console.log(`Verified ${verified.signatureKind} response.`);
 }
 
-async function runStreamingExample(secureClient: SecureClient): Promise<void> {
-  const stream = await secureClient.chat.completions.create({
+async function runStreamingExample(
+  openai: OpenAI,
+  secureClient: SecureClient,
+): Promise<void> {
+  const stream = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
     max_completion_tokens: 8,

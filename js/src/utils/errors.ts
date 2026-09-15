@@ -14,6 +14,7 @@ type ApiResource =
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type ApiFailure =
+  | { code: 'api.completion_not_found' }
   | {
       /** A value supplied to a Cloud API helper is not usable for that call. */
       code: 'api.invalid_input';
@@ -399,6 +400,8 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'api.completion_not_found':
+      return 'Completion was not captured by this client or its retention period has expired';
     case 'api.invalid_input':
       return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':

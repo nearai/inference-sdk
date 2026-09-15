@@ -6,9 +6,8 @@ model deployments that expose a quote-bound E2EE public key.
 
 The package has two layers:
 
-- `NearAiSecureClient` exposes the familiar OpenAI Chat Completions shape,
-  including `createWithReceipt()` for an asynchronous response audit;
-  `SecureClient` exposes the same deployment-checked request path as `fetch`.
+- `SecureClient` provides standard `chat.completions.create()`, a reusable
+  `fetch` for external OpenAI clients, and `verifyResponse(id)` for later verification.
 - `AttestationClient` and the standalone `verify…` functions let applications
   fetch, inspect, and verify evidence or completion receipts themselves.
 
@@ -55,12 +54,15 @@ checks its AEAD tag. This field-level integrity check is not a completion
 receipt and does not establish that a particular Gateway or model signer
 produced the response.
 
-Ordinary `create()` and `fetch()` calls do not fetch a completion receipt on the
-request path. Use `createWithReceipt()` or `fetchWithReceipt()` when an
-asynchronous byte-level audit is needed. They preserve Fetch entity-body bytes
-before E2EE decryption; `receipt.verify()` later retrieves and verifies the
-matching completion signature without reissuing inference. A receipt cannot
-prevent an already-sent request and should not delay a user-visible response.
+Every `create()` and `fetch()` call retains the exact request and response
+bytes before decryption. Call `verifyResponse(completion.id)` after displaying
+the response to fetch and verify its signature. For streaming, finish consuming
+the stream first and use its chunk ID. Concurrent requests are tracked by ID.
+
+Response records and verification results are retained for 15 minutes after
+the response finishes, controlled by `responseCacheTimeToLiveMs`. They hold
+complete response bodies in memory until expiry. Verification uses the evidence
+captured for that request, even if the attestation cache has since refreshed.
 
 ## Documentation
 

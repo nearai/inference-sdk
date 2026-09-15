@@ -1,16 +1,11 @@
 import { CloudApiClient } from '../core/cloud-api';
 import {
-  createNearAiSecureChat,
   SecureClientBase,
   type CreateGatewaySessionTransportParams,
   type GatewaySessionTransport,
 } from '../core/secure-client';
 import type { FetchedGatewayAttestation } from '../types/cloud-api';
-import type {
-  NodeNearAiSecureClientOptions,
-  NodeSecureClientOptions,
-  SecureChat,
-} from '../types/secure-client';
+import type { NodeSecureClientOptions } from '../types/secure-client';
 import { AttestationClient, createPinnedTlsFetch } from './attestation-client';
 
 /** Model and receipt evidence client bound to one verified Gateway transport. */
@@ -75,16 +70,5 @@ export class NodeSecureClient extends SecureClientBase {
     spkiFingerprint: string,
   ): typeof globalThis.fetch {
     return createPinnedTlsFetch(spkiFingerprint);
-  }
-}
-
-/** OpenAI-compatible Node client with attested-SPKI-pinned Gateway requests by default. */
-export class NodeNearAiSecureClient {
-  readonly chat: SecureChat;
-  readonly secure: NodeSecureClient;
-
-  constructor(options: NodeNearAiSecureClientOptions) {
-    this.secure = new NodeSecureClient(options);
-    this.chat = createNearAiSecureChat({ options, secure: this.secure });
   }
 }
