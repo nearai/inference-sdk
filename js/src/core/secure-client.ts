@@ -1,5 +1,4 @@
 import OpenAI from 'openai';
-import type { Stream } from 'openai/streaming';
 import * as v from 'valibot';
 import {
   ChatCompletionRequestSchema,
@@ -20,17 +19,11 @@ import type {
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
 import type {
-  CompletionReceipt,
-  NearAiSecureClientOptions,
   NodeSecureClientOptions,
   SecureChat,
   SecureChatCompletionRequest,
   SecureChatCompletionResponse,
-  SecureChatCompletionStreamWithReceipt,
-  SecureChatCompletionWithReceipt,
-  SecureChatCompletions,
   SecureClientOptions,
-  SecureFetchWithReceipt,
   VerifiedCompletionReceipt,
 } from '../types/secure-client';
 import {
@@ -80,6 +73,10 @@ type CachedVerification = {
   readonly session: SecureSessionState;
 };
 
+type CompletionRecord = VerifyCapturedCompletionParams & {
+  verification?: Promise<VerifiedCompletionReceipt>;
+};
+
 type ParsedPlaintextRequest = {
   readonly e2ee: false;
   readonly model: string;
@@ -122,25 +119,10 @@ type PreparePlaintextRequestParams = {
 type SendSecureCompletionParams = {
   readonly input: RequestInfo | URL;
   readonly init?: RequestInit;
-  readonly captureReceipt: boolean;
-};
-
-type SendSecureCompletionWithReceiptParams = Omit<
-  SendSecureCompletionParams,
-  'captureReceipt'
-> & {
-  readonly captureReceipt: true;
-};
-
-type SendSecureCompletionWithoutReceiptParams = Omit<
-  SendSecureCompletionParams,
-  'captureReceipt'
-> & {
-  readonly captureReceipt: false;
 };
 
 type SentSecureCompletion = {
-  readonly response: Response;
+  response: Response;
   readonly session: SecureSessionState;
   readonly clientKeyPair?: E2eeClientKeyPair;
 };
@@ -199,10 +181,6 @@ export type CreateGatewaySessionTransportParams = {
   readonly tlsBinding: GatewayTlsBinding;
 };
 
-type OpenAiChatCompletionCreateParamsBase = Parameters<
-  OpenAI.Chat.Completions['create']
->[0];
-
 /**
  * A verified Chat Completions transport.
  *
@@ -219,6 +197,9 @@ export abstract class SecureClientBase {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
+  private readonly responseCacheTimeToLiveMs: number;
+  private readonly completions = new Map<string, CompletionRecord>();
+  readonly chat: SecureChat;
   protected readonly signingAlgo: SigningAlgo;
   private readonly options: NodeSecureClientOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
@@ -238,6 +219,13 @@ export abstract class SecureClientBase {
     this.signingAlgo = options.signingAlgo ?? 'ed25519';
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
+    this.responseCacheTimeToLiveMs =
+      options.responseCacheTimeToLiveMs ?? 15 * 60 * 1000;
+    this.chat = createOpenAiClient({
+      baseUrl: this.baseUrl,
+      fetch: this.fetch,
+      requestConfiguration: this.requestConfiguration,
+    }).chat;
   }
 
   /** Fetch Gateway evidence when starting a new verification session. */
@@ -259,55 +247,57 @@ export abstract class SecureClientBase {
    * Only POST requests to this client's configured Chat Completions endpoint
    * are accepted. Other API paths, including Responses, are rejected locally.
    */
-  async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-    const completion = await this.sendSecureCompletion({
-      input,
-      init,
-      captureReceipt: false,
-    });
-    return this.toClientResponse(completion);
-  }
-
-  /**
-   * Send one verified Chat Completions request and retain its exact entity-body
-   * bytes for later completion-signature verification.
-   */
-  async fetchWithReceipt(
+  readonly fetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
-  ): Promise<SecureFetchWithReceipt> {
+  ): Promise<Response> => {
     const completion = await this.sendSecureCompletion({
       input,
       init,
-      captureReceipt: true,
     });
     const requestBody = await completion.requestBody;
     const responseBody = completion.responseBody;
 
-    return {
-      response: await this.toClientResponse(completion),
-      receipt: this.createCompletionReceipt({
+    if (completion.response.ok) {
+      const record: CompletionRecord = {
         requestBody,
         responseBody,
         session: completion.session,
         contentType: completion.response.headers.get('content-type'),
-      }),
-    };
+      };
+      // Register before exposing the response, including its first SSE event.
+      completion.response = registerCompletionResponse({
+        response: completion.response,
+        register: (id) => {
+          this.completions.set(id, record);
+          const expire = (): void => {
+            const timer = setTimeout(() => {
+              if (this.completions.get(id) === record)
+                this.completions.delete(id);
+            }, this.responseCacheTimeToLiveMs);
+            timer.unref?.();
+          };
+          void responseBody.then(expire, expire);
+        },
+      });
+    }
+    return this.toClientResponse(completion);
+  };
+
+  /** Verify a captured response by ID. Consume streaming responses first. */
+  verifyResponse(completionId: string): Promise<VerifiedCompletionReceipt> {
+    const record = this.completions.get(completionId);
+    if (record === undefined) {
+      return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
+    }
+    record.verification ??= this.verifyCapturedCompletion(record);
+    return record.verification;
   }
 
-  private sendSecureCompletion(
-    params: SendSecureCompletionWithReceiptParams,
-  ): Promise<CapturedSecureCompletion>;
-  private sendSecureCompletion(
-    params: SendSecureCompletionWithoutReceiptParams,
-  ): Promise<SentSecureCompletion>;
   private async sendSecureCompletion({
     input,
     init,
-    captureReceipt,
-  }: SendSecureCompletionParams): Promise<
-    SentSecureCompletion | CapturedSecureCompletion
-  > {
+  }: SendSecureCompletionParams): Promise<CapturedSecureCompletion> {
     const parsed = await this.parseSecureRequest(input, init);
     if (parsed.request.signal.aborted) {
       throw parsed.request.signal.reason;
@@ -330,16 +320,6 @@ export abstract class SecureClientBase {
         };
     const clientKeyPair =
       'clientKeyPair' in prepared ? prepared.clientKeyPair : undefined;
-    if (!captureReceipt) {
-      return {
-        response: await this.sendCompletionRequest({
-          request: prepared.request,
-          transport: session.transport,
-        }),
-        session,
-        ...(clientKeyPair === undefined ? {} : { clientKeyPair }),
-      };
-    }
 
     const requestBody = captureRequestEntityBody(prepared.request);
     const response = await this.sendCompletionRequest({
@@ -367,25 +347,6 @@ export abstract class SecureClientBase {
       response,
       clientKeyPair,
     });
-  }
-
-  private createCompletionReceipt({
-    requestBody,
-    responseBody,
-    session,
-    contentType,
-  }: VerifyCapturedCompletionParams): CompletionReceipt {
-    return {
-      requestBody,
-      responseBody,
-      verify: () =>
-        this.verifyCapturedCompletion({
-          requestBody,
-          responseBody,
-          session,
-          contentType,
-        }),
-    };
   }
 
   private async verifyCapturedCompletion({
@@ -718,105 +679,6 @@ export class SecureClient extends SecureClientBase {
   }
 }
 
-/** OpenAI-compatible verified Chat Completions client. */
-export class NearAiSecureClient {
-  readonly chat: SecureChat;
-  readonly secure: SecureClient;
-
-  constructor(options: NearAiSecureClientOptions) {
-    this.secure = new SecureClient(options);
-    this.chat = createNearAiSecureChat({ options, secure: this.secure });
-  }
-}
-
-/** Internal OpenAI-compatible Chat wrapper shared by runtime-specific clients. */
-export type CreateNearAiSecureChatParams = {
-  readonly options: NodeSecureClientOptions;
-  readonly secure: SecureClientBase;
-};
-
-export function createNearAiSecureChat({
-  options,
-  secure,
-}: CreateNearAiSecureChatParams): SecureChat {
-  return {
-    completions: new NearAiSecureChatCompletions({ options, secure }),
-  };
-}
-
-class NearAiSecureChatCompletions implements SecureChatCompletions {
-  readonly create: OpenAI.Chat.Completions['create'];
-  private readonly requestConfiguration: CloudApiRequestConfiguration;
-  private readonly secure: SecureClientBase;
-
-  constructor({ options, secure }: CreateNearAiSecureChatParams) {
-    this.requestConfiguration = createCloudApiRequestConfiguration(options);
-    this.secure = secure;
-    const client = this.createOpenAiClient((input, init) =>
-      this.secure.fetch(input, init),
-    );
-    this.create = client.chat.completions.create.bind(client.chat.completions);
-  }
-
-  async createWithReceipt(
-    body: OpenAI.ChatCompletionCreateParamsNonStreaming,
-    options?: OpenAI.RequestOptions,
-  ): Promise<SecureChatCompletionWithReceipt>;
-  async createWithReceipt(
-    body: OpenAI.ChatCompletionCreateParamsStreaming,
-    options?: OpenAI.RequestOptions,
-  ): Promise<SecureChatCompletionStreamWithReceipt>;
-  async createWithReceipt(
-    body: OpenAiChatCompletionCreateParamsBase,
-    options?: OpenAI.RequestOptions,
-  ): Promise<
-    SecureChatCompletionWithReceipt | SecureChatCompletionStreamWithReceipt
-  >;
-  async createWithReceipt(
-    body: OpenAiChatCompletionCreateParamsBase,
-    options?: OpenAI.RequestOptions,
-  ): Promise<
-    SecureChatCompletionWithReceipt | SecureChatCompletionStreamWithReceipt
-  > {
-    let captured: SecureFetchWithReceipt | undefined;
-    const client = this.createOpenAiClient(async (input, init) => {
-      const result = await this.secure.fetchWithReceipt(input, init);
-      captured = result;
-      return result.response;
-    });
-    const result = await client.chat.completions.create(body, options);
-    if (captured === undefined) {
-      throw new ApiError({
-        code: 'api.invalid_response',
-        details: {
-          path: 'Chat Completions request',
-          expected: 'one response from the secure transport',
-          actual: 'no response',
-        },
-      });
-    }
-
-    if (body.stream === true) {
-      return {
-        stream: result as unknown as Stream<OpenAI.ChatCompletionChunk>,
-        receipt: captured.receipt,
-      };
-    }
-    return {
-      completion: result as OpenAI.ChatCompletion,
-      receipt: captured.receipt,
-    };
-  }
-
-  private createOpenAiClient(fetch: typeof globalThis.fetch): OpenAI {
-    return createOpenAiClient({
-      baseUrl: this.secure.getBaseUrl(),
-      fetch,
-      requestConfiguration: this.requestConfiguration,
-    });
-  }
-}
-
 function createOpenAiClient({
   baseUrl,
   fetch,
@@ -828,7 +690,6 @@ function createOpenAiClient({
     dangerouslyAllowBrowser: true,
     defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
-    maxRetries: 0,
   });
 }
 
@@ -992,6 +853,71 @@ function decryptSecureStreamResponse({
       headers,
     },
   );
+}
+
+type RegisterCompletionResponseParams = {
+  readonly response: Response;
+  readonly register: (id: string) => void;
+};
+
+/** Register IDs before forwarding their bytes; streaming follows consumer backpressure. */
+function registerCompletionResponse({
+  response,
+  register,
+}: RegisterCompletionResponseParams): Response {
+  if (response.body === null) return response;
+  const streaming = isServerSentEventResponse(response);
+  const decoder = new TextDecoder();
+  let pending = '';
+  let registered = false;
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        if (!registered) {
+          pending += decoder.decode(chunk, { stream: true });
+          if (streaming) {
+            const records = getSseDataRecords(pending);
+            for (const data of records.slice(0, -1)) {
+              if (data === '' || data === '[DONE]') continue;
+              let value: unknown;
+              try {
+                value = JSON.parse(data);
+              } catch {
+                continue;
+              }
+              const parsed = v.safeParse(CompletionResponseIdSchema, value);
+              if (parsed.success) {
+                register(parsed.output.id);
+                registered = true;
+                pending = '';
+                break;
+              }
+            }
+          }
+        }
+        controller.enqueue(chunk);
+      },
+      flush() {
+        if (!registered) {
+          pending += decoder.decode();
+          let id: string;
+          try {
+            id = streaming
+              ? getSseCompletionId(pending)
+              : parseCompletionId(JSON.parse(pending));
+          } catch (cause) {
+            throw invalidCompletionId(cause);
+          }
+          register(id);
+        }
+      },
+    }),
+  );
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 }
 
 function captureRequestEntityBody(request: Request): Promise<Uint8Array> {

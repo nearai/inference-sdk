@@ -3,9 +3,9 @@
 These projects demonstrate attestation and response-receipt verification
 against the canonical `z-ai/glm-5.3-flash` model.
 
-The JavaScript SDK's Node.js example includes two entry points:
+The JavaScript SDK's Node.js example includes three entry points:
 
-- `client.ts` uses `NearAiSecureClient`, which enables E2EE by default. It
+- `client.ts` uses `SecureClient`, which enables E2EE by default. It
   selects Ed25519 by default for Gateway/model evidence and response receipts;
   change its `SIGNING_ALGO` constant to `'ecdsa'` to run the ECDSA flow. Each
   Chat request supplies its model; the client verifies Gateway and model
@@ -16,6 +16,8 @@ The JavaScript SDK's Node.js example includes two entry points:
   requests to the SPKI bound by its verified Gateway evidence. This does not
   require reuse of the initial TLS connection. The example also verifies a
   response receipt after the completion is available.
+- `openai-sdk-compatible.ts` creates an official OpenAI client once with
+  `fetch: secureClient.fetch` and verifies responses using `secureClient.verifyResponse(id)`.
 - `bare.ts` explicitly verifies Gateway evidence, every returned model
   attestation, and each response receipt. It deliberately sends plaintext Chat
   JSON and does not demonstrate E2EE.
@@ -32,8 +34,8 @@ export NEARAI_API_KEY=sk-your-api-key
 The bare example sends the Chat request itself because receipt verification
 needs its original bytes. It sends `x-no-aliasing: true` and
 `Accept-Encoding: identity` so the model identity and response bytes are not
-silently changed before verification. `NearAiSecureClient` retains those bytes
-internally when its `createWithReceipt()` method is used. The response
+silently changed before verification. `SecureClient` retains those bytes
+internally for each request; call `verifyResponse(id)` after consuming the response. The response
 signature's kind selects which previously verified signer checks the exact
 response bytes; it does not replace either deployment verification.
 
@@ -54,6 +56,7 @@ pnpm --dir examples/example-js install --frozen-lockfile
 pnpm --dir examples/example-js check
 pnpm --dir examples/example-js start:client
 pnpm --dir examples/example-js start:bare
+pnpm --dir examples/example-js start:openai-sdk-compatible
 ```
 
 Requires Node.js 24 or later.

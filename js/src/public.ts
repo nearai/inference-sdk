@@ -3,7 +3,7 @@ export {
   findModelAttestationForSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
-export { NearAiSecureClient, SecureClient } from './core/secure-client';
+export { SecureClient } from './core/secure-client';
 export type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
@@ -16,14 +16,9 @@ export type {
   DeploymentPolicy,
   DeploymentPolicyParams,
   ModelVerificationOptions,
-  NearAiSecureClientOptions,
-  CompletionReceipt,
   SecureChat,
-  SecureChatCompletionStreamWithReceipt,
-  SecureChatCompletionWithReceipt,
   SecureChatCompletions,
   SecureClientOptions,
-  SecureFetchWithReceipt,
   VerifiedCompletionReceipt,
   VerifiedGatewayCompletionReceipt,
   VerifiedModelCompletionReceipt,

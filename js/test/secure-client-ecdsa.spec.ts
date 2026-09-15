@@ -241,22 +241,21 @@ describe('ECDSA secure client', () => {
       modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
     });
 
-    const { response, receipt } = await client.fetchWithReceipt(
-      `${baseUrl}chat/completions`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'private ECDSA request' }],
-        }),
-      },
-    );
+    const response = await client.fetch(`${baseUrl}chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'private ECDSA request' }],
+      }),
+    });
 
     await expect(response.json()).resolves.toMatchObject({
       choices: [{ message: { content: 'private ECDSA response' } }],
     });
-    await expect(receipt.verify()).resolves.toMatchObject({
+    await expect(
+      client.verifyResponse('chatcmpl-ecdsa'),
+    ).resolves.toMatchObject({
       completionId: 'chatcmpl-ecdsa',
       signatureKind: 'provider_tee',
     });
@@ -284,19 +283,19 @@ describe('ECDSA secure client', () => {
       modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
     });
 
-    const { receipt } = await client.fetchWithReceipt(
-      `${baseUrl}chat/completions`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'private ECDSA request' }],
-        }),
-      },
-    );
+    const response = await client.fetch(`${baseUrl}chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: 'private ECDSA request' }],
+      }),
+    });
 
-    await expect(receipt.verify()).resolves.toMatchObject({
+    await response.text();
+    await expect(
+      client.verifyResponse('chatcmpl-ecdsa'),
+    ).resolves.toMatchObject({
       completionId: 'chatcmpl-ecdsa',
       signatureKind: 'gateway',
     });

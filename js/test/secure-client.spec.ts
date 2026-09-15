@@ -2,8 +2,8 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import ed2curve from 'ed2curve';
 import nacl from 'tweetnacl';
+import OpenAI from 'openai';
 import {
-  NearAiSecureClient,
   SecureClient,
   type QuoteVerificationResult,
   type SecureClientOptions,
@@ -816,6 +816,95 @@ function isChatCompletionRequest(input: RequestInfo | URL): boolean {
 describe('secure client', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  test('reuses one OpenAI client for concurrent JSON and streaming responses', async () => {
+    const gateway = createTestGateway();
+    mockProviderReceipts(gateway);
+    const secureClient = new SecureClient(secureClientOptions(gateway));
+    const openai = new OpenAI({
+      apiKey: directApiKey,
+      baseURL: baseUrl,
+      fetch: secureClient.fetch,
+    });
+    const [completion, stream] = await Promise.all([
+      openai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'first' }],
+      }),
+      openai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'second' }],
+        stream: true,
+      }),
+    ]);
+    let streamId = '';
+    let streamVerification: Promise<unknown> | undefined;
+    for await (const chunk of stream) {
+      streamId = chunk.id;
+      // The ID is registered before the first chunk reaches the caller.
+      streamVerification ??= secureClient.verifyResponse(streamId);
+    }
+    await expect(streamVerification).resolves.toMatchObject({
+      completionId: streamId,
+    });
+    const verification = secureClient.verifyResponse(completion.id);
+    expect(secureClient.verifyResponse(completion.id)).toBe(verification);
+    await expect(verification).resolves.toMatchObject({
+      completionId: completion.id,
+    });
+    expect(secureClient.verifyResponse(completion.id)).toBe(verification);
+  });
+
+  test('expires response records independently of the attestation cache', async () => {
+    const gateway = createTestGateway();
+    mockProviderReceipts(gateway);
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      responseCacheTimeToLiveMs: 1000,
+    });
+    jest.useFakeTimers({
+      doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+    });
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    await client.verifyResponse(completion.id);
+    jest.advanceTimersByTime(1001);
+    await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+  });
+
+  test('verifies the successful response after an OpenAI retry', async () => {
+    const gateway = createTestGateway();
+    const providerFetch = createProviderReceiptFetch(gateway);
+    let attempts = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (isChatCompletionRequest(input) && attempts++ === 0) {
+        return new Response('retry', {
+          status: 503,
+          headers: { 'retry-after-ms': '1' },
+        });
+      }
+      return providerFetch(input, init);
+    });
+    const secureClient = new SecureClient(secureClientOptions(gateway));
+    const openai = new OpenAI({
+      apiKey: directApiKey,
+      baseURL: baseUrl,
+      fetch: secureClient.fetch,
+    });
+    const completion = await openai.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    expect(attempts).toBe(2);
+    await expect(
+      secureClient.verifyResponse(completion.id),
+    ).resolves.toMatchObject({ completionId: completion.id });
   });
 
   test('accepts an API key for a direct Gateway connection', async () => {
@@ -1215,7 +1304,7 @@ describe('secure client', () => {
   test('decrypts a Chat Completions stream split across transport chunks', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new NearAiSecureClient(secureClientOptions(gateway));
+    const client = new SecureClient(secureClientOptions(gateway));
 
     const stream = await client.chat.completions.create({
       model,
@@ -1233,59 +1322,41 @@ describe('secure client', () => {
   test('returns a non-streaming completion with verifiable entity bodies', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);
-    const client = new NearAiSecureClient(secureClientOptions(gateway));
+    const client = new SecureClient(secureClientOptions(gateway));
 
-    const { completion, receipt } =
-      await client.chat.completions.createWithReceipt({
-        model,
-        messages: [{ role: 'user', content: 'hello model' }],
-      });
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello model' }],
+    });
 
     expect(completion.choices[0]?.message.content).toBe('hello client');
-    expect(new TextDecoder().decode(receipt.requestBody)).not.toContain(
-      'hello model',
-    );
-    expect(new TextDecoder().decode(await receipt.responseBody)).not.toContain(
-      'hello client',
-    );
-    await expect(receipt.verify()).resolves.toMatchObject({
+    await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
       completionId: 'chatcmpl-test',
       signatureKind: 'provider_tee',
     });
   });
 
-  test('returns a streaming receipt before its entity body is complete', async () => {
+  test('verifies a streamed response after consuming the stream', async () => {
     const gateway = createTestGateway({
       streamRecordSeparators: ['\n\r\n', '\r\n\n', '\n\r', '\r\n\r'],
     });
     mockProviderReceipts(gateway);
-    const client = new NearAiSecureClient(secureClientOptions(gateway));
+    const client = new SecureClient(secureClientOptions(gateway));
 
-    const { stream, receipt } = await client.chat.completions.createWithReceipt(
-      {
-        model,
-        messages: [{ role: 'user', content: 'hello model' }],
-        stream: true,
-      },
-    );
-    const responseBody = receipt.responseBody;
-    let responseBodyReady = false;
-    void responseBody.then(() => {
-      responseBodyReady = true;
+    const stream = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello model' }],
+      stream: true,
     });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(responseBodyReady).toBe(false);
-
     let content = '';
     for await (const chunk of stream) {
       content += chunk.choices[0]?.delta.content ?? '';
     }
 
     expect(content).toBe('hello client');
-    expect(new TextDecoder().decode(await responseBody)).toContain(
-      ': response complete',
-    );
-    await expect(receipt.verify()).resolves.toMatchObject({
+    await expect(
+      client.verifyResponse('chatcmpl-stream'),
+    ).resolves.toMatchObject({
       completionId: 'chatcmpl-stream',
       signatureKind: 'provider_tee',
     });
@@ -1299,7 +1370,7 @@ describe('secure client', () => {
       },
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new NearAiSecureClient({
+    const client = new SecureClient({
       baseUrl,
       headers: { authorization: 'Bearer browser-token' },
       gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
@@ -1681,7 +1752,7 @@ describe('secure client', () => {
   test('decrypts standard function tool calls in a Chat Completions stream', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new NearAiSecureClient(secureClientOptions(gateway));
+    const client = new SecureClient(secureClientOptions(gateway));
 
     const stream = await client.chat.completions.create({
       model,
@@ -2014,11 +2085,12 @@ describe('secure client', () => {
         pinnedFetch,
       );
 
-      const { receipt } = await client.fetchWithReceipt(
+      const response = await client.fetch(
         `${baseUrl}chat/completions`,
         chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
       );
-      await receipt.verify();
+      await response.text();
+      await client.verifyResponse('chatcmpl-test');
 
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(pinnedPaths).toEqual([
