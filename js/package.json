@@ -5,7 +5,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nearai/verifiable-ai-sdk.git"
+    "url": "git+https://github.com/nearai/verifiable-ai-sdk.git",
+    "directory": "js"
   },
   "homepage": "https://github.com/nearai/verifiable-ai-sdk#readme",
   "bugs": {
@@ -43,7 +44,7 @@
     "format:check": "biome check --formatter-enabled=true --linter-enabled=false --assist-enabled=false .",
     "lint": "biome lint .",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm typecheck:test && pnpm test && pnpm build",
-    "prepublishOnly": "pnpm build"
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "@phala/dcap-qvl": "0.6.2",

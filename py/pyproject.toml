@@ -3,6 +3,8 @@ name = "verifiable-ai-sdk"
 version = "0.1.0"
 description = "Verification SDK for NEAR AI Cloud attestations"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
@@ -26,3 +28,4 @@ build-backend = "uv_build"
 
 [project.urls]
 Repository = "https://github.com/nearai/verifiable-ai-sdk"
+Documentation = "https://github.com/nearai/verifiable-ai-sdk/tree/main/py/docs"
