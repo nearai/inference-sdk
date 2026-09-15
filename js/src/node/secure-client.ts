@@ -46,7 +46,7 @@ export class NodeSecureClient extends SecureClientBase {
 
   protected override fetchGatewayAttestation(): Promise<FetchedGatewayAttestation> {
     return this.attestationClient.fetchGatewayAttestation({
-      signingAlgo: 'ed25519',
+      signingAlgo: this.signingAlgo,
       includeSpkiFingerprint: this.includeSpkiFingerprint,
     });
   }

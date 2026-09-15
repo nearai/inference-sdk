@@ -19,6 +19,7 @@ import {
   decryptE2eeText,
   encryptE2eeText,
   type E2eeClientKeyPair,
+  type E2eeModelKey,
 } from './e2ee';
 
 export type ParseE2eeChatResponseParams = {
@@ -31,7 +32,7 @@ export type ParseE2eeChatStreamChunkParams = {
 
 export type EncryptE2eeChatRequestParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 export type EncryptedE2eeChatRequest = {
@@ -92,10 +93,10 @@ export function parseE2eeChatStreamChunk({
  */
 export function encryptE2eeChatRequest({
   body,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptE2eeChatRequestParams): EncryptedE2eeChatRequest {
   return {
-    body: encryptRequestBody({ body, modelSigningPublicKey }),
+    body: encryptRequestBody({ body, modelKey }),
   };
 }
 
@@ -199,12 +200,12 @@ export function createE2eeChatSseTransform({
 
 type EncryptRequestBodyParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptRequestBody({
   body,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptRequestBodyParams): SecureChatCompletionRequest {
   const encrypted: SecureChatJsonObject = { ...body };
   const messages = asJsonArray(body.messages);
@@ -215,21 +216,21 @@ function encryptRequestBody({
         ? message
         : encryptRequestMessage({
             message: record,
-            modelSigningPublicKey,
+            modelKey,
           });
     });
   }
 
   const tools = asJsonArray(body.tools);
   if (tools !== undefined) {
-    encrypted.tools = encryptTools({ tools, modelSigningPublicKey });
+    encrypted.tools = encryptTools({ tools, modelKey });
   }
 
   const toolChoice = asJsonObject(body.tool_choice);
   if (toolChoice !== undefined) {
     encrypted.tool_choice = encryptToolChoice({
       toolChoice,
-      modelSigningPublicKey,
+      modelKey,
     });
   }
 
@@ -237,7 +238,7 @@ function encryptRequestBody({
   if (functionCall !== undefined) {
     encrypted.function_call = encryptFunctionCall({
       functionCall,
-      modelSigningPublicKey,
+      modelKey,
       encryptArguments: false,
     });
   }
@@ -247,61 +248,61 @@ function encryptRequestBody({
 
 type EncryptRequestMessageParams = {
   readonly message: SecureChatJsonObject;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptRequestMessage({
   message,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptRequestMessageParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...message };
   const content = message.content;
   if (typeof content === 'string') {
     encrypted.content = encryptText({
       plaintext: content,
-      modelSigningPublicKey,
+      modelKey,
     });
   } else if (Array.isArray(content)) {
     encrypted.content = encryptText({
       plaintext: JSON.stringify(content),
-      modelSigningPublicKey,
+      modelKey,
     });
   }
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'reasoning_content',
-    modelSigningPublicKey,
+    modelKey,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'reasoning',
-    modelSigningPublicKey,
+    modelKey,
   });
 
   const audio = asJsonObject(message.audio);
   if (audio !== undefined) {
-    encrypted.audio = encryptAudio({ audio, modelSigningPublicKey });
+    encrypted.audio = encryptAudio({ audio, modelKey });
   }
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'name',
-    modelSigningPublicKey,
+    modelKey,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'refusal',
-    modelSigningPublicKey,
+    modelKey,
   });
 
   const toolCalls = asJsonArray(message.tool_calls);
   if (toolCalls !== undefined) {
     encrypted.tool_calls = encryptFunctionToolCalls({
       toolCalls,
-      modelSigningPublicKey,
+      modelKey,
     });
   }
 
@@ -309,7 +310,7 @@ function encryptRequestMessage({
   if (functionCall !== undefined) {
     encrypted.function_call = encryptFunctionCall({
       functionCall,
-      modelSigningPublicKey,
+      modelKey,
       encryptArguments: true,
     });
   }
@@ -318,32 +319,29 @@ function encryptRequestMessage({
 
 type EncryptAudioParams = {
   readonly audio: SecureChatJsonObject;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptAudio({
   audio,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptAudioParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...audio };
   encryptStringField({
     source: audio,
     target: encrypted,
     field: 'data',
-    modelSigningPublicKey,
+    modelKey,
   });
   return encrypted;
 }
 
 type EncryptToolsParams = {
   readonly tools: readonly unknown[];
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
-function encryptTools({
-  tools,
-  modelSigningPublicKey,
-}: EncryptToolsParams): unknown[] {
+function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
   return tools.map((tool) => {
     const record = asJsonObject(tool);
     if (record === undefined) {
@@ -358,18 +356,18 @@ function encryptTools({
       source: functionDefinition,
       target: encryptedFunction,
       field: 'name',
-      modelSigningPublicKey,
+      modelKey,
     });
     encryptStringField({
       source: functionDefinition,
       target: encryptedFunction,
       field: 'description',
-      modelSigningPublicKey,
+      modelKey,
     });
     if (functionDefinition.parameters !== undefined) {
       encryptedFunction.parameters = encryptText({
         plaintext: JSON.stringify(functionDefinition.parameters),
-        modelSigningPublicKey,
+        modelKey,
       });
     }
     return { ...record, function: encryptedFunction };
@@ -378,12 +376,12 @@ function encryptTools({
 
 type EncryptToolChoiceParams = {
   readonly toolChoice: SecureChatJsonObject;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptToolChoice({
   toolChoice,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptToolChoiceParams): SecureChatJsonObject {
   const functionDefinition = asJsonObject(toolChoice.function);
   if (functionDefinition === undefined) {
@@ -394,19 +392,19 @@ function encryptToolChoice({
     source: functionDefinition,
     target: encryptedFunction,
     field: 'name',
-    modelSigningPublicKey,
+    modelKey,
   });
   return { ...toolChoice, function: encryptedFunction };
 }
 
 type EncryptFunctionToolCallsParams = {
   readonly toolCalls: readonly unknown[];
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptFunctionToolCalls({
   toolCalls,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptFunctionToolCallsParams): unknown[] {
   return toolCalls.map((toolCall) => {
     const record = asJsonObject(toolCall);
@@ -418,7 +416,7 @@ function encryptFunctionToolCalls({
       ...record,
       function: encryptFunctionCall({
         functionCall,
-        modelSigningPublicKey,
+        modelKey,
         encryptArguments: true,
       }),
     };
@@ -427,13 +425,13 @@ function encryptFunctionToolCalls({
 
 type EncryptFunctionCallParams = {
   readonly functionCall: SecureChatJsonObject;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
   readonly encryptArguments: boolean;
 };
 
 function encryptFunctionCall({
   functionCall,
-  modelSigningPublicKey,
+  modelKey,
   encryptArguments,
 }: EncryptFunctionCallParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...functionCall };
@@ -441,14 +439,14 @@ function encryptFunctionCall({
     source: functionCall,
     target: encrypted,
     field: 'name',
-    modelSigningPublicKey,
+    modelKey,
   });
   if (encryptArguments) {
     encryptStringField({
       source: functionCall,
       target: encrypted,
       field: 'arguments',
-      modelSigningPublicKey,
+      modelKey,
     });
   }
   return encrypted;
@@ -458,33 +456,30 @@ type EncryptStringFieldParams = {
   readonly source: SecureChatJsonObject;
   readonly target: SecureChatJsonObject;
   readonly field: string;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 function encryptStringField({
   source,
   target,
   field,
-  modelSigningPublicKey,
+  modelKey,
 }: EncryptStringFieldParams): void {
   const value = source[field];
   if (typeof value === 'string') {
-    target[field] = encryptText({ plaintext: value, modelSigningPublicKey });
+    target[field] = encryptText({ plaintext: value, modelKey });
   }
 }
 
 type EncryptTextParams = {
   readonly plaintext: string;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
-function encryptText({
-  plaintext,
-  modelSigningPublicKey,
-}: EncryptTextParams): string {
+function encryptText({ plaintext, modelKey }: EncryptTextParams): string {
   return encryptE2eeText({
     plaintext,
-    recipientPublicKey: modelSigningPublicKey,
+    modelKey,
   });
 }
 
@@ -911,7 +906,7 @@ function decryptText({
 }: DecryptTextParams): string {
   return decryptE2eeText({
     ciphertext,
-    recipientSecretKey: clientKeyPair.x25519SecretKey,
+    clientKeyPair,
     field: path,
   });
 }

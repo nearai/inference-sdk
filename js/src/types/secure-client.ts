@@ -5,6 +5,7 @@ import type { ChatCompletionRequestSchema } from '../schemas';
 import type { AttestationClientOptions } from './cloud-api';
 import type { CompletionSignature } from './chat';
 import type { Awaitable } from './shared';
+import type { SigningAlgo } from './attestation-common';
 import type {
   AttestationPolicy,
   AttestationVerifiers,
@@ -88,9 +89,15 @@ type SecureClientCommonOptions = {
    * Encrypt supported Chat fields directly to the verified model key.
    * Defaults to `true`. Setting this to `false` keeps attestation and
    * deployment-policy checks, but sends plaintext Chat fields with a verified
-   * Ed25519 model-key routing header.
+   * model-key routing header.
    */
   readonly e2ee?: boolean;
+  /**
+   * Signing and E2EE protocol to use for Gateway/model evidence, model-key
+   * routing, completion receipts, and optional field encryption. Defaults to
+   * `ed25519`.
+   */
+  readonly signingAlgo?: SigningAlgo;
   /**
    * Optional caller-owned allowlist for authenticated model measurements.
    * It receives the model named by each Chat request.

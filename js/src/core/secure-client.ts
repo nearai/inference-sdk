@@ -11,6 +11,7 @@ import type {
   VerifiedGatewayAttestation,
   VerifiedModelAttestation,
 } from '../types/verification';
+import type { SigningAlgo } from '../types/attestation-common';
 import type {
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
@@ -55,7 +56,11 @@ import {
   encryptE2eeChatRequest,
   parseE2eeChatResponse,
 } from './e2ee-chat';
-import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
+import {
+  createE2eeClientKeyPair,
+  type E2eeClientKeyPair,
+  type E2eeModelKey,
+} from './e2ee';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -66,7 +71,7 @@ const DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS = 15 * 60 * 1000;
 type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
   readonly modelAttestations: readonly VerifiedModelAttestation[];
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
   readonly transport: GatewaySessionTransport;
 };
 
@@ -92,7 +97,7 @@ type ParsedSecureRequest = ParsedPlaintextRequest | ParsedE2eeRequest;
 
 type EncryptSecureRequestParams = {
   readonly parsed: ParsedE2eeRequest;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 type EncryptedSecureRequest = {
@@ -111,7 +116,7 @@ type DecodeChatRequestParams = {
 
 type PreparePlaintextRequestParams = {
   readonly request: Request;
-  readonly modelSigningPublicKey: string;
+  readonly modelKey: E2eeModelKey;
 };
 
 type SendSecureCompletionParams = {
@@ -204,7 +209,7 @@ type OpenAiChatCompletionCreateParamsBase = Parameters<
  * Every `fetch()` call reads its model from the Chat request, then uses a
  * successfully verified Gateway/model session for that model when it remains
  * within the configured cache lifetime. With the default `e2ee: true`,
- * supported fields are encrypted to a quote-bound Ed25519 model key and
+ * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
  * With `e2ee: false`, the same evidence and policy checks run on a cache miss,
  * but the Chat request and response remain plaintext while the request stays
@@ -214,6 +219,7 @@ export abstract class SecureClientBase {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
+  protected readonly signingAlgo: SigningAlgo;
   private readonly options: NodeSecureClientOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<string, CachedVerification>();
@@ -229,6 +235,7 @@ export abstract class SecureClientBase {
       options.attestationCacheTimeToLiveMs ??
       DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS;
     this.e2eeEnabled = options.e2ee !== false;
+    this.signingAlgo = options.signingAlgo ?? 'ed25519';
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
   }
@@ -313,12 +320,12 @@ export abstract class SecureClientBase {
     const prepared = parsed.e2ee
       ? this.encryptSecureRequest({
           parsed,
-          modelSigningPublicKey: session.modelSigningPublicKey,
+          modelKey: session.modelKey,
         })
       : {
           request: this.preparePlaintextRequest({
             request: parsed.request,
-            modelSigningPublicKey: session.modelSigningPublicKey,
+            modelKey: session.modelKey,
           }),
         };
     const clientKeyPair =
@@ -391,7 +398,7 @@ export abstract class SecureClientBase {
     const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
       completionId,
-      signingAlgo: 'ed25519',
+      signingAlgo: session.modelKey.signingAlgo,
     });
 
     if (signature.kind === 'provider_tee') {
@@ -489,7 +496,7 @@ export abstract class SecureClientBase {
     });
     const fetchedModels = await transport.fetchModelAttestations({
       model,
-      signingAlgo: 'ed25519',
+      signingAlgo: this.signingAlgo,
     });
     if (fetchedModels.attestations.length === 0) {
       throw new VerificationError({
@@ -508,13 +515,15 @@ export abstract class SecureClientBase {
         }),
       ),
     );
-    const modelSigningPublicKey =
-      selectModelSigningPublicKey(modelAttestations);
+    const modelKey = selectModelSigningKey({
+      attestations: modelAttestations,
+      signingAlgo: this.signingAlgo,
+    });
 
     return {
       gatewayAttestation,
       modelAttestations,
-      modelSigningPublicKey,
+      modelKey,
       transport,
     };
   }
@@ -584,35 +593,39 @@ export abstract class SecureClientBase {
 
   private preparePlaintextRequest({
     request,
-    modelSigningPublicKey,
+    modelKey,
   }: PreparePlaintextRequestParams): Request {
     const headers = this.createCompletionHeaders(request.headers);
     headers.set(NO_ALIASING_HEADER, 'true');
     removeE2eeHeaders(headers);
     // Cloud API uses this routing-only header to select the verified NEAR
     // backend. It is deliberately not forwarded to the model request body.
-    headers.set('x-model-pub-key', modelSigningPublicKey);
+    headers.set('x-signing-algo', modelKey.signingAlgo);
+    headers.set('x-model-pub-key', modelKey.publicKey);
     return new Request(request, { headers });
   }
 
   private encryptSecureRequest({
     parsed,
-    modelSigningPublicKey,
+    modelKey,
   }: EncryptSecureRequestParams): EncryptedSecureRequest {
-    const clientKeyPair = createE2eeClientKeyPair();
+    const clientKeyPair = createE2eeClientKeyPair(modelKey.signingAlgo);
     const encrypted = encryptE2eeChatRequest({
       body: parsed.body,
-      modelSigningPublicKey,
+      modelKey,
     });
     const headers = this.createCompletionHeaders(parsed.request.headers);
     // The serialized encrypted JSON has a different byte length from the
     // caller's body. Let Fetch calculate the new value.
     headers.delete('content-length');
     headers.set('content-type', 'application/json');
-    headers.set('x-signing-algo', 'ed25519');
+    removeE2eeHeaders(headers);
+    headers.set('x-signing-algo', modelKey.signingAlgo);
     headers.set('x-client-pub-key', clientKeyPair.publicKey);
-    headers.set('x-model-pub-key', modelSigningPublicKey);
-    headers.set('x-encryption-version', '2');
+    headers.set('x-model-pub-key', modelKey.publicKey);
+    if (modelKey.signingAlgo === 'ed25519') {
+      headers.set('x-encryption-version', '2');
+    }
     headers.set(NO_ALIASING_HEADER, 'true');
     headers.set('x-encrypt-all-fields', 'true');
 
@@ -687,7 +700,7 @@ export class SecureClient extends SecureClientBase {
 
   protected override fetchGatewayAttestation(): Promise<FetchedGatewayAttestation> {
     return this.attestationClient.fetchGatewayAttestation({
-      signingAlgo: 'ed25519',
+      signingAlgo: this.signingAlgo,
       includeSpkiFingerprint: false,
     });
   }
@@ -837,13 +850,22 @@ function createOpenAiDefaultHeaders(
   return headers;
 }
 
-function selectModelSigningPublicKey(
-  attestations: readonly VerifiedModelAttestation[],
-): string {
+type SelectModelSigningKeyParams = {
+  readonly attestations: readonly VerifiedModelAttestation[];
+  readonly signingAlgo: SigningAlgo;
+};
+
+function selectModelSigningKey({
+  attestations,
+  signingAlgo,
+}: SelectModelSigningKeyParams): E2eeModelKey {
   for (const attestation of attestations) {
     const signingPublicKey = attestation.signingPublicKey;
-    if (signingPublicKey !== undefined) {
-      return signingPublicKey;
+    if (
+      attestation.signer.signingAlgo === signingAlgo &&
+      signingPublicKey !== undefined
+    ) {
+      return { signingAlgo, publicKey: signingPublicKey };
     }
   }
   throw new VerificationError({ code: 'e2ee.model_public_key_required' });
