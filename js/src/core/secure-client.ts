@@ -494,15 +494,12 @@ export abstract class SecureClientBase {
   ): ModelAttestationVerifiers | undefined {
     const verifiers = this.options.modelVerification?.verifiers;
     const deploymentPolicy = this.options.deploymentPolicy;
-    if (verifiers?.deployment === undefined && deploymentPolicy === undefined) {
+    if (deploymentPolicy === undefined) {
       return verifiers;
     }
     return {
       ...verifiers,
-      deployment: async (deployment) => {
-        await verifiers?.deployment?.(deployment);
-        await deploymentPolicy?.({ model, deployment });
-      },
+      deployment: (deployment) => deploymentPolicy({ model, deployment }),
     };
   }
 

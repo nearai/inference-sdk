@@ -15,8 +15,7 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
 
 Gateway attestation verifies the Gateway's TEE and signing identity.
 Model attestation verifies the model deployment's TEE, signing identity,
-measurements, and available GPU evidence. Use `deploymentPolicy` to check
-model measurements against your application's approved deployments.
+measurements, and available GPU evidence.
 
 Response signatures bind specific request and response bytes to an attested
 signer. A `provider_tee` signature identifies a model signer; a `gateway`

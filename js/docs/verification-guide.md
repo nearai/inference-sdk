@@ -52,33 +52,9 @@ Increase the value to check deployments less frequently, or set `0` to
 verify before every request. Deployment changes are not checked while a cached
 result is reused. This setting controls caching, not attestation validity.
 
-## Approve deployments
-
-Use `deploymentPolicy` to accept or reject verified model measurements.
-Throw an error to reject a deployment.
-
-`EXPECTED_COMPOSE_HASHES` in this example is an application-owned mapping of
-model IDs to approved compose hashes. Populate it from deployment
-configurations you have reviewed and approved. The SDK does not provide this
-allowlist.
-
-```ts
-const client = new SecureClient({
-  apiKey: process.env.NEARAI_API_KEY!,
-  deploymentPolicy: ({ model, deployment }) => {
-    const expected = EXPECTED_COMPOSE_HASHES[model];
-    if (
-      expected === undefined ||
-      deployment.runtimeMeasurements.composeHash !== expected
-    ) {
-      throw new Error('Unapproved model deployment');
-    }
-  },
-});
-```
-
-Without a deployment policy, the SDK verifies attestation evidence but does
-not check whether the deployment is on your application's allowlist.
+The SDK does not check model measurements against an approved-deployment
+allowlist by default. If needed, supply a `deploymentPolicy` callback and
+throw an error to reject a deployment.
 
 ## Connect through an application proxy
 

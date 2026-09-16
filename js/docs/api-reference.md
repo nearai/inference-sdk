@@ -58,7 +58,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `responseCacheTimeToLiveMs?` | `number` | No | `900000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the evidence, model-key routing, receipt, and E2EE protocol. Set `'ecdsa'` for the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `true` | Enables secure Chat field encryption for the selected algorithm. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and still supports response verification. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Caller-owned release-approval callback for authenticated model measurements. It receives the model named by each Chat request. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model deployment check. No approval policy is provided by default. Throw to reject. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
 
@@ -72,7 +72,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
 | `GatewayVerificationOptions` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
-|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifier overrides. |
+|  | `verifiers?: Omit<ModelAttestationVerifiers, 'deployment'>` | Model quote and NVIDIA verifier overrides. Use `deploymentPolicy` for model deployment checks. |
 
 ### Methods and result
 

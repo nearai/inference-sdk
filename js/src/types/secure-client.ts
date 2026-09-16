@@ -70,7 +70,7 @@ export type NodeGatewayVerificationOptions = Omit<
 /** Advanced verification settings for model evidence used by `SecureClient`. */
 export type ModelVerificationOptions = {
   readonly policy?: ModelAttestationPolicy;
-  readonly verifiers?: ModelAttestationVerifiers;
+  readonly verifiers?: Omit<ModelAttestationVerifiers, 'deployment'>;
 };
 
 /** Settings shared by generic and Node verified Chat clients. */
