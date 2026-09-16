@@ -1,50 +1,31 @@
 # Verifiable AI SDK examples
 
-These projects demonstrate attestation and response-receipt verification
-against the canonical `z-ai/glm-5.3-flash` model.
-
-The JavaScript SDK's Node.js example includes three entry points:
-
-- `client.ts` uses `SecureClient`, which enables E2EE by default. It
-  selects Ed25519 by default for Gateway/model evidence and response receipts;
-  change its `SIGNING_ALGO` constant to `'ecdsa'` to run the ECDSA flow. Each
-  Chat request supplies its model; the client verifies Gateway and model
-  evidence before its first request for that model, then reuses it for 15
-  minutes.
-  Because it imports the Node entry point and
-  connects directly to the Gateway, it pins model evidence, Chat, and receipt
-  requests to the SPKI bound by its verified Gateway evidence. This does not
-  require reuse of the initial TLS connection. The example also verifies a
-  response receipt after the completion is available.
-- `openai-sdk-compatible.ts` creates an official OpenAI client once with
-  `fetch: secureClient.fetch` and verifies responses using `secureClient.verifyResponse(id)`.
-- `bare.ts` explicitly verifies Gateway evidence, every returned model
-  attestation, and each response receipt. It deliberately sends plaintext Chat
-  JSON and does not demonstrate E2EE.
-
-The bare example uses an explicit `ed25519` signing algorithm for Gateway,
-model, and response-signature requests. Change its `SIGNING_ALGO` constant to
-`'ecdsa'` to exercise the corresponding receipt-verification path. All
-examples use only the `NEARAI_API_KEY` environment variable.
+These projects verify Gateway and model attestations before sending Chat
+Completions, then verify the response signature. The examples use
+`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key
 ```
 
-The bare example sends the Chat request itself because receipt verification
-needs its original bytes. It sends `x-no-aliasing: true` and
-`Accept-Encoding: identity` so the model identity and response bytes are not
-silently changed before verification. `SecureClient` retains those bytes
-internally for each request; call `verifyResponse(id)` after consuming the response. The response
-signature's kind selects which previously verified signer checks the exact
-response bytes; it does not replace either deployment verification.
-
-The current API exposes one response signature at a time. Verifying both
-deployments and that signature is useful, but does not yet form a complete
-cryptographic model-to-Gateway-to-response chain for rewritten responses. That
-receipt-chain work is tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
-
 ## JavaScript (Node.js)
+
+All three entry points include non-streaming and streaming calls:
+
+| File | Usage | E2EE |
+| --- | --- | --- |
+| `bare.ts` | Fetches and verifies evidence, sends requests, and verifies signatures using standalone functions. | Not included |
+| `client.ts` | Uses `SecureClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `openai-sdk-compatible.ts` | Passes `secureClient.fetch` to one reusable OpenAI client, then calls `secureClient.verifyResponse(id)`. | Enabled |
+
+All three verify Gateway TLS identity. The secure clients also pin later
+evidence, Chat, and signature requests to that identity. They cache attestation
+results for 15 minutes and retain response records for 15 minutes after body
+completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
+
+The bare example preserves exact request and response bytes for signature
+verification. It sends `x-no-aliasing: true` and `Accept-Encoding: identity`.
+The secure clients handle byte capture internally.
 
 The SDK must be built first because the example imports the local package's
 published `dist` files.

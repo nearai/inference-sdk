@@ -1,28 +1,19 @@
 # TypeScript verification guide
 
-Use `SecureClient` when the device should verify deployment evidence and
-encrypt supported Chat Completions fields directly to a verified NEAR model
-key. Use `AttestationClient` plus the standalone verification functions when
-your application owns the transport or needs to control each verification step
-itself.
+Use `SecureClient` for Chat Completions with deployment verification and E2EE.
+Use `AttestationClient` and the standalone verification functions to manage
+the verification steps yourself.
 
 ## Send an E2EE chat completion
 
-`SecureClient` uses the official OpenAI request and response types. It
-uses `signingAlgo` for Gateway/model evidence, model-key routing, optional
-response receipts, and E2EE. It defaults to `ed25519`; set it to `ecdsa` for a
-deployment that uses the legacy ECDSA protocol. E2EE is enabled by default.
-Its E2EE runtime transforms the fields covered by the protocol and forwards the
-rest to the Gateway. Each Chat request names its model; before dispatch, the
-client uses a verified session for that model and the Gateway.
+`SecureClient` uses OpenAI Chat Completions types and enables E2EE by default.
+Before sending a request, it verifies Gateway and model evidence or reuses
+cached results. A verification failure prevents the request from being sent.
 
-This direct-Gateway example is for a server-side API key. It uses the Node
-entry point, which compares Gateway evidence with the TLS peer that returned
-the attestation. After verification, the secure client pins its model-evidence,
-Chat, and receipt-signature requests to that attested SPKI. Those requests may
-use new HTTPS connections; the original TLS socket is not reused. For a browser
-integration, use the aggregator configuration below with its browser
-authentication headers instead.
+This Node.js example connects directly to the Gateway with a server-side API
+key. The Node client verifies the Gateway's TLS identity and pins subsequent
+requests to that identity. For browser applications, see
+[Connect through an application proxy](#connect-through-an-application-proxy).
 
 ```ts
 import { SecureClient } from 'verifiable-ai-sdk/node';
@@ -49,39 +40,27 @@ const client = new SecureClient({
 });
 ```
 
-Each valid Chat request starts or joins verification for its `model` when no
-valid session is cached. Successful sessions are reused for 15 minutes by
-default; set `attestationCacheTimeToLiveMs: 0` to verify every request. The
-client verifies every returned model candidate, then selects a verified model
-key for the configured algorithm and sends it in `X-Model-Pub-Key` so the
-Gateway routes the Chat request to a compatible model path.
+`signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
+and response signatures. The client verifies all returned model attestations
+before selecting a key for that algorithm.
 
-Session reuse does not detect a deployment change until the session expires.
-Set the cache lifetime to `0` when the application must re-check evidence
-before every request.
+### Cache deployment verification
 
-The 15-minute default balances verification overhead with evidence freshness;
-it is a client cache setting, not an attestation expiry time. Increase
-`attestationCacheTimeToLiveMs` if your application accepts a longer interval
-between deployment checks.
+`attestationCacheTimeToLiveMs` defaults to `900000` (15 minutes). Concurrent
+requests for the same model share verification work and cached results.
+Increase the value to check deployments less frequently, or set `0` to
+verify before every request. Deployment changes are not checked while a cached
+result is reused. This setting controls caching, not attestation validity.
 
-The key comes from `signing_public_key`. The SDK binds it to the signer already
-authenticated by the quote before using it as an encryption recipient: an
-Ed25519 key must equal the signer, while an ECDSA key must derive the signer's
-address.
+## Approve deployments
 
-## Decide which deployments to approve
+Use `deploymentPolicy` to accept or reject verified model measurements.
+Throw an error to reject a deployment.
 
-Attestation proves measurements; it does not define your release policy.
-`deploymentPolicy` is an optional callback that receives authenticated model
-measurements and must throw or reject values your application does not
-approve.
-
-`EXPECTED_COMPOSE_HASHES` below represents your application's approved
-model-to-compose-hash mapping. It is not an SDK export or a bundled NEAR AI
-allowlist. Populate it from deployment configurations you have reviewed and
-approved. Copying the hash from the current attestation alone does not establish
-that the deployment is approved.
+`EXPECTED_COMPOSE_HASHES` in this example is an application-owned mapping of
+model IDs to approved compose hashes. Populate it from deployment
+configurations you have reviewed and approved. The SDK does not provide this
+allowlist.
 
 ```ts
 const client = new SecureClient({
@@ -98,25 +77,17 @@ const client = new SecureClient({
 });
 ```
 
-Without a policy or `modelVerification.verifiers.deployment`, the SDK still
-verifies the quote, nonce, event log, measurements, and available GPU evidence.
-It does not claim that a deployment is release-approved. A future published
-NEAR AI release policy can become the default without changing this calling
-pattern.
+Without a deployment policy, the SDK verifies attestation evidence but does
+not check whether the deployment is on your application's allowlist.
 
-## Connect through an aggregator (optional)
+## Connect through an application proxy
 
-Use this setup when your application backend forwards inference requests for
-users, keeping its NEAR AI API key on the server while users' devices verify
-evidence and encrypt prompts locally. The backend is the aggregator in this
-example. For a direct server-to-Gateway integration, use the earlier `apiKey`
-example; no additional service is required.
+A proxy lets your backend keep the NEAR AI API key while users' devices verify
+evidence and encrypt prompts. Direct server-to-Gateway integrations do not
+need a proxy.
 
-Set `baseUrl` to the aggregator API base URL and set the headers it expects.
-The SDK sends those static headers with evidence, signature, and Chat requests.
-The aggregator authenticates them and forwards requests with its own NEAR AI
-credential. The device still performs attestation verification and encrypts
-message fields before the aggregator receives them.
+Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
+it accepts:
 
 ```ts
 import { SecureClient } from 'verifiable-ai-sdk';
@@ -129,21 +100,20 @@ const client = new SecureClient({
 });
 ```
 
-A compatible aggregator must proxy `GET /v1/attestation/report` and, when
-receipt verification is used, `GET /v1/signature/{completionId}`. It
-authenticates the configured client headers and substitutes its own upstream
-credential. It must forward the Chat request and its model key pin unchanged.
-For receipt verification, it must preserve the exact Chat request and response
-entity-body bytes without parsing, reserializing, or otherwise transforming
-them. When E2EE is enabled, it must also forward the encrypted body and
-field-encryption headers unchanged. In production, the aggregator endpoint
-should use HTTPS because client credentials are sent to it.
+The proxy must forward `/v1/attestation/report`, `/v1/chat/completions`, and
+`/v1/signature/{id}`. It authenticates the user and supplies its upstream
+NEAR AI credential. Preserve the request and response bodies, model-key routing header,
+and encryption headers unchanged so decryption and signature verification work.
 
-The generic entry point uses no TLS binding because browser Fetch cannot expose
-the peer certificate. In Node.js, the `/node` secure client compares Gateway
-evidence with the observed peer and pins later Gateway requests to the
-attested SPKI by default. If its `baseUrl` is an aggregator or proxy instead,
-disable both behaviors explicitly:
+Browser Fetch does not expose the TLS peer certificate, so the generic client
+does not verify Gateway TLS binding. Depending on the browser build, the default
+Intel verifier may need `crypto`, `buffer`, and `stream` polyfills. A custom
+quote verifier can be supplied through `gatewayVerification.verifiers.quote`
+and `modelVerification.verifiers.quote`.
+
+For a Node client connecting through a proxy, disable Gateway TLS binding
+because the observed certificate belongs
+to the proxy:
 
 ```ts
 import { SecureClient } from 'verifiable-ai-sdk/node';
@@ -159,19 +129,13 @@ const client = new SecureClient({
 
 ## E2EE scope and response handling
 
-It is not a generic Gateway encryption layer: it requires NEAR model evidence
-that supplies a quote-bound key for the selected algorithm. Ed25519, the
-default, uses the version 2 field-encryption protocol. `X-Encryption-Version:
-2` selects that Ed25519 wire format; it does not define an ECDSA version. ECDSA
-therefore uses its secp256k1 ECDH and AES-GCM format without that header. The
-secure client accepts only `POST /v1/chat/completions`; Responses API and other
-endpoint paths are rejected locally before it requests attestation evidence.
+The client supports `POST /v1/chat/completions` with a model public key bound
+to verified attestation. Responses API and other endpoints are not supported.
 
-The SDK transforms protocol-covered fields; it does not validate every Chat
-option locally. The Gateway and model remain responsible for accepting a
-request's overall shape. Every E2EE Chat request sends
-`X-Encrypt-All-Fields: true`. This enables the protocol's additional documented
-fields; it does not encrypt arbitrary request JSON.
+Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
+and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the
+Ed25519 format. Both send `X-Encrypt-All-Fields: true` to enable encryption
+of the supported fields below. Other fields are forwarded unchanged.
 
 | Capability | E2EE behavior |
 | --- | --- |
@@ -179,27 +143,15 @@ fields; it does not encrypt arbitrary request JSON.
 | Rich message content | An array-valued `messages[].content` is serialized and encrypted as one value. |
 | Assistant context | String `reasoning_content`, `reasoning`, and `audio.data` message fields are encrypted. |
 | Function and tool fields | Recognized function definitions, function calls, and related message fields are encrypted. Other tool forms are preserved without E2EE transformation. |
-| `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. The Gateway decides whether a particular streaming or non-streaming request is valid. |
-| Other Chat request-body fields | Preserved without E2EE transformation. The Gateway and model decide whether to accept them. Fields outside the protocol are ordinary request data, not E2EE-protected values. |
-| Non-streaming and streaming Chat | The client checks the AEAD tag of each non-empty protocol-covered assistant and tool value before decrypting it. For streaming, it waits until each SSE event is complete, even when the event spans transport chunks. |
+| `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. |
+| Other Chat request-body fields | Forwarded without encryption. |
+| Streaming Chat | Each complete SSE event is decrypted before it reaches the caller. |
 
-Each non-empty protocol-covered encrypted response field must pass its AEAD
-integrity check before the client decrypts it. This checks the encrypted field
-within the E2EE protocol; it does not establish that a particular Gateway or
-model signer produced the response. Ordinary
-`chat.completions.create()` does not fetch or verify a completion receipt before
-returning its decrypted result.
-Field-level AEAD integrity checking is necessary before plaintext can be
-displayed; receipt verification is a separate byte-level check. A receipt cannot
-prevent a request that has already been sent, and waiting for one would
-needlessly delay a user-visible message.
+The client checks each encrypted field's authentication tag before decryption.
+Use `verifyResponse(id)` separately to verify the response's signing identity.
 
-The field-encryption protocol covers only the recognized Chat JSON values. URL
-query parameters and caller-supplied headers remain ordinary transport
-metadata, so do not place private prompt or tool data there.
-
-Non-2xx responses are returned without E2EE decryption and follow the normal
-OpenAI client error path.
+URL query parameters, headers, and fields outside the table are not encrypted.
+Non-2xx responses follow the normal OpenAI error path.
 
 ### Stream an E2EE completion
 
@@ -217,9 +169,8 @@ for await (const chunk of stream) {
 
 ### Send plaintext after deployment verification
 
-Set `e2ee: false` only when field encryption is not needed. This does not turn
-off the deployment gate: verification and `deploymentPolicy` run whenever the
-model's cached session is missing or expired.
+Set `e2ee: false` to send plaintext. Gateway and model verification,
+deployment policy, and response verification remain available.
 
 ```ts
 const client = new SecureClient({
@@ -228,12 +179,8 @@ const client = new SecureClient({
 });
 ```
 
-In this mode the client sends plaintext Chat fields and response. It does not
-encrypt or decrypt fields, but still sends a model-key routing header for the
-selected algorithm. A model that does not expose that key is not supported by
-the secure client, even in plaintext mode. A successful deployment check does
-not prove that these particular request and response bytes were signed by an
-attested Gateway or model.
+Plaintext requests still use a verified model public key for routing, so the
+model must expose a key for the configured signing algorithm.
 
 ## Verify a response
 
@@ -273,13 +220,11 @@ Each ID identifies its own request bytes, response bytes, and verified deploymen
 evidence. Concurrent requests can finish in any order. Repeated verification of
 the same ID shares its result, including a verification failure.
 
-Records stay in memory for `responseCacheTimeToLiveMs` after the response finishes
-(default: 15 minutes), independently of the attestation cache. Expired or unknown
-IDs produce `ApiError` with code `api.completion_not_found`. Keep this retention
-period appropriate for your response sizes and request volume.
-The client retains complete response bodies while they are being read. For
-long-running streams, the application controls when to cancel; the retention
-TTL is not a stream duration or memory limit.
+Response records retain complete bodies in memory. They expire
+`responseCacheTimeToLiveMs` after body completion (default: 15 minutes),
+independently of the attestation cache. Unknown or expired IDs produce
+`ApiError` with code `api.completion_not_found`. For active streams, memory
+grows with the received body until the application finishes or cancels reading.
 
 A `provider_tee` signature binds the bytes to a verified model signer.
 A `gateway` signature binds them to a verified Gateway signer; it does not
@@ -309,7 +254,7 @@ const verified = await client.verifyResponse(completion.id);
 Streaming uses the same ID-based verification as the built-in client.
 With raw `client.fetch()`, consume the returned response body before verification.
 
-## Advanced: own the transport and verification steps
+## Verify manually
 
 The manual flow has distinct stages:
 
@@ -374,7 +319,7 @@ apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
 receipt signature—must be pinned automatically.
 
-### Verify a later receipt
+### Verify the response signature
 
 `signature.kind` identifies the signer and therefore the proof made by a
 successful verification:
@@ -401,14 +346,15 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
+  const attestation = findModelAttestationForSignature({
+    attestations: models,
+    signature,
+  });
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation: findModelAttestationForSignature({
-      attestations: models,
-      signature,
-    }),
+    attestation,
   });
 } else {
   verifyGatewayResponse({
@@ -420,12 +366,9 @@ if (signature.kind === 'provider_tee') {
 }
 ```
 
-`provider_tee` and `gateway` describe different trust boundaries. A Gateway
-receipt does not independently establish that an upstream model generated the
-final response, and a provider receipt does not bind its bytes to verified
-Gateway deployment evidence. The planned paired provider signature and Gateway
-receipt for rewritten responses are tracked in
-[cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
+A Gateway signature does not establish which model generated the response.
+A model signature does not authenticate the Gateway deployment. Verify both
+deployments before sending the request.
 
 ## Handle errors
 
