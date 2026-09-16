@@ -25,7 +25,7 @@ import {
 } from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
-const model = 'glm-5.2';
+const model = 'glm-5.3-flash';
 const secondModel = 'qwen-3.5';
 const aggregatorHeader = {
   name: 'x-aggregator-token',
@@ -2034,7 +2034,7 @@ describe('secure client', () => {
 
   test('keeps verification and model routing on when E2EE is disabled', async () => {
     const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    mockProviderReceipts(gateway);
     const client = new SecureClient({
       ...secureClientOptions(gateway),
       e2ee: false,
@@ -2046,8 +2046,13 @@ describe('secure client', () => {
       chatRequest({ messages: [{ role: 'user', content: richContent }] }),
     );
 
-    await expect(response.json()).resolves.toMatchObject({
+    const completion = await response.json();
+    expect(completion).toMatchObject({
       choices: [{ message: { content: 'plaintext response' } }],
+    });
+    await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
+      signatureKind: 'provider_tee',
+      signature: { signer: { signingAlgo: 'ed25519' } },
     });
     expect(gateway.state).toMatchObject({
       gatewayAttestationRequests: 1,
@@ -2058,8 +2063,11 @@ describe('secure client', () => {
     expect(request.body.messages).toEqual([
       { role: 'user', content: richContent },
     ]);
+    expect(request.headers.get('x-signing-algo')).toBeNull();
     expect(request.headers.get('x-client-pub-key')).toBeNull();
-    expect(request.headers.get('x-model-pub-key')).toEqual(expect.any(String));
+    expect(request.headers.get('x-model-pub-key')).toBe(
+      keyHex(keyPair(2).publicKey),
+    );
   });
 
   test('does not send a completion when a deployment policy rejects it', async () => {

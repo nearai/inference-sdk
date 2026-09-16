@@ -570,7 +570,7 @@ export abstract class SecureClientBase {
     removeE2eeHeaders(headers);
     // Cloud API uses this routing-only header to select the verified NEAR
     // backend. It is deliberately not forwarded to the model request body.
-    headers.set('x-signing-algo', modelKey.signingAlgo);
+    // X-Signing-Algo is an encryption header and requires a client key.
     headers.set('x-model-pub-key', modelKey.publicKey);
     return new Request(request, { headers });
   }

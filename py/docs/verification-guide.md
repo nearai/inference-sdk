@@ -38,7 +38,7 @@ from verifiable_ai_sdk import (
     verify_model_attestation,
 )
 
-MODEL = 'z-ai/glm-5.2'
+MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ecdsa'
 
 

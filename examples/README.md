@@ -1,9 +1,8 @@
 # Verifiable AI SDK examples
 
 These projects verify Gateway and model attestations before sending Chat
-Completions, then verify the response signature. The JavaScript examples use
-`z-ai/glm-5.3-flash`; Python and Rust use `z-ai/glm-5.2`. All read the API key
-from `NEARAI_API_KEY`.
+Completions, then verify the response signature. All examples use
+`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key

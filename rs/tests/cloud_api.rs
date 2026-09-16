@@ -330,7 +330,7 @@ async fn client_preserves_a_missing_model_candidate_list_as_empty() {
         .await;
 
     let fetched = client(&server)
-        .fetch_model_attestations("glm-5.2", None, None)
+        .fetch_model_attestations("glm-5.3-flash", None, None)
         .await
         .unwrap();
 
@@ -343,7 +343,7 @@ async fn client_rejects_an_invalid_model_signing_address_before_request() {
     let client = client(&server);
 
     let error = client
-        .fetch_model_attestations("glm-5.2", None, Some("not hexadecimal"))
+        .fetch_model_attestations("glm-5.3-flash", None, Some("not hexadecimal"))
         .await
         .unwrap_err();
     assert!(matches!(
@@ -362,7 +362,7 @@ async fn client_fetches_model_attestations_with_a_fresh_nonce() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/attestation/report"))
-        .and(query_param("model", "glm-5.2"))
+        .and(query_param("model", "glm-5.3-flash"))
         .and(query_param("provider", "near"))
         .and(query_param("include_tls_fingerprint", "false"))
         .and(query_param_is_missing("signing_algo"))
@@ -373,7 +373,7 @@ async fn client_fetches_model_attestations_with_a_fresh_nonce() {
         .await;
 
     let fetched = client(&server)
-        .fetch_model_attestations("glm-5.2", None, None)
+        .fetch_model_attestations("glm-5.3-flash", None, None)
         .await
         .unwrap();
 
@@ -399,7 +399,7 @@ async fn client_preserves_every_model_attestation_candidate() {
         .await;
 
     let fetched = client(&server)
-        .fetch_model_attestations("glm-5.2", None, None)
+        .fetch_model_attestations("glm-5.3-flash", None, None)
         .await
         .unwrap();
 
@@ -434,7 +434,7 @@ async fn client_checks_every_model_attestation_nonce() {
         .await;
 
     let error = client(&server)
-        .fetch_model_attestations("glm-5.2", None, None)
+        .fetch_model_attestations("glm-5.3-flash", None, None)
         .await
         .unwrap_err();
 

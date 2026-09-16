@@ -157,6 +157,8 @@ const client = new SecureClient({
 
 Plaintext requests still use a verified model public key for routing, so the
 model must expose a key for the configured signing algorithm.
+They send `X-Model-Pub-Key` without the encryption headers. Attestation and
+signature lookups still use the configured `signingAlgo`.
 
 ## Verify a response
 

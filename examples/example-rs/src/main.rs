@@ -10,7 +10,7 @@ use verifiable_ai_sdk::{
 };
 
 const API_URL: &str = "https://cloud-api.near.ai/v1/chat/completions";
-const MODEL: &str = "z-ai/glm-5.2";
+const MODEL: &str = "z-ai/glm-5.3-flash";
 
 struct Completion {
     completion_id: String,
