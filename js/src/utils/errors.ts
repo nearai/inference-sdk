@@ -213,12 +213,34 @@ export type VerificationFailure =
       retryable: boolean;
     }
   | {
+      code: 'gpu.jwks_request_failed';
+      details: {
+        reason: 'transport' | 'http_status';
+        status?: number;
+      };
+      retryable: boolean;
+    }
+  | {
+      code: 'gpu.jwt_verification_failed';
+      details: {
+        reason:
+          | 'invalid_signature'
+          | 'invalid_claims'
+          | 'expired'
+          | 'not_yet_valid'
+          | 'nonce_mismatch'
+          | 'key_not_found'
+          | 'unsupported_algorithm';
+      };
+    }
+  | {
       code: 'gpu.nras_response_invalid';
       details: {
         reason:
           | 'invalid_json'
           | 'invalid_jwt'
           | 'invalid_schema'
+          | 'invalid_jwks'
           | 'invalid_verdict_type';
       };
     }
@@ -468,6 +490,10 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] NVIDIA NRAS request failed: ${failure.details.reason}`;
     case 'gpu.nras_response_invalid':
       return `[${failure.code}] NVIDIA NRAS response is invalid: ${failure.details.reason}`;
+    case 'gpu.jwks_request_failed':
+      return `[${failure.code}] NVIDIA JWKS request failed: ${failure.details.reason}`;
+    case 'gpu.jwt_verification_failed':
+      return `[${failure.code}] NVIDIA JWT verification failed: ${failure.details.reason}`;
     case 'gpu.attestation_rejected':
       return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':

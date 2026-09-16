@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { SigningKey, computeAddress } from 'ethers';
 import { ApiError, verifyModelAttestation } from '../src';
 import type { MeasuredDeployment, QuoteVerifier } from '../src';
@@ -12,6 +13,12 @@ import {
 } from './fixtures';
 
 const DSTACK_RUNTIME_EVENT_TYPE = 0x08000001;
+const NRAS_KEYS = generateKeyPairSync('ec', { namedCurve: 'secp384r1' });
+const NRAS_JWKS = {
+  keys: [
+    { ...NRAS_KEYS.publicKey.export({ format: 'jwk' }), kid: 'test-nras' },
+  ],
+};
 type EventLogDigest = {
   digest: string;
 };
@@ -522,8 +529,8 @@ describe('model attestation verification', () => {
       }),
     ).rejects.toMatchObject({
       failure: {
-        code: 'gpu.nras_response_invalid',
-        details: { reason: 'invalid_verdict_type' },
+        code: 'gpu.jwt_verification_failed',
+        details: { reason: 'invalid_claims' },
       },
     });
   });
@@ -541,8 +548,8 @@ describe('model attestation verification', () => {
       }),
     ).rejects.toMatchObject({
       failure: {
-        code: 'gpu.nras_response_invalid',
-        details: { reason: 'invalid_jwt' },
+        code: 'gpu.jwt_verification_failed',
+        details: { reason: 'invalid_claims' },
       },
     });
   });
@@ -569,6 +576,75 @@ describe('model attestation verification', () => {
       },
     });
   });
+
+  test.each([
+    ['expired', { exp: 1 }, 'expired'],
+    ['not yet valid', { nbf: 4102444800 }, 'not_yet_valid'],
+    ['issued in the future', { iat: 4102444800 }, 'not_yet_valid'],
+    ['wrong issuer', { iss: 'https://untrusted.example' }, 'invalid_claims'],
+    ['missing expiration', { exp: undefined }, 'invalid_claims'],
+    ['missing signed nonce', { eat_nonce: undefined }, 'invalid_claims'],
+    ['wrong signed nonce', { eat_nonce: '44'.repeat(32) }, 'nonce_mismatch'],
+  ])('rejects an NRAS token with %s', async (_, overrides, reason) => {
+    mockNrasJwtPayload(nrasClaims(overrides));
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: { code: 'gpu.jwt_verification_failed', details: { reason } },
+    });
+  });
+
+  test('rejects a modified NRAS token even when its verdict is true', async () => {
+    const token = createNrasJwt(
+      nrasClaims({ 'x-nvidia-overall-att-result': false }),
+    );
+    const [header, , signature] = token.split('.');
+    const modifiedPayload = Buffer.from(JSON.stringify(nrasClaims())).toString(
+      'base64url',
+    );
+    mockNrasResponse([['JWT', `${header}.${modifiedPayload}.${signature}`]]);
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        clientBinding: { nonce },
+        verifiers: { quote: quoteVerifier },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'gpu.jwt_verification_failed',
+        details: { reason: 'invalid_signature' },
+      },
+    });
+  });
+
+  test.each([
+    [{ alg: 'none', kid: 'test-nras' }, 'unsupported_algorithm'],
+    [{ alg: 'ES384', kid: 'unknown-key' }, 'key_not_found'],
+  ])(
+    'rejects an NRAS token with untrusted signing metadata %p',
+    async (header, reason) => {
+      mockNrasResponse([['JWT', createNrasJwt(nrasClaims(), header)]]);
+      await expect(
+        verifyModelAttestation({
+          attestation: createModelAttestation({
+            nvidiaPayload: JSON.stringify({ nonce }),
+          }),
+          clientBinding: { nonce },
+          verifiers: { quote: quoteVerifier },
+        }),
+      ).rejects.toMatchObject({
+        failure: { code: 'gpu.jwt_verification_failed', details: { reason } },
+      });
+    },
+  );
 
   test('rejects model report data that contradicts the verified quote', async () => {
     await expect(
@@ -638,25 +714,56 @@ describe('model attestation verification', () => {
 });
 
 function mockNrasOverallResult(result: boolean | string): void {
-  mockNrasJwtPayload({ 'x-nvidia-overall-att-result': result });
+  mockNrasJwtPayload(nrasClaims({ 'x-nvidia-overall-att-result': result }));
+}
+
+function nrasClaims(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    iss: 'https://nras.attestation.nvidia.com',
+    exp: now + 3600,
+    nbf: now - 60,
+    iat: now - 60,
+    eat_nonce: nonce,
+    'x-nvidia-overall-att-result': true,
+    ...overrides,
+  };
 }
 
 function mockNrasJwtPayload(payload: unknown): void {
   mockNrasResponse([['JWT', createNrasJwt(payload)]]);
 }
 
-function createNrasJwt(payload: unknown): string {
-  const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString(
+function createNrasJwt(
+  payload: unknown,
+  protectedHeader = { alg: 'ES384', kid: 'test-nras' },
+): string {
+  const header = Buffer.from(JSON.stringify(protectedHeader)).toString(
     'base64url',
   );
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
     'base64url',
   );
-  return `${header}.${encodedPayload}.signature`;
+  const signingInput = `${header}.${encodedPayload}`;
+  const signature = sign('sha384', Buffer.from(signingInput), {
+    key: NRAS_KEYS.privateKey,
+    dsaEncoding: 'ieee-p1363',
+  });
+  return `${signingInput}.${signature.toString('base64url')}`;
 }
 
 function mockNrasResponse(body: unknown): void {
   jest
     .spyOn(globalThis, 'fetch')
-    .mockResolvedValue(new Response(JSON.stringify(body), { status: 200 }));
+    .mockImplementation(
+      async (url) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith('/.well-known/jwks.json') ? NRAS_JWKS : body,
+          ),
+          { status: 200 },
+        ),
+    );
 }

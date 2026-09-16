@@ -300,10 +300,9 @@ the provider signature no longer matches the client-visible bytes.
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
 directly or asynchronously.
 
-The default NVIDIA verifier submits GPU evidence to NVIDIA NRAS over HTTPS and
-accepts its documented boolean overall result. It does not locally validate the
-returned JWT/EAT signature. Provide `nvidia` when the application needs local
-JWT/EAT validation, different trust roots, or another verification service.
+The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
+timestamps, signed nonce, and boolean verdict. Provide `nvidia` to use different
+trust roots or another verification service.
 
 ### Quote and deployment values
 

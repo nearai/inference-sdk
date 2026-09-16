@@ -346,6 +346,11 @@ A Gateway signature does not establish which model generated the response.
 A model signature does not authenticate the Gateway deployment. Verify both
 deployments before sending the request.
 
+The default NVIDIA verifier submits evidence to NRAS, then verifies the overall
+JWT's ES384 signature against NVIDIA's JWKS, issuer, expiration, not-before and
+issued-at times, and signed `eat_nonce`. The overall verdict must be `true`.
+It does not consume detached per-device claims. See [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
+
 ## Handle errors
 
 `AttestationClient` and selection helpers throw `ApiError` for SDK-classified

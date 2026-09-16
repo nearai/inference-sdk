@@ -222,6 +222,12 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             return f'[{code}] NVIDIA NRAS request failed: {_detail(details, "reason")}'
         case 'gpu.nras_response_invalid':
             return f'[{code}] NVIDIA NRAS response is invalid: {_detail(details, "reason")}'
+        case 'gpu.jwks_request_failed':
+            return f'[{code}] NVIDIA JWKS request failed: {_detail(details, "reason")}'
+        case 'gpu.jwt_verification_failed':
+            return (
+                f'[{code}] NVIDIA JWT verification failed: {_detail(details, "reason")}'
+            )
         case 'gpu.attestation_rejected':
             return f'[{code}] GPU evidence was rejected by {_detail(details, "source")}'
         case 'provenance.verification_failed':
