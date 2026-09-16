@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping
 
 import aiohttp
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 class FetchResponse:
     status: int
     body: bytes
+    headers: Mapping[str, str] = field(default_factory=dict)
     peer_spki_fingerprint: str | None = None
 
     @property
@@ -55,6 +56,7 @@ async def fetch(
             return FetchResponse(
                 status=response.status,
                 body=await response.read(),
+                headers=response.headers,
                 peer_spki_fingerprint=(
                     response.peer_spki_fingerprint
                     if isinstance(response, _PeerSpkiCapturingResponse)

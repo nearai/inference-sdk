@@ -59,9 +59,13 @@ export async function fetchImageProvenance({
     headers.Authorization = `Bearer ${githubToken}`;
   }
 
+  const baseUrl = `https://api.github.com/repos/${repositoryPath}/attestations/${encodeURIComponent(digest.toLowerCase())}?per_page=100`;
   const bundles: string[] = [];
-  for (let page = 1; ; page++) {
-    const url = `https://api.github.com/repos/${repositoryPath}/attestations/${encodeURIComponent(digest.toLowerCase())}?per_page=100&page=${page}`;
+  const visited = new Set<string>();
+  let url: string | undefined = baseUrl;
+  while (url !== undefined) {
+    if (visited.has(url)) throw invalidGitHubPagination();
+    visited.add(url);
     let response: Response;
     try {
       response = await fetch(url, { headers });
@@ -109,10 +113,53 @@ export async function fetchImageProvenance({
     bundles.push(
       ...parsed.output.attestations.map(({ bundle }) => JSON.stringify(bundle)),
     );
-    if (parsed.output.attestations.length < 100) {
-      return bundles;
-    }
+    url = nextGitHubAttestationsUrl(response.headers.get('link'), baseUrl);
   }
+  return bundles;
+}
+
+function nextGitHubAttestationsUrl(
+  link: string | null,
+  baseUrl: string,
+): string | undefined {
+  for (const entry of link?.split(/,\s*(?=<)/) ?? []) {
+    const relation = entry.match(/;\s*rel\s*=\s*(?:"([^"]*)"|([^;\s]+))/);
+    if (
+      !relation ||
+      !(relation[1] ?? relation[2]).split(/\s+/).includes('next')
+    ) {
+      continue;
+    }
+    const target = entry.match(/^\s*<([^>]*)>/)?.[1];
+    let next: URL;
+    try {
+      next = new URL(target ?? '');
+    } catch {
+      throw invalidGitHubPagination();
+    }
+    const cursors = [...next.searchParams].filter(
+      ([name]) => name === 'before' || name === 'after',
+    );
+    if (cursors.length !== 1 || cursors[0][1] === '') {
+      throw invalidGitHubPagination();
+    }
+    // Keep the repository, digest and origin fixed; only use GitHub's cursor.
+    const url = new URL(baseUrl);
+    url.searchParams.set(cursors[0][0], cursors[0][1]);
+    return url.href;
+  }
+  return undefined;
+}
+
+function invalidGitHubPagination(): ApiError {
+  return new ApiError({
+    code: 'api.invalid_response',
+    details: {
+      path: 'Link',
+      expected: 'A next-page URL with a new before or after cursor',
+      actual: 'Invalid or repeated pagination cursor',
+    },
+  });
 }
 
 /**

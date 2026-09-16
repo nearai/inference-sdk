@@ -2,12 +2,14 @@ use crate::errors::{ApiError, ApiResource, ApiTransportReason, VerificationError
 use crate::types::{
     ImageProvenanceFailureReason as Reason, ImageProvenancePolicy, VerifiedImageProvenance,
 };
+use reqwest::{header::HeaderMap, Client, Url};
 use serde::Deserialize;
 use sigstore_verify::{
     trust_root::{TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT},
     types::{Bundle, Sha256Hash, SignatureContent},
     VerificationPolicy, Verifier,
 };
+use std::collections::HashSet;
 
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
@@ -31,17 +33,27 @@ pub async fn fetch_image_provenance(
             "expected sha256: followed by 64 hexadecimal digits",
         )
     })?;
-    let client = reqwest::Client::new();
+    let url = Url::parse(&format!(
+        "https://api.github.com/repos/{repository}/attestations/sha256:{hash}?per_page=100"
+    ))
+    .expect("validated repository and digest form a valid GitHub URL");
+    fetch_image_provenance_pages(&Client::new(), url, github_token).await
+}
+
+async fn fetch_image_provenance_pages(
+    client: &Client,
+    original_url: Url,
+    github_token: Option<&str>,
+) -> Result<Vec<String>, ApiError> {
     let mut bundles = Vec::new();
-    let mut page = 1usize;
+    let mut url = original_url.clone();
+    let mut visited = HashSet::new();
     loop {
-        // Build each page at the fixed GitHub origin, without following a URL
-        // supplied in the response's pagination fields or bundle_url.
-        let url = format!(
-            "https://api.github.com/repos/{repository}/attestations/sha256:{hash}?per_page=100&page={page}"
-        );
+        if !visited.insert(url.clone()) {
+            return Err(pagination_error("repeated pagination cursor"));
+        }
         let mut request = client
-            .get(url)
+            .get(url.clone())
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
             .header("User-Agent", "verifiable-ai-sdk");
@@ -58,6 +70,7 @@ pub async fn fetch_image_provenance(
                 status: response.status().as_u16(),
             });
         }
+        let next = next_attestation_page(&original_url, response.headers())?;
         let text = response.text().await.map_err(|_| ApiError::Transport {
             resource: RESOURCE,
             reason: ApiTransportReason::ResponseBody,
@@ -73,17 +86,74 @@ pub async fn fetch_image_provenance(
                 }
             }
         })?;
-        let count = response.attestations.len();
         bundles.extend(
             response
                 .attestations
                 .into_iter()
                 .map(|entry| serde_json::Value::Object(entry.bundle).to_string()),
         );
-        if count < 100 {
+        let Some(next) = next else {
             return Ok(bundles);
+        };
+        url = next;
+    }
+}
+
+fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, ApiError> {
+    for header in headers.get_all(reqwest::header::LINK) {
+        let header = header
+            .to_str()
+            .map_err(|_| pagination_error("invalid Link header"))?;
+        for link in header.split(',') {
+            let mut parts = link.trim().split(';');
+            let target = parts.next().unwrap_or_default().trim();
+            let is_next = parts.any(|part| {
+                part.trim().split_once('=').is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("rel")
+                        && value
+                            .trim()
+                            .trim_matches('"')
+                            .split_whitespace()
+                            .any(|relation| relation == "next")
+                })
+            });
+            if !is_next {
+                continue;
+            }
+            let target = target
+                .strip_prefix('<')
+                .and_then(|target| target.strip_suffix('>'))
+                .and_then(|target| Url::parse(target).ok())
+                .filter(|target| matches!(target.scheme(), "http" | "https"))
+                .ok_or_else(|| pagination_error("invalid next link URL"))?;
+            let mut cursors = target
+                .query_pairs()
+                .filter(|(name, _)| name == "before" || name == "after");
+            let (name, value) = cursors
+                .next()
+                .filter(|(_, value)| !value.is_empty())
+                .ok_or_else(|| pagination_error("missing next link cursor"))?;
+            if cursors.next().is_some() {
+                return Err(pagination_error("multiple next link cursors"));
+            }
+            // Retain the caller's validated GitHub origin and attestation path;
+            // only the cursor is taken from the server-supplied URL.
+            let mut url = original_url.clone();
+            url.set_query(None);
+            url.query_pairs_mut()
+                .append_pair("per_page", "100")
+                .append_pair(&name, &value);
+            return Ok(Some(url));
         }
-        page += 1;
+    }
+    Ok(None)
+}
+
+fn pagination_error(actual: &str) -> ApiError {
+    ApiError::InvalidResponse {
+        path: "Link".to_owned(),
+        expected: "a next link with a new before or after cursor".to_owned(),
+        actual: actual.to_owned(),
     }
 }
 
@@ -409,6 +479,10 @@ struct SourceDigest {
 mod tests {
     use super::*;
     use serde_json::json;
+    use wiremock::{
+        matchers::{header, method, path, query_param, query_param_is_missing},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     const COMMIT: &str = "8e07c3583909c9ab9da94d883e87add1ae90832d";
 
@@ -417,6 +491,113 @@ mod tests {
             "nearai/compose-manager".to_owned(),
             ".github/workflows/build.yml".to_owned(),
         )
+    }
+
+    #[tokio::test]
+    async fn fetches_cursor_pages_at_the_original_origin_and_path() {
+        for cursor_name in ["before", "after"] {
+            let server = MockServer::start().await;
+            let endpoint_path = "/repos/nearai/compose-manager/attestations/sha256:abc";
+            let initial =
+                Url::parse(&format!("{}{endpoint_path}?per_page=100", server.uri())).unwrap();
+            let next_link = format!(
+                "<https://example.com/untrusted?per_page=1&page=2&{cursor_name}=a%2B%2F%3D%26>; rel=\"next\""
+            );
+            Mock::given(method("GET"))
+                .and(path(endpoint_path))
+                .and(query_param("per_page", "100"))
+                .and(query_param_is_missing(cursor_name))
+                .and(header("Authorization", "Bearer test-token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("Link", next_link)
+                        .set_body_json(json!({"attestations": [{"bundle": {"page": 1}}]})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let final_bundles = (0..100)
+                .map(|index| json!({"index": index}))
+                .collect::<Vec<_>>();
+            Mock::given(method("GET"))
+                .and(path(endpoint_path))
+                .and(query_param("per_page", "100"))
+                .and(query_param(cursor_name, "a+/=&"))
+                .and(header("Authorization", "Bearer test-token"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "attestations": final_bundles.iter().map(|bundle| json!({"bundle": bundle})).collect::<Vec<_>>()
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let bundles =
+                fetch_image_provenance_pages(&Client::new(), initial.clone(), Some("test-token"))
+                    .await
+                    .unwrap();
+
+            let mut expected = vec![json!({"page": 1}).to_string()];
+            expected.extend(final_bundles.iter().map(ToString::to_string));
+            assert_eq!(bundles, expected);
+            let requests = server.received_requests().await.unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests
+                .iter()
+                .all(|request| request.url.path() == endpoint_path));
+            assert_eq!(requests[0].url.query(), Some("per_page=100"));
+            assert_eq!(
+                requests[1].url.query().unwrap(),
+                format!("per_page=100&{cursor_name}=a%2B%2F%3D%26")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_repeated_pagination_before_repeating_a_request() {
+        let server = MockServer::start().await;
+        let initial = Url::parse(&format!("{}/attestations?per_page=100", server.uri())).unwrap();
+        let next_link = format!("<{}&after=repeated>; rel=\"next\"", initial);
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Link", next_link)
+                    .set_body_json(json!({"attestations": [{"bundle": {}}]})),
+            )
+            .expect(2)
+            .up_to_n_times(2)
+            .mount(&server)
+            .await;
+
+        let result = fetch_image_provenance_pages(&Client::new(), initial, None).await;
+
+        assert!(matches!(result, Err(ApiError::InvalidResponse { path, .. }) if path == "Link"));
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+    }
+
+    #[test]
+    fn rejects_malformed_or_missing_next_cursors() {
+        let initial = Url::parse("https://api.github.com/attestations?per_page=100").unwrap();
+        for link in [
+            "<not-a-url>; rel=\"next\"",
+            "<https://api.github.com/attestations?per_page=100>; rel=\"next\"",
+            "<https://api.github.com/attestations?after=>; rel=\"next\"",
+            "<https://api.github.com/attestations?after=a&before=b>; rel=\"next\"",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(reqwest::header::LINK, link.parse().unwrap());
+            assert!(matches!(
+                next_attestation_page(&initial, &headers),
+                Err(ApiError::InvalidResponse { path, .. }) if path == "Link"
+            ));
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::LINK,
+            "<https://api.github.com/attestations?before=a>; rel=\"prev\""
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(next_attestation_page(&initial, &headers).unwrap(), None);
     }
 
     #[test]

@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from cryptography import x509
 from pydantic import ValidationError
@@ -68,13 +68,14 @@ async def fetch_image_provenance(
     if github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
 
+    base_url = (
+        f'https://api.github.com/repos/{repository}/attestations/'
+        f'{quote(digest.lower(), safe=":")}?per_page=100'
+    )
+    url = base_url
+    visited = {url}
     bundles: list[str] = []
-    page = 1
     while True:
-        url = (
-            f'https://api.github.com/repos/{repository}/attestations/'
-            f'{quote(digest.lower(), safe=":")}?per_page=100&page={page}'
-        )
         try:
             response = await fetch(url, headers=headers)
         except Exception as error:
@@ -112,9 +113,53 @@ async def fetch_image_provenance(
                 cause=error,
             ) from error
         bundles.extend(json.dumps(item.bundle) for item in parsed.attestations)
-        if len(parsed.attestations) < 100:
-            return bundles
-        page += 1
+        link = ', '.join(
+            value for name, value in response.headers.items() if name.lower() == 'link'
+        )
+        try:
+            next_url = _next_attestation_url(link, base_url)
+            if next_url is None:
+                return bundles
+            if next_url in visited:
+                raise ValueError('repeated pagination cursor')
+        except ValueError as error:
+            raise api_failure(
+                'api.invalid_response',
+                {
+                    'resource': 'image_provenance',
+                    'path': 'Link',
+                    'expected': 'a next link with a new before or after cursor',
+                    'actual': 'invalid or repeated pagination cursor',
+                },
+                cause=error,
+            ) from error
+        visited.add(next_url)
+        url = next_url
+
+
+def _next_attestation_url(link: str, base_url: str) -> str | None:
+    for entry in re.split(r',\s*(?=<)', link):
+        relation = re.search(r';\s*rel\s*=\s*(?:"([^"]*)"|([^;\s]+))', entry)
+        if relation is None or 'next' not in (relation[1] or relation[2] or '').split():
+            continue
+        target = re.match(r'\s*<([^>]*)>', entry)
+        if target is None:
+            raise ValueError('invalid pagination link')
+        parsed_url = urlsplit(target[1])
+        if not parsed_url.scheme or not parsed_url.netloc:
+            raise ValueError('invalid pagination URL')
+        cursors = [
+            (name, value)
+            for name, value in parse_qsl(
+                parsed_url.query, keep_blank_values=True, errors='strict'
+            )
+            if name in ('before', 'after')
+        ]
+        if len(cursors) != 1 or not cursors[0][1]:
+            raise ValueError('missing or ambiguous pagination cursor')
+        # The link contributes only its cursor, never its origin or path.
+        return f'{base_url}&{urlencode(cursors)}'
+    return None
 
 
 async def verify_image_provenance(

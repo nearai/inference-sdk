@@ -61,6 +61,93 @@ describe('image provenance verification', () => {
     });
   });
 
+  test.each(['before', 'after'])(
+    'fetches every page using the %s cursor from Link',
+    async (cursorName) => {
+      const url = `https://api.github.com/repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`;
+      const cursor = 'opaque+cursor/=';
+      const nextUrl = `${url}&${cursorName}=${encodeURIComponent(cursor)}`;
+      const firstBundle = { page: 'first' };
+      const lastBundle = { page: 'last' };
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(
+          Response.json(
+            { attestations: [{ bundle: firstBundle }] },
+            {
+              headers: {
+                // Only the cursor is used, not the returned host or path.
+                Link: `<${url}>; rel="prev", <https://other.example/ignored?${cursorName}=${encodeURIComponent(cursor)}>; rel="next"`,
+              },
+            },
+          ),
+        )
+        .mockResolvedValueOnce(
+          Response.json({
+            attestations: Array.from({ length: 100 }, () => ({
+              bundle: lastBundle,
+            })),
+          }),
+        );
+
+      const bundles = await fetchImageProvenance({
+        repository: POLICY.repository,
+        digest: DIGEST,
+        githubToken: 'test-token',
+      });
+
+      expect(fetch.mock.calls.map(([requestedUrl]) => requestedUrl)).toEqual([
+        url,
+        nextUrl,
+      ]);
+      expect(bundles).toEqual([
+        JSON.stringify(firstBundle),
+        ...Array(100).fill(JSON.stringify(lastBundle)),
+      ]);
+    },
+  );
+
+  test('reports a repeated pagination cursor as an API error', async () => {
+    const url = `https://api.github.com/repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`;
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () =>
+        Response.json(
+          { attestations: [{ bundle: {} }] },
+          { headers: { Link: `<${url}&after=same>; rel="next"` } },
+        ),
+      );
+
+    await expect(
+      fetchImageProvenance({ repository: POLICY.repository, digest: DIGEST }),
+    ).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: { code: 'api.invalid_response', details: { path: 'Link' } },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(['not a URL', 'https://api.github.com/attestations?per_page=100'])(
+    'rejects a next-page link without a usable cursor: %s',
+    async (nextUrl) => {
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          Response.json(
+            { attestations: [{ bundle: {} }] },
+            { headers: { Link: `<${nextUrl}>; rel="next"` } },
+          ),
+        );
+
+      await expect(
+        fetchImageProvenance({ repository: POLICY.repository, digest: DIGEST }),
+      ).rejects.toMatchObject({
+        name: 'ApiError',
+        failure: { code: 'api.invalid_response', details: { path: 'Link' } },
+      });
+    },
+  );
+
   test('accepts a later valid proof when another proof does not verify', async () => {
     const verified = await verifyImageProvenance({
       bundles: ['{}', BUNDLE],

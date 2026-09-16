@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -117,30 +118,71 @@ async def test_rejects_missing_attestations() -> None:
     assert raised.value.failure.details['reasons'] == ['no_attestations']
 
 
-async def test_fetches_every_github_page_without_following_bundle_urls(
+@pytest.mark.parametrize('cursor', ['before', 'after'])
+async def test_fetches_github_cursor_pages_without_following_returned_urls(
     monkeypatch: pytest.MonkeyPatch,
+    cursor: str,
 ) -> None:
     entry = {'bundle': json.loads(BUNDLE), 'bundle_url': 'https://example.com/ignored'}
+    requested: list[str] = []
+    base_url = (
+        f'https://api.github.com/repos/nearai/compose-manager/attestations/{DIGEST}'
+        '?per_page=100'
+    )
+
+    async def github_response(url: str, *, headers: Mapping[str, str]) -> FetchResponse:
+        requested.append(url)
+        assert headers['Authorization'] == 'Bearer test-token'
+        assert len(requested) <= 2
+        entries = [entry] if len(requested) == 1 else [entry] * 100
+        return FetchResponse(
+            status=200,
+            body=json.dumps({'attestations': entries}).encode(),
+            headers={
+                'lInK': '<https://example.com/ignored?after=ignored>; rel="prev", '
+                f'<https://example.com/ignored?per_page=1&{cursor}=cursor%2B%2F%3D>'
+                '; rel="next"',
+            }
+            if len(requested) == 1
+            else {},
+        )
+
+    monkeypatch.setattr(provenance, 'fetch', github_response)
+    bundles = await fetch_image_provenance(POLICY.repository, DIGEST, 'test-token')
+
+    assert bundles == [json.dumps(entry['bundle'])] * 101
+    assert requested == [base_url, f'{base_url}&{cursor}=cursor%2B%2F%3D']
+    result = await verify_image_provenance(bundles, DIGEST, POLICY)
+    assert result.commit == COMMIT
+
+
+@pytest.mark.parametrize(
+    ('query', 'request_count'),
+    [('page=2', 1), ('after=', 1), ('after=repeated', 2)],
+)
+async def test_rejects_an_invalid_or_repeated_github_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    request_count: int,
+) -> None:
     requested: list[str] = []
 
     async def github_response(url: str, **_: object) -> FetchResponse:
         requested.append(url)
-        entries = [entry] * 100 if len(requested) == 1 else [entry]
+        assert len(requested) <= 2
         return FetchResponse(
-            status=200, body=json.dumps({'attestations': entries}).encode()
+            status=200,
+            body=b'{"attestations":[]}',
+            headers={'Link': f'<https://api.github.com/?{query}>; rel="next"'},
         )
 
     monkeypatch.setattr(provenance, 'fetch', github_response)
-    bundles = await fetch_image_provenance(POLICY.repository, DIGEST)
+    with pytest.raises(ApiError) as raised:
+        await fetch_image_provenance(POLICY.repository, DIGEST)
 
-    assert len(bundles) == 101
-    assert requested == [
-        f'https://api.github.com/repos/nearai/compose-manager/attestations/{DIGEST}'
-        f'?per_page=100&page={page}'
-        for page in (1, 2)
-    ]
-    result = await verify_image_provenance(bundles, DIGEST, POLICY)
-    assert result.commit == COMMIT
+    assert raised.value.failure.code == 'api.invalid_response'
+    assert raised.value.failure.details['path'] == 'Link'
+    assert len(requested) == request_count
 
 
 async def test_invalid_github_response_is_an_api_error(
