@@ -670,7 +670,7 @@ export class SecureClient extends SecureClientBase {
     _params: CreateGatewaySessionTransportParams,
   ): GatewaySessionTransport {
     return {
-      fetch: globalThis.fetch,
+      fetch: globalThis.fetch.bind(globalThis),
       fetchModelAttestations: (params) =>
         this.attestationClient.fetchModelAttestations(params),
       fetchCompletionSignature: (params) =>

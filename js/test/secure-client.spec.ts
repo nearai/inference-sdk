@@ -819,6 +819,30 @@ describe('secure client', () => {
     jest.useRealTimers();
   });
 
+  test('calls browser Fetch with the global receiver', async () => {
+    const gateway = createTestGateway();
+    const providerFetch = createProviderReceiptFetch(gateway);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(function (
+      this: typeof globalThis | undefined,
+      input,
+      init,
+    ) {
+      // Browser Fetch accepts a standalone call, but not an arbitrary receiver.
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError('Illegal invocation');
+      }
+      return providerFetch(input, init);
+    });
+    const client = new SecureClient(secureClientOptions(gateway));
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
+      completionId: completion.id,
+    });
+  });
+
   test('reuses one OpenAI client for concurrent JSON and streaming responses', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);

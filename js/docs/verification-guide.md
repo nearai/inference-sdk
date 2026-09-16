@@ -60,6 +60,11 @@ Session reuse does not detect a deployment change until the session expires.
 Set the cache lifetime to `0` when the application must re-check evidence
 before every request.
 
+The 15-minute default balances verification overhead with evidence freshness;
+it is a client cache setting, not an attestation expiry time. Increase
+`attestationCacheTimeToLiveMs` if your application accepts a longer interval
+between deployment checks.
+
 The key comes from `signing_public_key`. The SDK binds it to the signer already
 authenticated by the quote before using it as an encryption recipient: an
 Ed25519 key must equal the signer, while an ECDSA key must derive the signer's
@@ -71,6 +76,12 @@ Attestation proves measurements; it does not define your release policy.
 `deploymentPolicy` is an optional callback that receives authenticated model
 measurements and must throw or reject values your application does not
 approve.
+
+`EXPECTED_COMPOSE_HASHES` below represents your application's approved
+model-to-compose-hash mapping. It is not an SDK export or a bundled NEAR AI
+allowlist. Populate it from deployment configurations you have reviewed and
+approved. Copying the hash from the current attestation alone does not establish
+that the deployment is approved.
 
 ```ts
 const client = new SecureClient({
@@ -93,7 +104,13 @@ It does not claim that a deployment is release-approved. A future published
 NEAR AI release policy can become the default without changing this calling
 pattern.
 
-## Use an aggregator
+## Connect through an aggregator (optional)
+
+Use this setup when your application backend forwards inference requests for
+users, keeping its NEAR AI API key on the server while users' devices verify
+evidence and encrypt prompts locally. The backend is the aggregator in this
+example. For a direct server-to-Gateway integration, use the earlier `apiKey`
+example; no additional service is required.
 
 Set `baseUrl` to the aggregator API base URL and set the headers it expects.
 The SDK sends those static headers with evidence, signature, and Chat requests.
@@ -260,6 +277,9 @@ Records stay in memory for `responseCacheTimeToLiveMs` after the response finish
 (default: 15 minutes), independently of the attestation cache. Expired or unknown
 IDs produce `ApiError` with code `api.completion_not_found`. Keep this retention
 period appropriate for your response sizes and request volume.
+The client retains complete response bodies while they are being read. For
+long-running streams, the application controls when to cancel; the retention
+TTL is not a stream duration or memory limit.
 
 A `provider_tee` signature binds the bytes to a verified model signer.
 A `gateway` signature binds them to a verified Gateway signer; it does not

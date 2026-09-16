@@ -52,7 +52,7 @@ export class NodeSecureClient extends SecureClientBase {
     const gatewayFetch =
       tlsBinding.kind === 'attested'
         ? this.createPinnedTlsFetch(tlsBinding.spkiFingerprint)
-        : globalThis.fetch;
+        : globalThis.fetch.bind(globalThis);
     const client = new GatewaySessionEvidenceClient(
       this.nodeOptions,
       gatewayFetch,
