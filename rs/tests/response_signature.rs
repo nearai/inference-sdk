@@ -13,7 +13,7 @@ use verifiable_ai_sdk::{
 fn uses_distinct_model_and_gateway_payloads() {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
     let signing_address = hex::encode(signing_key.verifying_key().to_bytes());
-    let request_body = br#"{"model":"glm-5.2","messages":[]}"#;
+    let request_body = br#"{"model":"glm-5.3-flash","messages":[]}"#;
     let response_body = br#"{"id":"response"}"#;
     let signer = SigningIdentity {
         signing_algo: SigningAlgo::Ed25519,
@@ -23,7 +23,7 @@ fn uses_distinct_model_and_gateway_payloads() {
         &signing_key,
         CompletionSignatureKind::ProviderTee,
         format!(
-            "glm-5.2:{}:{}",
+            "glm-5.3-flash:{}:{}",
             sha256_hex(request_body),
             sha256_hex(response_body)
         ),
@@ -85,10 +85,10 @@ fn uses_distinct_model_and_gateway_payloads() {
 #[test]
 fn accepts_an_ethereum_personal_signature() {
     let signing_key = k256::ecdsa::SigningKey::from_bytes((&[1u8; 32]).into()).unwrap();
-    let request_body = br#"{"model":"glm-5.2","messages":[]}"#;
+    let request_body = br#"{"model":"glm-5.3-flash","messages":[]}"#;
     let response_body = br#"{"id":"response"}"#;
     let signed_text = format!(
-        "glm-5.2:{}:{}",
+        "glm-5.3-flash:{}:{}",
         sha256_hex(request_body),
         sha256_hex(response_body)
     );
@@ -127,10 +127,10 @@ fn accepts_an_ethereum_personal_signature() {
 fn accepts_an_equivalent_hex_signing_address() {
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
     let signing_address = hex::encode(signing_key.verifying_key().to_bytes());
-    let request_body = br#"{"model":"glm-5.2","messages":[]}"#;
+    let request_body = br#"{"model":"glm-5.3-flash","messages":[]}"#;
     let response_body = br#"{"id":"response"}"#;
     let signed_text = format!(
-        "glm-5.2:{}:{}",
+        "glm-5.3-flash:{}:{}",
         sha256_hex(request_body),
         sha256_hex(response_body)
     );

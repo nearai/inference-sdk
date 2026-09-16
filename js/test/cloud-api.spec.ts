@@ -4,10 +4,20 @@ import type {
   VerifiedModelAttestation,
 } from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
+import {
+  createCloudApiRequestConfiguration,
+  mergeCloudApiRequestHeaders,
+} from '../src/core/cloud-api';
 import { AttestationClient as NodeAttestationClient } from '../src/node';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
+
+type RequestAuthenticationCase = {
+  name: string;
+  options: AttestationClientOptions;
+  expectedAuthorization: string;
+};
 
 function modelSignature(
   modelSigningAddress = signingAddress,
@@ -133,6 +143,43 @@ function requestNonce(request: Request): string {
   }
   return value;
 }
+
+describe('request authentication', () => {
+  test.each<RequestAuthenticationCase>([
+    {
+      name: 'uses the configured API key over both Authorization headers',
+      options: {
+        apiKey: 'direct-key',
+        headers: { Authorization: 'Bearer proxy-token', 'x-tenant': 'default' },
+      },
+      expectedAuthorization: 'Bearer direct-key',
+    },
+    {
+      name: 'keeps proxy authentication when OpenAI adds its Authorization header',
+      options: {
+        headers: { Authorization: 'Bearer proxy-token', 'x-tenant': 'default' },
+      },
+      expectedAuthorization: 'Bearer proxy-token',
+    },
+    {
+      name: 'uses request authentication when none is configured',
+      options: { headers: { 'x-tenant': 'default' } },
+      expectedAuthorization: 'Bearer openai-key',
+    },
+  ])('$name', ({ options, expectedAuthorization }) => {
+    const configuration = createCloudApiRequestConfiguration(options);
+    const headers = mergeCloudApiRequestHeaders({
+      configuration,
+      requestHeaders: {
+        authorization: 'Bearer openai-key',
+        'x-tenant': 'request-tenant',
+      },
+    });
+
+    expect(headers.get('authorization')).toBe(expectedAuthorization);
+    expect(headers.get('x-tenant')).toBe('request-tenant');
+  });
+});
 
 describe('AttestationClient', () => {
   afterEach(() => {

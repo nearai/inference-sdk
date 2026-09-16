@@ -16,7 +16,7 @@ from verifiable_ai_sdk import (
 
 
 API_URL = 'https://cloud-api.near.ai/v1/chat/completions'
-MODEL = 'z-ai/glm-5.2'
+MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ecdsa'
 
 

@@ -157,6 +157,8 @@ const client = new SecureClient({
 
 Plaintext requests still use a verified model public key for routing, so the
 model must expose a key for the configured signing algorithm.
+They send `X-Model-Pub-Key` without the encryption headers. Attestation and
+signature lookups still use the configured `signingAlgo`.
 
 ## Verify a response
 
@@ -194,7 +196,9 @@ if (completionId !== undefined) {
 
 Each ID identifies its own request bytes, response bytes, and verified deployment
 evidence. Concurrent requests can finish in any order. Repeated verification of
-the same ID shares its result, including a verification failure.
+the same ID shares the in-flight operation and its result. After a retryable
+API failure, call `verifyResponse(id)` again to retry the signature lookup.
+Successful results and non-retryable failures remain cached.
 
 Response records retain complete bodies in memory. They expire
 `responseCacheTimeToLiveMs` after body completion (default: 15 minutes),
@@ -202,7 +206,8 @@ independently of the attestation cache. Unknown or expired IDs produce
 `ApiError` with code `api.completion_not_found`. For active streams, memory
 grows with the received body until the application finishes or cancels reading.
 
-A `provider_tee` signature binds the bytes to a verified model signer.
+A `provider_tee` signature must match the verified model signer selected for
+the request's `X-Model-Pub-Key`.
 A `gateway` signature binds them to a verified Gateway signer; it does not
 by itself prove model execution.
 
@@ -228,6 +233,11 @@ const verified = await client.verifyResponse(completion.id);
 ```
 
 Streaming uses the same ID-based verification as the built-in client.
+
+For a proxy configured with `headers.Authorization`, OpenAI's required `apiKey`
+can be a placeholder. The secure client's configured authorization takes
+precedence for evidence, Chat, and signature requests. Other per-request headers
+can override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
 ## Verify manually

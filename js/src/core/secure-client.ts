@@ -28,13 +28,13 @@ import type {
 } from '../types/secure-client';
 import {
   ApiError,
+  isApiError,
   isVerificationError,
   VerificationError,
 } from '../utils/errors';
 import {
   AttestationClient,
   createCloudApiRequestConfiguration,
-  findModelAttestationForSignature,
   mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
@@ -63,7 +63,7 @@ const DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS = 15 * 60 * 1000;
 
 type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
-  readonly modelAttestations: readonly VerifiedModelAttestation[];
+  readonly modelAttestation: VerifiedModelAttestation;
   readonly modelKey: E2eeModelKey;
   readonly transport: GatewaySessionTransport;
 };
@@ -290,7 +290,15 @@ export abstract class SecureClientBase {
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
-    record.verification ??= this.verifyCapturedCompletion(record);
+    record.verification ??= this.verifyCapturedCompletion(record).catch(
+      (cause: unknown) => {
+        // Keep the captured bytes so a later call can retry a transient lookup.
+        if (isApiError(cause) && cause.retryable) {
+          record.verification = undefined;
+        }
+        throw cause;
+      },
+    );
     return record.verification;
   }
 
@@ -363,10 +371,7 @@ export abstract class SecureClientBase {
     });
 
     if (signature.kind === 'provider_tee') {
-      const attestation = findModelAttestationForSignature({
-        attestations: session.modelAttestations,
-        signature,
-      });
+      const attestation = session.modelAttestation;
       verifyModelResponse({
         requestBody,
         responseBody: bytes,
@@ -476,15 +481,22 @@ export abstract class SecureClientBase {
         }),
       ),
     );
-    const modelKey = selectModelSigningKey({
-      attestations: modelAttestations,
-      signingAlgo: this.signingAlgo,
-    });
+    const modelAttestation = modelAttestations.find(
+      (attestation) =>
+        attestation.signer.signingAlgo === this.signingAlgo &&
+        attestation.signingPublicKey !== undefined,
+    );
+    if (modelAttestation?.signingPublicKey === undefined) {
+      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+    }
 
     return {
       gatewayAttestation,
-      modelAttestations,
-      modelKey,
+      modelAttestation,
+      modelKey: {
+        signingAlgo: this.signingAlgo,
+        publicKey: modelAttestation.signingPublicKey,
+      },
       transport,
     };
   }
@@ -558,7 +570,7 @@ export abstract class SecureClientBase {
     removeE2eeHeaders(headers);
     // Cloud API uses this routing-only header to select the verified NEAR
     // backend. It is deliberately not forwarded to the model request body.
-    headers.set('x-signing-algo', modelKey.signingAlgo);
+    // X-Signing-Algo is an encryption header and requires a client key.
     headers.set('x-model-pub-key', modelKey.publicKey);
     return new Request(request, { headers });
   }
@@ -708,27 +720,6 @@ function createOpenAiDefaultHeaders(
   return headers;
 }
 
-type SelectModelSigningKeyParams = {
-  readonly attestations: readonly VerifiedModelAttestation[];
-  readonly signingAlgo: SigningAlgo;
-};
-
-function selectModelSigningKey({
-  attestations,
-  signingAlgo,
-}: SelectModelSigningKeyParams): E2eeModelKey {
-  for (const attestation of attestations) {
-    const signingPublicKey = attestation.signingPublicKey;
-    if (
-      attestation.signer.signingAlgo === signingAlgo &&
-      signingPublicKey !== undefined
-    ) {
-      return { signingAlgo, publicKey: signingPublicKey };
-    }
-  }
-  throw new VerificationError({ code: 'e2ee.model_public_key_required' });
-}
-
 function awaitWithAbort<T>({
   operation,
   signal,
@@ -776,22 +767,31 @@ function createRequest(
 async function decodeChatRequest({
   request,
 }: DecodeChatRequestParams): Promise<unknown> {
-  let text: string;
+  request.signal.throwIfAborted();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const decoder = new TextDecoder();
+  let text = '';
   try {
-    text = await request.clone().text();
-  } catch (cause) {
-    throw invalidInput(
-      {
-        field: 'request body',
-        reason: 'invalid_json',
-        expected: 'a JSON Chat Completions request',
-      },
-      cause,
-    );
-  }
-  try {
+    reader = request.clone().body?.getReader();
+    if (reader !== undefined) {
+      while (true) {
+        const chunk = await awaitWithAbort({
+          operation: reader.read(),
+          signal: request.signal,
+        });
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      text += decoder.decode();
+    }
     return JSON.parse(text);
   } catch (cause) {
+    if (request.signal.aborted) {
+      // Cancelling a cloned stream may wait for the caller's other branch.
+      // Stop our reader without delaying the abort result on that branch.
+      void reader?.cancel(request.signal.reason).catch(() => undefined);
+      throw request.signal.reason;
+    }
     throw invalidInput(
       {
         field: 'request body',
@@ -800,6 +800,8 @@ async function decodeChatRequest({
       },
       cause,
     );
+  } finally {
+    reader?.releaseLock();
   }
 }
 

@@ -137,7 +137,7 @@ describe('createPinnedTlsFetch', () => {
         'content-type': 'application/json',
         'accept-encoding': 'gzip',
       },
-      body: '{"model":"glm-5.2"}',
+      body: '{"model":"glm-5.3-flash"}',
     });
 
     expect(response.headers.get('content-type')).toBe('application/json');
@@ -157,7 +157,7 @@ describe('createPinnedTlsFetch', () => {
     expect(firstRequest.options?.rejectUnauthorized).toBe(true);
     expect(firstRequest.body).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(firstRequest.body)).toBe(
-      '{"model":"glm-5.2"}',
+      '{"model":"glm-5.3-flash"}',
     );
 
     await expect(

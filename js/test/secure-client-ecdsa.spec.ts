@@ -6,7 +6,7 @@ import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
-const model = 'glm-5.2';
+const model = 'glm-5.3-flash';
 const gatewayKey = new ethers.Wallet(
   '0x0123456789012345678901234567890123456789012345678901234567890123',
 );

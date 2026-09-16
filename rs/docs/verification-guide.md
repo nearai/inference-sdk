@@ -37,7 +37,7 @@ use verifiable_ai_sdk::{
     VerifiedModelAttestation,
 };
 
-const MODEL: &str = "z-ai/glm-5.2";
+const MODEL: &str = "z-ai/glm-5.3-flash";
 
 async fn verify_deployments(
     client: &AttestationClient,

@@ -25,7 +25,7 @@ import {
 } from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
-const model = 'glm-5.2';
+const model = 'glm-5.3-flash';
 const secondModel = 'qwen-3.5';
 const aggregatorHeader = {
   name: 'x-aggregator-token',
@@ -783,9 +783,11 @@ function createProviderReceiptFetch(
     const body = JSON.parse(new TextDecoder().decode(requestBody)) as {
       stream?: boolean;
     };
-    const completionId =
-      body.stream === true ? 'chatcmpl-stream' : 'chatcmpl-test';
     const response = await gateway.fetch(request);
+    const completionId =
+      body.stream === true
+        ? 'chatcmpl-stream'
+        : (await response.clone().json()).id;
     signatures.set(
       completionId,
       response
@@ -899,6 +901,73 @@ describe('secure client', () => {
     jest.advanceTimersByTime(1001);
     await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
       failure: { code: 'api.completion_not_found' },
+    });
+  });
+
+  test.each([404, 503])(
+    'retries response verification after HTTP %i',
+    async (status) => {
+      const gateway = createTestGateway();
+      const providerFetch = createProviderReceiptFetch(gateway);
+      let signatureRequests = 0;
+      jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        if (new URL(request.url).pathname.startsWith('/v1/signature/')) {
+          signatureRequests += 1;
+          if (signatureRequests === 1) {
+            return Promise.resolve(new Response('try again', { status }));
+          }
+        }
+        return providerFetch(request);
+      });
+      const client = new SecureClient(secureClientOptions(gateway));
+      const completion = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+
+      const firstAttempt = client.verifyResponse(completion.id);
+      expect(client.verifyResponse(completion.id)).toBe(firstAttempt);
+      await expect(firstAttempt).rejects.toMatchObject({
+        failure: { code: 'api.http_status', details: { status } },
+        retryable: true,
+      });
+
+      const retry = client.verifyResponse(completion.id);
+      expect(client.verifyResponse(completion.id)).toBe(retry);
+      await expect(retry).resolves.toMatchObject({
+        completionId: completion.id,
+      });
+      expect(client.verifyResponse(completion.id)).toBe(retry);
+      expect(signatureRequests).toBe(2);
+    },
+  );
+
+  test('preserves proxy authorization with an external OpenAI client', async () => {
+    const authorization = 'Bearer proxy-token';
+    const gateway = createTestGateway({
+      expectedRequestHeader: { name: 'authorization', value: authorization },
+    });
+    mockProviderReceipts(gateway);
+    const secureClient = new SecureClient({
+      ...secureClientOptions(gateway),
+      headers: { Authorization: authorization },
+    });
+    const openai = new OpenAI({
+      apiKey: 'unused-placeholder',
+      baseURL: baseUrl,
+      fetch: secureClient.fetch,
+      maxRetries: 0,
+    });
+
+    const completion = await openai.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    await expect(
+      secureClient.verifyResponse(completion.id),
+    ).resolves.toMatchObject({
+      completionId: completion.id,
     });
   });
 
@@ -1311,7 +1380,7 @@ describe('secure client', () => {
 
   test('selects a verified model key when multiple candidates are returned', async () => {
     const gateway = createTestGateway({ includeSecondModelAttestation: true });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    mockProviderReceipts(gateway);
     const client = new SecureClient(secureClientOptions(gateway));
 
     const response = await client.fetch(
@@ -1323,6 +1392,50 @@ describe('secure client', () => {
       choices: [{ message: { content: 'hello client' } }],
     });
     expect(gateway.state.decryptedRequestContent).toEqual(['hello model']);
+    await expect(client.verifyResponse('chatcmpl-test')).resolves.toMatchObject(
+      {
+        signatureKind: 'provider_tee',
+        attestation: {
+          signer: { signingAddress: keyHex(keyPair(2).publicKey) },
+        },
+      },
+    );
+  });
+
+  test('rejects a provider signature from a different verified model candidate', async () => {
+    const gateway = createTestGateway({ includeSecondModelAttestation: true });
+    const signWithSelectedKey = gateway.createProviderSignature;
+    const otherKey = keyPair(3);
+    jest
+      .spyOn(gateway, 'createProviderSignature')
+      .mockImplementation((requestBody, responseBody) => {
+        const signature = signWithSelectedKey(requestBody, responseBody);
+        return {
+          ...signature,
+          signing_address: keyHex(otherKey.publicKey),
+          signature: keyHex(
+            nacl.sign.detached(Buffer.from(signature.text), otherKey.secretKey),
+          ),
+        };
+      });
+    mockProviderReceipts(gateway);
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      e2ee: false,
+    });
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+
+    expect(
+      gateway.state.completionRequestsSeen[0].headers.get('x-model-pub-key'),
+    ).toBe(keyHex(keyPair(2).publicKey));
+    const verification = client.verifyResponse(completion.id);
+    await expect(verification).rejects.toMatchObject({
+      failure: { code: 'signature.signer_mismatch' },
+    });
+    expect(client.verifyResponse(completion.id)).toBe(verification);
   });
 
   test('decrypts a Chat Completions stream split across transport chunks', async () => {
@@ -1921,7 +2034,7 @@ describe('secure client', () => {
 
   test('keeps verification and model routing on when E2EE is disabled', async () => {
     const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    mockProviderReceipts(gateway);
     const client = new SecureClient({
       ...secureClientOptions(gateway),
       e2ee: false,
@@ -1933,8 +2046,13 @@ describe('secure client', () => {
       chatRequest({ messages: [{ role: 'user', content: richContent }] }),
     );
 
-    await expect(response.json()).resolves.toMatchObject({
+    const completion = await response.json();
+    expect(completion).toMatchObject({
       choices: [{ message: { content: 'plaintext response' } }],
+    });
+    await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
+      signatureKind: 'provider_tee',
+      signature: { signer: { signingAlgo: 'ed25519' } },
     });
     expect(gateway.state).toMatchObject({
       gatewayAttestationRequests: 1,
@@ -1945,8 +2063,11 @@ describe('secure client', () => {
     expect(request.body.messages).toEqual([
       { role: 'user', content: richContent },
     ]);
+    expect(request.headers.get('x-signing-algo')).toBeNull();
     expect(request.headers.get('x-client-pub-key')).toBeNull();
-    expect(request.headers.get('x-model-pub-key')).toEqual(expect.any(String));
+    expect(request.headers.get('x-model-pub-key')).toBe(
+      keyHex(keyPair(2).publicKey),
+    );
   });
 
   test('does not send a completion when a deployment policy rejects it', async () => {
