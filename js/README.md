@@ -1,6 +1,6 @@
-# Verifiable AI SDK for TypeScript
+# NEAR AI Inference SDK for TypeScript
 
-`verifiable-ai-sdk` verifies Gateway and model attestations in Node.js and
+`@nearai/inference-sdk` verifies Gateway and model attestations in Node.js and
 browsers, and provides encrypted Chat Completions for NEAR model deployments.
 
 ## Clients and verification
@@ -35,8 +35,8 @@ Attestation results are cached for 60 minutes. Set
 records have a separate 60-minute retention period, configured through
 `responseCacheTimeToLiveMs`.
 
-Import from `verifiable-ai-sdk/node` for Node.js with Gateway TLS verification
-and subsequent request pinning. Use `verifiable-ai-sdk` in browsers, where
+Import from `@nearai/inference-sdk/node` for Node.js with Gateway TLS verification
+and subsequent request pinning. Use `@nearai/inference-sdk` in browsers, where
 Fetch does not expose the TLS peer certificate. The package publishes ESM and
 requires Node.js 24 or later for Node usage.
 

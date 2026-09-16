@@ -16,7 +16,7 @@ requests to that identity. For browser applications, see
 [Connect through an application proxy](#connect-through-an-application-proxy).
 
 ```ts
-import { SecureClient } from 'verifiable-ai-sdk/node';
+import { SecureClient } from '@nearai/inference-sdk/node';
 
 const model = 'z-ai/glm-5.3-flash';
 const client = new SecureClient({
@@ -72,7 +72,7 @@ Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
 it accepts:
 
 ```ts
-import { SecureClient } from 'verifiable-ai-sdk';
+import { SecureClient } from '@nearai/inference-sdk';
 
 const client = new SecureClient({
   baseUrl: 'https://api.example.com/v1',
@@ -98,7 +98,7 @@ because the observed certificate belongs
 to the proxy:
 
 ```ts
-import { SecureClient } from 'verifiable-ai-sdk/node';
+import { SecureClient } from '@nearai/inference-sdk/node';
 
 const client = new SecureClient({
   baseUrl: 'https://api.example.com/v1',
@@ -263,7 +263,7 @@ import {
   createPinnedTlsFetch,
   verifyGatewayAttestation,
   verifyModelAttestation,
-} from 'verifiable-ai-sdk/node';
+} from '@nearai/inference-sdk/node';
 
 const model = 'z-ai/glm-5.3-flash';
 const client = new AttestationClient({ apiKey: process.env.NEARAI_API_KEY! });
@@ -304,7 +304,7 @@ Use `pinnedTlsFetch` instead of `fetch` for raw direct-Gateway requests that
 your application sends itself. It performs normal certificate and hostname
 verification, then requires each TLS peer to present the attested SPKI.
 
-The generic `verifiable-ai-sdk` entry point requests the no-TLS Gateway quote
+The generic `@nearai/inference-sdk` entry point requests the no-TLS Gateway quote
 layout and is suitable for browsers. The `/node` `AttestationClient` observes
 only the peer for its Gateway-attestation request; it does not automatically
 apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
@@ -323,7 +323,7 @@ import {
   verifyDeploymentImageProvenance,
   verifyGatewayAttestation,
   type ImageProvenancePolicy,
-} from 'verifiable-ai-sdk';
+} from '@nearai/inference-sdk';
 
 const imagePolicies: Record<string, ImageProvenancePolicy> = {
   'nearaidev/cloud-api': {
@@ -388,7 +388,7 @@ import {
   findModelAttestationForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
-} from 'verifiable-ai-sdk/node';
+} from '@nearai/inference-sdk/node';
 
 const signature = await client.fetchCompletionSignature({
   completionId,
@@ -433,7 +433,7 @@ and E2EE integrity-check or decryption failures throw `VerificationError`.
 Check the stable `failure.code` rather than parsing an error message.
 
 ```ts
-import { ApiError } from 'verifiable-ai-sdk';
+import { ApiError } from '@nearai/inference-sdk';
 
 try {
   await client.fetchCompletionSignature({ completionId });

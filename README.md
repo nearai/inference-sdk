@@ -1,4 +1,4 @@
-# Verifiable AI SDK
+# NEAR AI Inference SDK
 
 Language-specific implementations and verification guides:
 

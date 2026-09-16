@@ -1,7 +1,7 @@
 # TypeScript SDK API reference
 
 This page describes the attestation, E2EE, and response verification APIs in
-`verifiable-ai-sdk`. For integration steps and examples, see the
+`@nearai/inference-sdk`. For integration steps and examples, see the
 [verification guide](./verification-guide.md).
 
 ## Package entry points
@@ -12,8 +12,8 @@ that returned it.
 
 | Import | Gateway evidence behavior |
 | --- | --- |
-| `verifiable-ai-sdk` | Generic `AttestationClient` and `SecureClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
-| `verifiable-ai-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node secure clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
+| `@nearai/inference-sdk` | Generic `AttestationClient` and `SecureClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
+| `@nearai/inference-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node secure clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 `gatewayVerification.includeSpkiFingerprint: false` on a secure client or
@@ -29,7 +29,7 @@ Gateway-attestation socket to be reused.
 | --- | --- | --- |
 | `SecureClient` | `new SecureClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
-| `createPinnedTlsFetch` from `verifiable-ai-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
+| `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
@@ -73,7 +73,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
 |  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
-| `GatewayVerificationOptions` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
+| `GatewayVerificationOptions` from `@nearai/inference-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
 |  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifiers. A deployment check must pass before `deploymentPolicy` runs. |
 
@@ -133,8 +133,8 @@ The Gateway's report and signature endpoints have different defaults.
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Gateway response. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Gateway response. It must be hexadecimal: 20 or 32 bytes without `signingAlgo`, or the matching length when an algorithm is selected. Invalid input throws `ApiError` before a request. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit to use the service default. Use the same algorithm when fetching a response signature. |
-| `FetchGatewayAttestationParams` from `verifiable-ai-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
-| `FetchGatewayAttestationParams` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
+| `FetchGatewayAttestationParams` from `@nearai/inference-sdk` | `includeSpkiFingerprint?` | `false` | No | `false`. The generic client defaults to `include_tls_fingerprint=false`. |
+| `FetchGatewayAttestationParams` from `@nearai/inference-sdk/node` | `includeSpkiFingerprint?` | `boolean` | No | `true`. Requests `include_tls_fingerprint=true` by default and captures the matching TLS peer fingerprint. Set `false` for the signer-and-nonce quote layout. |
 
 ### Attestation fetch result types
 
