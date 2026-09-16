@@ -7,16 +7,16 @@ This page describes the attestation, E2EE, and response verification APIs in
 ## Package entry points
 
 Both entry points export the same verification APIs. Their attestation and
-secure clients differ in whether they can bind Gateway evidence to the TLS peer
+inference clients differ in whether they can bind Gateway evidence to the TLS peer
 that returned it.
 
 | Import | Gateway evidence behavior |
 | --- | --- |
-| `@nearai/inference-sdk` | Generic `AttestationClient` and `SecureClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
-| `@nearai/inference-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node secure clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on a secure client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
+| `@nearai/inference-sdk` | Generic `AttestationClient` and `InferenceClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
+| `@nearai/inference-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node inference clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on an inference client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
-`gatewayVerification.includeSpkiFingerprint: false` on a secure client or
+`gatewayVerification.includeSpkiFingerprint: false` on an inference client or
 `includeSpkiFingerprint: false` on `AttestationClient`.
 
 Node request pinning checks every later TLS peer. It permits a new HTTPS
@@ -27,7 +27,7 @@ Gateway-attestation socket to be reused.
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `SecureClient` | `new SecureClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
+| `InferenceClient` | `new InferenceClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
 | `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
@@ -39,7 +39,7 @@ Gateway-attestation socket to be reused.
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
 
-## `SecureClient`
+## `InferenceClient`
 
 Provides `chat.completions.create()`, a reusable `fetch` adapter, and
 `verifyResponse(id)`. Supports streaming and non-streaming Chat Completions.
@@ -48,7 +48,7 @@ for supported encryption fields and protocols.
 
 ### Constructor options
 
-`SecureClientOptions` configures the client.
+`InferenceClientOptions` configures the client.
 Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 `headers` supports a proxy or another compatible endpoint.
 
@@ -81,10 +81,10 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
-| `SecureClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `SecureClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, verifies it on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
-| `SecureClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
-| `SecureClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionReceipt>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, verifies it on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
+| `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
+| `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionReceipt>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionReceipt.completionId` | `string` | Completion ID whose signature was verified. |
 | `VerifiedCompletionReceipt.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence. |
 
@@ -101,7 +101,7 @@ The Node `AttestationClient` observes the TLS peer only for its Gateway
 attestation request. After `verifyGatewayAttestation` returns an
 `attested` TLS binding, pass its `spkiFingerprint` to
 `createPinnedTlsFetch` for raw HTTPS requests your application owns. The
-Node secure clients apply this automatically to their complete Chat flow.
+Node inference clients apply this automatically to their complete Chat flow.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.

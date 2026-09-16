@@ -43,7 +43,7 @@ export type DeploymentPolicyParams = {
   readonly deployment: MeasuredDeployment;
 };
 
-/** Advanced verification settings for Gateway evidence used by `SecureClient`. */
+/** Advanced verification settings for Gateway evidence used by `InferenceClient`. */
 export type GatewayVerificationOptions = {
   /**
    * The generic client cannot observe an HTTPS peer certificate, so Gateway
@@ -54,7 +54,7 @@ export type GatewayVerificationOptions = {
   readonly verifiers?: AttestationVerifiers;
 };
 
-/** Gateway-evidence settings supported by the Node-specific secure client. */
+/** Gateway-evidence settings supported by the Node-specific inference client. */
 export type NodeGatewayVerificationOptions = Omit<
   GatewayVerificationOptions,
   'includeSpkiFingerprint'
@@ -67,14 +67,14 @@ export type NodeGatewayVerificationOptions = Omit<
   readonly includeSpkiFingerprint?: boolean;
 };
 
-/** Advanced verification settings for model evidence used by `SecureClient`. */
+/** Advanced verification settings for model evidence used by `InferenceClient`. */
 export type ModelVerificationOptions = {
   readonly policy?: ModelAttestationPolicy;
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
 /** Settings shared by generic and Node verified Chat clients. */
-type SecureClientCommonOptions = {
+type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
    * same model. Defaults to 60 minutes. Set `0` to verify every request.
@@ -105,14 +105,14 @@ type SecureClientCommonOptions = {
 };
 
 /** Configuration for browser-compatible verified Chat Completions. */
-export type SecureClientOptions = AttestationClientOptions &
-  SecureClientCommonOptions & {
+export type InferenceClientOptions = AttestationClientOptions &
+  InferenceClientCommonOptions & {
     readonly gatewayVerification?: GatewayVerificationOptions;
   };
 
-/** Options accepted by the Node-specific `SecureClient`. */
-export type NodeSecureClientOptions = AttestationClientOptions &
-  SecureClientCommonOptions & {
+/** Options accepted by the Node-specific `InferenceClient`. */
+export type NodeInferenceClientOptions = AttestationClientOptions &
+  InferenceClientCommonOptions & {
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
   };
 

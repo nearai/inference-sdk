@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
-import { SecureClient, type QuoteVerificationResult } from '../src';
+import { InferenceClient, type QuoteVerificationResult } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
 
@@ -225,7 +225,7 @@ function createEcdsaGateway({
   };
 }
 
-describe('ECDSA secure client', () => {
+describe('ECDSA inference client', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -233,7 +233,7 @@ describe('ECDSA secure client', () => {
   test('verifies, encrypts, decrypts, and verifies a receipt with ECDSA', async () => {
     const gateway = createEcdsaGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
+    const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
@@ -275,7 +275,7 @@ describe('ECDSA secure client', () => {
   test('verifies an ECDSA Gateway receipt when the Gateway signs the response', async () => {
     const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
+    const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',

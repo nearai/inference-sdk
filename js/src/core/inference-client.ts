@@ -19,13 +19,13 @@ import type {
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
 import type {
-  NodeSecureClientOptions,
+  NodeInferenceClientOptions,
   SecureChat,
   SecureChatCompletionRequest,
   SecureChatCompletionResponse,
-  SecureClientOptions,
+  InferenceClientOptions,
   VerifiedCompletionReceipt,
-} from '../types/secure-client';
+} from '../types/inference-client';
 import {
   ApiError,
   isApiError,
@@ -193,7 +193,7 @@ export type CreateGatewaySessionTransportParams = {
  * but the Chat request and response remain plaintext while the request stays
  * pinned to the verified model key.
  */
-export abstract class SecureClientBase {
+export abstract class InferenceClientBase {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
@@ -201,7 +201,7 @@ export abstract class SecureClientBase {
   private readonly completions = new Map<string, CompletionRecord>();
   readonly chat: SecureChat;
   protected readonly signingAlgo: SigningAlgo;
-  private readonly options: NodeSecureClientOptions;
+  private readonly options: NodeInferenceClientOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<string, CachedVerification>();
   /** Shares same-model verification work while it is in progress. */
@@ -210,7 +210,7 @@ export abstract class SecureClientBase {
     Promise<SecureSessionState>
   >();
 
-  protected constructor(options: NodeSecureClientOptions) {
+  protected constructor(options: NodeInferenceClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.attestationCacheTimeToLiveMs =
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
@@ -662,10 +662,10 @@ export abstract class SecureClientBase {
 }
 
 /** Browser-compatible verified Chat Completions transport. */
-export class SecureClient extends SecureClientBase {
+export class InferenceClient extends InferenceClientBase {
   private readonly attestationClient: AttestationClient;
 
-  constructor(options: SecureClientOptions) {
+  constructor(options: InferenceClientOptions) {
     super(options);
     this.attestationClient = new AttestationClient(options);
   }

@@ -5,10 +5,10 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
 
 ## Clients and verification
 
-- `SecureClient` verifies Gateway and model evidence before sending a chat
+- `InferenceClient` verifies Gateway and model evidence before sending a chat
   request, encrypts supported fields, and decrypts the response. It provides
   `chat.completions.create()` and a reusable `fetch` for the official OpenAI SDK.
-- `SecureClient.verifyResponse(id)` verifies a completion's signature using
+- `InferenceClient.verifyResponse(id)` verifies a completion's signature using
   its exact request and response bytes and the evidence retained for that request.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
@@ -26,7 +26,7 @@ signature identifies a Gateway signer and does not establish model execution.
 
 ## Defaults
 
-`SecureClient` supports streaming and non-streaming Chat Completions. E2EE is
+`InferenceClient` supports streaming and non-streaming Chat Completions. E2EE is
 enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
 Setting `e2ee: false` disables encryption while retaining deployment verification.
 
@@ -46,5 +46,5 @@ requires Node.js 24 or later for Node usage.
   deployment policies, and response verification.
 - [API reference](./docs/api-reference.md): public functions, parameters,
   defaults, and result fields.
-- [Runnable examples](../examples/README.md): bare verification, SecureClient,
+- [Runnable examples](../examples/README.md): bare verification, InferenceClient,
   and OpenAI SDK integration.

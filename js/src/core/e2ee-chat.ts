@@ -8,7 +8,7 @@ import type {
   SecureChatCompletionResponse,
   SecureChatCompletionStreamChunk,
   SecureChatJsonObject,
-} from '../types/secure-client';
+} from '../types/inference-client';
 import {
   ApiError,
   isApiError,
