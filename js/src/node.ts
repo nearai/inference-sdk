@@ -3,9 +3,9 @@ export {
   AttestationClient,
   createPinnedTlsFetch,
 } from './node/attestation-client';
-export { NodeSecureClient as SecureClient } from './node/secure-client';
+export { NodeInferenceClient as InferenceClient } from './node/inference-client';
 export type { NodeFetchGatewayAttestationParams as FetchGatewayAttestationParams } from './types/cloud-api';
 export type {
   NodeGatewayVerificationOptions as GatewayVerificationOptions,
-  NodeSecureClientOptions as SecureClientOptions,
-} from './types/secure-client';
+  NodeInferenceClientOptions as InferenceClientOptions,
+} from './types/inference-client';

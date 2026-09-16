@@ -1,4 +1,4 @@
-import { SecureClient } from '../src';
+import { InferenceClient } from '../src';
 
 const baseUrl = 'https://gateway.test/v1/';
 
@@ -8,7 +8,7 @@ afterEach(() => {
 
 test('rejects an already aborted request with the caller’s reason', async () => {
   const fetch = jest.spyOn(globalThis, 'fetch');
-  const client = new SecureClient({ apiKey: 'test-key', baseUrl });
+  const client = new InferenceClient({ apiKey: 'test-key', baseUrl });
   const reason = new Error('Chat cancelled');
 
   const response = client.fetch(`${baseUrl}chat/completions`, {
@@ -23,7 +23,7 @@ test('rejects an already aborted request with the caller’s reason', async () =
 
 test('aborts while a streamed request body is stalled before any network request', async () => {
   const fetch = jest.spyOn(globalThis, 'fetch');
-  const client = new SecureClient({ apiKey: 'test-key', baseUrl });
+  const client = new InferenceClient({ apiKey: 'test-key', baseUrl });
   const controller = new AbortController();
   const body = new TransformStream<Uint8Array>();
   const writer = body.writable.getWriter();
@@ -50,7 +50,7 @@ test('aborts while a streamed request body is stalled before any network request
 
 test('still reports malformed request JSON as an API input error', async () => {
   const fetch = jest.spyOn(globalThis, 'fetch');
-  const client = new SecureClient({ apiKey: 'test-key', baseUrl });
+  const client = new InferenceClient({ apiKey: 'test-key', baseUrl });
 
   const response = client.fetch(`${baseUrl}chat/completions`, {
     method: 'POST',

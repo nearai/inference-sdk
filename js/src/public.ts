@@ -3,7 +3,7 @@ export {
   findModelAttestationForSignature,
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
-export { SecureClient } from './core/secure-client';
+export { InferenceClient } from './core/inference-client';
 export type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
@@ -18,11 +18,11 @@ export type {
   ModelVerificationOptions,
   SecureChat,
   SecureChatCompletions,
-  SecureClientOptions,
+  InferenceClientOptions,
   VerifiedCompletionReceipt,
   VerifiedGatewayCompletionReceipt,
   VerifiedModelCompletionReceipt,
-} from './types/secure-client';
+} from './types/inference-client';
 export type { Awaitable } from './types/shared';
 
 export { verifyModelAttestation } from './core/attestation-model';

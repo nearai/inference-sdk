@@ -4,13 +4,13 @@ import ed2curve from 'ed2curve';
 import nacl from 'tweetnacl';
 import OpenAI from 'openai';
 import {
-  SecureClient,
+  InferenceClient,
   type QuoteVerificationResult,
-  type SecureClientOptions,
+  type InferenceClientOptions,
 } from '../src';
 import {
   AttestationClient as NodeAttestationClient,
-  SecureClient as NodeSecureClient,
+  InferenceClient as NodeInferenceClient,
 } from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
@@ -689,7 +689,7 @@ function createTestGateway({
   };
 }
 
-function secureClientOptions(gateway: TestGateway): SecureClientOptions {
+function inferenceClientOptions(gateway: TestGateway): InferenceClientOptions {
   return {
     baseUrl,
     headers: { [aggregatorHeader.name]: aggregatorHeader.value },
@@ -710,12 +710,12 @@ type MockNodeGatewayAttestationParams = {
   readonly peerSpkiFingerprint?: string;
 };
 
-class TestNodeSecureClient extends NodeSecureClient {
+class TestNodeInferenceClient extends NodeInferenceClient {
   readonly pinnedSpkiFingerprints: string[] = [];
   private readonly testPinnedFetch: typeof globalThis.fetch;
 
   constructor(
-    options: SecureClientOptions,
+    options: InferenceClientOptions,
     testPinnedFetch: typeof globalThis.fetch,
   ) {
     super(options);
@@ -815,7 +815,7 @@ function isChatCompletionRequest(input: RequestInfo | URL): boolean {
   return new URL(url).pathname === '/v1/chat/completions';
 }
 
-describe('secure client', () => {
+describe('inference client', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
@@ -835,7 +835,7 @@ describe('secure client', () => {
       }
       return providerFetch(input, init);
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
     const completion = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: 'hello' }],
@@ -848,11 +848,13 @@ describe('secure client', () => {
   test('reuses one OpenAI client for concurrent JSON and streaming responses', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);
-    const secureClient = new SecureClient(secureClientOptions(gateway));
+    const inferenceClient = new InferenceClient(
+      inferenceClientOptions(gateway),
+    );
     const openai = new OpenAI({
       apiKey: directApiKey,
       baseURL: baseUrl,
-      fetch: secureClient.fetch,
+      fetch: inferenceClient.fetch,
     });
     const [completion, stream] = await Promise.all([
       openai.chat.completions.create({
@@ -870,17 +872,17 @@ describe('secure client', () => {
     for await (const chunk of stream) {
       streamId = chunk.id;
       // The ID is registered before the first chunk reaches the caller.
-      streamVerification ??= secureClient.verifyResponse(streamId);
+      streamVerification ??= inferenceClient.verifyResponse(streamId);
     }
     await expect(streamVerification).resolves.toMatchObject({
       completionId: streamId,
     });
-    const verification = secureClient.verifyResponse(completion.id);
-    expect(secureClient.verifyResponse(completion.id)).toBe(verification);
+    const verification = inferenceClient.verifyResponse(completion.id);
+    expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
     await expect(verification).resolves.toMatchObject({
       completionId: completion.id,
     });
-    expect(secureClient.verifyResponse(completion.id)).toBe(verification);
+    expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
   });
 
   test.each([
@@ -891,8 +893,8 @@ describe('secure client', () => {
     async (_label, responseCacheTimeToLiveMs, expectedTtl) => {
       const gateway = createTestGateway();
       mockProviderReceipts(gateway);
-      const client = new SecureClient({
-        ...secureClientOptions(gateway),
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
         responseCacheTimeToLiveMs,
       });
       jest.useFakeTimers({
@@ -932,7 +934,7 @@ describe('secure client', () => {
         }
         return providerFetch(request);
       });
-      const client = new SecureClient(secureClientOptions(gateway));
+      const client = new InferenceClient(inferenceClientOptions(gateway));
       const completion = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: 'hello' }],
@@ -961,14 +963,14 @@ describe('secure client', () => {
       expectedRequestHeader: { name: 'authorization', value: authorization },
     });
     mockProviderReceipts(gateway);
-    const secureClient = new SecureClient({
-      ...secureClientOptions(gateway),
+    const inferenceClient = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       headers: { Authorization: authorization },
     });
     const openai = new OpenAI({
       apiKey: 'unused-placeholder',
       baseURL: baseUrl,
-      fetch: secureClient.fetch,
+      fetch: inferenceClient.fetch,
       maxRetries: 0,
     });
 
@@ -977,7 +979,7 @@ describe('secure client', () => {
       messages: [{ role: 'user', content: 'hello' }],
     });
     await expect(
-      secureClient.verifyResponse(completion.id),
+      inferenceClient.verifyResponse(completion.id),
     ).resolves.toMatchObject({
       completionId: completion.id,
     });
@@ -996,11 +998,13 @@ describe('secure client', () => {
       }
       return providerFetch(input, init);
     });
-    const secureClient = new SecureClient(secureClientOptions(gateway));
+    const inferenceClient = new InferenceClient(
+      inferenceClientOptions(gateway),
+    );
     const openai = new OpenAI({
       apiKey: directApiKey,
       baseURL: baseUrl,
-      fetch: secureClient.fetch,
+      fetch: inferenceClient.fetch,
     });
     const completion = await openai.chat.completions.create({
       model,
@@ -1008,7 +1012,7 @@ describe('secure client', () => {
     });
     expect(attempts).toBe(2);
     await expect(
-      secureClient.verifyResponse(completion.id),
+      inferenceClient.verifyResponse(completion.id),
     ).resolves.toMatchObject({ completionId: completion.id });
   });
 
@@ -1020,7 +1024,7 @@ describe('secure client', () => {
       },
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
+    const client = new InferenceClient({
       apiKey: directApiKey,
       baseUrl,
       gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
@@ -1046,7 +1050,7 @@ describe('secure client', () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const now = jest.spyOn(Date, 'now').mockReturnValue(0);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1079,8 +1083,8 @@ describe('secure client', () => {
   test('verifies every request when the attestation cache time-to-live is zero', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       attestationCacheTimeToLiveMs: 0,
     });
 
@@ -1104,8 +1108,8 @@ describe('secure client', () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const now = jest.spyOn(Date, 'now').mockReturnValue(0);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       attestationCacheTimeToLiveMs: 100,
     });
 
@@ -1130,8 +1134,8 @@ describe('secure client', () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const policyModels: string[] = [];
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       deploymentPolicy: ({ model: policyModel }) => {
         policyModels.push(policyModel);
       },
@@ -1157,8 +1161,8 @@ describe('secure client', () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const deployment = jest.fn();
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       modelVerification: {
         verifiers: { quote: gateway.quoteVerifier, deployment },
       },
@@ -1193,8 +1197,8 @@ describe('secure client', () => {
       calls.push('policy finished');
       expect(gateway.state.completionRequests).toBe(0);
     });
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       modelVerification: {
         verifiers: { quote: gateway.quoteVerifier, deployment },
       },
@@ -1221,7 +1225,7 @@ describe('secure client', () => {
   test('caches verified sessions by exact model', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1252,7 +1256,7 @@ describe('secure client', () => {
   test('keeps concurrent verification separate for different models', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await Promise.all([
       client.fetch(
@@ -1277,7 +1281,7 @@ describe('secure client', () => {
   test('shares concurrent verification for the same model', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await Promise.all([
       client.fetch(
@@ -1323,7 +1327,7 @@ describe('secure client', () => {
       }
       return gateway.fetch(request);
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
     const controller = new AbortController();
 
     const aborted = client.fetch(`${baseUrl}chat/completions`, {
@@ -1355,7 +1359,7 @@ describe('secure client', () => {
   test('requires a model before it fetches attestation evidence', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await expect(
       client.fetch(`${baseUrl}chat/completions`, {
@@ -1378,7 +1382,7 @@ describe('secure client', () => {
   test('blocks an E2EE request when model evidence has no signing public key', async () => {
     const gateway = createTestGateway({ includeModelPublicKey: false });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await expect(
       client.fetch(
@@ -1398,7 +1402,7 @@ describe('secure client', () => {
   test('fetch verifies, encrypts, and decrypts a Chat Completions request', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1417,7 +1421,7 @@ describe('secure client', () => {
   test('encrypts assistant context fields when present', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1449,7 +1453,7 @@ describe('secure client', () => {
   test('replaces a caller content length after encrypting the request body', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
     const request = new Request(`${baseUrl}chat/completions`, {
       method: 'POST',
       headers: {
@@ -1472,7 +1476,7 @@ describe('secure client', () => {
   test('selects a verified model key when multiple candidates are returned', async () => {
     const gateway = createTestGateway({ includeSecondModelAttestation: true });
     mockProviderReceipts(gateway);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1510,8 +1514,8 @@ describe('secure client', () => {
         };
       });
     mockProviderReceipts(gateway);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       e2ee: false,
     });
     const completion = await client.chat.completions.create({
@@ -1532,7 +1536,7 @@ describe('secure client', () => {
   test('decrypts a Chat Completions stream split across transport chunks', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const stream = await client.chat.completions.create({
       model,
@@ -1550,7 +1554,7 @@ describe('secure client', () => {
   test('returns a non-streaming completion with verifiable entity bodies', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const completion = await client.chat.completions.create({
       model,
@@ -1569,7 +1573,7 @@ describe('secure client', () => {
       streamRecordSeparators: ['\n\r\n', '\r\n\n', '\n\r', '\r\n\r'],
     });
     mockProviderReceipts(gateway);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const stream = await client.chat.completions.create({
       model,
@@ -1598,7 +1602,7 @@ describe('secure client', () => {
       },
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
+    const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer browser-token' },
       gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
@@ -1617,7 +1621,7 @@ describe('secure client', () => {
   test('accepts nullable and empty Chat response fields under E2EE', async () => {
     const gateway = createTestGateway({ includeNullableResponseFields: true });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1683,7 +1687,7 @@ describe('secure client', () => {
         ],
       });
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1773,7 +1777,7 @@ describe('secure client', () => {
         ],
       });
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1802,7 +1806,7 @@ describe('secure client', () => {
   test('uses all-fields E2EE for standard function tools', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1879,7 +1883,7 @@ describe('secure client', () => {
         ],
       });
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1913,7 +1917,7 @@ describe('secure client', () => {
       encryptedRefusal: 'I cannot provide that information.',
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -1980,7 +1984,7 @@ describe('secure client', () => {
   test('decrypts standard function tool calls in a Chat Completions stream', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const stream = await client.chat.completions.create({
       model,
@@ -2020,7 +2024,7 @@ describe('secure client', () => {
   test('supports an encrypted web_context_search stream', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -2048,7 +2052,7 @@ describe('secure client', () => {
   test('leaves web_context_search request acceptance to the Gateway', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -2083,7 +2087,7 @@ describe('secure client', () => {
         ],
       });
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await expect(
       client.fetch(
@@ -2110,7 +2114,7 @@ describe('secure client', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
@@ -2126,8 +2130,8 @@ describe('secure client', () => {
   test('keeps verification and model routing on when E2EE is disabled', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       e2ee: false,
     });
     const richContent = [{ type: 'text', text: 'plain Chat payload' }];
@@ -2174,8 +2178,8 @@ describe('secure client', () => {
         if (rejectedHook === 'policy')
           throw new Error('deployment is not approved');
       });
-      const client = new SecureClient({
-        ...secureClientOptions(gateway),
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
         modelVerification: {
           verifiers: { quote: gateway.quoteVerifier, deployment },
         },
@@ -2201,8 +2205,8 @@ describe('secure client', () => {
   test('does not send a completion when model verification fails', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
       modelVerification: {
         verifiers: {
           quote: () => {
@@ -2226,7 +2230,7 @@ describe('secure client', () => {
   test('encrypts rich content and forwards other Chat fields to the Gateway', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
     const richContent = [
       { type: 'text', text: 'describe this image' },
       {
@@ -2279,7 +2283,7 @@ describe('secure client', () => {
   test('rejects non-Chat paths before it fetches attestation evidence', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient(secureClientOptions(gateway));
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await expect(
       client.fetch(
@@ -2293,15 +2297,15 @@ describe('secure client', () => {
     expect(gateway.state.modelAttestationRequests).toBe(0);
   });
 
-  describe('Node secure client', () => {
+  describe('Node inference client', () => {
     test('binds Gateway evidence to the TLS peer by default', async () => {
       const gateway = createTestGateway();
       jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
       const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
         gateway,
       });
-      const client = new TestNodeSecureClient(
-        secureClientOptions(gateway),
+      const client = new TestNodeInferenceClient(
+        inferenceClientOptions(gateway),
         gateway.fetch,
       );
 
@@ -2332,8 +2336,8 @@ describe('secure client', () => {
         throw new Error('Unexpected unpinned Gateway request');
       });
       mockNodeGatewayAttestation({ gateway });
-      const client = new TestNodeSecureClient(
-        secureClientOptions(gateway),
+      const client = new TestNodeInferenceClient(
+        inferenceClientOptions(gateway),
         pinnedFetch,
       );
 
@@ -2358,8 +2362,8 @@ describe('secure client', () => {
       const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
         gateway,
       });
-      const client = new NodeSecureClient({
-        ...secureClientOptions(gateway),
+      const client = new NodeInferenceClient({
+        ...inferenceClientOptions(gateway),
         gatewayVerification: {
           includeSpkiFingerprint: false,
           verifiers: { quote: gateway.quoteVerifier },
@@ -2385,7 +2389,7 @@ describe('secure client', () => {
         gateway,
         peerSpkiFingerprint: '44'.repeat(32),
       });
-      const client = new NodeSecureClient(secureClientOptions(gateway));
+      const client = new NodeInferenceClient(inferenceClientOptions(gateway));
 
       await expect(
         client.fetch(
