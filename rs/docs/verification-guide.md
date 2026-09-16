@@ -218,11 +218,22 @@ async fn verify_image(
 
 The verifier accepts a bundle only after its Sigstore signature, certificate,
 transparency-log evidence, artifact digest and signed SLSA source identity pass.
-The SLSA source commit must match the certificate's authenticated source digest,
-even without `policy.commit`; that optional pin must then match the same commit.
+The SLSA source repository, ref and commit must match the certificate's
+authenticated source claims, even without optional ref/commit pins.
+`policy.commit` must then match that same source commit.
 It tries every supplied bundle until one satisfies the policy. Fetching uses
 GitHub's public API; supply an optional GitHub token for authenticated rate
 limits. It is not a Gateway API key.
+
+For a cross-repository reusable signing workflow, set
+`policy.signer_identity` to its exact certificate SAN URI, for example
+`https://github.com/example/build-workflows/.github/workflows/attest.yml@refs/tags/v1`.
+Keep `repository`, `workflow`, `git_ref` and `commit` pointed at the caller/source
+build, not the reusable workflow. The signer URI may end in a branch/tag ref or
+commit SHA and is matched exactly. Without this override, the signer must be
+the configured source workflow at the authenticated source ref. The verified
+result's `git_ref` and `commit` describe the source; `certificate_identity`
+describes the signer. Fetching still uses the source repository.
 
 Verification uses `sigstore-verify`'s embedded Sigstore public-good trust-root
 snapshot, without a runtime trust-root download. Keep the dependency updated

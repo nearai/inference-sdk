@@ -19,9 +19,16 @@ use x509_cert::{
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
+const SOURCE_REPOSITORY_URI: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.12");
 const SOURCE_REPOSITORY_DIGEST: ObjectIdentifier =
     ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.13");
+const SOURCE_REPOSITORY_REF: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.14");
 const GITHUB_WORKFLOW_SHA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.3");
+const GITHUB_WORKFLOW_REPOSITORY: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.5");
+const GITHUB_WORKFLOW_REF: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.6");
 
 /// Fetch inline GitHub attestation bundles for a `sha256:…` image digest.
 ///
@@ -243,30 +250,47 @@ fn verify_bundle(
         .map_err(|_| Reason::InvalidBundle)?;
     let identity = verified.identity.ok_or(Reason::UntrustedIdentity)?;
     let issuer = verified.issuer.ok_or(Reason::UntrustedIdentity)?;
-    let identity_prefix = format!(
-        "https://github.com/{}/{}@",
-        policy.repository, policy.workflow
-    );
-    let git_ref = identity
-        .strip_prefix(&identity_prefix)
-        .filter(|value| value.starts_with("refs/"))
-        .ok_or(Reason::UntrustedIdentity)?;
-    if issuer != policy.issuer
-        || policy
-            .git_ref
-            .as_deref()
-            .is_some_and(|expected| expected != git_ref)
-    {
+    if issuer != policy.issuer {
         return Err(Reason::UntrustedIdentity);
     }
-    let certificate_commit = certificate_source_commit(&bundle.verification_material.content)?;
-    let (commit, predicate_type) =
-        source_commit(statement.provenance, policy, git_ref, &certificate_commit)?;
+    let default_signer_ref = if let Some(expected) = &policy.signer_identity {
+        if identity != *expected {
+            return Err(Reason::UntrustedIdentity);
+        }
+        None
+    } else {
+        let identity_prefix = format!(
+            "https://github.com/{}/{}@",
+            policy.repository, policy.workflow
+        );
+        let signer_ref = identity
+            .strip_prefix(&identity_prefix)
+            .filter(|value| value.starts_with("refs/"))
+            .ok_or(Reason::UntrustedIdentity)?;
+        if policy
+            .git_ref
+            .as_deref()
+            .is_some_and(|expected| expected != signer_ref)
+        {
+            return Err(Reason::UntrustedIdentity);
+        }
+        Some(signer_ref)
+    };
+    let source = certificate_source(&bundle.verification_material.content, policy)?;
+    if default_signer_ref.is_some_and(|signer_ref| signer_ref != source.git_ref) {
+        return Err(Reason::SourceMismatch);
+    }
+    let (commit, predicate_type) = source_commit(
+        statement.provenance,
+        policy,
+        &source.git_ref,
+        &source.commit,
+    )?;
     Ok(VerifiedImageProvenance {
         digest: format!("sha256:{hash}"),
         repository: policy.repository.clone(),
         workflow: policy.workflow.clone(),
-        git_ref: git_ref.to_owned(),
+        git_ref: source.git_ref,
         commit,
         certificate_identity: identity,
         issuer,
@@ -274,7 +298,15 @@ fn verify_bundle(
     })
 }
 
-fn certificate_source_commit(material: &VerificationMaterialContent) -> Result<String, Reason> {
+struct CertificateSource {
+    git_ref: String,
+    commit: String,
+}
+
+fn certificate_source(
+    material: &VerificationMaterialContent,
+    policy: &ImageProvenancePolicy,
+) -> Result<CertificateSource, Reason> {
     let der = match material {
         VerificationMaterialContent::Certificate(certificate) => &certificate.raw_bytes,
         VerificationMaterialContent::X509CertificateChain { certificates } => {
@@ -286,35 +318,76 @@ fn certificate_source_commit(material: &VerificationMaterialContent) -> Result<S
         VerificationMaterialContent::PublicKey { .. } => return Err(Reason::SourceMismatch),
     };
     let certificate = Certificate::from_der(der.as_bytes()).map_err(|_| Reason::SourceMismatch)?;
-    source_commit_extension(
+    source_extensions(
         certificate
             .tbs_certificate
             .extensions
             .as_deref()
             .unwrap_or_default(),
+        policy,
     )
+}
+
+fn source_extensions(
+    extensions: &[Extension],
+    policy: &ImageProvenancePolicy,
+) -> Result<CertificateSource, Reason> {
+    let repository = source_extension(
+        extensions,
+        SOURCE_REPOSITORY_URI,
+        GITHUB_WORKFLOW_REPOSITORY,
+        "https://github.com/",
+    )?;
+    let git_ref = source_extension(extensions, SOURCE_REPOSITORY_REF, GITHUB_WORKFLOW_REF, "")?;
+    if repository != format!("https://github.com/{}", policy.repository)
+        || !git_ref.starts_with("refs/")
+        || policy
+            .git_ref
+            .as_deref()
+            .is_some_and(|expected| expected != git_ref)
+    {
+        return Err(Reason::SourceMismatch);
+    }
+    Ok(CertificateSource {
+        git_ref,
+        commit: source_commit_extension(extensions)?,
+    })
+}
+
+fn source_extension(
+    extensions: &[Extension],
+    modern: ObjectIdentifier,
+    legacy: ObjectIdentifier,
+    legacy_prefix: &str,
+) -> Result<String, Reason> {
+    // A present modern claim is authoritative; malformed data must not fall back.
+    if let Some(extension) = extensions
+        .iter()
+        .find(|extension| extension.extn_id == modern)
+    {
+        Ok(Utf8StringRef::from_der(extension.extn_value.as_bytes())
+            .map_err(|_| Reason::SourceMismatch)?
+            .as_str()
+            .to_owned())
+    } else {
+        let extension = extensions
+            .iter()
+            .find(|extension| extension.extn_id == legacy)
+            .ok_or(Reason::SourceMismatch)?;
+        let value = std::str::from_utf8(extension.extn_value.as_bytes())
+            .map_err(|_| Reason::SourceMismatch)?;
+        Ok(format!("{legacy_prefix}{value}"))
+    }
 }
 
 fn source_commit_extension(extensions: &[Extension]) -> Result<String, Reason> {
     // The source digest is independent of a reusable workflow's signer digest.
-    // Only certificates without the modern extension may use the legacy SHA.
-    let commit = if let Some(extension) = extensions
-        .iter()
-        .find(|extension| extension.extn_id == SOURCE_REPOSITORY_DIGEST)
-    {
-        Utf8StringRef::from_der(extension.extn_value.as_bytes())
-            .map_err(|_| Reason::SourceMismatch)?
-            .as_str()
-            .to_owned()
-    } else {
-        let extension = extensions
-            .iter()
-            .find(|extension| extension.extn_id == GITHUB_WORKFLOW_SHA)
-            .ok_or(Reason::SourceMismatch)?;
-        std::str::from_utf8(extension.extn_value.as_bytes())
-            .map_err(|_| Reason::SourceMismatch)?
-            .to_owned()
-    };
+    let commit = source_extension(
+        extensions,
+        SOURCE_REPOSITORY_DIGEST,
+        GITHUB_WORKFLOW_SHA,
+        "",
+    )?;
     if !is_commit(&commit) {
         return Err(Reason::SourceMismatch);
     }
@@ -562,6 +635,88 @@ mod tests {
             extn_id: oid,
             critical: false,
             extn_value: OctetString::new(value).unwrap(),
+        }
+    }
+
+    fn text_extension(oid: ObjectIdentifier, value: &str) -> Extension {
+        certificate_extension(oid, &Utf8StringRef::new(value).unwrap().to_der().unwrap())
+    }
+
+    #[test]
+    fn extracts_source_repository_and_ref_with_independent_legacy_fallback() {
+        let legacy_repository =
+            certificate_extension(GITHUB_WORKFLOW_REPOSITORY, b"nearai/compose-manager");
+        let legacy_ref = certificate_extension(GITHUB_WORKFLOW_REF, b"refs/heads/master");
+        let legacy_commit = certificate_extension(GITHUB_WORKFLOW_SHA, COMMIT.as_bytes());
+        for extensions in [
+            vec![
+                text_extension(
+                    SOURCE_REPOSITORY_URI,
+                    "https://github.com/nearai/compose-manager",
+                ),
+                text_extension(SOURCE_REPOSITORY_REF, "refs/heads/master"),
+                text_extension(SOURCE_REPOSITORY_DIGEST, COMMIT),
+                certificate_extension(GITHUB_WORKFLOW_REPOSITORY, b"ignored/legacy"),
+                certificate_extension(GITHUB_WORKFLOW_REF, b"refs/heads/ignored"),
+            ],
+            vec![
+                legacy_repository.clone(),
+                legacy_ref.clone(),
+                legacy_commit.clone(),
+            ],
+            vec![
+                text_extension(
+                    SOURCE_REPOSITORY_URI,
+                    "https://github.com/nearai/compose-manager",
+                ),
+                legacy_ref,
+                legacy_commit,
+            ],
+        ] {
+            let source = source_extensions(&extensions, &policy()).unwrap();
+            assert_eq!(source.git_ref, "refs/heads/master");
+            assert_eq!(source.commit, COMMIT);
+        }
+    }
+
+    #[test]
+    fn rejects_missing_or_malformed_source_identity_without_legacy_downgrade() {
+        let legacy = vec![
+            certificate_extension(GITHUB_WORKFLOW_REPOSITORY, b"nearai/compose-manager"),
+            certificate_extension(GITHUB_WORKFLOW_REF, b"refs/heads/master"),
+            certificate_extension(GITHUB_WORKFLOW_SHA, COMMIT.as_bytes()),
+        ];
+        for modern in [
+            certificate_extension(
+                SOURCE_REPOSITORY_URI,
+                b"https://github.com/nearai/compose-manager",
+            ),
+            text_extension(
+                SOURCE_REPOSITORY_URI,
+                "https://github.com/another/repository",
+            ),
+            text_extension(SOURCE_REPOSITORY_URI, ""),
+            certificate_extension(SOURCE_REPOSITORY_REF, b"refs/heads/master"),
+            text_extension(SOURCE_REPOSITORY_REF, "master"),
+            text_extension(SOURCE_REPOSITORY_REF, ""),
+        ] {
+            let mut extensions = legacy.clone();
+            extensions.push(modern);
+            assert!(matches!(
+                source_extensions(&extensions, &policy()),
+                Err(Reason::SourceMismatch)
+            ));
+        }
+        for missing in [GITHUB_WORKFLOW_REPOSITORY, GITHUB_WORKFLOW_REF] {
+            let extensions = legacy
+                .iter()
+                .filter(|extension| extension.extn_id != missing)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(matches!(
+                source_extensions(&extensions, &policy()),
+                Err(Reason::SourceMismatch)
+            ));
         }
     }
 

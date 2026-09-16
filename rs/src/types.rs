@@ -9,14 +9,17 @@ use serde_json::Value;
 pub struct ImageProvenancePolicy {
     /// GitHub source repository in `owner/repo` form.
     pub repository: String,
-    /// Workflow path, for example `.github/workflows/build.yml`.
+    /// Caller/source workflow path, for example `.github/workflows/build.yml`.
     pub workflow: String,
-    /// Optional exact Git ref, such as `refs/heads/main`.
+    /// Optional exact source Git ref, such as `refs/heads/main`.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
     /// Optional full source commit SHA, matched against both the SLSA statement
     /// and the signing certificate's authenticated source digest.
     pub commit: Option<String>,
+    /// Optional exact certificate SAN URI for a reusable signing workflow,
+    /// including its ref, tag, or commit SHA. Source policy remains independent.
+    pub signer_identity: Option<String>,
     /// Expected certificate OIDC issuer.
     #[serde(default = "default_image_provenance_issuer")]
     pub issuer: String,
@@ -29,6 +32,7 @@ impl ImageProvenancePolicy {
             workflow,
             git_ref: None,
             commit: None,
+            signer_identity: None,
             issuer: default_image_provenance_issuer(),
         }
     }
@@ -44,10 +48,12 @@ pub struct VerifiedImageProvenance {
     pub digest: String,
     pub repository: String,
     pub workflow: String,
+    /// Authenticated source ref, not the reusable signing workflow's ref.
     #[serde(rename = "ref")]
     pub git_ref: String,
     /// Source commit matched between the SLSA statement and signing certificate.
     pub commit: String,
+    /// Authenticated signing workflow SAN URI; it may differ from the source.
     pub certificate_identity: String,
     pub issuer: String,
     pub predicate_type: String,
