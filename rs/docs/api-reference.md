@@ -1,7 +1,7 @@
 # Rust SDK API reference
 
 This page lists the public Rust request and verification APIs exported by
-`verifiable_ai_sdk`. For workflows and complete examples, see the
+`nearai_inference_sdk`. For workflows and complete examples, see the
 [verification guide](./verification-guide.md).
 
 ## Verification lifecycle

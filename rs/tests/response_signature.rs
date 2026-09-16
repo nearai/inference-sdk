@@ -1,12 +1,12 @@
 mod support;
 
+use nearai_inference_sdk::{
+    verify_gateway_response, verify_model_response, CompletionSignature, CompletionSignatureKind,
+    SigningAlgo, SigningIdentity, VerificationError,
+};
 use sha3::Digest as _;
 use support::{
     sha256_hex, signed_signature, verified_gateway_attestation, verified_model_attestation,
-};
-use verifiable_ai_sdk::{
-    verify_gateway_response, verify_model_response, CompletionSignature, CompletionSignatureKind,
-    SigningAlgo, SigningIdentity, VerificationError,
 };
 
 #[test]

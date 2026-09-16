@@ -13,16 +13,16 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sigstore.models import TrustedRoot
 from sigstore.verify import Verifier
 
-import verifiable_ai_sdk.core.provenance as provenance
-from verifiable_ai_sdk import (
+import nearai_inference_sdk.core.provenance as provenance
+from nearai_inference_sdk import (
     ApiError,
     ImageProvenancePolicy,
     VerificationError,
     fetch_image_provenance,
     verify_image_provenance,
 )
-from verifiable_ai_sdk.schemas import SlsaStatementSchema
-from verifiable_ai_sdk.utils.fetch import FetchResponse
+from nearai_inference_sdk.schemas import SlsaStatementSchema
+from nearai_inference_sdk.utils.fetch import FetchResponse
 
 
 FIXTURE = (

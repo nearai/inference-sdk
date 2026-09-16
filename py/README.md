@@ -1,8 +1,18 @@
-# NEAR AI verification SDK for Python
+# nearai-inference-sdk (Python)
 
 Verify NEAR AI Cloud deployment attestations and completion signatures. This
 asynchronous SDK retrieves and verifies evidence; your application sends the
 completion request and retains its exact request and response bytes.
+
+## Installation
+
+```sh
+pip install nearai-inference-sdk
+```
+
+```python
+from nearai_inference_sdk import AttestationClient
+```
 
 ## Recommended lifecycle
 

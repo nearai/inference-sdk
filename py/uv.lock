@@ -1669,7 +1669,7 @@ wheels = [
 ]
 
 [[package]]
-name = "verifiable-ai-sdk"
+name = "nearai-inference-sdk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

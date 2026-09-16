@@ -80,6 +80,8 @@ GLM runtime-image or model-weight provenance.
 
 ## Python
 
+Uses `nearai-inference-sdk`, imported as `nearai_inference_sdk`.
+
 ```sh
 cd examples/example-py
 uv run python main.py
@@ -88,6 +90,8 @@ uv run python main.py
 Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 
 ## Rust
+
+Uses the `nearai-inference-sdk` crate, imported as `nearai_inference_sdk`.
 
 ```sh
 cd examples/example-rs

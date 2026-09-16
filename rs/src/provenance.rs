@@ -64,7 +64,7 @@ async fn fetch_image_provenance_pages(
             .get(url.clone())
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "verifiable-ai-sdk");
+            .header("User-Agent", "nearai-inference-sdk");
         if let Some(token) = github_token {
             request = request.bearer_auth(token);
         }

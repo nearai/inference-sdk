@@ -1,8 +1,8 @@
 # Publishing the SDKs
 
 The npm package is named `@nearai/inference-sdk`. The PyPI and crates.io
-packages are named `verifiable-ai-sdk`. The prepared release version is `0.1.0`
-in all three manifests. Python and Rust imports use `verifiable_ai_sdk`.
+packages are named `nearai-inference-sdk`. The prepared release version is `0.1.0`
+in all three manifests. Python and Rust imports use `nearai_inference_sdk`.
 
 ## Prepare and validate
 
@@ -13,7 +13,7 @@ toolchain. Run these commands from the repository root:
 mkdir -p dist
 (cd js && pnpm install --frozen-lockfile && pnpm check && pnpm pack --pack-destination ../dist)
 (cd py && uv sync --locked && make lint && uv build --no-sources)
-(cd py && uv run --with twine twine check dist/verifiable_ai_sdk-0.1.0*)
+(cd py && uv run --with twine twine check dist/nearai_inference_sdk-0.1.0*)
 (cd rs && make check && cargo publish --dry-run --locked --registry crates-io)
 ```
 
@@ -26,8 +26,8 @@ Release artifacts:
 | Registry | Artifact |
 | --- | --- |
 | npm | `dist/nearai-inference-sdk-0.1.0.tgz` |
-| PyPI | `py/dist/verifiable_ai_sdk-0.1.0-py3-none-any.whl` and `py/dist/verifiable_ai_sdk-0.1.0.tar.gz` |
-| crates.io | `rs/target/package/verifiable-ai-sdk-0.1.0.crate` |
+| PyPI | `py/dist/nearai_inference_sdk-0.1.0-py3-none-any.whl` and `py/dist/nearai_inference_sdk-0.1.0.tar.gz` |
+| crates.io | `rs/target/package/nearai-inference-sdk-0.1.0.crate` |
 
 Inspect archive contents and test installation from the npm tarball and Python
 wheel in temporary projects outside the checkout. Check that the npm default
@@ -53,7 +53,7 @@ From the repository root, publish the reviewed artifacts:
 
 ```sh
 npm publish ./dist/nearai-inference-sdk-0.1.0.tgz --access public --registry https://registry.npmjs.org/
-uv publish --publish-url https://upload.pypi.org/legacy/ py/dist/verifiable_ai_sdk-0.1.0-py3-none-any.whl py/dist/verifiable_ai_sdk-0.1.0.tar.gz
+uv publish --publish-url https://upload.pypi.org/legacy/ py/dist/nearai_inference_sdk-0.1.0-py3-none-any.whl py/dist/nearai_inference_sdk-0.1.0.tar.gz
 (cd rs && cargo publish --locked --registry crates-io)
 ```
 

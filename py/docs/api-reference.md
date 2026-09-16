@@ -1,6 +1,6 @@
 # Python SDK API reference
 
-This page describes the public APIs exported by `verifiable_ai_sdk`. For
+This page describes the public APIs exported by `nearai_inference_sdk`. For
 workflows and complete examples, see the [verification guide](./verification-guide.md).
 
 ## Recommended lifecycle

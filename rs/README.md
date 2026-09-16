@@ -1,6 +1,6 @@
-# verifiable-ai-sdk (Rust)
+# nearai-inference-sdk (Rust)
 
-`verifiable-ai-sdk` verifies three distinct kinds of NEAR AI Cloud evidence:
+`nearai-inference-sdk` verifies three distinct kinds of NEAR AI Cloud evidence:
 
 - a Gateway deployment attestation, including its TLS endpoint binding when
   available;
@@ -51,7 +51,7 @@ the evidence currently proves.
 
 ```toml
 [dependencies]
-verifiable-ai-sdk = "0.1"
+nearai-inference-sdk = "0.1"
 ```
 
 Retain the exact bytes sent to and received from the completion endpoint. The

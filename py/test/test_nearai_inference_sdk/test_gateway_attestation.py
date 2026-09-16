@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationPolicy,
     AttestationVerifiers,
     GatewayClientBinding,

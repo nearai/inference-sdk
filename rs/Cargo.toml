@@ -1,10 +1,10 @@
 [package]
-name = "verifiable-ai-sdk"
+name = "nearai-inference-sdk"
 version = "0.1.0"
 edition = "2021"
 description = "Verification SDK for NEAR AI Cloud attestations"
 license = "MIT"
-repository = "https://github.com/nearai/verifiable-ai-sdk"
+repository = "https://github.com/nearai/inference-sdk"
 readme = "README.md"
 # This repository-only test uses a signed fixture shared by all three SDKs
 # outside the crate root. Do not publish a test whose fixture is unavailable.

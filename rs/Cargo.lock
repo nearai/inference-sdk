@@ -1556,6 +1556,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "nearai-inference-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "dcap-qvl",
+ "ed25519-dalek",
+ "hex",
+ "jsonwebtoken",
+ "k256",
+ "rand 0.8.5",
+ "reqwest 0.12.26",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_yaml_ng",
+ "sha2",
+ "sha3",
+ "sigstore-verify",
+ "thiserror",
+ "tokio",
+ "wiremock",
+ "x509-cert",
+]
+
+[[package]]
 name = "num-bigint-dig"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3102,32 +3128,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "verifiable-ai-sdk"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "dcap-qvl",
- "ed25519-dalek",
- "hex",
- "jsonwebtoken",
- "k256",
- "rand 0.8.5",
- "reqwest 0.12.26",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "serde_yaml_ng",
- "sha2",
- "sha3",
- "sigstore-verify",
- "thiserror",
- "tokio",
- "wiremock",
- "x509-cert",
-]
 
 [[package]]
 name = "version_check"

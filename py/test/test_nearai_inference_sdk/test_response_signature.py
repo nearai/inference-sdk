@@ -7,7 +7,7 @@ import pytest
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationVerifiers,
     CompletionSignature,
     GatewayClientBinding,

@@ -1,13 +1,13 @@
 use std::{env, error::Error, io};
 
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
-use serde_json::{json, Value};
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
     verify_model_attestation, verify_model_response, AttestationClient, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, SigningAlgo,
-    VerifiedGatewayAttestation, VerifiedModelAttestation, NO_ALIASING_HEADER,
+    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
+    VerifiedModelAttestation, NO_ALIASING_HEADER,
 };
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
+use serde_json::{json, Value};
 
 const API_URL: &str = "https://cloud-api.near.ai/v1/chat/completions";
 const MODEL: &str = "z-ai/glm-5.3-flash";
@@ -152,8 +152,7 @@ async fn verify_completion_receipt(
     // which verified signer covers these exact response bytes.
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let verified_model =
-                find_model_attestation_for_signature(verified_models, &signature)?;
+            let verified_model = find_model_attestation_for_signature(verified_models, &signature)?;
             verify_model_response(
                 &completion.request_body,
                 &completion.response_body,
