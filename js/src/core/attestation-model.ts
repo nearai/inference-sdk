@@ -55,7 +55,8 @@ export async function verifyModelAttestation({
     payload: attestation.nvidiaPayload,
     nonce,
     requirement: gpuEvidenceRequirement,
-    verifier: verifiers?.nvidia ?? nvidiaNrasVerifier,
+    verifier:
+      verifiers?.nvidia ?? ((payload) => nvidiaNrasVerifier(payload, nonce)),
   });
 
   const signingPublicKey = verifySigningPublicKey({

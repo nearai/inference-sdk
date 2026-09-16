@@ -52,6 +52,7 @@
     "buffer": "^6.0.3",
     "ed2curve": "0.3.0",
     "ethers": "^6.17.0",
+    "jose": "6.2.12",
     "openai": "7.10.0",
     "tweetnacl": "^1.0.3",
     "valibot": "1.4.2"

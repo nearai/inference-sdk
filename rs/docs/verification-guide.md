@@ -182,9 +182,11 @@ mandatory.
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
 quote, deployment, and—for models—NVIDIA evidence verifiers. A supplied
 verifier must return `Ok` only for evidence it accepts. The built-in Intel
-verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier sends
-supplied GPU evidence to NRAS and accepts its documented boolean overall
-result; it does not locally validate the returned JWT/EAT signature.
+verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier submits
+evidence to NRAS, then verifies the overall JWT's ES384 signature against NVIDIA's
+JWKS, issuer, expiration, not-before and issued-at times, and signed `eat_nonce`.
+The overall verdict must be `true`; detached per-device claims are not consumed.
+See [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
 
 ## Handle errors
 

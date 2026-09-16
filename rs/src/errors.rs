@@ -197,6 +197,16 @@ pub enum VerificationError {
     #[error("NVIDIA NRAS response is invalid: {reason}")]
     NrasResponseInvalid { reason: &'static str },
 
+    #[error("NVIDIA JWKS request failed: {reason}")]
+    NvidiaJwksRequestFailed {
+        reason: &'static str,
+        status: Option<u16>,
+        retryable: bool,
+    },
+
+    #[error("NVIDIA JWT verification failed: {reason}")]
+    NvidiaJwtVerificationFailed { reason: &'static str },
+
     #[error("NVIDIA attestation was rejected ({origin})")]
     GpuAttestationRejected { origin: &'static str },
 
@@ -249,6 +259,8 @@ impl VerificationError {
             Self::GpuPayloadInvalid { .. } => "gpu.payload_invalid",
             Self::NrasRequestFailed { .. } => "gpu.nras_request_failed",
             Self::NrasResponseInvalid { .. } => "gpu.nras_response_invalid",
+            Self::NvidiaJwksRequestFailed { .. } => "gpu.jwks_request_failed",
+            Self::NvidiaJwtVerificationFailed { .. } => "gpu.jwt_verification_failed",
             Self::GpuAttestationRejected { .. } => "gpu.attestation_rejected",
             Self::DeploymentProvenanceRejected => "provenance.verification_failed",
             Self::SignatureKindMismatch { .. } => "signature.kind_mismatch",
@@ -264,6 +276,7 @@ impl VerificationError {
         match self {
             Self::QuoteCollateralUnavailable => true,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
+            Self::NvidiaJwksRequestFailed { retryable, .. } => *retryable,
             _ => false,
         }
     }
