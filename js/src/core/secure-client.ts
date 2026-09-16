@@ -58,7 +58,7 @@ import {
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
 // placeholder before the secure transport receives the request.
-const OPENAI_WRAPPER_API_KEY = 'verifiable-ai-sdk-internal';
+const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
 type SecureSessionState = {

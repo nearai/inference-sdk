@@ -1,8 +1,8 @@
 # Publishing the SDKs
 
-The npm, PyPI, and crates.io packages are named `verifiable-ai-sdk`. The
-prepared release version is `0.1.0` in all three manifests. Python imports use
-`verifiable_ai_sdk`; Rust imports also use `verifiable_ai_sdk`.
+The npm package is named `@nearai/inference-sdk`. The PyPI and crates.io
+packages are named `verifiable-ai-sdk`. The prepared release version is `0.1.0`
+in all three manifests. Python and Rust imports use `verifiable_ai_sdk`.
 
 ## Prepare and validate
 
@@ -25,7 +25,7 @@ Release artifacts:
 
 | Registry | Artifact |
 | --- | --- |
-| npm | `dist/verifiable-ai-sdk-0.1.0.tgz` |
+| npm | `dist/nearai-inference-sdk-0.1.0.tgz` |
 | PyPI | `py/dist/verifiable_ai_sdk-0.1.0-py3-none-any.whl` and `py/dist/verifiable_ai_sdk-0.1.0.tar.gz` |
 | crates.io | `rs/target/package/verifiable-ai-sdk-0.1.0.crate` |
 
@@ -52,7 +52,7 @@ preparation commands above.
 From the repository root, publish the reviewed artifacts:
 
 ```sh
-npm publish ./dist/verifiable-ai-sdk-0.1.0.tgz --access public --registry https://registry.npmjs.org/
+npm publish ./dist/nearai-inference-sdk-0.1.0.tgz --access public --registry https://registry.npmjs.org/
 uv publish --publish-url https://upload.pypi.org/legacy/ py/dist/verifiable_ai_sdk-0.1.0-py3-none-any.whl py/dist/verifiable_ai_sdk-0.1.0.tar.gz
 (cd rs && cargo publish --locked --registry crates-io)
 ```

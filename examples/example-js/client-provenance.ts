@@ -2,7 +2,7 @@ import {
   SecureClient,
   verifyDeploymentImageProvenance,
   type ImageProvenancePolicy,
-} from 'verifiable-ai-sdk/node';
+} from '@nearai/inference-sdk/node';
 
 const BASE_URL = 'https://cloud-api.near.ai/v1/';
 const MODEL = 'z-ai/glm-5.3-flash';

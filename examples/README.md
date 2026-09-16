@@ -1,4 +1,4 @@
-# Verifiable AI SDK examples
+# NEAR AI Inference SDK examples
 
 These projects verify Gateway and model attestations before sending Chat
 Completions, then verify the response signature. All examples use
@@ -9,6 +9,8 @@ export NEARAI_API_KEY=sk-your-api-key
 ```
 
 ## JavaScript (Node.js)
+
+The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
 
 The three basic entry points include non-streaming and streaming calls:
 

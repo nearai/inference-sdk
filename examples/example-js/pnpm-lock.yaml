@@ -8,12 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@nearai/inference-sdk':
+        specifier: link:../../js
+        version: link:../../js
       openai:
         specifier: 7.10.0
         version: 7.10.0
-      verifiable-ai-sdk:
-        specifier: link:../../js
-        version: link:../../js
     devDependencies:
       '@types/node':
         specifier: 24.13.3

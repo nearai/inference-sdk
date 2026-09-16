@@ -1,16 +1,16 @@
 {
-  "name": "verifiable-ai-sdk",
+  "name": "@nearai/inference-sdk",
   "version": "0.1.0",
   "description": "Verify NEAR AI Cloud attestation evidence in TypeScript",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nearai/verifiable-ai-sdk.git",
+    "url": "git+https://github.com/nearai/inference-sdk.git",
     "directory": "js"
   },
-  "homepage": "https://github.com/nearai/verifiable-ai-sdk#readme",
+  "homepage": "https://github.com/nearai/inference-sdk#readme",
   "bugs": {
-    "url": "https://github.com/nearai/verifiable-ai-sdk/issues"
+    "url": "https://github.com/nearai/inference-sdk/issues"
   },
   "type": "module",
   "main": "./dist/index.js",
