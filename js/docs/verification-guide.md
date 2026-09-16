@@ -345,6 +345,8 @@ One complete matching bundle is sufficient; other bundles for the digest may
 come from different builds. The helpers do not maintain an approved-image list,
 rebuild images, or prove which containers are currently running. They are not
 enabled automatically. Trust roots are refreshed through Sigstore's TUF service.
+The TypeScript verifier accepts Rekor `dsse` entries, as used by current GitHub
+build attestations; legacy Rekor `intoto` entries are not supported.
 
 Fetch failures throw `ApiError`. Verification failures throw `VerificationError`
 with `provenance.image_verification_failed` and machine-readable `details.reasons`.

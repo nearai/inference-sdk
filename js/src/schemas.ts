@@ -319,7 +319,7 @@ export const ImageProvenanceStatementSchema = v.union([
         resolvedDependencies: v.array(
           objectSchema({
             uri: v.string(),
-            digest: v.record(v.string(), v.string()),
+            digest: v.optional(v.record(v.string(), v.string()), () => ({})),
           }),
         ),
       }),

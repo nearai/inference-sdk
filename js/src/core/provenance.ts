@@ -251,7 +251,7 @@ async function verifyBundle({
   if (!subjectMatches)
     throw imageFailure({ digest, reasons: ['digest_mismatch'] });
 
-  const commit = verifySource({
+  const commit = verifyImageProvenanceSource({
     statement: statement.output,
     policy,
     ref,
@@ -269,19 +269,20 @@ async function verifyBundle({
   };
 }
 
-type VerifySourceParams = {
+type VerifyImageProvenanceSourceParams = {
   statement: ImageProvenanceStatement;
   policy: ImageProvenancePolicy;
   ref: string;
   digest: string;
 };
 
-function verifySource({
+/** Match source fields after the enclosing DSSE statement has been verified. */
+export function verifyImageProvenanceSource({
   statement,
   policy,
   ref,
   digest,
-}: VerifySourceParams): string {
+}: VerifyImageProvenanceSourceParams): string {
   const repositoryUrl = `https://github.com/${policy.repository}`;
   let commit: string | undefined;
   if (statement.predicateType === 'https://slsa.dev/provenance/v1') {
@@ -368,6 +369,7 @@ function imageFailure({
     {
       code: 'provenance.image_verification_failed',
       details: { digest, reasons },
+      retryable: reasons.includes('trust_root_unavailable'),
     },
     cause === undefined ? undefined : { cause },
   );

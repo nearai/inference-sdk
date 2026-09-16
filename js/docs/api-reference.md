@@ -235,6 +235,7 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
 artifact digest and signed source. No deployment allowlist is provided.
+Rekor entries must use the `dsse` format; legacy `intoto` entries are not supported.
 
 | `VerifyImageProvenanceParams` field | Type | Required | Description |
 | --- | --- | --- | --- |

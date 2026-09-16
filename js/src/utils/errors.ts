@@ -237,6 +237,7 @@ export type VerificationFailure =
         digest: string;
         reasons: readonly ImageProvenanceFailureReason[];
       };
+      retryable: boolean;
     }
   | {
       code: 'e2ee.model_public_key_required';

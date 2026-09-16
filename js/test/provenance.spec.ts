@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { resolve } from 'node:path';
 import { SigstoreVerifier } from '@freedomofpress/sigstore-browser';
+import * as v from 'valibot';
 import { fetchImageProvenance, verifyImageProvenance } from '../src';
+import { verifyImageProvenanceSource } from '../src/core/provenance';
+import { ImageProvenanceStatementSchema } from '../src/schemas';
 
 const FIXTURES = resolve(__dirname, '../../test-fixtures/provenance');
 const BUNDLE = readFileSync(
@@ -167,5 +170,68 @@ describe('image provenance verification', () => {
       name: 'ApiError',
       failure: { code: 'api.http_status', details: { status: 404 } },
     });
+  });
+});
+
+describe('verified SLSA source interpretation', () => {
+  test('selects the source dependency matching the workflow repository and ref', () => {
+    const bundle = JSON.parse(BUNDLE);
+    const raw = JSON.parse(
+      Buffer.from(bundle.dsseEnvelope.payload, 'base64').toString('utf8'),
+    );
+    raw.predicate.buildDefinition.resolvedDependencies.unshift({
+      uri: 'git+https://github.com/other/dependency@refs/heads/main',
+    });
+    const statement = v.parse(ImageProvenanceStatementSchema, raw);
+
+    const commit = verifyImageProvenanceSource({
+      statement,
+      digest: DIGEST,
+      policy: POLICY,
+      ref: POLICY.ref,
+    });
+
+    expect(commit).toBe(POLICY.commit);
+  });
+
+  test('reads SLSA v0.2 configSource and rejects a different source repository', () => {
+    const raw = {
+      _type: 'https://in-toto.io/Statement/v0.1',
+      subject: [{ digest: { sha256: DIGEST.slice('sha256:'.length) } }],
+      predicateType: 'https://slsa.dev/provenance/v0.2',
+      predicate: {
+        invocation: {
+          configSource: {
+            uri: `git+https://github.com/${POLICY.repository}@${POLICY.ref}`,
+            entryPoint: POLICY.workflow,
+            digest: { sha1: POLICY.commit },
+          },
+        },
+      },
+    };
+    const statement = v.parse(ImageProvenanceStatementSchema, raw);
+    const commit = verifyImageProvenanceSource({
+      statement,
+      digest: DIGEST,
+      policy: POLICY,
+      ref: POLICY.ref,
+    });
+    expect(commit).toBe(POLICY.commit);
+
+    expect(() =>
+      verifyImageProvenanceSource({
+        statement,
+        digest: DIGEST,
+        policy: { ...POLICY, repository: 'other/source' },
+        ref: POLICY.ref,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({
+          code: 'provenance.image_verification_failed',
+          details: { digest: DIGEST, reasons: ['source_mismatch'] },
+        }),
+      }),
+    );
   });
 });
