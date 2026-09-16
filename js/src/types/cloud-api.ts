@@ -13,11 +13,26 @@ import type {
   VerifiedModelAttestation,
 } from './verification';
 
-/** Configuration shared by all Cloud API evidence requests. */
-export type AttestationClientOptions = {
-  readonly apiKey: string;
+type AttestationClientBaseOptions = {
   readonly baseUrl?: string;
 };
+
+/**
+ * Request authentication used by attestation and receipt requests. `apiKey`
+ * is the convenience form for a direct Gateway connection. `headers` supports
+ * an aggregator or another compatible endpoint with its own authentication.
+ */
+export type AttestationClientOptions =
+  | (AttestationClientBaseOptions & {
+      readonly apiKey: string;
+      /** Sent with every SDK request. `apiKey` overrides its Authorization value. */
+      readonly headers?: HeadersInit;
+    })
+  | (AttestationClientBaseOptions & {
+      readonly apiKey?: never;
+      /** Sent with every SDK request. Required when no direct Gateway API key is used. */
+      readonly headers: HeadersInit;
+    });
 
 export type FetchModelAttestationsParams = {
   readonly model: string;

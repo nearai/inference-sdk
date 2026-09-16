@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { SigningKey, computeAddress } from 'ethers';
 import { ApiError, verifyModelAttestation } from '../src';
 import type { MeasuredDeployment, QuoteVerifier } from '../src';
 import {
@@ -43,6 +44,16 @@ function createQuoteForEventLog(events: readonly EventLogDigest[]) {
     rtmr3 = sha384(Buffer.concat([rtmr3, Buffer.from(event.digest, 'hex')]));
   }
   return createModelQuote({ rtMr3: Buffer.from(rtmr3) });
+}
+
+function createModelQuoteForSigner(signer: string) {
+  const signerBinding = Buffer.alloc(32);
+  Buffer.from(signer.startsWith('0x') ? signer.slice(2) : signer, 'hex').copy(
+    signerBinding,
+  );
+  return createModelQuote({
+    reportData: Buffer.concat([signerBinding, Buffer.from(nonce, 'hex')]),
+  });
 }
 
 describe('model attestation verification', () => {
@@ -108,6 +119,89 @@ describe('model attestation verification', () => {
 
     expect(result).toMatchObject({
       signer: { signingAlgo: 'ed25519', signingAddress: ed25519SigningAddress },
+    });
+  });
+
+  test('binds an Ed25519 model public key to the quote signer', async () => {
+    const ed25519SigningAddress = '66'.repeat(32);
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        signer: {
+          signingAlgo: 'ed25519',
+          signingAddress: ed25519SigningAddress,
+        },
+        signingPublicKey: ed25519SigningAddress.toUpperCase(),
+      }),
+      clientBinding: { nonce },
+      verifiers: {
+        quote: async () => createModelQuoteForSigner(ed25519SigningAddress),
+      },
+    });
+
+    expect(result.signingPublicKey).toBe(ed25519SigningAddress);
+  });
+
+  test('binds a raw ECDSA model public key to the quote signer', async () => {
+    const signingKey = new SigningKey(
+      '0x0123456789012345678901234567890123456789012345678901234567890123',
+    );
+    const signingPublicKey = signingKey.publicKey.slice(4);
+    const signingAddress = computeAddress(signingKey.publicKey);
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        signer: { signingAlgo: 'ecdsa', signingAddress },
+        signingPublicKey: signingPublicKey.toUpperCase(),
+      }),
+      clientBinding: { nonce },
+      verifiers: {
+        quote: async () => createModelQuoteForSigner(signingAddress),
+      },
+    });
+
+    expect(result.signingPublicKey).toBe(signingPublicKey);
+  });
+
+  test('accepts an uncompressed-prefix ECDSA model public key', async () => {
+    const signingKey = new SigningKey(
+      '0x0123456789012345678901234567890123456789012345678901234567890123',
+    );
+    const signingAddress = computeAddress(signingKey.publicKey);
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({
+        signer: { signingAlgo: 'ecdsa', signingAddress },
+        signingPublicKey: signingKey.publicKey.slice(2),
+      }),
+      clientBinding: { nonce },
+      verifiers: {
+        quote: async () => createModelQuoteForSigner(signingAddress),
+      },
+    });
+
+    expect(result.signingPublicKey).toBe(signingKey.publicKey.slice(4));
+  });
+
+  test('rejects an ECDSA model public key for a different quote signer', async () => {
+    const expectedSigner = new SigningKey(
+      '0x0123456789012345678901234567890123456789012345678901234567890123',
+    );
+    const suppliedKey = new SigningKey(
+      '0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd',
+    );
+    const signingAddress = computeAddress(expectedSigner.publicKey);
+
+    await expect(
+      verifyModelAttestation({
+        attestation: createModelAttestation({
+          signer: { signingAlgo: 'ecdsa', signingAddress },
+          signingPublicKey: suppliedKey.publicKey.slice(4),
+        }),
+        clientBinding: { nonce },
+        verifiers: {
+          quote: async () => createModelQuoteForSigner(signingAddress),
+        },
+      }),
+    ).rejects.toMatchObject({
+      failure: { code: 'binding.model_public_key_mismatch' },
     });
   });
 

@@ -19,7 +19,11 @@ import type {
 } from '../types/cloud-api';
 import type { VerifiedModelAttestation } from '../types/verification';
 import { generateNonce, hexToBuffer } from '../utils/common';
-import { ApiError, type ApiFailure } from '../utils/errors';
+import {
+  ApiError,
+  isVerificationError,
+  type ApiFailure,
+} from '../utils/errors';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
 export const NO_ALIASING_HEADER = 'x-no-aliasing';
@@ -60,6 +64,10 @@ type CreateCloudApiRequestParams = {
   readonly url: URL;
   readonly extraHeaders?: HeadersInit;
 };
+type MergeCloudApiRequestHeadersParams = {
+  readonly configuration: CloudApiRequestConfiguration;
+  readonly requestHeaders?: HeadersInit;
+};
 type ReadCloudApiJsonParams = {
   readonly response: Response;
   readonly resource: ApiResource;
@@ -70,18 +78,62 @@ type ValidateApiSigningAddressParams = {
   readonly field: string;
 };
 
+/** Internal static request configuration shared by evidence and Chat clients. */
+export type CloudApiRequestConfiguration = {
+  readonly apiKey?: string;
+  readonly defaultHeaders: Headers;
+};
+
+/** Read the static headers used for every SDK request. */
+export function createCloudApiRequestConfiguration(
+  options: AttestationClientOptions,
+): CloudApiRequestConfiguration {
+  try {
+    return {
+      apiKey: options.apiKey,
+      defaultHeaders: new Headers(options.headers),
+    };
+  } catch (cause) {
+    throw invalidHeaderInput('headers', cause);
+  }
+}
+
+/** Merge configured and request-specific headers, with the direct API key last. */
+export function mergeCloudApiRequestHeaders({
+  configuration,
+  requestHeaders,
+}: MergeCloudApiRequestHeadersParams): Headers {
+  try {
+    const headers = new Headers(configuration.defaultHeaders);
+    if (requestHeaders !== undefined) {
+      for (const [name, value] of new Headers(requestHeaders)) {
+        headers.set(name, value);
+      }
+    }
+    if (configuration.apiKey !== undefined) {
+      headers.set('authorization', `Bearer ${configuration.apiKey}`);
+    }
+    return headers;
+  } catch (cause) {
+    throw invalidHeaderInput(
+      configuration.apiKey === undefined ? 'headers' : 'apiKey',
+      cause,
+    );
+  }
+}
+
 /**
  * Shared Cloud API client implementation. Runtime-specific clients expose
  * their own Gateway-attestation options while sharing model and signature
  * requests.
  */
 export class CloudApiClient {
-  private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly requestConfiguration: CloudApiRequestConfiguration;
 
-  constructor({ apiKey, baseUrl }: AttestationClientOptions) {
-    this.apiKey = apiKey;
-    this.baseUrl = resolveCloudApiBaseUrl(baseUrl);
+  constructor(options: AttestationClientOptions) {
+    this.requestConfiguration = createCloudApiRequestConfiguration(options);
+    this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
   }
 
   /**
@@ -213,6 +265,11 @@ export class CloudApiClient {
     return { response: await fetch(request) };
   }
 
+  /** Override this in a runtime-specific client to control ordinary API requests. */
+  protected async requestCloudApi(request: Request): Promise<Response> {
+    return fetch(request);
+  }
+
   private async getCloudApiJson({
     url,
     resource,
@@ -221,8 +278,11 @@ export class CloudApiClient {
     const request = this.createCloudApiRequest({ url, extraHeaders });
     let response: Response;
     try {
-      response = await fetch(request);
+      response = await this.requestCloudApi(request);
     } catch (cause) {
+      if (isVerificationError(cause)) {
+        throw cause;
+      }
       throw new ApiError(
         {
           code: 'api.transport_failed',
@@ -271,24 +331,29 @@ export class CloudApiClient {
     url,
     extraHeaders = {},
   }: CreateCloudApiRequestParams): Request {
-    try {
-      const headers = new Headers(extraHeaders);
-      headers.set('authorization', `Bearer ${this.apiKey}`);
-      return new Request(url, { headers });
-    } catch (cause) {
-      throw new ApiError(
-        {
-          code: 'api.invalid_input',
-          details: {
-            field: 'apiKey',
-            reason: 'invalid_header_value',
-            expected: 'an HTTP header value',
-          },
-        },
-        { cause },
-      );
-    }
+    const headers = mergeCloudApiRequestHeaders({
+      configuration: this.requestConfiguration,
+      requestHeaders: extraHeaders,
+    });
+    return new Request(url, { headers });
   }
+}
+
+function invalidHeaderInput(
+  field: 'apiKey' | 'headers',
+  cause: unknown,
+): ApiError {
+  return new ApiError(
+    {
+      code: 'api.invalid_input',
+      details: {
+        field,
+        reason: 'invalid_header_value',
+        expected: 'an HTTP header value',
+      },
+    },
+    { cause },
+  );
 }
 
 /**
@@ -453,7 +518,7 @@ function validateApiSigningAddress({
   return address;
 }
 
-function resolveCloudApiBaseUrl(
+export function resolveCloudApiBaseUrl(
   baseUrl = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
 ): string {
   let resolvedBaseUrl: URL;
@@ -465,7 +530,9 @@ function resolveCloudApiBaseUrl(
   if (
     (resolvedBaseUrl.protocol !== 'http:' &&
       resolvedBaseUrl.protocol !== 'https:') ||
-    resolvedBaseUrl.hostname === ''
+    resolvedBaseUrl.hostname === '' ||
+    resolvedBaseUrl.search !== '' ||
+    resolvedBaseUrl.hash !== ''
   ) {
     throw invalidBaseUrl();
   }
@@ -481,7 +548,7 @@ function invalidBaseUrl(): ApiError {
     details: {
       field: 'baseUrl',
       reason: 'invalid_url',
-      expected: 'an absolute HTTP(S) URL',
+      expected: 'an absolute HTTP(S) URL without a query or fragment',
     },
   });
 }

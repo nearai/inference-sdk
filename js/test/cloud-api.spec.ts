@@ -1,4 +1,8 @@
-import type { CompletionSignature, VerifiedModelAttestation } from '../src';
+import type {
+  AttestationClientOptions,
+  CompletionSignature,
+  VerifiedModelAttestation,
+} from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
 import { AttestationClient as NodeAttestationClient } from '../src/node';
 
@@ -100,16 +104,16 @@ function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status });
 }
 
-function cloudFor(response: (request: Request) => Response) {
+function cloudFor(
+  response: (request: Request) => Response,
+  options: AttestationClientOptions = { baseUrl, apiKey: 'test' },
+) {
   let lastRequest: Request | undefined;
   jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
     lastRequest = new Request(input, init);
     return response(lastRequest);
   });
-  const client = new AttestationClient({
-    baseUrl,
-    apiKey: 'test',
-  });
+  const client = new AttestationClient(options);
 
   return {
     client,
@@ -148,13 +152,33 @@ describe('AttestationClient', () => {
             details: expect.objectContaining({
               field: 'baseUrl',
               reason: 'invalid_url',
-              expected: 'an absolute HTTP(S) URL',
+              expected: 'an absolute HTTP(S) URL without a query or fragment',
             }),
           }),
         }),
       );
     },
   );
+
+  test.each([
+    ['query', 'https://cloud.example/v1?tenant=example'],
+    ['fragment', 'https://cloud.example/v1#attestation'],
+  ])('rejects a base URL with a %s', (_kind, invalidBaseUrl) => {
+    expect(
+      () => new AttestationClient({ apiKey: 'test', baseUrl: invalidBaseUrl }),
+    ).toThrow(
+      expect.objectContaining({
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'baseUrl',
+            reason: 'invalid_url',
+            expected: 'an absolute HTTP(S) URL without a query or fragment',
+          },
+        },
+      }),
+    );
+  });
 
   test('reports an invalid API key as client input', async () => {
     const client = new AttestationClient({
@@ -173,6 +197,50 @@ describe('AttestationClient', () => {
         },
       },
     });
+  });
+
+  test('uses configured headers when no direct API key is provided', async () => {
+    const api = cloudFor(
+      (request) =>
+        jsonResponse(
+          gatewayReport(requestNonce(request), { tls_cert_fingerprint: null }),
+        ),
+      {
+        baseUrl,
+        headers: { 'x-aggregator-token': 'browser-token' },
+      },
+    );
+
+    await api.client.fetchGatewayAttestation();
+
+    expect(api.request().headers.get('x-aggregator-token')).toBe(
+      'browser-token',
+    );
+    expect(api.request().headers.get('authorization')).toBeNull();
+  });
+
+  test('uses a direct API key over a configured authorization header', async () => {
+    const api = cloudFor(
+      (request) =>
+        jsonResponse(
+          gatewayReport(requestNonce(request), { tls_cert_fingerprint: null }),
+        ),
+      {
+        baseUrl,
+        apiKey: 'direct-key',
+        headers: {
+          authorization: 'Bearer aggregator-token',
+          'x-tenant-id': 'tenant-a',
+        },
+      },
+    );
+
+    await api.client.fetchGatewayAttestation();
+
+    expect(api.request().headers.get('authorization')).toBe(
+      'Bearer direct-key',
+    );
+    expect(api.request().headers.get('x-tenant-id')).toBe('tenant-a');
   });
 
   describe('model attestations', () => {

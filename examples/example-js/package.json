@@ -7,9 +7,17 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node index.mjs"
+    "check": "tsc --noEmit",
+    "start:bare": "node bare.ts",
+    "start:client": "node client.ts",
+    "start:openai-sdk-compatible": "node openai-sdk-compatible.ts"
   },
   "dependencies": {
+    "openai": "7.10.0",
     "verifiable-ai-sdk": "link:../../js"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
   }
 }

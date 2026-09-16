@@ -133,6 +133,8 @@ export type VerifiedAttestationEvidence = {
 export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
   /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
   readonly gpuEvidence: GpuEvidenceStatus;
+  /** Quote-bound model public key available for the selected E2EE protocol. */
+  readonly signingPublicKey?: string;
 };
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */

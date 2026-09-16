@@ -1,113 +1,313 @@
 # TypeScript verification guide
 
-Verify a completion in three stages:
+Use `SecureClient` for Chat Completions with deployment verification and E2EE.
+Use `AttestationClient` and the standalone verification functions to manage
+the verification steps yourself.
 
-1. Verify the Gateway deployment and target model deployment before sending
-   the completion.
-2. Send the completion and preserve its exact request and response bytes.
-3. Fetch the completion signature and use its `kind` to verify the bytes
-   against the corresponding preflight result.
+## Send an E2EE chat completion
 
-`AttestationClient` retrieves NEAR AI Cloud Gateway evidence and signatures. The SDK does
-not send completions itself; your application owns the inference request, raw
-bytes, and retry policy.
+`SecureClient` uses OpenAI Chat Completions types and enables E2EE by default.
+Before sending a request, it verifies Gateway and model evidence or reuses
+cached results. A verification failure prevents the request from being sent.
 
-## Before the completion: verify both deployments
+This Node.js example connects directly to the Gateway with a server-side API
+key. The Node client verifies the Gateway's TLS identity and pins subsequent
+requests to that identity. For browser applications, see
+[Connect through an application proxy](#connect-through-an-application-proxy).
 
-Use a canonical model ID and choose one signing algorithm for this operation.
-Verify the Gateway and model evidence before the completion request. The Node
-client below also checks the TLS peer for the Gateway evidence request.
-Pass the same explicit algorithm to both attestation fetches and the completion
-signature fetch: the Gateway's report and signature endpoints have different
-defaults.
+```ts
+import { SecureClient } from 'verifiable-ai-sdk/node';
+
+const model = 'z-ai/glm-5.3-flash';
+const client = new SecureClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+});
+
+const completion = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+
+console.log(completion.choices[0].message.content);
+```
+
+To select ECDSA instead of the default Ed25519 protocol:
+
+```ts
+const client = new SecureClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+  signingAlgo: 'ecdsa',
+});
+```
+
+`signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
+and response signatures. The client verifies all returned model attestations
+before selecting a key for that algorithm.
+
+### Cache deployment verification
+
+`attestationCacheTimeToLiveMs` defaults to `900000` (15 minutes). Concurrent
+requests for the same model share verification work and cached results.
+Increase the value to check deployments less frequently, or set `0` to
+verify before every request. Deployment changes are not checked while a cached
+result is reused. This setting controls caching, not attestation validity.
+
+The SDK does not check model measurements against an approved-deployment
+allowlist by default. If needed, supply a `deploymentPolicy` callback and
+throw an error to reject a deployment.
+
+## Connect through an application proxy
+
+A proxy lets your backend keep the NEAR AI API key while users' devices verify
+evidence and encrypt prompts. Direct server-to-Gateway integrations do not
+need a proxy.
+
+Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
+it accepts:
+
+```ts
+import { SecureClient } from 'verifiable-ai-sdk';
+
+const client = new SecureClient({
+  baseUrl: 'https://api.example.com/v1',
+  headers: {
+    Authorization: 'Bearer <browser-scoped token>',
+  },
+});
+```
+
+The proxy must forward `/v1/attestation/report`, `/v1/chat/completions`, and
+`/v1/signature/{id}`. It authenticates the user and supplies its upstream
+NEAR AI credential. Preserve the request and response bodies, model-key routing header,
+and encryption headers unchanged so decryption and signature verification work.
+
+Browser Fetch does not expose the TLS peer certificate, so the generic client
+does not verify Gateway TLS binding. Depending on the browser build, the default
+Intel verifier may need `crypto`, `buffer`, and `stream` polyfills. A custom
+quote verifier can be supplied through `gatewayVerification.verifiers.quote`
+and `modelVerification.verifiers.quote`.
+
+For a Node client connecting through a proxy, disable Gateway TLS binding
+because the observed certificate belongs
+to the proxy:
+
+```ts
+import { SecureClient } from 'verifiable-ai-sdk/node';
+
+const client = new SecureClient({
+  baseUrl: 'https://api.example.com/v1',
+  headers: {
+    Authorization: 'Bearer <server-scoped token>',
+  },
+  gatewayVerification: { includeSpkiFingerprint: false },
+});
+```
+
+## E2EE scope and response handling
+
+The client supports `POST /v1/chat/completions` with a model public key bound
+to verified attestation. Responses API and other endpoints are not supported.
+
+Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
+and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the
+Ed25519 format. Both send `X-Encrypt-All-Fields: true` to enable encryption
+of the supported fields below. Other fields are forwarded unchanged.
+
+| Capability | E2EE behavior |
+| --- | --- |
+| String `messages[].content` | Each string is encrypted independently. |
+| Rich message content | An array-valued `messages[].content` is serialized and encrypted as one value. |
+| Assistant context | String `reasoning_content`, `reasoning`, and `audio.data` message fields are encrypted. |
+| Function and tool fields | Recognized function definitions, function calls, and related message fields are encrypted. Other tool forms are preserved without E2EE transformation. |
+| `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. |
+| Other Chat request-body fields | Forwarded without encryption. |
+| Streaming Chat | Each complete SSE event is decrypted before it reaches the caller. |
+
+The client checks each encrypted field's authentication tag before decryption.
+Use `verifyResponse(id)` separately to verify the response's signing identity.
+
+URL query parameters, headers, and fields outside the table are not encrypted.
+Non-2xx responses follow the normal OpenAI error path.
+
+### Stream an E2EE completion
+
+```ts
+const stream = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  process.stdout.write(chunk.choices[0]?.delta.content ?? '');
+}
+```
+
+### Send plaintext after deployment verification
+
+Set `e2ee: false` to send plaintext. Gateway and model verification,
+deployment policy, and response verification remain available.
+
+```ts
+const client = new SecureClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+  e2ee: false,
+});
+```
+
+Plaintext requests still use a verified model public key for routing, so the
+model must expose a key for the configured signing algorithm.
+
+## Verify a response
+
+The client retains the exact request and response bytes before E2EE decryption.
+Display the completion normally, then verify its signature by ID:
+
+```ts
+const completion = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+render(completion.choices[0]?.message.content);
+const verified = await client.verifyResponse(completion.id);
+console.log(verified.signatureKind);
+```
+
+For streams, consume the stream before awaiting verification:
+
+```ts
+const stream = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+  stream: true,
+});
+let completionId: string | undefined;
+for await (const chunk of stream) {
+  completionId = chunk.id;
+  renderIncrementally(chunk);
+}
+if (completionId !== undefined) {
+  const verified = await client.verifyResponse(completionId);
+  console.log(verified.signatureKind);
+}
+```
+
+Each ID identifies its own request bytes, response bytes, and verified deployment
+evidence. Concurrent requests can finish in any order. Repeated verification of
+the same ID shares its result, including a verification failure.
+
+Response records retain complete bodies in memory. They expire
+`responseCacheTimeToLiveMs` after body completion (default: 15 minutes),
+independently of the attestation cache. Unknown or expired IDs produce
+`ApiError` with code `api.completion_not_found`. For active streams, memory
+grows with the received body until the application finishes or cancels reading.
+
+A `provider_tee` signature binds the bytes to a verified model signer.
+A `gateway` signature binds them to a verified Gateway signer; it does not
+by itself prove model execution.
+
+### Use the official OpenAI SDK
+
+Create both clients once. The same Fetch adapter supports sequential and
+concurrent requests, with the standard OpenAI retry behavior:
+
+```ts
+import OpenAI from 'openai';
+
+const openai = new OpenAI({
+  apiKey,
+  baseURL: client.getBaseUrl(),
+  fetch: client.fetch,
+});
+const completion = await openai.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+render(completion.choices[0]?.message.content);
+const verified = await client.verifyResponse(completion.id);
+```
+
+Streaming uses the same ID-based verification as the built-in client.
+With raw `client.fetch()`, consume the returned response body before verification.
+
+## Verify manually
+
+The manual flow has distinct stages:
+
+1. Verify Gateway and model deployment evidence before sending a request.
+2. Send the request and retain the exact body bytes sent and received.
+3. Fetch the completion signature later and verify it against the retained
+   evidence and bytes.
+
+### Verify Gateway and model evidence
 
 ```ts
 import {
   AttestationClient,
+  createPinnedTlsFetch,
   verifyGatewayAttestation,
   verifyModelAttestation,
 } from 'verifiable-ai-sdk/node';
 
-const apiKey = process.env.NEARAI_API_KEY;
-if (!apiKey) {
-  throw new Error('NEARAI_API_KEY is required');
-}
+const model = 'z-ai/glm-5.3-flash';
+const client = new AttestationClient({ apiKey: process.env.NEARAI_API_KEY! });
 
-const MODEL = 'z-ai/glm-5.2';
-const SIGNING_ALGO = 'ecdsa';
-const client = new AttestationClient({ apiKey });
-
-const verifiedGatewayAttestation = await verifyGatewayDeployment();
-const verifiedModelAttestations = await verifyModelDeployments();
-
-async function verifyGatewayDeployment() {
-  const fetched = await client.fetchGatewayAttestation({
-    signingAlgo: SIGNING_ALGO,
-  });
-  return verifyGatewayAttestation({
-    attestation: fetched.attestation,
-    clientBinding: fetched.clientBinding,
-  });
-}
-
-async function verifyModelDeployments() {
-  const fetched = await client.fetchModelAttestations({
-    model: MODEL,
-    signingAlgo: SIGNING_ALGO,
-  });
-  if (fetched.attestations.length === 0) {
-    throw new Error('Gateway returned no model attestations');
-  }
-  const verifiedAttestations = [];
-  for (const attestation of fetched.attestations) {
-    verifiedAttestations.push(
-      await verifyModelAttestation({
-        attestation,
-        clientBinding: fetched.clientBinding,
-      }),
-    );
-  }
-  return verifiedAttestations;
-}
-```
-
-The Gateway may return zero or multiple model attestations. The fetch helper
-preserves the collection and checks the returned nonce on every item. This
-deployment-first flow rejects an empty collection, verifies every candidate,
-and retains every verified result for receipt selection.
-
-Model evidence always uses the signer-and-nonce quote layout. The Gateway makes
-the model connection on the client's behalf, so model verification does not
-make a client-to-model TLS claim.
-
-The generic `verifiable-ai-sdk` entry point is suitable when TLS peer
-observation is unavailable, including browsers. Its Gateway request uses the
-same signer-and-nonce layout and returns `tlsBinding.kind: 'none'`. The Node
-entry point above requests and verifies the Gateway TLS SPKI fingerprint by
-default.
-
-## Send the completion
-
-Only after both deployment checks succeed, send the completion. Use the same
-canonical model ID and `x-no-aliasing: true`. Retain the exact bytes sent and
-received; parsing and serializing JSON or SSE again changes the signed payload.
-
-```ts
-const { completionId, requestBody, responseBody } = await sendCompletion({
-  model: MODEL,
-  headers: { 'x-no-aliasing': 'true' },
+const fetchedGateway = await client.fetchGatewayAttestation({
+  signingAlgo: 'ed25519',
 });
+const gateway = await verifyGatewayAttestation({
+  attestation: fetchedGateway.attestation,
+  clientBinding: fetchedGateway.clientBinding,
+});
+if (gateway.tlsBinding.kind !== 'attested') {
+  throw new Error('Expected TLS-bound Gateway evidence');
+}
+const pinnedTlsFetch = createPinnedTlsFetch(
+  gateway.tlsBinding.spkiFingerprint,
+);
+
+const fetchedModels = await client.fetchModelAttestations({
+  model,
+  signingAlgo: 'ed25519',
+});
+if (fetchedModels.attestations.length === 0) {
+  throw new Error('Gateway returned no model attestation');
+}
+
+const models = await Promise.all(
+  fetchedModels.attestations.map((attestation) =>
+    verifyModelAttestation({
+      attestation,
+      clientBinding: fetchedModels.clientBinding,
+    }),
+  ),
+);
 ```
 
-`sendCompletion` is application code. It must return the completion ID and
-unaltered `Uint8Array` values for the HTTP request and response. For streams,
-`responseBody` includes the original SSE framing.
+Use `pinnedTlsFetch` instead of `fetch` for raw direct-Gateway requests that
+your application sends itself. It performs normal certificate and hostname
+verification, then requires each TLS peer to present the attested SPKI.
 
-## Verify the completion receipt
+The generic `verifiable-ai-sdk` entry point requests the no-TLS Gateway quote
+layout and is suitable for browsers. The `/node` `AttestationClient` observes
+only the peer for its Gateway-attestation request; it does not automatically
+apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
+client when the complete Chat flow—including model evidence, completion, and
+receipt signature—must be pinned automatically.
 
-Fetch the signature after the completion returns. `signature.kind` selects the
-response verifier; it does not decide which deployments to verify. Both
-preflight values remain part of the operation.
+### Verify the response signature
+
+`signature.kind` identifies the signer and therefore the proof made by a
+successful verification:
+
+| Kind | Verify with | Establishes |
+| --- | --- | --- |
+| `provider_tee` | A matching verified model attestation | The model-serving TEE signer signed the exact request and response body bytes. |
+| `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
+
+For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext
+object after decryption. Do not parse and reserialize either body before
+verification.
 
 ```ts
 import {
@@ -118,108 +318,40 @@ import {
 
 const signature = await client.fetchCompletionSignature({
   completionId,
-  signingAlgo: SIGNING_ALGO,
+  signingAlgo: 'ed25519',
 });
 
 if (signature.kind === 'provider_tee') {
-  const verifiedModelAttestation = findModelAttestationForSignature({
-    attestations: verifiedModelAttestations,
+  const attestation = findModelAttestationForSignature({
+    attestations: models,
     signature,
-  );
+  });
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation: verifiedModelAttestation,
+    attestation,
   });
 } else {
   verifyGatewayResponse({
     requestBody,
     responseBody,
     signature,
-    attestation: verifiedGatewayAttestation,
+    attestation: gateway,
   });
 }
 ```
 
-`verifyModelResponse` requires a `provider_tee` signature and matches its
-signer to the selected result in `verifiedModelAttestations`.
-`verifyGatewayResponse` requires a
-`gateway` signature and matches its signer to `verifiedGatewayAttestation`.
-Each verifier also verifies the signature over the exact request and response
-bytes. A signer mismatch fails naturally; do not fetch unrelated evidence to
-make the check pass.
-
-The Gateway returns `gateway` when it signs client-visible bytes that a provider
-signature cannot cover, such as a rewritten response. It returns `provider_tee`
-when the model-serving TEE signs those bytes directly.
-
-## Current evidence boundary
-
-The preflight Gateway and model attestations establish two verified deployments.
-The completion signature binds the returned bytes to one of their signers,
-according to `kind`. They do not yet prove a complete chain from the model's
-upstream response through a Gateway transformation to the final bytes.
-
-For a `gateway` signature, a successful result proves that the verified Gateway
-signed the exact final bytes. It does not cryptographically prove that the
-verified model produced the upstream response. For a `provider_tee` signature,
-a successful result proves model-signature provenance for the bytes, but does
-not cryptographically bind it to the preflight Gateway evidence.
-
-The planned paired provider signature and Gateway receipt for rewritten
-responses are tracked in [cloud-api#986](https://github.com/nearai/cloud-api/issues/986).
-Until that exists, do not claim the complete chain from these separate pieces of
-evidence.
-
-## Set policy and trust roots
-
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. Model GPU
-evidence is verified when present and is optional by default. Require it when
-your application needs that guarantee:
-
-```ts
-import type {
-  ModelAttestationPolicy,
-  ModelAttestationVerifiers,
-} from 'verifiable-ai-sdk';
-
-const policy: ModelAttestationPolicy = {
-  acceptedTcbStatuses: ['UpToDate'],
-  gpuEvidence: 'required',
-};
-
-const verifiers: ModelAttestationVerifiers = {
-  // Resolve only for deployments your application accepts.
-  deployment: verifyDeploymentRelease,
-};
-```
-
-Pass `policy` and `verifiers` to every `verifyModelAttestation` call in
-`verifyModelDeployments`. `verifiers.deployment` receives authenticated
-measured deployment data and must reject every deployment your release policy
-does not accept. The SDK authenticates measured values; your callback decides
-which values are trusted.
-
-`verifiers.quote` replaces the built-in Intel DCAP verifier. `verifiers.nvidia`
-replaces the default NVIDIA NRAS verifier. Each callback must resolve only for
-evidence it accepts and throw or reject every other outcome.
+A Gateway signature does not establish which model generated the response.
+A model signature does not authenticate the Gateway deployment. Verify both
+deployments before sending the request.
 
 ## Handle errors
 
-`fetchCompletionSignature` returns a signature or throws `ApiError`. A 2xx
-unavailable result is `api.completion_signature_unavailable` and includes
-`providerErrorCode` and `providerMessage`. An HTTP 404 is
-`api.http_status`; it is retryable because a request made before a completion
-reaches its terminal state can later succeed, although an unknown ID can also
-produce 404.
-
-`AttestationClient` and `findModelAttestationForSignature` report
-SDK-classified caller-input, transport, response-format, nonce, and
-attestation-selection failures as `ApiError`. Explicit `verify…` calls report
-SDK-classified verification failures as `VerificationError`. Runtime errors
-outside those contracts can still propagate unchanged, so rethrow errors that
-are not the class your handler expects.
+`AttestationClient` and selection helpers throw `ApiError` for SDK-classified
+request, response, nonce, and selection problems. Explicit `verify…` calls
+and E2EE integrity-check or decryption failures throw `VerificationError`.
+Check the stable `failure.code` rather than parsing an error message.
 
 ```ts
 import { ApiError } from 'verifiable-ai-sdk';
@@ -228,8 +360,6 @@ try {
   await client.fetchCompletionSignature({ completionId });
 } catch (error) {
   if (!(error instanceof ApiError)) throw error;
-  console.log(error.failure.code, error.failure.details);
+  console.log(error.failure.code);
 }
 ```
-
-Use `error.failure.code` for program logic, not the error message.

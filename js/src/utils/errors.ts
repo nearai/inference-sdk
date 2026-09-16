@@ -1,6 +1,7 @@
 import type { TcbStatus } from '../types/verification';
 
 type ApiResource =
+  | 'completion'
   | 'model_attestation'
   | 'gateway_attestation'
   | 'completion_signature';
@@ -13,6 +14,7 @@ type ApiResource =
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type ApiFailure =
+  | { code: 'api.completion_not_found' }
   | {
       /** A value supplied to a Cloud API helper is not usable for that call. */
       code: 'api.invalid_input';
@@ -23,7 +25,9 @@ export type ApiFailure =
           | 'invalid_hex'
           | 'wrong_length'
           | 'unsupported_value'
-          | 'invalid_header_value';
+          | 'invalid_header_value'
+          | 'invalid_json'
+          | 'missing_model';
         expected?: string;
         actual?: string;
       };
@@ -129,6 +133,9 @@ export type VerificationFailure =
       code: 'policy.gpu_evidence_required';
     }
   | {
+      code: 'policy.model_attestation_required';
+    }
+  | {
       code: 'binding.nonce_mismatch';
       details: {
         source: 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
@@ -154,6 +161,9 @@ export type VerificationFailure =
     }
   | {
       code: 'binding.spki_fingerprint_mismatch';
+    }
+  | {
+      code: 'binding.model_public_key_mismatch';
     }
   | {
       code: 'measurement.event_log_invalid';
@@ -218,6 +228,16 @@ export type VerificationFailure =
     }
   | {
       code: 'provenance.verification_failed';
+    }
+  | {
+      code: 'e2ee.model_public_key_required';
+    }
+  | {
+      code: 'e2ee.model_public_key_invalid';
+    }
+  | {
+      code: 'e2ee.decryption_failed';
+      details: { field: string };
     }
   | {
       code: 'signature.kind_mismatch';
@@ -380,6 +400,8 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'api.completion_not_found':
+      return 'Completion was not captured by this client or its retention period has expired';
     case 'api.invalid_input':
       return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':
@@ -418,6 +440,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] TDX TCB status ${failure.details.actual} is not allowed by policy`;
     case 'policy.gpu_evidence_required':
       return `[${failure.code}] GPU evidence is required by policy`;
+    case 'policy.model_attestation_required':
+      return `[${failure.code}] Model attestation evidence is required`;
     case 'binding.spki_fingerprint_required':
       return `[${failure.code}] Gateway attestation requires an observed TLS peer fingerprint`;
     case 'binding.nonce_mismatch':
@@ -428,6 +452,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] ${failure.details.source} does not match the verified quote`;
     case 'binding.spki_fingerprint_mismatch':
       return `[${failure.code}] Attestation SPKI fingerprint does not match the observed TLS peer`;
+    case 'binding.model_public_key_mismatch':
+      return `[${failure.code}] Model E2EE public key does not match the verified model signer`;
     case 'measurement.event_log_invalid':
       return `[${failure.code}] Attestation event log is invalid at ${failure.details.path}: ${failure.details.reason}`;
     case 'measurement.rtmr3_mismatch':
@@ -446,6 +472,12 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':
       return `[${failure.code}] Deployment provenance verification failed`;
+    case 'e2ee.model_public_key_required':
+      return `[${failure.code}] Verified model evidence does not provide an E2EE public key`;
+    case 'e2ee.model_public_key_invalid':
+      return `[${failure.code}] Model E2EE public key cannot be used for encryption`;
+    case 'e2ee.decryption_failed':
+      return `[${failure.code}] Encrypted response field ${failure.details.field} could not be decrypted`;
     case 'signature.kind_mismatch':
       return `[${failure.code}] Expected a ${failure.details.expected} signature, received ${failure.details.actual}`;
     case 'signature.payload_mismatch':
@@ -461,6 +493,8 @@ function formatFailureMessage(failure: SdkFailure): string {
 
 function formatApiResource(resource: ApiResource): string {
   switch (resource) {
+    case 'completion':
+      return 'completion';
     case 'model_attestation':
       return 'model attestation';
     case 'gateway_attestation':
