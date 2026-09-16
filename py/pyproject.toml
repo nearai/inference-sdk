@@ -1,5 +1,5 @@
 [project]
-name = "verifiable-ai-sdk"
+name = "nearai-inference-sdk"
 version = "0.1.0"
 description = "Verification SDK for NEAR AI Cloud attestations"
 readme = "README.md"
@@ -30,5 +30,5 @@ requires = ["uv_build>=0.9.15,<0.10.0"]
 build-backend = "uv_build"
 
 [project.urls]
-Repository = "https://github.com/nearai/verifiable-ai-sdk"
-Documentation = "https://github.com/nearai/verifiable-ai-sdk/tree/main/py/docs"
+Repository = "https://github.com/nearai/inference-sdk"
+Documentation = "https://github.com/nearai/inference-sdk/tree/main/py/docs"

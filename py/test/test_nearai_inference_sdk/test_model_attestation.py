@@ -8,14 +8,14 @@ import pytest
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
 
-import verifiable_ai_sdk.utils.nvidia as nvidia
-from verifiable_ai_sdk import (
+import nearai_inference_sdk.utils.nvidia as nvidia
+from nearai_inference_sdk import (
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     VerificationError,
     verify_model_attestation,
 )
-from verifiable_ai_sdk.utils.fetch import FetchResponse
+from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
     APP_COMPOSE,

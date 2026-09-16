@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     GatewayAttestation,
     ModelClientBinding,
     ModelAttestation,
@@ -12,7 +12,7 @@ from verifiable_ai_sdk import (
     SigningIdentity,
 )
 
-from verifiable_ai_sdk.utils.common import sha256, sha384
+from nearai_inference_sdk.utils.common import sha256, sha384
 
 
 NONCE = '11' * 32

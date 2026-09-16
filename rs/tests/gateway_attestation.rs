@@ -1,14 +1,14 @@
 mod support;
 
 use async_trait::async_trait;
-use support::{
-    gateway_attestation, gateway_attestation_without_tls_binding, gateway_tls_quote, model_quote,
-    FixtureQuoteVerifier, APP_COMPOSE, NONCE, TLS_FINGERPRINT,
-};
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     verify_gateway_attestation, AttestationPolicy, AttestationVerifiers,
     DeploymentProvenanceStatus, DeploymentVerifier, GatewayClientBinding, GatewayTlsBinding,
     MeasuredDeployment, TcbStatus, VerificationError,
+};
+use support::{
+    gateway_attestation, gateway_attestation_without_tls_binding, gateway_tls_quote, model_quote,
+    FixtureQuoteVerifier, APP_COMPOSE, NONCE, TLS_FINGERPRINT,
 };
 
 fn client_binding(spki_fingerprint: Option<String>) -> GatewayClientBinding {

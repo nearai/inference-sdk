@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationClient,
     ApiError,
     CompletionSignature,
@@ -17,8 +17,8 @@ from verifiable_ai_sdk import (
     VerifiedModelAttestation,
     find_model_attestation_for_signature,
 )
-from verifiable_ai_sdk.core import cloud_api
-from verifiable_ai_sdk.utils.fetch import FetchResponse
+from nearai_inference_sdk.core import cloud_api
+from nearai_inference_sdk.utils.fetch import FetchResponse
 
 
 SIGNING_ADDRESS = f'0x{"22" * 20}'

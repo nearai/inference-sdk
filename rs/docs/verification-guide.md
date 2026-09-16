@@ -31,7 +31,7 @@ endpoints have different defaults. The APIs also accept `None` for individual
 calls, but omitting the algorithm is not suitable for this three-stage flow.
 
 ```rust,no_run
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     verify_gateway_attestation, verify_model_attestation, AttestationClient,
     GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
@@ -112,7 +112,7 @@ Fetch the completion signature after the chat request completes. The only part
 of this stage that depends on `signature.kind` is the response verifier:
 
 ```rust,no_run
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     find_model_attestation_for_signature, verify_gateway_response,
     verify_model_response, AttestationClient, CompletionSignature,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
@@ -196,7 +196,7 @@ trusts. Do not treat a compose variable's default image as the resolved image
 when its value may be overridden.
 
 ```rust,no_run
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     fetch_image_provenance, verify_image_provenance, ImageProvenancePolicy,
     VerifiedImageProvenance,
 };
@@ -236,7 +236,7 @@ To check required images from measured Compose, call
 ```rust,no_run
 use std::collections::BTreeMap;
 use async_trait::async_trait;
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     verify_deployment_image_provenance, DeploymentVerifier,
     ImageProvenancePolicy, MeasuredDeployment, VerificationError,
 };
@@ -286,7 +286,7 @@ unavailable envelope. The error preserves the service's
 `provider_error_code` and `provider_message`.
 
 ```rust,no_run
-use verifiable_ai_sdk::{ApiError, AttestationClient};
+use nearai_inference_sdk::{ApiError, AttestationClient};
 
 async fn fetch_completion_signature(
     api_key: &str,

@@ -32,7 +32,7 @@ completion-signature fetch: the Gateway's report and signature endpoints have
 different defaults.
 
 ```python
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationClient,
     verify_gateway_attestation,
     verify_model_attestation,
@@ -137,7 +137,7 @@ Selection completes before any GitHub requests. The application supplies its
 trusted image repositories and build policies:
 
 ```python
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationVerifiers,
     ImageProvenancePolicy,
     MeasuredDeployment,
@@ -200,7 +200,7 @@ provider signature selects exactly one verified model result from stage 1; a
 Gateway signature uses the verified Gateway result.
 
 ```python
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     find_model_attestation_for_signature,
     verify_gateway_response,
     verify_model_response,
@@ -271,7 +271,7 @@ The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU evidence
 is verified when present; require it when your application needs it:
 
 ```python
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     verify_model_attestation,
@@ -335,7 +335,7 @@ failures. Handle each stage separately: client and selection handlers catch
 | `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
 
 ```python
-from verifiable_ai_sdk import ApiError
+from nearai_inference_sdk import ApiError
 
 try:
     signature = await client.fetch_completion_signature(completion_id)

@@ -4,8 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
-    "verifiable-ai-sdk",
+    "nearai-inference-sdk",
 ]
 
 [tool.uv.sources]
-verifiable-ai-sdk = { path = "../../py", editable = true }
+nearai-inference-sdk = { path = "../../py", editable = true }

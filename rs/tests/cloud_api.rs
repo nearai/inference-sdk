@@ -1,11 +1,11 @@
-use serde_json::json;
-use std::sync::Once;
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     find_model_attestation_for_signature, ApiError, ApiResource, AttestationClient,
     CompletionSignature, CompletionSignatureKind, DeploymentProvenanceStatus,
     GatewayAttestationFetchOptions, GpuEvidenceStatus, MeasuredDeployment, RuntimeMeasurements,
     SigningAlgo, SigningIdentity, TcbStatus, VerifiedAttestationEvidence, VerifiedModelAttestation,
 };
+use serde_json::json;
+use std::sync::Once;
 use wiremock::{
     matchers::{header, method, path, query_param, query_param_is_missing},
     Mock, MockServer, Request, Respond, ResponseTemplate,

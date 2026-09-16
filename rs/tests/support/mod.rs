@@ -3,14 +3,14 @@
 
 use async_trait::async_trait;
 use ed25519_dalek::Signer;
-use sha2::Digest;
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     DeploymentProvenanceStatus, GatewayAttestation, GpuEvidenceStatus, ModelAttestation,
     NvidiaEvidenceVerifier, QuoteVerificationResult, QuoteVerifier, SigningAlgo, SigningIdentity,
     TcbStatus, VerificationError, VerifiedAttestationEvidence, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
+use sha2::Digest;
 
 pub const NONCE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 pub const ECDSA_ADDRESS: &str = "2222222222222222222222222222222222222222";
@@ -168,7 +168,7 @@ pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttes
 pub fn verified_gateway_attestation(signer: SigningIdentity) -> VerifiedGatewayAttestation {
     VerifiedGatewayAttestation {
         evidence: verified_evidence(signer),
-        tls_binding: verifiable_ai_sdk::GatewayTlsBinding::Attested {
+        tls_binding: nearai_inference_sdk::GatewayTlsBinding::Attested {
             spki_fingerprint: TLS_FINGERPRINT.to_owned(),
         },
     }
@@ -179,7 +179,7 @@ fn verified_evidence(signer: SigningIdentity) -> VerifiedAttestationEvidence {
         signer,
         tcb_status: TcbStatus::UpToDate,
         advisory_ids: vec![],
-        deployment: verifiable_ai_sdk::MeasuredDeployment {
+        deployment: nearai_inference_sdk::MeasuredDeployment {
             app_compose: APP_COMPOSE.to_owned(),
             runtime_measurements: Default::default(),
         },

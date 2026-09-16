@@ -1,14 +1,14 @@
 mod support;
 
 use async_trait::async_trait;
-use support::{
-    gateway_tls_quote, model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier,
-    APP_COMPOSE, NONCE,
-};
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     verify_model_attestation, DeploymentProvenanceStatus, DeploymentVerifier,
     GpuEvidenceRequirement, GpuEvidenceStatus, MeasuredDeployment, ModelAttestationPolicy,
     ModelAttestationVerifiers, ModelClientBinding, TcbStatus, VerificationError,
+};
+use support::{
+    gateway_tls_quote, model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier,
+    APP_COMPOSE, NONCE,
 };
 
 fn client_binding() -> ModelClientBinding {

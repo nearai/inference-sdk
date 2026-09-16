@@ -3,7 +3,7 @@ import json
 import os
 
 import aiohttp
-from verifiable_ai_sdk import (
+from nearai_inference_sdk import (
     AttestationClient,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,

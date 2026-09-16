@@ -1,9 +1,9 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
-use serde_json::Value;
-use verifiable_ai_sdk::{
+use nearai_inference_sdk::{
     verify_image_provenance, ImageProvenanceFailureReason as Reason, ImageProvenancePolicy,
     VerificationError,
 };
+use serde_json::Value;
 
 const BUNDLE: &str =
     include_str!("../../test-fixtures/provenance/compose-manager-launcher.bundle.json");

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 
-import verifiable_ai_sdk.core.provenance as provenance
-from verifiable_ai_sdk import (
+import nearai_inference_sdk.core.provenance as provenance
+from nearai_inference_sdk import (
     ApiError,
     ApiFailure,
     ImageProvenancePolicy,
