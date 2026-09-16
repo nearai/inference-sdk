@@ -3,6 +3,82 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Caller-approved GitHub build identity. This approves a source, not a model
+/// deployment: obtain the image digest from previously verified evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImageProvenancePolicy {
+    /// GitHub source repository in `owner/repo` form.
+    pub repository: String,
+    /// Workflow path, for example `.github/workflows/build.yml`.
+    pub workflow: String,
+    /// Optional exact Git ref, such as `refs/heads/main`.
+    #[serde(rename = "ref")]
+    pub git_ref: Option<String>,
+    /// Optional full source commit SHA, matched against both the SLSA statement
+    /// and the signing certificate's authenticated source digest.
+    pub commit: Option<String>,
+    /// Expected certificate OIDC issuer.
+    #[serde(default = "default_image_provenance_issuer")]
+    pub issuer: String,
+}
+
+impl ImageProvenancePolicy {
+    pub fn new(repository: String, workflow: String) -> Self {
+        Self {
+            repository,
+            workflow,
+            git_ref: None,
+            commit: None,
+            issuer: default_image_provenance_issuer(),
+        }
+    }
+}
+
+fn default_image_provenance_issuer() -> String {
+    "https://token.actions.githubusercontent.com".to_owned()
+}
+
+/// Source information extracted only after the Sigstore bundle is verified.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VerifiedImageProvenance {
+    pub digest: String,
+    pub repository: String,
+    pub workflow: String,
+    #[serde(rename = "ref")]
+    pub git_ref: String,
+    /// Source commit matched between the SLSA statement and signing certificate.
+    pub commit: String,
+    pub certificate_identity: String,
+    pub issuer: String,
+    pub predicate_type: String,
+}
+
+/// Why a candidate bundle failed image-provenance verification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageProvenanceFailureReason {
+    NoAttestations,
+    InvalidBundle,
+    UntrustedIdentity,
+    InvalidStatement,
+    DigestMismatch,
+    SourceMismatch,
+    CommitMismatch,
+    TrustRootUnavailable,
+}
+
+/// Why the measured Compose images cannot be checked against the supplied policies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentImagesFailureReason {
+    EmptyPolicy,
+    InvalidAppCompose,
+    InvalidDockerCompose,
+    UnresolvedImage,
+    ImageMissing,
+    ImageNotPinned,
+}
+
 /// Signature algorithms exposed by NEAR AI Cloud.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

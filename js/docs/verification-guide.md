@@ -46,7 +46,7 @@ before selecting a key for that algorithm.
 
 ### Cache deployment verification
 
-`attestationCacheTimeToLiveMs` defaults to `900000` (15 minutes). Concurrent
+`attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model share verification work and cached results.
 Increase the value to check deployments less frequently, or set `0` to
 verify before every request. Deployment changes are not checked while a cached
@@ -55,6 +55,12 @@ result is reused. This setting controls caching, not attestation validity.
 The SDK does not check model measurements against an approved-deployment
 allowlist by default. If needed, supply a `deploymentPolicy` callback and
 throw an error to reject a deployment.
+
+Reusable deployment checks can also be passed through
+`gatewayVerification.verifiers.deployment` and
+`modelVerification.verifiers.deployment`. For models, this check runs before
+`deploymentPolicy`, which also receives the requested model name. If both are
+configured, both must pass.
 
 ## Connect through an application proxy
 
@@ -201,7 +207,7 @@ API failure, call `verifyResponse(id)` again to retry the signature lookup.
 Successful results and non-retryable failures remain cached.
 
 Response records retain complete bodies in memory. They expire
-`responseCacheTimeToLiveMs` after body completion (default: 15 minutes),
+`responseCacheTimeToLiveMs` after body completion (default: 60 minutes),
 independently of the attestation cache. Unknown or expired IDs produce
 `ApiError` with code `api.completion_not_found`. For active streams, memory
 grows with the received body until the application finishes or cancels reading.
@@ -304,6 +310,64 @@ only the peer for its Gateway-attestation request; it does not automatically
 apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
 receipt signature—must be pinned automatically.
+
+### Optional image build provenance
+
+`verifyDeploymentImageProvenance` reads image digests from `appCompose`, fetches
+their GitHub Sigstore bundles, and verifies them against your build policies.
+Use it in a deployment callback so the quote and configuration binding are
+checked first:
+
+```ts
+import {
+  verifyDeploymentImageProvenance,
+  verifyGatewayAttestation,
+  type ImageProvenancePolicy,
+} from 'verifiable-ai-sdk';
+
+const imagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/cloud-api': {
+    repository: 'nearai/cloud-api',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+const gateway = await verifyGatewayAttestation({
+  attestation: fetchedGateway.attestation,
+  clientBinding: fetchedGateway.clientBinding,
+  verifiers: {
+    deployment: ({ appCompose }) =>
+      verifyDeploymentImageProvenance({ appCompose, imagePolicies }),
+  },
+});
+```
+
+Each map key is a required container image repository; its value identifies the
+trusted GitHub repository and workflow. Every reference to a listed image must
+have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
+alone are not. Image variables are not resolved. Other literal images are not
+verified. For `SecureClient`, pass the same callback as
+`gatewayVerification.verifiers.deployment`; see the runnable
+[image provenance example](../../examples/example-js/client-provenance.ts).
+
+The checks cover signatures, certificates, transparency-log evidence, artifact
+digests, and signed SLSA source. Each source commit must match the certificate's
+authenticated source SHA. Set `ref` or `commit` to restrict builds further.
+For individual digests or other configuration formats, use
+`fetchImageProvenance` and `verifyImageProvenance` directly.
+
+One complete matching bundle is sufficient; other bundles for the digest may
+come from different builds. The helpers do not maintain an approved-image list,
+rebuild images, or prove which containers are currently running. They are not
+enabled automatically. Trust roots are refreshed through Sigstore's TUF service.
+The TypeScript verifier accepts Rekor `dsse` entries, as used by current GitHub
+build attestations; legacy Rekor `intoto` entries are not supported.
+
+`verifyDeploymentImageProvenance` throws `VerificationError` for invalid image
+configuration, failed proof retrieval, or failed proof verification. A retrieval
+failure preserves the underlying `ApiError` as its cause and its retryability.
+Calling `fetchImageProvenance` directly still throws `ApiError`.
+The optional `githubToken` is a GitHub token, not a Gateway API key.
 
 ### Verify the response signature
 

@@ -7,6 +7,10 @@
 - a model-serving deployment attestation; and
 - a completion signature over exact request and response bytes.
 
+Optional image-provenance helpers verify GitHub build attestations against a
+caller-selected repository, workflow and source pin. See the
+[guide](./docs/verification-guide.md#verify-an-images-build-provenance).
+
 The recommended lifecycle has three stages:
 
 1. Before the request, verify the Gateway deployment and every canonical-model

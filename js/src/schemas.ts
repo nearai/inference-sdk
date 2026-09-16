@@ -231,3 +231,135 @@ export const NvidiaJwksSchema = v.object({
     looseObjectSchema({ kty: v.string(), kid: v.optional(v.string()) }),
   ),
 });
+
+// GitHub transports opaque Sigstore bundles. The cryptographic verifier owns
+// their interpretation; this schema checks the DSSE wire shape at its boundary.
+export const GitHubImageAttestationsSchema = objectSchema({
+  attestations: v.array(
+    objectSchema({ bundle: v.record(v.string(), v.unknown()) }),
+  ),
+});
+
+const SigstoreCertificateSchema = objectSchema({ rawBytes: v.string() });
+const SigstoreTlogEntrySchema = objectSchema({
+  logIndex: v.string(),
+  logId: objectSchema({ keyId: v.string() }),
+  kindVersion: objectSchema({ kind: v.string(), version: v.string() }),
+  // Sigstore's wire/library contract uses null for Rekor v2's absent timestamp.
+  integratedTime: v.nullish(v.string(), null),
+  inclusionPromise: v.optional(
+    objectSchema({ signedEntryTimestamp: v.string() }),
+  ),
+  inclusionProof: v.optional(
+    objectSchema({
+      logIndex: v.string(),
+      rootHash: v.string(),
+      treeSize: v.string(),
+      hashes: v.array(v.string()),
+      checkpoint: objectSchema({ envelope: v.string() }),
+    }),
+  ),
+  canonicalizedBody: v.string(),
+});
+
+export const DeploymentAppComposeSchema = objectSchema({
+  docker_compose_file: v.string(),
+});
+
+export const DeploymentDockerComposeSchema = objectSchema({
+  services: v.record(
+    v.string(),
+    objectSchema({
+      image: v.pipe(
+        v.nullish(v.string()),
+        v.transform((value) => value ?? undefined),
+      ),
+    }),
+  ),
+});
+
+export const ImageProvenanceBundleSchema = objectSchema({
+  mediaType: v.picklist([
+    'application/vnd.dev.sigstore.bundle+json;version=0.1',
+    'application/vnd.dev.sigstore.bundle+json;version=0.2',
+    'application/vnd.dev.sigstore.bundle+json;version=0.3',
+    'application/vnd.dev.sigstore.bundle.v0.3+json',
+  ]),
+  verificationMaterial: objectSchema({
+    certificate: v.optional(SigstoreCertificateSchema),
+    x509CertificateChain: v.optional(
+      objectSchema({
+        certificates: v.pipe(
+          v.array(SigstoreCertificateSchema),
+          v.minLength(1),
+        ),
+      }),
+    ),
+    tlogEntries: v.pipe(v.array(SigstoreTlogEntrySchema), v.minLength(1)),
+    timestampVerificationData: v.optional(
+      objectSchema({
+        rfc3161Timestamps: v.optional(
+          v.array(objectSchema({ signedTimestamp: v.string() })),
+          () => [],
+        ),
+      }),
+    ),
+  }),
+  dsseEnvelope: objectSchema({
+    payload: v.string(),
+    payloadType: v.literal('application/vnd.in-toto+json'),
+    signatures: v.pipe(
+      v.array(objectSchema({ sig: v.string(), keyid: v.optional(v.string()) })),
+      v.length(1),
+    ),
+  }),
+});
+
+const ProvenanceStatementEntries = {
+  _type: v.picklist([
+    'https://in-toto.io/Statement/v1',
+    'https://in-toto.io/Statement/v0.1',
+  ]),
+  subject: v.array(
+    objectSchema({
+      digest: v.record(v.string(), v.string()),
+    }),
+  ),
+};
+
+export const ImageProvenanceStatementSchema = v.union([
+  objectSchema({
+    ...ProvenanceStatementEntries,
+    predicateType: v.literal('https://slsa.dev/provenance/v1'),
+    predicate: objectSchema({
+      buildDefinition: objectSchema({
+        externalParameters: objectSchema({
+          workflow: objectSchema({
+            repository: v.string(),
+            path: v.string(),
+            ref: v.string(),
+          }),
+        }),
+        resolvedDependencies: v.array(
+          objectSchema({
+            uri: v.string(),
+            digest: v.optional(v.record(v.string(), v.string()), () => ({})),
+          }),
+        ),
+      }),
+    }),
+  }),
+  objectSchema({
+    ...ProvenanceStatementEntries,
+    predicateType: v.literal('https://slsa.dev/provenance/v0.2'),
+    predicate: objectSchema({
+      invocation: objectSchema({
+        configSource: objectSchema({
+          uri: v.string(),
+          entryPoint: v.string(),
+          digest: v.record(v.string(), v.string()),
+        }),
+      }),
+    }),
+  }),
+]);

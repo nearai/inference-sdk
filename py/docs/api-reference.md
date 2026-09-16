@@ -34,6 +34,9 @@ verification is synchronous.
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
+| `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
+| `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
+| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
 
 ## AttestationClient
 
@@ -171,6 +174,80 @@ prove a complete model-to-Gateway-to-final-bytes chain. A `provider_tee`
 signature does not identify the Gateway that returned the bytes; a `gateway`
 signature does not prove that an attested model generated them. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
 provider-signature and Gateway-receipt chain.
+
+## Image build provenance
+
+### `verify_deployment_image_provenance`
+
+Asynchronously returns `None` when every configured image repository is present
+and every matching service image passes provenance verification. It parses
+`app_compose` as JSON containing a `docker_compose_file` YAML string with a
+`services` map. Missing or null service images are ignored.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `app_compose` | `str` | Yes | Measured app-compose JSON. |
+| `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Yes | Nonempty mapping from image repository to trusted GitHub build policy. |
+| `github_token` | `str \| None` | No | Optional GitHub authentication token. |
+
+Images must use `repository@sha256:<64 hex>` or
+`repository:tag@sha256:<64 hex>`. A leading `docker.io/` is normalized in policy
+keys and service images. All matching references must be pinned, even when a
+different service uses a valid pin. Unrelated literal images are ignored;
+references containing `$` are rejected without environment expansion. Selection
+is validated before any fetch.
+
+Selection errors raise `VerificationError` with code
+`provenance.deployment_images_invalid` and a `reason` of `empty_policy`,
+`invalid_app_compose`, `invalid_docker_compose`, `unresolved_image`, `image_missing`,
+or `image_not_pinned`; `imageRepository` and `service` identify the selection when
+applicable. GitHub request errors are wrapped as `provenance.image_request_failed`
+with `imageRepository`, `digest`, the original cause, and unchanged retryability.
+Image verification errors pass through unchanged.
+
+### `fetch_image_provenance`
+
+Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `repository` | `str` | Yes | GitHub repository in `owner/repo` form. |
+| `digest` | `str` | Yes | Image digest in `sha256:<64 hex characters>` form. |
+| `github_token` | `str \| None` | No | GitHub authentication token; defaults to no token. |
+
+### `verify_image_provenance`
+
+Asynchronously returns `VerifiedImageProvenance`. One bundle must satisfy every
+signature, artifact, source and policy check. The helper supports GitHub SLSA v1
+and v0.2 provenance and refreshes Sigstore's production trust root through TUF.
+The statement's source commit must match the signing certificate's source digest
+(or legacy GitHub workflow SHA when the source digest is absent), before applying
+the optional commit pin.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundles` | `Sequence[str]` | Yes | Candidate Sigstore bundle JSON strings. |
+| `digest` | `str` | Yes | Expected image digest, not a hash chosen from the bundle. |
+| `policy` | `ImageProvenancePolicy` | Yes | Caller-owned build identity and optional source pin. |
+
+| Policy field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `repository` | `str` | required | Expected GitHub `owner/repo`. |
+| `workflow` | `str` | required | Expected workflow path, such as `.github/workflows/build.yml`. |
+| `ref` | `str \| None` | `None` | Optional exact source ref, such as `refs/heads/main`. |
+| `commit` | `str \| None` | `None` | Optional approved source commit SHA. |
+| `issuer` | `str` | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
+
+| Result field | Type | Description |
+| --- | --- | --- |
+| `digest` | `str` | Verified image digest. |
+| `repository` | `str` | Verified GitHub repository. |
+| `workflow` | `str` | Verified build workflow path. |
+| `ref` | `str` | Verified build ref. |
+| `commit` | `str` | Verified source commit SHA. |
+| `certificate_identity` | `str` | Verified signing-certificate identity. |
+| `issuer` | `str` | Accepted certificate OIDC issuer. |
+| `predicate_type` | `str` | Verified SLSA predicate type. |
 
 ## Evidence, signatures, policies, and results
 

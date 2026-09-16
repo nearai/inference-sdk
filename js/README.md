@@ -12,6 +12,9 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
   its exact request and response bytes and the evidence retained for that request.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
+- `verifyDeploymentImageProvenance` checks required deployment images against
+  caller-supplied GitHub build policies. Individual image fetch and verification
+  helpers are also available.
 
 Gateway attestation verifies the Gateway's TEE and signing identity.
 Model attestation verifies the model deployment's TEE, signing identity,
@@ -27,9 +30,9 @@ signature identifies a Gateway signer and does not establish model execution.
 enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
 Setting `e2ee: false` disables encryption while retaining deployment verification.
 
-Attestation results are cached for 15 minutes. Set
+Attestation results are cached for 60 minutes. Set
 `attestationCacheTimeToLiveMs: 0` to verify before every request. Response
-records have a separate 15-minute retention period, configured through
+records have a separate 60-minute retention period, configured through
 `responseCacheTimeToLiveMs`.
 
 Import from `verifiable-ai-sdk/node` for Node.js with Gateway TLS verification

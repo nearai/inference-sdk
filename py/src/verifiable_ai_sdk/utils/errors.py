@@ -13,7 +13,7 @@ ErrorDetails = dict[str, object]
 
 @dataclass(frozen=True, kw_only=True)
 class ApiFailure:
-    """A Cloud API helper-input, request, response, or selection failure."""
+    """A helper-input, request, response, or selection failure."""
 
     code: str
     details: ErrorDetails | None = None
@@ -30,7 +30,7 @@ class VerificationFailure:
 
 
 class ApiError(Exception):
-    """A machine-readable Cloud API retrieval or evidence-selection failure."""
+    """A machine-readable retrieval or evidence-selection failure."""
 
     def __init__(self, failure: ApiFailure, *, cause: BaseException | None = None):
         self.failure = failure
@@ -115,6 +115,7 @@ def verification_failure(
 def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
     details = failure.details or {}
     code = failure.code
+    service = 'GitHub' if details.get('resource') == 'image_provenance' else 'Cloud API'
 
     match code:
         case 'input.invalid' | 'api.invalid_input':
@@ -127,17 +128,17 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
                 if reason == 'response_body'
                 else 'request failed'
             )
-            return f'[{code}] Cloud API {resource} {message}'
+            return f'[{code}] {service} {resource} {message}'
         case 'api.http_status':
             return (
-                f'[{code}] Cloud API {_api_resource(details)} returned HTTP '
+                f'[{code}] {service} {_api_resource(details)} returned HTTP '
                 f'{_detail(details, "status")}'
             )
         case 'api.invalid_json':
-            return f'[{code}] Cloud API {_api_resource(details)} returned invalid JSON'
+            return f'[{code}] {service} {_api_resource(details)} returned invalid JSON'
         case 'api.invalid_response':
             return (
-                f'[{code}] Cloud API response has an invalid '
+                f'[{code}] {service} response has an invalid '
                 f'{_detail(details, "path")}: expected {_detail(details, "expected")}, '
                 f'received {_detail(details, "actual")}'
             )
@@ -232,6 +233,18 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             return f'[{code}] GPU evidence was rejected by {_detail(details, "source")}'
         case 'provenance.verification_failed':
             return f'[{code}] Deployment provenance verification failed'
+        case 'provenance.deployment_images_invalid':
+            return f'[{code}] Deployment image selection failed: {_detail(details, "reason")}'
+        case 'provenance.image_request_failed':
+            return (
+                f'[{code}] Image provenance request failed for '
+                f'{_detail(details, "imageRepository")}@{_detail(details, "digest")}'
+            )
+        case 'provenance.image_verification_failed':
+            return (
+                f'[{code}] Image provenance verification failed for '
+                f'{_detail(details, "digest")}: {_detail(details, "reasons")}'
+            )
         case 'signature.kind_mismatch':
             return (
                 f'[{code}] Expected a {_detail(details, "expected")} signature, '
@@ -273,6 +286,8 @@ def _api_resource(details: ErrorDetails) -> str:
             return 'Gateway attestation'
         case 'completion_signature':
             return 'completion signature'
+        case 'image_provenance':
+            return 'image provenance'
         case _:
             return 'resource'
 

@@ -188,6 +188,79 @@ JWKS, issuer, expiration, not-before and issued-at times, and signed `eat_nonce`
 The overall verdict must be `true`; detached per-device claims are not consumed.
 See [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
 
+## Verify an image's build provenance
+
+Image provenance is optional. Use a digest from a verified deployment's
+`app_compose` and choose the GitHub repository and workflow your application
+trusts. Do not treat a compose variable's default image as the resolved image
+when its value may be overridden.
+
+```rust,no_run
+use verifiable_ai_sdk::{
+    fetch_image_provenance, verify_image_provenance, ImageProvenancePolicy,
+    VerifiedImageProvenance,
+};
+
+async fn verify_image(
+    digest: &str,
+) -> Result<VerifiedImageProvenance, Box<dyn std::error::Error>> {
+    let mut policy = ImageProvenancePolicy::new(
+        "nearai/compose-manager".to_owned(),
+        ".github/workflows/build.yml".to_owned(),
+    );
+    policy.git_ref = Some("refs/heads/master".to_owned());
+    // Set policy.commit as well when your application approves one source commit.
+    let bundles = fetch_image_provenance(&policy.repository, digest, None).await?;
+    let provenance = verify_image_provenance(&bundles, digest, &policy).await?;
+    Ok(provenance)
+}
+```
+
+The verifier accepts a bundle only after its Sigstore signature, certificate,
+transparency-log evidence, artifact digest and signed SLSA source identity pass.
+The SLSA source commit must match the certificate's authenticated source digest,
+even without `policy.commit`; that optional pin must then match the same commit.
+It tries every supplied bundle until one satisfies the policy. Fetching uses
+GitHub's public API; supply an optional GitHub token for authenticated rate
+limits. It is not a Gateway API key.
+
+Verification uses `sigstore-verify`'s embedded Sigstore public-good trust-root
+snapshot, without a runtime trust-root download. Keep the dependency updated
+when Sigstore rotates trust material. This verifies build provenance, not
+reproducibility, all deployment images, or the software currently serving a
+model. Attestation verification does not call these helpers automatically.
+
+To check required images from measured Compose, call
+`verify_deployment_image_provenance` in your `DeploymentVerifier`:
+
+```rust,no_run
+use std::collections::BTreeMap;
+use async_trait::async_trait;
+use verifiable_ai_sdk::{
+    verify_deployment_image_provenance, DeploymentVerifier,
+    ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
+
+struct ApprovedImages(BTreeMap<String, ImageProvenancePolicy>);
+
+#[async_trait]
+impl DeploymentVerifier for ApprovedImages {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        verify_deployment_image_provenance(&deployment.app_compose, &self.0, None).await
+    }
+}
+```
+
+Populate the nonempty map with container image repository keys and your own
+GitHub build policies, then pass this verifier through
+`AttestationVerifiers.deployment` or `ModelAttestationVerifiers.deployment`.
+The SDK checks the quote and Compose measurement binding before calling it.
+Every configured repository is required, and every matching reference must
+include a SHA-256 digest (a tag alongside the digest is allowed). Unlisted
+literal images are ignored; any unresolved `$` image reference is rejected,
+including defaults. This checks only images in the measured Compose, not model
+runtime images loaded later by a launcher or another service.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.

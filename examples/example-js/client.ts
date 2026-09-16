@@ -10,8 +10,8 @@ async function main(): Promise<void> {
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
   // E2EE and Gateway TLS verification are enabled by default.
-  // Attestations are reused for 15 minutes. Response records have a separate
-  // 15-minute TTL, starting when the response finishes.
+  // Attestations are reused for 60 minutes. Response records have a separate
+  // 60-minute TTL, starting when the response finishes.
   const secureClient = new SecureClient({
     apiKey,
     baseUrl: BASE_URL,

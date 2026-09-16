@@ -1,15 +1,19 @@
-use crate::types::{CompletionSignatureKind, SigningAlgo, TcbStatus};
+use crate::types::{
+    CompletionSignatureKind, DeploymentImagesFailureReason, ImageProvenanceFailureReason,
+    SigningAlgo, TcbStatus,
+};
 use thiserror::Error;
 
-/// Cloud API resource involved in an API failure.
+/// External resource involved in an API failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApiResource {
     ModelAttestation,
     GatewayAttestation,
     CompletionSignature,
+    ImageProvenance,
 }
 
-/// The request stage that failed before NEAR AI Cloud returned a response.
+/// The external request stage that failed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApiTransportReason {
     Request,
@@ -31,16 +35,16 @@ impl std::fmt::Display for ApiResource {
             Self::ModelAttestation => "model attestation",
             Self::GatewayAttestation => "gateway attestation",
             Self::CompletionSignature => "completion signature",
+            Self::ImageProvenance => "image provenance",
         };
         formatter.write_str(value)
     }
 }
 
-/// Failures while configuring or calling NEAR AI Cloud, or selecting evidence
-/// returned by it.
+/// Failures while retrieving or selecting external evidence.
 #[derive(Debug, Error)]
 pub enum ApiError {
-    #[error("invalid Cloud API input {field}: {reason}")]
+    #[error("invalid API input {field}: {reason}")]
     InvalidInput {
         field: String,
         reason: String,
@@ -48,19 +52,19 @@ pub enum ApiError {
         actual: Option<String>,
     },
 
-    #[error("Cloud API {resource} {reason} failed")]
+    #[error("API {resource} {reason} failed")]
     Transport {
         resource: ApiResource,
         reason: ApiTransportReason,
     },
 
-    #[error("Cloud API {resource} returned HTTP {status}")]
+    #[error("API {resource} returned HTTP {status}")]
     HttpStatus { resource: ApiResource, status: u16 },
 
-    #[error("Cloud API {resource} returned invalid JSON")]
+    #[error("API {resource} returned invalid JSON")]
     InvalidJson { resource: ApiResource },
 
-    #[error("Cloud API response has an invalid {path}: expected {expected}, received {actual}")]
+    #[error("API response has an invalid {path}: expected {expected}, received {actual}")]
     InvalidResponse {
         path: String,
         expected: String,
@@ -109,11 +113,11 @@ impl ApiError {
     }
 
     /// Whether retrying the same operation may reasonably succeed.
-    pub fn retryable(&self) -> bool {
+    pub const fn retryable(&self) -> bool {
         match self {
             Self::Transport { .. } => true,
             Self::HttpStatus { resource, status } => {
-                (*resource == ApiResource::CompletionSignature && *status == 404)
+                (matches!(resource, ApiResource::CompletionSignature) && *status == 404)
                     || *status == 408
                     || *status == 425
                     || *status == 429
@@ -213,6 +217,27 @@ pub enum VerificationError {
     #[error("deployment provenance verifier rejected the measured deployment")]
     DeploymentProvenanceRejected,
 
+    #[error("no trusted image provenance for {digest}: {reasons:?}")]
+    ImageProvenanceVerificationFailed {
+        digest: String,
+        reasons: Vec<ImageProvenanceFailureReason>,
+    },
+
+    #[error("deployment images cannot be verified: {reason:?}")]
+    DeploymentImagesInvalid {
+        reason: DeploymentImagesFailureReason,
+        image_repository: Option<String>,
+        service: Option<String>,
+    },
+
+    #[error("image provenance request failed for {image_repository}@{digest}")]
+    ImageProvenanceRequestFailed {
+        image_repository: String,
+        digest: String,
+        #[source]
+        source: Box<ApiError>,
+    },
+
     #[error("completion signature kind {actual:?} cannot be used here; expected {expected:?}")]
     SignatureKindMismatch {
         expected: CompletionSignatureKind,
@@ -263,6 +288,11 @@ impl VerificationError {
             Self::NvidiaJwtVerificationFailed { .. } => "gpu.jwt_verification_failed",
             Self::GpuAttestationRejected { .. } => "gpu.attestation_rejected",
             Self::DeploymentProvenanceRejected => "provenance.verification_failed",
+            Self::ImageProvenanceVerificationFailed { .. } => {
+                "provenance.image_verification_failed"
+            }
+            Self::DeploymentImagesInvalid { .. } => "provenance.deployment_images_invalid",
+            Self::ImageProvenanceRequestFailed { .. } => "provenance.image_request_failed",
             Self::SignatureKindMismatch { .. } => "signature.kind_mismatch",
             Self::SignaturePayloadMismatch { .. } => "signature.payload_mismatch",
             Self::SignatureFormatInvalid { .. } => "signature.format_invalid",
@@ -277,6 +307,7 @@ impl VerificationError {
             Self::QuoteCollateralUnavailable => true,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
             Self::NvidiaJwksRequestFailed { retryable, .. } => *retryable,
+            Self::ImageProvenanceRequestFailed { source, .. } => source.retryable(),
             _ => false,
         }
     }

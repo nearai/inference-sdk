@@ -7,6 +7,12 @@ from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
 )
+from .core.provenance import (
+    fetch_image_provenance,
+    verify_deployment_image_provenance,
+    verify_image_provenance,
+)
+from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
 from .types.attestation_common import (
     AttestationEvidence,
     AttestationEventLog,
@@ -62,6 +68,11 @@ __all__ = [
     'verify_gateway_attestation',
     'verify_model_response',
     'verify_gateway_response',
+    'fetch_image_provenance',
+    'verify_deployment_image_provenance',
+    'verify_image_provenance',
+    'ImageProvenancePolicy',
+    'VerifiedImageProvenance',
     'FetchedGatewayAttestation',
     'FetchedModelAttestations',
     'SigningAlgo',

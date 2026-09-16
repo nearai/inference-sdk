@@ -7,6 +7,8 @@ export default {
       { tsconfig: { allowJs: true, module: 'CommonJS' } },
     ],
   },
-  // jose is ESM-only; run its real cryptographic implementation in these CJS tests.
-  transformIgnorePatterns: ['/node_modules/(?!.*jose/)'],
+  // These browser-compatible dependencies publish ESM only.
+  transformIgnorePatterns: [
+    '/node_modules/(?!.*(?:@freedomofpress|@noble|jose)/)',
+  ],
 };

@@ -1,0 +1,7 @@
+{
+  "repository": "nearai/compose-manager",
+  "digest": "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56",
+  "workflow": ".github/workflows/build.yml",
+  "url": "https://api.github.com/repos/nearai/compose-manager/attestations/sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56",
+  "retrieved_at": "2026-09-16"
+}

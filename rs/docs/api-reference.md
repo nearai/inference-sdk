@@ -138,6 +138,61 @@ response, `verify_model_response` requires a `VerifiedModelAttestation` with
 the same signer. Select it from the verified preflight results with
 `find_model_attestation_for_signature`.
 
+## Image build provenance
+
+These functions are asynchronous. The low-level functions separate retrieval
+from verification; the deployment helper combines them for required images.
+
+| Function | Parameters | Returns | Description |
+| --- | --- | --- | --- |
+| `fetch_image_provenance` | `repository: &str`, `digest: &str`, `github_token: Option<&str>` | `Result<Vec<String>, ApiError>` | Fetches all inline GitHub attestation bundles, following pagination. `repository` is `owner/repo`; `digest` is `sha256:` plus 64 hexadecimal digits. |
+| `verify_image_provenance` | `bundles: &[String]`, `digest: &str`, `policy: &ImageProvenancePolicy` | `Result<VerifiedImageProvenance, VerificationError>` | Verifies Sigstore and SLSA v1 or v0.2 provenance. At least one complete bundle must satisfy the policy. |
+| `verify_deployment_image_provenance` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Parses measured Compose, requires every configured image repository and verifies all matching digest-pinned references. |
+
+The deployment helper expects outer JSON with a `docker_compose_file` YAML
+string and a `services` map. YAML aliases and merge keys are supported. Policy
+keys are container image repositories, not GitHub source repositories. An
+optional `docker.io/` prefix is normalized on both keys and references. Every
+matching reference must be `repository@sha256:<64 hex digits>` or
+`repository:tag@sha256:<64 hex digits>`. The policy map must not be empty;
+unlisted literal images are ignored. Any image containing `$` is rejected:
+environment variables and their defaults are not resolved. Missing or null
+service images are ignored. All Compose/reference checks finish before fetching.
+
+Malformed Compose or unsupported references return
+`provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
+(`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
+`unresolved_image`, `image_missing`, or `image_not_pinned`) and optional image
+repository/service details. Fetch failures become
+`provenance.image_request_failed`, preserving the `ApiError` source and its
+retryability. Cryptographic verification errors are returned unchanged.
+
+`ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
+GitHub Actions issuer and leaves the optional ref and commit unset.
+The statement's source commit must match the certificate's authenticated source
+SHA before applying the optional commit pin.
+
+| Policy field | Type | Description |
+| --- | --- | --- |
+| `repository` | `String` | Required GitHub source repository, such as `nearai/compose-manager`. |
+| `workflow` | `String` | Required workflow path, such as `.github/workflows/build.yml`. |
+| `git_ref` | `Option<String>` | Optional exact Git ref, such as `refs/heads/master`. Serialized as `ref`. |
+| `commit` | `Option<String>` | Optional full, 40-digit source commit SHA. |
+| `issuer` | `String` | Expected OIDC issuer; defaults to `https://token.actions.githubusercontent.com`. |
+
+| Verified result field | Type | Description |
+| --- | --- | --- |
+| `digest` | `String` | Verified SHA-256 artifact digest, including its `sha256:` prefix. |
+| `repository`, `workflow`, `git_ref`, `commit` | `String` | Source repository, workflow, ref and commit matched against the verified certificate identity and signed statement. |
+| `certificate_identity`, `issuer` | `String` | Authenticated certificate identity and OIDC issuer. |
+| `predicate_type` | `String` | SLSA provenance predicate URI (`v1` or `v0.2`). |
+
+These helpers use an embedded public-good Sigstore trust root. They do not
+authenticate `app_compose` themselves or run automatically during attestation
+verification. Call the deployment helper from a `DeploymentVerifier` so the SDK
+has already checked quote and measurement binding. No default image trust policy
+is supplied, and unlisted images are not approved by the helper.
+
 ## Signatures and evidence
 
 ### Signature types

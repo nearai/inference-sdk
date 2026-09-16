@@ -35,6 +35,9 @@ Gateway deployment.
   requires the TLS peer observed for the evidence request to match it.
 - A completion signature: the exact request and response bytes signed by the
   signer named in the returned signature.
+- Optional image build provenance: Sigstore signatures, transparency-log evidence,
+  and a GitHub build identity selected by the caller. No publisher or version
+  approval policy is provided by default.
 
 The Gateway returns an explicit kind for each completion signature:
 

@@ -70,17 +70,17 @@ export type NodeGatewayVerificationOptions = Omit<
 /** Advanced verification settings for model evidence used by `SecureClient`. */
 export type ModelVerificationOptions = {
   readonly policy?: ModelAttestationPolicy;
-  readonly verifiers?: Omit<ModelAttestationVerifiers, 'deployment'>;
+  readonly verifiers?: ModelAttestationVerifiers;
 };
 
 /** Settings shared by generic and Node verified Chat clients. */
 type SecureClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model. Defaults to 15 minutes. Set `0` to verify every request.
+   * same model. Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
-  /** Retain response verification records for this long after the body finishes. Defaults to 15 minutes. */
+  /** Retain response verification records for this long after the body finishes. Defaults to 60 minutes. */
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
@@ -98,6 +98,7 @@ type SecureClientCommonOptions = {
   /**
    * Optional caller-owned allowlist for authenticated model measurements.
    * It receives the model named by each Chat request.
+   * Runs after `modelVerification.verifiers.deployment` when both are supplied.
    */
   readonly deploymentPolicy?: DeploymentPolicy;
   readonly modelVerification?: ModelVerificationOptions;

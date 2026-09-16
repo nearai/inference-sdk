@@ -35,6 +35,9 @@ Gateway-attestation socket to be reused.
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
+| `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
+| `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
+| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
 
 ## `SecureClient`
 
@@ -54,11 +57,11 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
 | `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for evidence, signature, and Chat requests. Configured `Authorization` takes precedence over per-request authorization unless `apiKey` is set. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
-| `attestationCacheTimeToLiveMs?` | `number` | No | `900000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
-| `responseCacheTimeToLiveMs?` | `number` | No | `900000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
+| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the evidence, model-key routing, receipt, and E2EE protocol. Set `'ecdsa'` for the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `true` | Enables secure Chat field encryption for the selected algorithm. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and still supports response verification. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model deployment check. No approval policy is provided by default. Throw to reject. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
 
@@ -72,7 +75,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
 | `GatewayVerificationOptions` from `verifiable-ai-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
-|  | `verifiers?: Omit<ModelAttestationVerifiers, 'deployment'>` | Model quote and NVIDIA verifier overrides. Use `deploymentPolicy` for model deployment checks. |
+|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifiers. A deployment check must pass before `deploymentPolicy` runs. |
 
 ### Methods and result
 
@@ -216,6 +219,75 @@ verified gateway deployment evidence; it does not establish model execution.
 Call both attestation verifiers before sending a completion. Later, pass the
 matching previously verified attestation selected by `signature.kind` to the
 response verifier.
+## Image build provenance
+
+### `verifyDeploymentImageProvenance`
+
+Parses JSON `appCompose` and its YAML `docker_compose_file`, then fetches and
+verifies build proofs for the required images. Returns `Promise<void>`.
+Use in a deployment callback: this helper does not authenticate `appCompose`
+against a quote itself.
+
+| `VerifyDeploymentImageProvenanceParams` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
+| `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
+| `githubToken` | `string` | No | GitHub authentication for fetching proofs. |
+
+Every configured repository must appear in Compose `services`. Each matching
+reference must have a literal `sha256:` digest, optionally preceded by a tag.
+An optional `docker.io/` prefix is normalized. YAML anchors and merges are
+supported; image interpolation is not. Unlisted literal images are ignored.
+
+Throws `VerificationError`: `provenance.deployment_images_invalid` for invalid
+configuration, `provenance.image_request_failed` for proof retrieval errors, or
+`provenance.image_verification_failed` for rejected proofs. Retrieval errors
+preserve the `ApiError` cause and retryability.
+
+### `fetchImageProvenance`
+
+Returns all inline Sigstore bundles as JSON strings. Does not verify them.
+
+| `FetchImageProvenanceParams` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
+| `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
+| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+
+### `verifyImageProvenance`
+
+Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
+certificate, DSSE signature and transparency log before the SDK checks the
+artifact digest and signed source. The statement's source commit must match the
+certificate's authenticated source SHA, even when `policy.commit` is omitted.
+No deployment allowlist is provided.
+Rekor entries must use the `dsse` format; legacy `intoto` entries are not supported.
+
+| `VerifyImageProvenanceParams` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundles` | `readonly string[]` | Yes | Serialized bundles from the fetch helper or another source. At least one must satisfy every check. |
+| `digest` | `string` | Yes | Expected `sha256:` image manifest digest. |
+| `policy` | `ImageProvenancePolicy` | Yes | Required build identity and optional approved version. |
+
+| `ImageProvenancePolicy` field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `repository` | `string` | Yes | — | Expected source and workflow repository, `owner/repo`. |
+| `workflow` | `string` | Yes | — | Expected workflow path, such as `.github/workflows/build.yml`. |
+| `ref` | `string` | No | Any matching workflow ref | Restricts the build to one full Git ref, such as `refs/heads/main`. |
+| `commit` | `string` | No | Any matching source commit | Restricts the signed source to one full, 40-character Git commit. |
+| `issuer` | `string` | No | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
+
+| `VerifiedImageProvenance` field | Type | Description |
+| --- | --- | --- |
+| `digest` | `string` | Verified image manifest digest, normalized to lowercase. |
+| `repository` | `string` | Matched source and workflow repository. |
+| `workflow` | `string` | Matched workflow path. |
+| `ref` | `string` | Git ref shared by the certificate identity and signed source. |
+| `commit` | `string` | Source commit matched against the verified certificate, normalized to lowercase. |
+| `certificateIdentity` | `string` | Verified certificate's workflow URI. |
+| `issuer` | `string` | Verified OIDC issuer. |
+| `predicateType` | `string` | Verified statement's SLSA predicate version. |
+
 ## Completion signatures and evidence
 
 ### Signature kinds

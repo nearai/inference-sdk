@@ -59,7 +59,7 @@ import {
 // another authentication header. `createOpenAiDefaultHeaders` removes this
 // placeholder before the secure transport receives the request.
 const OPENAI_WRAPPER_API_KEY = 'verifiable-ai-sdk-internal';
-const DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS = 15 * 60 * 1000;
+const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
 type SecureSessionState = {
   readonly gatewayAttestation: VerifiedGatewayAttestation;
@@ -213,14 +213,13 @@ export abstract class SecureClientBase {
   protected constructor(options: NodeSecureClientOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.attestationCacheTimeToLiveMs =
-      options.attestationCacheTimeToLiveMs ??
-      DEFAULT_ATTESTATION_CACHE_TIME_TO_LIVE_MS;
+      options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
     this.e2eeEnabled = options.e2ee !== false;
     this.signingAlgo = options.signingAlgo ?? 'ed25519';
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
-      options.responseCacheTimeToLiveMs ?? 15 * 60 * 1000;
+      options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
     this.chat = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
@@ -511,7 +510,10 @@ export abstract class SecureClientBase {
     }
     return {
       ...verifiers,
-      deployment: (deployment) => deploymentPolicy({ model, deployment }),
+      deployment: async (deployment) => {
+        await verifiers?.deployment?.(deployment);
+        await deploymentPolicy({ model, deployment });
+      },
     };
   }
 

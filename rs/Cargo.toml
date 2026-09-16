@@ -6,6 +6,9 @@ description = "Verification SDK for NEAR AI Cloud attestations"
 license = "MIT"
 repository = "https://github.com/nearai/verifiable-ai-sdk"
 readme = "README.md"
+# This repository-only test uses a signed fixture shared by all three SDKs
+# outside the crate root. Do not publish a test whose fixture is unavailable.
+exclude = ["tests/image_provenance.rs"]
 
 [dependencies]
 reqwest = { version = "0.12.26", features = ["json"] }
@@ -13,6 +16,7 @@ x509-cert = { version = "0.2.5", default-features = false }
 
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+serde_yaml_ng = "0.10.0"
 serde_path_to_error = "0.1.20"
 base64 = "0.22.1"
 hex = "0.4.3"
@@ -28,6 +32,7 @@ jsonwebtoken = { version = "10.4.0", default-features = false, features = ["rust
 dcap-qvl = "0.3.9"
 
 thiserror = "2.0.17"
+sigstore-verify = { version = "0.11.0", default-features = false }
 
 [dev-dependencies]
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time", "net"] }

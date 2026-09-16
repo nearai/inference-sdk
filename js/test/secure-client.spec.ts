@@ -883,26 +883,38 @@ describe('secure client', () => {
     expect(secureClient.verifyResponse(completion.id)).toBe(verification);
   });
 
-  test('expires response records independently of the attestation cache', async () => {
-    const gateway = createTestGateway();
-    mockProviderReceipts(gateway);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
-      responseCacheTimeToLiveMs: 1000,
-    });
-    jest.useFakeTimers({
-      doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
-    });
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: 'hello' }],
-    });
-    await client.verifyResponse(completion.id);
-    jest.advanceTimersByTime(1001);
-    await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
-      failure: { code: 'api.completion_not_found' },
-    });
-  });
+  test.each([
+    ['default', undefined, 60 * 60 * 1000],
+    ['custom', 1000, 1000],
+  ] as const)(
+    'expires response records at the %s TTL independently of the attestation cache',
+    async (_label, responseCacheTimeToLiveMs, expectedTtl) => {
+      const gateway = createTestGateway();
+      mockProviderReceipts(gateway);
+      const client = new SecureClient({
+        ...secureClientOptions(gateway),
+        responseCacheTimeToLiveMs,
+      });
+      jest.useFakeTimers({
+        doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+      });
+      const completion = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+      await client.verifyResponse(completion.id);
+      jest.advanceTimersByTime(expectedTtl - 1);
+      await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
+        {
+          completionId: completion.id,
+        },
+      );
+      jest.advanceTimersByTime(1);
+      await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+    },
+  );
 
   test.each([404, 503])(
     'retries response verification after HTTP %i',
@@ -1030,15 +1042,17 @@ describe('secure client', () => {
     ]);
   });
 
-  test('reuses verified evidence for the same model by default', async () => {
+  test('reuses verified evidence for the same model for 60 minutes by default', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(0);
     const client = new SecureClient(secureClientOptions(gateway));
 
     await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
     );
+    now.mockReturnValue(60 * 60 * 1000 - 1);
     await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
@@ -1047,6 +1061,18 @@ describe('secure client', () => {
       gatewayAttestationRequests: 1,
       modelAttestationRequests: 1,
       completionRequests: 2,
+    });
+    now.mockReturnValue(60 * 60 * 1000);
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({
+        messages: [{ role: 'user', content: 'refresh evidence' }],
+      }),
+    );
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 2,
+      modelAttestationRequests: 2,
+      completionRequests: 3,
     });
   });
 
@@ -1125,6 +1151,71 @@ describe('secure client', () => {
 
     expect(gateway.state.modelAttestationModels).toEqual([model, secondModel]);
     expect(policyModels).toEqual([model, secondModel]);
+  });
+
+  test('supports a model deployment verifier without a deployment policy', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const deployment = jest.fn();
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      modelVerification: {
+        verifiers: { quote: gateway.quoteVerifier, deployment },
+      },
+    });
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+    );
+
+    expect(deployment).toHaveBeenCalledTimes(1);
+    expect(deployment).toHaveBeenCalledWith({
+      appCompose,
+      runtimeMeasurements: expect.any(Object),
+    });
+    expect(gateway.state.completionRequests).toBe(1);
+  });
+
+  test('awaits the model deployment verifier before the policy and Chat', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const calls: string[] = [];
+    const deployment = jest.fn(async () => {
+      calls.push('verifier started');
+      await Promise.resolve();
+      calls.push('verifier finished');
+    });
+    const deploymentPolicy = jest.fn(async () => {
+      expect(calls).toEqual(['verifier started', 'verifier finished']);
+      calls.push('policy started');
+      await Promise.resolve();
+      calls.push('policy finished');
+      expect(gateway.state.completionRequests).toBe(0);
+    });
+    const client = new SecureClient({
+      ...secureClientOptions(gateway),
+      modelVerification: {
+        verifiers: { quote: gateway.quoteVerifier, deployment },
+      },
+      deploymentPolicy,
+    });
+
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+    );
+    expect(deploymentPolicy).toHaveBeenCalledWith({
+      model,
+      deployment: { appCompose, runtimeMeasurements: expect.any(Object) },
+    });
+    expect(calls).toEqual([
+      'verifier started',
+      'verifier finished',
+      'policy started',
+      'policy finished',
+    ]);
+    expect(gateway.state.completionRequests).toBe(1);
   });
 
   test('caches verified sessions by exact model', async () => {
@@ -2070,26 +2161,42 @@ describe('secure client', () => {
     );
   });
 
-  test('does not send a completion when a deployment policy rejects it', async () => {
-    const gateway = createTestGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
-      deploymentPolicy: () => {
-        throw new Error('deployment is not approved');
-      },
-    });
+  test.each(['verifier', 'policy'])(
+    'does not send a completion when the model deployment %s rejects it',
+    async (rejectedHook) => {
+      const gateway = createTestGateway();
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const deployment = jest.fn(async () => {
+        if (rejectedHook === 'verifier')
+          throw new Error('deployment is not approved');
+      });
+      const deploymentPolicy = jest.fn(async () => {
+        if (rejectedHook === 'policy')
+          throw new Error('deployment is not approved');
+      });
+      const client = new SecureClient({
+        ...secureClientOptions(gateway),
+        modelVerification: {
+          verifiers: { quote: gateway.quoteVerifier, deployment },
+        },
+        deploymentPolicy,
+      });
 
-    await expect(
-      client.fetch(
-        `${baseUrl}chat/completions`,
-        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
-      ),
-    ).rejects.toMatchObject({
-      failure: { code: 'provenance.verification_failed' },
-    });
-    expect(gateway.state.completionRequests).toBe(0);
-  });
+      await expect(
+        client.fetch(
+          `${baseUrl}chat/completions`,
+          chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+        ),
+      ).rejects.toMatchObject({
+        failure: { code: 'provenance.verification_failed' },
+      });
+      expect(deployment).toHaveBeenCalledTimes(1);
+      expect(deploymentPolicy).toHaveBeenCalledTimes(
+        rejectedHook === 'verifier' ? 0 : 1,
+      );
+      expect(gateway.state.completionRequests).toBe(0);
+    },
+  );
 
   test('does not send a completion when model verification fails', async () => {
     const gateway = createTestGateway();
