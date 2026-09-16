@@ -1,12 +1,12 @@
 # TypeScript verification guide
 
-Use `SecureClient` for Chat Completions with deployment verification and E2EE.
+Use `InferenceClient` for Chat Completions with deployment verification and E2EE.
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
 ## Send an E2EE chat completion
 
-`SecureClient` uses OpenAI Chat Completions types and enables E2EE by default.
+`InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
 Before sending a request, it verifies Gateway and model evidence or reuses
 cached results. A verification failure prevents the request from being sent.
 
@@ -16,10 +16,10 @@ requests to that identity. For browser applications, see
 [Connect through an application proxy](#connect-through-an-application-proxy).
 
 ```ts
-import { SecureClient } from '@nearai/inference-sdk/node';
+import { InferenceClient } from '@nearai/inference-sdk/node';
 
 const model = 'z-ai/glm-5.3-flash';
-const client = new SecureClient({
+const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
 });
 
@@ -34,7 +34,7 @@ console.log(completion.choices[0].message.content);
 To select ECDSA instead of the default Ed25519 protocol:
 
 ```ts
-const client = new SecureClient({
+const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
   signingAlgo: 'ecdsa',
 });
@@ -72,9 +72,9 @@ Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
 it accepts:
 
 ```ts
-import { SecureClient } from '@nearai/inference-sdk';
+import { InferenceClient } from '@nearai/inference-sdk';
 
-const client = new SecureClient({
+const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
@@ -98,9 +98,9 @@ because the observed certificate belongs
 to the proxy:
 
 ```ts
-import { SecureClient } from '@nearai/inference-sdk/node';
+import { InferenceClient } from '@nearai/inference-sdk/node';
 
-const client = new SecureClient({
+const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <server-scoped token>',
@@ -155,7 +155,7 @@ Set `e2ee: false` to send plaintext. Gateway and model verification,
 deployment policy, and response verification remain available.
 
 ```ts
-const client = new SecureClient({
+const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
   e2ee: false,
 });
@@ -241,7 +241,7 @@ const verified = await client.verifyResponse(completion.id);
 Streaming uses the same ID-based verification as the built-in client.
 
 For a proxy configured with `headers.Authorization`, OpenAI's required `apiKey`
-can be a placeholder. The secure client's configured authorization takes
+can be a placeholder. The inference client's configured authorization takes
 precedence for evidence, Chat, and signature requests. Other per-request headers
 can override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
@@ -346,7 +346,7 @@ Each map key is a required container image repository; its value identifies the
 trusted GitHub repository and workflow. Every reference to a listed image must
 have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
-verified. For `SecureClient`, pass the same callback as
+verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
 [image provenance example](../../examples/example-js/client-provenance.ts).
 

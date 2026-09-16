@@ -156,7 +156,7 @@ export const CloudApiGatewayAttestationResponseSchema = objectSchema({
 });
 
 // This is the minimal external boundary for secure Chat Completions requests.
-// The secure client knows how to encrypt selected protocol fields, but leaves
+// The inference client knows how to encrypt selected protocol fields, but leaves
 // ordinary and future Chat fields to the Gateway and model to interpret.
 export const ChatCompletionRequestSchema = looseObjectSchema({
   model: v.pipe(v.string(), v.minLength(1)),

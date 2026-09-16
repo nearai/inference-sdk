@@ -1,11 +1,11 @@
 import { CloudApiClient } from '../core/cloud-api';
 import {
-  SecureClientBase,
+  InferenceClientBase,
   type CreateGatewaySessionTransportParams,
   type GatewaySessionTransport,
-} from '../core/secure-client';
+} from '../core/inference-client';
 import type { FetchedGatewayAttestation } from '../types/cloud-api';
-import type { NodeSecureClientOptions } from '../types/secure-client';
+import type { NodeInferenceClientOptions } from '../types/inference-client';
 import { AttestationClient, createPinnedTlsFetch } from './attestation-client';
 
 /** Model and receipt evidence client bound to one verified Gateway transport. */
@@ -13,7 +13,7 @@ class GatewaySessionEvidenceClient extends CloudApiClient {
   private readonly gatewayFetch: typeof globalThis.fetch;
 
   constructor(
-    options: NodeSecureClientOptions,
+    options: NodeInferenceClientOptions,
     gatewayFetch: typeof globalThis.fetch,
   ) {
     super(options);
@@ -26,12 +26,12 @@ class GatewaySessionEvidenceClient extends CloudApiClient {
 }
 
 /** Node verified Chat Completions transport with attested-SPKI-pinned Gateway requests. */
-export class NodeSecureClient extends SecureClientBase {
+export class NodeInferenceClient extends InferenceClientBase {
   private readonly attestationClient: AttestationClient;
-  private readonly nodeOptions: NodeSecureClientOptions;
+  private readonly nodeOptions: NodeInferenceClientOptions;
   private readonly includeSpkiFingerprint: boolean;
 
-  constructor(options: NodeSecureClientOptions) {
+  constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.nodeOptions = options;
     this.attestationClient = new AttestationClient(options);

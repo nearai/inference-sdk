@@ -1,5 +1,5 @@
 import {
-  SecureClient,
+  InferenceClient,
   verifyDeploymentImageProvenance,
   type ImageProvenancePolicy,
 } from '@nearai/inference-sdk/node';
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  const secureClient = new SecureClient({
+  const inferenceClient = new InferenceClient({
     apiKey,
     baseUrl: BASE_URL,
     gatewayVerification: {
@@ -50,13 +50,13 @@ async function main(): Promise<void> {
   // Successful attestations are cached for 60 minutes.
   // Model runtime images require direct Compose Manager evidence, which this
   // Gateway-based SDK does not retrieve. A launcher check is not a substitute.
-  const completion = await secureClient.chat.completions.create({
+  const completion = await inferenceClient.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
     max_completion_tokens: 8,
   });
 
-  const verified = await secureClient.verifyResponse(completion.id);
+  const verified = await inferenceClient.verifyResponse(completion.id);
   console.log(completion.choices[0]?.message.content ?? '');
   console.log(`Verified ${verified.signatureKind} response.`);
 }
