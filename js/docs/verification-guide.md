@@ -56,6 +56,12 @@ The SDK does not check model measurements against an approved-deployment
 allowlist by default. If needed, supply a `deploymentPolicy` callback and
 throw an error to reject a deployment.
 
+Reusable deployment checks can also be passed through
+`gatewayVerification.verifiers.deployment` and
+`modelVerification.verifiers.deployment`. For models, this check runs before
+`deploymentPolicy`, which also receives the requested model name. If both are
+configured, both must pass.
+
 ## Connect through an application proxy
 
 A proxy lets your backend keep the NEAR AI API key while users' devices verify
@@ -307,50 +313,48 @@ receipt signature—must be pinned automatically.
 
 ### Optional image build provenance
 
-`fetchImageProvenance` retrieves GitHub Sigstore bundles for an image digest.
-`verifyImageProvenance` checks their signatures, certificates, transparency-log
-evidence, artifact digest, and signed SLSA source against your repository and
-workflow policy. The source commit must match the certificate's authenticated
-source SHA. Set `ref` or `commit` to restrict the accepted builds further.
-
-Use a digest from the authenticated deployment configuration. This example
-adds an image check to Gateway attestation verification:
+`verifyDeploymentImageProvenance` reads image digests from `appCompose`, fetches
+their GitHub Sigstore bundles, and verifies them against your build policies.
+Use it in a deployment callback so the quote and configuration binding are
+checked first:
 
 ```ts
 import {
-  fetchImageProvenance,
-  verifyImageProvenance,
+  verifyDeploymentImageProvenance,
   verifyGatewayAttestation,
+  type ImageProvenancePolicy,
 } from 'verifiable-ai-sdk';
-import type { MeasuredDeployment } from 'verifiable-ai-sdk';
 
-const imagePolicy = {
-  repository: 'nearai/cloud-api',
-  workflow: '.github/workflows/build.yml',
-  ref: 'refs/heads/main',
+const imagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/cloud-api': {
+    repository: 'nearai/cloud-api',
+    workflow: '.github/workflows/build.yml',
+  },
 };
-
-async function checkGatewayImages(deployment: MeasuredDeployment): Promise<void> {
-  // Application code: select a required, explicit image@sha256:... reference.
-  const digest = selectCloudApiDigest(deployment.appCompose);
-  const bundles = await fetchImageProvenance({
-    repository: imagePolicy.repository,
-    digest,
-  });
-  await verifyImageProvenance({ bundles, digest, policy: imagePolicy });
-}
 
 const gateway = await verifyGatewayAttestation({
   attestation: fetchedGateway.attestation,
   clientBinding: fetchedGateway.clientBinding,
-  verifiers: { deployment: checkGatewayImages },
+  verifiers: {
+    deployment: ({ appCompose }) =>
+      verifyDeploymentImageProvenance({ appCompose, imagePolicies }),
+  },
 });
 ```
 
-The application supplies `selectCloudApiDigest`: it parses its compose format
-and rejects missing or unresolved required image references. A variable's
-default image is not proof of its resolved value. For `SecureClient`, supply the
-same callback as `gatewayVerification.verifiers.deployment`.
+Each map key is a required container image repository; its value identifies the
+trusted GitHub repository and workflow. Every reference to a listed image must
+have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
+alone are not. Image variables are not resolved. Other literal images are not
+verified. For `SecureClient`, pass the same callback as
+`gatewayVerification.verifiers.deployment`; see the runnable
+[image provenance example](../../examples/example-js/client-provenance.ts).
+
+The checks cover signatures, certificates, transparency-log evidence, artifact
+digests, and signed SLSA source. Each source commit must match the certificate's
+authenticated source SHA. Set `ref` or `commit` to restrict builds further.
+For individual digests or other configuration formats, use
+`fetchImageProvenance` and `verifyImageProvenance` directly.
 
 One complete matching bundle is sufficient; other bundles for the digest may
 come from different builds. The helpers do not maintain an approved-image list,
@@ -359,8 +363,10 @@ enabled automatically. Trust roots are refreshed through Sigstore's TUF service.
 The TypeScript verifier accepts Rekor `dsse` entries, as used by current GitHub
 build attestations; legacy Rekor `intoto` entries are not supported.
 
-Fetch failures throw `ApiError`. Verification failures throw `VerificationError`
-with `provenance.image_verification_failed` and machine-readable `details.reasons`.
+`verifyDeploymentImageProvenance` throws `VerificationError` for invalid image
+configuration, failed proof retrieval, or failed proof verification. A retrieval
+failure preserves the underlying `ApiError` as its cause and its retryability.
+Calling `fetchImageProvenance` directly still throws `ApiError`.
 The optional `githubToken` is a GitHub token, not a Gateway API key.
 
 ### Verify the response signature

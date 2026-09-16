@@ -511,7 +511,10 @@ export abstract class SecureClientBase {
     }
     return {
       ...verifiers,
-      deployment: (deployment) => deploymentPolicy({ model, deployment }),
+      deployment: async (deployment) => {
+        await verifiers?.deployment?.(deployment);
+        await deploymentPolicy({ model, deployment });
+      },
     };
   }
 

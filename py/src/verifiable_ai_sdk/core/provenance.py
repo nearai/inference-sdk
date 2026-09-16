@@ -9,21 +9,33 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from cryptography import x509
 from pydantic import ValidationError
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from sigstore.errors import Error as SigstoreError
 from sigstore.errors import VerificationError as SigstoreVerificationError
 from sigstore.models import Bundle
 from sigstore.verify import Verifier
 from sigstore.verify.policy import Identity
 
-from ..schemas import GitHubImageAttestationsSchema, SlsaStatementSchema
+from ..schemas import (
+    DeploymentAppComposeSchema,
+    DeploymentDockerComposeSchema,
+    GitHubImageAttestationsSchema,
+    SlsaStatementSchema,
+)
 from ..types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
-from ..utils.errors import VerificationError, api_failure, verification_failure
+from ..utils.errors import (
+    ApiError,
+    VerificationError,
+    api_failure,
+    verification_failure,
+)
 from ..utils.fetch import fetch
 
 
@@ -32,6 +44,94 @@ _REPOSITORY_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _COMMIT_PATTERN = re.compile(r'[0-9a-fA-F]{40}')
 _SOURCE_REPOSITORY_DIGEST_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.13')
 _GITHUB_WORKFLOW_SHA_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.3')
+
+
+async def verify_deployment_image_provenance(
+    app_compose: str,
+    image_policies: Mapping[str, ImageProvenancePolicy],
+    github_token: str | None = None,
+) -> None:
+    """Verify digest-pinned images selected from measured app-compose JSON.
+
+    Every configured image repository must occur, and every matching service
+    image must be pinned. Environment variables are not resolved. Selection is
+    validated completely before any GitHub requests are made.
+    """
+
+    if not image_policies:
+        raise _deployment_images_failure('empty_policy')
+    try:
+        app = DeploymentAppComposeSchema.model_validate_json(app_compose)
+    except (ValidationError, TypeError):
+        raise _deployment_images_failure('invalid_app_compose') from None
+    try:
+        yaml = YAML(typ='safe', pure=True)
+        compose = DeploymentDockerComposeSchema.model_validate(
+            yaml.load(app.docker_compose_file)
+        )
+    except (YAMLError, ValidationError, ValueError, TypeError, RecursionError):
+        raise _deployment_images_failure('invalid_docker_compose') from None
+
+    images: list[tuple[str, str]] = []
+    for service, config in compose.services.items():
+        if config.image is None:
+            continue
+        if '$' in config.image:
+            raise _deployment_images_failure('unresolved_image', service=service)
+        images.append((service, config.image.removeprefix('docker.io/')))
+
+    selected: list[tuple[str, str, ImageProvenancePolicy]] = []
+    for configured_repository, policy in image_policies.items():
+        repository = configured_repository.removeprefix('docker.io/')
+        found = False
+        for service, image in images:
+            if image != repository and not image.startswith(
+                (f'{repository}@', f'{repository}:')
+            ):
+                continue
+            found = True
+            pinned = re.fullmatch(
+                re.escape(repository)
+                + r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})',
+                image,
+            )
+            if pinned is None:
+                raise _deployment_images_failure(
+                    'image_not_pinned', image_repository=repository, service=service
+                )
+            selected.append((repository, pinned[1].lower(), policy))
+        if not found:
+            raise _deployment_images_failure(
+                'image_missing', image_repository=repository
+            )
+
+    for repository, digest, policy in selected:
+        try:
+            bundles = await fetch_image_provenance(
+                policy.repository, digest, github_token
+            )
+        except ApiError as error:
+            raise verification_failure(
+                'provenance.image_request_failed',
+                {'imageRepository': repository, 'digest': digest},
+                retryable=error.retryable,
+                cause=error,
+            ) from error
+        await verify_image_provenance(bundles, digest, policy)
+
+
+def _deployment_images_failure(
+    reason: str,
+    *,
+    image_repository: str | None = None,
+    service: str | None = None,
+) -> VerificationError:
+    details: dict[str, object] = {'reason': reason}
+    if image_repository is not None:
+        details['imageRepository'] = image_repository
+    if service is not None:
+        details['service'] = service
+    return verification_failure('provenance.deployment_images_invalid', details)
 
 
 async def fetch_image_provenance(

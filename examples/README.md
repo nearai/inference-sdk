@@ -10,7 +10,7 @@ export NEARAI_API_KEY=sk-your-api-key
 
 ## JavaScript (Node.js)
 
-All three entry points include non-streaming and streaming calls:
+The three basic entry points include non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
@@ -41,6 +41,40 @@ pnpm --dir examples/example-js start:openai-sdk-compatible
 ```
 
 Requires Node.js 24 or later.
+
+### Image provenance
+
+[`client-provenance.ts`](example-js/client-provenance.ts) verifies these four
+required Gateway images:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/cloud-api` | `nearai/cloud-api` | `.github/workflows/build.yml` |
+| `nearaidev/cvm-ingress` | `nearai/cvm-ingress` | `.github/workflows/build-push.yml` |
+| `nearaidev/dstack-vpc` | `nearai/dstack-vpc` | `.github/workflows/build.yml` |
+| `nearaidev/dstack-vpc-client` | `nearai/dstack-vpc-client` | `.github/workflows/build.yml` |
+
+The `gatewayVerification.verifiers.deployment` callback calls
+`verifyDeploymentImageProvenance` with the authenticated `appCompose` and the
+image policies. The SDK extracts the digests and verifies GitHub Sigstore provenance.
+Every listed image is required; other images are outside this check. References
+must contain literal digests: `image:tag@sha256:...` is accepted, but tags alone
+and unresolved `${VARIABLE:-default}` expressions are not.
+The policies belong to this example, not an SDK default allowlist. Add `commit`
+to each policy to require a reviewed source commit.
+
+```sh
+pnpm --dir examples/example-js start:client-provenance
+```
+
+Gateway/model attestation and image-check failures block Chat. Successful checks
+reuse the client's 15-minute attestation cache. The example then sends a
+non-streaming GLM-5.3 request and calls `verifyResponse(id)`.
+
+The example verifies build provenance, not reproducible builds. Checking the
+running Compose Manager and inference-proxy images requires direct Compose
+Manager evidence, which this SDK does not retrieve. This example does not check
+GLM runtime-image or model-weight provenance.
 
 ## Python
 

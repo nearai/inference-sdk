@@ -29,12 +29,15 @@ export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
+export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
 export type {
+  DeploymentImagesFailureReason,
   FetchImageProvenanceParams,
   ImageProvenanceFailureReason,
   ImageProvenancePolicy,
   VerifiedImageProvenance,
   VerifyImageProvenanceParams,
+  VerifyDeploymentImageProvenanceParams,
 } from './types/provenance';
 
 export type {

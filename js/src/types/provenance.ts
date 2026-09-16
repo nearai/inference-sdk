@@ -1,5 +1,9 @@
 import type * as v from 'valibot';
-import type { ImageProvenanceStatementSchema } from '../schemas';
+import type {
+  DeploymentAppComposeSchema,
+  DeploymentDockerComposeSchema,
+  ImageProvenanceStatementSchema,
+} from '../schemas';
 
 /** Caller-owned GitHub Actions build identity and optional version approval. */
 export type ImageProvenancePolicy = {
@@ -25,6 +29,31 @@ export type VerifyImageProvenanceParams = {
   readonly digest: string;
   readonly policy: ImageProvenancePolicy;
 };
+
+export type VerifyDeploymentImageProvenanceParams = {
+  /** JSON appCompose from a measurement-bound deployment. */
+  readonly appCompose: string;
+  /** Required container image repositories mapped to trusted GitHub builds. */
+  readonly imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
+  /** Optional GitHub token, not a gateway API key. */
+  readonly githubToken?: string;
+};
+
+export type DeploymentImagesFailureReason =
+  | 'empty_policy'
+  | 'invalid_app_compose'
+  | 'invalid_docker_compose'
+  | 'unresolved_image'
+  | 'image_missing'
+  | 'image_not_pinned';
+
+export type DeploymentAppCompose = v.InferOutput<
+  typeof DeploymentAppComposeSchema
+>;
+
+export type DeploymentDockerCompose = v.InferOutput<
+  typeof DeploymentDockerComposeSchema
+>;
 
 export type VerifiedImageProvenance = {
   readonly digest: string;

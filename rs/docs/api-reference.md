@@ -140,12 +140,32 @@ the same signer. Select it from the verified preflight results with
 
 ## Image build provenance
 
-Both functions are asynchronous and separate retrieval from verification.
+These functions are asynchronous. The low-level functions separate retrieval
+from verification; the deployment helper combines them for required images.
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
 | `fetch_image_provenance` | `repository: &str`, `digest: &str`, `github_token: Option<&str>` | `Result<Vec<String>, ApiError>` | Fetches all inline GitHub attestation bundles, following pagination. `repository` is `owner/repo`; `digest` is `sha256:` plus 64 hexadecimal digits. |
 | `verify_image_provenance` | `bundles: &[String]`, `digest: &str`, `policy: &ImageProvenancePolicy` | `Result<VerifiedImageProvenance, VerificationError>` | Verifies Sigstore and SLSA v1 or v0.2 provenance. At least one complete bundle must satisfy the policy. |
+| `verify_deployment_image_provenance` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Parses measured Compose, requires every configured image repository and verifies all matching digest-pinned references. |
+
+The deployment helper expects outer JSON with a `docker_compose_file` YAML
+string and a `services` map. YAML aliases and merge keys are supported. Policy
+keys are container image repositories, not GitHub source repositories. An
+optional `docker.io/` prefix is normalized on both keys and references. Every
+matching reference must be `repository@sha256:<64 hex digits>` or
+`repository:tag@sha256:<64 hex digits>`. The policy map must not be empty;
+unlisted literal images are ignored. Any image containing `$` is rejected:
+environment variables and their defaults are not resolved. Missing or null
+service images are ignored. All Compose/reference checks finish before fetching.
+
+Malformed Compose or unsupported references return
+`provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
+(`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
+`unresolved_image`, `image_missing`, or `image_not_pinned`) and optional image
+repository/service details. Fetch failures become
+`provenance.image_request_failed`, preserving the `ApiError` source and its
+retryability. Cryptographic verification errors are returned unchanged.
 
 `ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
 GitHub Actions issuer and leaves the optional ref and commit unset.
@@ -168,7 +188,10 @@ SHA before applying the optional commit pin.
 | `predicate_type` | `String` | SLSA provenance predicate URI (`v1` or `v0.2`). |
 
 These helpers use an embedded public-good Sigstore trust root. They do not
-discover deployment images or run automatically during attestation verification.
+authenticate `app_compose` themselves or run automatically during attestation
+verification. Call the deployment helper from a `DeploymentVerifier` so the SDK
+has already checked quote and measurement binding. No default image trust policy
+is supplied, and unlisted images are not approved by the helper.
 
 ## Signatures and evidence
 

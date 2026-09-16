@@ -230,6 +230,37 @@ when Sigstore rotates trust material. This verifies build provenance, not
 reproducibility, all deployment images, or the software currently serving a
 model. Attestation verification does not call these helpers automatically.
 
+To check required images from measured Compose, call
+`verify_deployment_image_provenance` in your `DeploymentVerifier`:
+
+```rust,no_run
+use std::collections::BTreeMap;
+use async_trait::async_trait;
+use verifiable_ai_sdk::{
+    verify_deployment_image_provenance, DeploymentVerifier,
+    ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
+
+struct ApprovedImages(BTreeMap<String, ImageProvenancePolicy>);
+
+#[async_trait]
+impl DeploymentVerifier for ApprovedImages {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        verify_deployment_image_provenance(&deployment.app_compose, &self.0, None).await
+    }
+}
+```
+
+Populate the nonempty map with container image repository keys and your own
+GitHub build policies, then pass this verifier through
+`AttestationVerifiers.deployment` or `ModelAttestationVerifiers.deployment`.
+The SDK checks the quote and Compose measurement binding before calling it.
+Every configured repository is required, and every matching reference must
+include a SHA-256 digest (a tag alongside the digest is allowed). Unlisted
+literal images are ignored; any unresolved `$` image reference is rejected,
+including defaults. This checks only images in the measured Compose, not model
+runtime images loaded later by a launcher or another service.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.

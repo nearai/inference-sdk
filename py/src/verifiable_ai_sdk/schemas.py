@@ -31,6 +31,18 @@ class GitHubImageAttestationsSchema(ApiSchema):
     attestations: list[GitHubImageAttestationSchema]
 
 
+class DeploymentAppComposeSchema(ApiSchema):
+    docker_compose_file: StrictStr
+
+
+class DeploymentComposeServiceSchema(ApiSchema):
+    image: StrictStr | None = None
+
+
+class DeploymentDockerComposeSchema(ApiSchema):
+    services: dict[str, DeploymentComposeServiceSchema]
+
+
 class SlsaSubjectSchema(ApiSchema):
     digest: dict[str, StrictStr]
 

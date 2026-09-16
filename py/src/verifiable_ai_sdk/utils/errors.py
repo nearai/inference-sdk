@@ -233,6 +233,13 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             return f'[{code}] GPU evidence was rejected by {_detail(details, "source")}'
         case 'provenance.verification_failed':
             return f'[{code}] Deployment provenance verification failed'
+        case 'provenance.deployment_images_invalid':
+            return f'[{code}] Deployment image selection failed: {_detail(details, "reason")}'
+        case 'provenance.image_request_failed':
+            return (
+                f'[{code}] Image provenance request failed for '
+                f'{_detail(details, "imageRepository")}@{_detail(details, "digest")}'
+            )
         case 'provenance.image_verification_failed':
             return (
                 f'[{code}] Image provenance verification failed for '

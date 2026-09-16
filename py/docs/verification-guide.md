@@ -129,31 +129,33 @@ workflow. The statement's source commit must match the verified certificate's
 source commit, including when no commit pin is supplied. Set `ref` or `commit` to
 restrict the accepted build further.
 
-This example adds the check to Gateway deployment verification. The application
-selects the required image from the authenticated compose and rejects a missing
-or unresolved image reference; the SDK does not maintain a trusted-image list.
+`verify_deployment_image_provenance` selects configured image repositories from
+the measured app-compose JSON's `docker_compose_file` YAML. Every configured
+repository must occur, and all matching service images must be digest-pinned.
+Unrelated literal images are ignored; image references containing `$` are rejected.
+Selection completes before any GitHub requests. The application supplies its
+trusted image repositories and build policies:
 
 ```python
 from verifiable_ai_sdk import (
     AttestationVerifiers,
     ImageProvenancePolicy,
     MeasuredDeployment,
-    fetch_image_provenance,
-    verify_image_provenance,
+    verify_deployment_image_provenance,
+    verify_gateway_attestation,
 )
 
-image_policy = ImageProvenancePolicy(
-    repository='nearai/cloud-api',
-    workflow='.github/workflows/build.yml',
-    ref='refs/heads/main',
-)
+image_policies = {
+    'ghcr.io/example/gateway': ImageProvenancePolicy(
+        repository='example/gateway',
+        workflow='.github/workflows/build.yml',
+        ref='refs/heads/main',
+    ),
+}
 
 
 async def check_gateway_images(deployment: MeasuredDeployment) -> None:
-    # Application code: select a required, explicit image@sha256:... reference.
-    digest = select_cloud_api_digest(deployment.app_compose)
-    bundles = await fetch_image_provenance(image_policy.repository, digest)
-    await verify_image_provenance(bundles, digest, image_policy)
+    await verify_deployment_image_provenance(deployment.app_compose, image_policies)
 
 
 verified_gateway = await verify_gateway_attestation(
@@ -163,10 +165,11 @@ verified_gateway = await verify_gateway_attestation(
 )
 ```
 
-Both helpers are asynchronous. Fetch failures raise `ApiError`; invalid or
-untrusted provenance raises `VerificationError`. Multiple bundles are tried
-until one satisfies all checks. An optional GitHub token can be passed to the
-fetch helper; do not use a Gateway API key for GitHub.
+The helpers are asynchronous. The deployment helper reports selection, request,
+and verification failures as `VerificationError`; wrapped request failures retain
+their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
+Multiple bundles are tried until one satisfies all checks. An optional GitHub
+token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
 
 This proves the selected digest's build provenance. It does not approve the code,
 rebuild the image, resolve compose-variable overrides, inspect compose-manager,

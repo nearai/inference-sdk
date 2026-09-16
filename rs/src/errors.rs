@@ -1,4 +1,7 @@
-use crate::types::{CompletionSignatureKind, ImageProvenanceFailureReason, SigningAlgo, TcbStatus};
+use crate::types::{
+    CompletionSignatureKind, DeploymentImagesFailureReason, ImageProvenanceFailureReason,
+    SigningAlgo, TcbStatus,
+};
 use thiserror::Error;
 
 /// External resource involved in an API failure.
@@ -110,11 +113,11 @@ impl ApiError {
     }
 
     /// Whether retrying the same operation may reasonably succeed.
-    pub fn retryable(&self) -> bool {
+    pub const fn retryable(&self) -> bool {
         match self {
             Self::Transport { .. } => true,
             Self::HttpStatus { resource, status } => {
-                (*resource == ApiResource::CompletionSignature && *status == 404)
+                (matches!(resource, ApiResource::CompletionSignature) && *status == 404)
                     || *status == 408
                     || *status == 425
                     || *status == 429
@@ -220,6 +223,21 @@ pub enum VerificationError {
         reasons: Vec<ImageProvenanceFailureReason>,
     },
 
+    #[error("deployment images cannot be verified: {reason:?}")]
+    DeploymentImagesInvalid {
+        reason: DeploymentImagesFailureReason,
+        image_repository: Option<String>,
+        service: Option<String>,
+    },
+
+    #[error("image provenance request failed for {image_repository}@{digest}")]
+    ImageProvenanceRequestFailed {
+        image_repository: String,
+        digest: String,
+        #[source]
+        source: Box<ApiError>,
+    },
+
     #[error("completion signature kind {actual:?} cannot be used here; expected {expected:?}")]
     SignatureKindMismatch {
         expected: CompletionSignatureKind,
@@ -273,6 +291,8 @@ impl VerificationError {
             Self::ImageProvenanceVerificationFailed { .. } => {
                 "provenance.image_verification_failed"
             }
+            Self::DeploymentImagesInvalid { .. } => "provenance.deployment_images_invalid",
+            Self::ImageProvenanceRequestFailed { .. } => "provenance.image_request_failed",
             Self::SignatureKindMismatch { .. } => "signature.kind_mismatch",
             Self::SignaturePayloadMismatch { .. } => "signature.payload_mismatch",
             Self::SignatureFormatInvalid { .. } => "signature.format_invalid",
@@ -287,6 +307,7 @@ impl VerificationError {
             Self::QuoteCollateralUnavailable => true,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
             Self::NvidiaJwksRequestFailed { retryable, .. } => *retryable,
+            Self::ImageProvenanceRequestFailed { source, .. } => source.retryable(),
             _ => false,
         }
     }

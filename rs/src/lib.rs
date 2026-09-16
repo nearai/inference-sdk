@@ -9,6 +9,7 @@
 mod attestation;
 mod bindings;
 mod cloud_api;
+mod deployment_provenance;
 mod errors;
 mod event_log;
 mod gateway;
@@ -24,6 +25,7 @@ pub use cloud_api::{
     find_model_attestation_for_signature, AttestationClient, DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
 };
+pub use deployment_provenance::verify_deployment_image_provenance;
 pub use errors::{ApiError, ApiResource, ApiTransportReason, VerificationError};
 pub use gateway::verify_gateway_attestation;
 pub use model::verify_model_attestation;

@@ -7,7 +7,11 @@ import {
   X509SourceRepositoryDigestExtension,
 } from '@freedomofpress/sigstore-browser';
 import * as v from 'valibot';
-import { fetchImageProvenance, verifyImageProvenance } from '../src';
+import {
+  fetchImageProvenance,
+  verifyDeploymentImageProvenance,
+  verifyImageProvenance,
+} from '../src';
 import { verifyImageProvenanceSource } from '../src/core/provenance';
 import { ImageProvenanceStatementSchema } from '../src/schemas';
 
@@ -62,6 +66,191 @@ describe('image provenance verification', () => {
         'https://github.com/nearai/compose-manager/.github/workflows/build.yml@refs/heads/master',
       issuer: 'https://token.actions.githubusercontent.com',
       predicateType: 'https://slsa.dev/provenance/v1',
+    });
+  });
+
+  test('verifies every required image from compose, including YAML merges and tagged digests', async () => {
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () =>
+        Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+      );
+    const appCompose = JSON.stringify({
+      docker_compose_file: `
+x-image: &manager
+  image: docker.io/nearaidev/compose-manager@${DIGEST}
+services:
+  manager:
+    <<: *manager
+  worker:
+    image: nearaidev/compose-manager:release@${DIGEST}
+  other:
+    image: unrelated/image:latest
+  built:
+    build: .
+  absent:
+    image: null
+`,
+    });
+
+    await verifyDeploymentImageProvenance({
+      appCompose,
+      imagePolicies: { 'docker.io/nearaidev/compose-manager': POLICY },
+      githubToken: 'test-github-token',
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(encodeURIComponent(DIGEST)),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-github-token',
+        }),
+      }),
+    );
+  });
+
+  test.each(['', ':latest', '@sha256:bad', `@${DIGEST}@${DIGEST}`])(
+    'rejects an unpinned reference even alongside a valid digest: %s',
+    async (suffix) => {
+      const fetch = jest.spyOn(globalThis, 'fetch');
+      const appCompose = JSON.stringify({
+        docker_compose_file: `services:
+  pinned:
+    image: nearaidev/compose-manager@${DIGEST}
+  unpinned:
+    image: nearaidev/compose-manager${suffix}
+`,
+      });
+
+      await expect(
+        verifyDeploymentImageProvenance({
+          appCompose,
+          imagePolicies: { 'nearaidev/compose-manager': POLICY },
+        }),
+      ).rejects.toMatchObject({
+        name: 'VerificationError',
+        failure: {
+          code: 'provenance.deployment_images_invalid',
+          details: {
+            reason: 'image_not_pinned',
+            imageRepository: 'nearaidev/compose-manager',
+            service: 'unpinned',
+          },
+        },
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([
+    ['not-json', 'invalid_app_compose'],
+    ['{}', 'invalid_app_compose'],
+    [
+      JSON.stringify({ docker_compose_file: 'services: [' }),
+      'invalid_docker_compose',
+    ],
+    [
+      JSON.stringify({
+        docker_compose_file: 'services: { manager: { image: 42 } }',
+      }),
+      'invalid_docker_compose',
+    ],
+    [JSON.stringify({ docker_compose_file: 'services: {}' }), 'image_missing'],
+    [
+      JSON.stringify({
+        docker_compose_file: `services:\n  manager:\n    image: \${IMAGE:-nearaidev/compose-manager@${DIGEST}}`,
+      }),
+      'unresolved_image',
+    ],
+  ])(
+    'reports invalid deployment configuration: %s',
+    async (appCompose, reason) => {
+      const fetch = jest.spyOn(globalThis, 'fetch');
+
+      await expect(
+        verifyDeploymentImageProvenance({
+          appCompose,
+          imagePolicies: { 'nearaidev/compose-manager': POLICY },
+        }),
+      ).rejects.toMatchObject({
+        name: 'VerificationError',
+        failure: {
+          code: 'provenance.deployment_images_invalid',
+          details: { reason },
+        },
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  test('requires a nonempty image policy instead of succeeding without checks', async () => {
+    await expect(
+      verifyDeploymentImageProvenance({ appCompose: '{}', imagePolicies: {} }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'provenance.deployment_images_invalid',
+        details: { reason: 'empty_policy' },
+      },
+    });
+  });
+
+  test('checks provenance of every matching digest, not only the first service', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () =>
+        Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+      );
+    const otherDigest = `sha256:${'ab'.repeat(32)}`;
+    const appCompose = JSON.stringify({
+      docker_compose_file: `services:
+  first:
+    image: nearaidev/compose-manager@${DIGEST}
+  second:
+    image: nearaidev/compose-manager@${otherDigest}
+`,
+    });
+
+    await expect(
+      verifyDeploymentImageProvenance({
+        appCompose,
+        imagePolicies: { 'nearaidev/compose-manager': POLICY },
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'provenance.image_verification_failed',
+        details: { digest: otherDigest, reasons: ['digest_mismatch'] },
+      },
+    });
+  });
+
+  test('reports an image fetch failure as a retryable verification failure with its cause', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 429 }));
+    const appCompose = JSON.stringify({
+      docker_compose_file: `services:\n  manager:\n    image: nearaidev/compose-manager@${DIGEST}`,
+    });
+
+    await expect(
+      verifyDeploymentImageProvenance({
+        appCompose,
+        imagePolicies: { 'nearaidev/compose-manager': POLICY },
+      }),
+    ).rejects.toMatchObject({
+      name: 'VerificationError',
+      failure: {
+        code: 'provenance.image_request_failed',
+        details: {
+          imageRepository: 'nearaidev/compose-manager',
+          digest: DIGEST,
+        },
+      },
+      retryable: true,
+      cause: {
+        name: 'ApiError',
+        failure: { code: 'api.http_status', details: { status: 429 } },
+      },
     });
   });
 

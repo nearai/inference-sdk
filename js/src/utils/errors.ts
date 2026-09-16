@@ -1,5 +1,8 @@
 import type { TcbStatus } from '../types/verification';
-import type { ImageProvenanceFailureReason } from '../types/provenance';
+import type {
+  DeploymentImagesFailureReason,
+  ImageProvenanceFailureReason,
+} from '../types/provenance';
 
 type ApiResource =
   | 'completion'
@@ -252,6 +255,19 @@ export type VerificationFailure =
     }
   | {
       code: 'provenance.verification_failed';
+    }
+  | {
+      code: 'provenance.deployment_images_invalid';
+      details: {
+        reason: DeploymentImagesFailureReason;
+        imageRepository?: string;
+        service?: string;
+      };
+    }
+  | {
+      code: 'provenance.image_request_failed';
+      details: { imageRepository: string; digest: string };
+      retryable: boolean;
     }
   | {
       code: 'provenance.image_verification_failed';
@@ -508,6 +524,10 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':
       return `[${failure.code}] Deployment provenance verification failed`;
+    case 'provenance.deployment_images_invalid':
+      return `[${failure.code}] Deployment images are invalid: ${failure.details.reason}${failure.details.imageRepository ? ` (${failure.details.imageRepository})` : ''}${failure.details.service ? ` in service ${failure.details.service}` : ''}`;
+    case 'provenance.image_request_failed':
+      return `[${failure.code}] Could not fetch provenance for ${failure.details.imageRepository}@${failure.details.digest}`;
     case 'provenance.image_verification_failed':
       return `[${failure.code}] Image ${failure.details.digest} was not verified: ${failure.details.reasons.join(', ')}`;
     case 'e2ee.model_public_key_required':

@@ -36,6 +36,7 @@ verification is synchronous.
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
+| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
 
 ## AttestationClient
 
@@ -175,6 +176,34 @@ signature does not prove that an attested model generated them. [cloud-api#986](
 provider-signature and Gateway-receipt chain.
 
 ## Image build provenance
+
+### `verify_deployment_image_provenance`
+
+Asynchronously returns `None` when every configured image repository is present
+and every matching service image passes provenance verification. It parses
+`app_compose` as JSON containing a `docker_compose_file` YAML string with a
+`services` map. Missing or null service images are ignored.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `app_compose` | `str` | Yes | Measured app-compose JSON. |
+| `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Yes | Nonempty mapping from image repository to trusted GitHub build policy. |
+| `github_token` | `str \| None` | No | Optional GitHub authentication token. |
+
+Images must use `repository@sha256:<64 hex>` or
+`repository:tag@sha256:<64 hex>`. A leading `docker.io/` is normalized in policy
+keys and service images. All matching references must be pinned, even when a
+different service uses a valid pin. Unrelated literal images are ignored;
+references containing `$` are rejected without environment expansion. Selection
+is validated before any fetch.
+
+Selection errors raise `VerificationError` with code
+`provenance.deployment_images_invalid` and a `reason` of `empty_policy`,
+`invalid_app_compose`, `invalid_docker_compose`, `unresolved_image`, `image_missing`,
+or `image_not_pinned`; `imageRepository` and `service` identify the selection when
+applicable. GitHub request errors are wrapped as `provenance.image_request_failed`
+with `imageRepository`, `digest`, the original cause, and unchanged retryability.
+Image verification errors pass through unchanged.
 
 ### `fetch_image_provenance`
 

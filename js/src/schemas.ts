@@ -262,6 +262,22 @@ const SigstoreTlogEntrySchema = objectSchema({
   canonicalizedBody: v.string(),
 });
 
+export const DeploymentAppComposeSchema = objectSchema({
+  docker_compose_file: v.string(),
+});
+
+export const DeploymentDockerComposeSchema = objectSchema({
+  services: v.record(
+    v.string(),
+    objectSchema({
+      image: v.pipe(
+        v.nullish(v.string()),
+        v.transform((value) => value ?? undefined),
+      ),
+    }),
+  ),
+});
+
 export const ImageProvenanceBundleSchema = objectSchema({
   mediaType: v.picklist([
     'application/vnd.dev.sigstore.bundle+json;version=0.1',

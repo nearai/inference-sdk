@@ -67,6 +67,18 @@ pub enum ImageProvenanceFailureReason {
     TrustRootUnavailable,
 }
 
+/// Why the measured Compose images cannot be checked against the supplied policies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeploymentImagesFailureReason {
+    EmptyPolicy,
+    InvalidAppCompose,
+    InvalidDockerCompose,
+    UnresolvedImage,
+    ImageMissing,
+    ImageNotPinned,
+}
+
 /// Signature algorithms exposed by NEAR AI Cloud.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
