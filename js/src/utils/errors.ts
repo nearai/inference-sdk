@@ -1,10 +1,12 @@
 import type { TcbStatus } from '../types/verification';
+import type { ImageProvenanceFailureReason } from '../types/provenance';
 
 type ApiResource =
   | 'completion'
   | 'model_attestation'
   | 'gateway_attestation'
-  | 'completion_signature';
+  | 'completion_signature'
+  | 'image_provenance';
 
 /** A JSON-safe description of a Cloud API failure.
  *
@@ -228,6 +230,13 @@ export type VerificationFailure =
     }
   | {
       code: 'provenance.verification_failed';
+    }
+  | {
+      code: 'provenance.image_verification_failed';
+      details: {
+        digest: string;
+        reasons: readonly ImageProvenanceFailureReason[];
+      };
     }
   | {
       code: 'e2ee.model_public_key_required';
@@ -472,6 +481,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':
       return `[${failure.code}] Deployment provenance verification failed`;
+    case 'provenance.image_verification_failed':
+      return `[${failure.code}] Image ${failure.details.digest} was not verified: ${failure.details.reasons.join(', ')}`;
     case 'e2ee.model_public_key_required':
       return `[${failure.code}] Verified model evidence does not provide an E2EE public key`;
     case 'e2ee.model_public_key_invalid':
@@ -501,6 +512,8 @@ function formatApiResource(resource: ApiResource): string {
       return 'Gateway attestation';
     case 'completion_signature':
       return 'completion signature';
+    case 'image_provenance':
+      return 'image provenance';
   }
 }
 

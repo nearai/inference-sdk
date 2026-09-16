@@ -22,6 +22,71 @@ class ApiSchema(BaseModel):
     model_config = ConfigDict(extra='ignore', strict=True)
 
 
+class GitHubImageAttestationSchema(ApiSchema):
+    # Sigstore owns bundle parsing; do not duplicate its certificate/log schema.
+    bundle: dict[str, Any]
+
+
+class GitHubImageAttestationsSchema(ApiSchema):
+    attestations: list[GitHubImageAttestationSchema]
+
+
+class SlsaSubjectSchema(ApiSchema):
+    digest: dict[str, StrictStr]
+
+
+class SlsaDependencySchema(ApiSchema):
+    uri: StrictStr
+    digest: dict[str, StrictStr] = Field(default_factory=dict)
+
+
+class SlsaWorkflowSchema(ApiSchema):
+    repository: StrictStr
+    path: StrictStr
+    ref: StrictStr
+
+
+class SlsaExternalParametersSchema(ApiSchema):
+    workflow: SlsaWorkflowSchema
+
+
+class SlsaBuildDefinitionSchema(ApiSchema):
+    external_parameters: SlsaExternalParametersSchema = Field(
+        validation_alias='externalParameters'
+    )
+    resolved_dependencies: list[SlsaDependencySchema] = Field(
+        validation_alias='resolvedDependencies'
+    )
+
+
+class SlsaConfigSourceSchema(ApiSchema):
+    uri: StrictStr
+    entry_point: StrictStr = Field(validation_alias='entryPoint')
+    digest: dict[str, StrictStr]
+
+
+class SlsaInvocationSchema(ApiSchema):
+    config_source: SlsaConfigSourceSchema = Field(validation_alias='configSource')
+
+
+class SlsaPredicateSchema(ApiSchema):
+    build_definition: SlsaBuildDefinitionSchema | None = Field(
+        default=None, validation_alias='buildDefinition'
+    )
+    invocation: SlsaInvocationSchema | None = None
+
+
+class SlsaStatementSchema(ApiSchema):
+    statement_type: Literal[
+        'https://in-toto.io/Statement/v1', 'https://in-toto.io/Statement/v0.1'
+    ] = Field(validation_alias='_type')
+    subject: list[SlsaSubjectSchema]
+    predicate_type: Literal[
+        'https://slsa.dev/provenance/v1', 'https://slsa.dev/provenance/v0.2'
+    ] = Field(validation_alias='predicateType')
+    predicate: SlsaPredicateSchema
+
+
 class CloudTcbInfoSchema(ApiSchema):
     app_compose: StrictStr
 

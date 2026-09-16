@@ -35,6 +35,8 @@ Gateway-attestation socket to be reused.
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
+| `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
+| `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 
 ## `SecureClient`
 
@@ -216,6 +218,49 @@ verified gateway deployment evidence; it does not establish model execution.
 Call both attestation verifiers before sending a completion. Later, pass the
 matching previously verified attestation selected by `signature.kind` to the
 response verifier.
+## Image build provenance
+
+### `fetchImageProvenance`
+
+Returns all inline Sigstore bundles as JSON strings. Does not verify them.
+
+| `FetchImageProvenanceParams` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
+| `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
+| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+
+### `verifyImageProvenance`
+
+Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
+certificate, DSSE signature and transparency log before the SDK checks the
+artifact digest and signed source. No deployment allowlist is provided.
+
+| `VerifyImageProvenanceParams` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundles` | `readonly string[]` | Yes | Serialized bundles from the fetch helper or another source. At least one must satisfy every check. |
+| `digest` | `string` | Yes | Expected `sha256:` image manifest digest. |
+| `policy` | `ImageProvenancePolicy` | Yes | Required build identity and optional approved version. |
+
+| `ImageProvenancePolicy` field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `repository` | `string` | Yes | — | Expected source and workflow repository, `owner/repo`. |
+| `workflow` | `string` | Yes | — | Expected workflow path, such as `.github/workflows/build.yml`. |
+| `ref` | `string` | No | Any matching workflow ref | Restricts the build to one full Git ref, such as `refs/heads/main`. |
+| `commit` | `string` | No | Any matching source commit | Restricts the signed source to one full, 40-character Git commit. |
+| `issuer` | `string` | No | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
+
+| `VerifiedImageProvenance` field | Type | Description |
+| --- | --- | --- |
+| `digest` | `string` | Verified image manifest digest, normalized to lowercase. |
+| `repository` | `string` | Matched source and workflow repository. |
+| `workflow` | `string` | Matched workflow path. |
+| `ref` | `string` | Git ref shared by the certificate identity and signed source. |
+| `commit` | `string` | Source commit from the verified statement, normalized to lowercase. |
+| `certificateIdentity` | `string` | Verified certificate's workflow URI. |
+| `issuer` | `string` | Verified OIDC issuer. |
+| `predicateType` | `string` | Verified statement's SLSA predicate version. |
+
 ## Completion signatures and evidence
 
 ### Signature kinds

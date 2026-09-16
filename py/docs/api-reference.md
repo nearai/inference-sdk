@@ -34,6 +34,8 @@ verification is synchronous.
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
+| `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
+| `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 
 ## AttestationClient
 
@@ -171,6 +173,49 @@ prove a complete model-to-Gateway-to-final-bytes chain. A `provider_tee`
 signature does not identify the Gateway that returned the bytes; a `gateway`
 signature does not prove that an attested model generated them. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986) tracks the missing
 provider-signature and Gateway-receipt chain.
+
+## Image build provenance
+
+### `fetch_image_provenance`
+
+Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `repository` | `str` | Yes | GitHub repository in `owner/repo` form. |
+| `digest` | `str` | Yes | Image digest in `sha256:<64 hex characters>` form. |
+| `github_token` | `str \| None` | No | GitHub authentication token; defaults to no token. |
+
+### `verify_image_provenance`
+
+Asynchronously returns `VerifiedImageProvenance`. One bundle must satisfy every
+signature, artifact, source and policy check. The helper supports GitHub SLSA v1
+and v0.2 provenance and refreshes Sigstore's production trust root through TUF.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `bundles` | `Sequence[str]` | Yes | Candidate Sigstore bundle JSON strings. |
+| `digest` | `str` | Yes | Expected image digest, not a hash chosen from the bundle. |
+| `policy` | `ImageProvenancePolicy` | Yes | Caller-owned build identity and optional source pin. |
+
+| Policy field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `repository` | `str` | required | Expected GitHub `owner/repo`. |
+| `workflow` | `str` | required | Expected workflow path, such as `.github/workflows/build.yml`. |
+| `ref` | `str \| None` | `None` | Optional exact source ref, such as `refs/heads/main`. |
+| `commit` | `str \| None` | `None` | Optional approved source commit SHA. |
+| `issuer` | `str` | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
+
+| Result field | Type | Description |
+| --- | --- | --- |
+| `digest` | `str` | Verified image digest. |
+| `repository` | `str` | Verified GitHub repository. |
+| `workflow` | `str` | Verified build workflow path. |
+| `ref` | `str` | Verified build ref. |
+| `commit` | `str` | Verified source commit SHA. |
+| `certificate_identity` | `str` | Verified signing-certificate identity. |
+| `issuer` | `str` | Accepted certificate OIDC issuer. |
+| `predicate_type` | `str` | Verified SLSA predicate type. |
 
 ## Evidence, signatures, policies, and results
 

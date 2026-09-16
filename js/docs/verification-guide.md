@@ -295,6 +295,61 @@ apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
 receipt signature—must be pinned automatically.
 
+### Optional image build provenance
+
+`fetchImageProvenance` retrieves GitHub Sigstore bundles for an image digest.
+`verifyImageProvenance` checks their signatures, certificates, transparency-log
+evidence, artifact digest, and signed SLSA source against your repository and
+workflow policy. Set `ref` or `commit` to restrict the accepted builds further.
+
+Use a digest from the authenticated deployment configuration. This example
+adds an image check to Gateway attestation verification:
+
+```ts
+import {
+  fetchImageProvenance,
+  verifyImageProvenance,
+  verifyGatewayAttestation,
+} from 'verifiable-ai-sdk';
+import type { MeasuredDeployment } from 'verifiable-ai-sdk';
+
+const imagePolicy = {
+  repository: 'nearai/cloud-api',
+  workflow: '.github/workflows/build.yml',
+  ref: 'refs/heads/main',
+};
+
+async function checkGatewayImages(deployment: MeasuredDeployment): Promise<void> {
+  // Application code: select a required, explicit image@sha256:... reference.
+  const digest = selectCloudApiDigest(deployment.appCompose);
+  const bundles = await fetchImageProvenance({
+    repository: imagePolicy.repository,
+    digest,
+  });
+  await verifyImageProvenance({ bundles, digest, policy: imagePolicy });
+}
+
+const gateway = await verifyGatewayAttestation({
+  attestation: fetchedGateway.attestation,
+  clientBinding: fetchedGateway.clientBinding,
+  verifiers: { deployment: checkGatewayImages },
+});
+```
+
+The application supplies `selectCloudApiDigest`: it parses its compose format
+and rejects missing or unresolved required image references. A variable's
+default image is not proof of its resolved value. For `SecureClient`, supply the
+same callback as `gatewayVerification.verifiers.deployment`.
+
+One complete matching bundle is sufficient; other bundles for the digest may
+come from different builds. The helpers do not maintain an approved-image list,
+rebuild images, or prove which containers are currently running. They are not
+enabled automatically. Trust roots are refreshed through Sigstore's TUF service.
+
+Fetch failures throw `ApiError`. Verification failures throw `VerificationError`
+with `provenance.image_verification_failed` and machine-readable `details.reasons`.
+The optional `githubToken` is a GitHub token, not a Gateway API key.
+
 ### Verify the response signature
 
 `signature.kind` identifies the signer and therefore the proof made by a

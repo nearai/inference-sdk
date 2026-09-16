@@ -12,6 +12,8 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
   its exact request and response bytes and the evidence retained for that request.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
+- `fetchImageProvenance` and `verifyImageProvenance` check GitHub image build
+  proofs against caller-supplied repository, workflow, and optional version rules.
 
 Gateway attestation verifies the Gateway's TEE and signing identity.
 Model attestation verifies the model deployment's TEE, signing identity,

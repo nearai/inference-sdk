@@ -120,6 +120,56 @@ The second form still verifies the Gateway quote, signer, nonce, deployment,
 and policy. It does not make a claim about the TLS peer serving the evidence
 request.
 
+### Optional image build provenance
+
+`fetch_image_provenance` retrieves a digest's GitHub attestation bundles.
+`verify_image_provenance` verifies them against Sigstore's production trust root,
+matches the signed artifact digest, and checks your expected repository and
+workflow. Set `ref` or `commit` to restrict the accepted build further.
+
+This example adds the check to Gateway deployment verification. The application
+selects the required image from the authenticated compose and rejects a missing
+or unresolved image reference; the SDK does not maintain a trusted-image list.
+
+```python
+from verifiable_ai_sdk import (
+    AttestationVerifiers,
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    fetch_image_provenance,
+    verify_image_provenance,
+)
+
+image_policy = ImageProvenancePolicy(
+    repository='nearai/cloud-api',
+    workflow='.github/workflows/build.yml',
+    ref='refs/heads/main',
+)
+
+
+async def check_gateway_images(deployment: MeasuredDeployment) -> None:
+    # Application code: select a required, explicit image@sha256:... reference.
+    digest = select_cloud_api_digest(deployment.app_compose)
+    bundles = await fetch_image_provenance(image_policy.repository, digest)
+    await verify_image_provenance(bundles, digest, image_policy)
+
+
+verified_gateway = await verify_gateway_attestation(
+    fetched_gateway.attestation,
+    fetched_gateway.client_binding,
+    verifiers=AttestationVerifiers(deployment=check_gateway_images),
+)
+```
+
+Both helpers are asynchronous. Fetch failures raise `ApiError`; invalid or
+untrusted provenance raises `VerificationError`. Multiple bundles are tried
+until one satisfies all checks. An optional GitHub token can be passed to the
+fetch helper; do not use a Gateway API key for GitHub.
+
+This proves the selected digest's build provenance. It does not approve the code,
+rebuild the image, resolve compose-variable overrides, inspect compose-manager,
+or prove which containers are currently running.
+
 ## 2. Send the completion and retain exact bytes
 
 After deployment verification succeeds, send the completion with the canonical

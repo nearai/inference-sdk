@@ -138,6 +138,36 @@ response, `verify_model_response` requires a `VerifiedModelAttestation` with
 the same signer. Select it from the verified preflight results with
 `find_model_attestation_for_signature`.
 
+## Image build provenance
+
+Both functions are asynchronous and separate retrieval from verification.
+
+| Function | Parameters | Returns | Description |
+| --- | --- | --- | --- |
+| `fetch_image_provenance` | `repository: &str`, `digest: &str`, `github_token: Option<&str>` | `Result<Vec<String>, ApiError>` | Fetches all inline GitHub attestation bundles, following pagination. `repository` is `owner/repo`; `digest` is `sha256:` plus 64 hexadecimal digits. |
+| `verify_image_provenance` | `bundles: &[String]`, `digest: &str`, `policy: &ImageProvenancePolicy` | `Result<VerifiedImageProvenance, VerificationError>` | Verifies Sigstore and SLSA v1 or v0.2 provenance. At least one complete bundle must satisfy the policy. |
+
+`ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
+GitHub Actions issuer and leaves the optional ref and commit unset.
+
+| Policy field | Type | Description |
+| --- | --- | --- |
+| `repository` | `String` | Required GitHub source repository, such as `nearai/compose-manager`. |
+| `workflow` | `String` | Required workflow path, such as `.github/workflows/build.yml`. |
+| `git_ref` | `Option<String>` | Optional exact Git ref, such as `refs/heads/master`. Serialized as `ref`. |
+| `commit` | `Option<String>` | Optional full, 40-digit source commit SHA. |
+| `issuer` | `String` | Expected OIDC issuer; defaults to `https://token.actions.githubusercontent.com`. |
+
+| Verified result field | Type | Description |
+| --- | --- | --- |
+| `digest` | `String` | Verified SHA-256 artifact digest, including its `sha256:` prefix. |
+| `repository`, `workflow`, `git_ref`, `commit` | `String` | Source repository, workflow, ref and commit matched against the verified certificate identity and signed statement. |
+| `certificate_identity`, `issuer` | `String` | Authenticated certificate identity and OIDC issuer. |
+| `predicate_type` | `String` | SLSA provenance predicate URI (`v1` or `v0.2`). |
+
+These helpers use an embedded public-good Sigstore trust root. They do not
+discover deployment images or run automatically during attestation verification.
+
 ## Signatures and evidence
 
 ### Signature types

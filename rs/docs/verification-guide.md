@@ -186,6 +186,46 @@ verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier sends
 supplied GPU evidence to NRAS and accepts its documented boolean overall
 result; it does not locally validate the returned JWT/EAT signature.
 
+## Verify an image's build provenance
+
+Image provenance is optional. Use a digest from a verified deployment's
+`app_compose` and choose the GitHub repository and workflow your application
+trusts. Do not treat a compose variable's default image as the resolved image
+when its value may be overridden.
+
+```rust,no_run
+use verifiable_ai_sdk::{
+    fetch_image_provenance, verify_image_provenance, ImageProvenancePolicy,
+    VerifiedImageProvenance,
+};
+
+async fn verify_image(
+    digest: &str,
+) -> Result<VerifiedImageProvenance, Box<dyn std::error::Error>> {
+    let mut policy = ImageProvenancePolicy::new(
+        "nearai/compose-manager".to_owned(),
+        ".github/workflows/build.yml".to_owned(),
+    );
+    policy.git_ref = Some("refs/heads/master".to_owned());
+    // Set policy.commit as well when your application approves one source commit.
+    let bundles = fetch_image_provenance(&policy.repository, digest, None).await?;
+    let provenance = verify_image_provenance(&bundles, digest, &policy).await?;
+    Ok(provenance)
+}
+```
+
+The verifier accepts a bundle only after its Sigstore signature, certificate,
+transparency-log evidence, artifact digest and signed SLSA source identity pass.
+It tries every supplied bundle until one satisfies the policy. Fetching uses
+GitHub's public API; supply an optional GitHub token for authenticated rate
+limits. It is not a Gateway API key.
+
+Verification uses `sigstore-verify`'s embedded Sigstore public-good trust-root
+snapshot, without a runtime trust-root download. Keep the dependency updated
+when Sigstore rotates trust material. This verifies build provenance, not
+reproducibility, all deployment images, or the software currently serving a
+model. Attestation verification does not call these helpers automatically.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.

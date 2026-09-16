@@ -28,6 +28,14 @@ export type { Awaitable } from './types/shared';
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
+export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
+export type {
+  FetchImageProvenanceParams,
+  ImageProvenanceFailureReason,
+  ImageProvenancePolicy,
+  VerifiedImageProvenance,
+  VerifyImageProvenanceParams,
+} from './types/provenance';
 
 export type {
   AttestationEventLog,
