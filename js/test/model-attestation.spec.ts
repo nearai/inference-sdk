@@ -583,6 +583,8 @@ describe('model attestation verification', () => {
     ['issued in the future', { iat: 4102444800 }, 'not_yet_valid'],
     ['wrong issuer', { iss: 'https://untrusted.example' }, 'invalid_claims'],
     ['missing expiration', { exp: undefined }, 'invalid_claims'],
+    ['missing not-before time', { nbf: undefined }, 'invalid_claims'],
+    ['invalid not-before time', { nbf: [] }, 'invalid_claims'],
     ['missing signed nonce', { eat_nonce: undefined }, 'invalid_claims'],
     ['wrong signed nonce', { eat_nonce: '44'.repeat(32) }, 'nonce_mismatch'],
   ])('rejects an NRAS token with %s', async (_, overrides, reason) => {

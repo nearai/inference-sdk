@@ -344,6 +344,7 @@ async def test_default_nras_verifies_a_signed_overall_token(
         ({'iat': 4102444800}, 'not_yet_valid'),
         ({'iss': 'https://untrusted.example'}, 'invalid_claims'),
         ({'exp': None}, 'invalid_claims'),
+        ({'exp': []}, 'invalid_claims'),
         ({'eat_nonce': None}, 'invalid_claims'),
         ({'eat_nonce': '44' * 32}, 'nonce_mismatch'),
     ],
@@ -362,6 +363,23 @@ async def test_default_nras_rejects_unacceptable_signed_claims(
         )
     assert raised.value.failure.code == 'gpu.jwt_verification_failed'
     assert raised.value.failure.details == {'reason': reason}
+
+
+async def test_default_nras_rejects_an_invalid_jwks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(NRAS_TEST_JWK, 'alg', ['ES384'])
+    use_fake_nras_response(monkeypatch, [['JWT', nras_jwt({})]])
+
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'gpu.nras_response_invalid'
+    assert raised.value.failure.details == {'reason': 'invalid_jwks'}
 
 
 @pytest.mark.parametrize('case', ['modified', 'unknown_key', 'unsigned'])

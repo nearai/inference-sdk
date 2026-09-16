@@ -95,7 +95,7 @@ async def _fetch_nvidia_jwks() -> jwt.PyJWKSet:
     try:
         key_set = _NvidiaJwksSchema.model_validate_json(response.text())
         return jwt.PyJWKSet.from_dict(key_set.model_dump())
-    except (jwt.PyJWTError, ValueError, KeyError) as error:
+    except (jwt.PyJWTError, ValueError, TypeError, KeyError) as error:
         raise _invalid_nras_response('invalid_jwks', error) from error
 
 
@@ -133,7 +133,7 @@ def _verify_nras_jwt(
         raise _jwt_failure('invalid_claims', error) from error
     except jwt.PyJWTError as error:
         raise _jwt_failure('invalid_signature', error) from error
-    except ValidationError as error:
+    except (ValidationError, TypeError) as error:
         raise _jwt_failure('invalid_claims', error) from error
 
 

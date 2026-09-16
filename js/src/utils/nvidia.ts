@@ -62,7 +62,9 @@ export async function nvidiaNrasVerifier(
     if (cause instanceof errors.JWTExpired) throw jwtFailure('expired', cause);
     if (cause instanceof errors.JWTClaimValidationFailed) {
       throw jwtFailure(
-        cause.claim === 'nbf' ? 'not_yet_valid' : 'invalid_claims',
+        cause.claim === 'nbf' && cause.reason === 'check_failed'
+          ? 'not_yet_valid'
+          : 'invalid_claims',
         cause,
       );
     }
