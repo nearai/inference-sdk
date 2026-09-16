@@ -149,6 +149,8 @@ Both functions are asynchronous and separate retrieval from verification.
 
 `ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
 GitHub Actions issuer and leaves the optional ref and commit unset.
+The statement's source commit must match the certificate's authenticated source
+SHA before applying the optional commit pin.
 
 | Policy field | Type | Description |
 | --- | --- | --- |

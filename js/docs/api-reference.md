@@ -234,7 +234,9 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
-artifact digest and signed source. No deployment allowlist is provided.
+artifact digest and signed source. The statement's source commit must match the
+certificate's authenticated source SHA, even when `policy.commit` is omitted.
+No deployment allowlist is provided.
 Rekor entries must use the `dsse` format; legacy `intoto` entries are not supported.
 
 | `VerifyImageProvenanceParams` field | Type | Required | Description |
@@ -257,7 +259,7 @@ Rekor entries must use the `dsse` format; legacy `intoto` entries are not suppor
 | `repository` | `string` | Matched source and workflow repository. |
 | `workflow` | `string` | Matched workflow path. |
 | `ref` | `string` | Git ref shared by the certificate identity and signed source. |
-| `commit` | `string` | Source commit from the verified statement, normalized to lowercase. |
+| `commit` | `string` | Source commit matched against the verified certificate, normalized to lowercase. |
 | `certificateIdentity` | `string` | Verified certificate's workflow URI. |
 | `issuer` | `string` | Verified OIDC issuer. |
 | `predicateType` | `string` | Verified statement's SLSA predicate version. |

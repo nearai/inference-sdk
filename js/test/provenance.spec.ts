@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { resolve } from 'node:path';
-import { SigstoreVerifier } from '@freedomofpress/sigstore-browser';
+import {
+  SigstoreVerifier,
+  X509Certificate,
+  X509SourceRepositoryDigestExtension,
+} from '@freedomofpress/sigstore-browser';
 import * as v from 'valibot';
 import { fetchImageProvenance, verifyImageProvenance } from '../src';
 import { verifyImageProvenanceSource } from '../src/core/provenance';
@@ -158,6 +162,84 @@ describe('image provenance verification', () => {
     expect(verified.commit).toBe(POLICY.commit);
   });
 
+  test.each([POLICY.commit, undefined])(
+    'rejects a statement from another certificate source commit with pin %s',
+    async (commit) => {
+      // Simulate another authenticated source claim at the policy boundary.
+      // DSSE, certificate-chain and transparency-log verification still run.
+      jest
+        .spyOn(
+          X509SourceRepositoryDigestExtension.prototype,
+          'sourceRepositoryDigest',
+          'get',
+        )
+        .mockReturnValue('ab'.repeat(20));
+
+      await expect(
+        verifyImageProvenance({
+          bundles: [BUNDLE],
+          digest: DIGEST,
+          policy: { ...POLICY, commit },
+        }),
+      ).rejects.toMatchObject({
+        failure: { details: { reasons: ['source_mismatch'] } },
+      });
+    },
+  );
+
+  test('uses the legacy source SHA only when the modern extension is absent', async () => {
+    jest
+      .spyOn(X509Certificate.prototype, 'extSourceRepositoryDigest', 'get')
+      .mockReturnValue(undefined);
+
+    const verified = await verifyImageProvenance({
+      bundles: [BUNDLE],
+      digest: DIGEST,
+      policy: POLICY,
+    });
+
+    expect(verified.commit).toBe(POLICY.commit);
+  });
+
+  test('rejects a missing certificate source SHA', async () => {
+    jest
+      .spyOn(X509Certificate.prototype, 'extSourceRepositoryDigest', 'get')
+      .mockReturnValue(undefined);
+    jest
+      .spyOn(X509Certificate.prototype, 'extGitHubWorkflowSHA', 'get')
+      .mockReturnValue(undefined);
+
+    await expect(
+      verifyImageProvenance({
+        bundles: [BUNDLE],
+        digest: DIGEST,
+        policy: POLICY,
+      }),
+    ).rejects.toMatchObject({
+      failure: { details: { reasons: ['source_mismatch'] } },
+    });
+  });
+
+  test('does not fall back to a legacy SHA when the modern claim is malformed', async () => {
+    jest
+      .spyOn(
+        X509SourceRepositoryDigestExtension.prototype,
+        'sourceRepositoryDigest',
+        'get',
+      )
+      .mockReturnValue('not-a-commit');
+
+    await expect(
+      verifyImageProvenance({
+        bundles: [BUNDLE],
+        digest: DIGEST,
+        policy: POLICY,
+      }),
+    ).rejects.toMatchObject({
+      failure: { details: { reasons: ['source_mismatch'] } },
+    });
+  });
+
   test.each([
     ['repository', { repository: 'someone/compose-manager' }],
     ['workflow', { workflow: '.github/workflows/unapproved.yml' }],
@@ -276,6 +358,7 @@ describe('verified SLSA source interpretation', () => {
       digest: DIGEST,
       policy: POLICY,
       ref: POLICY.ref,
+      certificateSourceCommit: POLICY.commit,
     });
 
     expect(commit).toBe(POLICY.commit);
@@ -302,6 +385,7 @@ describe('verified SLSA source interpretation', () => {
       digest: DIGEST,
       policy: POLICY,
       ref: POLICY.ref,
+      certificateSourceCommit: POLICY.commit,
     });
     expect(commit).toBe(POLICY.commit);
 
@@ -311,6 +395,7 @@ describe('verified SLSA source interpretation', () => {
         digest: DIGEST,
         policy: { ...POLICY, repository: 'other/source' },
         ref: POLICY.ref,
+        certificateSourceCommit: POLICY.commit,
       }),
     ).toThrow(
       expect.objectContaining({

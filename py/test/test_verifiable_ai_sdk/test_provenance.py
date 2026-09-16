@@ -4,9 +4,12 @@ import base64
 import json
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from sigstore.models import TrustedRoot
 from sigstore.verify import Verifier
 
@@ -52,8 +55,13 @@ def use_local_trust_root(
     monkeypatch.setattr(Verifier, 'production', lambda: sigstore_verifier)
 
 
-async def test_verifies_real_image_provenance_and_skips_an_invalid_candidate() -> None:
-    result = await verify_image_provenance(['{}', BUNDLE], DIGEST, POLICY)
+@pytest.mark.parametrize('commit_pin', [COMMIT, None])
+async def test_verifies_real_image_provenance_and_skips_an_invalid_candidate(
+    commit_pin: str | None,
+) -> None:
+    result = await verify_image_provenance(
+        ['{}', BUNDLE], DIGEST, replace(POLICY, commit=commit_pin)
+    )
 
     assert result.digest == DIGEST
     assert result.repository == 'nearai/compose-manager'
@@ -116,6 +124,80 @@ async def test_rejects_missing_attestations() -> None:
         await verify_image_provenance([], DIGEST, POLICY)
 
     assert raised.value.failure.details['reasons'] == ['no_attestations']
+
+
+def _certificate_with_extensions(extensions: dict[int, bytes]) -> x509.Certificate:
+    # Generated certificates exercise only the source-policy boundary. The real
+    # bundle tests above remain responsible for Sigstore cryptographic verification.
+    key = Ed25519PrivateKey.generate()
+    name = x509.Name(
+        [x509.NameAttribute(x509.NameOID.COMMON_NAME, 'source-policy-test')]
+    )
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(1)
+        .not_valid_before(datetime(2026, 1, 1, tzinfo=timezone.utc))
+        .not_valid_after(datetime(2027, 1, 1, tzinfo=timezone.utc))
+    )
+    for suffix, value in extensions.items():
+        builder = builder.add_extension(
+            x509.UnrecognizedExtension(
+                x509.ObjectIdentifier(f'1.3.6.1.4.1.57264.1.{suffix}'), value
+            ),
+            critical=False,
+        )
+    return builder.sign(key, algorithm=None)
+
+
+@pytest.mark.parametrize('commit_pin', [COMMIT, None])
+def test_statement_commit_must_match_certificate_source_even_without_a_pin(
+    commit_pin: str | None,
+) -> None:
+    statement = SlsaStatementSchema.model_validate_json(
+        base64.b64decode(json.loads(BUNDLE)['dsseEnvelope']['payload'])
+    )
+    certificate = _certificate_with_extensions(
+        {13: b'\x0c\x28' + b'ab' * 20, 3: COMMIT.encode()}
+    )
+    with pytest.raises(provenance._StatementMismatch) as raised:
+        provenance._verify_statement(
+            statement,
+            DIGEST,
+            replace(POLICY, commit=commit_pin),
+            POLICY.ref,
+            certificate,
+        )
+
+    assert raised.value.reason == 'source_mismatch'
+
+
+def test_uses_legacy_certificate_sha_when_source_digest_is_absent() -> None:
+    certificate = _certificate_with_extensions({3: COMMIT.upper().encode()})
+
+    assert provenance._certificate_source_commit(certificate) == COMMIT
+
+
+@pytest.mark.parametrize(
+    'extensions',
+    [
+        {},
+        {10: b'\x0c\x28' + COMMIT.encode(), 19: b'\x0c\x28' + COMMIT.encode()},
+        {13: COMMIT.encode(), 3: COMMIT.encode()},
+        {13: b'\x0c\x28' + b'z' * 40, 3: COMMIT.encode()},
+        {3: b'not-a-commit'},
+    ],
+)
+def test_rejects_missing_or_malformed_certificate_source(
+    extensions: dict[int, bytes],
+) -> None:
+    certificate = _certificate_with_extensions(extensions)
+    with pytest.raises(provenance._StatementMismatch) as raised:
+        provenance._certificate_source_commit(certificate)
+
+    assert raised.value.reason == 'source_mismatch'
 
 
 @pytest.mark.parametrize('cursor', ['before', 'after'])
@@ -216,11 +298,14 @@ def test_slsa_v02_checks_the_workflow_source_not_an_unrelated_material() -> None
         },
     }
     statement = SlsaStatementSchema.model_validate(payload)
-    commit = provenance._verify_statement(statement, DIGEST, POLICY, POLICY.ref)
+    certificate = _certificate_with_extensions({13: b'\x0c\x28' + COMMIT.encode()})
+    commit = provenance._verify_statement(
+        statement, DIGEST, POLICY, POLICY.ref, certificate
+    )
     assert commit == COMMIT
 
     payload['predicate']['invocation']['configSource']['entryPoint'] = 'other.yml'
     statement = SlsaStatementSchema.model_validate(payload)
     with pytest.raises(provenance._StatementMismatch) as raised:
-        provenance._verify_statement(statement, DIGEST, POLICY, POLICY.ref)
+        provenance._verify_statement(statement, DIGEST, POLICY, POLICY.ref, certificate)
     assert raised.value.reason == 'source_mismatch'

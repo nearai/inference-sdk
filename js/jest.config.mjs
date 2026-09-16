@@ -8,5 +8,7 @@ export default {
     ],
   },
   // These browser-compatible dependencies publish ESM only.
-  transformIgnorePatterns: ['/node_modules/(?!.*(?:@freedomofpress|@noble|jose)/)'],
+  transformIgnorePatterns: [
+    '/node_modules/(?!.*(?:@freedomofpress|@noble|jose)/)',
+  ],
 };

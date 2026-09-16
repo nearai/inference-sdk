@@ -191,6 +191,9 @@ Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
 Asynchronously returns `VerifiedImageProvenance`. One bundle must satisfy every
 signature, artifact, source and policy check. The helper supports GitHub SLSA v1
 and v0.2 provenance and refreshes Sigstore's production trust root through TUF.
+The statement's source commit must match the signing certificate's source digest
+(or legacy GitHub workflow SHA when the source digest is absent), before applying
+the optional commit pin.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

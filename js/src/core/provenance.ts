@@ -249,6 +249,7 @@ async function verifyBundle({
   const identityPrefix = `https://github.com/${policy.repository}/${policy.workflow}@`;
   let certificateIdentity = '';
   let ref = '';
+  let certificateSourceCommit: string | undefined;
   const verified = await verifier.verifyDsse(parsed.output, {
     verify(cert) {
       const identity = cert.extSubjectAltName?.uri ?? '';
@@ -266,6 +267,15 @@ async function verifyBundle({
       new AnyOf([new OIDCIssuer(issuer), new OIDCIssuerV2(issuer)]).verify(
         cert,
       );
+      try {
+        // Both extensions identify the source SHA, not a reusable workflow's SHA.
+        // Use the legacy claim only when the modern extension is absent.
+        certificateSourceCommit =
+          cert.extSourceRepositoryDigest?.sourceRepositoryDigest ??
+          cert.extGitHubWorkflowSHA?.workflowSHA;
+      } catch (cause) {
+        throw imageFailure({ digest, reasons: ['source_mismatch'], cause });
+      }
       certificateIdentity = identity;
       ref = candidateRef;
     },
@@ -303,6 +313,7 @@ async function verifyBundle({
     policy,
     ref,
     digest,
+    certificateSourceCommit,
   });
   return {
     digest,
@@ -321,6 +332,7 @@ type VerifyImageProvenanceSourceParams = {
   policy: ImageProvenancePolicy;
   ref: string;
   digest: string;
+  certificateSourceCommit: string | undefined;
 };
 
 /** Match source fields after the enclosing DSSE statement has been verified. */
@@ -329,6 +341,7 @@ export function verifyImageProvenanceSource({
   policy,
   ref,
   digest,
+  certificateSourceCommit,
 }: VerifyImageProvenanceSourceParams): string {
   const repositoryUrl = `https://github.com/${policy.repository}`;
   let commit: string | undefined;
@@ -360,6 +373,15 @@ export function verifyImageProvenanceSource({
     throw imageFailure({ digest, reasons: ['source_mismatch'] });
   }
   const normalizedCommit = commit.toLowerCase();
+  if (
+    certificateSourceCommit === undefined ||
+    !/^[a-f\d]{40}$/i.test(certificateSourceCommit) ||
+    !Buffer.from(normalizedCommit, 'hex').equals(
+      Buffer.from(certificateSourceCommit, 'hex'),
+    )
+  ) {
+    throw imageFailure({ digest, reasons: ['source_mismatch'] });
+  }
   if (
     policy.commit !== undefined &&
     (!/^[a-f\d]{40}$/i.test(policy.commit) ||

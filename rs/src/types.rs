@@ -14,7 +14,8 @@ pub struct ImageProvenancePolicy {
     /// Optional exact Git ref, such as `refs/heads/main`.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
-    /// Optional full source commit SHA.
+    /// Optional full source commit SHA, matched against both the SLSA statement
+    /// and the signing certificate's authenticated source digest.
     pub commit: Option<String>,
     /// Expected certificate OIDC issuer.
     #[serde(default = "default_image_provenance_issuer")]
@@ -45,6 +46,7 @@ pub struct VerifiedImageProvenance {
     pub workflow: String,
     #[serde(rename = "ref")]
     pub git_ref: String,
+    /// Source commit matched between the SLSA statement and signing certificate.
     pub commit: String,
     pub certificate_identity: String,
     pub issuer: String,

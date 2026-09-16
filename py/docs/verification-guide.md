@@ -125,7 +125,9 @@ request.
 `fetch_image_provenance` retrieves a digest's GitHub attestation bundles.
 `verify_image_provenance` verifies them against Sigstore's production trust root,
 matches the signed artifact digest, and checks your expected repository and
-workflow. Set `ref` or `commit` to restrict the accepted build further.
+workflow. The statement's source commit must match the verified certificate's
+source commit, including when no commit pin is supplied. Set `ref` or `commit` to
+restrict the accepted build further.
 
 This example adds the check to Gateway deployment verification. The application
 selects the required image from the authenticated compose and rejects a missing

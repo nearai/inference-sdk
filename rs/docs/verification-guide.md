@@ -218,6 +218,8 @@ async fn verify_image(
 
 The verifier accepts a bundle only after its Sigstore signature, certificate,
 transparency-log evidence, artifact digest and signed SLSA source identity pass.
+The SLSA source commit must match the certificate's authenticated source digest,
+even without `policy.commit`; that optional pin must then match the same commit.
 It tries every supplied bundle until one satisfies the policy. Fetching uses
 GitHub's public API; supply an optional GitHub token for authenticated rate
 limits. It is not a Gateway API key.

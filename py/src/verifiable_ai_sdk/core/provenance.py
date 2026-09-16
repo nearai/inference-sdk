@@ -30,6 +30,8 @@ from ..utils.fetch import fetch
 _DIGEST_PATTERN = re.compile(r'sha256:[0-9a-fA-F]{64}')
 _REPOSITORY_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _COMMIT_PATTERN = re.compile(r'[0-9a-fA-F]{40}')
+_SOURCE_REPOSITORY_DIGEST_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.13')
+_GITHUB_WORKFLOW_SHA_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.3')
 
 
 async def fetch_image_provenance(
@@ -169,7 +171,8 @@ async def verify_image_provenance(
 
     Sigstore authenticates the certificate, DSSE signature and transparency-log
     evidence. Only then do we interpret the in-toto statement and match its
-    subject digest, source repository and optional reviewed commit.
+    subject digest, source repository and certificate's source commit before
+    applying the optional reviewed commit pin.
     """
 
     if not _DIGEST_PATTERN.fullmatch(digest):
@@ -251,7 +254,9 @@ def _verify_bundles(
                 statement = SlsaStatementSchema.model_validate_json(payload)
             except ValidationError as error:
                 raise _StatementMismatch('invalid_statement') from error
-            commit = _verify_statement(statement, digest, policy, identity.ref)
+            commit = _verify_statement(
+                statement, digest, policy, identity.ref, bundle.signing_certificate
+            )
             return VerifiedImageProvenance(
                 digest=digest,
                 repository=policy.repository,
@@ -281,6 +286,7 @@ def _verify_statement(
     digest: str,
     policy: ImageProvenancePolicy,
     ref: str,
+    certificate: x509.Certificate,
 ) -> str:
     expected_hash = digest.removeprefix('sha256:')
     if not any(
@@ -321,9 +327,34 @@ def _verify_statement(
         raise _StatementMismatch('source_mismatch')
     if not _COMMIT_PATTERN.fullmatch(commit):
         raise _StatementMismatch('source_mismatch')
+    if commit.lower() != _certificate_source_commit(certificate):
+        raise _StatementMismatch('source_mismatch')
     if policy.commit is not None and commit.lower() != policy.commit.lower():
         raise _StatementMismatch('commit_mismatch')
     return commit.lower()
+
+
+def _certificate_source_commit(certificate: x509.Certificate) -> str:
+    for oid, prefix in (
+        (_SOURCE_REPOSITORY_DIGEST_OID, b'\x0c\x28'),
+        (_GITHUB_WORKFLOW_SHA_OID, b''),
+    ):
+        try:
+            extension = certificate.extensions.get_extension_for_oid(oid).value
+        except x509.ExtensionNotFound:
+            continue
+        if not isinstance(extension, x509.UnrecognizedExtension):
+            raise _StatementMismatch('source_mismatch')
+        # The modern field is a DER UTF8String with a 40-byte SHA; the legacy
+        # field is raw text. A present but malformed modern field cannot fall back.
+        value = extension.value
+        if not value.startswith(prefix):
+            raise _StatementMismatch('source_mismatch')
+        commit = value[len(prefix) :]
+        if re.fullmatch(rb'[0-9a-fA-F]{40}', commit) is None:
+            raise _StatementMismatch('source_mismatch')
+        return commit.decode('ascii').lower()
+    raise _StatementMismatch('source_mismatch')
 
 
 def _source_matches(uri: str, repository: str, ref: str) -> bool:

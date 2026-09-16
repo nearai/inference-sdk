@@ -6,14 +6,22 @@ use reqwest::{header::HeaderMap, Client, Url};
 use serde::Deserialize;
 use sigstore_verify::{
     trust_root::{TrustedRoot, SIGSTORE_PRODUCTION_TRUSTED_ROOT},
-    types::{Bundle, Sha256Hash, SignatureContent},
+    types::{bundle::VerificationMaterialContent, Bundle, Sha256Hash, SignatureContent},
     VerificationPolicy, Verifier,
 };
 use std::collections::HashSet;
+use x509_cert::{
+    der::{asn1::ObjectIdentifier, asn1::Utf8StringRef, Decode},
+    ext::Extension,
+    Certificate,
+};
 
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
+const SOURCE_REPOSITORY_DIGEST: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.13");
+const GITHUB_WORKFLOW_SHA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.3");
 
 /// Fetch inline GitHub attestation bundles for a `sha256:…` image digest.
 ///
@@ -162,7 +170,8 @@ fn pagination_error(actual: &str) -> ApiError {
 /// The Sigstore library verifies the DSSE signature, Fulcio certificate, SCT,
 /// Rekor inclusion proof/checkpoint and artifact digest using its embedded
 /// public-good trust root. This function additionally checks the caller's
-/// source repository, workflow, optional ref and commit against signed data.
+/// source repository, workflow and optional ref, and binds the SLSA source
+/// commit to the certificate's source digest before applying an optional pin.
 /// It does not discover images, approve a deployment or rebuild the artifact.
 pub async fn verify_image_provenance(
     bundles: &[String],
@@ -250,14 +259,9 @@ fn verify_bundle(
     {
         return Err(Reason::UntrustedIdentity);
     }
-    let (commit, predicate_type) = source_commit(statement.provenance, policy, git_ref)?;
-    if policy
-        .commit
-        .as_deref()
-        .is_some_and(|expected| !expected.eq_ignore_ascii_case(&commit))
-    {
-        return Err(Reason::CommitMismatch);
-    }
+    let certificate_commit = certificate_source_commit(&bundle.verification_material.content)?;
+    let (commit, predicate_type) =
+        source_commit(statement.provenance, policy, git_ref, &certificate_commit)?;
     Ok(VerifiedImageProvenance {
         digest: format!("sha256:{hash}"),
         repository: policy.repository.clone(),
@@ -270,12 +274,60 @@ fn verify_bundle(
     })
 }
 
+fn certificate_source_commit(material: &VerificationMaterialContent) -> Result<String, Reason> {
+    let der = match material {
+        VerificationMaterialContent::Certificate(certificate) => &certificate.raw_bytes,
+        VerificationMaterialContent::X509CertificateChain { certificates } => {
+            &certificates
+                .first()
+                .ok_or(Reason::SourceMismatch)?
+                .raw_bytes
+        }
+        VerificationMaterialContent::PublicKey { .. } => return Err(Reason::SourceMismatch),
+    };
+    let certificate = Certificate::from_der(der.as_bytes()).map_err(|_| Reason::SourceMismatch)?;
+    source_commit_extension(
+        certificate
+            .tbs_certificate
+            .extensions
+            .as_deref()
+            .unwrap_or_default(),
+    )
+}
+
+fn source_commit_extension(extensions: &[Extension]) -> Result<String, Reason> {
+    // The source digest is independent of a reusable workflow's signer digest.
+    // Only certificates without the modern extension may use the legacy SHA.
+    let commit = if let Some(extension) = extensions
+        .iter()
+        .find(|extension| extension.extn_id == SOURCE_REPOSITORY_DIGEST)
+    {
+        Utf8StringRef::from_der(extension.extn_value.as_bytes())
+            .map_err(|_| Reason::SourceMismatch)?
+            .as_str()
+            .to_owned()
+    } else {
+        let extension = extensions
+            .iter()
+            .find(|extension| extension.extn_id == GITHUB_WORKFLOW_SHA)
+            .ok_or(Reason::SourceMismatch)?;
+        std::str::from_utf8(extension.extn_value.as_bytes())
+            .map_err(|_| Reason::SourceMismatch)?
+            .to_owned()
+    };
+    if !is_commit(&commit) {
+        return Err(Reason::SourceMismatch);
+    }
+    Ok(commit.to_ascii_lowercase())
+}
+
 fn source_commit(
     provenance: Provenance,
     policy: &ImageProvenancePolicy,
     git_ref: &str,
+    certificate_commit: &str,
 ) -> Result<(String, &'static str), Reason> {
-    match provenance {
+    let (commit, predicate_type) = match provenance {
         Provenance::V1(predicate) => {
             let definition = predicate.build_definition;
             let workflow = definition.external_parameters.workflow;
@@ -298,7 +350,7 @@ fn source_commit(
                 .filter(|commit| is_commit(commit))
                 .ok_or(Reason::SourceMismatch)?
                 .to_ascii_lowercase();
-            Ok((commit, SLSA_V1))
+            (commit, SLSA_V1)
         }
         Provenance::V02(predicate) => {
             let source = predicate.invocation.config_source;
@@ -312,9 +364,20 @@ fn source_commit(
                 .filter(|commit| is_commit(commit))
                 .ok_or(Reason::SourceMismatch)?
                 .to_ascii_lowercase();
-            Ok((commit, SLSA_V02))
+            (commit, SLSA_V02)
         }
+    };
+    if !commit.eq_ignore_ascii_case(certificate_commit) {
+        return Err(Reason::SourceMismatch);
     }
+    if policy
+        .commit
+        .as_deref()
+        .is_some_and(|expected| !expected.eq_ignore_ascii_case(&commit))
+    {
+        return Err(Reason::CommitMismatch);
+    }
+    Ok((commit, predicate_type))
 }
 
 fn require_source(uri: &str, policy: &ImageProvenancePolicy, git_ref: &str) -> Result<(), Reason> {
@@ -483,6 +546,7 @@ mod tests {
         matchers::{header, method, path, query_param, query_param_is_missing},
         Mock, MockServer, ResponseTemplate,
     };
+    use x509_cert::der::{asn1::OctetString, Encode};
 
     const COMMIT: &str = "8e07c3583909c9ab9da94d883e87add1ae90832d";
 
@@ -491,6 +555,101 @@ mod tests {
             "nearai/compose-manager".to_owned(),
             ".github/workflows/build.yml".to_owned(),
         )
+    }
+
+    fn certificate_extension(oid: ObjectIdentifier, value: &[u8]) -> Extension {
+        Extension {
+            extn_id: oid,
+            critical: false,
+            extn_value: OctetString::new(value).unwrap(),
+        }
+    }
+
+    #[test]
+    fn extracts_the_certificate_source_digest_with_legacy_fallback() {
+        let modern = |value: &str| {
+            certificate_extension(
+                SOURCE_REPOSITORY_DIGEST,
+                &Utf8StringRef::new(value).unwrap().to_der().unwrap(),
+            )
+        };
+        let legacy = certificate_extension(GITHUB_WORKFLOW_SHA, COMMIT.as_bytes());
+        let signer = certificate_extension(
+            ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.10"),
+            &Utf8StringRef::new(&"b".repeat(40))
+                .unwrap()
+                .to_der()
+                .unwrap(),
+        );
+        let config = Extension {
+            extn_id: ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.19"),
+            ..signer.clone()
+        };
+        for (extensions, expected) in [
+            (
+                vec![
+                    modern(&COMMIT.to_ascii_uppercase()),
+                    certificate_extension(GITHUB_WORKFLOW_SHA, b"not-the-source"),
+                    signer.clone(),
+                    config.clone(),
+                ],
+                Ok(COMMIT.to_owned()),
+            ),
+            (vec![legacy.clone()], Ok(COMMIT.to_owned())),
+            (
+                vec![
+                    certificate_extension(SOURCE_REPOSITORY_DIGEST, COMMIT.as_bytes()),
+                    legacy.clone(),
+                ],
+                Err(Reason::SourceMismatch),
+            ),
+            (
+                vec![modern("not-a-sha"), legacy],
+                Err(Reason::SourceMismatch),
+            ),
+            (vec![signer, config], Err(Reason::SourceMismatch)),
+            (vec![], Err(Reason::SourceMismatch)),
+        ] {
+            assert_eq!(source_commit_extension(&extensions), expected);
+        }
+    }
+
+    #[test]
+    fn requires_certificate_source_commit_even_when_statement_matches_pin() {
+        let certificate_commit = source_commit_extension(&[certificate_extension(
+            SOURCE_REPOSITORY_DIGEST,
+            &Utf8StringRef::new(&"b".repeat(40))
+                .unwrap()
+                .to_der()
+                .unwrap(),
+        )])
+        .unwrap();
+        for pin in [None, Some(COMMIT.to_owned())] {
+            let mut policy = policy();
+            policy.commit = pin;
+            let provenance = Provenance::V02(PredicateV02 {
+                invocation: Invocation {
+                    config_source: ConfigSource {
+                        uri: "git+https://github.com/nearai/compose-manager@refs/heads/master"
+                            .to_owned(),
+                        digest: SourceDigest {
+                            sha1: Some(COMMIT.to_owned()),
+                            ..Default::default()
+                        },
+                        entry_point: policy.workflow.clone(),
+                    },
+                },
+            });
+            assert_eq!(
+                source_commit(
+                    provenance,
+                    &policy,
+                    "refs/heads/master",
+                    &certificate_commit
+                ),
+                Err(Reason::SourceMismatch)
+            );
+        }
     }
 
     #[tokio::test]
@@ -615,7 +774,7 @@ mod tests {
             }
         });
         let provenance = serde_json::from_value(statement).unwrap();
-        let result = source_commit(provenance, &policy(), "refs/heads/master").unwrap();
+        let result = source_commit(provenance, &policy(), "refs/heads/master", COMMIT).unwrap();
 
         assert_eq!(result, (COMMIT.to_owned(), SLSA_V02));
     }
@@ -647,12 +806,12 @@ mod tests {
             }
         });
         let provenance = serde_json::from_value(statement.clone()).unwrap();
-        let result = source_commit(provenance, &policy(), "refs/heads/master").unwrap();
+        let result = source_commit(provenance, &policy(), "refs/heads/master", COMMIT).unwrap();
         assert_eq!(result, (COMMIT.to_owned(), SLSA_V1));
 
         let provenance = serde_json::from_value(statement).unwrap();
         assert_eq!(
-            source_commit(provenance, &policy(), "refs/heads/feature"),
+            source_commit(provenance, &policy(), "refs/heads/feature", COMMIT),
             Err(Reason::SourceMismatch)
         );
     }

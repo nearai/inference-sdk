@@ -310,7 +310,8 @@ receipt signature—must be pinned automatically.
 `fetchImageProvenance` retrieves GitHub Sigstore bundles for an image digest.
 `verifyImageProvenance` checks their signatures, certificates, transparency-log
 evidence, artifact digest, and signed SLSA source against your repository and
-workflow policy. Set `ref` or `commit` to restrict the accepted builds further.
+workflow policy. The source commit must match the certificate's authenticated
+source SHA. Set `ref` or `commit` to restrict the accepted builds further.
 
 Use a digest from the authenticated deployment configuration. This example
 adds an image check to Gateway attestation verification:
