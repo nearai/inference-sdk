@@ -52,7 +52,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
-| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every evidence, signature, and Chat request. Use this for a proxy's bearer token, API key, tenant header, or other authentication scheme. SDK protocol headers override conflicts. |
+| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for evidence, signature, and Chat requests. Configured `Authorization` takes precedence over per-request authorization unless `apiKey` is set. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `900000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `900000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
@@ -81,9 +81,9 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `SecureClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `SecureClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, verifies it on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
 | `SecureClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
-| `SecureClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionReceipt>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Repeated calls share the verification result. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `SecureClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionReceipt>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionReceipt.completionId` | `string` | Completion ID whose signature was verified. |
-| `VerifiedCompletionReceipt.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` uses matching model evidence; `gateway` uses Gateway evidence. |
+| `VerifiedCompletionReceipt.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence. |
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
