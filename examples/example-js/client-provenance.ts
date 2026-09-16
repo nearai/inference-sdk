@@ -47,7 +47,7 @@ async function main(): Promise<void> {
 
   // Gateway/model attestations and all four Gateway image checks must pass
   // before Chat is sent. E2EE and Gateway TLS verification stay enabled.
-  // Successful attestations are cached for 15 minutes.
+  // Successful attestations are cached for 60 minutes.
   // Model runtime images require direct Compose Manager evidence, which this
   // Gateway-based SDK does not retrieve. A launcher check is not a substitute.
   const completion = await secureClient.chat.completions.create({

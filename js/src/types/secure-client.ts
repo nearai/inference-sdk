@@ -77,10 +77,10 @@ export type ModelVerificationOptions = {
 type SecureClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model. Defaults to 15 minutes. Set `0` to verify every request.
+   * same model. Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
-  /** Retain response verification records for this long after the body finishes. Defaults to 15 minutes. */
+  /** Retain response verification records for this long after the body finishes. Defaults to 60 minutes. */
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.

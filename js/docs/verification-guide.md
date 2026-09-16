@@ -46,7 +46,7 @@ before selecting a key for that algorithm.
 
 ### Cache deployment verification
 
-`attestationCacheTimeToLiveMs` defaults to `900000` (15 minutes). Concurrent
+`attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model share verification work and cached results.
 Increase the value to check deployments less frequently, or set `0` to
 verify before every request. Deployment changes are not checked while a cached
@@ -207,7 +207,7 @@ API failure, call `verifyResponse(id)` again to retry the signature lookup.
 Successful results and non-retryable failures remain cached.
 
 Response records retain complete bodies in memory. They expire
-`responseCacheTimeToLiveMs` after body completion (default: 15 minutes),
+`responseCacheTimeToLiveMs` after body completion (default: 60 minutes),
 independently of the attestation cache. Unknown or expired IDs produce
 `ApiError` with code `api.completion_not_found`. For active streams, memory
 grows with the received body until the application finishes or cancels reading.

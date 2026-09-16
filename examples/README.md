@@ -20,7 +20,7 @@ The three basic entry points include non-streaming and streaming calls:
 
 All three verify Gateway TLS identity. The secure clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
-results for 15 minutes and retain response records for 15 minutes after body
+results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
 
 The bare example preserves exact request and response bytes for signature
@@ -68,7 +68,7 @@ pnpm --dir examples/example-js start:client-provenance
 ```
 
 Gateway/model attestation and image-check failures block Chat. Successful checks
-reuse the client's 15-minute attestation cache. The example then sends a
+reuse the client's 60-minute attestation cache. The example then sends a
 non-streaming GLM-5.3 request and calls `verifyResponse(id)`.
 
 The example verifies build provenance, not reproducible builds. Checking the

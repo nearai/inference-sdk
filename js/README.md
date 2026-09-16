@@ -30,9 +30,9 @@ signature identifies a Gateway signer and does not establish model execution.
 enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
 Setting `e2ee: false` disables encryption while retaining deployment verification.
 
-Attestation results are cached for 15 minutes. Set
+Attestation results are cached for 60 minutes. Set
 `attestationCacheTimeToLiveMs: 0` to verify before every request. Response
-records have a separate 15-minute retention period, configured through
+records have a separate 60-minute retention period, configured through
 `responseCacheTimeToLiveMs`.
 
 Import from `verifiable-ai-sdk/node` for Node.js with Gateway TLS verification

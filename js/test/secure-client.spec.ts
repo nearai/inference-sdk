@@ -883,26 +883,38 @@ describe('secure client', () => {
     expect(secureClient.verifyResponse(completion.id)).toBe(verification);
   });
 
-  test('expires response records independently of the attestation cache', async () => {
-    const gateway = createTestGateway();
-    mockProviderReceipts(gateway);
-    const client = new SecureClient({
-      ...secureClientOptions(gateway),
-      responseCacheTimeToLiveMs: 1000,
-    });
-    jest.useFakeTimers({
-      doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
-    });
-    const completion = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: 'hello' }],
-    });
-    await client.verifyResponse(completion.id);
-    jest.advanceTimersByTime(1001);
-    await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
-      failure: { code: 'api.completion_not_found' },
-    });
-  });
+  test.each([
+    ['default', undefined, 60 * 60 * 1000],
+    ['custom', 1000, 1000],
+  ] as const)(
+    'expires response records at the %s TTL independently of the attestation cache',
+    async (_label, responseCacheTimeToLiveMs, expectedTtl) => {
+      const gateway = createTestGateway();
+      mockProviderReceipts(gateway);
+      const client = new SecureClient({
+        ...secureClientOptions(gateway),
+        responseCacheTimeToLiveMs,
+      });
+      jest.useFakeTimers({
+        doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+      });
+      const completion = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+      await client.verifyResponse(completion.id);
+      jest.advanceTimersByTime(expectedTtl - 1);
+      await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
+        {
+          completionId: completion.id,
+        },
+      );
+      jest.advanceTimersByTime(1);
+      await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+    },
+  );
 
   test.each([404, 503])(
     'retries response verification after HTTP %i',
@@ -1030,15 +1042,17 @@ describe('secure client', () => {
     ]);
   });
 
-  test('reuses verified evidence for the same model by default', async () => {
+  test('reuses verified evidence for the same model for 60 minutes by default', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(0);
     const client = new SecureClient(secureClientOptions(gateway));
 
     await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
     );
+    now.mockReturnValue(60 * 60 * 1000 - 1);
     await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello again' }] }),
@@ -1047,6 +1061,18 @@ describe('secure client', () => {
       gatewayAttestationRequests: 1,
       modelAttestationRequests: 1,
       completionRequests: 2,
+    });
+    now.mockReturnValue(60 * 60 * 1000);
+    await client.fetch(
+      `${baseUrl}chat/completions`,
+      chatRequest({
+        messages: [{ role: 'user', content: 'refresh evidence' }],
+      }),
+    );
+    expect(gateway.state).toMatchObject({
+      gatewayAttestationRequests: 2,
+      modelAttestationRequests: 2,
+      completionRequests: 3,
     });
   });
 
