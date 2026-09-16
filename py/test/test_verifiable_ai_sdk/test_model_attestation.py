@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import base64
 import json
+import time
 from dataclasses import replace
 
 import pytest
+import jwt
+from cryptography.hazmat.primitives.asymmetric import ec
 
 import verifiable_ai_sdk.utils.nvidia as nvidia
 from verifiable_ai_sdk import (
@@ -25,14 +27,31 @@ from .fixtures import (
 )
 
 
-def nras_jwt(claims: object) -> str:
-    encoded_payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode()
-    return f'header.{encoded_payload.rstrip("=")}.signature'
+NRAS_TEST_KEY = ec.generate_private_key(ec.SECP384R1())
+NRAS_TEST_JWK = jwt.algorithms.ECAlgorithm.to_jwk(
+    NRAS_TEST_KEY.public_key(), as_dict=True
+)
+NRAS_TEST_JWK['kid'] = 'test-nras'
+
+
+def nras_jwt(claims: dict[str, object], kid: str = 'test-nras') -> str:
+    now = int(time.time())
+    payload = {
+        'iss': nvidia.NVIDIA_ISSUER,
+        'exp': now + 3600,
+        'nbf': now - 60,
+        'iat': now - 60,
+        'eat_nonce': NONCE,
+        'x-nvidia-overall-att-result': True,
+        **claims,
+    }
+    return jwt.encode(payload, NRAS_TEST_KEY, algorithm='ES384', headers={'kid': kid})
 
 
 def use_fake_nras_response(monkeypatch: pytest.MonkeyPatch, body: object) -> None:
-    async def fake_fetch(_: str, **__: object) -> FetchResponse:
-        return FetchResponse(status=200, body=json.dumps(body).encode())
+    async def fake_fetch(url: str, **__: object) -> FetchResponse:
+        response = {'keys': [NRAS_TEST_JWK]} if url == nvidia.NVIDIA_JWKS_URL else body
+        return FetchResponse(status=200, body=json.dumps(response).encode())
 
     monkeypatch.setattr(nvidia, 'fetch', fake_fetch)
 
@@ -263,8 +282,8 @@ async def test_default_nras_rejects_an_invalid_jwt(
             verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
-    assert raised.value.failure.code == 'gpu.nras_response_invalid'
-    assert raised.value.failure.details == {'reason': 'invalid_jwt'}
+    assert raised.value.failure.code == 'gpu.jwt_verification_failed'
+    assert raised.value.failure.details == {'reason': 'invalid_claims'}
 
 
 async def test_default_nras_rejects_a_non_boolean_verdict(
@@ -282,8 +301,8 @@ async def test_default_nras_rejects_a_non_boolean_verdict(
             verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
         )
 
-    assert raised.value.failure.code == 'gpu.nras_response_invalid'
-    assert raised.value.failure.details == {'reason': 'invalid_verdict_type'}
+    assert raised.value.failure.code == 'gpu.jwt_verification_failed'
+    assert raised.value.failure.details == {'reason': 'invalid_claims'}
 
 
 async def test_default_nras_rejects_a_false_verdict(
@@ -303,6 +322,91 @@ async def test_default_nras_rejects_a_false_verdict(
 
     assert raised.value.failure.code == 'gpu.attestation_rejected'
     assert raised.value.failure.details == {'source': 'nras'}
+
+
+async def test_default_nras_verifies_a_signed_overall_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_fake_nras_response(monkeypatch, [['JWT', nras_jwt({})]])
+    result = await verify_model_attestation(
+        create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+    )
+    assert result.gpu_evidence == 'verified'
+
+
+@pytest.mark.parametrize(
+    ('claims', 'reason'),
+    [
+        ({'exp': 1}, 'expired'),
+        ({'nbf': 4102444800}, 'not_yet_valid'),
+        ({'iat': 4102444800}, 'not_yet_valid'),
+        ({'iss': 'https://untrusted.example'}, 'invalid_claims'),
+        ({'exp': None}, 'invalid_claims'),
+        ({'exp': []}, 'invalid_claims'),
+        ({'eat_nonce': None}, 'invalid_claims'),
+        ({'eat_nonce': '44' * 32}, 'nonce_mismatch'),
+    ],
+)
+async def test_default_nras_rejects_unacceptable_signed_claims(
+    monkeypatch: pytest.MonkeyPatch,
+    claims: dict[str, object],
+    reason: str,
+) -> None:
+    use_fake_nras_response(monkeypatch, [['JWT', nras_jwt(claims)]])
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+    assert raised.value.failure.code == 'gpu.jwt_verification_failed'
+    assert raised.value.failure.details == {'reason': reason}
+
+
+async def test_default_nras_rejects_an_invalid_jwks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(NRAS_TEST_JWK, 'alg', ['ES384'])
+    use_fake_nras_response(monkeypatch, [['JWT', nras_jwt({})]])
+
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+
+    assert raised.value.failure.code == 'gpu.nras_response_invalid'
+    assert raised.value.failure.details == {'reason': 'invalid_jwks'}
+
+
+@pytest.mark.parametrize('case', ['modified', 'unknown_key', 'unsigned'])
+async def test_default_nras_rejects_untrusted_signatures(
+    monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    if case == 'modified':
+        token = nras_jwt({})
+        header, payload, signature = token.split('.')
+        replacement = ('A' if signature[0] != 'A' else 'B') + signature[1:]
+        token = f'{header}.{payload}.{replacement}'
+        reason = 'invalid_signature'
+    elif case == 'unknown_key':
+        token = nras_jwt({}, kid='unknown')
+        reason = 'key_not_found'
+    else:
+        token = jwt.encode({'eat_nonce': NONCE}, key=None, algorithm='none')
+        reason = 'unsupported_algorithm'
+    use_fake_nras_response(monkeypatch, [['JWT', token]])
+    with pytest.raises(VerificationError) as raised:
+        await verify_model_attestation(
+            create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        )
+    assert raised.value.failure.code == 'gpu.jwt_verification_failed'
+    assert raised.value.failure.details == {'reason': reason}
 
 
 async def test_model_attestation_rejects_invalid_custom_quote_results() -> None:

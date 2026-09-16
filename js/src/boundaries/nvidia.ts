@@ -1,66 +1,46 @@
-import { Buffer } from 'buffer';
 import * as v from 'valibot';
 import {
-  NrasJwtPayloadSchema,
   NrasOverallAttestationJwtClaimsSchema,
   NrasResponseSchema,
+  NvidiaJwksSchema,
 } from '../schemas';
 import type {
   NrasOverallAttestationJwtClaims,
-  NrasResponse,
+  NvidiaJwks,
 } from '../types/nvidia';
 import { VerificationError } from '../utils/errors';
 
-const OverallAttestationResultClaim = 'x-nvidia-overall-att-result';
-
-/** Decode the documented boolean overall-attestation verdict from an NRAS response. */
-export function decodeNrasOverallAttestationVerdict(value: unknown): boolean {
-  const jwt = parseNrasResponse(value)[0][1];
-  const payload = decodeJwtPayload(jwt);
-  const claims = parseNrasOverallAttestationJwtClaims(payload);
-  return claims[OverallAttestationResultClaim];
+export function decodeNvidiaJwks(value: unknown): NvidiaJwks {
+  const parsed = v.safeParse(NvidiaJwksSchema, value);
+  if (!parsed.success) throw invalidNrasResponse('invalid_jwks');
+  return parsed.output;
 }
 
-function parseNrasResponse(value: unknown): NrasResponse {
+/** Read the JWT without treating its unsigned claims as evidence. */
+export function decodeNrasOverallAttestationJwt(value: unknown): string {
   const parsed = v.safeParse(NrasResponseSchema, value);
   if (!parsed.success) {
     throw invalidNrasResponse('invalid_schema');
   }
-  return parsed.output;
+  return parsed.output[0][1];
 }
 
-function decodeJwtPayload(jwt: string): unknown {
-  const parts = jwt.split('.');
-  if (parts.length !== 3) {
-    throw invalidNrasResponse('invalid_jwt');
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-  } catch (cause) {
-    throw invalidNrasResponse('invalid_jwt', cause);
-  }
-
-  const parsed = v.safeParse(NrasJwtPayloadSchema, payload);
-  if (!parsed.success) {
-    throw invalidNrasResponse('invalid_jwt');
-  }
-  return parsed.output;
-}
-
-function parseNrasOverallAttestationJwtClaims(
+/** Called after JWT signature and registered claims have been verified. */
+export function decodeNrasOverallAttestationClaims(
   value: unknown,
 ): NrasOverallAttestationJwtClaims {
   const parsed = v.safeParse(NrasOverallAttestationJwtClaimsSchema, value);
   if (!parsed.success) {
-    throw invalidNrasResponse('invalid_verdict_type');
+    throw new VerificationError({
+      code: 'gpu.jwt_verification_failed',
+      details: { reason: 'invalid_claims' },
+    });
   }
   return parsed.output;
 }
 
 function invalidNrasResponse(
-  reason: 'invalid_jwt' | 'invalid_schema' | 'invalid_verdict_type',
+  reason: 'invalid_jwks' | 'invalid_schema',
   cause?: unknown,
 ): VerificationError {
   return new VerificationError(

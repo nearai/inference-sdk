@@ -218,10 +218,18 @@ export const NrasResponseSchema = v.tupleWithRest(
   v.unknown(),
 );
 
-export const NrasJwtPayloadSchema = looseObjectSchema({});
-
 export const NrasOverallAttestationJwtClaimsSchema = looseObjectSchema({
   'x-nvidia-overall-att-result': v.boolean(),
+  eat_nonce: v.pipe(v.string(), v.regex(/^[0-9a-fA-F]{64}$/)),
+  exp: v.pipe(v.number(), v.integer()),
+  nbf: v.pipe(v.number(), v.integer()),
+  iat: v.pipe(v.number(), v.integer()),
+});
+
+export const NvidiaJwksSchema = v.object({
+  keys: v.array(
+    looseObjectSchema({ kty: v.string(), kid: v.optional(v.string()) }),
+  ),
 });
 
 // GitHub transports opaque Sigstore bundles. The cryptographic verifier owns

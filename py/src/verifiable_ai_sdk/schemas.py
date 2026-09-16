@@ -195,13 +195,15 @@ class _NrasResponseSchema(ApiSchema):
         return {'overall_attestation_jwt': value[0][1]}
 
 
-class _NrasJwtPayloadSchema(RootModel[dict[str, object]]):
-    """A JWT payload must decode to a JSON object."""
-
-    model_config = ConfigDict(strict=True)
-
-
 class _NrasOverallAttestationJwtClaimsSchema(ApiSchema):
     overall_attestation_result: StrictBool = Field(
         validation_alias='x-nvidia-overall-att-result'
     )
+    eat_nonce: StrictStr = Field(pattern=r'^[0-9a-fA-F]{64}$')
+    exp: StrictInt
+    nbf: StrictInt
+    iat: StrictInt
+
+
+class _NvidiaJwksSchema(ApiSchema):
+    keys: list[dict[str, object]]

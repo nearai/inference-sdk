@@ -38,7 +38,7 @@ from verifiable_ai_sdk import (
     verify_model_attestation,
 )
 
-MODEL = 'z-ai/glm-5.2'
+MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ecdsa'
 
 
@@ -296,11 +296,13 @@ acceptable.
 
 `verify_gateway_attestation` accepts `AttestationPolicy` when an application
 needs to restrict Gateway TCB statuses. `verifiers.quote` replaces the built-in
-Intel DCAP quote verifier. For model evidence, the default NVIDIA verifier
-delegates to NVIDIA NRAS over HTTPS and accepts its documented boolean overall
-result. Set `verifiers.nvidia` when your trust model requires local JWT/EAT
-validation, different trust roots, or another verification service. Every
-verifier callback must return only for evidence it accepts.
+Intel DCAP quote verifier. The default NVIDIA verifier submits evidence to NRAS,
+then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
+expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
+verdict must be `true`; detached per-device claims are not consumed. See
+[NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
+Set `verifiers.nvidia` to use different trust roots or another verification
+service. Every verifier callback must return only for evidence it accepts.
 
 ## Handle retrieval and verification errors
 

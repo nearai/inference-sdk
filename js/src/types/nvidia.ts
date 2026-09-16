@@ -1,10 +1,10 @@
 import type * as v from 'valibot';
 import type {
   NrasOverallAttestationJwtClaimsSchema,
-  NrasResponseSchema,
+  NvidiaJwksSchema,
 } from '../schemas';
 
-export type NrasResponse = v.InferOutput<typeof NrasResponseSchema>;
+export type NvidiaJwks = v.InferOutput<typeof NvidiaJwksSchema>;
 
 export type NrasOverallAttestationJwtClaims = v.InferOutput<
   typeof NrasOverallAttestationJwtClaimsSchema

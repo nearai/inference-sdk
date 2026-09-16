@@ -21,8 +21,8 @@ import type { VerifiedModelAttestation } from '../types/verification';
 import { generateNonce, hexToBuffer } from '../utils/common';
 import {
   ApiError,
-  isVerificationError,
   type ApiFailure,
+  isVerificationError,
 } from '../utils/errors';
 
 /** Set this on completion requests to reject model aliases before dispatch. */
@@ -98,7 +98,7 @@ export function createCloudApiRequestConfiguration(
   }
 }
 
-/** Merge configured and request-specific headers, with the direct API key last. */
+/** Merge request headers while preserving explicitly configured authentication. */
 export function mergeCloudApiRequestHeaders({
   configuration,
   requestHeaders,
@@ -110,8 +110,12 @@ export function mergeCloudApiRequestHeaders({
         headers.set(name, value);
       }
     }
-    if (configuration.apiKey !== undefined) {
-      headers.set('authorization', `Bearer ${configuration.apiKey}`);
+    const authorization =
+      configuration.apiKey === undefined
+        ? configuration.defaultHeaders.get('authorization')
+        : `Bearer ${configuration.apiKey}`;
+    if (authorization !== null) {
+      headers.set('authorization', authorization);
     }
     return headers;
   } catch (cause) {

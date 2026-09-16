@@ -260,9 +260,8 @@ and v0.2 provenance and refreshes Sigstore's production trust root through TUF.
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
 | `NvidiaEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
 
-The default NVIDIA verifier delegates to NVIDIA NRAS over HTTPS and accepts its
-documented boolean overall result. It does not locally validate the returned
-JWT/EAT signature.
+The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
+timestamps, signed nonce, and boolean verdict.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |

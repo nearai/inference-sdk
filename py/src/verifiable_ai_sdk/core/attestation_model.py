@@ -90,9 +90,11 @@ async def _verify_nvidia_evidence(
         ) from error
     verify_reported_nonce(parsed.nonce, nonce, 'nvidiaPayload')
 
-    actual_verifier = verify_nvidia_nras if verifier is None else verifier
     try:
-        await maybe_await(actual_verifier(payload))
+        if verifier is None:
+            await verify_nvidia_nras(payload, nonce)
+        else:
+            await maybe_await(verifier(payload))
     except VerificationError:
         raise
     except Exception as error:

@@ -234,9 +234,9 @@ Gateway `reported_quote_data` is required.
 | `verify_dcap_quote` | `async fn verify_dcap_quote(pccs_url: &str, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | One-off Intel DCAP verification using the supplied PCCS URL. |
 | `NrasNvidiaEvidenceVerifier` | `NrasNvidiaEvidenceVerifier::default()`, `NrasNvidiaEvidenceVerifier::new(url)`, or `NrasNvidiaEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
 
-The default NVIDIA verifier accepts NRAS's documented boolean overall result; it
-does not locally validate the returned JWT/EAT signature. See the guide for the
-trust-root implications.
+The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
+timestamps, signed nonce, and boolean verdict. A custom NRAS URL changes where
+evidence is submitted, not the trusted NVIDIA issuer or JWKS endpoint.
 
 ### Quote and deployment values
 
