@@ -21,11 +21,10 @@ import type { CompletionSignature } from '../types/chat';
 import type {
   NodeInferenceClientOptions,
   SecureChat,
-  SecureChatCompletionRequest,
-  SecureChatCompletionResponse,
   InferenceClientOptions,
   VerifiedCompletionReceipt,
 } from '../types/inference-client';
+import type { PreparedE2eeChatRequest } from '../types/e2ee';
 import {
   ApiError,
   isApiError,
@@ -44,16 +43,13 @@ import { verifyGatewayAttestation } from './attestation-gateway';
 import { verifyModelAttestation } from './attestation-model';
 import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
-  createE2eeChatSseTransform,
-  decryptE2eeChatResponse,
-  encryptE2eeChatRequest,
-  parseE2eeChatResponse,
-} from './e2ee-chat';
-import {
-  createE2eeClientKeyPair,
-  type E2eeClientKeyPair,
-  type E2eeModelKey,
-} from './e2ee';
+  decodeChatRequest,
+  isServerSentEventContentType,
+  isServerSentEventResponse,
+  prepareE2eeChatRequest,
+  removeE2eeHeaders,
+} from './e2ee-request';
+import type { E2eeModelKey } from './e2ee';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -77,37 +73,8 @@ type CompletionRecord = VerifyCapturedCompletionParams & {
   verification?: Promise<VerifiedCompletionReceipt>;
 };
 
-type ParsedPlaintextRequest = {
-  readonly e2ee: false;
+type ParsedSecureRequest = {
   readonly model: string;
-  readonly request: Request;
-};
-
-type ParsedE2eeRequest = {
-  readonly e2ee: true;
-  readonly model: string;
-  readonly request: Request;
-  readonly body: SecureChatCompletionRequest;
-};
-
-type ParsedSecureRequest = ParsedPlaintextRequest | ParsedE2eeRequest;
-
-type EncryptSecureRequestParams = {
-  readonly parsed: ParsedE2eeRequest;
-  readonly modelKey: E2eeModelKey;
-};
-
-type EncryptedSecureRequest = {
-  readonly request: Request;
-  readonly clientKeyPair: E2eeClientKeyPair;
-};
-
-type DecryptSecureResponseParams = {
-  readonly response: Response;
-  readonly clientKeyPair: E2eeClientKeyPair;
-};
-
-type DecodeChatRequestParams = {
   readonly request: Request;
 };
 
@@ -124,7 +91,7 @@ type SendSecureCompletionParams = {
 type SentSecureCompletion = {
   response: Response;
   readonly session: SecureSessionState;
-  readonly clientKeyPair?: E2eeClientKeyPair;
+  readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
 
 type CapturedSecureCompletion = SentSecureCompletion & {
@@ -314,10 +281,12 @@ export abstract class InferenceClientBase {
       signal: parsed.request.signal,
     });
 
-    const prepared = parsed.e2ee
-      ? this.encryptSecureRequest({
-          parsed,
-          modelKey: session.modelKey,
+    const prepared = this.e2eeEnabled
+      ? await prepareE2eeChatRequest({
+          request: new Request(parsed.request, {
+            headers: this.createCompletionHeaders(parsed.request.headers),
+          }),
+          attestation: session.modelAttestation,
         })
       : {
           request: this.preparePlaintextRequest({
@@ -325,8 +294,8 @@ export abstract class InferenceClientBase {
             modelKey: session.modelKey,
           }),
         };
-    const clientKeyPair =
-      'clientKeyPair' in prepared ? prepared.clientKeyPair : undefined;
+    const decryptResponse =
+      'decryptResponse' in prepared ? prepared.decryptResponse : undefined;
 
     const requestBody = captureRequestEntityBody(prepared.request);
     const response = await this.sendCompletionRequest({
@@ -339,21 +308,15 @@ export abstract class InferenceClientBase {
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
-      ...(clientKeyPair === undefined ? {} : { clientKeyPair }),
+      ...(decryptResponse === undefined ? {} : { decryptResponse }),
     };
   }
 
   private async toClientResponse({
     response,
-    clientKeyPair,
+    decryptResponse,
   }: SentSecureCompletion): Promise<Response> {
-    if (clientKeyPair === undefined || !response.ok) {
-      return response;
-    }
-    return this.decryptSecureResponse({
-      response,
-      clientKeyPair,
-    });
+    return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
   private async verifyCapturedCompletion({
@@ -533,16 +496,7 @@ export abstract class InferenceClientBase {
       });
     }
     const model = generic.output.model;
-    if (this.e2eeEnabled) {
-      const body = generic.output as SecureChatCompletionRequest;
-      return {
-        e2ee: true,
-        model,
-        request,
-        body,
-      };
-    }
-    return { e2ee: false, model, request };
+    return { model, request };
   }
 
   private requireSupportedEndpoint(request: Request): void {
@@ -577,39 +531,6 @@ export abstract class InferenceClientBase {
     return new Request(request, { headers });
   }
 
-  private encryptSecureRequest({
-    parsed,
-    modelKey,
-  }: EncryptSecureRequestParams): EncryptedSecureRequest {
-    const clientKeyPair = createE2eeClientKeyPair(modelKey.signingAlgo);
-    const encrypted = encryptE2eeChatRequest({
-      body: parsed.body,
-      modelKey,
-    });
-    const headers = this.createCompletionHeaders(parsed.request.headers);
-    // The serialized encrypted JSON has a different byte length from the
-    // caller's body. Let Fetch calculate the new value.
-    headers.delete('content-length');
-    headers.set('content-type', 'application/json');
-    removeE2eeHeaders(headers);
-    headers.set('x-signing-algo', modelKey.signingAlgo);
-    headers.set('x-client-pub-key', clientKeyPair.publicKey);
-    headers.set('x-model-pub-key', modelKey.publicKey);
-    if (modelKey.signingAlgo === 'ed25519') {
-      headers.set('x-encryption-version', '2');
-    }
-    headers.set(NO_ALIASING_HEADER, 'true');
-    headers.set('x-encrypt-all-fields', 'true');
-
-    return {
-      request: new Request(parsed.request, {
-        headers,
-        body: JSON.stringify(encrypted.body),
-      }),
-      clientKeyPair,
-    };
-  }
-
   private async sendCompletionRequest({
     request,
     transport,
@@ -635,28 +556,6 @@ export abstract class InferenceClientBase {
     return mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
       requestHeaders,
-    });
-  }
-
-  private async decryptSecureResponse({
-    response,
-    clientKeyPair,
-  }: DecryptSecureResponseParams): Promise<Response> {
-    if (isServerSentEventResponse(response)) {
-      return decryptSecureStreamResponse({ response, clientKeyPair });
-    }
-    const body = await decodeSecureResponseBody(response);
-    const decrypted = decryptE2eeChatResponse({
-      body,
-      clientKeyPair,
-    });
-    const headers = new Headers(response.headers);
-    headers.delete('content-length');
-    headers.set('content-type', 'application/json');
-    return new Response(JSON.stringify(decrypted), {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
     });
   }
 }
@@ -764,96 +663,6 @@ function createRequest(
       { cause },
     );
   }
-}
-
-async function decodeChatRequest({
-  request,
-}: DecodeChatRequestParams): Promise<unknown> {
-  request.signal.throwIfAborted();
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  const decoder = new TextDecoder();
-  let text = '';
-  try {
-    reader = request.clone().body?.getReader();
-    if (reader !== undefined) {
-      while (true) {
-        const chunk = await awaitWithAbort({
-          operation: reader.read(),
-          signal: request.signal,
-        });
-        if (chunk.done) break;
-        text += decoder.decode(chunk.value, { stream: true });
-      }
-      text += decoder.decode();
-    }
-    return JSON.parse(text);
-  } catch (cause) {
-    if (request.signal.aborted) {
-      // Cancelling a cloned stream may wait for the caller's other branch.
-      // Stop our reader without delaying the abort result on that branch.
-      void reader?.cancel(request.signal.reason).catch(() => undefined);
-      throw request.signal.reason;
-    }
-    throw invalidInput(
-      {
-        field: 'request body',
-        reason: 'invalid_json',
-        expected: 'a JSON Chat Completions request',
-      },
-      cause,
-    );
-  } finally {
-    reader?.releaseLock();
-  }
-}
-
-async function decodeSecureResponseBody(
-  response: Response,
-): Promise<SecureChatCompletionResponse> {
-  let text: string;
-  try {
-    text = await response.text();
-  } catch (cause) {
-    throw new ApiError(
-      {
-        code: 'api.transport_failed',
-        details: { resource: 'completion', reason: 'response_body' },
-        retryable: true,
-      },
-      { cause },
-    );
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw invalidSecureResponse(cause);
-  }
-  return parseE2eeChatResponse({ body: value });
-}
-
-type DecryptSecureStreamResponseParams = {
-  readonly response: Response;
-  readonly clientKeyPair: E2eeClientKeyPair;
-};
-
-function decryptSecureStreamResponse({
-  response,
-  clientKeyPair,
-}: DecryptSecureStreamResponseParams): Response {
-  if (response.body === null) {
-    throw invalidSecureResponse();
-  }
-  const headers = new Headers(response.headers);
-  headers.delete('content-length');
-  return new Response(
-    response.body.pipeThrough(createE2eeChatSseTransform({ clientKeyPair })),
-    {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    },
-  );
 }
 
 type RegisterCompletionResponseParams = {
@@ -1148,22 +957,6 @@ function invalidCompletionId(cause?: unknown): ApiError {
   );
 }
 
-function isServerSentEventResponse(response: Response): boolean {
-  return isServerSentEventContentType(response.headers.get('content-type'));
-}
-
-function isServerSentEventContentType(contentType: string | null): boolean {
-  return contentType?.toLowerCase().startsWith('text/event-stream') ?? false;
-}
-
-function removeE2eeHeaders(headers: Headers): void {
-  headers.delete('x-signing-algo');
-  headers.delete('x-client-pub-key');
-  headers.delete('x-model-pub-key');
-  headers.delete('x-encryption-version');
-  headers.delete('x-encrypt-all-fields');
-}
-
 function invalidInput(
   details: Extract<
     ApiError['failure'],
@@ -1173,20 +966,6 @@ function invalidInput(
 ): ApiError {
   return new ApiError(
     { code: 'api.invalid_input', details },
-    cause === undefined ? undefined : { cause },
-  );
-}
-
-function invalidSecureResponse(cause?: unknown): ApiError {
-  return new ApiError(
-    {
-      code: 'api.invalid_response',
-      details: {
-        path: 'Chat Completions response',
-        expected: 'an encrypted Chat Completions response',
-        actual: 'invalid',
-      },
-    },
     cause === undefined ? undefined : { cause },
   );
 }

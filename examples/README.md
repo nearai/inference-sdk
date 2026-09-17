@@ -16,7 +16,7 @@ The three basic entry points include non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `bare.ts` | Fetches and verifies evidence, sends requests, and verifies signatures using standalone functions. | Not included |
+| `bare.ts` | Verifies evidence, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures using standalone functions. | Enabled |
 | `client.ts` | Uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `openai-sdk-compatible.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 
@@ -25,9 +25,12 @@ evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
 
-The bare example preserves exact request and response bytes for signature
-verification. It sends `x-no-aliasing: true` and `Accept-Encoding: identity`.
-The inference clients handle byte capture internally.
+The bare example preserves the exact encrypted request and response bytes
+before decryption for signature verification. The public E2EE helper creates
+request-specific keys and protocol headers, including `x-no-aliasing: true`.
+The example sets `Accept-Encoding: identity` and displays decrypted JSON or
+SSE. The inference clients handle encryption, decryption, and byte capture
+internally.
 
 The SDK must be built first because the example imports the local package's
 published `dist` files.
