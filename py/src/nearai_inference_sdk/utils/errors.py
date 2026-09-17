@@ -163,6 +163,8 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'
+        case 'api.completion_not_found':
+            return f'[{code}] Completion is not retained by this client'
         case 'quote.verification_failed':
             return f'[{code}] Intel TDX quote verification failed: {_detail(details, "reason")}'
         case 'quote.invalid_result':
@@ -184,6 +186,16 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'policy.gpu_evidence_required':
             return f'[{code}] GPU evidence is required by policy'
+        case 'policy.model_attestation_required':
+            return f'[{code}] No model attestation was returned for the request'
+        case 'binding.model_public_key_mismatch':
+            return f'[{code}] Model public key does not match the verified signer'
+        case 'e2ee.model_public_key_required':
+            return f'[{code}] A verified model public key is required'
+        case 'e2ee.model_public_key_invalid':
+            return f'[{code}] Model public key is invalid for E2EE'
+        case 'e2ee.decryption_failed':
+            return f'[{code}] Could not decrypt {_detail(details, "field")}'
         case 'binding.spki_fingerprint_required':
             return f'[{code}] Gateway attestation requires an observed TLS peer fingerprint'
         case 'binding.nonce_mismatch':
