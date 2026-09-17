@@ -1,9 +1,15 @@
-import type { VerifiedModelAttestation } from './verification';
+import type { SigningAlgo } from './attestation-common';
+
+/** Model public key and signing algorithm used by the E2EE protocol. */
+export type E2eeModelKey = {
+  readonly signingAlgo: SigningAlgo;
+  /** Hexadecimal model public key, obtained from verified attestation evidence. */
+  readonly publicKey: string;
+};
 
 export type PrepareE2eeChatRequestParams = {
   readonly request: Request;
-  /** Successfully verified model evidence containing its quote-bound public key. */
-  readonly attestation: VerifiedModelAttestation;
+  readonly modelKey: E2eeModelKey;
 };
 
 /** One encrypted request and the matching response decryption operation. */

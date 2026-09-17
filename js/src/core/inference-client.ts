@@ -24,7 +24,7 @@ import type {
   InferenceClientOptions,
   VerifiedCompletionReceipt,
 } from '../types/inference-client';
-import type { PreparedE2eeChatRequest } from '../types/e2ee';
+import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
 import {
   ApiError,
   isApiError,
@@ -49,7 +49,6 @@ import {
   prepareE2eeChatRequest,
   removeE2eeHeaders,
 } from './e2ee-request';
-import type { E2eeModelKey } from './e2ee';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -286,7 +285,7 @@ export abstract class InferenceClientBase {
           request: new Request(parsed.request, {
             headers: this.createCompletionHeaders(parsed.request.headers),
           }),
-          attestation: session.modelAttestation,
+          modelKey: session.modelKey,
         })
       : {
           request: this.preparePlaintextRequest({

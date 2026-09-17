@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import type { E2eeModelKey } from '../types/e2ee';
 import {
   SecureChatCompletionResponseSchema,
   SecureChatCompletionStreamChunkSchema,
@@ -19,7 +20,6 @@ import {
   decryptE2eeText,
   encryptE2eeText,
   type E2eeClientKeyPair,
-  type E2eeModelKey,
 } from './e2ee';
 
 export type ParseE2eeChatResponseParams = {

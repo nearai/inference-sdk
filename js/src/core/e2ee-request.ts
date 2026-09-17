@@ -5,7 +5,7 @@ import type {
   PrepareE2eeChatRequestParams,
 } from '../types/e2ee';
 import type { SecureChatCompletionResponse } from '../types/inference-client';
-import { ApiError, VerificationError } from '../utils/errors';
+import { ApiError } from '../utils/errors';
 import { NO_ALIASING_HEADER } from './cloud-api';
 import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
 import {
@@ -30,16 +30,17 @@ type AwaitWithAbortParams<T> = {
 };
 
 /**
- * Prepare one Chat Completions request using a verified model's E2EE key.
+ * Prepare one Chat Completions request using the supplied model E2EE key.
  *
  * Each call creates a fresh response key pair. The returned decryption
  * operation handles JSON and SSE without exposing the private key. Only
  * protocol-defined Chat fields are encrypted; other JSON is preserved.
+ * The caller verifies the key's attestation before preparing the request.
  * This operation performs no network requests or completion-signature checks.
  */
 export async function prepareE2eeChatRequest({
   request,
-  attestation,
+  modelKey,
 }: PrepareE2eeChatRequestParams): Promise<PreparedE2eeChatRequest> {
   request.signal.throwIfAborted();
   if (request.method !== 'POST') {
@@ -49,9 +50,6 @@ export async function prepareE2eeChatRequest({
       expected: 'a POST Chat Completions request',
       actual: request.method,
     });
-  }
-  if (attestation.signingPublicKey === undefined) {
-    throw new VerificationError({ code: 'e2ee.model_public_key_required' });
   }
   const value = await decodeChatRequest({ request });
   const parsed = v.safeParse(ChatCompletionRequestSchema, value);
@@ -63,10 +61,6 @@ export async function prepareE2eeChatRequest({
     });
   }
   request.signal.throwIfAborted();
-  const modelKey = {
-    signingAlgo: attestation.signer.signingAlgo,
-    publicKey: attestation.signingPublicKey,
-  };
   const clientKeyPair = createE2eeClientKeyPair(modelKey.signingAlgo);
   const encrypted = encryptE2eeChatRequest({ body: parsed.output, modelKey });
   const headers = new Headers(request.headers);

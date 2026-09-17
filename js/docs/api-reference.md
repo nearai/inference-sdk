@@ -29,7 +29,7 @@ Gateway-attestation socket to be reused.
 | --- | --- | --- |
 | `InferenceClient` | `new InferenceClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
-| `prepareE2eeChatRequest` | `(params: PrepareE2eeChatRequestParams) => Promise<PreparedE2eeChatRequest>` | Encrypts a Chat request to a verified model key and returns its matching response decryptor. |
+| `prepareE2eeChatRequest` | `(params: PrepareE2eeChatRequestParams) => Promise<PreparedE2eeChatRequest>` | Encrypts a Chat request to a model public key and returns its matching response decryptor. |
 | `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
@@ -97,14 +97,16 @@ including after successful or failed verification. TTL starts at body completion
 
 Prepares one encrypted request for an application-owned Fetch transport. It
 performs no networking, attestation verification, or completion-signature
-verification. Pass a successful `verifyModelAttestation` result. The helper
-selects the encryption algorithm from `attestation.signer.signingAlgo` and
-creates a fresh response key pair for each call.
+verification. Supply the algorithm and public key obtained from model
+verification. The helper selects the encryption algorithm from
+`modelKey.signingAlgo` and creates a fresh response key pair for each call.
 
 | Structure | Field | Type | Description |
 | --- | --- | --- | --- |
 | `PrepareE2eeChatRequestParams` | `request` | `Request` | Required POST request with a JSON Chat Completions body containing a string `model`. |
-|  | `attestation` | `VerifiedModelAttestation` | Required verified model evidence with `signingPublicKey`. Missing keys reject with `e2ee.model_public_key_required`. |
+|  | `modelKey` | `E2eeModelKey` | Required model encryption key. |
+| `E2eeModelKey` | `signingAlgo` | `SigningAlgo` | `'ed25519'` or `'ecdsa'`. |
+|  | `publicKey` | `string` | Hexadecimal model public key taken from the verified model attestation's `signingPublicKey`. |
 | `PreparedE2eeChatRequest` | `request` | `Request` | Request with supported Chat fields encrypted, protocol headers set, and other JSON fields preserved. |
 |  | `decryptResponse` | `(response: Response) => Promise<Response>` | Matching JSON or SSE response decryptor. Unsuccessful HTTP responses pass through unchanged. |
 

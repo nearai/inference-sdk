@@ -6,6 +6,7 @@ export {
 export { InferenceClient } from './core/inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
 export type {
+  E2eeModelKey,
   PrepareE2eeChatRequestParams,
   PreparedE2eeChatRequest,
 } from './types/e2ee';

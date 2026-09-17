@@ -10,8 +10,7 @@
     "check": "tsc --noEmit",
     "start:bare": "node bare.ts",
     "start:client": "node client.ts",
-    "start:client-provenance": "node client-provenance.ts",
-    "start:openai-sdk-compatible": "node openai-sdk-compatible.ts"
+    "start:client-openai-sdk": "node client-openai-sdk.ts"
   },
   "dependencies": {
     "@nearai/inference-sdk": "link:../../js",

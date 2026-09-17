@@ -1,7 +1,4 @@
-import { Buffer } from 'node:buffer';
-import { computeAddress } from 'ethers';
 import { prepareE2eeChatRequest } from '../src';
-import { verifyModelAttestation } from '../src/core/attestation-model';
 import { NO_ALIASING_HEADER } from '../src/core/cloud-api';
 import {
   createE2eeClientKeyPair,
@@ -9,7 +6,6 @@ import {
   encryptE2eeText,
 } from '../src/core/e2ee';
 import type { SigningAlgo } from '../src/types/attestation-common';
-import { createModelAttestation, createModelQuote, nonce } from './fixtures';
 
 const endpoint = 'https://gateway.test/v1/chat/completions';
 const prompt = {
@@ -17,26 +13,10 @@ const prompt = {
   messages: [{ role: 'user', content: '私密问题' }],
 };
 
-async function createVerifiedModel(signingAlgo: SigningAlgo = 'ed25519') {
+function createModelKeys(signingAlgo: SigningAlgo = 'ed25519') {
   const keyPair = createE2eeClientKeyPair(signingAlgo);
-  const signingAddress =
-    signingAlgo === 'ecdsa'
-      ? computeAddress(`0x04${keyPair.publicKey}`)
-      : keyPair.publicKey;
-  const signerBinding = Buffer.alloc(32);
-  Buffer.from(signingAddress.replace(/^0x/, ''), 'hex').copy(signerBinding);
-  const quote = createModelQuote({
-    reportData: Buffer.concat([signerBinding, Buffer.from(nonce, 'hex')]),
-  });
-  const attestation = await verifyModelAttestation({
-    attestation: createModelAttestation({
-      signer: { signingAlgo, signingAddress },
-      signingPublicKey: keyPair.publicKey,
-    }),
-    clientBinding: { nonce },
-    verifiers: { quote: () => quote },
-  });
-  return { attestation, keyPair };
+  const modelKey = { signingAlgo, publicKey: keyPair.publicKey };
+  return { modelKey, keyPair };
 }
 
 function chatRequest(init: RequestInit = {}): Request {
@@ -58,7 +38,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
   '%s bare Chat E2EE',
   (signingAlgo) => {
     test('prepares protocol headers and a request that the model can decrypt', async () => {
-      const { attestation, keyPair } = await createVerifiedModel(signingAlgo);
+      const { modelKey, keyPair } = createModelKeys(signingAlgo);
       const controller = new AbortController();
       const original = chatRequest({
         signal: controller.signal,
@@ -77,7 +57,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       });
       const prepared = await prepareE2eeChatRequest({
         request: original,
-        attestation,
+        modelKey,
       });
       const { headers } = prepared.request;
       expect(prepared.request.url).toBe(endpoint);
@@ -119,10 +99,10 @@ describe.each(['ed25519', 'ecdsa'] as const)(
     });
 
     test('decrypts JSON with the request key and rejects tampered ciphertext', async () => {
-      const { attestation } = await createVerifiedModel(signingAlgo);
+      const { modelKey } = createModelKeys(signingAlgo);
       const prepared = await prepareE2eeChatRequest({
         request: chatRequest(),
-        attestation,
+        modelKey,
       });
       const clientPublicKey = prepared.request.headers.get('x-client-pub-key');
       if (clientPublicKey === null) throw new Error('Expected client key');
@@ -168,12 +148,12 @@ describe.each(['ed25519', 'ecdsa'] as const)(
     });
 
     test('decrypts SSE split across individual bytes and preserves control records', async () => {
-      const { attestation } = await createVerifiedModel(signingAlgo);
+      const { modelKey } = createModelKeys(signingAlgo);
       const prepared = await prepareE2eeChatRequest({
         request: chatRequest({
           body: JSON.stringify({ ...prompt, stream: true }),
         }),
-        attestation,
+        modelKey,
       });
       const clientPublicKey = prepared.request.headers.get('x-client-pub-key');
       if (clientPublicKey === null) throw new Error('Expected client key');
@@ -224,10 +204,10 @@ describe.each(['ed25519', 'ecdsa'] as const)(
     });
 
     test('uses separate response keys for concurrent requests', async () => {
-      const { attestation } = await createVerifiedModel(signingAlgo);
+      const { modelKey } = createModelKeys(signingAlgo);
       const prepared = await Promise.all([
-        prepareE2eeChatRequest({ request: chatRequest(), attestation }),
-        prepareE2eeChatRequest({ request: chatRequest(), attestation }),
+        prepareE2eeChatRequest({ request: chatRequest(), modelKey }),
+        prepareE2eeChatRequest({ request: chatRequest(), modelKey }),
       ]);
       const firstKey = prepared[0].request.headers.get('x-client-pub-key');
       const secondKey = prepared[1].request.headers.get('x-client-pub-key');
@@ -258,10 +238,10 @@ describe.each(['ed25519', 'ecdsa'] as const)(
 );
 
 test('passes unsuccessful HTTP responses through without consuming them', async () => {
-  const { attestation } = await createVerifiedModel();
+  const { modelKey } = createModelKeys();
   const prepared = await prepareE2eeChatRequest({
     request: chatRequest(),
-    attestation,
+    modelKey,
   });
   const response = new Response('Gateway unavailable', {
     status: 503,
@@ -273,43 +253,31 @@ test('passes unsuccessful HTTP responses through without consuming them', async 
   expect(await response.text()).toBe('Gateway unavailable');
 });
 
-test('rejects verified evidence without an encryption public key', async () => {
-  const { attestation } = await createVerifiedModel();
-  await expect(
-    prepareE2eeChatRequest({
-      request: chatRequest(),
-      attestation: { ...attestation, signingPublicKey: undefined },
-    }),
-  ).rejects.toMatchObject({
-    failure: { code: 'e2ee.model_public_key_required' },
-  });
-});
-
 test.each([
   { body: '{invalid', reason: 'invalid_json' },
   { body: '{"messages":[]}', reason: 'unsupported_value' },
 ])('rejects invalid request body: $reason', async ({ body, reason }) => {
-  const { attestation } = await createVerifiedModel();
+  const { modelKey } = createModelKeys();
   await expect(
-    prepareE2eeChatRequest({ request: chatRequest({ body }), attestation }),
+    prepareE2eeChatRequest({ request: chatRequest({ body }), modelKey }),
   ).rejects.toMatchObject({
     failure: { code: 'api.invalid_input', details: { reason } },
   });
 });
 
 test('rejects an already aborted request with the original reason', async () => {
-  const { attestation } = await createVerifiedModel();
+  const { modelKey } = createModelKeys();
   const reason = new Error('Cancelled before preparation');
   await expect(
     prepareE2eeChatRequest({
       request: chatRequest({ signal: AbortSignal.abort(reason) }),
-      attestation,
+      modelKey,
     }),
   ).rejects.toBe(reason);
 });
 
 test('does not wait for a stalled request body after cancellation', async () => {
-  const { attestation } = await createVerifiedModel();
+  const { modelKey } = createModelKeys();
   const controller = new AbortController();
   const body = new TransformStream<Uint8Array>();
   const writer = body.writable.getWriter();
@@ -321,7 +289,7 @@ test('does not wait for a stalled request body after cancellation', async () => 
   };
   const request = new Request(endpoint, options);
   const reason = new Error('Cancelled during upload');
-  const preparation = prepareE2eeChatRequest({ request, attestation });
+  const preparation = prepareE2eeChatRequest({ request, modelKey });
   await writer.write(new TextEncoder().encode('{"model":'));
   controller.abort(reason);
   try {

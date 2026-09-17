@@ -7,6 +7,7 @@ import ed2curve from 'ed2curve';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
 import type { SigningAlgo } from '../types/attestation-common';
+import type { E2eeModelKey } from '../types/e2ee';
 import { hexToBuffer, utf8 } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 
@@ -20,12 +21,6 @@ const ECDSA_ENVELOPE_PREFIX_BYTES = ECDSA_PUBLIC_KEY_BYTES + ECDSA_NONCE_BYTES;
 const E2EE_AUTH_TAG_BYTES = 16;
 const ED25519_HKDF_INFO = utf8('ed25519_encryption');
 const ECDSA_HKDF_INFO = utf8('ecdsa_encryption');
-
-/** A quote-bound model key selected for the E2EE protocol. */
-export type E2eeModelKey = {
-  readonly signingAlgo: SigningAlgo;
-  readonly publicKey: string;
-};
 
 type Ed25519E2eeClientKeyPair = {
   readonly signingAlgo: 'ed25519';
