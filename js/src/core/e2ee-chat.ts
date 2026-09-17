@@ -17,6 +17,12 @@ import {
   VerificationError,
 } from '../utils/errors';
 import {
+  getSseData,
+  type SseLine,
+  splitSseLines,
+  takeCompleteSseRecords,
+} from '../utils/sse';
+import {
   decryptE2eeText,
   encryptE2eeText,
   type E2eeClientKeyPair,
@@ -974,43 +980,6 @@ function transformSseRecord({
   return replaceSseData(lines, JSON.stringify(decrypted)) + separator;
 }
 
-type SseLine = {
-  readonly content: string;
-  readonly ending: string;
-};
-
-function splitSseLines(value: string): SseLine[] {
-  const lines: SseLine[] = [];
-  let start = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value[index] !== '\n' && value[index] !== '\r') {
-      continue;
-    }
-    const isCrLf = value[index] === '\r' && value[index + 1] === '\n';
-    const ending = isCrLf ? '\r\n' : value[index];
-    lines.push({ content: value.slice(start, index), ending });
-    start = index + ending.length;
-    if (isCrLf) {
-      index += 1;
-    }
-  }
-  if (start < value.length) {
-    lines.push({ content: value.slice(start), ending: '' });
-  }
-  return lines;
-}
-
-function getSseData(line: string): string | undefined {
-  if (line === 'data') {
-    return '';
-  }
-  if (!line.startsWith('data:')) {
-    return undefined;
-  }
-  const value = line.slice('data:'.length);
-  return value.startsWith(' ') ? value.slice(1) : value;
-}
-
 function getSseEvent(lines: readonly SseLine[]): string | undefined {
   for (const line of lines) {
     if (line.content === 'event') {
@@ -1025,53 +994,23 @@ function getSseEvent(lines: readonly SseLine[]): string | undefined {
 }
 
 function replaceSseData(lines: readonly SseLine[], serialized: string): string {
-  let replaced = false;
+  let remainingDataLines = lines.filter(
+    (line) => getSseData(line.content) !== undefined,
+  ).length;
   let output = '';
   for (const line of lines) {
     if (getSseData(line.content) === undefined) {
       output += line.content + line.ending;
       continue;
     }
-    if (!replaced) {
+    remainingDataLines -= 1;
+    // Emit at the last data line so its ending cannot merge with the blank
+    // line into a single CRLF when the original event mixes line endings.
+    if (remainingDataLines === 0) {
       output += `data: ${serialized}${line.ending}`;
-      replaced = true;
     }
   }
   return output;
-}
-
-type CompleteSseRecord = {
-  readonly value: string;
-  readonly separator: string;
-};
-
-function takeCompleteSseRecords(value: string): {
-  readonly records: readonly CompleteSseRecord[];
-  readonly pending: string;
-} {
-  const records: CompleteSseRecord[] = [];
-  let remainder = value;
-  while (true) {
-    const boundary = findSseRecordBoundary(remainder);
-    if (boundary === undefined) {
-      return { records, pending: remainder };
-    }
-    records.push({
-      value: remainder.slice(0, boundary.index),
-      separator: boundary.separator,
-    });
-    remainder = remainder.slice(boundary.index + boundary.separator.length);
-  }
-}
-
-function findSseRecordBoundary(
-  value: string,
-): { readonly index: number; readonly separator: string } | undefined {
-  const match = /(?:\r\n|\n|\r)(?:\r\n|\n|\r)/.exec(value);
-  if (match === null || match.index === undefined) {
-    return undefined;
-  }
-  return { index: match.index, separator: match[0] };
 }
 
 function asSseResponseError(cause: unknown): ApiError | Error {

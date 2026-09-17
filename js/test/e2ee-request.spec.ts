@@ -147,61 +147,75 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       ).rejects.toMatchObject({ failure: { code: 'e2ee.decryption_failed' } });
     });
 
-    test('decrypts SSE split across individual bytes and preserves control records', async () => {
-      const { modelKey } = createModelKeys(signingAlgo);
-      const prepared = await prepareE2eeChatRequest({
-        request: chatRequest({
-          body: JSON.stringify({ ...prompt, stream: true }),
-        }),
-        modelKey,
-      });
-      const clientPublicKey = prepared.request.headers.get('x-client-pub-key');
-      if (clientPublicKey === null) throw new Error('Expected client key');
-      const chunk = {
-        id: 'chatcmpl-stream',
-        choices: [
-          {
-            delta: {
-              content: encryptE2eeText({
-                plaintext: '流式回答',
-                modelKey: { signingAlgo, publicKey: clientPublicKey },
-              }),
+    test.each([
+      { name: 'LF', lineEnding: '\n', separator: '\n\n' },
+      { name: 'CRLF', lineEnding: '\r\n', separator: '\r\n\r\n' },
+      { name: 'CR', lineEnding: '\r', separator: '\r\r' },
+      { name: 'mixed', lineEnding: '\r', separator: '\n\n' },
+    ])(
+      'decrypts multiline SSE with $name endings split across individual bytes and preserves control records',
+      async ({ lineEnding, separator }) => {
+        const { modelKey } = createModelKeys(signingAlgo);
+        const prepared = await prepareE2eeChatRequest({
+          request: chatRequest({
+            body: JSON.stringify({ ...prompt, stream: true }),
+          }),
+          modelKey,
+        });
+        const clientPublicKey =
+          prepared.request.headers.get('x-client-pub-key');
+        if (clientPublicKey === null) throw new Error('Expected client key');
+        const chunk = {
+          id: 'chatcmpl-stream',
+          choices: [
+            {
+              delta: {
+                content: encryptE2eeText({
+                  plaintext: '流式回答',
+                  modelKey: { signingAlgo, publicKey: clientPublicKey },
+                }),
+              },
             },
+          ],
+        };
+        const prefix = `: 保活${separator}`;
+        const controls = `event: message${lineEnding}id: part-1${lineEnding}`;
+        const suffix =
+          'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\n';
+        const data = [
+          `data: {"id":${JSON.stringify(chunk.id)},`,
+          `data: "choices":${JSON.stringify(chunk.choices)}}`,
+        ].join(lineEnding);
+        const input = `${prefix}${controls}${data}${separator}${suffix}`;
+        const source = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const byte of new TextEncoder().encode(input)) {
+              controller.enqueue(Uint8Array.of(byte));
+            }
+            controller.close();
           },
-        ],
-      };
-      const prefix = ': 保活\r\n\r\n';
-      const suffix =
-        'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\n';
-      const input = `${prefix}data: ${JSON.stringify(chunk)}\r\n\r\n${suffix}`;
-      const source = new ReadableStream<Uint8Array>({
-        start(controller) {
-          for (const byte of new TextEncoder().encode(input)) {
-            controller.enqueue(Uint8Array.of(byte));
-          }
-          controller.close();
-        },
-      });
-      const response = await prepared.decryptResponse(
-        new Response(source, {
-          headers: {
-            'content-type': 'text/event-stream; charset=utf-8',
-            'content-length': '99999',
-          },
-        }),
-      );
-      expect(response.headers.get('content-length')).toBeNull();
-      expect(response.headers.get('content-type')).toBe(
-        'text/event-stream; charset=utf-8',
-      );
-      const decryptedChunk = {
-        ...chunk,
-        choices: [{ delta: { content: '流式回答' } }],
-      };
-      expect(await response.text()).toBe(
-        `${prefix}data: ${JSON.stringify(decryptedChunk)}\r\n\r\n${suffix}`,
-      );
-    });
+        });
+        const response = await prepared.decryptResponse(
+          new Response(source, {
+            headers: {
+              'content-type': 'text/event-stream; charset=utf-8',
+              'content-length': '99999',
+            },
+          }),
+        );
+        expect(response.headers.get('content-length')).toBeNull();
+        expect(response.headers.get('content-type')).toBe(
+          'text/event-stream; charset=utf-8',
+        );
+        const decryptedChunk = {
+          ...chunk,
+          choices: [{ delta: { content: '流式回答' } }],
+        };
+        expect(await response.text()).toBe(
+          `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,
+        );
+      },
+    );
 
     test('uses separate response keys for concurrent requests', async () => {
       const { modelKey } = createModelKeys(signingAlgo);

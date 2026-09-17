@@ -31,6 +31,7 @@ import {
   isVerificationError,
   VerificationError,
 } from '../utils/errors';
+import { getSseDataRecords } from '../utils/sse';
 import {
   AttestationClient,
   createCloudApiRequestConfiguration,
@@ -922,16 +923,6 @@ async function drainResponseEntityBody({
   } catch (cause) {
     reject(cause);
   }
-}
-
-function getSseDataRecords(text: string): string[] {
-  return text.split(/(?:\r\n|\n|\r)(?:\r\n|\n|\r)/).map((record) =>
-    record
-      .split(/\r\n|\n|\r/)
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).replace(/^ /, ''))
-      .join('\n'),
-  );
 }
 
 function parseCompletionId(value: unknown): string {
