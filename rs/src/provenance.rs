@@ -654,6 +654,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetches_cursor_pages_at_the_original_origin_and_path() {
+        let client = Client::builder().no_proxy().build().unwrap();
         for cursor_name in ["before", "after"] {
             let server = MockServer::start().await;
             let endpoint_path = "/repos/nearai/compose-manager/attestations/sha256:abc";
@@ -691,7 +692,7 @@ mod tests {
                 .await;
 
             let bundles =
-                fetch_image_provenance_pages(&Client::new(), initial.clone(), Some("test-token"))
+                fetch_image_provenance_pages(&client, initial.clone(), Some("test-token"))
                     .await
                     .unwrap();
 
@@ -713,6 +714,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_repeated_pagination_before_repeating_a_request() {
+        let client = Client::builder().no_proxy().build().unwrap();
         let server = MockServer::start().await;
         let initial = Url::parse(&format!("{}/attestations?per_page=100", server.uri())).unwrap();
         let next_link = format!("<{}&after=repeated>; rel=\"next\"", initial);
@@ -727,7 +729,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let result = fetch_image_provenance_pages(&Client::new(), initial, None).await;
+        let result = fetch_image_provenance_pages(&client, initial, None).await;
 
         assert!(matches!(result, Err(ApiError::InvalidResponse { path, .. }) if path == "Link"));
         assert_eq!(server.received_requests().await.unwrap().len(), 2);
