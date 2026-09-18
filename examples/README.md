@@ -12,22 +12,25 @@ export NEARAI_API_KEY=sk-your-api-key
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
 
-The three basic entry points include non-streaming and streaming calls:
+The three entry points include non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `bare.ts` | Fetches and verifies evidence, sends requests, and verifies signatures using standalone functions. | Not included |
-| `client.ts` | Uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
-| `openai-sdk-compatible.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
+| `bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 
 All three verify Gateway TLS identity. The inference clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
 
-The bare example preserves exact request and response bytes for signature
-verification. It sends `x-no-aliasing: true` and `Accept-Encoding: identity`.
-The inference clients handle byte capture internally.
+The bare example preserves the exact encrypted request and response bytes
+before decryption for signature verification. The public E2EE helper creates
+request-specific keys and protocol headers, including `x-no-aliasing: true`.
+The example sets `Accept-Encoding: identity` and displays decrypted JSON or
+SSE. The inference clients handle encryption, decryption, and byte capture
+internally.
 
 The SDK must be built first because the example imports the local package's
 published `dist` files.
@@ -39,15 +42,15 @@ pnpm --dir examples/example-js install --frozen-lockfile
 pnpm --dir examples/example-js check
 pnpm --dir examples/example-js start:client
 pnpm --dir examples/example-js start:bare
-pnpm --dir examples/example-js start:openai-sdk-compatible
+pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
 Requires Node.js 24 or later.
 
 ### Image provenance
 
-[`client-provenance.ts`](example-js/client-provenance.ts) verifies these four
-required Gateway images:
+[`client.ts`](example-js/client.ts) and [`bare.ts`](example-js/bare.ts) verify
+the build provenance of these four required Gateway images:
 
 | Image | GitHub repository | Build workflow |
 | --- | --- | --- |
@@ -56,26 +59,25 @@ required Gateway images:
 | `nearaidev/dstack-vpc` | `nearai/dstack-vpc` | `.github/workflows/build.yml` |
 | `nearaidev/dstack-vpc-client` | `nearai/dstack-vpc-client` | `.github/workflows/build.yml` |
 
-The `gatewayVerification.verifiers.deployment` callback calls
-`verifyDeploymentImageProvenance` with the authenticated `appCompose` and the
-image policies. The SDK extracts the digests and verifies GitHub Sigstore provenance.
+Both examples call `verifyDeploymentImageProvenance` with the authenticated
+`appCompose` and image policies in a deployment verifier. `client.ts` configures
+`gatewayVerification.verifiers.deployment`; `bare.ts` passes
+`verifiers.deployment` to `verifyGatewayAttestation`. The SDK extracts the
+digests and verifies GitHub Sigstore provenance.
 Every listed image is required; other images are outside this check. References
 must contain literal digests: `image:tag@sha256:...` is accepted, but tags alone
 and unresolved `${VARIABLE:-default}` expressions are not.
-The policies belong to this example, not an SDK default allowlist. Add `commit`
+The policies belong to these examples, not an SDK default allowlist. Add `commit`
 to each policy to require a reviewed source commit.
 
-```sh
-pnpm --dir examples/example-js start:client-provenance
-```
+Gateway/model attestation and image-check failures block both Chat modes.
+`client.ts` reuses successful checks through its 60-minute attestation cache;
+`bare.ts` verifies the deployments before sending either request. Run them with
+the `start:client` and `start:bare` commands above.
 
-Gateway/model attestation and image-check failures block Chat. Successful checks
-reuse the client's 60-minute attestation cache. The example then sends a
-non-streaming GLM-5.3 request and calls `verifyResponse(id)`.
-
-The example verifies build provenance, not reproducible builds. Checking the
+These examples verify build provenance, not reproducible builds. Checking the
 running Compose Manager and inference-proxy images requires direct Compose
-Manager evidence, which this SDK does not retrieve. This example does not check
+Manager evidence, which this SDK does not retrieve. These examples do not check
 GLM runtime-image or model-weight provenance.
 
 ## Python

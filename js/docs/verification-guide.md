@@ -311,6 +311,65 @@ apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
 receipt signature—must be pinned automatically.
 
+### Encrypt a raw Chat request
+
+`prepareE2eeChatRequest` accepts a model public key and its signing algorithm.
+Obtain them from verified model evidence before preparing the request. The
+helper creates fresh client keys and sets the encryption and model-routing
+headers; it sends no requests and performs no attestation or completion-signature
+verification.
+
+```ts
+import { prepareE2eeChatRequest } from '@nearai/inference-sdk/node';
+
+const modelAttestation = models.find(
+  (attestation) => attestation.signingPublicKey !== undefined,
+);
+if (
+  modelAttestation === undefined ||
+  modelAttestation.signingPublicKey === undefined
+) {
+  throw new Error('No verified model key is available');
+}
+const request = new Request('https://cloud-api.near.ai/v1/chat/completions', {
+  method: 'POST',
+  headers: {
+    Authorization: `Bearer ${process.env.NEARAI_API_KEY!}`,
+    'Content-Type': 'application/json',
+    'Accept-Encoding': 'identity',
+  },
+  body: JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: 'Hello' }],
+  }),
+});
+const prepared = await prepareE2eeChatRequest({
+  request,
+  modelKey: {
+    signingAlgo: modelAttestation.signer.signingAlgo,
+    publicKey: modelAttestation.signingPublicKey,
+  },
+});
+const requestBytes = await prepared.request.clone().arrayBuffer();
+const requestBody = new Uint8Array(requestBytes);
+const encryptedResponse = await pinnedTlsFetch(prepared.request);
+const receiptResponse = encryptedResponse.clone();
+const response = await prepared.decryptResponse(encryptedResponse);
+const [responseBytes, plaintext] = await Promise.all([
+  receiptResponse.arrayBuffer(),
+  response.text(),
+]);
+const responseBody = new Uint8Array(responseBytes);
+console.log(plaintext);
+```
+
+Pass the captured `requestBody` and `responseBody` to the response-signature
+functions below. With `stream: true`, `decryptResponse` returns a decrypted
+SSE `Response`; consume its body as events arrive while retaining the encrypted
+response clone for signature verification. HTTP error responses pass through
+unchanged. The [bare example](../../examples/example-js/bare.ts) demonstrates
+both response modes without handling protocol keys or encryption headers.
+
 ### Optional image build provenance
 
 `verifyDeploymentImageProvenance` reads image digests from `appCompose`, fetches
@@ -348,7 +407,9 @@ have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
-[image provenance example](../../examples/example-js/client-provenance.ts).
+[client example](../../examples/example-js/client.ts) and
+[bare example](../../examples/example-js/bare.ts), which require build provenance
+for four Gateway images.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact
 digests, and signed SLSA source. Each source commit must match the certificate's
@@ -376,7 +437,7 @@ successful verification:
 
 | Kind | Verify with | Establishes |
 | --- | --- | --- |
-| `provider_tee` | A matching verified model attestation | The model-serving TEE signer signed the exact request and response body bytes. |
+| `provider_tee` | The verified model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
 | `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
 
 For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext
@@ -397,7 +458,7 @@ const signature = await client.fetchCompletionSignature({
 
 if (signature.kind === 'provider_tee') {
   const attestation = findModelAttestationForSignature({
-    attestations: models,
+    attestations: [modelAttestation],
     signature,
   });
   verifyModelResponse({

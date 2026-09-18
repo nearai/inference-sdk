@@ -1,9 +1,34 @@
-import { InferenceClient } from '@nearai/inference-sdk/node';
+import {
+  InferenceClient,
+  verifyDeploymentImageProvenance,
+  type ImageProvenancePolicy,
+} from '@nearai/inference-sdk/node';
 
 const BASE_URL = 'https://cloud-api.near.ai/v1/';
 const MODEL = 'z-ai/glm-5.3-flash';
 // Selects the algorithm for attestation, E2EE, and response signatures.
 const SIGNING_ALGO = 'ed25519';
+
+// Required Gateway images and build workflows. Add a reviewed `commit`
+// to each policy if your application also requires commit pinning.
+const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/cloud-api': {
+    repository: 'nearai/cloud-api',
+    workflow: '.github/workflows/build.yml',
+  },
+  'nearaidev/cvm-ingress': {
+    repository: 'nearai/cvm-ingress',
+    workflow: '.github/workflows/build-push.yml',
+  },
+  'nearaidev/dstack-vpc': {
+    repository: 'nearai/dstack-vpc',
+    workflow: '.github/workflows/build.yml',
+  },
+  'nearaidev/dstack-vpc-client': {
+    repository: 'nearai/dstack-vpc-client',
+    workflow: '.github/workflows/build.yml',
+  },
+};
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
@@ -16,8 +41,19 @@ async function main(): Promise<void> {
     apiKey,
     baseUrl: BASE_URL,
     signingAlgo: SIGNING_ALGO,
+    gatewayVerification: {
+      verifiers: {
+        deployment: ({ appCompose }) =>
+          verifyDeploymentImageProvenance({
+            appCompose,
+            imagePolicies: GATEWAY_IMAGE_POLICIES,
+          }),
+      },
+    },
   });
 
+  // Gateway/model attestations and all four Gateway image checks must pass
+  // before Chat is sent. These policies do not verify model runtime images.
   await runNonStreamingExample(inferenceClient);
   await runStreamingExample(inferenceClient);
 }

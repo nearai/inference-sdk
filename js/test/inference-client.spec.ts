@@ -586,10 +586,12 @@ function createTestGateway({
       };
       const separator = (index: number): string =>
         streamRecordSeparators?.[index] ?? '\r\r';
-      const firstEvent = `data: ${JSON.stringify(firstChunk)}${separator(0)}`;
+      const firstEvent = `data: {\r\ndata: ${JSON.stringify(firstChunk).slice(1)}${separator(0)}`;
+      // Split a CRLF inside the JSON event across transport chunks.
+      const split = firstEvent.indexOf('\r\n') + 1;
       return streamResponse([
-        firstEvent.slice(0, 19),
-        firstEvent.slice(19),
+        firstEvent.slice(0, split),
+        firstEvent.slice(split),
         `data: ${JSON.stringify(secondChunk)}${separator(1)}`,
         `data: [DONE]${separator(2)}`,
         `: response complete${separator(3)}`,
@@ -1551,6 +1553,62 @@ describe('inference client', () => {
     expect(content).toBe('hello client');
   });
 
+  test.each(['\n\n', '\r\n\r\n'])(
+    'registers the first SSE event ending in %j before the next event arrives',
+    async (separator) => {
+      const gateway = createTestGateway({
+        streamRecordSeparators: [separator],
+      });
+      const providerFetch = createProviderReceiptFetch(gateway);
+      let resumeStream: () => void = () => {};
+      const nextEventReady = new Promise<void>((resolve) => {
+        resumeStream = resolve;
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const response = await providerFetch(input, init);
+          if (!isChatCompletionRequest(input)) return response;
+          let chunks = 0;
+          return new Response(
+            response.body?.pipeThrough(
+              new TransformStream<Uint8Array, Uint8Array>({
+                async transform(chunk, controller) {
+                  // The fixture splits its first event into two transport chunks.
+                  if (chunks === 2) await nextEventReady;
+                  chunks += 1;
+                  controller.enqueue(chunk);
+                },
+              }),
+            ),
+            { headers: response.headers },
+          );
+        });
+      const client = new InferenceClient(inferenceClientOptions(gateway));
+      const stream = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello model' }],
+        stream: true,
+      });
+      const iterator = stream[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      expect(first.value?.choices[0]?.delta.content).toBe('hello ');
+      const verification = expect(
+        client.verifyResponse('chatcmpl-stream'),
+      ).resolves.toMatchObject({
+        completionId: 'chatcmpl-stream',
+        signatureKind: 'provider_tee',
+      });
+
+      resumeStream();
+      expect((await iterator.next()).value?.choices[0]?.delta.content).toBe(
+        'client',
+      );
+      expect((await iterator.next()).done).toBe(true);
+      await verification;
+    },
+  );
+
   test('returns a non-streaming completion with verifiable entity bodies', async () => {
     const gateway = createTestGateway();
     mockProviderReceipts(gateway);
@@ -1568,31 +1626,40 @@ describe('inference client', () => {
     });
   });
 
-  test('verifies a streamed response after consuming the stream', async () => {
-    const gateway = createTestGateway({
-      streamRecordSeparators: ['\n\r\n', '\r\n\n', '\n\r', '\r\n\r'],
-    });
-    mockProviderReceipts(gateway);
-    const client = new InferenceClient(inferenceClientOptions(gateway));
+  test.each([
+    {
+      name: 'CRLF',
+      separators: ['\r\n\r\n', '\r\n\r\n', '\r\n\r\n', '\r\n\r\n'],
+    },
+    { name: 'mixed', separators: ['\n\r\n', '\r\n\n', '\n\r', '\r\n\r'] },
+  ])(
+    'verifies multiline SSE with $name record separators after consuming the stream',
+    async ({ separators }) => {
+      const gateway = createTestGateway({
+        streamRecordSeparators: separators,
+      });
+      mockProviderReceipts(gateway);
+      const client = new InferenceClient(inferenceClientOptions(gateway));
 
-    const stream = await client.chat.completions.create({
-      model,
-      messages: [{ role: 'user', content: 'hello model' }],
-      stream: true,
-    });
-    let content = '';
-    for await (const chunk of stream) {
-      content += chunk.choices[0]?.delta.content ?? '';
-    }
+      const stream = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello model' }],
+        stream: true,
+      });
+      let content = '';
+      for await (const chunk of stream) {
+        content += chunk.choices[0]?.delta.content ?? '';
+      }
 
-    expect(content).toBe('hello client');
-    await expect(
-      client.verifyResponse('chatcmpl-stream'),
-    ).resolves.toMatchObject({
-      completionId: 'chatcmpl-stream',
-      signatureKind: 'provider_tee',
-    });
-  });
+      expect(content).toBe('hello client');
+      await expect(
+        client.verifyResponse('chatcmpl-stream'),
+      ).resolves.toMatchObject({
+        completionId: 'chatcmpl-stream',
+        signatureKind: 'provider_tee',
+      });
+    },
+  );
 
   test('supports a non-streaming OpenAI-compatible chat call', async () => {
     const gateway = createTestGateway({

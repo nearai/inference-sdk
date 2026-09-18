@@ -4,6 +4,12 @@ export {
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export { InferenceClient } from './core/inference-client';
+export { prepareE2eeChatRequest } from './core/e2ee-request';
+export type {
+  E2eeModelKey,
+  PrepareE2eeChatRequestParams,
+  PreparedE2eeChatRequest,
+} from './types/e2ee';
 export type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
