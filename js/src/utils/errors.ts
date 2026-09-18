@@ -491,7 +491,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'policy.model_attestation_required':
       return `[${failure.code}] Model attestation evidence is required`;
     case 'binding.spki_fingerprint_required':
-      return `[${failure.code}] Gateway attestation requires an observed TLS peer fingerprint`;
+      return `[${failure.code}] Attestation requires an observed TLS peer fingerprint`;
     case 'binding.nonce_mismatch':
       return `[${failure.code}] Nonce in ${failure.details.source} does not match`;
     case 'binding.report_data_invalid':

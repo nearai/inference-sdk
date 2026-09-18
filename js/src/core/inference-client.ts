@@ -7,8 +7,6 @@ import {
 import type {
   GatewayTlsBinding,
   ModelAttestationVerifiers,
-  VerifiedGatewayAttestation,
-  VerifiedModelAttestation,
 } from '../types/verification';
 import type { SigningAlgo } from '../types/attestation-common';
 import type {
@@ -23,7 +21,9 @@ import type {
   SecureChat,
   InferenceClientOptions,
   VerifiedCompletionReceipt,
+  InferenceClientCommonOptions,
 } from '../types/inference-client';
+import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
 import {
   ApiError,
@@ -57,20 +57,41 @@ import {
 const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
-type SecureSessionState = {
-  readonly gatewayAttestation: VerifiedGatewayAttestation;
-  readonly modelAttestation: VerifiedModelAttestation;
+export type InferenceSession<Receipt> = {
   readonly modelKey: E2eeModelKey;
-  readonly transport: GatewaySessionTransport;
+  readonly transport: InferenceSessionTransport;
+  readonly verifyResponse: (
+    params: VerifySessionResponseParams,
+  ) => Awaitable<Receipt>;
 };
 
-type CachedVerification = {
+export type VerifySessionResponseParams = {
+  readonly completionId: string;
+  readonly requestBody: Uint8Array;
+  readonly responseBody: Uint8Array;
+  readonly signature: CompletionSignature;
+};
+
+export type InferenceSessionTransport = {
+  readonly fetch: typeof globalThis.fetch;
+  readonly fetchCompletionSignature: (
+    params: FetchCompletionSignatureParams,
+  ) => Promise<CompletionSignature>;
+};
+
+export type InferenceTransportOptions = InferenceClientCommonOptions & {
+  readonly baseUrl?: string;
+  readonly apiKey?: string;
+  readonly headers?: HeadersInit;
+};
+
+type CachedVerification<Receipt> = {
   readonly expiresAt: number;
-  readonly session: SecureSessionState;
+  readonly session: InferenceSession<Receipt>;
 };
 
-type CompletionRecord = VerifyCapturedCompletionParams & {
-  verification?: Promise<VerifiedCompletionReceipt>;
+type CompletionRecord<Receipt> = VerifyCapturedCompletionParams<Receipt> & {
+  verification?: Promise<Receipt>;
 };
 
 type ParsedSecureRequest = {
@@ -88,13 +109,13 @@ type SendSecureCompletionParams = {
   readonly init?: RequestInit;
 };
 
-type SentSecureCompletion = {
+type SentSecureCompletion<Receipt> = {
   response: Response;
-  readonly session: SecureSessionState;
+  readonly session: InferenceSession<Receipt>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
 
-type CapturedSecureCompletion = SentSecureCompletion & {
+type CapturedSecureCompletion<Receipt> = SentSecureCompletion<Receipt> & {
   readonly requestBody: Promise<Uint8Array>;
   readonly responseBody: Promise<Uint8Array>;
 };
@@ -104,21 +125,21 @@ type CapturedResponseEntityBody = {
   readonly responseBody: Promise<Uint8Array>;
 };
 
-type VerifyCapturedCompletionParams = {
+type VerifyCapturedCompletionParams<Receipt> = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
-  readonly session: SecureSessionState;
+  readonly session: InferenceSession<Receipt>;
   readonly contentType: string | null;
 };
 
 type SendCompletionRequestParams = {
   readonly request: Request;
-  readonly transport: GatewaySessionTransport;
+  readonly transport: InferenceSessionTransport;
 };
 
-type ClearPendingVerificationParams = {
+type ClearPendingVerificationParams<Receipt> = {
   readonly model: string;
-  readonly verification: Promise<SecureSessionState>;
+  readonly verification: Promise<InferenceSession<Receipt>>;
 };
 
 type AwaitWithAbortParams<T> = {
@@ -152,7 +173,7 @@ export type CreateGatewaySessionTransportParams = {
  * A verified Chat Completions transport.
  *
  * Every `fetch()` call reads its model from the Chat request, then uses a
- * successfully verified Gateway/model session for that model when it remains
+ * successfully verified endpoint-specific session for that model when it remains
  * within the configured cache lifetime. With the default `e2ee: true`,
  * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
@@ -160,24 +181,27 @@ export type CreateGatewaySessionTransportParams = {
  * but the Chat request and response remain plaintext while the request stays
  * pinned to the verified model key.
  */
-export abstract class InferenceClientBase {
+export abstract class VerifiedInferenceClientBase<Receipt> {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly completions = new Map<string, CompletionRecord>();
+  private readonly completions = new Map<string, CompletionRecord<Receipt>>();
   readonly chat: SecureChat;
   protected readonly signingAlgo: SigningAlgo;
-  private readonly options: NodeInferenceClientOptions;
+  private readonly options: InferenceTransportOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
-  private readonly cachedVerifications = new Map<string, CachedVerification>();
+  private readonly cachedVerifications = new Map<
+    string,
+    CachedVerification<Receipt>
+  >();
   /** Shares same-model verification work while it is in progress. */
   private readonly pendingVerifications = new Map<
     string,
-    Promise<SecureSessionState>
+    Promise<InferenceSession<Receipt>>
   >();
 
-  protected constructor(options: NodeInferenceClientOptions) {
+  protected constructor(options: InferenceTransportOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.attestationCacheTimeToLiveMs =
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
@@ -194,13 +218,10 @@ export abstract class InferenceClientBase {
     }).chat;
   }
 
-  /** Fetch Gateway evidence when starting a new verification session. */
-  protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
-
-  /** Create the request transport for one successfully verified Gateway. */
-  protected abstract createGatewaySessionTransport(
-    params: CreateGatewaySessionTransportParams,
-  ): GatewaySessionTransport;
+  /** Verify every required report before creating a transport for Chat requests. */
+  protected abstract createVerificationState(
+    model: string,
+  ): Promise<InferenceSession<Receipt>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
@@ -225,7 +246,7 @@ export abstract class InferenceClientBase {
     const responseBody = completion.responseBody;
 
     if (completion.response.ok) {
-      const record: CompletionRecord = {
+      const record: CompletionRecord<Receipt> = {
         requestBody,
         responseBody,
         session: completion.session,
@@ -251,7 +272,7 @@ export abstract class InferenceClientBase {
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(completionId: string): Promise<VerifiedCompletionReceipt> {
+  verifyResponse(completionId: string): Promise<Receipt> {
     const record = this.completions.get(completionId);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
@@ -271,7 +292,7 @@ export abstract class InferenceClientBase {
   private async sendSecureCompletion({
     input,
     init,
-  }: SendSecureCompletionParams): Promise<CapturedSecureCompletion> {
+  }: SendSecureCompletionParams): Promise<CapturedSecureCompletion<Receipt>> {
     const parsed = await this.parseSecureRequest(input, init);
     if (parsed.request.signal.aborted) {
       throw parsed.request.signal.reason;
@@ -315,7 +336,7 @@ export abstract class InferenceClientBase {
   private async toClientResponse({
     response,
     decryptResponse,
-  }: SentSecureCompletion): Promise<Response> {
+  }: SentSecureCompletion<Receipt>): Promise<Response> {
     return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
@@ -324,7 +345,7 @@ export abstract class InferenceClientBase {
     responseBody,
     session,
     contentType,
-  }: VerifyCapturedCompletionParams): Promise<VerifiedCompletionReceipt> {
+  }: VerifyCapturedCompletionParams<Receipt>): Promise<Receipt> {
     const bytes = await responseBody;
     const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
@@ -332,37 +353,15 @@ export abstract class InferenceClientBase {
       signingAlgo: session.modelKey.signingAlgo,
     });
 
-    if (signature.kind === 'provider_tee') {
-      const attestation = session.modelAttestation;
-      verifyModelResponse({
-        requestBody,
-        responseBody: bytes,
-        signature,
-        attestation,
-      });
-      return {
-        completionId,
-        signatureKind: 'provider_tee',
-        signature,
-        attestation,
-      };
-    } else {
-      verifyGatewayResponse({
-        requestBody,
-        responseBody: bytes,
-        signature,
-        attestation: session.gatewayAttestation,
-      });
-      return {
-        completionId,
-        signatureKind: 'gateway',
-        signature,
-        attestation: session.gatewayAttestation,
-      };
-    }
+    return session.verifyResponse({
+      completionId,
+      requestBody,
+      responseBody: bytes,
+      signature,
+    });
   }
 
-  private startVerification(model: string): Promise<SecureSessionState> {
+  private startVerification(model: string): Promise<InferenceSession<Receipt>> {
     const now = Date.now();
     this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(model);
@@ -403,67 +402,13 @@ export abstract class InferenceClientBase {
   private clearPendingVerification({
     model,
     verification,
-  }: ClearPendingVerificationParams): void {
+  }: ClearPendingVerificationParams<Receipt>): void {
     if (this.pendingVerifications.get(model) === verification) {
       this.pendingVerifications.delete(model);
     }
   }
 
-  private async createVerificationState(
-    model: string,
-  ): Promise<SecureSessionState> {
-    const gateway = await this.fetchGatewayAttestation();
-    const gatewayAttestation = await verifyGatewayAttestation({
-      attestation: gateway.attestation,
-      clientBinding: gateway.clientBinding,
-      policy: this.options.gatewayVerification?.policy,
-      verifiers: this.options.gatewayVerification?.verifiers,
-    });
-    const transport = this.createGatewaySessionTransport({
-      tlsBinding: gatewayAttestation.tlsBinding,
-    });
-    const fetchedModels = await transport.fetchModelAttestations({
-      model,
-      signingAlgo: this.signingAlgo,
-    });
-    if (fetchedModels.attestations.length === 0) {
-      throw new VerificationError({
-        code: 'policy.model_attestation_required',
-      });
-    }
-
-    const modelVerifiers = this.getModelVerifiers(model);
-    const modelAttestations = await Promise.all(
-      fetchedModels.attestations.map((attestation) =>
-        verifyModelAttestation({
-          attestation,
-          clientBinding: fetchedModels.clientBinding,
-          policy: this.options.modelVerification?.policy,
-          verifiers: modelVerifiers,
-        }),
-      ),
-    );
-    const modelAttestation = modelAttestations.find(
-      (attestation) =>
-        attestation.signer.signingAlgo === this.signingAlgo &&
-        attestation.signingPublicKey !== undefined,
-    );
-    if (modelAttestation?.signingPublicKey === undefined) {
-      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
-    }
-
-    return {
-      gatewayAttestation,
-      modelAttestation,
-      modelKey: {
-        signingAlgo: this.signingAlgo,
-        publicKey: modelAttestation.signingPublicKey,
-      },
-      transport,
-    };
-  }
-
-  private getModelVerifiers(
+  protected getModelVerifiers(
     model: string,
   ): ModelAttestationVerifiers | undefined {
     const verifiers = this.options.modelVerification?.verifiers;
@@ -557,6 +502,105 @@ export abstract class InferenceClientBase {
       configuration: this.requestConfiguration,
       requestHeaders,
     });
+  }
+}
+
+/** Gateway-specific preflight layered over the shared Chat/E2EE transport. */
+export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionReceipt> {
+  private readonly gatewayOptions: NodeInferenceClientOptions;
+
+  protected constructor(options: NodeInferenceClientOptions) {
+    super(options);
+    this.gatewayOptions = options;
+  }
+
+  protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
+
+  protected abstract createGatewaySessionTransport(
+    params: CreateGatewaySessionTransportParams,
+  ): GatewaySessionTransport;
+
+  protected override async createVerificationState(
+    model: string,
+  ): Promise<InferenceSession<VerifiedCompletionReceipt>> {
+    const gateway = await this.fetchGatewayAttestation();
+    const gatewayAttestation = await verifyGatewayAttestation({
+      attestation: gateway.attestation,
+      clientBinding: gateway.clientBinding,
+      policy: this.gatewayOptions.gatewayVerification?.policy,
+      verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+    });
+    const transport = this.createGatewaySessionTransport({
+      tlsBinding: gatewayAttestation.tlsBinding,
+    });
+    const fetchedModels = await transport.fetchModelAttestations({
+      model,
+      signingAlgo: this.signingAlgo,
+    });
+    if (fetchedModels.attestations.length === 0) {
+      throw new VerificationError({
+        code: 'policy.model_attestation_required',
+      });
+    }
+    const modelVerifiers = this.getModelVerifiers(model);
+    const modelAttestations = await Promise.all(
+      fetchedModels.attestations.map((attestation) =>
+        verifyModelAttestation({
+          attestation,
+          clientBinding: fetchedModels.clientBinding,
+          policy: this.gatewayOptions.modelVerification?.policy,
+          verifiers: modelVerifiers,
+        }),
+      ),
+    );
+    const modelAttestation = modelAttestations.find(
+      (attestation) =>
+        attestation.signer.signingAlgo === this.signingAlgo &&
+        attestation.signingPublicKey !== undefined,
+    );
+    if (modelAttestation?.signingPublicKey === undefined) {
+      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+    }
+    return {
+      modelKey: {
+        signingAlgo: this.signingAlgo,
+        publicKey: modelAttestation.signingPublicKey,
+      },
+      transport,
+      verifyResponse: ({
+        completionId,
+        requestBody,
+        responseBody,
+        signature,
+      }) => {
+        if (signature.kind === 'provider_tee') {
+          verifyModelResponse({
+            requestBody,
+            responseBody,
+            signature,
+            attestation: modelAttestation,
+          });
+          return {
+            completionId,
+            signatureKind: 'provider_tee',
+            signature,
+            attestation: modelAttestation,
+          };
+        }
+        verifyGatewayResponse({
+          requestBody,
+          responseBody,
+          signature,
+          attestation: gatewayAttestation,
+        });
+        return {
+          completionId,
+          signatureKind: 'gateway',
+          signature,
+          attestation: gatewayAttestation,
+        };
+      },
+    };
   }
 }
 

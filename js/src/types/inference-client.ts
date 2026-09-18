@@ -74,7 +74,7 @@ export type ModelVerificationOptions = {
 };
 
 /** Settings shared by generic and Node verified Chat clients. */
-type InferenceClientCommonOptions = {
+export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
    * same model. Defaults to 60 minutes. Set `0` to verify every request.

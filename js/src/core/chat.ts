@@ -243,7 +243,7 @@ function getCanonicalModelIdFromRequest(requestBody: Uint8Array): string {
   return parsed.output.model;
 }
 
-function parseSignatureHex(
+export function parseSignatureHex(
   value: string,
   field: 'signature' | 'signer.signingAddress',
 ): Buffer {

@@ -4,6 +4,34 @@ export {
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export { InferenceClient } from './core/inference-client';
+export {
+  DirectInferenceClient,
+  verifyDirectModelResponse,
+} from './core/direct-inference-client';
+export {
+  verifyDirectModelAttestation,
+  verifyDirectAttestationReport,
+} from './core/attestation-direct';
+export type {
+  DirectAttestationClientOptions,
+  DirectAttestationReport,
+  DirectClientBinding,
+  DirectModelAttestation,
+  FetchedDirectAttestationReport,
+} from './types/direct-api';
+export type {
+  VerifiedDirectModelAttestation,
+  VerifiedDirectAttestationReport,
+  DirectTlsBinding,
+  VerifyDirectModelAttestationParams,
+  VerifyDirectAttestationReportParams,
+} from './types/direct-verification';
+export type {
+  DirectInferenceClientOptions,
+  DirectModelVerificationOptions,
+  VerifiedDirectCompletionReceipt,
+  VerifyDirectModelResponseParams,
+} from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
 export type {
   E2eeModelKey,

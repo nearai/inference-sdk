@@ -2,6 +2,7 @@ import type * as v from 'valibot';
 import type {
   CloudApiGatewayAttestationSchema,
   CloudApiModelAttestationSchema,
+  CloudApiCompletionSignatureResultSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
@@ -76,6 +77,9 @@ export type CloudApiModelAttestation = v.InferOutput<
 >;
 export type CloudApiGatewayAttestation = v.InferOutput<
   typeof CloudApiGatewayAttestationSchema
+>;
+export type CloudApiCompletionSignatureResult = v.InferOutput<
+  typeof CloudApiCompletionSignatureResultSchema
 >;
 
 export type FetchedGatewayAttestation = {
