@@ -13,9 +13,9 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
 - `DirectInferenceClient` connects to a model's own endpoint, verifies every
-  returned model report, and provides the same Chat, E2EE, and response-verification
+  returned model attestation, and provides the same Chat, E2EE, and response-verification
   methods without Gateway verification. `DirectAttestationClient` fetches direct
-  reports and signatures for a manual flow.
+  attestations and signatures for a manual flow.
 - `prepareE2eeChatRequest({ request, modelKey })` encrypts a raw Chat request
   using a model public key and returns the request and a JSON/SSE response
   decryptor. Applications verify the model key, send the request, and verify its
@@ -45,7 +45,7 @@ records have a separate 60-minute retention period, configured through
 
 Import from `@nearai/inference-sdk/node` for Node.js with endpoint TLS verification
 and subsequent request pinning. The direct client allows TLS keys from the
-verified reports sharing its selected model signer; the Gateway client pins
+verified model attestations sharing its selected model signer; the Gateway client pins
 the Gateway key.
 Use `@nearai/inference-sdk` in browsers, where
 Fetch does not expose the TLS peer certificate. The package publishes ESM and

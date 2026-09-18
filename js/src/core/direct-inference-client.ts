@@ -1,4 +1,4 @@
-import type { FetchedDirectAttestationReport } from '../types/direct-api';
+import type { FetchedDirectModelAttestations } from '../types/direct-api';
 import type {
   DirectInferenceClientOptions,
   NodeDirectInferenceClientOptions,
@@ -11,7 +11,7 @@ import type {
 } from '../types/direct-verification';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import { verifyDirectAttestationReport } from './attestation-direct';
+import { verifyDirectModelAttestations } from './attestation-direct';
 import { parseSignatureHex, verifyModelResponse } from './chat';
 import { DirectAttestationClient } from './direct-api';
 import {
@@ -34,7 +34,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     this.directOptions = options;
   }
 
-  protected abstract fetchAttestationReport(): Promise<FetchedDirectAttestationReport>;
+  protected abstract fetchModelAttestations(): Promise<FetchedDirectModelAttestations>;
 
   protected abstract createDirectSessionTransport(
     params: CreateDirectSessionTransportParams,
@@ -43,16 +43,15 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
   protected override async createVerificationState(
     model: string,
   ): Promise<InferenceSession<VerifiedDirectCompletionReceipt>> {
-    const fetched = await this.fetchAttestationReport();
-    const report = await verifyDirectAttestationReport({
-      report: fetched.report,
-      clientBinding: fetched.clientBinding,
+    const fetched = await this.fetchModelAttestations();
+    const verifiedModelAttestations = await verifyDirectModelAttestations({
+      ...fetched,
       policy: this.directOptions.modelVerification?.policy,
       verifiers: this.getModelVerifiers(model),
     });
-    // Every report is verified before choosing an encryption key. Reports
+    // Every attestation is verified before choosing an encryption key. Entries
     // sharing a key may still have different deployment measurements.
-    const modelAttestation = report.attestations.find(
+    const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         candidate.signingPublicKey !== undefined,
@@ -63,7 +62,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     const signingAddress = hexToBuffer(modelAttestation.signer.signingAddress);
     // Encryption, TLS pins and response verification use the same signer
     // group, retaining every verified deployment that shares the selected key.
-    const attestations = report.attestations.filter(
+    const attestations = verifiedModelAttestations.attestations.filter(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         hexToBuffer(candidate.signer.signingAddress).equals(signingAddress),
@@ -75,7 +74,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       },
       transport: this.createDirectSessionTransport({
         attestations,
-        tlsBinding: report.tlsBinding,
+        tlsBinding: verifiedModelAttestations.tlsBinding,
       }),
       verifyResponse: ({
         completionId,
@@ -109,8 +108,8 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
     this.attestationClient = new DirectAttestationClient(options);
   }
 
-  protected override fetchAttestationReport(): Promise<FetchedDirectAttestationReport> {
-    return this.attestationClient.fetchAttestationReport({
+  protected override fetchModelAttestations(): Promise<FetchedDirectModelAttestations> {
+    return this.attestationClient.fetchModelAttestations({
       signingAlgo: this.signingAlgo,
       includeSpkiFingerprint: false,
     });
@@ -128,7 +127,7 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
 }
 
 /**
- * Verify the exact completion bytes and return the verified reports sharing
+ * Verify the exact completion bytes and return the verified attestations sharing
  * its signer. A shared signing key does not identify an individual CVM.
  */
 export function verifyDirectModelResponse({

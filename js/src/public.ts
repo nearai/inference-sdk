@@ -10,21 +10,21 @@ export {
 } from './core/direct-inference-client';
 export {
   verifyDirectModelAttestation,
-  verifyDirectAttestationReport,
+  verifyDirectModelAttestations,
 } from './core/attestation-direct';
 export type {
   DirectAttestationClientOptions,
-  DirectAttestationReport,
   DirectClientBinding,
   DirectModelAttestation,
-  FetchedDirectAttestationReport,
+  DirectModelAttestations,
+  FetchedDirectModelAttestations,
 } from './types/direct-api';
 export type {
   VerifiedDirectModelAttestation,
-  VerifiedDirectAttestationReport,
+  VerifiedDirectModelAttestations,
   DirectTlsBinding,
   VerifyDirectModelAttestationParams,
-  VerifyDirectAttestationReportParams,
+  VerifyDirectModelAttestationsParams,
 } from './types/direct-verification';
 export type {
   DirectInferenceClientOptions,

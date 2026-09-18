@@ -1,14 +1,14 @@
 import {
-  decodeDirectAttestationReport,
+  decodeDirectModelAttestations,
   decodeDirectCompletionSignature,
 } from '../boundaries/direct-api';
 import type { CompletionSignature } from '../types/chat';
 import type { FetchCompletionSignatureParams } from '../types/cloud-api';
 import type {
   DirectAttestationClientOptions,
-  FetchDirectAttestationReportParams,
-  FetchedDirectAttestationReport,
-  NodeFetchDirectAttestationReportParams,
+  FetchDirectModelAttestationsParams,
+  FetchedDirectModelAttestations,
+  NodeFetchDirectModelAttestationsParams,
 } from '../types/direct-api';
 import { generateNonce } from '../utils/common';
 import { ApiError, isVerificationError } from '../utils/errors';
@@ -22,8 +22,8 @@ import {
   validateApiSigningAddress,
 } from './cloud-api';
 
-type FetchDirectAttestationRequestParams =
-  NodeFetchDirectAttestationReportParams & {
+type FetchDirectModelAttestationsRequestParams =
+  NodeFetchDirectModelAttestationsParams & {
     readonly includeSpkiFingerprint: boolean;
   };
 
@@ -78,11 +78,11 @@ export class DirectApiClient {
     );
   }
 
-  protected async fetchAttestationReportWithOptions({
+  protected async fetchModelAttestationsWithOptions({
     signingAlgo,
     signingAddress,
     includeSpkiFingerprint,
-  }: FetchDirectAttestationRequestParams): Promise<FetchedDirectAttestationReport> {
+  }: FetchDirectModelAttestationsRequestParams): Promise<FetchedDirectModelAttestations> {
     if (signingAddress !== undefined) {
       validateApiSigningAddress({
         signingAddress,
@@ -117,15 +117,15 @@ export class DirectApiClient {
         { cause },
       );
     }
-    const report = decodeDirectAttestationReport(
+    const modelAttestations = decodeDirectModelAttestations(
       await readCloudApiJson({
         response: result.response,
         resource: 'model_attestation',
       }),
     );
     for (const [index, attestation] of [
-      report.attestation,
-      ...report.attestations,
+      modelAttestations.servingAttestation,
+      ...modelAttestations.attestations,
     ].entries()) {
       requireMatchingApiNonce({
         reportedNonce: attestation.nonce,
@@ -147,7 +147,7 @@ export class DirectApiClient {
       }
     }
     return {
-      report,
+      ...modelAttestations,
       clientBinding: {
         nonce,
         ...(result.peerSpkiFingerprint === undefined
@@ -179,12 +179,12 @@ export class DirectApiClient {
 
 /** Fetch direct provider evidence with standard Fetch (without TLS peer access). */
 export class DirectAttestationClient extends DirectApiClient {
-  async fetchAttestationReport({
+  async fetchModelAttestations({
     signingAlgo,
     signingAddress,
     includeSpkiFingerprint = false,
-  }: FetchDirectAttestationReportParams = {}): Promise<FetchedDirectAttestationReport> {
-    return this.fetchAttestationReportWithOptions({
+  }: FetchDirectModelAttestationsParams = {}): Promise<FetchedDirectModelAttestations> {
+    return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
       includeSpkiFingerprint,

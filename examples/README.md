@@ -19,8 +19,8 @@ Each entry point includes non-streaming and streaming calls:
 | `bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
-| `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies all returned model reports, then verifies responses by ID. | Enabled |
-| `direct-bare.ts` | Fetches and verifies direct model reports, pins Chat to their TLS keys, and verifies exact response bytes. | Not implemented |
+| `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies all returned model attestations, then verifies responses by ID. | Enabled |
+| `direct-bare.ts` | Fetches and verifies direct model attestations, pins Chat to their TLS keys, and verifies exact response bytes. | Not implemented |
 
 The first three connect through the Gateway and verify its TLS identity.
 The inference clients also pin later
@@ -62,17 +62,11 @@ pnpm --dir examples/example-js start:direct-client
 pnpm --dir examples/example-js start:direct-bare
 ```
 
-Both verify every returned model report and compare the top-level report's TLS
-key with the observed peer. `DirectInferenceClient` selects a model key for
-routing and E2EE, pins later requests to that signer's verified TLS keys, and
-requires response signatures from the same signer. The bare example sends
-plaintext over HTTPS, accepts all verified instance TLS keys, and selects the
-matching reports when verifying the response signature. Neither identifies a
-unique CVM when reports share a signing key.
-
-A load-balanced endpoint must supply the reports for the instances it routes to.
-If a later connection presents a TLS key absent from the verified reports, the
-request is blocked with `binding.spki_fingerprint_mismatch`.
+Both verify every returned model attestation and bind the endpoint's TLS key in
+Node. `DirectInferenceClient` selects a model key for routing and E2EE, pins
+later requests to that signer's verified TLS keys, and requires response
+signatures from the same signer. The bare example sends plaintext over HTTPS
+and selects matching attestations when verifying the response signature.
 
 ### Image provenance
 
@@ -103,8 +97,8 @@ Gateway/model attestation and image-check failures block both Chat modes.
 the `start:client` and `start:bare` commands above.
 
 These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image or model-weight
-provenance. Direct reports retain Compose Manager evidence as opaque data.
+verify Compose Manager runtime state, GLM runtime-image, or model-weight
+provenance.
 
 ## Python
 

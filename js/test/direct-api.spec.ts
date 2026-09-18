@@ -5,7 +5,7 @@ import {
 } from '../src/core/direct-api';
 import type {
   DirectAttestationClientOptions,
-  NodeFetchDirectAttestationReportParams,
+  NodeFetchDirectModelAttestationsParams,
 } from '../src/types/direct-api';
 
 const baseUrl = 'https://model.example/v1';
@@ -64,11 +64,11 @@ function directFor(
 }
 
 class CapturingDirectClient extends DirectApiClient {
-  fetchAttestationReport({
+  fetchModelAttestations({
     includeSpkiFingerprint = true,
     ...params
-  }: NodeFetchDirectAttestationReportParams = {}) {
-    return this.fetchAttestationReportWithOptions({
+  }: NodeFetchDirectModelAttestationsParams = {}) {
+    return this.fetchModelAttestationsWithOptions({
       ...params,
       includeSpkiFingerprint,
     });
@@ -92,7 +92,7 @@ describe('DirectAttestationClient', () => {
     jest.restoreAllMocks();
   });
 
-  test('preserves reports with a shared signer and reuses an identical root', async () => {
+  test('preserves model attestations with a shared signer and reuses identical serving evidence', async () => {
     const api = directFor((request) => {
       const report = reportFor(request);
       // Both supported tcb_info wire forms normalize to the same evidence.
@@ -104,18 +104,19 @@ describe('DirectAttestationClient', () => {
         },
       });
     });
-    const { report, clientBinding } = await api.client.fetchAttestationReport({
-      signingAlgo: 'ed25519',
-      signingAddress,
-    });
+    const { servingAttestation, attestations, clientBinding } =
+      await api.client.fetchModelAttestations({
+        signingAlgo: 'ed25519',
+        signingAddress,
+      });
 
-    expect(report.attestations).toHaveLength(2);
-    expect(report.attestation).toBe(report.attestations[0]);
-    expect(report.attestations.map((item) => item.instanceId)).toEqual([
+    expect(attestations).toHaveLength(2);
+    expect(servingAttestation).toBe(attestations[0]);
+    expect(attestations.map((item) => item.instanceId)).toEqual([
       'instance-a',
       'instance-b',
     ]);
-    expect(report.attestation).toEqual({
+    expect(servingAttestation).toEqual({
       nonce: clientBinding.nonce,
       signer: { signingAlgo: 'ed25519', signingAddress },
       intelQuote: 'aa',
@@ -127,7 +128,6 @@ describe('DirectAttestationClient', () => {
       modelName: 'provider-model',
       instanceId: 'instance-a',
     });
-    expect(report.composeManagerAttestation).toEqual({ opaque: 'evidence' });
     const request = api.requests[0];
     const url = new URL(request.url);
     expect(url.pathname).toBe('/v1/attestation/report');
@@ -143,22 +143,23 @@ describe('DirectAttestationClient', () => {
       nonce: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
 
-    const next = await api.client.fetchAttestationReport();
+    const next = await api.client.fetchModelAttestations();
     expect(next.clientBinding.nonce).not.toBe(clientBinding.nonce);
   });
 
-  test('does not substitute a root with different evidence from the same instance', async () => {
+  test('does not substitute serving evidence with a different attestation from the same instance', async () => {
     const api = directFor((request) =>
       jsonResponse({ ...reportFor(request), intel_quote: 'bb' }),
     );
-    const { report } = await api.client.fetchAttestationReport();
-    expect(report.attestation).not.toBe(report.attestations[0]);
-    expect(report.attestation.intelQuote).toBe('bb');
-    expect(report.attestations[0].intelQuote).toBe('aa');
+    const { servingAttestation, attestations } =
+      await api.client.fetchModelAttestations();
+    expect(servingAttestation).not.toBe(attestations[0]);
+    expect(servingAttestation.intelQuote).toBe('bb');
+    expect(attestations[0].intelQuote).toBe('aa');
   });
 
   test.each(['root', 0, 1] as const)(
-    'checks the fresh nonce in report %s',
+    'checks the fresh nonce in model attestation %s',
     async (target) => {
       const api = directFor((request) => {
         const report = reportFor(request);
@@ -167,7 +168,7 @@ describe('DirectAttestationClient', () => {
         entry.request_nonce = '00'.repeat(32);
         return jsonResponse(report);
       });
-      await expect(api.client.fetchAttestationReport()).rejects.toMatchObject({
+      await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
         name: 'ApiError',
         failure: { code: 'api.nonce_mismatch' },
       });
@@ -175,12 +176,12 @@ describe('DirectAttestationClient', () => {
   );
 
   test.each([undefined, []])(
-    'rejects a missing or empty report array: %p',
+    'rejects a missing or empty model-attestation array: %p',
     async (entries) => {
       const api = directFor((request) =>
         jsonResponse({ ...reportFor(request), all_attestations: entries }),
       );
-      await expect(api.client.fetchAttestationReport()).rejects.toMatchObject({
+      await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
         name: 'ApiError',
         failure: {
           code: 'api.invalid_response',
@@ -209,7 +210,7 @@ describe('DirectAttestationClient', () => {
       });
       const client = new CapturingDirectClient({ baseUrl });
       await expect(
-        client.fetchAttestationReport({ includeSpkiFingerprint: include }),
+        client.fetchModelAttestations({ includeSpkiFingerprint: include }),
       ).rejects.toMatchObject({
         name: 'ApiError',
         failure: {
@@ -231,14 +232,15 @@ describe('DirectAttestationClient', () => {
       return jsonResponse(report);
     });
     const client = new CapturingDirectClient({ baseUrl });
-    const result = await client.fetchAttestationReport();
+    const result = await client.fetchModelAttestations();
     expect(
       new URL(api.requests[0].url).searchParams.get('include_tls_fingerprint'),
     ).toBe('true');
     expect(result.clientBinding.spkiFingerprint).toBe(spkiFingerprint);
-    expect(
-      result.report.attestations.map((entry) => entry.spkiFingerprint),
-    ).toEqual([spkiFingerprint, spkiFingerprint]);
+    expect(result.attestations.map((entry) => entry.spkiFingerprint)).toEqual([
+      spkiFingerprint,
+      spkiFingerprint,
+    ]);
   });
 
   test.each([
@@ -252,7 +254,7 @@ describe('DirectAttestationClient', () => {
         apiKey,
         headers: { Authorization: 'Bearer proxy-token', 'x-tenant': 'tenant' },
       });
-      await api.client.fetchAttestationReport();
+      await api.client.fetchModelAttestations();
       expect(api.requests[0].headers.get('authorization')).toBe(expected);
       expect(api.requests[0].headers.get('x-tenant')).toBe('tenant');
     },

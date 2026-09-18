@@ -1,7 +1,6 @@
 import type {
-  DirectAttestationReport,
-  DirectClientBinding,
   DirectModelAttestation,
+  FetchedDirectModelAttestations,
 } from './direct-api';
 import type {
   GatewayTlsBinding,
@@ -18,30 +17,32 @@ export type VerifyDirectModelAttestationParams = {
   readonly verifiers?: ModelAttestationVerifiers;
 };
 
-/** One model report, independently verified without observing its TLS peer. */
+/** One model attestation, independently verified without observing its TLS peer. */
 export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
-  /** Report metadata, not a model-name claim authenticated by the quote. */
+  /** Metadata, not a model-name claim authenticated by the quote. */
   readonly modelName: string;
-  /** Report metadata identifying the instance, when supplied by the endpoint. */
+  /** Instance metadata, when supplied by the endpoint. */
   readonly instanceId?: string;
   /** Quote-authenticated SPKI fingerprint; not necessarily the observed TLS peer. */
   readonly spkiFingerprint?: string;
 };
 
-export type VerifyDirectAttestationReportParams = {
-  readonly report: DirectAttestationReport;
-  readonly clientBinding: DirectClientBinding;
-  readonly policy?: ModelAttestationPolicy;
-  readonly verifiers?: ModelAttestationVerifiers;
-};
+export type VerifyDirectModelAttestationsParams =
+  FetchedDirectModelAttestations & {
+    readonly policy?: ModelAttestationPolicy;
+    readonly verifiers?: ModelAttestationVerifiers;
+  };
 
-/** TLS identity of the direct endpoint that returned the report. */
+/** TLS identity of the direct endpoint that returned the attestation. */
 export type DirectTlsBinding = GatewayTlsBinding;
 
-/** Every supplied model report passed, plus the serving endpoint's TLS binding. */
-export type VerifiedDirectAttestationReport = {
-  readonly attestation: VerifiedDirectModelAttestation;
+/** Every supplied model attestation passed, plus the serving endpoint's TLS binding. */
+export type VerifiedDirectModelAttestations = {
+  /** The verified top-level attestation returned by the serving endpoint. */
+  readonly servingAttestation: VerifiedDirectModelAttestation;
   readonly attestations: readonly VerifiedDirectModelAttestation[];
-  /** Only the top-level report is compared with the TLS peer of this request. */
+  /** Only the serving attestation is compared with the TLS peer of this request. */
   readonly tlsBinding: DirectTlsBinding;
+  /** Quote-authenticated SPKI fingerprints from every returned model attestation. */
+  readonly spkiFingerprints: readonly string[];
 };

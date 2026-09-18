@@ -1,7 +1,7 @@
 import type {
-  VerifiedDirectAttestationReport,
+  VerifiedDirectModelAttestations,
   VerifiedDirectModelAttestation,
-  VerifyDirectAttestationReportParams,
+  VerifyDirectModelAttestationsParams,
   VerifyDirectModelAttestationParams,
 } from '../types/direct-verification';
 import { VerificationError } from '../utils/errors';
@@ -14,7 +14,7 @@ import { verifyModelDeployment } from './attestation-model';
 import { verifyDstackQuote } from './dstack-attestation';
 
 /**
- * Verify one direct model report. Its optional fingerprint is authenticated by
+ * Verify one direct model attestation. Its optional fingerprint is authenticated by
  * the quote, without claiming a connection to that individual instance.
  */
 export async function verifyDirectModelAttestation({
@@ -64,21 +64,23 @@ export async function verifyDirectModelAttestation({
 }
 
 /**
- * Verify every supplied instance report, then bind the top-level report to the
- * TLS peer observed for this request. Shared signing keys do not make reports
- * interchangeable: each instance's measurements and GPU evidence are checked.
+ * Verify every supplied model attestation, then bind the serving attestation
+ * to the TLS peer observed for this request. Shared signing keys do not make
+ * instances interchangeable: each instance's measurements and GPU evidence
+ * are checked.
  */
-export async function verifyDirectAttestationReport({
-  report,
+export async function verifyDirectModelAttestations({
+  servingAttestation,
+  attestations: suppliedAttestations,
   clientBinding,
   policy,
   verifiers,
-}: VerifyDirectAttestationReportParams): Promise<VerifiedDirectAttestationReport> {
-  if (report.attestations.length === 0) {
+}: VerifyDirectModelAttestationsParams): Promise<VerifiedDirectModelAttestations> {
+  if (suppliedAttestations.length === 0) {
     throw new VerificationError({ code: 'policy.model_attestation_required' });
   }
   const attestations: VerifiedDirectModelAttestation[] = [];
-  for (const attestation of report.attestations) {
+  for (const attestation of suppliedAttestations) {
     const verified = await verifyDirectModelAttestation({
       attestation,
       clientBinding,
@@ -88,33 +90,58 @@ export async function verifyDirectAttestationReport({
     attestations.push(verified);
   }
 
-  // The HTTP decoder reuses the array entry when it is identical to the root.
+  // The HTTP decoder reuses the array entry when it is identical to the
+  // serving attestation.
   // Reuse only that object, never another instance with the same signer.
-  const rootIndex = report.attestations.indexOf(report.attestation);
-  const attestation =
-    attestations[rootIndex] ??
+  const servingIndex = suppliedAttestations.indexOf(servingAttestation);
+  const verifiedServingAttestation =
+    attestations[servingIndex] ??
     (await verifyDirectModelAttestation({
-      attestation: report.attestation,
+      attestation: servingAttestation,
       clientBinding,
       policy,
       verifiers,
     }));
 
-  let tlsBinding: VerifiedDirectAttestationReport['tlsBinding'];
-  if (attestation.spkiFingerprint !== undefined) {
+  let tlsBinding: VerifiedDirectModelAttestations['tlsBinding'];
+  if (verifiedServingAttestation.spkiFingerprint !== undefined) {
     const peerSpkiFingerprint = clientBinding.spkiFingerprint;
     if (peerSpkiFingerprint === undefined) {
       throw new VerificationError({
         code: 'binding.spki_fingerprint_required',
       });
     }
-    verifyPeerSpkiFingerprint(attestation.spkiFingerprint, peerSpkiFingerprint);
+    verifyPeerSpkiFingerprint(
+      verifiedServingAttestation.spkiFingerprint,
+      peerSpkiFingerprint,
+    );
     tlsBinding = {
       kind: 'attested',
-      spkiFingerprint: attestation.spkiFingerprint,
+      spkiFingerprint: verifiedServingAttestation.spkiFingerprint,
     };
   } else {
     tlsBinding = { kind: 'none' };
   }
-  return { attestation, attestations, tlsBinding };
+  return {
+    servingAttestation: verifiedServingAttestation,
+    attestations,
+    tlsBinding,
+    spkiFingerprints: getDirectSpkiFingerprints([
+      verifiedServingAttestation,
+      ...attestations,
+    ]),
+  };
+}
+
+/** Return distinct quote-authenticated SPKI fingerprints in response order. */
+export function getDirectSpkiFingerprints(
+  attestations: readonly VerifiedDirectModelAttestation[],
+): readonly string[] {
+  const fingerprints = new Set<string>();
+  for (const attestation of attestations) {
+    if (attestation.spkiFingerprint !== undefined) {
+      fingerprints.add(attestation.spkiFingerprint);
+    }
+  }
+  return [...fingerprints];
 }

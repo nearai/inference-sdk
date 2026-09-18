@@ -1,7 +1,7 @@
 import {
   DirectAttestationClient,
   createPinnedTlsFetch,
-  verifyDirectAttestationReport,
+  verifyDirectModelAttestations,
   verifyDirectModelResponse,
   type VerifiedDirectModelAttestation,
 } from '@nearai/inference-sdk/node';
@@ -18,22 +18,19 @@ async function main(): Promise<void> {
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
   const client = new DirectAttestationClient({ apiKey, baseUrl: BASE_URL });
-  const fetched = await client.fetchAttestationReport({
+  const fetched = await client.fetchModelAttestations({
     signingAlgo: SIGNING_ALGO,
   });
-  const verified = await verifyDirectAttestationReport({
-    report: fetched.report,
-    clientBinding: fetched.clientBinding,
-  });
-  console.log(`Verified ${verified.attestations.length} direct model reports.`);
-
-  // The full report verifier authenticates every reported fingerprint, but
-  // compares only the root report with the TLS peer observed during fetching.
-  // Later Chat connections may use any of the verified instance keys.
-  const fingerprints = verified.attestations.flatMap(({ spkiFingerprint }) =>
-    spkiFingerprint === undefined ? [] : [spkiFingerprint],
+  const verified = await verifyDirectModelAttestations(fetched);
+  console.log(
+    `Verified ${verified.attestations.length} direct model attestations.`,
   );
-  const pinnedTlsFetch = createPinnedTlsFetch(fingerprints);
+
+  if (verified.tlsBinding.kind !== 'attested') {
+    throw new Error('Expected TLS-bound direct model attestations');
+  }
+  // Pin Chat requests to the verified endpoint TLS keys.
+  const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
   const params: CompletionExampleParams = {
     apiKey,
     client,
@@ -139,9 +136,9 @@ async function verifyResponse({
     signature,
     attestations,
   });
-  // Keep all matching reports: a shared signing key does not select one CVM.
+  // Keep every verified attestation matching the response signer.
   console.log(
-    `Verified model response against ${matching.length} matching reports.`,
+    `Verified model response against ${matching.length} matching attestations.`,
   );
 }
 

@@ -14,12 +14,11 @@ export type DirectModelAttestation = ModelAttestation & {
   readonly spkiFingerprint?: string;
 };
 
-/** The top-level report and every entry supplied in all_attestations. */
-export type DirectAttestationReport = {
-  readonly attestation: DirectModelAttestation;
+/** The serving attestation and every instance attestation supplied by a direct endpoint. */
+export type DirectModelAttestations = {
+  /** The top-level attestation returned by the endpoint serving this request. */
+  readonly servingAttestation: DirectModelAttestation;
   readonly attestations: readonly DirectModelAttestation[];
-  /** Opaque Compose Manager evidence; not verified by model verification. */
-  readonly composeManagerAttestation?: unknown;
 };
 
 /** Locally generated nonce and, in Node, the observed TLS peer SPKI hash. */
@@ -28,8 +27,7 @@ export type DirectClientBinding = {
   readonly spkiFingerprint?: string;
 };
 
-export type FetchedDirectAttestationReport = {
-  readonly report: DirectAttestationReport;
+export type FetchedDirectModelAttestations = DirectModelAttestations & {
   readonly clientBinding: DirectClientBinding;
 };
 
@@ -40,14 +38,14 @@ export type DirectAttestationClientOptions = {
   readonly headers?: HeadersInit;
 };
 
-export type FetchDirectAttestationReportParams = {
+export type FetchDirectModelAttestationsParams = {
   readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
   /** Standard Fetch cannot observe the TLS peer certificate. */
   readonly includeSpkiFingerprint?: false;
 };
 
-export type NodeFetchDirectAttestationReportParams = {
+export type NodeFetchDirectModelAttestationsParams = {
   readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
   readonly includeSpkiFingerprint?: boolean;

@@ -253,9 +253,9 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 ## Use a direct model endpoint
 
 `DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
-It verifies the top-level report and every entry in `all_attestations` before
-sending Chat. E2EE defaults to enabled with Ed25519, and both cache defaults are
-60 minutes, just as for `InferenceClient`.
+It fetches and verifies the endpoint's model attestations before sending Chat.
+E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
+just as for `InferenceClient`.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -268,14 +268,12 @@ const client = new DirectInferenceClient({
 
 Use `client.chat.completions.create()`, `client.fetch`, and
 `client.verifyResponse(id)` as above. Direct endpoints may require different
-credentials from the Gateway. Their reports do not use the Gateway response
-envelope, so they have separate fetch and verification APIs.
+credentials from the Gateway and use separate fetch and verification APIs.
 
 The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. The Node client verifies the observed TLS peer
-against the top-level report and pins later requests to TLS keys from the
-verified reports sharing that signer. Different instances may use different TLS
-keys. The generic browser client cannot observe TLS certificates
+must match that selected signer. The Node client also verifies the endpoint's
+TLS identity and pins later requests to the verified keys for that signer. The
+generic browser client cannot observe TLS certificates
 and only supports `modelVerification.includeSpkiFingerprint: false`. Node
 defaults to `true`; set it to `false` when TLS binding is unavailable, such as
 when connecting through a proxy.
@@ -286,41 +284,30 @@ when connecting through a proxy.
 import {
   DirectAttestationClient,
   createPinnedTlsFetch,
-  verifyDirectAttestationReport,
+  verifyDirectModelAttestations,
 } from '@nearai/inference-sdk/node';
 
 const client = new DirectAttestationClient({
   baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
   apiKey: process.env.NEARAI_API_KEY,
 });
-const fetched = await client.fetchAttestationReport({ signingAlgo: 'ed25519' });
-const verified = await verifyDirectAttestationReport({
-  report: fetched.report,
-  clientBinding: fetched.clientBinding,
-});
-const fingerprints = verified.attestations.flatMap(({ spkiFingerprint }) =>
-  spkiFingerprint === undefined ? [] : [spkiFingerprint],
-);
-const pinnedTlsFetch = createPinnedTlsFetch(fingerprints);
+const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
+const verified = await verifyDirectModelAttestations(fetched);
+if (verified.tlsBinding.kind !== 'attested') {
+  throw new Error('Expected TLS-bound direct model attestations');
+}
+const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
 ```
 
 Send Chat with `pinnedTlsFetch` and retain the exact request and response bytes.
 Then fetch its signature with `client.fetchCompletionSignature()` and pass the
 signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
-It returns all verified reports sharing the response's signer. A signing key
-shared by several CVMs does not identify which CVM handled the request.
+It returns all verified attestations sharing the response's signer.
 
-For one report, `verifyDirectModelAttestation()` checks its quote, nonce,
-measurements, available GPU evidence, and any declared SPKI binding. Only the full-report
-verifier compares the top-level report with the client-observed TLS peer; it does
-not claim to have connected to every reported instance.
-
-Verification covers the reports returned by the endpoint; the SDK cannot prove
-that `all_attestations` lists the entire fleet. If a later connection reaches an
-instance whose TLS key is missing from those reports, it fails with
-`binding.spki_fingerprint_mismatch` before sending the request.
-`compose_manager_attestation` is retained as opaque data, not verified as current
-runtime state.
+For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
+measurements, available GPU evidence, and any reported SPKI binding.
+`verifyDirectModelAttestations()` also verifies the observed TLS peer when SPKI
+evidence is enabled.
 
 The runnable [direct-client.ts](../../examples/example-js/direct-client.ts) and
 [direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each include

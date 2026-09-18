@@ -1,10 +1,11 @@
+import { getDirectSpkiFingerprints } from '../core/attestation-direct';
 import { DirectApiClient } from '../core/direct-api';
 import {
   DirectInferenceClientBase,
   type CreateDirectSessionTransportParams,
 } from '../core/direct-inference-client';
 import type { InferenceSessionTransport } from '../core/inference-client';
-import type { FetchedDirectAttestationReport } from '../types/direct-api';
+import type { FetchedDirectModelAttestations } from '../types/direct-api';
 import type { NodeDirectInferenceClientOptions } from '../types/direct-inference-client';
 import { createPinnedTlsFetch } from './attestation-client';
 import { DirectAttestationClient } from './direct-attestation-client';
@@ -33,8 +34,8 @@ export class NodeDirectInferenceClient extends DirectInferenceClientBase {
     this.attestationClient = new DirectAttestationClient(options);
   }
 
-  protected override fetchAttestationReport(): Promise<FetchedDirectAttestationReport> {
-    return this.attestationClient.fetchAttestationReport({
+  protected override fetchModelAttestations(): Promise<FetchedDirectModelAttestations> {
+    return this.attestationClient.fetchModelAttestations({
       signingAlgo: this.signingAlgo,
       includeSpkiFingerprint:
         this.nodeOptions.modelVerification?.includeSpkiFingerprint ?? true,
@@ -45,11 +46,7 @@ export class NodeDirectInferenceClient extends DirectInferenceClientBase {
     attestations,
     tlsBinding,
   }: CreateDirectSessionTransportParams): InferenceSessionTransport {
-    const fingerprints = attestations.flatMap((candidate) =>
-      candidate.spkiFingerprint === undefined
-        ? []
-        : [candidate.spkiFingerprint],
-    );
+    const fingerprints = getDirectSpkiFingerprints(attestations);
     const pinnedTlsFetch =
       tlsBinding.kind === 'attested'
         ? createPinnedTlsFetch(fingerprints)

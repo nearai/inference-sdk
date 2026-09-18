@@ -6,7 +6,7 @@ import {
 import type { CompletionSignature } from '../types/chat';
 import type {
   DirectApiModelAttestation,
-  DirectAttestationReport,
+  DirectModelAttestations,
   DirectModelAttestation,
 } from '../types/direct-api';
 import {
@@ -15,10 +15,10 @@ import {
   mapModelAttestation,
 } from './cloud-api';
 
-/** Decode the provider's flattened root report and its complete report array. */
-export function decodeDirectAttestationReport(
+/** Decode the serving attestation and its complete model-attestation array. */
+export function decodeDirectModelAttestations(
   value: unknown,
-): DirectAttestationReport {
+): DirectModelAttestations {
   const parsed = v.safeParse(DirectApiAttestationReportSchema, value);
   if (!parsed.success) {
     throw invalidCloudApiResponse({
@@ -39,11 +39,8 @@ export function decodeDirectAttestationReport(
       (candidate) => JSON.stringify(candidate) === serializedRoot,
     ) ?? root;
   return {
-    attestation,
+    servingAttestation: attestation,
     attestations,
-    ...(response.compose_manager_attestation === undefined
-      ? {}
-      : { composeManagerAttestation: response.compose_manager_attestation }),
   };
 }
 

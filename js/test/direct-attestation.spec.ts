@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import {
-  verifyDirectAttestationReport,
+  verifyDirectModelAttestations,
   verifyDirectModelAttestation,
 } from '../src/core/attestation-direct';
 import type { DirectModelAttestation } from '../src/types/direct-api';
@@ -152,8 +152,8 @@ describe('direct model attestation verification', () => {
   );
 });
 
-describe('direct attestation report verification', () => {
-  test('verifies each instance sharing a signer and compares only the root with the TLS peer', async () => {
+describe('direct model attestations verification', () => {
+  test('verifies every attestation and binds only the serving attestation to the TLS peer', async () => {
     const first = createDirectAttestation({ spkiFingerprint: tlsFingerprint });
     const second = createDirectAttestation({
       instanceId: 'instance-b',
@@ -163,8 +163,9 @@ describe('direct attestation report verification', () => {
     });
     const checkedDeployments: MeasuredDeployment[] = [];
 
-    const verified = await verifyDirectAttestationReport({
-      report: { attestation: first, attestations: [first, second] },
+    const verified = await verifyDirectModelAttestations({
+      servingAttestation: first,
+      attestations: [first, second],
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: {
         quote: (quote) => quoteFor(quote === first.intelQuote ? first : second),
@@ -182,14 +183,18 @@ describe('direct attestation report verification', () => {
       first.appCompose,
       second.appCompose,
     ]);
-    expect(verified.attestation).toBe(verified.attestations[0]);
+    expect(verified.servingAttestation).toBe(verified.attestations[0]);
     expect(verified.tlsBinding).toEqual({
       kind: 'attested',
       spkiFingerprint: tlsFingerprint,
     });
+    expect(verified.spkiFingerprints).toEqual([
+      tlsFingerprint,
+      '44'.repeat(32),
+    ]);
   });
 
-  test('rejects the whole report when another instance fails deployment verification', async () => {
+  test('rejects every supplied attestation when another instance fails deployment verification', async () => {
     const first = createDirectAttestation();
     const second = createDirectAttestation({
       instanceId: 'instance-b',
@@ -198,8 +203,9 @@ describe('direct attestation report verification', () => {
     const tampered = { ...second, appCompose: '{"tampered":true}' };
 
     await expect(
-      verifyDirectAttestationReport({
-        report: { attestation: first, attestations: [first, tampered] },
+      verifyDirectModelAttestations({
+        servingAttestation: first,
+        attestations: [first, tampered],
         clientBinding: { nonce },
         verifiers: {
           quote: (quote) =>
@@ -215,15 +221,16 @@ describe('direct attestation report verification', () => {
     [undefined, 'binding.spki_fingerprint_required'],
     ['44'.repeat(32), 'binding.spki_fingerprint_mismatch'],
   ])(
-    'rejects a root report without a matching peer observation: %s',
+    'rejects a serving attestation without a matching peer observation: %s',
     async (spkiFingerprint, code) => {
       const attestation = createDirectAttestation({
         spkiFingerprint: tlsFingerprint,
       });
 
       await expect(
-        verifyDirectAttestationReport({
-          report: { attestation, attestations: [attestation] },
+        verifyDirectModelAttestations({
+          servingAttestation: attestation,
+          attestations: [attestation],
           clientBinding: { nonce, spkiFingerprint },
           verifiers: { quote: () => quoteFor(attestation) },
         }),
@@ -233,22 +240,25 @@ describe('direct attestation report verification', () => {
 
   test('verifies signer-and-nonce evidence without a TLS binding', async () => {
     const attestation = createDirectAttestation();
-    const verified = await verifyDirectAttestationReport({
-      report: { attestation, attestations: [attestation] },
+    const verified = await verifyDirectModelAttestations({
+      servingAttestation: attestation,
+      attestations: [attestation],
       clientBinding: { nonce },
       verifiers: { quote: () => quoteFor(attestation) },
     });
 
     expect(verified.tlsBinding).toEqual({ kind: 'none' });
+    expect(verified.spkiFingerprints).toEqual([]);
   });
 
-  test('independently verifies a root report that is not an array entry', async () => {
+  test('independently verifies serving evidence that is not an array entry', async () => {
     const instance = createDirectAttestation();
     const root = { ...instance, appCompose: '{"unverified-root":true}' };
 
     await expect(
-      verifyDirectAttestationReport({
-        report: { attestation: root, attestations: [instance] },
+      verifyDirectModelAttestations({
+        servingAttestation: root,
+        attestations: [instance],
         clientBinding: { nonce },
         verifiers: { quote: () => quoteFor(instance) },
       }),
@@ -257,10 +267,11 @@ describe('direct attestation report verification', () => {
     });
   });
 
-  test('requires at least one instance report', async () => {
+  test('requires at least one model attestation', async () => {
     await expect(
-      verifyDirectAttestationReport({
-        report: { attestation: createDirectAttestation(), attestations: [] },
+      verifyDirectModelAttestations({
+        servingAttestation: createDirectAttestation(),
+        attestations: [],
         clientBinding: { nonce },
       }),
     ).rejects.toMatchObject({
