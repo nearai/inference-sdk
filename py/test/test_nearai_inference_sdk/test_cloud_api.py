@@ -79,6 +79,32 @@ async def test_client_rejects_an_invalid_api_key_before_request(
     assert requests == 0
 
 
+@pytest.mark.parametrize('api_key', [None, API_KEY])
+async def test_client_uses_custom_headers_and_prefers_an_explicit_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str | None,
+) -> None:
+    async def fake_fetch(_: str, headers: Mapping[str, str]) -> FetchResponse:
+        assert headers['authorization'] == (
+            'Bearer test' if api_key is not None else 'Bearer aggregator-token'
+        )
+        assert headers['x-tenant'] == 'example'
+        return completion_signature_response(
+            signing_algo='ecdsa', kind='gateway', signing_address=SIGNING_ADDRESS
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
+    client = AttestationClient(
+        api_key,
+        base_url=BASE_URL,
+        headers={'Authorization': 'Bearer aggregator-token', 'X-Tenant': 'example'},
+    )
+
+    signature = await client.fetch_completion_signature('completion-id')
+
+    assert signature.kind == 'gateway'
+
+
 def use_fake_cloud_api_fetch(
     monkeypatch: pytest.MonkeyPatch,
     responder: CloudApiResponder,
@@ -166,7 +192,11 @@ async def test_model_helper_requests_fresh_evidence(
             body=json.dumps(
                 {
                     'model_attestations': [
-                        cloud_attestation(nonce, report_data='44' * 64),
+                        cloud_attestation(
+                            nonce,
+                            report_data='44' * 64,
+                            signing_public_key='55' * 65,
+                        ),
                         cloud_attestation(
                             nonce,
                             signing_address='33' * 20,
@@ -187,6 +217,8 @@ async def test_model_helper_requests_fresh_evidence(
     assert tuple(
         attestation.signer.signing_address for attestation in fetched.attestations
     ) == (SIGNING_ADDRESS, '33' * 20)
+    assert fetched.attestations[0].signing_public_key == '55' * 65
+    assert fetched.attestations[1].signing_public_key is None
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)

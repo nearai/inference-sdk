@@ -13,6 +13,7 @@ class ModelAttestation(AttestationEvidence):
 
     reported_quote_data: str | None = None
     nvidia_payload: str | None = None
+    signing_public_key: str | None = None
 
 
 __all__ = ['ModelAttestation', 'SigningIdentity']

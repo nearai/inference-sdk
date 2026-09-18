@@ -1,8 +1,8 @@
 # nearai-inference-sdk (Python)
 
-Verify NEAR AI Cloud deployment attestations and completion signatures. This
-asynchronous SDK retrieves and verifies evidence; your application sends the
-completion request and retains its exact request and response bytes.
+Verify NEAR AI Cloud deployments, encrypt Chat Completions, and verify their
+response signatures. Use the `asyncio`-based `InferenceClient` for the integrated
+workflow, or combine the public attestation, E2EE, and signature functions.
 
 ## Installation
 
@@ -11,7 +11,7 @@ pip install nearai-inference-sdk
 ```
 
 ```python
-from nearai_inference_sdk import AttestationClient
+from nearai_inference_sdk import InferenceClient
 ```
 
 ## Recommended lifecycle
@@ -63,8 +63,28 @@ the final bytes. In particular, the current Gateway signature over rewritten
 bytes has no provider-response link. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
 tracks the proposed provider signature plus Gateway receipt chain.
 
-The SDK does not send completion requests, choose retry behavior, or turn model
-evidence into a client-to-model TLS claim.
+## Chat client and standalone functions
+
+`InferenceClient.chat.completions.create()` verifies Gateway and model evidence
+before sending Chat, then encrypts and decrypts the protocol-supported fields.
+The same transport works with an external `openai.AsyncOpenAI` client through
+`inference_client.http_client`. Both support JSON and streaming responses.
+
+Ed25519, E2EE, and Gateway TLS verification are enabled by default. ECDSA is
+available through `signing_algo='ecdsa'`. Successful attestations are cached for
+60 minutes; set `attestation_cache_time_to_live_ms=0` to verify every request.
+Optional deployment callbacks can enforce an application-owned approval policy;
+no approved-release allowlist is supplied by default.
+
+Response-signature verification is explicit: call `verify_response(completion_id)`
+after consuming the response. It uses the exact encrypted bytes retained by the
+client, without delaying delivery of decrypted content. Response records expire
+60 minutes after the body finishes by default.
+
+For a custom workflow, `prepare_e2ee_chat_request()` accepts an `httpx.Request`
+and a verified model's public key. It returns the encrypted request and a matching
+JSON/SSE decryptor. The helper performs no requests or attestation verification.
+Keep the encrypted bytes, not reserialized plaintext, for response verification.
 
 Create an `AttestationClient` with the Gateway API key once. Its asynchronous
 methods retrieve signatures and evidence; selection and verification are
@@ -109,6 +129,11 @@ that an inference should be replayed.
 `ApiError`. A 2xx response that reports an unavailable signature raises
 `api.completion_signature_unavailable`; its details preserve the provider's
 error code and message.
+
+`InferenceClient.send()` and `verify_response()` compose retrieval and
+verification, so either SDK error type can occur. The OpenAI Chat interface
+preserves OpenAI's exception behavior: a transport failure is wrapped in
+`openai.APIConnectionError`, with the original failure in `__cause__`.
 
 ## Development checks
 

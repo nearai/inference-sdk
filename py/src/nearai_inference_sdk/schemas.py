@@ -132,6 +132,7 @@ class CloudAttestationSchema(ApiSchema):
 
 class CloudModelAttestationSchema(CloudAttestationSchema):
     nvidia_payload: StrictStr | None = None
+    signing_public_key: StrictStr | None = None
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
@@ -164,6 +165,20 @@ class CompletionRequestModelSchema(ApiSchema):
     """The model identifier embedded in signed completion request bytes."""
 
     model: StrictStr = Field(min_length=1)
+
+
+class ChatCompletionRequestSchema(CompletionRequestModelSchema):
+    """Only identify the model; leave Chat field validation to the server."""
+
+    model_config = ConfigDict(extra='allow', strict=True)
+
+
+class ChatCompletionResponseSchema(RootModel[dict[str, Any]]):
+    model_config = ConfigDict(strict=True)
+
+
+class CompletionResponseIdSchema(ApiSchema):
+    id: StrictStr = Field(min_length=1)
 
 
 class NvidiaPayloadNonceSchema(ApiSchema):
