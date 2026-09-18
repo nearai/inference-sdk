@@ -32,14 +32,21 @@ export function decodeDirectModelAttestations(
     mapDirectAttestation(attestation, `all_attestations[${index}]`),
   );
   const serializedRoot = JSON.stringify(root);
-  // Reuse identical root evidence, but do not collapse array entries based on
-  // signer or instance: either can be shared by distinct reports.
-  const attestation =
-    attestations.find(
-      (candidate) => JSON.stringify(candidate) === serializedRoot,
-    ) ?? root;
+  // The top-level report identifies the endpoint that answered this request.
+  // The complete serving set must contain that same evidence; do not infer it
+  // from a shared signer or instance ID.
+  const servingAttestation = attestations.find(
+    (candidate) => JSON.stringify(candidate) === serializedRoot,
+  );
+  if (servingAttestation === undefined) {
+    throw invalidCloudApiResponse({
+      path: 'all_attestations',
+      expected: 'array containing the top-level attestation',
+      value: response.all_attestations,
+    });
+  }
   return {
-    servingAttestation: attestation,
+    servingAttestation,
     attestations,
   };
 }

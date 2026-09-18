@@ -251,7 +251,7 @@ describe('direct model attestations verification', () => {
     expect(verified.spkiFingerprints).toEqual([]);
   });
 
-  test('independently verifies serving evidence that is not an array entry', async () => {
+  test('requires the serving attestation to be an array entry', async () => {
     const instance = createDirectAttestation();
     const root = { ...instance, appCompose: '{"unverified-root":true}' };
 
@@ -263,7 +263,13 @@ describe('direct model attestations verification', () => {
         verifiers: { quote: () => quoteFor(instance) },
       }),
     ).rejects.toMatchObject({
-      failure: { code: 'measurement.app_compose_mrconfigid_mismatch' },
+      failure: {
+        code: 'input.invalid',
+        details: {
+          field: 'servingAttestation',
+          reason: 'not_in_attestation_set',
+        },
+      },
     });
   });
 

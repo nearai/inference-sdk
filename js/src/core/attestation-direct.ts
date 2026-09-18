@@ -80,6 +80,7 @@ export async function verifyDirectModelAttestations({
     throw new VerificationError({ code: 'policy.model_attestation_required' });
   }
   const attestations: VerifiedDirectModelAttestation[] = [];
+  let verifiedServingAttestation: VerifiedDirectModelAttestation | undefined;
   for (const attestation of suppliedAttestations) {
     const verified = await verifyDirectModelAttestation({
       attestation,
@@ -88,20 +89,20 @@ export async function verifyDirectModelAttestations({
       verifiers,
     });
     attestations.push(verified);
+    if (attestation === servingAttestation) {
+      verifiedServingAttestation = verified;
+    }
   }
 
-  // The HTTP decoder reuses the array entry when it is identical to the
-  // serving attestation.
-  // Reuse only that object, never another instance with the same signer.
-  const servingIndex = suppliedAttestations.indexOf(servingAttestation);
-  const verifiedServingAttestation =
-    attestations[servingIndex] ??
-    (await verifyDirectModelAttestation({
-      attestation: servingAttestation,
-      clientBinding,
-      policy,
-      verifiers,
-    }));
+  if (verifiedServingAttestation === undefined) {
+    throw new VerificationError({
+      code: 'input.invalid',
+      details: {
+        field: 'servingAttestation',
+        reason: 'not_in_attestation_set',
+      },
+    });
+  }
 
   let tlsBinding: VerifiedDirectModelAttestations['tlsBinding'];
   if (verifiedServingAttestation.spkiFingerprint !== undefined) {
@@ -126,10 +127,7 @@ export async function verifyDirectModelAttestations({
     servingAttestation: verifiedServingAttestation,
     attestations,
     tlsBinding,
-    spkiFingerprints: getDirectSpkiFingerprints([
-      verifiedServingAttestation,
-      ...attestations,
-    ]),
+    spkiFingerprints: getDirectSpkiFingerprints(attestations),
   };
 }
 

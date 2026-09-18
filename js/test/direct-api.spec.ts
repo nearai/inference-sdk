@@ -147,33 +147,40 @@ describe('DirectAttestationClient', () => {
     expect(next.clientBinding.nonce).not.toBe(clientBinding.nonce);
   });
 
-  test('does not substitute serving evidence with a different attestation from the same instance', async () => {
+  test('rejects a serving attestation absent from the complete attestation set', async () => {
     const api = directFor((request) =>
       jsonResponse({ ...reportFor(request), intel_quote: 'bb' }),
     );
-    const { servingAttestation, attestations } =
-      await api.client.fetchModelAttestations();
-    expect(servingAttestation).not.toBe(attestations[0]);
-    expect(servingAttestation.intelQuote).toBe('bb');
-    expect(attestations[0].intelQuote).toBe('aa');
+    await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: {
+        code: 'api.invalid_response',
+        details: { path: 'all_attestations' },
+      },
+    });
   });
 
-  test.each(['root', 0, 1] as const)(
-    'checks the fresh nonce in model attestation %s',
-    async (target) => {
-      const api = directFor((request) => {
-        const report = reportFor(request);
-        const entry =
-          target === 'root' ? report : report.all_attestations[target];
+  test.each([
+    { label: 'serving entry', entries: [0] },
+    { label: 'another entry', entries: [1] },
+  ])('checks the fresh nonce in $label', async ({ entries }) => {
+    const api = directFor((request) => {
+      const report = reportFor(request);
+      if (entries.includes(0)) {
+        report.request_nonce = '00'.repeat(32);
+      }
+      for (const entry of entries.map(
+        (index) => report.all_attestations[index],
+      )) {
         entry.request_nonce = '00'.repeat(32);
-        return jsonResponse(report);
-      });
-      await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
-        name: 'ApiError',
-        failure: { code: 'api.nonce_mismatch' },
-      });
-    },
-  );
+      }
+      return jsonResponse(report);
+    });
+    await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: { code: 'api.nonce_mismatch' },
+    });
+  });
 
   test.each([undefined, []])(
     'rejects a missing or empty model-attestation array: %p',
@@ -204,8 +211,13 @@ describe('DirectAttestationClient', () => {
         for (const entry of [report, ...report.all_attestations]) {
           entry.tls_cert_fingerprint = include ? spkiFingerprint : null;
         }
-        const entry = target === 'root' ? report : report.all_attestations[1];
-        entry.tls_cert_fingerprint = include ? null : spkiFingerprint;
+        const entries =
+          target === 'root'
+            ? [report, report.all_attestations[0]]
+            : [report.all_attestations[1]];
+        for (const entry of entries) {
+          entry.tls_cert_fingerprint = include ? null : spkiFingerprint;
+        }
         return jsonResponse(report);
       });
       const client = new CapturingDirectClient({ baseUrl });

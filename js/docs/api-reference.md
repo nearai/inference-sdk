@@ -246,13 +246,13 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `FetchedDirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request. |
-|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters. |
+| `FetchedDirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
 |  | `clientBinding` | `DirectClientBinding` | Client values for the matching verification call. |
 | `DirectClientBinding` | `nonce` | `string` | Fresh client nonce sent with this request. |
 |  | `spkiFingerprint?` | `string` | SHA-256 SPKI observed from this request's TLS peer in Node. |
-| `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request. |
-|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters. |
+| `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
 | `DirectModelAttestation` | Base fields | `ModelAttestation` | Quote, nonce, signer, measurements, and available GPU evidence. |
 |  | `modelName` | `string` | Metadata, not a model-name claim authenticated by the quote. |
 |  | `instanceId?` | `string` | Instance metadata when supplied by the endpoint. |
@@ -262,7 +262,7 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 
 | Parameter type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Top-level attestation from the fetch helper. |
+| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving attestation from the fetch helper; it must be an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Complete serving model-attestation set from the fetch helper. Every entry is checked. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce and observed peer fingerprint from the matching request. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
@@ -278,7 +278,7 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified top-level attestation. |
+| `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the complete set. |
 |  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified complete serving model-attestation set. |
 |  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |

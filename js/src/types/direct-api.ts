@@ -16,7 +16,7 @@ export type DirectModelAttestation = ModelAttestation & {
 
 /** The serving attestation and complete serving set supplied by a direct endpoint. */
 export type DirectModelAttestations = {
-  /** The top-level attestation returned by the endpoint serving this request. */
+  /** The top-level attestation returned by the endpoint serving this request. Also an entry in `attestations`. */
   readonly servingAttestation: DirectModelAttestation;
   readonly attestations: readonly DirectModelAttestation[];
 };
