@@ -1,0 +1,232 @@
+name: Publish packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release tag and package versions
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git fetch origin "$DEFAULT_BRANCH"
+          tag_commit=$(git rev-parse "${GITHUB_REF}^{commit}")
+          main_commit=$(git rev-parse FETCH_HEAD)
+          if ! git merge-base --is-ancestor "$tag_commit" "$main_commit"; then
+            printf 'Release tag %s must point to a commit reachable from %s.\n' \
+              "$RELEASE_TAG" "$DEFAULT_BRANCH" >&2
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          component = r"(?:0|[1-9]\d*)"
+          match = re.fullmatch(
+              rf"v({component}\.{component}\.{component})", tag
+          )
+          if match is None:
+              raise SystemExit(
+                  "Release tags must use the stable form vX.Y.Z; "
+                  f"received {tag!r}."
+              )
+
+          expected = match.group(1)
+          versions = {
+              "js/package.json": json.loads(
+                  Path("js/package.json").read_text(encoding="utf-8")
+              )["version"],
+              "py/pyproject.toml": tomllib.loads(
+                  Path("py/pyproject.toml").read_text(encoding="utf-8")
+              )["project"]["version"],
+              "rs/Cargo.toml": tomllib.loads(
+                  Path("rs/Cargo.toml").read_text(encoding="utf-8")
+              )["package"]["version"],
+          }
+          mismatches = [
+              f"{path}: {version}"
+              for path, version in versions.items()
+              if version != expected
+          ]
+          if mismatches:
+              raise SystemExit(
+                  f"Release tag {tag} does not match:\n" + "\n".join(mismatches)
+              )
+          PY
+
+  checks:
+    needs: validate-release
+    uses: ./.github/workflows/ci.yml
+
+  create-release:
+    if: github.repository == 'nearai/inference-sdk'
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft GitHub release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            if [ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" != true ]; then
+              printf 'Existing GitHub Release %s must be a draft.\n' \
+                "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" --draft --generate-notes \
+            --title "$GITHUB_REF_NAME" --verify-tag
+
+  publish-npm:
+    if: github.repository == 'nearai/inference-sdk'
+    needs:
+      - checks
+      - create-release
+    runs-on: ubuntu-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: js
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Publish package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if npm view "@nearai/inference-sdk@$version" version >/dev/null 2>&1; then
+            printf '@nearai/inference-sdk@%s already exists on npm.\n' "$version"
+            exit 0
+          fi
+          npm publish --access public
+
+  build-python:
+    if: github.repository == 'nearai/inference-sdk'
+    needs:
+      - checks
+      - create-release
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: py
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: py/dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    if: github.repository == 'nearai/inference-sdk'
+    needs: build-python
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+  publish-crates:
+    if: github.repository == 'nearai/inference-sdk'
+    needs:
+      - checks
+      - create-release
+    runs-on: ubuntu-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: rs
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check whether the crate is already published
+        id: crate-version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if curl --fail --silent --show-error \
+            "https://crates.io/api/v1/crates/nearai-inference-sdk/$version" >/dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          fi
+      - id: crates-io-auth
+        if: steps.crate-version.outputs.published != 'true'
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish crate
+        if: steps.crate-version.outputs.published != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+        run: cargo publish --locked
+
+  publish-release:
+    if: github.repository == 'nearai/inference-sdk'
+    needs:
+      - publish-npm
+      - publish-pypi
+      - publish-crates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish GitHub release
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
