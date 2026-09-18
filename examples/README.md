@@ -20,6 +20,7 @@ Each entry point includes non-streaming and streaming calls:
 | `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies all returned model attestations, then verifies responses by ID. | Enabled |
+| `direct-client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
 | `direct-bare.ts` | Fetches and verifies direct model attestations, pins Chat to their TLS keys, and verifies exact response bytes. | Not implemented |
 
 The first three connect through the Gateway and verify its TLS identity.
@@ -52,17 +53,18 @@ Requires Node.js 24 or later.
 
 ### Direct model endpoints
 
-`direct-client.ts` and `direct-bare.ts` use
+`direct-client.ts`, `direct-client-openai-sdk.ts`, and `direct-bare.ts` use
 `https://glm-5-3-flash.completions.near.ai/v1`, without Gateway attestation.
 Set `NEARAI_API_KEY` to a credential accepted by that endpoint; a Gateway key is
 not necessarily valid for direct inference.
 
 ```sh
 pnpm --dir examples/example-js start:direct-client
+pnpm --dir examples/example-js start:direct-client-openai-sdk
 pnpm --dir examples/example-js start:direct-bare
 ```
 
-Both verify every returned model attestation and bind the endpoint's TLS key in
+All three verify every returned model attestation and bind the endpoint's TLS key in
 Node. `DirectInferenceClient` selects a model key for routing and E2EE, pins
 later requests to that signer's verified TLS keys, and requires response
 signatures from the same signer. The bare example sends plaintext over HTTPS

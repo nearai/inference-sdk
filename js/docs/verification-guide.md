@@ -309,9 +309,10 @@ measurements, available GPU evidence, and any reported SPKI binding.
 `verifyDirectModelAttestations()` also verifies the observed TLS peer when SPKI
 evidence is enabled.
 
-The runnable [direct-client.ts](../../examples/example-js/direct-client.ts) and
-[direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each include
-streaming and non-streaming calls. The bare example omits E2EE.
+The runnable [direct-client.ts](../../examples/example-js/direct-client.ts),
+[direct-client-openai-sdk.ts](../../examples/example-js/direct-client-openai-sdk.ts),
+and [direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each
+include streaming and non-streaming calls. The bare example omits E2EE.
 
 ## Verify Gateway requests manually
 
