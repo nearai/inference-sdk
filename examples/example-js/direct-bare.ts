@@ -1,5 +1,6 @@
 import {
   DirectAttestationClient,
+  NO_ALIASING_HEADER,
   createPinnedTlsFetch,
   verifyDirectModelAttestations,
   verifyDirectModelResponse,
@@ -109,6 +110,7 @@ async function sendChatRequest({
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'Accept-Encoding': 'identity',
+      [NO_ALIASING_HEADER]: 'true',
     },
     body,
   });

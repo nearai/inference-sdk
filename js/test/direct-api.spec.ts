@@ -147,6 +147,15 @@ describe('DirectAttestationClient', () => {
     expect(next.clientBinding.nonce).not.toBe(clientBinding.nonce);
   });
 
+  test('requires a direct base URL at runtime', () => {
+    const createClientWithoutBaseUrl = () => {
+      // @ts-expect-error JavaScript callers can omit a required property.
+      return new DirectAttestationClient({ apiKey: 'direct-key' });
+    };
+
+    expect(createClientWithoutBaseUrl).toThrow('[api.invalid_input]');
+  });
+
   test('rejects a serving attestation absent from the complete attestation set', async () => {
     const api = directFor((request) =>
       jsonResponse({ ...reportFor(request), intel_quote: 'bb' }),

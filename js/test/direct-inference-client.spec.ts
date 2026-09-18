@@ -272,6 +272,15 @@ describe('DirectInferenceClient', () => {
     jest.restoreAllMocks();
   });
 
+  test('requires a direct base URL at runtime', () => {
+    const createClientWithoutBaseUrl = () => {
+      // @ts-expect-error JavaScript callers can omit a required property.
+      return new DirectInferenceClient({ apiKey: 'direct-key' });
+    };
+
+    expect(createClientWithoutBaseUrl).toThrow('[api.invalid_input]');
+  });
+
   test('encrypts by default after checking every deployment and retains both same-signer reports', async () => {
     const endpoint = createDirectEndpoint();
     const checked: string[] = [];

@@ -39,7 +39,9 @@ export class DirectApiClient {
   private readonly requestConfiguration: CloudApiRequestConfiguration;
 
   constructor(options: DirectAttestationClientOptions) {
-    this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
+    this.baseUrl = resolveCloudApiBaseUrl(
+      requireDirectApiBaseUrl(options.baseUrl),
+    );
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
   }
 
@@ -175,6 +177,22 @@ export class DirectApiClient {
     });
     return new Request(url, { headers });
   }
+}
+
+/** Reject the Gateway default for a direct endpoint before any request setup. */
+export function requireDirectApiBaseUrl(baseUrl: string | undefined): string {
+  if (baseUrl !== undefined) {
+    return baseUrl;
+  }
+  throw new ApiError({
+    code: 'api.invalid_input',
+    details: {
+      field: 'baseUrl',
+      reason: 'invalid_url',
+      expected: 'an absolute HTTP(S) direct endpoint URL',
+      actual: 'missing',
+    },
+  });
 }
 
 /** Fetch direct provider evidence with standard Fetch (without TLS peer access). */

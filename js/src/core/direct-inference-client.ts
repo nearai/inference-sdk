@@ -13,7 +13,7 @@ import { hexToBuffer } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import { verifyDirectModelAttestations } from './attestation-direct';
 import { parseSignatureHex, verifyModelResponse } from './chat';
-import { DirectAttestationClient } from './direct-api';
+import { DirectAttestationClient, requireDirectApiBaseUrl } from './direct-api';
 import {
   VerifiedInferenceClientBase,
   type InferenceSession,
@@ -30,7 +30,10 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
   private readonly directOptions: NodeDirectInferenceClientOptions;
 
   protected constructor(options: NodeDirectInferenceClientOptions) {
-    super(options);
+    super({
+      ...options,
+      baseUrl: requireDirectApiBaseUrl(options.baseUrl),
+    });
     this.directOptions = options;
   }
 
