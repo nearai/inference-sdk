@@ -102,7 +102,7 @@ async function sendChatRequest({
   const body = JSON.stringify({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 8,
+    max_completion_tokens: 128,
     stream,
   });
   const requestBody = new TextEncoder().encode(body);

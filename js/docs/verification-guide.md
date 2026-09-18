@@ -316,8 +316,11 @@ verifier compares the top-level report with the client-observed TLS peer; it doe
 not claim to have connected to every reported instance.
 
 Verification covers the reports returned by the endpoint; the SDK cannot prove
-that `all_attestations` lists the entire fleet. `compose_manager_attestation` is
-retained as opaque data, not verified as current runtime state.
+that `all_attestations` lists the entire fleet. If a later connection reaches an
+instance whose TLS key is missing from those reports, it fails with
+`binding.spki_fingerprint_mismatch` before sending the request.
+`compose_manager_attestation` is retained as opaque data, not verified as current
+runtime state.
 
 The runnable [direct-client.ts](../../examples/example-js/direct-client.ts) and
 [direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each include

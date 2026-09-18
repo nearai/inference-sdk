@@ -70,6 +70,10 @@ plaintext over HTTPS, accepts all verified instance TLS keys, and selects the
 matching reports when verifying the response signature. Neither identifies a
 unique CVM when reports share a signing key.
 
+A load-balanced endpoint must supply the reports for the instances it routes to.
+If a later connection presents a TLS key absent from the verified reports, the
+request is blocked with `binding.spki_fingerprint_mismatch`.
+
 ### Image provenance
 
 [`client.ts`](example-js/client.ts) and [`bare.ts`](example-js/bare.ts) verify
