@@ -1,7 +1,7 @@
 import type { Buffer } from 'node:buffer';
 import { createHash, X509Certificate } from 'node:crypto';
-import * as https from 'node:https';
 import type { IncomingHttpHeaders } from 'node:http';
+import * as https from 'node:https';
 import { Readable } from 'node:stream';
 import {
   checkServerIdentity,
@@ -22,13 +22,19 @@ import { VerificationError } from '../utils/errors';
 type RequestHttpsParams = {
   readonly request: Request;
   readonly capturePeerSpkiFingerprint?: boolean;
-  readonly expectedSpkiFingerprint?: Uint8Array;
+  readonly expectedSpkiFingerprints?: readonly Uint8Array[];
 };
 
 type VerifyPinnedPeerParams = {
   readonly hostname: string;
   readonly certificate: PeerCertificate;
-  readonly expectedSpkiFingerprint: Uint8Array;
+  readonly expectedSpkiFingerprints: readonly Uint8Array[];
+};
+
+/** Internal HTTPS result shared by the Node attestation clients. */
+export type HttpsResponse = {
+  readonly response: Response;
+  readonly peerSpkiFingerprint?: string;
 };
 
 /**
@@ -61,35 +67,40 @@ export class AttestationClient extends CloudApiClient {
 
 /**
  * Create a Fetch-compatible HTTPS transport that requires each TLS peer to
- * present the SPKI authenticated by a Gateway attestation.
+ * present one of the SPKI fingerprints authenticated by verified attestations.
  *
  * Standard certificate-chain and hostname verification still run first. The
  * transport creates a new native HTTPS request for each call, so it does not
  * require reuse of the connection that returned the attestation.
  */
 export function createPinnedTlsFetch(
-  spkiFingerprint: string,
+  spkiFingerprints: string | readonly string[],
 ): typeof globalThis.fetch {
-  const expectedSpkiFingerprint = requireByteLength({
-    value: spkiFingerprint,
-    byteLength: 32,
-    label: 'spkiFingerprint',
-  });
+  const fingerprints =
+    typeof spkiFingerprints === 'string'
+      ? [spkiFingerprints]
+      : spkiFingerprints;
+  if (fingerprints.length === 0) {
+    throw new VerificationError({ code: 'binding.spki_fingerprint_required' });
+  }
+  const expectedSpkiFingerprints = fingerprints.map((value) =>
+    requireByteLength({ value, byteLength: 32, label: 'spkiFingerprint' }),
+  );
 
   return async (input, init) => {
     const request = new Request(input, init);
     if (new URL(request.url).protocol !== 'https:') {
-      throw new TypeError('Pinned Gateway fetch requires an HTTPS URL');
+      throw new TypeError('TLS-pinned fetch requires an HTTPS URL');
     }
-    return (await requestHttps({ request, expectedSpkiFingerprint })).response;
+    return (await requestHttps({ request, expectedSpkiFingerprints })).response;
   };
 }
 
-function requestHttps({
+export function requestHttps({
   request,
   capturePeerSpkiFingerprint = false,
-  expectedSpkiFingerprint,
-}: RequestHttpsParams): Promise<GatewayAttestationHttpResponse> {
+  expectedSpkiFingerprints,
+}: RequestHttpsParams): Promise<HttpsResponse> {
   const headers = new Headers(request.headers);
   headers.set('accept-encoding', 'identity');
 
@@ -102,7 +113,7 @@ function requestHttps({
         headers: Object.fromEntries(headers),
         rejectUnauthorized: true,
         signal: request.signal,
-        ...(expectedSpkiFingerprint === undefined
+        ...(expectedSpkiFingerprints === undefined
           ? {}
           : {
               checkServerIdentity: (
@@ -112,7 +123,7 @@ function requestHttps({
                 verifyPinnedPeer({
                   hostname,
                   certificate,
-                  expectedSpkiFingerprint,
+                  expectedSpkiFingerprints,
                 }),
             }),
       },
@@ -161,7 +172,7 @@ function requestHttps({
 function verifyPinnedPeer({
   hostname,
   certificate,
-  expectedSpkiFingerprint,
+  expectedSpkiFingerprints,
 }: VerifyPinnedPeerParams): Error | undefined {
   const identityError = checkServerIdentity(hostname, certificate);
   if (identityError !== undefined) {
@@ -171,7 +182,11 @@ function verifyPinnedPeer({
     const actualSpkiFingerprint = spkiFingerprintForCertificate(
       new X509Certificate(certificate.raw),
     );
-    if (actualSpkiFingerprint.equals(expectedSpkiFingerprint)) {
+    if (
+      expectedSpkiFingerprints.some((expected) =>
+        actualSpkiFingerprint.equals(expected),
+      )
+    ) {
       return undefined;
     }
     return new VerificationError({

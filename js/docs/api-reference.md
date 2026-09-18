@@ -7,21 +7,20 @@ This page describes the attestation, E2EE, and response verification APIs in
 ## Package entry points
 
 Both entry points export the same verification APIs. Their attestation and
-inference clients differ in whether they can bind Gateway evidence to the TLS peer
+inference clients differ in whether they can bind endpoint evidence to the TLS peer
 that returned it.
 
-| Import | Gateway evidence behavior |
+| Import | TLS behavior |
 | --- | --- |
-| `@nearai/inference-sdk` | Generic `AttestationClient` and `InferenceClient` use `include_tls_fingerprint=false`, so Gateway verification returns `tlsBinding.kind: 'none'`. Their `includeSpkiFingerprint` option can only be `false`. |
-| `@nearai/inference-sdk/node` | Node `AttestationClient` captures the TLS peer for its Gateway-evidence request and requests an SPKI fingerprint by default. Node inference clients additionally pin later model-evidence, Chat, and receipt-signature HTTPS requests to that attested SPKI. Set `gatewayVerification.includeSpkiFingerprint: false` on an inference client, or `includeSpkiFingerprint: false` on `AttestationClient`, to use the no-TLS flow. |
+| `@nearai/inference-sdk` | Gateway and direct clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
+| `@nearai/inference-sdk/node` | Gateway and direct attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. Inference clients pin later requests to verified TLS keys. Disable this through `gatewayVerification.includeSpkiFingerprint` on `InferenceClient`, `modelVerification.includeSpkiFingerprint` on `DirectInferenceClient`, or `includeSpkiFingerprint` on either attestation client's fetch method. |
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
-`gatewayVerification.includeSpkiFingerprint: false` on an inference client or
-`includeSpkiFingerprint: false` on `AttestationClient`.
+the relevant `includeSpkiFingerprint` option to `false`.
 
 Node request pinning checks every later TLS peer. It permits a new HTTPS
-connection when that peer presents the attested SPKI; it does not require the
-Gateway-attestation socket to be reused.
+connection when that peer presents an allowed attested SPKI; it does not require
+the attestation socket to be reused.
 
 ## Runtime exports
 
@@ -29,12 +28,17 @@ Gateway-attestation socket to be reused.
 | --- | --- | --- |
 | `InferenceClient` | `new InferenceClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches Gateway signatures and attestation evidence. |
+| `DirectInferenceClient` | `new DirectInferenceClient(options)` | Verified Chat and E2EE through a model endpoint, without Gateway verification. |
+| `DirectAttestationClient` | `new DirectAttestationClient(options)` | Fetches direct model attestations and signatures. |
 | `prepareE2eeChatRequest` | `(params: PrepareE2eeChatRequestParams) => Promise<PreparedE2eeChatRequest>` | Encrypts a Chat request to a model public key and returns its matching response decryptor. |
-| `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprint: string) => typeof fetch` | Creates an HTTPS Fetch transport that requires every peer to present an already attested SHA-256 SPKI fingerprint. |
+| `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprints: string \| readonly string[]) => typeof fetch` | Pins each HTTPS connection to one of the supplied, already verified SHA-256 SPKI fingerprints. Requires a nonempty set; certificate-chain and hostname checks still run. |
 | `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
 | `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
+| `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
+| `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and the serving attestation's observed TLS binding. |
+| `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
@@ -93,6 +97,46 @@ Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
 including after successful or failed verification. TTL starts at body completion.
 
+## `DirectInferenceClient`
+
+Uses the same Chat, Fetch, E2EE, and cache behavior as `InferenceClient`, but
+verifies direct model attestations instead of Gateway and Gateway-routed model
+evidence. Every attestation in the complete serving set must pass verification
+before Chat is sent.
+There is no `gatewayVerification` option.
+
+### Constructor options
+
+| Field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `baseUrl` | `string` | Yes | — | Direct model API base URL, including `/v1` where applicable. |
+| `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
+| `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. |
+| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. |
+| `e2ee?` | `boolean` | No | `true` | Encrypts supported Chat fields. `false` preserves model verification and sends plaintext over the selected transport. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
+| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Additional model-aware deployment check. No approval policy is supplied by default. |
+| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model `policy`, `verifiers`, and the TLS option below. |
+| `modelVerification.includeSpkiFingerprint?` in the generic entry point | `false` | No | `false` | TLS peer observation is unavailable. |
+| `modelVerification.includeSpkiFingerprint?` in the Node entry point | `boolean` | No | `true` | Requests TLS evidence, checks the observed peer, and pins later requests to TLS keys of verified attestations sharing the selected model signer. |
+
+### Methods and response result
+
+| Method | Returns | Description |
+| --- | --- | --- |
+| `getBaseUrl()` | `string` | Resolved direct API base URL. |
+| `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
+| `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
+| `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionReceipt>` | Verifies retained bytes against the model signer selected for the request. |
+
+| `VerifiedDirectCompletionReceipt` field | Type | Description |
+| --- | --- | --- |
+| `completionId` | `string` | Verified completion ID. |
+| `signatureKind` | `'provider_tee'` | Direct responses use model signatures. |
+| `signature` | `CompletionSignature` | Verified signature record. |
+| `attestations` | `readonly VerifiedDirectModelAttestation[]` | All verified attestations sharing the selected model signer, which must match the response signature. |
+
 ## `prepareE2eeChatRequest`
 
 Prepares one encrypted request for an application-owned Fetch transport. It
@@ -144,7 +188,7 @@ The Gateway's report and signature endpoints have different defaults.
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment check. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the complete serving model-attestation set matching the requested model and optional signing filters. Verify every returned attestation for a deployment check. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -170,12 +214,80 @@ attestation verifier.
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations`. The collection may be empty or contain multiple candidates; verify every candidate before a completion. |
+|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations` for the complete serving set. Verify every attestation before a completion. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 | `GatewayClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
 |  | `spkiFingerprint?` | `string` | SHA-256 SPKI fingerprint observed for the HTTPS request that returned this evidence. The Node client supplies it when `includeSpkiFingerprint` is `true`; the generic client does not. |
+
+## `DirectAttestationClient`
+
+Fetches `/attestation/report` and `/signature/{id}` relative to a direct model API
+base URL. Authentication is optional in the SDK and depends on the endpoint.
+
+| Constructor field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `baseUrl` | `string` | Yes | Absolute HTTP(S) provider API base URL, including its version path. |
+| `apiKey?` | `string` | No | Endpoint bearer credential; overrides `headers.Authorization`. |
+| `headers?` | `HeadersInit` | No | Additional request headers. |
+
+| Method | Params | Resolves to | Description |
+| --- | --- | --- | --- |
+| `fetchModelAttestations(params?)` | `FetchDirectModelAttestationsParams` | `FetchedDirectModelAttestations` | Generates a nonce and fetches the serving attestation and complete serving model-attestation set matching the optional signing filters; checks echoed nonces before returning. |
+| `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Fetches a direct model signature, normalized to `kind: 'provider_tee'`. |
+
+| `FetchDirectModelAttestationsParams` field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `signingAlgo?` | `SigningAlgo` | Service default | Requested signing algorithm. Use the same algorithm for signature lookup. |
+| `signingAddress?` | `string` | — | Optional signing-address filter. Omit to fetch the endpoint's unfiltered attestation set. |
+| `includeSpkiFingerprint?` in the generic entry point | `false` | `false` | Requests the signer-and-nonce quote layout without TLS evidence. |
+| `includeSpkiFingerprint?` in the Node entry point | `boolean` | `true` | Requests SPKI evidence and captures the actual TLS peer for this fetch. |
+
+| Result type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `FetchedDirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
+|  | `clientBinding` | `DirectClientBinding` | Client values for the matching verification call. |
+| `DirectClientBinding` | `nonce` | `string` | Fresh client nonce sent with this request. |
+|  | `spkiFingerprint?` | `string` | SHA-256 SPKI observed from this request's TLS peer in Node. |
+| `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
+| `DirectModelAttestation` | Base fields | `ModelAttestation` | Quote, nonce, signer, measurements, and available GPU evidence. |
+|  | `modelName` | `string` | Metadata, not a model-name claim authenticated by the quote. |
+|  | `instanceId?` | `string` | Instance metadata when supplied by the endpoint. |
+|  | `spkiFingerprint?` | `string` | Reported TLS SPKI; must be authenticated by quote verification before use. |
+
+## Direct verification functions
+
+| Parameter type | Field | Type | Required | Description |
+| --- | --- | --- | --- | --- |
+| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving attestation from the fetch helper; it must be an entry in `attestations`. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Complete serving model-attestation set from the fetch helper. Every entry is checked. |
+|  | `clientBinding` | `DirectClientBinding` | Yes | Nonce and observed peer fingerprint from the matching request. |
+|  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
+|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
+| `VerifyDirectModelAttestationParams` | `attestation` | `DirectModelAttestation` | Yes | One direct model attestation. |
+|  | `clientBinding` | `ModelClientBinding` | Yes | Client nonce; this operation does not compare an observed TLS peer. |
+|  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU requirements. |
+|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
+| `VerifyDirectModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request bytes sent. |
+|  | `responseBody` | `Uint8Array` | Yes | Exact response bytes received, before E2EE decryption if applicable. |
+|  | `signature` | `CompletionSignature` | Yes | Direct model signature with `kind: 'provider_tee'`. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Yes | Previously verified model attestations. All signer matches are returned after byte and signature checks pass. |
+
+| Result type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the complete set. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified complete serving model-attestation set. |
+|  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
+|  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
+| `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
+|  | `modelName` / `instanceId?` | `string` | Preserved metadata, not additional quote-authenticated claims. |
+|  | `spkiFingerprint?` | `string` | Quote-authenticated TLS key; this alone does not claim observation of that instance's TLS peer. |
+
+`verifyDirectModelAttestations` verifies every returned attestation and compares
+the serving attestation with the observed TLS peer when SPKI evidence is enabled.
 
 ## Model attestation selection
 

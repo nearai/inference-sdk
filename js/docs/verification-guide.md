@@ -4,6 +4,10 @@ Use `InferenceClient` for Chat Completions with deployment verification and E2EE
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
+These clients connect through the NEAR AI Cloud Gateway. For a model's own
+`*.completions.near.ai` endpoint, use the
+[direct clients](#use-a-direct-model-endpoint) instead.
+
 ## Send an E2EE chat completion
 
 `InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
@@ -41,8 +45,9 @@ const client = new InferenceClient({
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The client verifies all returned model attestations
-before selecting a key for that algorithm.
+and response signatures. The Gateway returns the complete serving model-
+attestation set for the requested model. The client verifies that set before
+selecting a key for the chosen algorithm.
 
 ### Cache deployment verification
 
@@ -246,7 +251,72 @@ precedence for evidence, Chat, and signature requests. Other per-request headers
 can override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
-## Verify manually
+## Use a direct model endpoint
+
+`DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
+It fetches and verifies the complete serving model-attestation set before
+sending Chat.
+E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
+just as for `InferenceClient`.
+
+```ts
+import { DirectInferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new DirectInferenceClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+```
+
+Use `client.chat.completions.create()`, `client.fetch`, and
+`client.verifyResponse(id)` as above. Direct endpoints may require different
+credentials from the Gateway and use separate fetch and verification APIs.
+
+The client selects a verified model key for routing and E2EE; response signatures
+must match that selected signer. The Node client also verifies the endpoint's
+TLS identity and pins later requests to the verified keys for that signer. The
+generic browser client cannot observe TLS certificates
+and only supports `modelVerification.includeSpkiFingerprint: false`. Node
+defaults to `true`; set it to `false` when TLS binding is unavailable, such as
+when connecting through a proxy.
+
+### Verify direct evidence manually
+
+```ts
+import {
+  DirectAttestationClient,
+  createPinnedTlsFetch,
+  verifyDirectModelAttestations,
+} from '@nearai/inference-sdk/node';
+
+const client = new DirectAttestationClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
+const verified = await verifyDirectModelAttestations(fetched);
+if (verified.tlsBinding.kind !== 'attested') {
+  throw new Error('Expected TLS-bound direct model attestations');
+}
+const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
+```
+
+Send Chat with `pinnedTlsFetch` and retain the exact request and response bytes.
+Then fetch its signature with `client.fetchCompletionSignature()` and pass the
+signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
+It returns all verified attestations sharing the response's signer.
+
+For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
+measurements, available GPU evidence, and any reported SPKI binding.
+`verifyDirectModelAttestations()` also verifies the observed TLS peer when SPKI
+evidence is enabled.
+
+The runnable [direct-client.ts](../../examples/example-js/direct-client.ts),
+[direct-client-openai-sdk.ts](../../examples/example-js/direct-client-openai-sdk.ts),
+and [direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each
+include streaming and non-streaming calls. The bare example omits E2EE.
+
+## Verify Gateway requests manually
 
 The manual flow has distinct stages:
 

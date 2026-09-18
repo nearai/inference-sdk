@@ -4,6 +4,7 @@ import type {
 } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 import {
+  verifyPeerSpkiFingerprint,
   verifyReportDataBinding,
   verifyReportDataBindingWithTlsFingerprint,
 } from './attestation-common';
@@ -39,8 +40,8 @@ export async function verifyGatewayAttestation({
       nonce: clientBinding.nonce,
       signingAddress: verifiedQuote.signer.signingAddress,
       reportedSpkiFingerprint: attestation.spkiFingerprint,
-      peerSpkiFingerprint,
     });
+    verifyPeerSpkiFingerprint(spkiFingerprint, peerSpkiFingerprint);
     tlsBinding = { kind: 'attested', spkiFingerprint };
   } else {
     verifyReportDataBinding({

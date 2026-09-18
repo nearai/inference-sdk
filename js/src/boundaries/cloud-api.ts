@@ -13,6 +13,7 @@ import type {
 import type {
   CloudApiGatewayAttestation,
   CloudApiModelAttestation,
+  CloudApiCompletionSignatureResult,
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
 import { trimHexPrefix } from '../utils/common';
@@ -92,7 +93,13 @@ export function decodeCompletionSignature(value: unknown): CompletionSignature {
       fallbackPath: 'signature',
     });
   }
-  const response = parsed.output;
+  return mapCompletionSignature(parsed.output);
+}
+
+/** Map a decoded wire signature without parsing an HTTP response a second time. */
+export function mapCompletionSignature(
+  response: CloudApiCompletionSignatureResult,
+): CompletionSignature {
   if ('error_code' in response) {
     throw new ApiError({
       code: 'api.completion_signature_unavailable',
@@ -117,7 +124,7 @@ export function decodeCompletionSignature(value: unknown): CompletionSignature {
   };
 }
 
-function mapModelAttestation(
+export function mapModelAttestation(
   attestation: CloudApiModelAttestation,
   label: string,
 ): ModelAttestation {
@@ -236,7 +243,7 @@ function validateWireHex({
   return value;
 }
 
-function invalidCloudApiResponse({
+export function invalidCloudApiResponse({
   ...params
 }: InvalidCloudApiResponseParams): ApiError {
   const details =
