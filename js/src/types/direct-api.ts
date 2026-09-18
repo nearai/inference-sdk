@@ -14,7 +14,7 @@ export type DirectModelAttestation = ModelAttestation & {
   readonly spkiFingerprint?: string;
 };
 
-/** The serving attestation and every instance attestation supplied by a direct endpoint. */
+/** The serving attestation and complete serving set supplied by a direct endpoint. */
 export type DirectModelAttestations = {
   /** The top-level attestation returned by the endpoint serving this request. */
   readonly servingAttestation: DirectModelAttestation;

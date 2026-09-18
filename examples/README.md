@@ -19,7 +19,7 @@ Each entry point includes non-streaming and streaming calls:
 | `bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
-| `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies all returned model attestations, then verifies responses by ID. | Enabled |
+| `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
 | `direct-client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
 | `direct-bare.ts` | Fetches and verifies direct model attestations, pins Chat to their TLS keys, and verifies exact response bytes. | Not implemented |
 
@@ -64,8 +64,8 @@ pnpm --dir examples/example-js start:direct-client-openai-sdk
 pnpm --dir examples/example-js start:direct-bare
 ```
 
-All three verify every returned model attestation and bind the endpoint's TLS key in
-Node. `DirectInferenceClient` selects a model key for routing and E2EE, pins
+All three verify the complete serving model-attestation set and bind the endpoint's
+TLS key in Node. `DirectInferenceClient` selects a model key for routing and E2EE, pins
 later requests to that signer's verified TLS keys, and requires response
 signatures from the same signer. The bare example sends plaintext over HTTPS
 and selects matching attestations when verifying the response signature.

@@ -9,8 +9,8 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // This client verifies direct model attestations before Chat. E2EE and
-  // direct endpoint TLS verification are enabled by default.
+  // This client verifies the complete serving model-attestation set before
+  // Chat. E2EE and direct endpoint TLS verification are enabled by default.
   const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
     apiKey,

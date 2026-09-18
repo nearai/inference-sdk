@@ -13,7 +13,7 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
 - `DirectInferenceClient` connects to a model's own endpoint, verifies every
-  returned model attestation, and provides the same Chat, E2EE, and response-verification
+  attestation in its complete serving set, and provides the same Chat, E2EE, and response-verification
   methods without Gateway verification. `DirectAttestationClient` fetches direct
   attestations and signatures for a manual flow.
 - `prepareE2eeChatRequest({ request, modelKey })` encrypts a raw Chat request

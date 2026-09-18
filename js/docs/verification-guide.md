@@ -254,7 +254,8 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 ## Use a direct model endpoint
 
 `DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
-It fetches and verifies the endpoint's model attestations before sending Chat.
+It fetches and verifies the complete serving model-attestation set before
+sending Chat.
 E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
 just as for `InferenceClient`.
 
