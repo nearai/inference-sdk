@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nearai_inference_sdk::{
-    verify_image_provenance, ImageProvenanceFailureReason as Reason, ImageProvenancePolicy,
-    VerificationError,
+    verify_image_provenance, verify_image_provenance_with_signer_identity,
+    ImageProvenanceFailureReason as Reason, ImageProvenancePolicy, VerificationError,
 };
 use serde_json::Value;
 
@@ -30,16 +30,20 @@ fn reusable_policy() -> ImageProvenancePolicy {
     );
     policy.git_ref = Some("refs/heads/main".to_owned());
     policy.commit = Some(SOURCE_COMMIT.to_owned());
-    policy.signer_identity = Some(SIGNER_IDENTITY.to_owned());
     policy
 }
 
 #[tokio::test]
 async fn verifies_a_real_cross_repository_reusable_workflow_and_returns_source_identity() {
     let policy = reusable_policy();
-    let verified = verify_image_provenance(&[REUSABLE_BUNDLE.to_owned()], REUSABLE_DIGEST, &policy)
-        .await
-        .unwrap();
+    let verified = verify_image_provenance_with_signer_identity(
+        &[REUSABLE_BUNDLE.to_owned()],
+        REUSABLE_DIGEST,
+        &policy,
+        SIGNER_IDENTITY,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(verified.repository, policy.repository);
     assert_eq!(verified.workflow, policy.workflow);
@@ -51,10 +55,8 @@ async fn verifies_a_real_cross_repository_reusable_workflow_and_returns_source_i
 
 #[tokio::test]
 async fn requires_the_reusable_signer_and_independent_source_policy() {
-    let mut missing_signer = reusable_policy();
-    missing_signer.signer_identity = None;
-    let mut wrong_signer = reusable_policy();
-    wrong_signer.signer_identity = Some(format!("{SIGNER_IDENTITY}-wrong"));
+    let missing_signer = reusable_policy();
+    let wrong_signer = reusable_policy();
     let mut wrong_repository = reusable_policy();
     wrong_repository.repository = "another/source".to_owned();
     let mut wrong_workflow = reusable_policy();
@@ -63,18 +65,48 @@ async fn requires_the_reusable_signer_and_independent_source_policy() {
     wrong_ref.git_ref = Some("refs/heads/other".to_owned());
     let mut wrong_commit = reusable_policy();
     wrong_commit.commit = Some("a".repeat(40));
-    for (policy, expected) in [
-        (missing_signer, Reason::UntrustedIdentity),
-        (wrong_signer, Reason::UntrustedIdentity),
-        (wrong_repository, Reason::SourceMismatch),
-        (wrong_workflow, Reason::SourceMismatch),
-        (wrong_ref, Reason::SourceMismatch),
-        (wrong_commit, Reason::CommitMismatch),
+    for (policy, signer_identity, expected) in [
+        (missing_signer, None, Reason::UntrustedIdentity),
+        (
+            wrong_signer,
+            Some(format!("{SIGNER_IDENTITY}-wrong")),
+            Reason::UntrustedIdentity,
+        ),
+        (
+            wrong_repository,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_workflow,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_ref,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_commit,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::CommitMismatch,
+        ),
     ] {
-        let error =
-            verify_image_provenance(&[REUSABLE_BUNDLE.to_owned()], REUSABLE_DIGEST, &policy)
+        let bundles = [REUSABLE_BUNDLE.to_owned()];
+        let error = match signer_identity.as_deref() {
+            Some(signer_identity) => verify_image_provenance_with_signer_identity(
+                &bundles,
+                REUSABLE_DIGEST,
+                &policy,
+                signer_identity,
+            )
+            .await
+            .unwrap_err(),
+            None => verify_image_provenance(&bundles, REUSABLE_DIGEST, &policy)
                 .await
-                .unwrap_err();
+                .unwrap_err(),
+        };
         assert!(matches!(
             error,
             VerificationError::ImageProvenanceVerificationFailed { reasons, .. }

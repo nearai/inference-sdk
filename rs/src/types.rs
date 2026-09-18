@@ -17,9 +17,6 @@ pub struct ImageProvenancePolicy {
     /// Optional full source commit SHA, matched against both the SLSA statement
     /// and the signing certificate's authenticated source digest.
     pub commit: Option<String>,
-    /// Optional exact certificate SAN URI for a reusable signing workflow,
-    /// including its ref, tag, or commit SHA. Source policy remains independent.
-    pub signer_identity: Option<String>,
     /// Expected certificate OIDC issuer.
     #[serde(default = "default_image_provenance_issuer")]
     pub issuer: String,
@@ -32,7 +29,6 @@ impl ImageProvenancePolicy {
             workflow,
             git_ref: None,
             commit: None,
-            signer_identity: None,
             issuer: default_image_provenance_issuer(),
         }
     }

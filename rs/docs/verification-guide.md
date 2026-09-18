@@ -225,15 +225,15 @@ It tries every supplied bundle until one satisfies the policy. Fetching uses
 GitHub's public API; supply an optional GitHub token for authenticated rate
 limits. It is not a Gateway API key.
 
-For a cross-repository reusable signing workflow, set
-`policy.signer_identity` to its exact certificate SAN URI, for example
+For a cross-repository reusable signing workflow, call
+`verify_image_provenance_with_signer_identity` instead and pass its exact
+certificate SAN URI, for example
 `https://github.com/example/build-workflows/.github/workflows/attest.yml@refs/tags/v1`.
-Keep `repository`, `workflow`, `git_ref` and `commit` pointed at the caller/source
-build, not the reusable workflow. The signer URI may end in a branch/tag ref or
-commit SHA and is matched exactly. Without this override, the signer must be
-the configured source workflow at the authenticated source ref. The verified
-result's `git_ref` and `commit` describe the source; `certificate_identity`
-describes the signer. Fetching still uses the source repository.
+Keep `repository`, `workflow`, `git_ref` and `commit` in `policy` pointed at the
+caller/source build, not the reusable workflow. The signer URI may end in a
+branch/tag ref or commit SHA and is matched exactly. The verified result's
+`git_ref` and `commit` describe the source; `certificate_identity` describes
+the signer. Fetching still uses the source repository.
 
 Verification uses `sigstore-verify`'s embedded Sigstore public-good trust-root
 snapshot, without a runtime trust-root download. Keep the dependency updated

@@ -185,6 +185,29 @@ pub async fn verify_image_provenance(
     digest: &str,
     policy: &ImageProvenancePolicy,
 ) -> Result<VerifiedImageProvenance, VerificationError> {
+    verify_image_provenance_inner(bundles, digest, policy, None).await
+}
+
+/// Verify image provenance when a reusable workflow is the exact signer.
+///
+/// `policy` continues to identify the caller/source repository and workflow.
+/// `signer_identity` is the certificate SAN URI of the signing workflow,
+/// including its exact ref, tag, or commit SHA.
+pub async fn verify_image_provenance_with_signer_identity(
+    bundles: &[String],
+    digest: &str,
+    policy: &ImageProvenancePolicy,
+    signer_identity: &str,
+) -> Result<VerifiedImageProvenance, VerificationError> {
+    verify_image_provenance_inner(bundles, digest, policy, Some(signer_identity)).await
+}
+
+async fn verify_image_provenance_inner(
+    bundles: &[String],
+    digest: &str,
+    policy: &ImageProvenancePolicy,
+    signer_identity: Option<&str>,
+) -> Result<VerifiedImageProvenance, VerificationError> {
     let hash = image_hash(digest).ok_or_else(|| VerificationError::InvalidInput {
         field: "digest".to_owned(),
         reason: "expected sha256: followed by 64 hexadecimal digits".to_owned(),
@@ -195,7 +218,7 @@ pub async fn verify_image_provenance(
     let verifier = Verifier::new(&root);
     let mut reasons = Vec::new();
     for bundle in bundles {
-        match verify_bundle(bundle, &hash, policy, &verifier) {
+        match verify_bundle(bundle, &hash, policy, signer_identity, &verifier) {
             Ok(result) => return Ok(result),
             Err(reason) if !reasons.contains(&reason) => reasons.push(reason),
             Err(_) => {}
@@ -211,6 +234,7 @@ fn verify_bundle(
     json: &str,
     hash: &str,
     policy: &ImageProvenancePolicy,
+    signer_identity: Option<&str>,
     verifier: &Verifier,
 ) -> Result<VerifiedImageProvenance, Reason> {
     let bundle = Bundle::from_json(json).map_err(|_| Reason::InvalidBundle)?;
@@ -253,8 +277,8 @@ fn verify_bundle(
     if issuer != policy.issuer {
         return Err(Reason::UntrustedIdentity);
     }
-    let default_signer_ref = if let Some(expected) = &policy.signer_identity {
-        if identity != *expected {
+    let default_signer_ref = if let Some(expected) = signer_identity {
+        if identity != expected {
             return Err(Reason::UntrustedIdentity);
         }
         None
