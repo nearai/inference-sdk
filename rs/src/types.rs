@@ -9,9 +9,9 @@ use serde_json::Value;
 pub struct ImageProvenancePolicy {
     /// GitHub source repository in `owner/repo` form.
     pub repository: String,
-    /// Workflow path, for example `.github/workflows/build.yml`.
+    /// Caller/source workflow path, for example `.github/workflows/build.yml`.
     pub workflow: String,
-    /// Optional exact Git ref, such as `refs/heads/main`.
+    /// Optional exact source Git ref, such as `refs/heads/main`.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
     /// Optional full source commit SHA, matched against both the SLSA statement
@@ -44,10 +44,12 @@ pub struct VerifiedImageProvenance {
     pub digest: String,
     pub repository: String,
     pub workflow: String,
+    /// Authenticated source ref, not the reusable signing workflow's ref.
     #[serde(rename = "ref")]
     pub git_ref: String,
     /// Source commit matched between the SLSA statement and signing certificate.
     pub commit: String,
+    /// Authenticated signing workflow SAN URI; it may differ from the source.
     pub certificate_identity: String,
     pub issuer: String,
     pub predicate_type: String,

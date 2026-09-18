@@ -1,0 +1,18 @@
+{
+  "source_url": "https://raw.githubusercontent.com/cli/cli/8d0518645f309d5ceec8eab9663299e4b75f33b4/pkg/cmd/attestation/test/data/reusable-workflow-attestation.sigstore.json",
+  "github_api_url": "https://api.github.com/repos/malancas/attest-demo/attestations/sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25",
+  "retrieved_at": "2026-09-16",
+  "artifact_name": "github_provenance_demo-0.0.0-py3-none-any.whl",
+  "digest": "sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25",
+  "source_repository": "malancas/attest-demo",
+  "source_workflow": ".github/workflows/shared.yml",
+  "source_ref": "refs/heads/main",
+  "source_commit": "95baf27389e83e6a5c48f42e190d48d7abcea19e",
+  "signer_repository": "github/artifact-attestations-workflows",
+  "signer_workflow": ".github/workflows/attest.yml",
+  "signer_ref": "09b495c3f12c7881b3cc17209a327792065c1a1d",
+  "signer_commit": "09b495c3f12c7881b3cc17209a327792065c1a1d",
+  "certificate_identity": "https://github.com/github/artifact-attestations-workflows/.github/workflows/attest.yml@09b495c3f12c7881b3cc17209a327792065c1a1d",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "predicate_type": "https://slsa.dev/provenance/v1"
+}

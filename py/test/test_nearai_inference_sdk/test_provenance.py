@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from pyasn1.codec.der.encoder import encode as encode_der
+from pyasn1.type.char import UTF8String
 from sigstore.models import TrustedRoot
 from sigstore.verify import Verifier
 
@@ -37,6 +39,20 @@ POLICY = ImageProvenancePolicy(
     workflow='.github/workflows/build.yml',
     ref='refs/heads/master',
     commit=COMMIT,
+)
+REUSABLE_BUNDLE = FIXTURE.with_name('reusable-workflow.bundle.json').read_text()
+REUSABLE_DIGEST = (
+    'sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25'
+)
+REUSABLE_POLICY = ImageProvenancePolicy(
+    repository='malancas/attest-demo',
+    workflow='.github/workflows/shared.yml',
+    ref='refs/heads/main',
+    commit='95baf27389e83e6a5c48f42e190d48d7abcea19e',
+    signer_identity=(
+        'https://github.com/github/artifact-attestations-workflows/'
+        '.github/workflows/attest.yml@09b495c3f12c7881b3cc17209a327792065c1a1d'
+    ),
 )
 
 
@@ -74,6 +90,44 @@ async def test_verifies_real_image_provenance_and_skips_an_invalid_candidate(
     )
     assert result.issuer == POLICY.issuer
     assert result.predicate_type == 'https://slsa.dev/provenance/v1'
+
+
+async def test_verifies_a_reusable_workflow_signer_and_its_distinct_source() -> None:
+    result = await verify_image_provenance(
+        [BUNDLE, REUSABLE_BUNDLE], REUSABLE_DIGEST, REUSABLE_POLICY
+    )
+
+    assert result.repository == REUSABLE_POLICY.repository
+    assert result.workflow == REUSABLE_POLICY.workflow
+    assert result.ref == REUSABLE_POLICY.ref
+    assert result.commit == REUSABLE_POLICY.commit
+    assert result.certificate_identity == REUSABLE_POLICY.signer_identity
+
+
+@pytest.mark.parametrize(
+    ('policy', 'reason'),
+    [
+        (replace(REUSABLE_POLICY, signer_identity=None), 'untrusted_identity'),
+        (
+            replace(REUSABLE_POLICY, signer_identity='https://github.com/other/build'),
+            'untrusted_identity',
+        ),
+        (replace(REUSABLE_POLICY, repository='other/source'), 'source_mismatch'),
+        (
+            replace(REUSABLE_POLICY, workflow='.github/workflows/other.yml'),
+            'source_mismatch',
+        ),
+        (replace(REUSABLE_POLICY, ref='refs/heads/release'), 'source_mismatch'),
+        (replace(REUSABLE_POLICY, commit='ab' * 20), 'commit_mismatch'),
+    ],
+)
+async def test_reusable_workflow_requires_both_trusted_signer_and_source(
+    policy: ImageProvenancePolicy, reason: str
+) -> None:
+    with pytest.raises(VerificationError) as raised:
+        await verify_image_provenance([REUSABLE_BUNDLE], REUSABLE_DIGEST, policy)
+
+    assert raised.value.failure.details['reasons'] == [reason]
 
 
 async def test_rejects_tampered_signed_payload() -> None:
@@ -178,6 +232,36 @@ def test_uses_legacy_certificate_sha_when_source_digest_is_absent() -> None:
     certificate = _certificate_with_extensions({3: COMMIT.upper().encode()})
 
     assert provenance._certificate_source_commit(certificate) == COMMIT
+
+
+def test_uses_legacy_repository_and_ref_when_modern_claims_are_absent() -> None:
+    certificate = _certificate_with_extensions(
+        {5: b'nearai/compose-manager', 6: b'refs/heads/master'}
+    )
+
+    assert provenance._verify_certificate_source_ref(certificate, POLICY) == POLICY.ref
+
+
+@pytest.mark.parametrize(
+    'claims',
+    [
+        {12: b'not-der'},
+        {14: b'not-der'},
+        {12: encode_der(UTF8String('https://github.com/other/source'))},
+        {14: encode_der(UTF8String('refs/heads/other'))},
+    ],
+)
+def test_rejects_bad_modern_source_claims_without_using_matching_legacy_claims(
+    claims: dict[int, bytes],
+) -> None:
+    certificate = _certificate_with_extensions(
+        {5: b'nearai/compose-manager', 6: b'refs/heads/master', **claims}
+    )
+
+    with pytest.raises(provenance._StatementMismatch) as raised:
+        provenance._verify_certificate_source_ref(certificate, POLICY)
+
+    assert raised.value.reason == 'source_mismatch'
 
 
 @pytest.mark.parametrize(

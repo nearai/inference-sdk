@@ -232,18 +232,23 @@ the optional commit pin.
 
 | Policy field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `repository` | `str` | required | Expected GitHub `owner/repo`. |
-| `workflow` | `str` | required | Expected workflow path, such as `.github/workflows/build.yml`. |
+| `repository` | `str` | required | Expected source GitHub `owner/repo`; also the repository used to fetch attestations. |
+| `workflow` | `str` | required | Expected source workflow path, such as `.github/workflows/build.yml`. |
 | `ref` | `str \| None` | `None` | Optional exact source ref, such as `refs/heads/main`. |
 | `commit` | `str \| None` | `None` | Optional approved source commit SHA. |
 | `issuer` | `str` | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
+| `signer_identity` | `str \| None` | `None` | Exact signing-certificate URI for a reusable workflow, including its ref, tag, or commit suffix. Defaults to the source repository/workflow at the verified source ref. |
+
+The certificate's source repository, ref, and commit must match the signed SLSA
+source. Setting `signer_identity` changes only the accepted signer, not these
+source checks.
 
 | Result field | Type | Description |
 | --- | --- | --- |
 | `digest` | `str` | Verified image digest. |
-| `repository` | `str` | Verified GitHub repository. |
-| `workflow` | `str` | Verified build workflow path. |
-| `ref` | `str` | Verified build ref. |
+| `repository` | `str` | Verified source GitHub repository. |
+| `workflow` | `str` | Verified source workflow path. |
+| `ref` | `str` | Verified source ref. |
 | `commit` | `str` | Verified source commit SHA. |
 | `certificate_identity` | `str` | Verified signing-certificate identity. |
 | `issuer` | `str` | Accepted certificate OIDC issuer. |
