@@ -187,7 +187,7 @@ The Gateway's report and signature endpoints have different defaults.
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model deployment evidence, optionally filtered by signing algorithm and signing address. Verify every returned candidate for a deployment check. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the complete serving model-attestation set matching the requested model and optional signing filters. Verify every returned attestation for a deployment check. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -213,7 +213,7 @@ attestation verifier.
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations`. The collection may be empty or contain multiple candidates; verify every candidate before a completion. |
+|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations` for the complete serving set. Verify every attestation before a completion. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |

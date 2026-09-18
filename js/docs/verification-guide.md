@@ -45,8 +45,9 @@ const client = new InferenceClient({
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The client verifies all returned model attestations
-before selecting a key for that algorithm.
+and response signatures. The Gateway returns the complete serving model-
+attestation set for the requested model. The client verifies that set before
+selecting a key for the chosen algorithm.
 
 ### Cache deployment verification
 
