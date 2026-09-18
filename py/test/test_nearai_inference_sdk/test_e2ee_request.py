@@ -91,6 +91,12 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         json=body,
         headers={
             'authorization': 'Bearer caller-owned',
+            'Content-Length': '999',
+            'Content-MD5': 'stale',
+            'Digest': 'sha-256=stale',
+            'Content-Digest': 'sha-256=:stale:',
+            'Repr-Digest': 'sha-256=:stale:',
+            'Content-Encoding': 'gzip',
             'x-encryption-version': 'stale',
         },
         extensions={'timeout': {'read': None}},
@@ -105,6 +111,15 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
     assert headers.get('x-encryption-version') == (
         '2' if signing_algo == 'ed25519' else None
     )
+    assert headers['content-length'] == str(len(prepared.request.content))
+    for name in (
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
+        'content-encoding',
+    ):
+        assert name not in headers
     assert prepared.request.extensions == original.extensions
     encrypted = json.loads(await prepared.request.aread())
     message = encrypted['messages'][0]

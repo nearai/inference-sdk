@@ -21,6 +21,16 @@ from .e2ee_chat import (
 )
 
 
+_REPLACED_BODY_HEADERS = (
+    'content-length',
+    'content-md5',
+    'digest',
+    'content-digest',
+    'repr-digest',
+    'content-encoding',
+)
+
+
 async def prepare_e2ee_chat_request(
     request: httpx.Request, model_key: E2eeModelKey
 ) -> PreparedE2eeChatRequest:
@@ -45,7 +55,8 @@ async def prepare_e2ee_chat_request(
     client_key_pair = create_e2ee_client_key_pair(model_key.signing_algo)
     encrypted = encrypt_e2ee_chat_request(body, model_key)
     headers = httpx.Headers(request.headers)
-    headers.pop('content-length', None)
+    for name in _REPLACED_BODY_HEADERS:
+        headers.pop(name, None)
     headers['content-type'] = 'application/json'
     remove_e2ee_headers(headers)
     headers['x-signing-algo'] = model_key.signing_algo
