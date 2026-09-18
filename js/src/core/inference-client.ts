@@ -31,7 +31,7 @@ import {
   isVerificationError,
   VerificationError,
 } from '../utils/errors';
-import { getSseDataRecords } from '../utils/sse';
+import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
 import {
   AttestationClient,
   createCloudApiRequestConfiguration,
@@ -686,22 +686,19 @@ function registerCompletionResponse({
         if (!registered) {
           pending += decoder.decode(chunk, { stream: true });
           if (streaming) {
-            const records = getSseDataRecords(pending);
-            for (const data of records.slice(0, -1)) {
-              if (data === '' || data === '[DONE]') continue;
-              let value: unknown;
+            const complete = takeCompleteSseRecords(pending);
+            pending = complete.pending;
+            for (const record of complete.records) {
+              let id: string;
               try {
-                value = JSON.parse(data);
+                id = getSseCompletionId(record.value);
               } catch {
                 continue;
               }
-              const parsed = v.safeParse(CompletionResponseIdSchema, value);
-              if (parsed.success) {
-                register(parsed.output.id);
-                registered = true;
-                pending = '';
-                break;
-              }
+              register(id);
+              registered = true;
+              pending = '';
+              break;
             }
           }
         }

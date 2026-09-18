@@ -64,7 +64,7 @@ export async function prepareE2eeChatRequest({
   const clientKeyPair = createE2eeClientKeyPair(modelKey.signingAlgo);
   const encrypted = encryptE2eeChatRequest({ body: parsed.output, modelKey });
   const headers = new Headers(request.headers);
-  headers.delete('content-length');
+  removeTransformedBodyHeaders(headers);
   headers.set('content-type', 'application/json');
   removeE2eeHeaders(headers);
   headers.set('x-signing-algo', modelKey.signingAlgo);
@@ -151,7 +151,7 @@ async function decryptResponse({
 }: DecryptE2eeResponseParams): Promise<Response> {
   if (!response.ok) return response;
   const headers = new Headers(response.headers);
-  headers.delete('content-length');
+  removeTransformedBodyHeaders(headers);
   if (isServerSentEventResponse(response)) {
     if (response.body === null) throw invalidResponse();
     return new Response(
@@ -167,6 +167,22 @@ async function decryptResponse({
     statusText: response.statusText,
     headers,
   });
+}
+
+/** Body metadata from before encryption or decryption no longer applies. */
+function removeTransformedBodyHeaders(headers: Headers): void {
+  for (const name of [
+    'content-length',
+    'content-encoding',
+    'content-md5',
+    'digest',
+    'content-digest',
+    'repr-digest',
+    'etag',
+    'last-modified',
+  ]) {
+    headers.delete(name);
+  }
 }
 
 async function decodeResponseBody(

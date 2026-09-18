@@ -47,6 +47,10 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           'x-caller-header': 'preserved',
           'content-type': 'text/plain',
           'content-length': '1',
+          'content-md5': 'original-body-md5',
+          digest: 'sha-256=original-body-digest',
+          'content-digest': 'sha-256=:original-body-digest:',
+          'repr-digest': 'sha-256=:original-representation-digest:',
           'x-signing-algo': 'stale',
           'x-client-pub-key': 'stale',
           'x-model-pub-key': 'stale',
@@ -66,6 +70,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       expect(headers.get('x-caller-header')).toBe('preserved');
       expect(headers.get('content-type')).toBe('application/json');
       expect(headers.get('content-length')).toBeNull();
+      for (const name of [
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
+      ]) {
+        expect(headers.has(name)).toBe(false);
+      }
       expect(headers.get('x-signing-algo')).toBe(signingAlgo);
       expect(headers.get('x-model-pub-key')).toBe(keyPair.publicKey);
       expect(headers.get('x-client-pub-key')).toHaveLength(
@@ -121,6 +133,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           statusText: 'Created',
           headers: {
             'content-length': '99999',
+            // Fetch has already decoded the HTTP content encoding.
+            'content-encoding': 'gzip',
+            'content-md5': 'encrypted-body-md5',
+            digest: 'sha-256=encrypted-body-digest',
+            'content-digest': 'sha-256=:encrypted-body-digest:',
+            'repr-digest': 'sha-256=:encrypted-representation-digest:',
+            etag: '"encrypted-body"',
+            'last-modified': 'Thu, 17 Sep 2026 00:00:00 GMT',
             'x-response-header': 'preserved',
           },
         }),
@@ -128,6 +148,17 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       expect(response.status).toBe(201);
       expect(response.statusText).toBe('Created');
       expect(response.headers.get('content-length')).toBeNull();
+      for (const name of [
+        'content-encoding',
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
+        'etag',
+        'last-modified',
+      ]) {
+        expect(response.headers.has(name)).toBe(false);
+      }
       expect(response.headers.get('content-type')).toBe('application/json');
       expect(response.headers.get('x-response-header')).toBe('preserved');
       expect(await response.json()).toEqual({
@@ -200,10 +231,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
             headers: {
               'content-type': 'text/event-stream; charset=utf-8',
               'content-length': '99999',
+              'content-encoding': 'br',
+              'content-digest': 'sha-256=:encrypted-stream-digest:',
             },
           }),
         );
         expect(response.headers.get('content-length')).toBeNull();
+        expect(response.headers.has('content-encoding')).toBe(false);
+        expect(response.headers.has('content-digest')).toBe(false);
         expect(response.headers.get('content-type')).toBe(
           'text/event-stream; charset=utf-8',
         );
