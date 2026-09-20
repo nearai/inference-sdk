@@ -6,6 +6,9 @@ from .core.chat import verify_gateway_response, verify_model_response
 from .core.e2ee_request import prepare_e2ee_chat_request
 from .core.inference_client import InferenceClient
 from .core.pinned_tls import create_pinned_tls_client
+from .core.ohttp import create_ohttp_client
+from .core.ohttp_attestation import verify_ohttp_key_config
+from .types.ohttp import OhttpAttestation
 from .types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
 from .types.inference_client import (
     DeploymentPolicy,
@@ -77,6 +80,9 @@ __all__ = [
     'AttestationClient',
     'InferenceClient',
     'create_pinned_tls_client',
+    'create_ohttp_client',
+    'verify_ohttp_key_config',
+    'OhttpAttestation',
     'prepare_e2ee_chat_request',
     'E2eeModelKey',
     'PreparedE2eeChatRequest',

@@ -13,6 +13,7 @@ dependencies = [
     "httpcore==1.0.9",
     "openai>=2.0.0,<3",
     "cryptography>=44.0.0",
+    "pyhpke==0.6.5",
     "eth-account>=0.10.0",
     "eth-utils>=2.0.0",
     "dcap-qvl>=0.3.9",

@@ -76,6 +76,11 @@ available through `signing_algo='ecdsa'`. Successful attestations are cached for
 Optional deployment callbacks can enforce an application-owned approval policy;
 no approved-release allowlist is supplied by default.
 
+Set `ohttp=True` to encapsulate Chat HTTP requests and responses to the attested
+Gateway. OHTTP is disabled by default and requires Ed25519. Field-level E2EE
+remains enabled independently; JSON, streaming, and response verification use
+the same interfaces.
+
 Response-signature verification is explicit: call `verify_response(completion_id)`
 after consuming the response. It uses the exact encrypted bytes retained by the
 client, without delaying delivery of decrypted content. Response records expire

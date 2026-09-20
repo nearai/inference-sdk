@@ -51,6 +51,8 @@ from .e2ee_request import (
     remove_e2ee_headers,
 )
 from .pinned_tls import create_pinned_tls_client
+from .ohttp import create_ohttp_client
+from .ohttp_attestation import verify_ohttp_key_config
 
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
@@ -128,6 +130,7 @@ class InferenceClient:
         base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
         headers: Mapping[str, str] | None = None,
         e2ee: bool = True,
+        ohttp: bool = False,
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
@@ -135,6 +138,16 @@ class InferenceClient:
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
+        if ohttp and signing_algo != 'ed25519':
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'signing_algo',
+                    'reason': 'unsupported_value',
+                    'expected': 'ed25519 when OHTTP is enabled',
+                    'actual': signing_algo,
+                },
+            )
         self.base_url = _validate_base_url(base_url).rstrip('/') + '/'
         self._api_key = api_key
         self._headers = httpx.Headers(headers)
@@ -143,6 +156,7 @@ class InferenceClient:
             self._headers.pop('api-key', None)
         self._signing_algo = signing_algo
         self._e2ee = e2ee
+        self._ohttp = ohttp
         self._attestation_ttl = attestation_cache_time_to_live_ms / 1000
         self._response_ttl = response_cache_time_to_live_ms / 1000
         self._gateway_options = gateway_verification or GatewayVerificationOptions()
@@ -363,6 +377,13 @@ class InferenceClient:
             policy=self._gateway_options.policy,
             verifiers=self._gateway_options.verifiers,
         )
+        ohttp_key_config = None
+        if self._ohttp:
+            if fetched.attestation.ohttp_attestation is None:
+                raise verification_failure('ohttp.attestation_required')
+            ohttp_key_config = verify_ohttp_key_config(
+                fetched.attestation.ohttp_attestation, gateway.signer
+            )
         fingerprint = gateway.tls_binding.spki_fingerprint
         client = self._gateway_clients.get(fingerprint)
         if client is None:
@@ -414,13 +435,25 @@ class InferenceClient:
         )
         if selected is None:
             raise verification_failure('e2ee.model_public_key_required')
+        # Only Chat uses OHTTP. Evidence and signature queries keep the original
+        # pinned client; receipt capture sees the decoded inner response bytes.
+        completion_client = (
+            client
+            if ohttp_key_config is None
+            else create_ohttp_client(
+                ohttp_key_config,
+                base_url=self.base_url,
+                http_client=client,
+                forwarded_headers=tuple(self._headers),
+            )
+        )
         return _VerifiedSession(
             gateway,
             selected,
             E2eeModelKey(
                 signing_algo=self._signing_algo, public_key=selected.signing_public_key
             ),
-            client,
+            completion_client,
             attestations,
         )
 
@@ -528,7 +561,9 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
     def _fail(self, cause: BaseException) -> None:
         if not self._record.response_body.done():
             self._record.response_body.set_exception(
-                api_failure(
+                cause
+                if isinstance(cause, (ApiError, VerificationError))
+                else api_failure(
                     'api.transport_failed',
                     {'resource': 'completion', 'reason': 'response_body'},
                     retryable=True,

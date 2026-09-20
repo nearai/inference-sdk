@@ -17,6 +17,7 @@ from ..schemas import (
     CloudModelAttestationResponseSchema,
     CloudModelAttestationSchema,
     CloudUnavailableSignatureSchema,
+    OhttpAttestationSchema,
 )
 from ..types.attestation_common import SigningAlgo, SigningIdentity
 from ..types.attestation_gateway import GatewayAttestation
@@ -31,6 +32,7 @@ from ..types.cloud_api import (
     FetchedGatewayAttestation,
     FetchedModelAttestations,
 )
+from ..types.ohttp import OhttpAttestation
 from ..types.verification import (
     GatewayClientBinding,
     ModelClientBinding,
@@ -322,7 +324,15 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
             root='gateway attestation report',
             nested_record_field='gateway_attestation',
         )
-    return _map_gateway_attestation(report.gateway_attestation, 'gateway_attestation')
+    return _map_gateway_attestation(
+        report.gateway_attestation,
+        'gateway_attestation',
+        ohttp_attestation=(
+            _map_ohttp_attestation(report.ohttp_attestation)
+            if report.ohttp_attestation is not None
+            else None
+        ),
+    )
 
 
 def _map_model_attestation(
@@ -343,7 +353,10 @@ def _map_model_attestation(
 
 
 def _map_gateway_attestation(
-    raw: CloudGatewayAttestationSchema, label: str
+    raw: CloudGatewayAttestationSchema,
+    label: str,
+    *,
+    ohttp_attestation: OhttpAttestation | None = None,
 ) -> GatewayAttestation:
     return GatewayAttestation(
         nonce=_validate_api_nonce(raw.request_nonce, f'{label}.request_nonce'),
@@ -353,6 +366,27 @@ def _map_gateway_attestation(
         app_compose=raw.info.tcb_info.app_compose,
         spki_fingerprint=raw.tls_cert_fingerprint,
         reported_quote_data=raw.report_data,
+        ohttp_attestation=ohttp_attestation,
+    )
+
+
+def _map_ohttp_attestation(raw: OhttpAttestationSchema) -> OhttpAttestation:
+    for field, value, byte_length in (
+        ('signing_key', raw.signing_key, 32),
+        ('key_config', raw.key_config, None),
+        ('signature', raw.signature, 64),
+    ):
+        label = f'ohttp_attestation.{field}'
+        decoded = _api_hex_to_bytes(value, label)
+        if byte_length is not None and len(decoded) != byte_length:
+            raise _invalid_response(
+                label, f'{byte_length}-byte hexadecimal text', value
+            )
+    return OhttpAttestation(
+        signing_algo=raw.signing_algo,
+        signing_key=raw.signing_key,
+        key_config=raw.key_config,
+        signature=raw.signature,
     )
 
 
@@ -398,6 +432,8 @@ def _wire_error_path(
     location = issue['loc']
     if not isinstance(location, tuple):
         return root
+    if location[:1] == ('ohttp_attestation',):
+        return _format_api_path(location)
     if (
         nested_record_field is not None
         and location[:1] == (nested_record_field,)

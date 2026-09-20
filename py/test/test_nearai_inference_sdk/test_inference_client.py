@@ -299,8 +299,16 @@ async def test_chat_decrypts_and_verifies_json_and_streaming_responses(
     )
 
 
-async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch):
-    gateway = Gateway()
+@pytest.fixture(params=['direct', 'ohttp'])
+def gateway(request):
+    if request.param == 'ohttp':
+        from .test_inference_ohttp import ObliviousGateway
+
+        return ObliviousGateway()
+    return Gateway()
+
+
+async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch, gateway):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -320,8 +328,46 @@ async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch):
     assert len(gateway.completion_requests) == 2
 
 
-async def test_attestation_cache_is_scoped_to_the_requested_model(monkeypatch):
-    gateway = Gateway()
+async def test_cancelling_one_chat_preserves_shared_preflight(monkeypatch, gateway):
+    preflight_started = asyncio.Event()
+    release_preflight = asyncio.Event()
+    handle = gateway.handle
+
+    async def hold_preflight(request):
+        if (
+            request.url.path == '/v1/attestation/report'
+            and 'model' not in request.url.params
+        ):
+            preflight_started.set()
+            await release_preflight.wait()
+        return await handle(request)
+
+    monkeypatch.setattr(gateway, 'handle', hold_preflight)
+    gateway.install(monkeypatch)
+
+    async with gateway.client() as client:
+        cancelled = asyncio.create_task(
+            client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        )
+        await preflight_started.wait()
+        continuing = asyncio.create_task(
+            client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        )
+        await asyncio.sleep(0)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        release_preflight.set()
+        completion = await continuing
+        await client.verify_response(completion.id)
+
+    assert gateway.gateway_requests == 1
+    assert gateway.model_requests == [MODEL]
+    assert len(gateway.completion_requests) == 1
+    assert gateway.signature_requests == 1
+
+
+async def test_attestation_cache_is_scoped_to_the_requested_model(monkeypatch, gateway):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -331,8 +377,9 @@ async def test_attestation_cache_is_scoped_to_the_requested_model(monkeypatch):
     assert gateway.model_requests == [MODEL, 'another-model']
 
 
-async def test_expired_attestations_are_refreshed_before_sending_chat(monkeypatch):
-    gateway = Gateway()
+async def test_expired_attestations_are_refreshed_before_sending_chat(
+    monkeypatch, gateway
+):
     gateway.install(monkeypatch)
     now = 0
     monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
@@ -345,8 +392,9 @@ async def test_expired_attestations_are_refreshed_before_sending_chat(monkeypatc
     assert gateway.model_requests == [MODEL, MODEL]
 
 
-async def test_concurrent_receipt_checks_share_signature_retrieval(monkeypatch):
-    gateway = Gateway()
+async def test_concurrent_receipt_checks_share_signature_retrieval(
+    monkeypatch, gateway
+):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -434,8 +482,8 @@ async def test_every_returned_model_report_must_pass_preflight(monkeypatch):
 
 async def test_configured_authentication_is_shared_with_evidence_and_chat(
     monkeypatch,
+    gateway,
 ):
-    gateway = Gateway()
     gateway.install(monkeypatch)
 
     async with gateway.client(headers={'x-aggregator': 'app'}) as client:
@@ -453,8 +501,7 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
     assert gateway.completion_requests[0].headers['x-tenant'] == 'alice'
 
 
-async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch):
-    gateway = Gateway()
+async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch, gateway):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -471,8 +518,8 @@ async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch):
 
 async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
     monkeypatch,
+    gateway,
 ):
-    gateway = Gateway()
     gateway.tail_gate = asyncio.Event()
     gateway.install(monkeypatch)
 

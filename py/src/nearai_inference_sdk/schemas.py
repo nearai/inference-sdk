@@ -144,8 +144,16 @@ class CloudModelAttestationResponseSchema(ApiSchema):
     model_attestations: list[CloudModelAttestationSchema] = Field(default_factory=list)
 
 
+class OhttpAttestationSchema(ApiSchema):
+    signing_algo: Literal['ed25519']
+    signing_key: StrictStr
+    key_config: StrictStr
+    signature: StrictStr
+
+
 class CloudGatewayAttestationResponseSchema(ApiSchema):
     gateway_attestation: CloudGatewayAttestationSchema
+    ohttp_attestation: OhttpAttestationSchema | None = None
 
 
 class CloudCompletionSignatureSchema(ApiSchema):

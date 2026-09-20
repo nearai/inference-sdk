@@ -12,6 +12,7 @@ from nearai_inference_sdk import (
     CompletionSignature,
     CompletionSignatureReference,
     MeasuredDeployment,
+    OhttpAttestation,
     RuntimeMeasurements,
     SigningIdentity,
     VerifiedModelAttestation,
@@ -24,6 +25,12 @@ from nearai_inference_sdk.utils.fetch import FetchResponse
 SIGNING_ADDRESS = f'0x{"22" * 20}'
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
+OHTTP_WIRE_ATTESTATION = {
+    'signing_algo': 'ed25519',
+    'signing_key': '55' * 32,
+    'key_config': '010020' + '33' * 32 + '000400010001',
+    'signature': '66' * 64,
+}
 
 
 CloudApiResponder = Callable[[str, Mapping[str, str]], Awaitable[FetchResponse]]
@@ -399,6 +406,83 @@ async def test_gateway_helper_rejects_a_mismatched_nonce(
 
     assert raised.value.failure.code == 'api.nonce_mismatch'
     assert raised.value.failure.details == {'resource': 'gateway_attestation'}
+
+
+@pytest.mark.parametrize(
+    'metadata',
+    [{}, {'ohttp_attestation': None}, {'ohttp_attestation': OHTTP_WIRE_ATTESTATION}],
+)
+async def test_gateway_helper_maps_optional_envelope_ohttp_attestation(
+    monkeypatch: pytest.MonkeyPatch, metadata: dict[str, object]
+) -> None:
+    async def response(url: str, _: Mapping[str, str]) -> FetchResponse:
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='00' * 64,
+                    ),
+                    **metadata,
+                }
+            ).encode(),
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, response)
+    fetched = await cloud_client().fetch_gateway_attestation()
+
+    assert fetched.attestation.ohttp_attestation == (
+        OhttpAttestation(**OHTTP_WIRE_ATTESTATION)
+        if metadata.get('ohttp_attestation') is not None
+        else None
+    )
+
+
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [
+        ('signing_algo', 'ecdsa'),
+        ('signing_key', 'ab'),
+        ('signing_key', 'not-hex'),
+        ('key_config', None),
+        ('key_config', 'not-hex'),
+        ('key_config', ''),
+        ('signature', '00'),
+        ('signature', None),
+        ('signature', ...),
+    ],
+)
+async def test_gateway_helper_rejects_malformed_ohttp_attestation_as_api_error(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    proof = {**OHTTP_WIRE_ATTESTATION, field: value}
+    if value is ...:
+        proof.pop(field)
+
+    async def response(url: str, _: Mapping[str, str]) -> FetchResponse:
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='00' * 64,
+                    ),
+                    'ohttp_attestation': proof,
+                }
+            ).encode(),
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, response)
+    with pytest.raises(ApiError) as raised:
+        await cloud_client().fetch_gateway_attestation()
+
+    assert raised.value.failure.code == 'api.invalid_response'
+    assert raised.value.failure.details['path'] == f'ohttp_attestation.{field}'
+    assert raised.value.retryable is False
 
 
 async def test_gateway_helper_requires_tls_fingerprint_evidence(
