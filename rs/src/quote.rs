@@ -7,10 +7,9 @@ use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::verify;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_INTEL_PCCS_URL: &str =
-    "https://api.trustedservices.intel.com/tdx/certification/v4";
+pub const DEFAULT_INTEL_PCCS_URL: &str = "https://api.trustedservices.intel.com";
 
-/// Default Intel DCAP quote verifier used when callers do not provide one.
+/// Intel DCAP quote verifier, using Intel's official PCS endpoint by default.
 #[derive(Clone, Debug)]
 pub struct DcapQuoteVerifier {
     pccs_url: String,
@@ -23,6 +22,8 @@ impl Default for DcapQuoteVerifier {
 }
 
 impl DcapQuoteVerifier {
+    /// Retrieve collateral from a PCCS-compatible base URL. This changes the
+    /// collateral source while retaining Intel's cryptographic trust roots.
     pub fn new(pccs_url: impl Into<String>) -> Self {
         Self {
             pccs_url: pccs_url.into(),
@@ -105,6 +106,65 @@ fn parse_tcb_status(status: &str) -> Result<TcbStatus, VerificationError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
+
+    #[test]
+    fn uses_the_official_intel_endpoint_by_default() {
+        assert_eq!(
+            DcapQuoteVerifier::default().pccs_url,
+            "https://api.trustedservices.intel.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn requests_collateral_from_the_custom_pccs_base_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/proxy/sgx/certification/v4/pckcert"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        // Structurally valid SGX quote with synthetic signatures and encrypted
+        // PPID data: enough to request a PCK certificate, never to pass verification.
+        let mut auth = vec![0; 64 + 64 + 384 + 64];
+        auth.extend(0_u16.to_le_bytes()); // Empty QE authentication data.
+        auth.extend(2_u16.to_le_bytes()); // Encrypted PPID-2048 certification.
+        auth.extend(276_u32.to_le_bytes());
+        auth.extend([0; 276]);
+        let mut quote = vec![0; 48 + 384];
+        quote[..2].copy_from_slice(&3_u16.to_le_bytes());
+        quote.extend((auth.len() as u32).to_le_bytes());
+        quote.extend(auth);
+        let quote = hex::encode(quote);
+
+        for suffix in ["/proxy", "/proxy/tdx/certification/v4/"] {
+            let verifier = DcapQuoteVerifier::new(format!("{}{suffix}", server.uri()));
+            let error = verifier.verify(&quote).await.unwrap_err();
+            assert!(matches!(
+                error,
+                VerificationError::QuoteCollateralUnavailable
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_quotes_before_contacting_the_custom_pccs() {
+        let server = MockServer::start().await;
+        let verifier = DcapQuoteVerifier::new(server.uri());
+        for (quote, expected) in [("zz", "invalid_encoding"), ("00", "invalid_quote")] {
+            let error = verifier.verify(quote).await.unwrap_err();
+            assert!(matches!(
+                error,
+                VerificationError::QuoteVerificationFailed { reason } if reason == expected
+            ));
+        }
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
 
     #[test]
     fn rejects_an_unrecognized_tcb_status() {

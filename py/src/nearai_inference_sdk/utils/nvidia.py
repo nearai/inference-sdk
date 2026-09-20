@@ -9,10 +9,13 @@ import jwt
 from pydantic import ValidationError
 
 from ..schemas import (
+    NvidiaPayloadNonceSchema,
     _NrasOverallAttestationJwtClaimsSchema,
     _NrasResponseSchema,
     _NvidiaJwksSchema,
 )
+from ..types.verification import NvidiaEvidenceVerifier
+from .common import require_byte_length
 from .consts import NVIDIA_GPU_VERIFIER_API_URL
 from .errors import verification_failure
 from .fetch import FetchResponse, fetch
@@ -21,7 +24,49 @@ NVIDIA_ISSUER = 'https://nras.attestation.nvidia.com'
 NVIDIA_JWKS_URL = f'{NVIDIA_ISSUER}/.well-known/jwks.json'
 
 
-async def verify_nvidia_nras(nvidia_payload: str, nonce: str) -> None:
+def create_nvidia_evidence_verifier(
+    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
+    jwks_url: str = NVIDIA_JWKS_URL,
+) -> NvidiaEvidenceVerifier:
+    """Create the NVIDIA verifier with NRAS and signing-key URLs.
+
+    The issuer remains NVIDIA. The JWKS endpoint supplies trusted signing keys;
+    configure only a trusted source. The returned verifier binds the signed
+    verdict to the payload nonce; callers must bind that nonce to their request,
+    as verify_model_attestation does.
+    """
+
+    async def verify_evidence(payload: str) -> None:
+        nonce = decode_nvidia_payload_nonce(payload)
+        await verify_nvidia_nras(payload, nonce, nras_url, jwks_url)
+
+    return verify_evidence
+
+
+def decode_nvidia_payload_nonce(payload: str) -> str:
+    """Decode GPU evidence and require a 32-byte hexadecimal nonce."""
+
+    try:
+        parsed = NvidiaPayloadNonceSchema.model_validate_json(payload)
+    except ValidationError as error:
+        reason = (
+            'invalid_json'
+            if error.errors(include_url=False)[0]['type'] == 'json_invalid'
+            else 'nonce_missing'
+        )
+        raise verification_failure(
+            'gpu.payload_invalid', {'reason': reason}, cause=error
+        ) from error
+    require_byte_length(parsed.nonce, 32, 'nvidia_payload.nonce')
+    return parsed.nonce
+
+
+async def verify_nvidia_nras(
+    nvidia_payload: str,
+    nonce: str,
+    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
+    jwks_url: str = NVIDIA_JWKS_URL,
+) -> None:
     """Verify NRAS's ES384-signed overall verdict, issuer, time and nonce.
 
     Detached device claims are not consumed by this adapter.
@@ -29,7 +74,7 @@ async def verify_nvidia_nras(nvidia_payload: str, nonce: str) -> None:
 
     try:
         response = await fetch(
-            NVIDIA_GPU_VERIFIER_API_URL,
+            nras_url,
             method='POST',
             data=nvidia_payload,
             headers={'content-type': 'application/json'},
@@ -51,7 +96,7 @@ async def verify_nvidia_nras(nvidia_payload: str, nonce: str) -> None:
 
     raw = _decode_nras_json(response)
     token = _decode_nras_overall_attestation_jwt(raw)
-    key_set = await _fetch_nvidia_jwks()
+    key_set = await _fetch_nvidia_jwks(jwks_url)
     claims = _verify_nras_jwt(token, key_set)
     if bytes.fromhex(claims.eat_nonce) != bytes.fromhex(
         nonce.removeprefix('0x').removeprefix('0X')
@@ -76,9 +121,9 @@ def _decode_nras_overall_attestation_jwt(value: object) -> str:
         raise _invalid_nras_response('invalid_schema', error) from error
 
 
-async def _fetch_nvidia_jwks() -> jwt.PyJWKSet:
+async def _fetch_nvidia_jwks(jwks_url: str) -> jwt.PyJWKSet:
     try:
-        response = await fetch(NVIDIA_JWKS_URL)
+        response = await fetch(jwks_url)
     except (aiohttp.ClientError, TimeoutError, OSError) as error:
         raise verification_failure(
             'gpu.jwks_request_failed',

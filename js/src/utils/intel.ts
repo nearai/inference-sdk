@@ -6,10 +6,21 @@ import {
   type VerifiedReport,
   verify,
 } from '@phala/dcap-qvl';
-import type { VerifiedTdxQuote } from '../types/verification';
+import type {
+  CreateDcapQuoteVerifierParams,
+  QuoteVerifier,
+  VerifiedTdxQuote,
+} from '../types/verification';
 import { decodeQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { isVerificationError, VerificationError } from './errors';
+
+/** Use Intel DCAP verification with collateral fetched from the selected service. */
+export function createDcapQuoteVerifier({
+  pccsUrl = getIntelPccsApiUrl(),
+}: CreateDcapQuoteVerifierParams = {}): QuoteVerifier {
+  return (quote) => verifyDcapQuote(quote, pccsUrl);
+}
 
 /**
  * Verify an Intel TDX quote using DCAP and expose only the measurements needed
@@ -17,6 +28,7 @@ import { isVerificationError, VerificationError } from './errors';
  */
 export async function verifyDcapQuote(
   quote: string,
+  pccsUrl = getIntelPccsApiUrl(),
 ): Promise<VerifiedTdxQuote> {
   let quoteBytes: Uint8Array;
   try {
@@ -45,7 +57,7 @@ export async function verifyDcapQuote(
 
   let collateral: Collateral;
   try {
-    collateral = await getCollateral(getIntelPccsApiUrl(), quoteBytes);
+    collateral = await getCollateral(pccsUrl, quoteBytes);
   } catch (cause) {
     throw new VerificationError(
       {

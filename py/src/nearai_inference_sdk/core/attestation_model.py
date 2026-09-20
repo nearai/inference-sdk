@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from pydantic import ValidationError
-
-from ..schemas import NvidiaPayloadNonceSchema
 from ..types.verification import (
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
@@ -18,7 +15,7 @@ from ..utils.errors import (
     VerificationError,
     verification_failure,
 )
-from ..utils.nvidia import verify_nvidia_nras
+from ..utils.nvidia import decode_nvidia_payload_nonce, verify_nvidia_nras
 from .attestation_common import verify_report_data_binding, verify_reported_nonce
 from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
 
@@ -77,18 +74,8 @@ async def _verify_nvidia_evidence(
             raise verification_failure('policy.gpu_evidence_required')
         return 'not_provided'
 
-    try:
-        parsed = NvidiaPayloadNonceSchema.model_validate_json(payload)
-    except ValidationError as error:
-        reason = (
-            'invalid_json'
-            if error.errors(include_url=False)[0]['type'] == 'json_invalid'
-            else 'nonce_missing'
-        )
-        raise verification_failure(
-            'gpu.payload_invalid', {'reason': reason}, cause=error
-        ) from error
-    verify_reported_nonce(parsed.nonce, nonce, 'nvidiaPayload')
+    payload_nonce = decode_nvidia_payload_nonce(payload)
+    verify_reported_nonce(payload_nonce, nonce, 'nvidiaPayload')
 
     try:
         if verifier is None:

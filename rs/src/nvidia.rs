@@ -1,5 +1,6 @@
 use crate::errors::VerificationError;
 use crate::types::NvidiaEvidenceVerifier;
+use crate::util::{require_hex_length, NONCE_BYTES};
 use async_trait::async_trait;
 use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::jwk::JwkSet;
@@ -11,16 +12,20 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
+pub const DEFAULT_NVIDIA_JWKS_URL: &str =
+    "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
-const NVIDIA_JWKS_URL: &str = "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 
-/// Default NVIDIA adapter. It submits the payload to NRAS over HTTPS and
+/// Default NVIDIA adapter. It submits the payload to NRAS and
 /// verifies the overall JWT's ES384 signature, issuer, timestamps and nonce.
 /// Detached device claims are not consumed by this adapter.
+/// Custom submission and JWKS URLs retain the required NVIDIA issuer. Use only
+/// a trusted JWKS proxy: its keys are used to authenticate the signed verdict.
 #[derive(Clone, Debug)]
 pub struct NrasNvidiaEvidenceVerifier {
     client: Client,
     url: String,
+    jwks_url: String,
 }
 
 impl Default for NrasNvidiaEvidenceVerifier {
@@ -30,11 +35,13 @@ impl Default for NrasNvidiaEvidenceVerifier {
 }
 
 impl NrasNvidiaEvidenceVerifier {
+    /// Submit evidence to this URL, using NVIDIA's official JWKS URL by default.
     pub fn new(url: impl Into<String>) -> Self {
         let client = Client::new();
         Self {
             client,
             url: url.into(),
+            jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
         }
     }
 
@@ -42,19 +49,39 @@ impl NrasNvidiaEvidenceVerifier {
         Self {
             client,
             url: url.into(),
+            jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
         }
+    }
+
+    /// Fetch JWT signing keys from a trusted JWKS proxy. The required NVIDIA
+    /// issuer, signature algorithm, nonce, timestamps and verdict remain checked.
+    pub fn with_jwks_url(mut self, url: impl Into<String>) -> Self {
+        self.jwks_url = url.into();
+        self
     }
 }
 
 #[async_trait]
 impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
     async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError> {
-        let payload: NvidiaPayloadNonceWire =
-            serde_json::from_str(nvidia_payload).map_err(|_| {
-                VerificationError::GpuPayloadInvalid {
-                    reason: "nonce_missing",
-                }
+        let raw: Value = serde_json::from_str(nvidia_payload).map_err(|_| {
+            VerificationError::GpuPayloadInvalid {
+                reason: "invalid_json",
+            }
+        })?;
+        let nonce = raw
+            .as_object()
+            .and_then(|object| object.get("nonce"))
+            .and_then(Value::as_str)
+            .ok_or(VerificationError::GpuPayloadInvalid {
+                reason: "nonce_missing",
             })?;
+        let nonce = require_hex_length(nonce, NONCE_BYTES).map_err(|_| {
+            VerificationError::InvalidInput {
+                field: "nvidia_payload.nonce".to_owned(),
+                reason: "expected a 32-byte hexadecimal nonce".to_owned(),
+            }
+        })?;
         let response = self
             .client
             .post(&self.url)
@@ -88,7 +115,7 @@ impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
                     reason: "invalid_json",
                 })?;
         let jwt = decode_nras_overall_attestation_jwt(raw)?;
-        let response = self.client.get(NVIDIA_JWKS_URL).send().await.map_err(|_| {
+        let response = self.client.get(&self.jwks_url).send().await.map_err(|_| {
             VerificationError::NvidiaJwksRequestFailed {
                 reason: "transport",
                 status: None,
@@ -109,7 +136,7 @@ impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
             .json()
             .await
             .map_err(|_| invalid_nras_response("invalid_jwks"))?;
-        verify_nras_jwt(&jwt, &jwks, &payload.nonce)
+        verify_nras_jwt(&jwt, &jwks, &nonce)
     }
 }
 
@@ -124,11 +151,6 @@ struct NrasResponseWire(Vec<Value>);
 #[derive(Deserialize)]
 #[serde(transparent)]
 struct NrasJwtEntryWire(Vec<Value>);
-
-#[derive(Deserialize)]
-struct NvidiaPayloadNonceWire {
-    nonce: String,
-}
 
 #[derive(Deserialize)]
 struct NrasOverallAttestationJwtClaimsWire {
@@ -159,7 +181,7 @@ fn decode_nras_overall_attestation_jwt(raw: Value) -> Result<String, Verificatio
     }
 }
 
-fn verify_nras_jwt(jwt: &str, jwks: &JwkSet, nonce: &str) -> Result<(), VerificationError> {
+fn verify_nras_jwt(jwt: &str, jwks: &JwkSet, nonce: &[u8]) -> Result<(), VerificationError> {
     let header = decode_header(jwt).map_err(map_jwt_error)?;
     if header.alg != Algorithm::ES384 {
         return Err(jwt_failure("unsupported_algorithm"));
@@ -186,14 +208,10 @@ fn verify_nras_jwt(jwt: &str, jwks: &JwkSet, nonce: &str) -> Result<(), Verifica
         return Err(jwt_failure("not_yet_valid"));
     }
     let actual_nonce = hex::decode(&claims.eat_nonce).map_err(|_| jwt_failure("invalid_claims"))?;
-    if actual_nonce.len() != 32 {
+    if actual_nonce.len() != NONCE_BYTES {
         return Err(jwt_failure("invalid_claims"));
     }
-    let expected_nonce =
-        crate::util::decode_hex(nonce).map_err(|_| VerificationError::GpuPayloadInvalid {
-            reason: "nonce_missing",
-        })?;
-    if actual_nonce != expected_nonce {
+    if actual_nonce != nonce {
         return Err(jwt_failure("nonce_mismatch"));
     }
     if !claims.overall_attestation_result {
@@ -227,6 +245,10 @@ mod tests {
     use base64::Engine;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use serde_json::json;
+    use wiremock::{
+        matchers::{body_string, header, method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     // Generated solely for tests, with no external signing authority.
     const TEST_KEY: &str = "MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDCePTWKqKn0TfSE/GYSS2wdy5aHKuyYx9xqZ+zTvl+nUZcb1nD+Lh2wXFWw08fD3tuhZANiAAT24KHioVPwh2q+byRqsjf4RSQzHwTypoDo87l/T6cxCM/U5tO7HGrgk0Xjw6XVPe4vGTppRZpDqsia4KGU7M1ehd2V4U37KgNps9qPHLrSt7/n4j3mzrLWuE3/Gm2sUD0=";
@@ -268,7 +290,7 @@ mod tests {
         ]);
 
         let jwt = decode_nras_overall_attestation_jwt(raw).unwrap();
-        verify_nras_jwt(&jwt, &test_jwks(), &"11".repeat(32)).unwrap();
+        verify_nras_jwt(&jwt, &test_jwks(), &[0x11; NONCE_BYTES]).unwrap();
     }
 
     #[test]
@@ -302,7 +324,7 @@ mod tests {
             let mut claims = claims();
             claims[name] = value;
             let token = sign_claims(&claims, "test-nras");
-            let error = verify_nras_jwt(&token, &test_jwks(), &"11".repeat(32)).unwrap_err();
+            let error = verify_nras_jwt(&token, &test_jwks(), &[0x11; NONCE_BYTES]).unwrap_err();
             assert!(
                 matches!(error, VerificationError::NvidiaJwtVerificationFailed { reason: actual } if actual == reason),
                 "{name}: {error}"
@@ -320,7 +342,7 @@ mod tests {
             "A"
         };
         token.replace_range(signature_start..signature_start + 1, replacement);
-        let error = verify_nras_jwt(&token, &test_jwks(), &"11".repeat(32)).unwrap_err();
+        let error = verify_nras_jwt(&token, &test_jwks(), &[0x11; NONCE_BYTES]).unwrap_err();
         assert!(matches!(
             error,
             VerificationError::NvidiaJwtVerificationFailed {
@@ -329,7 +351,7 @@ mod tests {
         ));
 
         let token = sign_claims(&claims(), "unknown-key");
-        let error = verify_nras_jwt(&token, &test_jwks(), &"11".repeat(32)).unwrap_err();
+        let error = verify_nras_jwt(&token, &test_jwks(), &[0x11; NONCE_BYTES]).unwrap_err();
         assert!(matches!(
             error,
             VerificationError::NvidiaJwtVerificationFailed {
@@ -340,8 +362,12 @@ mod tests {
 
     #[test]
     fn rejects_an_unsigned_token_and_a_signed_false_verdict() {
-        let error = verify_nras_jwt("eyJhbGciOiJub25lIn0.e30.", &test_jwks(), &"11".repeat(32))
-            .unwrap_err();
+        let error = verify_nras_jwt(
+            "eyJhbGciOiJub25lIn0.e30.",
+            &test_jwks(),
+            &[0x11; NONCE_BYTES],
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             VerificationError::NvidiaJwtVerificationFailed {
@@ -352,10 +378,130 @@ mod tests {
         let mut claims = claims();
         claims["x-nvidia-overall-att-result"] = json!(false);
         let token = sign_claims(&claims, "test-nras");
-        let error = verify_nras_jwt(&token, &test_jwks(), &"11".repeat(32)).unwrap_err();
+        let error = verify_nras_jwt(&token, &test_jwks(), &[0x11; NONCE_BYTES]).unwrap_err();
         assert!(matches!(
             error,
             VerificationError::GpuAttestationRejected { origin: "nras" }
         ));
+    }
+
+    #[test]
+    fn uses_the_official_nras_endpoint_by_default() {
+        let verifier = NrasNvidiaEvidenceVerifier::default();
+        assert_eq!(
+            verifier.url,
+            "https://nras.attestation.nvidia.com/v3/attest/gpu"
+        );
+        assert_eq!(
+            verifier.jwks_url,
+            "https://nras.attestation.nvidia.com/.well-known/jwks.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn verifies_proxy_responses_with_custom_nras_and_jwks_urls_and_a_fixed_issuer() {
+        for issuer in [NVIDIA_ISSUER, "https://proxy.example.com"] {
+            let server = MockServer::start().await;
+            let payload = json!({"nonce": "11".repeat(32)}).to_string();
+            let mut claims = claims();
+            claims["iss"] = json!(issuer);
+            let jwt = sign_claims(&claims, "test-nras");
+            Mock::given(method("POST"))
+                .and(path("/proxy/attest"))
+                .and(body_string(&payload))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([["JWT", jwt]])))
+                .expect(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/proxy/jwks"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks()))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let verifier = NrasNvidiaEvidenceVerifier::with_client(
+                Client::builder().no_proxy().build().unwrap(),
+                format!("{}/proxy/attest", server.uri()),
+            )
+            .with_jwks_url(format!("{}/proxy/jwks", server.uri()));
+            let result = verifier.verify(&payload).await;
+            if issuer == NVIDIA_ISSUER {
+                result.unwrap();
+            } else {
+                assert!(matches!(
+                    result.unwrap_err(),
+                    VerificationError::NvidiaJwtVerificationFailed {
+                        reason: "invalid_claims"
+                    }
+                ));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn submits_the_unchanged_payload_to_the_custom_endpoint() {
+        let server = MockServer::start().await;
+        let payload = format!(
+            r#"{{ "nonce": "0X{}", "evidence": ["opaque"] }}"#,
+            "AB".repeat(32)
+        );
+        Mock::given(method("POST"))
+            .and(path("/proxy/nras"))
+            .and(header("content-type", "application/json"))
+            .and(body_string(&payload))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": true})))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let verifier = NrasNvidiaEvidenceVerifier::new(format!("{}/proxy/nras", server.uri()));
+        let error = verifier.verify(&payload).await.unwrap_err();
+
+        // A successful proxy HTTP response is not sufficient attestation evidence.
+        assert!(matches!(
+            error,
+            VerificationError::NrasResponseInvalid {
+                reason: "invalid_schema"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_payload_nonces_before_contacting_the_custom_endpoint() {
+        let server = MockServer::start().await;
+        let verifier = NrasNvidiaEvidenceVerifier::new(server.uri());
+        for nonce in [
+            "".to_owned(),
+            "11".repeat(31),
+            "11".repeat(33),
+            "GG".repeat(32),
+            "1".repeat(63),
+        ] {
+            let error = verifier
+                .verify(&json!({"nonce": nonce}).to_string())
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                VerificationError::InvalidInput { field, .. } if field == "nvidia_payload.nonce"
+            ));
+        }
+        let array_payload = json!(["11".repeat(32)]).to_string();
+        for payload in ["{}", "null", r#"{"nonce": 1}"#, &array_payload] {
+            assert!(matches!(
+                verifier.verify(payload).await.unwrap_err(),
+                VerificationError::GpuPayloadInvalid {
+                    reason: "nonce_missing"
+                }
+            ));
+        }
+        assert!(matches!(
+            verifier.verify("{").await.unwrap_err(),
+            VerificationError::GpuPayloadInvalid {
+                reason: "invalid_json"
+            }
+        ));
+        assert!(server.received_requests().await.unwrap().is_empty());
     }
 }

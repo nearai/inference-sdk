@@ -4,7 +4,8 @@ use async_trait::async_trait;
 use nearai_inference_sdk::{
     verify_model_attestation, DeploymentProvenanceStatus, DeploymentVerifier,
     GpuEvidenceRequirement, GpuEvidenceStatus, MeasuredDeployment, ModelAttestationPolicy,
-    ModelAttestationVerifiers, ModelClientBinding, TcbStatus, VerificationError,
+    ModelAttestationVerifiers, ModelClientBinding, NvidiaEvidenceVerifier, TcbStatus,
+    VerificationError,
 };
 use support::{
     gateway_tls_quote, model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier,
@@ -214,6 +215,42 @@ async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
     .unwrap();
 
     assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
+}
+
+#[tokio::test]
+async fn checks_the_client_nonce_before_calling_a_custom_nvidia_verifier() {
+    struct UnreachableNvidiaVerifier;
+
+    #[async_trait]
+    impl NvidiaEvidenceVerifier for UnreachableNvidiaVerifier {
+        async fn verify(&self, _payload: &str) -> Result<(), VerificationError> {
+            panic!("invalid payload nonces must be rejected before the override runs");
+        }
+    }
+
+    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    for nonce in ["22".repeat(32), "11".repeat(31), "gg".repeat(32)] {
+        let payload = serde_json::json!({"nonce": nonce}).to_string();
+        let error = verify_model_attestation(
+            &model_attestation(Some(&payload)),
+            &client_binding(),
+            None,
+            ModelAttestationVerifiers {
+                quote: Some(&quote),
+                nvidia: Some(&UnreachableNvidiaVerifier),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        match error {
+            VerificationError::NonceMismatch {
+                binding: "nvidia_payload",
+            } => {}
+            VerificationError::InvalidInput { field, .. } if field == "nvidia_payload.nonce" => {}
+            error => panic!("unexpected error: {error}"),
+        }
+    }
 }
 
 #[tokio::test]

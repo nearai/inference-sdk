@@ -258,10 +258,26 @@ Gateway `reported_quote_data` is required.
 | `DcapQuoteVerifier` | `DcapQuoteVerifier::default()` or `DcapQuoteVerifier::new(pccs_url)` | Built-in Intel DCAP verifier. Pass a custom PCCS base URL when needed. |
 | `verify_dcap_quote` | `async fn verify_dcap_quote(pccs_url: &str, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | One-off Intel DCAP verification using the supplied PCCS URL. |
 | `NrasNvidiaEvidenceVerifier` | `NrasNvidiaEvidenceVerifier::default()`, `NrasNvidiaEvidenceVerifier::new(url)`, or `NrasNvidiaEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
+| `NrasNvidiaEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
+| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
+| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict. A custom NRAS URL changes where
-evidence is submitted, not the trusted NVIDIA issuer or JWKS endpoint.
+evidence is submitted; `with_jwks_url` independently configures the signing-key
+source. Use only a trusted JWKS proxy, since those keys authenticate the verdict.
+Both URLs default to NVIDIA's official endpoints. The required NVIDIA issuer
+(`https://nras.attestation.nvidia.com`) remains fixed. Payload nonces
+must decode to exactly 32 bytes of hexadecimal data, with an optional `0x` or
+`0X` prefix; invalid values fail before any request. Model verification checks
+the client challenge before invoking an override.
+
+Custom Intel URLs must provide PCCS-compatible certification-v4 endpoints
+for both SGX and TDX, including issuer-chain response headers and a hex-encoded
+SGX `rootcacrl` response. Local DCAP signature and trust-root checks remain in
+place. See [the proxy example](./verification-guide.md#use-a-pccs-or-nras-proxy)
+for construction and the required wire formats.
 
 ### Quote and deployment values
 

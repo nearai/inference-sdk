@@ -41,6 +41,18 @@ export type QuoteVerifier = (
 
 export type NvidiaEvidenceVerifier = (payload: string) => Awaitable<void>;
 
+export type CreateDcapQuoteVerifierParams = {
+  /** Collateral base URL. Defaults to Phala PCCS in browsers and Intel in Node.js. */
+  readonly pccsUrl?: string;
+};
+
+export type CreateNvidiaEvidenceVerifierParams = {
+  /** GPU attestation POST URL. Defaults to NVIDIA NRAS. */
+  readonly nrasUrl?: string;
+  /** Public-key GET URL. Defaults to NVIDIA's JWKS. Use only a trusted proxy. */
+  readonly jwksUrl?: string;
+};
+
 export type DeploymentVerifier = (
   deployment: MeasuredDeployment,
 ) => Awaitable<void>;

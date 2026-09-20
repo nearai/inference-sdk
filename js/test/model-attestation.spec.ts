@@ -1,7 +1,11 @@
 import { Buffer } from 'node:buffer';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { SigningKey, computeAddress } from 'ethers';
-import { ApiError, verifyModelAttestation } from '../src';
+import {
+  ApiError,
+  createNvidiaEvidenceVerifier,
+  verifyModelAttestation,
+} from '../src';
 import type { MeasuredDeployment, QuoteVerifier } from '../src';
 import {
   appCompose,
@@ -408,13 +412,14 @@ describe('model attestation verification', () => {
   });
 
   test('rejects NVIDIA evidence with a different nonce', async () => {
+    const nvidia = jest.fn(createNvidiaEvidenceVerifier());
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce: '55'.repeat(32) }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { quote: quoteVerifier, nvidia },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -422,6 +427,7 @@ describe('model attestation verification', () => {
         details: { source: 'nvidiaPayload' },
       },
     });
+    expect(nvidia).not.toHaveBeenCalled();
   });
 
   test('rejects NVIDIA evidence without a nonce', async () => {
@@ -495,6 +501,50 @@ describe('model attestation verification', () => {
     });
 
     expect(result.gpuEvidence).toBe('verified');
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://nras.attestation.nvidia.com/v3/attest/gpu',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://nras.attestation.nvidia.com/.well-known/jwks.json',
+    );
+  });
+
+  test('verifies NVIDIA evidence through configured NRAS and JWKS proxies', async () => {
+    mockNrasOverallResult(true);
+    const nvidiaPayload = JSON.stringify({ nonce });
+    const nvidia = createNvidiaEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+      jwksUrl: '/api/attestation/nvidia/jwks.json',
+    });
+
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({ nvidiaPayload }),
+      clientBinding: { nonce },
+      verifiers: { quote: quoteVerifier, nvidia },
+    });
+
+    expect(result.gpuEvidence).toBe('verified');
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/attestation/nvidia', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: nvidiaPayload,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/attestation/nvidia/jwks.json',
+    );
+  });
+
+  test('rejects a malformed payload nonce before contacting NRAS', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    const verify = createNvidiaEvidenceVerifier();
+
+    // A helper can be used independently, outside verifyModelAttestation.
+    const payload = JSON.stringify({ nonce: 'not-a-nonce' });
+    await expect(verify(payload)).rejects.toMatchObject({
+      failure: { code: 'input.invalid' },
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('reports rejected NVIDIA evidence from NRAS', async () => {
@@ -589,13 +639,16 @@ describe('model attestation verification', () => {
     ['wrong signed nonce', { eat_nonce: '44'.repeat(32) }, 'nonce_mismatch'],
   ])('rejects an NRAS token with %s', async (_, overrides, reason) => {
     mockNrasJwtPayload(nrasClaims(overrides));
+    const nvidia = createNvidiaEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+    });
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { quote: quoteVerifier, nvidia },
       }),
     ).rejects.toMatchObject({
       failure: { code: 'gpu.jwt_verification_failed', details: { reason } },
@@ -611,13 +664,16 @@ describe('model attestation verification', () => {
       'base64url',
     );
     mockNrasResponse([['JWT', `${header}.${modifiedPayload}.${signature}`]]);
+    const nvidia = createNvidiaEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+    });
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { quote: quoteVerifier, nvidia },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -762,9 +818,7 @@ function mockNrasResponse(body: unknown): void {
     .mockImplementation(
       async (url) =>
         new Response(
-          JSON.stringify(
-            String(url).endsWith('/.well-known/jwks.json') ? NRAS_JWKS : body,
-          ),
+          JSON.stringify(String(url).endsWith('/jwks.json') ? NRAS_JWKS : body),
           { status: 200 },
         ),
     );

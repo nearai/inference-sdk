@@ -57,6 +57,8 @@ from .utils.errors import (
     VerificationError,
     VerificationFailure,
 )
+from .utils.intel import create_dcap_quote_verifier
+from .utils.nvidia import create_nvidia_evidence_verifier
 
 
 __all__ = [
@@ -68,6 +70,8 @@ __all__ = [
     'verify_gateway_attestation',
     'verify_model_response',
     'verify_gateway_response',
+    'create_dcap_quote_verifier',
+    'create_nvidia_evidence_verifier',
     'fetch_image_provenance',
     'verify_deployment_image_provenance',
     'verify_image_provenance',

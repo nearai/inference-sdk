@@ -34,6 +34,8 @@ verification is synchronous.
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
+| `create_dcap_quote_verifier` | `(pccs_url=...)` | `QuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
+| `create_nvidia_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `NvidiaEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
@@ -294,6 +296,36 @@ the optional commit pin.
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict.
+
+### Built-in verifier factories
+
+Both factories are synchronous and return asynchronous verifier callbacks for
+the existing `verifiers.quote` and `verifiers.nvidia` fields. Their optional
+arguments are independent of `AttestationClient.base_url`.
+
+| Factory | Argument | Default |
+| --- | --- | --- |
+| `create_dcap_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
+| `create_nvidia_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+`pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral
+paths. A proxy must preserve PCCS bodies and issuer-chain headers, and serve
+`/sgx/certification/v4/rootcacrl` to avoid a direct root-CRL fallback. See the
+[proxy configuration example](./verification-guide.md#configure-attestation-service-urls).
+
+`nras_url` receives the evidence POST; `jwks_url` supplies the trusted signing
+keys. Use only a trusted JWKS source: checking the fixed NVIDIA issuer does not
+authenticate an arbitrary JWKS endpoint. The full signature, issuer, time,
+nonce, and verdict checks remain enabled.
+
+Model verification checks the payload nonce against the client nonce before
+calling a NVIDIA verifier. The factory additionally requires a 32-byte
+hexadecimal payload nonce and verifies that the signed JWT nonce matches it.
+Direct callback users must bind the payload nonce to their own fresh request
+nonce. Nonces accept an optional `0x`/`0X` prefix and compare as bytes.
+
+### Verified quote and deployment measurements
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
