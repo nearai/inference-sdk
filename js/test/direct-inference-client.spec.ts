@@ -11,6 +11,7 @@ import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import * as nodeTls from '../src/node/attestation-client';
 import { NodeDirectInferenceClient } from '../src/node/direct-inference-client';
 import { createModelAttestation, createModelQuote, sha256 } from './fixtures';
+import { createOhttpEndpoint } from './ohttp-fixtures';
 
 const baseUrl = 'https://model.test/v1';
 const model = 'test-model';
@@ -28,6 +29,7 @@ type CreateDirectEndpointParams = {
   readonly alterResponseBytes?: boolean;
   readonly wrongSignatureKey?: boolean;
   readonly additionalSigner?: boolean;
+  readonly otherSignerFirst?: boolean;
 };
 
 type CreateAttestationParams = {
@@ -65,6 +67,7 @@ function createDirectEndpoint({
   alterResponseBytes = false,
   wrongSignatureKey = false,
   additionalSigner = false,
+  otherSignerFirst = false,
 }: CreateDirectEndpointParams = {}) {
   const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
   const otherKeyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 8));
@@ -72,12 +75,13 @@ function createDirectEndpoint({
   const secretKey = ed2curve.convertSecretKey(keyPair.secretKey);
   if (secretKey === null) throw new Error('Invalid fixture encryption key');
   const signingKey = wrongSignatureKey ? otherKeyPair : keyPair;
-  const appComposes = additionalSigner
-    ? [
-        ...composes,
-        JSON.stringify({ services: { model: { image: 'model:other-key' } } }),
-      ]
-    : composes;
+  const appComposes =
+    additionalSigner || otherSignerFirst
+      ? [
+          ...composes,
+          JSON.stringify({ services: { model: { image: 'model:other-key' } } }),
+        ]
+      : composes;
   const quotes = new Map<string, QuoteVerificationResult>();
   const signatures = new Map<string, Record<string, string>>();
   const state = {
@@ -150,7 +154,9 @@ function createDirectEndpoint({
       );
       return jsonResponse({
         ...attestations[0],
-        all_attestations: attestations,
+        all_attestations: otherSignerFirst
+          ? [attestations[2], ...attestations.slice(0, 2)]
+          : attestations,
       });
     }
     if (url.pathname.startsWith('/v1/signature/')) {
@@ -270,6 +276,147 @@ function createDirectEndpoint({
 describe('DirectInferenceClient', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  test.each([true, false])(
+    'round-trips OHTTP JSON and SSE with byte-exact receipts and E2EE set to %s',
+    async (e2ee) => {
+      const provider = createDirectEndpoint({ otherSignerFirst: true });
+      const endpoint = await createOhttpEndpoint({
+        fetch: provider.fetch,
+        signingKey: nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7)),
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(endpoint.fetch);
+      const client = new DirectInferenceClient({
+        ...provider.options,
+        apiKey: 'direct-test-key',
+        headers: { 'x-proxy-token': 'proxy-test-token' },
+        ohttp: true,
+        signingAlgo: 'ed25519',
+        e2ee,
+      });
+      const completion = await client.chat.completions.create({
+        model,
+        messages,
+      });
+      expect(completion.choices[0].message.content).toBe(answer);
+      await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
+        {
+          completionId: completion.id,
+          signatureKind: 'provider_tee',
+        },
+      );
+
+      const stream = await client.chat.completions.create({
+        model,
+        messages,
+        stream: true,
+      });
+      let id = '';
+      let content = '';
+      for await (const event of stream) {
+        id = event.id;
+        content += event.choices[0]?.delta.content ?? '';
+      }
+      expect(content).toBe(answer);
+      const receipt = await client.verifyResponse(id);
+      expect(receipt.attestations.map(({ instanceId }) => instanceId)).toEqual([
+        'instance-0',
+        'instance-1',
+      ]);
+      expect(provider.state.decryptedPrompts).toEqual([prompt, prompt]);
+      expect(provider.state.attestationRequests).toBe(1);
+      expect(provider.state.verifiedQuotes).toHaveLength(3);
+      expect(provider.state.signatureRequests).toBe(2);
+      expect(
+        provider.state.requests.every(
+          ({ headers }) => headers.has('x-client-pub-key') === e2ee,
+        ),
+      ).toBe(true);
+      expect(
+        endpoint.requests.map((request) => new URL(request.url).pathname),
+      ).toEqual([
+        '/v1/attestation/report',
+        '/ohttp',
+        `/v1/signature/${completion.id}`,
+        '/ohttp',
+        `/v1/signature/${id}`,
+      ]);
+      for (const request of endpoint.requests) {
+        expect(request.headers.get('authorization')).toBe(
+          'Bearer direct-test-key',
+        );
+        expect(request.headers.get('x-proxy-token')).toBe('proxy-test-token');
+      }
+    },
+  );
+
+  test.each(['missing', 'other-instance-signed'] as const)(
+    'blocks direct Chat when OHTTP evidence is %s',
+    async (evidence) => {
+      const provider = createDirectEndpoint({ additionalSigner: true });
+      const endpoint = await createOhttpEndpoint({
+        fetch: provider.fetch,
+        signingKey: nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 8)),
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          evidence === 'missing' ? provider.fetch : endpoint.fetch,
+        );
+      const client = new DirectInferenceClient({
+        ...provider.options,
+        ohttp: true,
+        signingAlgo: 'ed25519',
+      });
+      await expect(client.fetch(chatRequest())).rejects.toMatchObject({
+        failure: {
+          code:
+            evidence === 'missing'
+              ? 'ohttp.attestation_required'
+              : 'ohttp.signer_mismatch',
+        },
+      });
+      expect(provider.state.verifiedQuotes).toHaveLength(3);
+      expect(provider.state.completionRequests).toBe(0);
+      expect(
+        endpoint.requests.every(
+          (request) => new URL(request.url).pathname !== '/ohttp',
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test('rejects the receipt when the final OHTTP authentication is truncated after SSE DONE', async () => {
+    const provider = createDirectEndpoint();
+    const endpoint = await createOhttpEndpoint({
+      fetch: provider.fetch,
+      signingKey: nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7)),
+      truncateResponse: true,
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(endpoint.fetch);
+    const client = new DirectInferenceClient({
+      ...provider.options,
+      ohttp: true,
+      signingAlgo: 'ed25519',
+    });
+    const stream = await client.chat.completions.create({
+      model,
+      messages,
+      stream: true,
+    });
+    let id = '';
+    let content = '';
+    for await (const event of stream) {
+      id = event.id;
+      content += event.choices[0]?.delta.content ?? '';
+    }
+    expect(content).toBe(answer);
+    endpoint.finishResponse();
+    await expect(client.verifyResponse(id)).rejects.toMatchObject({
+      failure: { code: 'ohttp.decryption_failed' },
+    });
+    expect(provider.state.signatureRequests).toBe(0);
   });
 
   test('requires a direct base URL at runtime', () => {

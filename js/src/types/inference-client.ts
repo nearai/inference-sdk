@@ -90,12 +90,6 @@ export type InferenceClientCommonOptions = {
    */
   readonly e2ee?: boolean;
   /**
-   * Signing and E2EE protocol to use for Gateway/model evidence, model-key
-   * routing, completion receipts, and optional field encryption. Defaults to
-   * `ed25519`.
-   */
-  readonly signingAlgo?: SigningAlgo;
-  /**
    * Optional caller-owned allowlist for authenticated model measurements.
    * It receives the model named by each Chat request.
    * Runs after `modelVerification.verifiers.deployment` when both are supplied.
@@ -104,17 +98,31 @@ export type InferenceClientCommonOptions = {
   readonly modelVerification?: ModelVerificationOptions;
 };
 
+/** OHTTP key attestations are signed with Ed25519 on both endpoint types. */
+export type InferenceEncryptionOptions =
+  | {
+      /** Encapsulate Chat requests with OHTTP. Defaults to false. Independent of field-level E2EE. */
+      readonly ohttp?: false;
+      /** Signing and field-encryption algorithm. Defaults to ed25519. */
+      readonly signingAlgo?: SigningAlgo;
+    }
+  | {
+      readonly ohttp: true;
+      /** OHTTP requires Ed25519 evidence. Defaults to ed25519. */
+      readonly signingAlgo?: 'ed25519';
+    };
+
 /** Configuration for browser-compatible verified Chat Completions. */
 export type InferenceClientOptions = AttestationClientOptions &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: GatewayVerificationOptions;
-  };
+  } & InferenceEncryptionOptions;
 
 /** Options accepted by the Node-specific `InferenceClient`. */
 export type NodeInferenceClientOptions = AttestationClientOptions &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
-  };
+  } & InferenceEncryptionOptions;
 
 /** A completion signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionReceipt = {

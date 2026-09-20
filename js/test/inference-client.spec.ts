@@ -23,6 +23,7 @@ import {
   sha256,
   tlsFingerprint,
 } from './fixtures';
+import { createOhttpEndpoint } from './ohttp-fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
 const model = 'glm-5.3-flash';
@@ -822,6 +823,123 @@ describe('inference client', () => {
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
+
+  test('uses pinned OHTTP for JSON and SSE while retaining raw evidence, receipts and session reuse', async () => {
+    const gateway = createTestGateway();
+    const endpoint = await createOhttpEndpoint({
+      fetch: createProviderReceiptFetch(gateway),
+      signingKey: keyPair(1),
+    });
+    mockNodeGatewayAttestation({
+      gateway: { ...gateway, fetch: endpoint.fetch },
+    });
+    const pinnedFetch = jest.fn(endpoint.fetch);
+    const rawFetch = jest.spyOn(globalThis, 'fetch');
+    const client = new TestNodeInferenceClient(
+      {
+        ...inferenceClientOptions(gateway),
+        ohttp: true,
+        signingAlgo: 'ed25519',
+      },
+      pinnedFetch,
+    );
+
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello JSON' }],
+    });
+    expect(completion.choices[0].message.content).toBe('hello client');
+    await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
+      completionId: completion.id,
+      signatureKind: 'provider_tee',
+    });
+    const stream = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello SSE' }],
+      stream: true,
+    });
+    let id = '';
+    let content = '';
+    for await (const event of stream) {
+      id = event.id;
+      content += event.choices[0]?.delta.content ?? '';
+    }
+    expect(content).toBe('hello client');
+    await expect(client.verifyResponse(id)).resolves.toMatchObject({
+      completionId: id,
+      signatureKind: 'provider_tee',
+    });
+    expect(gateway.state.decryptedRequestContent).toEqual([
+      'hello JSON',
+      'hello SSE',
+    ]);
+    expect(gateway.state.gatewayAttestationRequests).toBe(1);
+    expect(gateway.state.modelAttestationRequests).toBe(1);
+    expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
+    expect(rawFetch).not.toHaveBeenCalled();
+    const pinnedPaths = pinnedFetch.mock.calls.map(
+      ([request]) => new URL((request as Request).url).pathname,
+    );
+    expect(pinnedPaths).toEqual([
+      '/v1/attestation/report',
+      '/ohttp',
+      `/v1/signature/${completion.id}`,
+      '/ohttp',
+      `/v1/signature/${id}`,
+    ]);
+    for (const request of endpoint.requests) {
+      expect(request.headers.get(aggregatorHeader.name)).toBe(
+        aggregatorHeader.value,
+      );
+      if (new URL(request.url).pathname === '/ohttp') {
+        expect(request.headers.get('content-type')).toBe(
+          'message/ohttp-chunked-req',
+        );
+        expect(request.headers.has('x-model-pub-key')).toBe(false);
+      }
+    }
+  });
+
+  test.each(['missing', 'model-signed'] as const)(
+    'blocks Chat when Gateway OHTTP evidence is %s',
+    async (evidence) => {
+      const gateway = createTestGateway();
+      const endpoint = await createOhttpEndpoint({
+        fetch: gateway.fetch,
+        signingKey: keyPair(2),
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          evidence === 'missing' ? gateway.fetch : endpoint.fetch,
+        );
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        ohttp: true,
+        signingAlgo: 'ed25519',
+      });
+      await expect(
+        client.fetch(
+          `${baseUrl}chat/completions`,
+          chatRequest({ messages: [] }),
+        ),
+      ).rejects.toMatchObject({
+        failure: {
+          code:
+            evidence === 'missing'
+              ? 'ohttp.attestation_required'
+              : 'ohttp.signer_mismatch',
+        },
+      });
+      expect(gateway.state.completionRequests).toBe(0);
+      expect(gateway.state.modelAttestationRequests).toBe(0);
+      expect(
+        endpoint.requests.every(
+          (request) => new URL(request.url).pathname !== '/ohttp',
+        ),
+      ).toBe(true);
+    },
+  );
 
   test('calls browser Fetch with the global receiver', async () => {
     const gateway = createTestGateway();

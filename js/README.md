@@ -36,7 +36,11 @@ signature identifies a Gateway signer and does not establish model execution.
 
 Both inference clients support streaming and non-streaming Chat Completions. E2EE is
 enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
-Setting `e2ee: false` disables encryption while retaining deployment verification.
+Setting `e2ee: false` disables field encryption while retaining deployment verification.
+
+Set `ohttp: true` on either inference client to encrypt the Chat HTTP request
+and response to the attested endpoint. OHTTP requires Ed25519 and is disabled
+by default. Field-level E2EE remains enabled independently.
 
 Attestation results are cached for 60 minutes. Set
 `attestationCacheTimeToLiveMs: 0` to verify before every request. Response

@@ -13,6 +13,7 @@ import {
   mapCompletionSignature,
   invalidCloudApiResponse,
   mapModelAttestation,
+  mapOhttpAttestation,
 } from './cloud-api';
 
 /** Decode the serving attestation and its complete model-attestation array. */
@@ -48,6 +49,9 @@ export function decodeDirectModelAttestations(
   return {
     servingAttestation,
     attestations,
+    ...(response.ohttp_attestation === undefined
+      ? {}
+      : { ohttpAttestation: mapOhttpAttestation(response.ohttp_attestation) }),
   };
 }
 

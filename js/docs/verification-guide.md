@@ -49,6 +49,40 @@ and response signatures. The Gateway returns the complete serving model-
 attestation set for the requested model. The client verifies that set before
 selecting a key for the chosen algorithm.
 
+### Use OHTTP
+
+Set `ohttp: true` to encapsulate Chat requests and responses in OHTTP. Both
+`InferenceClient` and `DirectInferenceClient` support this option for ordinary
+and streaming completions:
+
+```ts
+const client = new InferenceClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+  ohttp: true,
+});
+```
+
+OHTTP is disabled by default and requires `signingAlgo: 'ed25519'` (the default).
+The client verifies the advertised OHTTP key configuration against the attested
+Gateway signer, or the serving model signer for a direct endpoint. Missing or
+invalid OHTTP evidence prevents Chat from being sent. The authenticated
+configuration is cached with the deployment verification result.
+
+`e2ee` is independent and remains enabled by default. Through the Gateway,
+OHTTP protects the HTTP exchange to the Gateway, while E2EE encrypts supported
+Chat fields to the model. With a direct endpoint, both terminate at the model
+service. Set `e2ee: false` only when field encryption is not needed.
+
+Only Chat uses OHTTP; attestation and signature requests keep their normal HTTP
+paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
+Authorization and explicitly configured custom headers are also sent on this
+outer request so the endpoint can authenticate it. OHTTP does not hide these
+outer headers or the client's network address from the endpoint.
+
+Chat calls and `verifyResponse(id)` do not change. Response verification uses
+the inner request and response bodies, before E2EE decryption, not the OHTTP
+ciphertext. Node TLS pinning still checks the outer connection.
+
 ### Cache deployment verification
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
@@ -137,7 +171,8 @@ of the supported fields below. Other fields are forwarded unchanged.
 The client checks each encrypted field's authentication tag before decryption.
 Use `verifyResponse(id)` separately to verify the response's signing identity.
 
-URL query parameters, headers, and fields outside the table are not encrypted.
+Field-level E2EE does not encrypt URL query parameters, headers, or fields
+outside the table.
 Non-2xx responses follow the normal OpenAI error path.
 
 ### Stream an E2EE completion

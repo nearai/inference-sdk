@@ -36,6 +36,11 @@ The example sets `Accept-Encoding: identity` and displays decrypted JSON or
 SSE. The inference clients handle encryption, decryption, and byte capture
 internally.
 
+To use OHTTP, add `ohttp: true` to either inference client's constructor and
+keep `SIGNING_ALGO` set to `'ed25519'`. JSON, streaming, and response-verification
+calls stay the same. The endpoint must provide signed OHTTP configuration and
+serve `/ohttp`. E2EE remains enabled independently.
+
 The SDK must be built first because the example imports the local package's
 published `dist` files.
 
