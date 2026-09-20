@@ -9,6 +9,7 @@ import type {
   VerifiedTdxQuote,
 } from '../src/types/verification';
 import {
+  createDeferred,
   createModelAttestation,
   createModelQuote,
   nonce,
@@ -153,7 +154,7 @@ describe('direct model attestation verification', () => {
 });
 
 describe('direct model attestations verification', () => {
-  test('verifies every attestation and binds only the serving attestation to the TLS peer', async () => {
+  test('verifies reports concurrently while preserving their order and serving identity', async () => {
     const first = createDirectAttestation({ spkiFingerprint: tlsFingerprint });
     const second = createDirectAttestation({
       instanceId: 'instance-b',
@@ -162,27 +163,48 @@ describe('direct model attestations verification', () => {
       spkiFingerprint: '44'.repeat(32),
     });
     const checkedDeployments: MeasuredDeployment[] = [];
+    const firstQuote = createDeferred<VerifiedTdxQuote>();
+    const secondQuote = createDeferred<VerifiedTdxQuote>();
+    const secondDeploymentChecked = createDeferred<void>();
+    const startedQuotes: string[] = [];
 
-    const verified = await verifyDirectModelAttestations({
+    const verification = verifyDirectModelAttestations({
       servingAttestation: first,
       attestations: [first, second],
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: {
-        quote: (quote) => quoteFor(quote === first.intelQuote ? first : second),
+        quote: (quote) => {
+          startedQuotes.push(quote);
+          return quote === first.intelQuote
+            ? firstQuote.promise
+            : secondQuote.promise;
+        },
         deployment: (deployment) => {
           checkedDeployments.push(deployment);
+          if (deployment.appCompose === second.appCompose) {
+            secondDeploymentChecked.resolve();
+          }
         },
       },
     });
+
+    expect(startedQuotes).toEqual([first.intelQuote, second.intelQuote]);
+    secondQuote.resolve(quoteFor(second));
+    await secondDeploymentChecked.promise;
+    expect(checkedDeployments.map(({ appCompose }) => appCompose)).toEqual([
+      second.appCompose,
+    ]);
+    firstQuote.resolve(quoteFor(first));
+    const verified = await verification;
 
     expect(verified.attestations.map(({ instanceId }) => instanceId)).toEqual([
       'instance-a',
       'instance-b',
     ]);
-    expect(checkedDeployments.map(({ appCompose }) => appCompose)).toEqual([
-      first.appCompose,
-      second.appCompose,
-    ]);
+    expect(checkedDeployments).toHaveLength(2);
+    expect(checkedDeployments.map(({ appCompose }) => appCompose)).toEqual(
+      expect.arrayContaining([first.appCompose, second.appCompose]),
+    );
     expect(verified.servingAttestation).toBe(verified.attestations[0]);
     expect(verified.tlsBinding).toEqual({
       kind: 'attested',

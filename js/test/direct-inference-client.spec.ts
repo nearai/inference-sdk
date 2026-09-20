@@ -296,7 +296,8 @@ describe('DirectInferenceClient', () => {
 
     const response = await client.chat.completions.create({ model, messages });
     expect(response.choices[0].message.content).toBe(answer);
-    expect(checked).toEqual(composes);
+    expect(checked).toHaveLength(composes.length);
+    expect(checked).toEqual(expect.arrayContaining(composes));
     expect(endpoint.state.verifiedQuotes).toHaveLength(2);
     expect(endpoint.state.decryptedPrompts).toEqual([prompt]);
     const sent = endpoint.state.requests[0];
@@ -445,7 +446,8 @@ describe('DirectInferenceClient', () => {
     await expect(client.fetch(chatRequest())).rejects.toMatchObject({
       failure: { code: 'provenance.verification_failed' },
     });
-    expect(checked).toEqual(composes);
+    expect(checked).toHaveLength(composes.length);
+    expect(checked).toEqual(expect.arrayContaining(composes));
     expect(endpoint.state.completionRequests).toBe(0);
   });
 

@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { resolve } from 'node:path';
 import {
-  SigstoreVerifier,
+  TrustedRootProvider,
   X509Certificate,
   X509SourceRepositoryDigestExtension,
 } from '@freedomofpress/sigstore-browser';
+import type { TrustedRoot } from '@freedomofpress/sigstore-browser';
 import * as v from 'valibot';
 import {
   fetchImageProvenance,
@@ -14,6 +15,7 @@ import {
 } from '../src';
 import { verifyImageProvenanceSource } from '../src/core/provenance';
 import { ImageProvenanceStatementSchema } from '../src/schemas';
+import { createDeferred } from './fixtures';
 
 const FIXTURES = resolve(__dirname, '../../test-fixtures/provenance');
 const BUNDLE = readFileSync(
@@ -37,10 +39,8 @@ describe('image provenance verification', () => {
     // Pin only the network root input. Certificate, signature, SCT and Rekor
     // checks run against the real published bundle in every verification test.
     jest
-      .spyOn(SigstoreVerifier.prototype, 'loadSigstoreRootWithTUF')
-      .mockImplementation(function (this: SigstoreVerifier) {
-        return this.loadSigstoreRoot(TRUSTED_ROOT);
-      });
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockResolvedValue(TRUSTED_ROOT);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -70,11 +70,12 @@ describe('image provenance verification', () => {
   });
 
   test('verifies every required image from compose, including YAML merges and tagged digests', async () => {
+    const firstRequest = createDeferred<Response>();
+    const secondRequest = createDeferred<Response>();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
-      .mockImplementation(async () =>
-        Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
-      );
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise);
     const appCompose = JSON.stringify({
       docker_compose_file: `
 x-image: &manager
@@ -93,12 +94,21 @@ services:
 `,
     });
 
-    await verifyDeploymentImageProvenance({
+    const verification = verifyDeploymentImageProvenance({
       appCompose,
       imagePolicies: { 'docker.io/nearaidev/compose-manager': POLICY },
       githubToken: 'test-github-token',
     });
+    const startedRequests = fetch.mock.calls.length;
+    firstRequest.resolve(
+      Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+    );
+    secondRequest.resolve(
+      Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+    );
+    await verification;
 
+    expect(startedRequests).toBe(2);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(encodeURIComponent(DIGEST)),
@@ -108,6 +118,59 @@ services:
         }),
       }),
     );
+  });
+
+  test('shares an in-flight root refresh without retaining the completed request', async () => {
+    const root = createDeferred<TrustedRoot>();
+    const getRoot = jest
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockReturnValueOnce(root.promise);
+    const input = { bundles: [BUNDLE], digest: DIGEST, policy: POLICY };
+    const verifications = [
+      verifyImageProvenance(input),
+      verifyImageProvenance(input),
+    ];
+    const startedRequests = getRoot.mock.calls.length;
+    root.resolve(TRUSTED_ROOT);
+
+    await expect(Promise.all(verifications)).resolves.toHaveLength(2);
+    expect(startedRequests).toBe(1);
+
+    await verifyImageProvenance(input);
+    expect(getRoot).toHaveBeenCalledTimes(2);
+  });
+
+  test('shares a failed root refresh and allows a later retry', async () => {
+    const root = createDeferred<TrustedRoot>();
+    const getRoot = jest
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockReturnValueOnce(root.promise);
+    const input = { bundles: [BUNDLE], digest: DIGEST, policy: POLICY };
+    const verifications = Promise.allSettled([
+      verifyImageProvenance(input),
+      verifyImageProvenance(input),
+    ]);
+    const startedRequests = getRoot.mock.calls.length;
+    const cause = new Error('root request failed');
+    root.reject(cause);
+
+    for (const result of await verifications) {
+      expect(result).toMatchObject({
+        status: 'rejected',
+        reason: {
+          failure: {
+            code: 'provenance.image_verification_failed',
+            details: { digest: DIGEST, reasons: ['trust_root_unavailable'] },
+          },
+          retryable: true,
+          cause,
+        },
+      });
+    }
+    expect(startedRequests).toBe(1);
+
+    await verifyImageProvenance(input);
+    expect(getRoot).toHaveBeenCalledTimes(2);
   });
 
   test.each(['', ':latest', '@sha256:bad', `@${DIGEST}@${DIGEST}`])(

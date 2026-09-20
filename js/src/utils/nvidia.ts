@@ -29,19 +29,10 @@ export async function nvidiaNrasVerifier(
   nvidiaPayload: string,
   nonce: string,
 ): Promise<void> {
-  const response = await fetchNras(nvidiaPayload);
-
-  if (!response.ok) {
-    throw new VerificationError({
-      code: 'gpu.nras_request_failed',
-      details: { reason: 'http_status', status: response.status },
-      retryable: isRetryableNrasStatus(response.status),
-    });
-  }
-
-  const raw = await getNrasJson(response);
-  const token = decodeNrasOverallAttestationJwt(raw);
-  const jwks = await fetchNvidiaJwks();
+  const [token, jwks] = await Promise.all([
+    fetchNrasToken(nvidiaPayload),
+    fetchNvidiaJwks(),
+  ]);
   let payload: unknown;
   try {
     const verified = await jwtVerify(
@@ -93,6 +84,19 @@ export async function nvidiaNrasVerifier(
     code: 'gpu.attestation_rejected',
     details: { source: 'nras' },
   });
+}
+
+async function fetchNrasToken(nvidiaPayload: string): Promise<string> {
+  const response = await fetchNras(nvidiaPayload);
+  if (!response.ok) {
+    throw new VerificationError({
+      code: 'gpu.nras_request_failed',
+      details: { reason: 'http_status', status: response.status },
+      retryable: isRetryableNrasStatus(response.status),
+    });
+  }
+  const raw = await getNrasJson(response);
+  return decodeNrasOverallAttestationJwt(raw);
 }
 
 async function fetchNvidiaJwks(): Promise<NvidiaJwksResolver> {

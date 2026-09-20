@@ -1,7 +1,6 @@
 import type {
   GpuEvidenceStatus,
-  ModelAttestationPolicy,
-  ModelAttestationVerifiers,
+  DeploymentVerifier,
   NvidiaEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
@@ -30,12 +29,25 @@ import type { VerifiedDstackQuote } from './dstack-attestation';
  * and the model signing identity but does not claim a client-to-model TLS
  * binding; the client's TLS connection terminates at the gateway.
  */
-export async function verifyModelAttestation({
+export async function verifyModelAttestation(
+  params: VerifyModelAttestationParams,
+): Promise<VerifiedModelAttestation> {
+  // CPU and GPU evidence bind independently to the same client nonce.
+  const [deployment, gpuEvidence] = await Promise.all([
+    verifyModelCpuAttestation(params),
+    verifyModelGpuEvidence(params),
+  ]);
+  return { ...deployment, gpuEvidence };
+}
+
+type VerifiedModelDeployment = Omit<VerifiedModelAttestation, 'gpuEvidence'>;
+
+async function verifyModelCpuAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
-}: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
+}: VerifyModelAttestationParams): Promise<VerifiedModelDeployment> {
   const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
     attestation,
@@ -52,39 +64,26 @@ export async function verifyModelAttestation({
   return verifyModelDeployment({
     attestation,
     verifiedQuote,
-    nonce,
-    policy,
-    verifiers,
+    deploymentVerifier: verifiers?.deployment,
   });
 }
 
 type VerifyModelDeploymentParams = {
   attestation: ModelAttestation;
   verifiedQuote: VerifiedDstackQuote;
-  nonce: string;
-  policy?: ModelAttestationPolicy;
-  verifiers?: ModelAttestationVerifiers;
+  deploymentVerifier?: DeploymentVerifier;
 };
 
 /** Shared model checks after the endpoint-specific report-data binding passes. */
 export async function verifyModelDeployment({
   attestation,
   verifiedQuote,
-  nonce,
-  policy,
-  verifiers,
-}: VerifyModelDeploymentParams): Promise<VerifiedModelAttestation> {
+  deploymentVerifier,
+}: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
-    verifiers?.deployment,
+    deploymentVerifier,
   );
-  const gpuEvidence = await verifyNvidiaEvidence({
-    payload: attestation.nvidiaPayload,
-    nonce,
-    requirement: getGpuEvidenceRequirement(policy),
-    verifier:
-      verifiers?.nvidia ?? ((payload) => nvidiaNrasVerifier(payload, nonce)),
-  });
 
   const signingPublicKey = verifySigningPublicKey({
     attestation,
@@ -94,9 +93,24 @@ export async function verifyModelDeployment({
 
   return {
     ...evidence,
-    gpuEvidence,
     ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
   };
+}
+
+/** GPU verification is independent of the model's CPU quote and deployment. */
+export function verifyModelGpuEvidence({
+  attestation,
+  clientBinding: { nonce },
+  policy,
+  verifiers,
+}: VerifyModelAttestationParams): Promise<GpuEvidenceStatus> {
+  return verifyNvidiaEvidence({
+    payload: attestation.nvidiaPayload,
+    nonce,
+    requirement: policy?.gpuEvidence ?? 'if-present',
+    verifier:
+      verifiers?.nvidia ?? ((payload) => nvidiaNrasVerifier(payload, nonce)),
+  });
 }
 
 type VerifySigningPublicKeyParams = {
@@ -223,10 +237,4 @@ async function verifyNvidiaEvidence(
     );
   }
   return 'verified';
-}
-
-function getGpuEvidenceRequirement(
-  policy: ModelAttestationPolicy | undefined,
-): 'if-present' | 'required' {
-  return policy?.gpuEvidence ?? 'if-present';
 }
