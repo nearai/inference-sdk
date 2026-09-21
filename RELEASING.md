@@ -1,9 +1,9 @@
 # Publishing the SDKs
 
 The npm package is named `@nearai/inference-sdk`. The PyPI and crates.io
-packages are named `nearai-inference-sdk`. The npm release candidate is
-`0.1.0-rc.3`; Python and Rust remain at `0.1.0`. Python and Rust imports use
-`nearai_inference_sdk`. The initial release preparation targets npm only.
+packages are named `nearai-inference-sdk`. The npm stable release is
+`0.1.0`; Python and Rust remain at `0.1.0`. Python and Rust imports use
+`nearai_inference_sdk`. This release preparation targets npm only.
 
 ## Prepare and validate
 
@@ -26,7 +26,7 @@ Release artifacts:
 
 | Registry | Artifact |
 | --- | --- |
-| npm | `dist/nearai-inference-sdk-0.1.0-rc.3.tgz` |
+| npm | `dist/nearai-inference-sdk-0.1.0.tgz` |
 | PyPI | `py/dist/nearai_inference_sdk-0.1.0-py3-none-any.whl` and `py/dist/nearai_inference_sdk-0.1.0.tar.gz` |
 | crates.io | `rs/target/package/nearai-inference-sdk-0.1.0.crate` |
 
@@ -50,20 +50,20 @@ through the registry CLI or its supported environment variables; do not commit
 credentials. These commands upload public packages and are separate from the
 preparation commands above.
 
-From the repository root, publish the reviewed npm release candidate with the
-`next` tag so it does not become the default `latest` install:
+From the repository root, publish the reviewed stable npm release with the
+`latest` tag so it becomes the default install:
 
 ```sh
-npm publish ./dist/nearai-inference-sdk-0.1.0-rc.3.tgz --tag next --access public --registry https://registry.npmjs.org/
+npm publish ./dist/nearai-inference-sdk-0.1.0.tgz --tag latest --access public --registry https://registry.npmjs.org/
 ```
 
-Install the candidate with `npm install @nearai/inference-sdk@next`, or pin
-`@nearai/inference-sdk@0.1.0-rc.3`. Use `0.1.0-rc.4` for a subsequent candidate.
-For the formal npm release, change `js/package.json` to `0.1.0`, update this
-guide's npm artifact paths, repeat validation, and publish the new archive with
-`--tag latest`. Changing a dist-tag does not change a package's version.
+Install the stable release with `npm install @nearai/inference-sdk`, or pin
+`@nearai/inference-sdk@0.1.0`. For future release candidates, use a prerelease
+version and publish with `--tag next`. Changing a dist-tag does not change a
+package's version; promoting a candidate requires building and publishing the
+stable version as a new archive.
 
-Python and Rust publication are separate from this npm candidate:
+Python and Rust publication are separate from this npm release:
 
 ```sh
 uv publish --publish-url https://upload.pypi.org/legacy/ py/dist/nearai_inference_sdk-0.1.0-py3-none-any.whl py/dist/nearai_inference_sdk-0.1.0.tar.gz
@@ -77,8 +77,8 @@ accepts `CARGO_REGISTRY_TOKEN` or credentials configured by `cargo login`.
 The three uploads are independent. If one fails after another succeeds, record
 which versions published and retry only the missing uploads after resolving
 the failure. Once registry indexing completes, install each published package
-in a fresh project and verify its public imports. For this npm-only candidate,
-tag the released commit `npm-v0.1.0-rc.3` after publication and installation
+in a fresh project and verify its public imports. For this npm-only release,
+tag the released commit `npm-v0.1.0` after publication and installation
 checks succeed. Reserve `v0.1.0` for a coordinated formal release of all three
 packages.
 
