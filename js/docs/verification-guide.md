@@ -517,6 +517,25 @@ authenticated source SHA. Set `ref` or `commit` to restrict builds further.
 For individual digests or other configuration formats, use
 `fetchImageProvenance` and `verifyImageProvenance` directly.
 
+For a reusable signing workflow in another repository, set `signerIdentity` to
+its exact certificate SAN URI. Keep `repository`, `workflow`, `ref`, and `commit`
+pointing to the source and caller workflow:
+
+```ts
+const imagePolicy: ImageProvenancePolicy = {
+  repository: 'example/app',
+  workflow: '.github/workflows/release.yml',
+  ref: 'refs/heads/main',
+  signerIdentity:
+    'https://github.com/example/build-workflows/.github/workflows/build.yml@refs/tags/v1',
+};
+```
+
+The signer URI can use a ref or a full workflow commit SHA. Without this option,
+the signer must be the source workflow at the same ref. In both cases, the
+certificate's source repository, ref, and commit must match the signed source.
+Proofs are still fetched from the source repository, not the signer repository.
+
 One complete matching bundle is sufficient; other bundles for the digest may
 come from different builds. The helpers do not maintain an approved-image list,
 rebuild images, or prove which containers are currently running. They are not
