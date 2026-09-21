@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from pydantic import ValidationError
-
-from ..schemas import NvidiaPayloadNonceSchema
 from ..types.verification import (
+    GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
-    NvidiaEvidenceVerifier,
     VerifiedModelAttestation,
 )
 from ..types.attestation_model import ModelAttestation
@@ -18,7 +15,7 @@ from ..utils.errors import (
     VerificationError,
     verification_failure,
 )
-from ..utils.nvidia import verify_nvidia_nras
+from ..utils.nvidia import decode_nvidia_payload_nonce, verify_nvidia_nras
 from .attestation_common import verify_report_data_binding, verify_reported_nonce
 from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
 
@@ -38,7 +35,7 @@ async def verify_model_attestation(
         advertised_report_data=attestation.reported_quote_data,
         nonce=nonce,
         policy=policy,
-        quote_verifier=None if verifiers is None else verifiers.quote,
+        tdx_quote_verifier=None if verifiers is None else verifiers.tdx_quote,
     )
     verify_report_data_binding(
         report_data=verified_quote.quote.report_data,
@@ -48,11 +45,11 @@ async def verify_model_attestation(
     evidence = await verify_dstack_deployment(
         verified_quote, None if verifiers is None else verifiers.deployment
     )
-    gpu_evidence = await _verify_nvidia_evidence(
+    gpu_evidence = await _verify_gpu_evidence(
         payload=attestation.nvidia_payload,
         nonce=nonce,
         policy=policy,
-        verifier=None if verifiers is None else verifiers.nvidia,
+        verifier=None if verifiers is None else verifiers.gpu_evidence,
     )
     return VerifiedModelAttestation(
         signer=evidence.signer,
@@ -64,12 +61,12 @@ async def verify_model_attestation(
     )
 
 
-async def _verify_nvidia_evidence(
+async def _verify_gpu_evidence(
     *,
     payload: str | None,
     nonce: str,
     policy: ModelAttestationPolicy | None,
-    verifier: NvidiaEvidenceVerifier | None,
+    verifier: GpuEvidenceVerifier | None,
 ) -> str:
     requirement = 'if-present' if policy is None else policy.gpu_evidence
     if payload is None:
@@ -77,18 +74,8 @@ async def _verify_nvidia_evidence(
             raise verification_failure('policy.gpu_evidence_required')
         return 'not_provided'
 
-    try:
-        parsed = NvidiaPayloadNonceSchema.model_validate_json(payload)
-    except ValidationError as error:
-        reason = (
-            'invalid_json'
-            if error.errors(include_url=False)[0]['type'] == 'json_invalid'
-            else 'nonce_missing'
-        )
-        raise verification_failure(
-            'gpu.payload_invalid', {'reason': reason}, cause=error
-        ) from error
-    verify_reported_nonce(parsed.nonce, nonce, 'nvidiaPayload')
+    payload_nonce = decode_nvidia_payload_nonce(payload)
+    verify_reported_nonce(payload_nonce, nonce, 'nvidiaPayload')
 
     try:
         if verifier is None:

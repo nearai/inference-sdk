@@ -76,7 +76,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
 | `GatewayVerificationOptions` from `@nearai/inference-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
-|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifiers. A deployment check must pass before `deploymentPolicy` runs. |
+|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and GPU verifiers. A deployment check must pass before `deploymentPolicy` runs. |
 
 ### Methods and result
 
@@ -209,7 +209,7 @@ match and performs no additional cryptographic verification.
 | `VerifyModelAttestationParams` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
 |  | `clientBinding` | `ModelClientBinding` | Yes | Client values returned by the matching model-attestation fetch result. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
-|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
+|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
 | `VerifyGatewayAttestationParams` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
 |  | `clientBinding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-attestation fetch result. |
 |  | `policy?` | `AttestationPolicy` | No | Accepted TCB statuses. |
@@ -368,6 +368,31 @@ the provider signature no longer matches the client-visible bytes.
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
 |  | `reportedQuoteData` | `string` | Yes | Gateway report-data copy. |
 
+## Configurable verification services
+
+Both factories return callbacks for the existing `verifiers` parameter. They
+retain the built-in verification checks and accept custom service or proxy URLs.
+PCCS defaults to Phala in browsers and Intel in Node.js. NVIDIA defaults are
+the same in both runtimes.
+
+| Function | Parameter type | Returns |
+| --- | --- | --- |
+| `createTdxQuoteVerifier(params?)` | `CreateTdxQuoteVerifierParams` | `TdxQuoteVerifier` |
+| `createGpuEvidenceVerifier(params?)` | `CreateGpuEvidenceVerifierParams` | `GpuEvidenceVerifier` |
+
+| Parameter type | Field | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
+|  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
+
+The NVIDIA callback verifies the signed JWT nonce against the submitted payload
+nonce. `verifyModelAttestation` additionally binds that nonce to
+`clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
+The expected NVIDIA issuer remains fixed when either URL changes.
+See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
+for routing and response-header requirements.
+
 ## Policies and verifier callbacks
 
 ### Policies
@@ -386,27 +411,27 @@ the provider signature no longer matches the client-visible bytes.
 
 | Type | Field or signature | Description |
 | --- | --- | --- |
-| `AttestationVerifiers` | `quote?: QuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
+| `AttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-| `ModelAttestationVerifiers` | `quote?: QuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
+| `ModelAttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-|  | `nvidia?: NvidiaEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
-| `QuoteVerifier` | `(quote: string) => Awaitable<QuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
+|  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
+| `TdxQuoteVerifier` | `(quote: string) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
-| `NvidiaEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
+| `GpuEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
 
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
 directly or asynchronously.
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
-timestamps, signed nonce, and boolean verdict. Provide `nvidia` to use different
+timestamps, signed nonce, and boolean verdict. Provide `gpuEvidence` to use different
 trust roots or another verification service.
 
 ### Quote and deployment values
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `QuoteVerificationResult` | `tcbStatus` | `TcbStatus` | Authenticated TCB status. |
+| `TdxQuoteVerificationResult` | `tcbStatus` | `TcbStatus` | Authenticated TCB status. |
 |  | `advisoryIds` | `readonly string[]` | Authenticated advisory IDs. |
 |  | `debugEnabled` | `boolean` | Whether the authenticated quote enables debug mode. |
 |  | `reportData` | `Uint8Array` | Authenticated quote report data. |

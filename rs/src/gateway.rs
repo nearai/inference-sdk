@@ -22,7 +22,7 @@ pub async fn verify_gateway_attestation(
         &attestation.evidence,
         &client_binding.nonce,
         policy,
-        verifiers.quote,
+        verifiers.tdx_quote,
         Some(&attestation.reported_quote_data),
     )
     .await?;

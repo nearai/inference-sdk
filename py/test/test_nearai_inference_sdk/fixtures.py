@@ -8,7 +8,7 @@ from nearai_inference_sdk import (
     GatewayAttestation,
     ModelClientBinding,
     ModelAttestation,
-    QuoteVerificationResult,
+    TdxQuoteVerificationResult,
     SigningIdentity,
 )
 
@@ -30,10 +30,10 @@ def create_gateway_tls_quote(
     signing_address: str = SIGNING_ADDRESS,
     tls_fingerprint: str = TLS_FINGERPRINT,
     **overrides: object,
-) -> QuoteVerificationResult:
+) -> TdxQuoteVerificationResult:
     signing_address_bytes = bytes.fromhex(signing_address.removeprefix('0x'))
     report_prefix = sha256(signing_address_bytes + bytes.fromhex(tls_fingerprint))
-    quote = QuoteVerificationResult(
+    quote = TdxQuoteVerificationResult(
         tcb_status='UpToDate',
         advisory_ids=(),
         debug_enabled=False,
@@ -48,10 +48,10 @@ def create_model_quote(
     *,
     signing_address: str = SIGNING_ADDRESS,
     **overrides: object,
-) -> QuoteVerificationResult:
+) -> TdxQuoteVerificationResult:
     signing_address_bytes = bytes.fromhex(signing_address.removeprefix('0x'))
     report_prefix = signing_address_bytes.ljust(32, b'\x00')
-    quote = QuoteVerificationResult(
+    quote = TdxQuoteVerificationResult(
         tcb_status='UpToDate',
         advisory_ids=(),
         debug_enabled=False,

@@ -1,6 +1,6 @@
 import { Buffer } from 'buffer';
 import * as v from 'valibot';
-import { QuoteVerificationResultSchema } from '../schemas';
+import { TdxQuoteVerificationResultSchema } from '../schemas';
 import type { VerifiedTdxQuote } from '../types/verification';
 import { VerificationError } from '../utils/errors';
 
@@ -11,8 +11,8 @@ import { VerificationError } from '../utils/errors';
  * this external shape. Decode it once before the attestation core consumes
  * measurements.
  */
-export function decodeQuoteVerifierOutput(value: unknown): VerifiedTdxQuote {
-  const parsed = v.safeParse(QuoteVerificationResultSchema, value);
+export function decodeTdxQuoteVerifierOutput(value: unknown): VerifiedTdxQuote {
+  const parsed = v.safeParse(TdxQuoteVerificationResultSchema, value);
   if (!parsed.success) {
     const issue = parsed.issues[0];
     throw new VerificationError({

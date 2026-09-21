@@ -31,10 +31,10 @@ pub use deployment_provenance::{
 pub use errors::{ApiError, ApiResource, ApiTransportReason, VerificationError};
 pub use gateway::verify_gateway_attestation;
 pub use model::verify_model_attestation;
-pub use nvidia::{NrasNvidiaEvidenceVerifier, DEFAULT_NVIDIA_NRAS_URL};
+pub use nvidia::{NrasGpuEvidenceVerifier, DEFAULT_NVIDIA_JWKS_URL, DEFAULT_NVIDIA_NRAS_URL};
 pub use provenance::{
     fetch_image_provenance, verify_image_provenance, verify_image_provenance_with_signer_identity,
 };
-pub use quote::{verify_dcap_quote, DcapQuoteVerifier, DEFAULT_INTEL_PCCS_URL};
+pub use quote::{verify_tdx_quote, DefaultTdxQuoteVerifier, DEFAULT_INTEL_PCCS_URL};
 pub use response::{verify_gateway_response, verify_model_response};
 pub use types::*;
