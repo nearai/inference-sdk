@@ -69,16 +69,33 @@ evidence and encrypt prompts. Direct server-to-Gateway integrations do not
 need a proxy.
 
 Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
-it accepts:
+it accepts. The Intel verifier uses Phala PCCS in browsers because Intel's
+service does not support CORS; Node.js uses Intel directly. NVIDIA uses its
+official NRAS and JWKS endpoints. Browser clients need a proxy for the NRAS
+POST. All three URLs can be overridden:
 
 ```ts
-import { InferenceClient } from '@nearai/inference-sdk';
+import {
+  createTdxQuoteVerifier,
+  createGpuEvidenceVerifier,
+  InferenceClient,
+} from '@nearai/inference-sdk';
+
+const tdxQuote = createTdxQuoteVerifier({
+  pccsUrl: '/api/attestation/intel',
+});
+const gpuEvidence = createGpuEvidenceVerifier({
+  nrasUrl: '/api/attestation/nvidia',
+  jwksUrl: '/api/attestation/nvidia/jwks.json',
+});
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
+  gatewayVerification: { verifiers: { tdxQuote } },
+  modelVerification: { verifiers: { tdxQuote, gpuEvidence } },
 });
 ```
 
@@ -87,11 +104,32 @@ The proxy must forward `/v1/attestation/report`, `/v1/chat/completions`, and
 NEAR AI credential. Preserve the request and response bodies, model-key routing header,
 and encryption headers unchanged so decryption and signature verification work.
 
+The attestation-service routes are separate from the inference API proxy:
+
+- The Intel route must be PCCS-compatible: support `/sgx/certification/v4/*`
+  and `/tdx/certification/v4/*` below the configured base, preserve query
+  parameters and issuer-chain response headers, and serve the hex-encoded root
+  CRL at `/sgx/certification/v4/rootcacrl`. Without that route, DCAP can fall back
+  to fetching the certificate's CRL URL directly.
+- The NVIDIA routes forward the NRAS JSON POST and JWKS GET without modifying
+  their bodies. Omit `jwksUrl` to fetch NVIDIA's CORS-enabled JWKS directly.
+
+Use same-origin routes or a proxy that permits the application's origin. A
+cross-origin Intel proxy must also expose the issuer-chain response headers.
+Changing these URLs does not disable signature, nonce, or timestamp checks.
+The JWKS URL selects trusted signing keys, so use only a trusted proxy;
+the expected NVIDIA issuer stays fixed.
+
+The same callbacks can be passed to `verifyGatewayAttestation` and
+`verifyModelAttestation` through `verifiers`. The NVIDIA helper checks the signed
+result against the submitted payload nonce; model verification also checks
+that nonce against `clientBinding.nonce`.
+
 Browser Fetch does not expose the TLS peer certificate, so the generic client
 does not verify Gateway TLS binding. Depending on the browser build, the default
 Intel verifier may need `crypto`, `buffer`, and `stream` polyfills. A custom
-quote verifier can be supplied through `gatewayVerification.verifiers.quote`
-and `modelVerification.verifiers.quote`.
+quote verifier can be supplied through `gatewayVerification.verifiers.tdxQuote`
+and `modelVerification.verifiers.tdxQuote`.
 
 For a Node client connecting through a proxy, disable Gateway TLS binding
 because the observed certificate belongs

@@ -2,7 +2,7 @@
 
 The npm package is named `@nearai/inference-sdk`. The PyPI and crates.io
 packages are named `nearai-inference-sdk`. The npm release candidate is
-`0.1.0-rc.1`; Python and Rust remain at `0.1.0`. Python and Rust imports use
+`0.1.0-rc.2`; Python and Rust remain at `0.1.0`. Python and Rust imports use
 `nearai_inference_sdk`. The initial release preparation targets npm only.
 
 ## Prepare and validate
@@ -26,7 +26,7 @@ Release artifacts:
 
 | Registry | Artifact |
 | --- | --- |
-| npm | `dist/nearai-inference-sdk-0.1.0-rc.1.tgz` |
+| npm | `dist/nearai-inference-sdk-0.1.0-rc.2.tgz` |
 | PyPI | `py/dist/nearai_inference_sdk-0.1.0-py3-none-any.whl` and `py/dist/nearai_inference_sdk-0.1.0.tar.gz` |
 | crates.io | `rs/target/package/nearai-inference-sdk-0.1.0.crate` |
 
@@ -54,11 +54,11 @@ From the repository root, publish the reviewed npm release candidate with the
 `next` tag so it does not become the default `latest` install:
 
 ```sh
-npm publish ./dist/nearai-inference-sdk-0.1.0-rc.1.tgz --tag next --access public --registry https://registry.npmjs.org/
+npm publish ./dist/nearai-inference-sdk-0.1.0-rc.2.tgz --tag next --access public --registry https://registry.npmjs.org/
 ```
 
 Install the candidate with `npm install @nearai/inference-sdk@next`, or pin
-`@nearai/inference-sdk@0.1.0-rc.1`. Use `0.1.0-rc.2` for a subsequent candidate.
+`@nearai/inference-sdk@0.1.0-rc.2`. Use `0.1.0-rc.3` for a subsequent candidate.
 For the formal npm release, change `js/package.json` to `0.1.0`, update this
 guide's npm artifact paths, repeat validation, and publish the new archive with
 `--tag latest`. Changing a dist-tag does not change a package's version.
@@ -78,7 +78,7 @@ The three uploads are independent. If one fails after another succeeds, record
 which versions published and retry only the missing uploads after resolving
 the failure. Once registry indexing completes, install each published package
 in a fresh project and verify its public imports. For this npm-only candidate,
-tag the released commit `npm-v0.1.0-rc.1` after publication and installation
+tag the released commit `npm-v0.1.0-rc.2` after publication and installation
 checks succeed. Reserve `v0.1.0` for a coordinated formal release of all three
 packages.
 

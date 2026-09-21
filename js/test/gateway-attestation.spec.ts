@@ -27,7 +27,7 @@ describe('gateway attestation verification', () => {
     const result = await verifyGatewayAttestation({
       attestation: createGatewayAttestation(),
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
-      verifiers: { quote: async () => createGatewayTlsQuote() },
+      verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
     });
 
     expect(result).toMatchObject({
@@ -42,7 +42,7 @@ describe('gateway attestation verification', () => {
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
         clientBinding: { nonce },
-        verifiers: { quote: async () => createGatewayTlsQuote() },
+        verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
       failure: { code: 'binding.spki_fingerprint_required' },
@@ -57,7 +57,7 @@ describe('gateway attestation verification', () => {
         reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
       },
       clientBinding: { nonce },
-      verifiers: { quote: async () => quote },
+      verifiers: { tdxQuote: async () => quote },
     });
 
     expect(result.tlsBinding).toEqual({ kind: 'none' });
@@ -68,7 +68,7 @@ describe('gateway attestation verification', () => {
       verifyGatewayAttestation({
         attestation: createGatewayAttestation(),
         clientBinding: { nonce, spkiFingerprint: '44'.repeat(32) },
-        verifiers: { quote: async () => createGatewayTlsQuote() },
+        verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -84,7 +84,7 @@ describe('gateway attestation verification', () => {
           reportedQuoteData: 'ff'.repeat(64),
         }),
         clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
-        verifiers: { quote: async () => createGatewayTlsQuote() },
+        verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -100,7 +100,7 @@ describe('gateway attestation verification', () => {
         attestation: createGatewayAttestation(),
         clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
         policy: { acceptedTcbStatuses: ['OutOfDate'] },
-        verifiers: { quote: async () => createGatewayTlsQuote() },
+        verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -116,7 +116,7 @@ describe('gateway attestation verification', () => {
       attestation: createGatewayAttestation(),
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: {
-        quote: async () => createGatewayTlsQuote(),
+        tdxQuote: async () => createGatewayTlsQuote(),
         deployment: async (deployment) => {
           verifiedDeployments.push(deployment);
         },

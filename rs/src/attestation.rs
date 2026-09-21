@@ -4,10 +4,10 @@ use crate::bindings::{
 };
 use crate::errors::VerificationError;
 use crate::event_log::verify_and_replay_rtmr3;
-use crate::quote::DcapQuoteVerifier;
+use crate::quote::DefaultTdxQuoteVerifier;
 use crate::types::{
     AttestationEvidence, AttestationPolicy, DeploymentProvenanceStatus, DeploymentVerifier,
-    MeasuredDeployment, QuoteVerificationResult, QuoteVerifier, SigningIdentity, TcbStatus,
+    MeasuredDeployment, SigningIdentity, TcbStatus, TdxQuoteVerificationResult, TdxQuoteVerifier,
     VerifiedAttestationEvidence,
 };
 
@@ -15,7 +15,7 @@ const DEFAULT_ACCEPTED_TCB_STATUSES: [TcbStatus; 2] = [TcbStatus::UpToDate, TcbS
 
 pub(crate) struct VerifiedDstackQuote<'a> {
     pub attestation: &'a AttestationEvidence,
-    pub quote: QuoteVerificationResult,
+    pub quote: TdxQuoteVerificationResult,
     pub signer: SigningIdentity,
 }
 
@@ -23,13 +23,13 @@ pub(crate) async fn verify_dstack_quote<'a>(
     attestation: &'a AttestationEvidence,
     nonce: &str,
     policy: Option<&AttestationPolicy>,
-    quote_verifier: Option<&dyn QuoteVerifier>,
+    tdx_quote_verifier: Option<&dyn TdxQuoteVerifier>,
     advertised_report_data: Option<&str>,
 ) -> Result<VerifiedDstackQuote<'a>, VerificationError> {
     verify_reported_nonce(&attestation.nonce, nonce, "attestation_nonce")?;
     let signer = validate_signing_identity(&attestation.signer)?;
-    let default_verifier = DcapQuoteVerifier::default();
-    let verifier = quote_verifier.unwrap_or(&default_verifier);
+    let default_verifier = DefaultTdxQuoteVerifier::default();
+    let verifier = tdx_quote_verifier.unwrap_or(&default_verifier);
     let quote = verifier.verify(&attestation.intel_quote).await?;
 
     verify_advertised_report_data(advertised_report_data, &quote.report_data)?;
