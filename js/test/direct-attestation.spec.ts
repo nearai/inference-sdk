@@ -71,8 +71,8 @@ describe('direct model attestation verification', () => {
       clientBinding: { nonce },
       policy: { gpuEvidence: 'required' },
       verifiers: {
-        quote: () => quoteFor(attestation),
-        nvidia: (payload) => {
+        tdxQuote: () => quoteFor(attestation),
+        gpuEvidence: (payload) => {
           gpuPayloads.push(payload);
         },
       },
@@ -107,7 +107,7 @@ describe('direct model attestation verification', () => {
       verifyDirectModelAttestation({
         attestation,
         clientBinding: { nonce },
-        verifiers: { quote: () => quoteFor(attestation) },
+        verifiers: { tdxQuote: () => quoteFor(attestation) },
       }),
     ).rejects.toMatchObject({ failure: { code } });
   });
@@ -122,7 +122,7 @@ describe('direct model attestation verification', () => {
       verifyDirectModelAttestation({
         attestation,
         clientBinding: { nonce },
-        verifiers: { quote: () => quoteFor(original) },
+        verifiers: { tdxQuote: () => quoteFor(original) },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -143,7 +143,7 @@ describe('direct model attestation verification', () => {
           attestation: includeFingerprint ? withTls : plain,
           clientBinding: { nonce },
           verifiers: {
-            quote: () => quoteFor(includeFingerprint ? plain : withTls),
+            tdxQuote: () => quoteFor(includeFingerprint ? plain : withTls),
           },
         }),
       ).rejects.toMatchObject({
@@ -173,7 +173,7 @@ describe('direct model attestations verification', () => {
       attestations: [first, second],
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: {
-        quote: (quote) => {
+        tdxQuote: (quote) => {
           startedQuotes.push(quote);
           return quote === first.intelQuote
             ? firstQuote.promise
@@ -230,7 +230,7 @@ describe('direct model attestations verification', () => {
         attestations: [first, tampered],
         clientBinding: { nonce },
         verifiers: {
-          quote: (quote) =>
+          tdxQuote: (quote) =>
             quoteFor(quote === first.intelQuote ? first : second),
         },
       }),
@@ -254,7 +254,7 @@ describe('direct model attestations verification', () => {
           servingAttestation: attestation,
           attestations: [attestation],
           clientBinding: { nonce, spkiFingerprint },
-          verifiers: { quote: () => quoteFor(attestation) },
+          verifiers: { tdxQuote: () => quoteFor(attestation) },
         }),
       ).rejects.toMatchObject({ failure: { code } });
     },
@@ -266,7 +266,7 @@ describe('direct model attestations verification', () => {
       servingAttestation: attestation,
       attestations: [attestation],
       clientBinding: { nonce },
-      verifiers: { quote: () => quoteFor(attestation) },
+      verifiers: { tdxQuote: () => quoteFor(attestation) },
     });
 
     expect(verified.tlsBinding).toEqual({ kind: 'none' });
@@ -282,7 +282,7 @@ describe('direct model attestations verification', () => {
         servingAttestation: root,
         attestations: [instance],
         clientBinding: { nonce },
-        verifiers: { quote: () => quoteFor(instance) },
+        verifiers: { tdxQuote: () => quoteFor(instance) },
       }),
     ).rejects.toMatchObject({
       failure: {

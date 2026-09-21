@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import {
   DirectInferenceClient,
   type DirectInferenceClientOptions,
-  type QuoteVerificationResult,
+  type TdxQuoteVerificationResult,
 } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import * as nodeTls from '../src/node/attestation-client';
@@ -78,7 +78,7 @@ function createDirectEndpoint({
         JSON.stringify({ services: { model: { image: 'model:other-key' } } }),
       ]
     : composes;
-  const quotes = new Map<string, QuoteVerificationResult>();
+  const quotes = new Map<string, TdxQuoteVerificationResult>();
   const signatures = new Map<string, Record<string, string>>();
   const state = {
     attestationRequests: 0,
@@ -254,7 +254,7 @@ function createDirectEndpoint({
   };
 
   jest.spyOn(globalThis, 'fetch').mockImplementation(fetch);
-  const quoteVerifier = (quoteId: string): QuoteVerificationResult => {
+  const tdxQuoteVerifier = (quoteId: string): TdxQuoteVerificationResult => {
     const quote = quotes.get(quoteId);
     if (quote === undefined) throw new Error('Unknown fixture quote');
     state.verifiedQuotes.push(quoteId);
@@ -262,7 +262,7 @@ function createDirectEndpoint({
   };
   const options: DirectInferenceClientOptions = {
     baseUrl,
-    modelVerification: { verifiers: { quote: quoteVerifier } },
+    modelVerification: { verifiers: { tdxQuote: tdxQuoteVerifier } },
   };
   return { state, options, publicKey, fetch };
 }
@@ -351,13 +351,12 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.signatureRequests).toBe(1);
   });
 
-  test('uses the selected signer group for Node TLS pins and response verification', async () => {
+  test('verifies Node direct requests without TLS fingerprint binding', async () => {
     const endpoint = createDirectEndpoint({ additionalSigner: true });
-    jest
+    const requestHttps = jest
       .spyOn(nodeTls, 'requestHttps')
       .mockImplementation(async ({ request }) => ({
         response: await endpoint.fetch(request),
-        peerSpkiFingerprint: spkiFingerprints[0],
       }));
     const createPinnedFetch = jest
       .spyOn(nodeTls, 'createPinnedTlsFetch')
@@ -367,18 +366,20 @@ describe('DirectInferenceClient', () => {
     const response = await client.chat.completions.create({ model, messages });
     expect(endpoint.state.verifiedQuotes).toHaveLength(3);
     expect(endpoint.state.decryptedPrompts).toEqual([prompt]);
-    expect(createPinnedFetch).toHaveBeenCalledWith(
-      spkiFingerprints.slice(0, 2),
-    );
+    const attestationRequest = requestHttps.mock.calls[0][0];
+    expect(attestationRequest.capturePeerSpkiFingerprint).toBe(false);
+    expect(
+      new URL(attestationRequest.request.url).searchParams.get(
+        'include_tls_fingerprint',
+      ),
+    ).toBe('false');
+    expect(createPinnedFetch).not.toHaveBeenCalled();
 
     const receipt = await client.verifyResponse(response.id);
     expect(receipt.attestations.map((item) => item.instanceId)).toEqual([
       'instance-0',
       'instance-1',
     ]);
-    expect(receipt.attestations.map((item) => item.spkiFingerprint)).toEqual(
-      spkiFingerprints.slice(0, 2),
-    );
   });
 
   test.each([true, false])(

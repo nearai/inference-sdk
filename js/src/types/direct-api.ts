@@ -21,7 +21,7 @@ export type DirectModelAttestations = {
   readonly attestations: readonly DirectModelAttestation[];
 };
 
-/** Locally generated nonce and, in Node, the observed TLS peer SPKI hash. */
+/** Client nonce and optional TLS peer evidence supplied to direct verification. */
 export type DirectClientBinding = {
   readonly nonce: string;
   readonly spkiFingerprint?: string;
@@ -41,15 +41,10 @@ export type DirectAttestationClientOptions = {
 export type FetchDirectModelAttestationsParams = {
   readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
-  /** Standard Fetch cannot observe the TLS peer certificate. */
-  readonly includeSpkiFingerprint?: false;
 };
 
-export type NodeFetchDirectModelAttestationsParams = {
-  readonly signingAlgo?: SigningAlgo;
-  readonly signingAddress?: string;
-  readonly includeSpkiFingerprint?: boolean;
-};
+export type NodeFetchDirectModelAttestationsParams =
+  FetchDirectModelAttestationsParams;
 
 export type DirectApiModelAttestation = v.InferOutput<
   typeof DirectApiModelAttestationSchema

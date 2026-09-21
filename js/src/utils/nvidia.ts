@@ -4,7 +4,12 @@ import {
   decodeNrasOverallAttestationClaims,
   decodeNrasOverallAttestationJwt,
   decodeNvidiaJwks,
+  decodeNvidiaPayloadNonce,
 } from '../boundaries/nvidia';
+import type {
+  CreateGpuEvidenceVerifierParams,
+  GpuEvidenceVerifier,
+} from '../types/verification';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { isVerificationError, VerificationError } from './errors';
 import type { VerificationFailure } from './errors';
@@ -21,17 +26,45 @@ const NVIDIA_ISSUER = 'https://nras.attestation.nvidia.com';
 const NVIDIA_JWKS_URL = `${NVIDIA_ISSUER}/.well-known/jwks.json`;
 
 /**
+ * Use NVIDIA's signed verdict through NRAS or a forwarding proxy. The JWT
+ * remains bound to the submitted payload nonce. A custom JWKS URL must be a
+ * trusted source of NVIDIA's public keys; it does not change the expected issuer.
+ * Model verification separately binds that payload nonce to the client nonce.
+ */
+export function createGpuEvidenceVerifier({
+  nrasUrl = NVIDIA_GPU_VERIFIER_API_URL,
+  jwksUrl = NVIDIA_JWKS_URL,
+}: CreateGpuEvidenceVerifierParams = {}): GpuEvidenceVerifier {
+  return async (nvidiaPayload) =>
+    nvidiaNrasVerifier({
+      nvidiaPayload,
+      nonce: decodeNvidiaPayloadNonce(nvidiaPayload),
+      nrasUrl,
+      jwksUrl,
+    });
+}
+
+type NvidiaNrasVerifierParams = {
+  nvidiaPayload: string;
+  nonce: string;
+  nrasUrl: string;
+  jwksUrl: string;
+};
+
+/**
  * Verify NRAS's overall EAT JWT using NVIDIA's public JWKS. Only ES384 is
  * accepted, matching NVIDIA's remote verifier. Detached device claims are not
  * consumed here; the signed overall result is the SDK's GPU verdict.
  */
-export async function nvidiaNrasVerifier(
-  nvidiaPayload: string,
-  nonce: string,
-): Promise<void> {
+async function nvidiaNrasVerifier({
+  nvidiaPayload,
+  nonce,
+  nrasUrl,
+  jwksUrl,
+}: NvidiaNrasVerifierParams): Promise<void> {
   const [token, jwks] = await Promise.all([
-    fetchNrasToken(nvidiaPayload),
-    fetchNvidiaJwks(),
+    fetchNrasToken(nvidiaPayload, nrasUrl),
+    fetchNvidiaJwks(jwksUrl),
   ]);
   let payload: unknown;
   try {
@@ -86,8 +119,11 @@ export async function nvidiaNrasVerifier(
   });
 }
 
-async function fetchNrasToken(nvidiaPayload: string): Promise<string> {
-  const response = await fetchNras(nvidiaPayload);
+async function fetchNrasToken(
+  nvidiaPayload: string,
+  nrasUrl: string,
+): Promise<string> {
+  const response = await fetchNras(nvidiaPayload, nrasUrl);
   if (!response.ok) {
     throw new VerificationError({
       code: 'gpu.nras_request_failed',
@@ -99,10 +135,10 @@ async function fetchNrasToken(nvidiaPayload: string): Promise<string> {
   return decodeNrasOverallAttestationJwt(raw);
 }
 
-async function fetchNvidiaJwks(): Promise<NvidiaJwksResolver> {
+async function fetchNvidiaJwks(jwksUrl: string): Promise<NvidiaJwksResolver> {
   let response: Response;
   try {
-    response = await fetch(NVIDIA_JWKS_URL);
+    response = await fetch(jwksUrl);
   } catch (cause) {
     throw new VerificationError(
       {
@@ -147,9 +183,12 @@ function jwtFailure(
   );
 }
 
-async function fetchNras(nvidiaPayload: string): Promise<Response> {
+async function fetchNras(
+  nvidiaPayload: string,
+  nrasUrl: string,
+): Promise<Response> {
   try {
-    return await fetch(NVIDIA_GPU_VERIFIER_API_URL, {
+    return await fetch(nrasUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

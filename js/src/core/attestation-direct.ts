@@ -46,7 +46,7 @@ async function verifyDirectModelCpuAttestation({
     attestation,
     nonce,
     policy,
-    quoteVerifier: verifiers?.quote,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   let spkiFingerprint: string | undefined;
