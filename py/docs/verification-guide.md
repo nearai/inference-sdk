@@ -414,14 +414,62 @@ The SDK authenticates measured values; the callback decides which values are
 acceptable.
 
 `verify_gateway_attestation` accepts `AttestationPolicy` when an application
-needs to restrict Gateway TCB statuses. `verifiers.quote` replaces the built-in
+needs to restrict Gateway TCB statuses. `verifiers.tdx_quote` replaces the built-in
 Intel DCAP quote verifier. The default NVIDIA verifier submits evidence to NRAS,
 then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
 expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
 verdict must be `true`; detached per-device claims are not consumed. See
 [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
-Set `verifiers.nvidia` to use different trust roots or another verification
+Set `verifiers.gpu_evidence` to use different trust roots or another verification
 service. Every verifier callback must return only for evidence it accepts.
+
+## Configure attestation service URLs
+
+The built-in verifiers use Intel's official PCS endpoint and NVIDIA's official
+NRAS and JWKS endpoints. To use proxies with the same verification checks,
+create verifier callbacks with the desired URLs:
+
+```python
+from nearai_inference_sdk import (
+    ModelAttestationVerifiers,
+    create_tdx_quote_verifier,
+    create_gpu_evidence_verifier,
+)
+
+verifiers = ModelAttestationVerifiers(
+    tdx_quote=create_tdx_quote_verifier(
+        pccs_url='https://attestation.example.com',
+    ),
+    gpu_evidence=create_gpu_evidence_verifier(
+        nras_url='https://attestation.example.com/v3/attest/gpu',
+        jwks_url='https://attestation.example.com/.well-known/jwks.json',
+    ),
+)
+```
+
+Pass `verifiers` to `verify_model_attestation`; Gateway verification accepts the
+same quote callback through `AttestationVerifiers(tdx_quote=...)`. Each URL is
+optional and defaults to its official endpoint. Configuration belongs to the
+returned callback and does not change other verifiers.
+
+The PCCS proxy must serve compatible collateral bodies and issuer-chain headers
+under both `/sgx/certification/v4/...` and `/tdx/certification/v4/...`;
+`dcap-qvl` constructs these paths. Provide the PCCS-compatible, hex-encoded root
+CA CRL at `/sgx/certification/v4/rootcacrl` to avoid its fallback to the root
+certificate's CRL distribution URL. Quote signatures, certificate chains, and
+collateral are still verified locally.
+
+The NVIDIA adapter submits the unchanged evidence JSON to `nras_url` and obtains
+signing keys from `jwks_url`. A custom JWKS URL selects a trust source: use only
+a trusted proxy. The fixed NVIDIA issuer check does not authenticate arbitrary
+JWKS sources. ES384 signatures, issuer, timestamps, signed nonce, and the boolean
+verdict remain checked.
+
+`verify_model_attestation` checks the payload nonce against the matching client
+nonce before invoking any NVIDIA callback. The factory's callback also requires
+a 32-byte hexadecimal payload nonce and checks it against the signed JWT nonce.
+When calling that callback directly, the application must additionally bind the
+payload nonce to its own fresh request nonce.
 
 ## Handle retrieval and verification errors
 

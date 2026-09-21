@@ -1,18 +1,17 @@
 import type {
   GpuEvidenceStatus,
   ModelAttestationPolicy,
-  NvidiaEvidenceVerifier,
+  GpuEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
 } from '../types/verification';
 import { Buffer } from 'buffer';
-import * as v from 'valibot';
 import { computeAddress } from 'ethers';
-import { NvidiaPayloadNonceSchema } from '../schemas';
+import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
-import { nvidiaNrasVerifier } from '../utils/nvidia';
+import { createGpuEvidenceVerifier } from '../utils/nvidia';
 import {
   verifyReportDataBinding,
   verifyReportedNonce,
@@ -39,7 +38,7 @@ export async function verifyModelAttestation({
     attestation,
     nonce,
     policy,
-    quoteVerifier: verifiers?.quote,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   verifyReportDataBinding({
@@ -51,12 +50,11 @@ export async function verifyModelAttestation({
     verifiedQuote,
     verifiers?.deployment,
   );
-  const gpuEvidence = await verifyNvidiaEvidence({
+  const gpuEvidence = await verifyGpuEvidence({
     payload: attestation.nvidiaPayload,
     nonce,
     requirement: gpuEvidenceRequirement,
-    verifier:
-      verifiers?.nvidia ?? ((payload) => nvidiaNrasVerifier(payload, nonce)),
+    verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
   });
 
   const signingPublicKey = verifySigningPublicKey({
@@ -138,15 +136,15 @@ function ecdsaPublicKeyMatchesSigner(
   }
 }
 
-type VerifyNvidiaEvidenceParams = {
+type VerifyGpuEvidenceParams = {
   payload?: string;
   nonce: string;
   requirement: 'if-present' | 'required';
-  verifier: NvidiaEvidenceVerifier;
+  verifier: GpuEvidenceVerifier;
 };
 
-async function verifyNvidiaEvidence(
-  input: VerifyNvidiaEvidenceParams,
+async function verifyGpuEvidence(
+  input: VerifyGpuEvidenceParams,
 ): Promise<GpuEvidenceStatus> {
   if (input.payload === undefined) {
     if (input.requirement === 'required') {
@@ -158,28 +156,9 @@ async function verifyNvidiaEvidence(
   }
 
   // Bind the provider payload to the same nonce before handing it to either
-  // the default NRAS verifier or a caller-supplied NVIDIA verifier.
-  let payload: unknown;
-  try {
-    payload = JSON.parse(input.payload);
-  } catch (cause) {
-    throw new VerificationError(
-      {
-        code: 'gpu.payload_invalid',
-        details: { reason: 'invalid_json' },
-      },
-      { cause },
-    );
-  }
-  const parsed = v.safeParse(NvidiaPayloadNonceSchema, payload);
-  if (!parsed.success) {
-    throw new VerificationError({
-      code: 'gpu.payload_invalid',
-      details: { reason: 'nonce_missing' },
-    });
-  }
+  // the default NRAS verifier or a caller-supplied GPU verifier.
   verifyReportedNonce({
-    reportedNonce: parsed.output.nonce,
+    reportedNonce: decodeNvidiaPayloadNonce(input.payload),
     nonce: input.nonce,
     source: 'nvidiaPayload',
   });

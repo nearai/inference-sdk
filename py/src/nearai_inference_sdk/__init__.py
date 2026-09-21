@@ -51,14 +51,14 @@ from .types.verification import (
     DeploymentVerifier,
     GatewayClientBinding,
     GatewayTlsBinding,
+    GpuEvidenceVerifier,
     MeasuredDeployment,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
-    NvidiaEvidenceVerifier,
-    QuoteVerificationResult,
-    QuoteVerifier,
     RuntimeMeasurements,
+    TdxQuoteVerificationResult,
+    TdxQuoteVerifier,
     VerifiedAttestationEvidence,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
@@ -69,6 +69,8 @@ from .utils.errors import (
     VerificationError,
     VerificationFailure,
 )
+from .utils.intel import create_tdx_quote_verifier
+from .utils.nvidia import create_gpu_evidence_verifier
 
 
 __all__ = [
@@ -91,6 +93,8 @@ __all__ = [
     'verify_gateway_attestation',
     'verify_model_response',
     'verify_gateway_response',
+    'create_tdx_quote_verifier',
+    'create_gpu_evidence_verifier',
     'fetch_image_provenance',
     'verify_deployment_image_provenance',
     'verify_image_provenance',
@@ -113,10 +117,10 @@ __all__ = [
     'AttestationVerifiers',
     'ModelAttestationVerifiers',
     'ModelClientBinding',
-    'QuoteVerifier',
-    'NvidiaEvidenceVerifier',
+    'TdxQuoteVerifier',
+    'GpuEvidenceVerifier',
     'DeploymentVerifier',
-    'QuoteVerificationResult',
+    'TdxQuoteVerificationResult',
     'RuntimeMeasurements',
     'MeasuredDeployment',
     'GatewayClientBinding',

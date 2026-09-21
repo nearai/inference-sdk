@@ -253,10 +253,10 @@ class Gateway:
             signing_algo=self.signing_algo,
             gateway_verification=GatewayVerificationOptions(
                 include_spki_fingerprint=False,
-                verifiers=AttestationVerifiers(quote=self.quotes.__getitem__),
+                verifiers=AttestationVerifiers(tdx_quote=self.quotes.__getitem__),
             ),
             model_verification=ModelVerificationOptions(
-                verifiers=ModelAttestationVerifiers(quote=self.quotes.__getitem__),
+                verifiers=ModelAttestationVerifiers(tdx_quote=self.quotes.__getitem__),
             ),
             **options,
         )
