@@ -5,9 +5,9 @@ fmt-check:
 	@cargo fmt --check
 
 lint: fmt-check
-	@cargo clippy --all-targets -- -D warnings
+	@cargo clippy --locked --all-targets -- -D warnings
 
 test:
-	@cargo test
+	@cargo test --locked
 
 check: lint test
