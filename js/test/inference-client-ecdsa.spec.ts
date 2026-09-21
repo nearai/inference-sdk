@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
-import { InferenceClient, type QuoteVerificationResult } from '../src';
+import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
 
@@ -58,7 +58,7 @@ function quoteForSigner({
 }: {
   readonly nonce: string;
   readonly signerAddress: string;
-}): QuoteVerificationResult {
+}): TdxQuoteVerificationResult {
   const signerBinding = Buffer.alloc(32);
   Buffer.from(signerAddress.slice(2), 'hex').copy(signerBinding);
   return createGatewayTlsQuote({
@@ -70,10 +70,10 @@ function createEcdsaGateway({
   signatureKind = 'provider_tee',
 }: CreateEcdsaGatewayParams = {}): {
   readonly fetch: typeof globalThis.fetch;
-  readonly quoteVerifier: (quote: string) => QuoteVerificationResult;
+  readonly tdxQuoteVerifier: (quote: string) => TdxQuoteVerificationResult;
   readonly state: EcdsaGatewayState;
 } {
-  const quotes = new Map<string, QuoteVerificationResult>();
+  const quotes = new Map<string, TdxQuoteVerificationResult>();
   const signatures = new Map<string, StoredSignature>();
   const state: EcdsaGatewayState = {
     attestationAlgorithms: [],
@@ -214,7 +214,7 @@ function createEcdsaGateway({
 
   return {
     fetch,
-    quoteVerifier(quote: string): QuoteVerificationResult {
+    tdxQuoteVerifier(quote: string): TdxQuoteVerificationResult {
       const result = quotes.get(quote);
       if (result === undefined) {
         throw new Error(`Unknown quote: ${quote}`);
@@ -237,8 +237,10 @@ describe('ECDSA inference client', () => {
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     const response = await client.fetch(`${baseUrl}chat/completions`, {
@@ -279,8 +281,10 @@ describe('ECDSA inference client', () => {
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     const response = await client.fetch(`${baseUrl}chat/completions`, {

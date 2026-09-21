@@ -90,7 +90,7 @@ export const CompletionResponseIdSchema = objectSchema({
   id: v.pipe(v.string(), v.minLength(1)),
 });
 
-export const QuoteVerificationResultSchema = objectSchema({
+export const TdxQuoteVerificationResultSchema = objectSchema({
   tcbStatus: TcbStatusSchema,
   advisoryIds: v.pipe(v.array(v.string()), v.readonly()),
   debugEnabled: v.boolean(),

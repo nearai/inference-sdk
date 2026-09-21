@@ -8,7 +8,7 @@ use nearai_inference_sdk::{
     VerificationError,
 };
 use support::{
-    gateway_tls_quote, model_attestation, model_quote, FixtureGpuVerifier, FixtureQuoteVerifier,
+    gateway_tls_quote, model_attestation, model_quote, FixtureGpuVerifier, FixtureTdxQuoteVerifier,
     APP_COMPOSE, NONCE,
 };
 
@@ -33,7 +33,7 @@ impl DeploymentVerifier for ExpectedDeploymentVerifier {
 
 #[tokio::test]
 async fn accepts_missing_gpu_evidence() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::OutOfDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::OutOfDate));
     let attestation = model_attestation(None);
     let client_binding = client_binding();
 
@@ -42,7 +42,7 @@ async fn accepts_missing_gpu_evidence() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -59,7 +59,7 @@ async fn accepts_missing_gpu_evidence() {
 
 #[tokio::test]
 async fn runs_a_model_deployment_verifier() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let attestation = model_attestation(None);
     let client_binding = client_binding();
     let deployment = ExpectedDeploymentVerifier;
@@ -69,7 +69,7 @@ async fn runs_a_model_deployment_verifier() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             deployment: Some(&deployment),
             ..Default::default()
         },
@@ -85,7 +85,7 @@ async fn runs_a_model_deployment_verifier() {
 
 #[tokio::test]
 async fn applies_an_explicit_model_tcb_policy() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::OutOfDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::OutOfDate));
     let attestation = model_attestation(None);
     let client_binding = client_binding();
     let policy = ModelAttestationPolicy {
@@ -98,7 +98,7 @@ async fn applies_an_explicit_model_tcb_policy() {
         &client_binding,
         Some(&policy),
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -117,7 +117,7 @@ async fn applies_an_explicit_model_tcb_policy() {
 
 #[tokio::test]
 async fn rejects_tls_bound_report_data_for_cloud_model_evidence() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let mut attestation = model_attestation(None);
     let client_binding = client_binding();
     attestation.reported_quote_data = None;
@@ -127,7 +127,7 @@ async fn rejects_tls_bound_report_data_for_cloud_model_evidence() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -144,7 +144,7 @@ async fn rejects_tls_bound_report_data_for_cloud_model_evidence() {
 
 #[tokio::test]
 async fn rejects_an_empty_gpu_payload() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let attestation = model_attestation(Some(""));
     let client_binding = client_binding();
 
@@ -153,7 +153,7 @@ async fn rejects_an_empty_gpu_payload() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -170,7 +170,7 @@ async fn rejects_an_empty_gpu_payload() {
 
 #[tokio::test]
 async fn enforces_required_gpu_policy() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let attestation = model_attestation(None);
     let client_binding = client_binding();
     let policy = ModelAttestationPolicy {
@@ -183,7 +183,7 @@ async fn enforces_required_gpu_policy() {
         &client_binding,
         Some(&policy),
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -195,8 +195,8 @@ async fn enforces_required_gpu_policy() {
 
 #[tokio::test]
 async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
-    let gpu = FixtureGpuVerifier;
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let gpu_evidence = FixtureGpuVerifier;
     let payload = format!(r#"{{"nonce":"{NONCE}"}}"#);
     let attestation = model_attestation(Some(&payload));
     let client_binding = client_binding();
@@ -206,8 +206,8 @@ async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
-            gpu: Some(&gpu),
+            tdx_quote: Some(&tdx_quote),
+            gpu_evidence: Some(&gpu_evidence),
             ..Default::default()
         },
     )
@@ -228,7 +228,7 @@ async fn checks_the_client_nonce_before_calling_a_custom_gpu_verifier() {
         }
     }
 
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     for nonce in ["22".repeat(32), "11".repeat(31), "gg".repeat(32)] {
         let payload = serde_json::json!({"nonce": nonce}).to_string();
         let error = verify_model_attestation(
@@ -236,8 +236,8 @@ async fn checks_the_client_nonce_before_calling_a_custom_gpu_verifier() {
             &client_binding(),
             None,
             ModelAttestationVerifiers {
-                quote: Some(&quote),
-                gpu: Some(&UnreachableGpuVerifier),
+                tdx_quote: Some(&tdx_quote),
+                gpu_evidence: Some(&UnreachableGpuVerifier),
                 ..Default::default()
             },
         )
@@ -255,7 +255,7 @@ async fn checks_the_client_nonce_before_calling_a_custom_gpu_verifier() {
 
 #[tokio::test]
 async fn rejects_incoherent_advertised_report_data() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let mut attestation = model_attestation(None);
     let client_binding = client_binding();
     attestation.reported_quote_data = Some("00".repeat(64));
@@ -265,7 +265,7 @@ async fn rejects_incoherent_advertised_report_data() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -283,7 +283,7 @@ async fn rejects_incoherent_advertised_report_data() {
 async fn rejects_replayed_rtmr3_measurements() {
     let mut quote = model_quote(TcbStatus::UpToDate);
     quote.rt_mr3[0] ^= 1;
-    let quote = FixtureQuoteVerifier(quote);
+    let tdx_quote = FixtureTdxQuoteVerifier(quote);
     let attestation = model_attestation(None);
     let client_binding = client_binding();
     let error = verify_model_attestation(
@@ -291,7 +291,7 @@ async fn rejects_replayed_rtmr3_measurements() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -309,7 +309,7 @@ async fn rejects_replayed_rtmr3_measurements() {
 async fn rejects_an_app_compose_not_bound_by_mrconfigid() {
     let mut quote = model_quote(TcbStatus::UpToDate);
     quote.mr_config_id[1] ^= 1;
-    let quote = FixtureQuoteVerifier(quote);
+    let tdx_quote = FixtureTdxQuoteVerifier(quote);
     let attestation = model_attestation(None);
     let client_binding = client_binding();
 
@@ -318,7 +318,7 @@ async fn rejects_an_app_compose_not_bound_by_mrconfigid() {
         &client_binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )

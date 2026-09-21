@@ -238,12 +238,12 @@ Gateway `reported_quote_data` is required.
 | `ModelAttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | Model TCB statuses accepted by verification. |
 |  | `gpu_evidence: GpuEvidenceRequirement` | `IfPresent` | `IfPresent` verifies supplied GPU evidence and accepts an absent payload; `Required` rejects absent evidence. |
 | `AttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | TCB statuses accepted by verification. |
-| `AttestationVerifiers<'a>` | `quote`, `deployment` | `None` | Optional `QuoteVerifier` and `DeploymentVerifier` overrides. |
-| `ModelAttestationVerifiers<'a>` | `quote`, `deployment`, `gpu` | `None` | Optional `QuoteVerifier`, `DeploymentVerifier`, and `GpuEvidenceVerifier` overrides. |
+| `AttestationVerifiers<'a>` | `tdx_quote`, `deployment` | `None` | Optional `TdxQuoteVerifier` and `DeploymentVerifier` overrides. |
+| `ModelAttestationVerifiers<'a>` | `tdx_quote`, `deployment`, `gpu_evidence` | `None` | Optional `TdxQuoteVerifier`, `DeploymentVerifier`, and `GpuEvidenceVerifier` overrides. |
 
 | Trait | Method | Contract |
 | --- | --- | --- |
-| `QuoteVerifier` | `async fn verify(&self, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | Authenticates a quote and returns verified quote fields. |
+| `TdxQuoteVerifier` | `async fn verify(&self, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | Authenticates a TDX quote and returns verified quote fields. |
 | `DeploymentVerifier` | `async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError>` | Returns `Ok(())` only for a deployment the application accepts. |
 | `GpuEvidenceVerifier` | `async fn verify(&self, payload: &str) -> Result<(), VerificationError>` | Returns `Ok(())` only for GPU evidence the application accepts. |
 
@@ -255,8 +255,8 @@ Gateway `reported_quote_data` is required.
 
 | Export | Construction or signature | Description |
 | --- | --- | --- |
-| `DcapQuoteVerifier` | `DcapQuoteVerifier::default()` or `DcapQuoteVerifier::new(pccs_url)` | Built-in Intel DCAP verifier. Pass a custom PCCS base URL when needed. |
-| `verify_dcap_quote` | `async fn verify_dcap_quote(pccs_url: &str, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | One-off Intel DCAP verification using the supplied PCCS URL. |
+| `DefaultTdxQuoteVerifier` | `DefaultTdxQuoteVerifier::default()` or `DefaultTdxQuoteVerifier::new(pccs_url)` | Built-in Intel TDX quote verifier. Pass a custom PCCS base URL when needed. |
+| `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
 | `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
 | `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
@@ -283,7 +283,7 @@ for construction and the required wire formats.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `QuoteVerificationResult` | `tcb_status` | `TcbStatus` | Authenticated TCB status. |
+| `TdxQuoteVerificationResult` | `tcb_status` | `TcbStatus` | Authenticated TCB status. |
 |  | `advisory_ids` | `Vec<String>` | Authenticated advisory IDs. |
 |  | `debug_enabled` | `bool` | Whether the authenticated quote enables debug mode. |
 |  | `report_data` | `Vec<u8>` | Authenticated quote report data. |

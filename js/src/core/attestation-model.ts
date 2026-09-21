@@ -38,7 +38,7 @@ export async function verifyModelAttestation({
     attestation,
     nonce,
     policy,
-    quoteVerifier: verifiers?.quote,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   verifyReportDataBinding({
@@ -54,7 +54,7 @@ export async function verifyModelAttestation({
     payload: attestation.nvidiaPayload,
     nonce,
     requirement: gpuEvidenceRequirement,
-    verifier: verifiers?.gpu ?? createGpuEvidenceVerifier(),
+    verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
   });
 
   const signingPublicKey = verifySigningPublicKey({

@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Quote, getCollateral, verify } from '@phala/dcap-qvl';
-import { createDcapQuoteVerifier } from '../src';
+import { createTdxQuoteVerifier } from '../src';
 import { createModelQuote } from './fixtures';
 
 jest.mock('@phala/dcap-qvl', () => ({
@@ -32,7 +32,7 @@ describe('Intel quote verifier configuration', () => {
   });
 
   test('uses Intel collateral by default', async () => {
-    const verifyQuote = createDcapQuoteVerifier();
+    const verifyQuote = createTdxQuoteVerifier();
     const quote = await verifyQuote('abcd');
 
     expect(getCollateral).toHaveBeenCalledWith(
@@ -43,7 +43,7 @@ describe('Intel quote verifier configuration', () => {
   });
 
   test('verifies collateral fetched through a configured PCCS proxy', async () => {
-    const verifyQuote = createDcapQuoteVerifier({
+    const verifyQuote = createTdxQuoteVerifier({
       pccsUrl: 'https://app.example.com/api/attestation/intel',
     });
     const quote = await verifyQuote('abcd');
@@ -64,7 +64,7 @@ describe('Intel quote verifier configuration', () => {
     jest.mocked(Quote.parse).mockImplementation(() => {
       throw new Error('Invalid quote');
     });
-    const verifyQuote = createDcapQuoteVerifier();
+    const verifyQuote = createTdxQuoteVerifier();
 
     await expect(verifyQuote('abcd')).rejects.toMatchObject({
       failure: {
@@ -79,7 +79,7 @@ describe('Intel quote verifier configuration', () => {
     jest.mocked(verify).mockImplementation(() => {
       throw new Error('Invalid collateral signature');
     });
-    const verifyQuote = createDcapQuoteVerifier({
+    const verifyQuote = createTdxQuoteVerifier({
       pccsUrl: '/api/attestation/intel',
     });
 

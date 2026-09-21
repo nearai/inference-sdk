@@ -26,7 +26,7 @@ pub async fn verify_model_attestation(
         &attestation.evidence,
         &client_binding.nonce,
         common_policy.as_ref(),
-        verifiers.quote,
+        verifiers.tdx_quote,
         attestation.reported_quote_data.as_deref(),
     )
     .await?;
@@ -42,7 +42,7 @@ pub async fn verify_model_attestation(
         policy
             .map(|policy| policy.gpu_evidence)
             .unwrap_or(GpuEvidenceRequirement::IfPresent),
-        verifiers.gpu,
+        verifiers.gpu_evidence,
     )
     .await?;
     Ok(VerifiedModelAttestation {

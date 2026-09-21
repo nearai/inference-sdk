@@ -76,15 +76,15 @@ POST. All three URLs can be overridden:
 
 ```ts
 import {
-  createDcapQuoteVerifier,
+  createTdxQuoteVerifier,
   createGpuEvidenceVerifier,
   InferenceClient,
 } from '@nearai/inference-sdk';
 
-const quote = createDcapQuoteVerifier({
+const tdxQuote = createTdxQuoteVerifier({
   pccsUrl: '/api/attestation/intel',
 });
-const gpu = createGpuEvidenceVerifier({
+const gpuEvidence = createGpuEvidenceVerifier({
   nrasUrl: '/api/attestation/nvidia',
   jwksUrl: '/api/attestation/nvidia/jwks.json',
 });
@@ -94,8 +94,8 @@ const client = new InferenceClient({
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
-  gatewayVerification: { verifiers: { quote } },
-  modelVerification: { verifiers: { quote, gpu } },
+  gatewayVerification: { verifiers: { tdxQuote } },
+  modelVerification: { verifiers: { tdxQuote, gpuEvidence } },
 });
 ```
 
@@ -128,8 +128,8 @@ that nonce against `clientBinding.nonce`.
 Browser Fetch does not expose the TLS peer certificate, so the generic client
 does not verify Gateway TLS binding. Depending on the browser build, the default
 Intel verifier may need `crypto`, `buffer`, and `stream` polyfills. A custom
-quote verifier can be supplied through `gatewayVerification.verifiers.quote`
-and `modelVerification.verifiers.quote`.
+quote verifier can be supplied through `gatewayVerification.verifiers.tdxQuote`
+and `modelVerification.verifiers.tdxQuote`.
 
 For a Node client connecting through a proxy, disable Gateway TLS binding
 because the observed certificate belongs

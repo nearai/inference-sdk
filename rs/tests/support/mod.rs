@@ -6,8 +6,8 @@ use ed25519_dalek::Signer;
 use nearai_inference_sdk::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
     DeploymentProvenanceStatus, GatewayAttestation, GpuEvidenceStatus, GpuEvidenceVerifier,
-    ModelAttestation, QuoteVerificationResult, QuoteVerifier, SigningAlgo, SigningIdentity,
-    TcbStatus, VerificationError, VerifiedAttestationEvidence, VerifiedGatewayAttestation,
+    ModelAttestation, SigningAlgo, SigningIdentity, TcbStatus, TdxQuoteVerificationResult,
+    TdxQuoteVerifier, VerificationError, VerifiedAttestationEvidence, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
 use sha2::Digest;
@@ -19,14 +19,14 @@ pub const TLS_FINGERPRINT: &str =
 pub const APP_COMPOSE: &str = "{\"services\":{\"model\":\"example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}";
 
 #[derive(Clone)]
-pub struct FixtureQuoteVerifier(pub QuoteVerificationResult);
+pub struct FixtureTdxQuoteVerifier(pub TdxQuoteVerificationResult);
 
 #[async_trait]
-impl QuoteVerifier for FixtureQuoteVerifier {
+impl TdxQuoteVerifier for FixtureTdxQuoteVerifier {
     async fn verify(
         &self,
         _intel_quote: &str,
-    ) -> Result<QuoteVerificationResult, VerificationError> {
+    ) -> Result<TdxQuoteVerificationResult, VerificationError> {
         Ok(self.0.clone())
     }
 }
@@ -105,11 +105,11 @@ pub fn gateway_attestation_without_tls_binding() -> GatewayAttestation {
     }
 }
 
-pub fn model_quote(tcb_status: TcbStatus) -> QuoteVerificationResult {
+pub fn model_quote(tcb_status: TcbStatus) -> TdxQuoteVerificationResult {
     quote_with_report_data(signer_nonce_report_data(), tcb_status)
 }
 
-pub fn gateway_tls_quote(tcb_status: TcbStatus) -> QuoteVerificationResult {
+pub fn gateway_tls_quote(tcb_status: TcbStatus) -> TdxQuoteVerificationResult {
     let mut input = hex::decode(ECDSA_ADDRESS).expect("fixture address is hexadecimal");
     input.extend(hex::decode(TLS_FINGERPRINT).expect("fixture fingerprint is hexadecimal"));
     quote_with_report_data(sha256_bytes(&input), tcb_status)
@@ -124,7 +124,7 @@ fn signer_nonce_report_data() -> Vec<u8> {
 fn quote_with_report_data(
     mut report_data: Vec<u8>,
     tcb_status: TcbStatus,
-) -> QuoteVerificationResult {
+) -> TdxQuoteVerificationResult {
     report_data.extend(hex::decode(NONCE).expect("fixture nonce is hexadecimal"));
 
     let event_digest = vec![0u8; 48];
@@ -134,7 +134,7 @@ fn quote_with_report_data(
     mr_config_id.extend(sha256_bytes(APP_COMPOSE.as_bytes()));
     mr_config_id.extend([0u8; 15]);
 
-    QuoteVerificationResult {
+    TdxQuoteVerificationResult {
         tcb_status,
         advisory_ids: vec![],
         debug_enabled: false,

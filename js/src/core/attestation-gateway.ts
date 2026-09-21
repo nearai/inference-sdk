@@ -23,7 +23,7 @@ export async function verifyGatewayAttestation({
     attestation,
     nonce: clientBinding.nonce,
     policy,
-    quoteVerifier: verifiers?.quote,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   let tlsBinding: VerifiedGatewayAttestation['tlsBinding'];

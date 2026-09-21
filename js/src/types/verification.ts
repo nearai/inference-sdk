@@ -26,7 +26,7 @@ export type MeasuredDeployment = {
 };
 
 /** Facts returned by a quote verifier before SDK policy and binding checks. */
-export type QuoteVerificationResult = {
+export type TdxQuoteVerificationResult = {
   tcbStatus: TcbStatus;
   advisoryIds: readonly string[];
   debugEnabled: boolean;
@@ -35,13 +35,13 @@ export type QuoteVerificationResult = {
   rtMr3: Uint8Array;
 };
 
-export type QuoteVerifier = (
+export type TdxQuoteVerifier = (
   quote: string,
-) => Awaitable<QuoteVerificationResult>;
+) => Awaitable<TdxQuoteVerificationResult>;
 
 export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
 
-export type CreateDcapQuoteVerifierParams = {
+export type CreateTdxQuoteVerifierParams = {
   /** Collateral base URL. Defaults to Phala PCCS in browsers and Intel in Node.js. */
   readonly pccsUrl?: string;
 };
@@ -66,12 +66,12 @@ export type ModelAttestationPolicy = AttestationPolicy & {
 };
 
 export type AttestationVerifiers = {
-  readonly quote?: QuoteVerifier;
+  readonly tdxQuote?: TdxQuoteVerifier;
   readonly deployment?: DeploymentVerifier;
 };
 
 export type ModelAttestationVerifiers = AttestationVerifiers & {
-  readonly gpu?: GpuEvidenceVerifier;
+  readonly gpuEvidence?: GpuEvidenceVerifier;
 };
 
 /** Values supplied by the client for a model-attestation request. */
@@ -105,7 +105,7 @@ export type VerifyGatewayAttestationParams = {
 
 /** Measurements extracted from an authenticated quote and normalized to Buffers. */
 export type VerifiedTdxQuote = Omit<
-  QuoteVerificationResult,
+  TdxQuoteVerificationResult,
   'reportData' | 'mrConfigId' | 'rtMr3'
 > & {
   reportData: Buffer;

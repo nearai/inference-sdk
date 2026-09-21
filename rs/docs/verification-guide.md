@@ -180,7 +180,7 @@ GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
-quote, deployment, and—for models—GPU evidence verifiers. A supplied
+TDX quote, deployment, and—for models—GPU evidence verifiers. A supplied
 verifier must return `Ok` only for evidence it accepts. The built-in Intel
 verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier submits
 evidence to NRAS, then verifies the overall JWT's ES384 signature against NVIDIA's
@@ -199,7 +199,7 @@ with custom URLs and pass them through the existing verifier options:
 
 ```rust,no_run
 use nearai_inference_sdk::{
-    verify_model_attestation, DcapQuoteVerifier, ModelAttestation,
+    verify_model_attestation, DefaultTdxQuoteVerifier, ModelAttestation,
     ModelAttestationVerifiers, ModelClientBinding, NrasGpuEvidenceVerifier,
     VerificationError, VerifiedModelAttestation,
 };
@@ -208,8 +208,8 @@ async fn verify_with_proxies(
     attestation: &ModelAttestation,
     binding: &ModelClientBinding,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
-    let quote = DcapQuoteVerifier::new("https://attestation.example.com/intel");
-    let gpu = NrasGpuEvidenceVerifier::new(
+    let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/intel");
+    let gpu_evidence = NrasGpuEvidenceVerifier::new(
         "https://attestation.example.com/nvidia/v3/attest/gpu",
     )
     .with_jwks_url("https://attestation.example.com/nvidia/.well-known/jwks.json");
@@ -218,8 +218,8 @@ async fn verify_with_proxies(
         binding,
         None,
         ModelAttestationVerifiers {
-            quote: Some(&quote),
-            gpu: Some(&gpu),
+            tdx_quote: Some(&tdx_quote),
+            gpu_evidence: Some(&gpu_evidence),
             ..Default::default()
         },
     )
@@ -227,7 +227,7 @@ async fn verify_with_proxies(
 }
 ```
 
-Pass the same `quote` verifier as `AttestationVerifiers { quote: Some(&quote),
+Pass the same `tdx_quote` verifier as `AttestationVerifiers { tdx_quote: Some(&tdx_quote),
 ..Default::default() }` for Gateway verification. Leave either verifier as
 `None` to use its official default service.
 

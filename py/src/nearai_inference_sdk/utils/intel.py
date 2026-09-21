@@ -8,18 +8,18 @@ from typing import cast
 from dcap_qvl import Quote, get_collateral, verify
 
 from ..types.attestation_common import SUPPORTED_TCB_STATUSES, TcbStatus
-from ..types.verification import QuoteVerificationResult, QuoteVerifier
+from ..types.verification import TdxQuoteVerificationResult, TdxQuoteVerifier
 from .common import hex_to_bytes
 from .consts import INTEL_PCCS_API_URL
 from .errors import VerificationError, verification_failure
 
 
-def create_dcap_quote_verifier(
+def create_tdx_quote_verifier(
     pccs_url: str = INTEL_PCCS_API_URL,
-) -> QuoteVerifier:
+) -> TdxQuoteVerifier:
     """Create the Intel DCAP verifier with a PCCS-compatible collateral URL."""
 
-    async def verify_quote(quote: str) -> QuoteVerificationResult:
+    async def verify_quote(quote: str) -> TdxQuoteVerificationResult:
         return await verify_dcap_quote(quote, pccs_url)
 
     return verify_quote
@@ -27,7 +27,7 @@ def create_dcap_quote_verifier(
 
 async def verify_dcap_quote(
     quote: str, pccs_url: str = INTEL_PCCS_API_URL
-) -> QuoteVerificationResult:
+) -> TdxQuoteVerificationResult:
     """Verify a TDX quote and expose the facts used by the SDK core."""
 
     try:
@@ -91,7 +91,7 @@ async def verify_dcap_quote(
     if not attributes:
         raise _invalid_quote_result()
 
-    return QuoteVerificationResult(
+    return TdxQuoteVerificationResult(
         tcb_status=cast(TcbStatus, status),
         advisory_ids=advisory_ids,
         debug_enabled=(attributes[0] & 0x01) != 0,

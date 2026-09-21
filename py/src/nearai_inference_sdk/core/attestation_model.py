@@ -35,7 +35,7 @@ async def verify_model_attestation(
         advertised_report_data=attestation.reported_quote_data,
         nonce=nonce,
         policy=policy,
-        quote_verifier=None if verifiers is None else verifiers.quote,
+        tdx_quote_verifier=None if verifiers is None else verifiers.tdx_quote,
     )
     verify_report_data_binding(
         report_data=verified_quote.quote.report_data,
@@ -49,7 +49,7 @@ async def verify_model_attestation(
         payload=attestation.nvidia_payload,
         nonce=nonce,
         policy=policy,
-        verifier=None if verifiers is None else verifiers.gpu,
+        verifier=None if verifiers is None else verifiers.gpu_evidence,
     )
     return VerifiedModelAttestation(
         signer=evidence.signer,

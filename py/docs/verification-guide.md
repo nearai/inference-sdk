@@ -300,13 +300,13 @@ The SDK authenticates measured values; the callback decides which values are
 acceptable.
 
 `verify_gateway_attestation` accepts `AttestationPolicy` when an application
-needs to restrict Gateway TCB statuses. `verifiers.quote` replaces the built-in
+needs to restrict Gateway TCB statuses. `verifiers.tdx_quote` replaces the built-in
 Intel DCAP quote verifier. The default NVIDIA verifier submits evidence to NRAS,
 then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
 expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
 verdict must be `true`; detached per-device claims are not consumed. See
 [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
-Set `verifiers.gpu` to use different trust roots or another verification
+Set `verifiers.gpu_evidence` to use different trust roots or another verification
 service. Every verifier callback must return only for evidence it accepts.
 
 ## Configure attestation service URLs
@@ -318,15 +318,15 @@ create verifier callbacks with the desired URLs:
 ```python
 from nearai_inference_sdk import (
     ModelAttestationVerifiers,
-    create_dcap_quote_verifier,
+    create_tdx_quote_verifier,
     create_gpu_evidence_verifier,
 )
 
 verifiers = ModelAttestationVerifiers(
-    quote=create_dcap_quote_verifier(
+    tdx_quote=create_tdx_quote_verifier(
         pccs_url='https://attestation.example.com',
     ),
-    gpu=create_gpu_evidence_verifier(
+    gpu_evidence=create_gpu_evidence_verifier(
         nras_url='https://attestation.example.com/v3/attest/gpu',
         jwks_url='https://attestation.example.com/.well-known/jwks.json',
     ),
@@ -334,7 +334,7 @@ verifiers = ModelAttestationVerifiers(
 ```
 
 Pass `verifiers` to `verify_model_attestation`; Gateway verification accepts the
-same quote callback through `AttestationVerifiers(quote=...)`. Each URL is
+same quote callback through `AttestationVerifiers(tdx_quote=...)`. Each URL is
 optional and defaults to its official endpoint. Configuration belongs to the
 returned callback and does not change other verifiers.
 

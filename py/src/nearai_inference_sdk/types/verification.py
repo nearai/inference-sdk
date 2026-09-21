@@ -22,7 +22,7 @@ class MeasuredDeployment:
 
 
 @dataclass(frozen=True, kw_only=True)
-class QuoteVerificationResult:
+class TdxQuoteVerificationResult:
     tcb_status: TcbStatus
     advisory_ids: tuple[str, ...]
     debug_enabled: bool
@@ -31,8 +31,8 @@ class QuoteVerificationResult:
     rt_mr3: bytes
 
 
-QuoteVerifier: TypeAlias = Callable[
-    [str], Awaitable[QuoteVerificationResult] | QuoteVerificationResult
+TdxQuoteVerifier: TypeAlias = Callable[
+    [str], Awaitable[TdxQuoteVerificationResult] | TdxQuoteVerificationResult
 ]
 GpuEvidenceVerifier: TypeAlias = Callable[[str], Awaitable[None] | None]
 DeploymentVerifier: TypeAlias = Callable[[MeasuredDeployment], Awaitable[None] | None]
@@ -50,13 +50,13 @@ class ModelAttestationPolicy(AttestationPolicy):
 
 @dataclass(frozen=True, kw_only=True)
 class AttestationVerifiers:
-    quote: QuoteVerifier | None = None
+    tdx_quote: TdxQuoteVerifier | None = None
     deployment: DeploymentVerifier | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
 class ModelAttestationVerifiers(AttestationVerifiers):
-    gpu: GpuEvidenceVerifier | None = None
+    gpu_evidence: GpuEvidenceVerifier | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -102,8 +102,8 @@ class VerifiedGatewayAttestation(VerifiedAttestationEvidence):
 __all__ = [
     'RuntimeMeasurements',
     'MeasuredDeployment',
-    'QuoteVerificationResult',
-    'QuoteVerifier',
+    'TdxQuoteVerificationResult',
+    'TdxQuoteVerifier',
     'GpuEvidenceVerifier',
     'DeploymentVerifier',
     'AttestationPolicy',

@@ -175,7 +175,7 @@ async def test_nras_factory_rejects_invalid_payload_nonce_before_network(
                 create_model_attestation(nvidia_payload=payload),
                 MODEL_CLIENT_BINDING,
                 verifiers=ModelAttestationVerifiers(
-                    quote=lambda _: create_model_quote(), gpu=verifier
+                    tdx_quote=lambda _: create_model_quote(), gpu_evidence=verifier
                 ),
             )
     assert raised.value.failure.code == code
@@ -195,7 +195,7 @@ async def test_model_attestation_returns_verified_evidence() -> None:
     result = await verify_model_attestation(
         create_model_attestation(),
         MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: create_model_quote()),
     )
 
     assert result.tcb_status == 'UpToDate'
@@ -208,7 +208,7 @@ async def test_model_attestation_uses_signer_nonce_report_data_binding() -> None
     result = await verify_model_attestation(
         create_model_attestation(),
         MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: create_model_quote()),
     )
 
     assert not hasattr(result, 'tls_binding')
@@ -220,7 +220,7 @@ async def test_model_attestation_rejects_gateway_tls_report_data_layout() -> Non
             create_model_attestation(),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_gateway_tls_quote()
+                tdx_quote=lambda _: create_gateway_tls_quote()
             ),
         )
 
@@ -234,7 +234,7 @@ async def test_model_attestation_checks_advertised_quote_report_data() -> None:
     result = await verify_model_attestation(
         create_model_attestation(reported_quote_data=quote.report_data.hex()),
         MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
     )
     assert result.tcb_status == 'UpToDate'
 
@@ -242,7 +242,7 @@ async def test_model_attestation_checks_advertised_quote_report_data() -> None:
         await verify_model_attestation(
             create_model_attestation(reported_quote_data='44' * 64),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+            verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
         )
     assert raised.value.failure.code == 'binding.report_data_mismatch'
 
@@ -252,7 +252,9 @@ async def test_model_attestation_rejects_mismatched_nonce_before_quote() -> None
         await verify_model_attestation(
             create_model_attestation(nonce='44' * 32),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
 
     assert raised.value.failure.code == 'binding.nonce_mismatch'
@@ -264,7 +266,7 @@ async def test_model_policy_accepts_out_of_date_by_default_and_can_tighten() -> 
     result = await verify_model_attestation(
         create_model_attestation(),
         MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
     )
     assert result.tcb_status == 'OutOfDate'
 
@@ -273,7 +275,7 @@ async def test_model_policy_accepts_out_of_date_by_default_and_can_tighten() -> 
             create_model_attestation(),
             MODEL_CLIENT_BINDING,
             policy=ModelAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
-            verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+            verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
         )
     assert raised.value.failure.code == 'policy.tcb_status_not_allowed'
 
@@ -284,7 +286,9 @@ async def test_model_gpu_policy_and_nonce_binding() -> None:
             create_model_attestation(),
             MODEL_CLIENT_BINDING,
             policy=ModelAttestationPolicy(gpu_evidence='required'),
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
     assert missing.value.failure.code == 'policy.gpu_evidence_required'
 
@@ -298,7 +302,7 @@ async def test_model_gpu_policy_and_nonce_binding() -> None:
             create_model_attestation(nvidia_payload=json.dumps({'nonce': '55' * 32})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=verify_gpu
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=verify_gpu
             ),
         )
     assert mismatch.value.failure.code == 'binding.nonce_mismatch'
@@ -308,7 +312,7 @@ async def test_model_gpu_policy_and_nonce_binding() -> None:
         create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_model_quote(), gpu=verify_gpu
+            tdx_quote=lambda _: create_model_quote(), gpu_evidence=verify_gpu
         ),
     )
     assert result.gpu_evidence == 'verified'
@@ -320,7 +324,9 @@ async def test_empty_gpu_payload_remains_invalid_supplied_json() -> None:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload=''),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
     assert raised.value.failure.code == 'gpu.payload_invalid'
     assert raised.value.failure.details == {'reason': 'invalid_json'}
@@ -331,7 +337,9 @@ async def test_gpu_evidence_requires_an_echoed_nonce() -> None:
         await verify_model_attestation(
             create_model_attestation(nvidia_payload='{}'),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
 
     assert raised.value.failure.code == 'gpu.payload_invalid'
@@ -343,7 +351,9 @@ async def test_model_attestation_rejects_an_invalid_event_log_entry() -> None:
         await verify_model_attestation(
             create_model_attestation(event_log='[{}]'),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
 
     assert raised.value.failure.code == 'measurement.event_log_invalid'
@@ -367,7 +377,9 @@ async def test_model_attestation_rejects_boolean_event_types() -> None:
                 ]
             ),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
 
     assert raised.value.failure.code == 'measurement.event_log_invalid'
@@ -383,7 +395,9 @@ async def test_model_attestation_rejects_invalid_serialized_event_log() -> None:
         await verify_model_attestation(
             create_model_attestation(event_log='['),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
 
     assert raised.value.failure.code == 'measurement.event_log_invalid'
@@ -404,7 +418,7 @@ async def test_nras_rejects_a_malformed_envelope(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
 
@@ -423,7 +437,7 @@ async def test_nras_rejects_an_invalid_jwt(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
 
@@ -445,7 +459,7 @@ async def test_nras_rejects_a_non_boolean_verdict(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
 
@@ -467,7 +481,7 @@ async def test_nras_rejects_a_false_verdict(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
 
@@ -486,8 +500,8 @@ async def test_nras_verifies_a_signed_overall_token(
         create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_model_quote(),
-            gpu=nras_verifier if use_factory else None,
+            tdx_quote=lambda _: create_model_quote(),
+            gpu_evidence=nras_verifier if use_factory else None,
         ),
     )
     assert result.gpu_evidence == 'verified'
@@ -518,7 +532,7 @@ async def test_nras_rejects_unacceptable_signed_claims(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
     assert raised.value.failure.code == 'gpu.jwt_verification_failed'
@@ -537,7 +551,7 @@ async def test_nras_rejects_an_invalid_jwks(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
 
@@ -569,7 +583,7 @@ async def test_nras_rejects_untrusted_signatures(
             create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
             MODEL_CLIENT_BINDING,
             verifiers=ModelAttestationVerifiers(
-                quote=lambda _: create_model_quote(), gpu=nras_verifier
+                tdx_quote=lambda _: create_model_quote(), gpu_evidence=nras_verifier
             ),
         )
     assert raised.value.failure.code == 'gpu.jwt_verification_failed'
@@ -583,7 +597,7 @@ async def test_model_attestation_rejects_invalid_custom_quote_results() -> None:
         await verify_model_attestation(
             create_model_attestation(),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+            verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
         )
 
     assert raised.value.failure.code == 'quote.invalid_result'
@@ -599,7 +613,7 @@ async def test_measurement_and_deployment_policy_are_bound_to_quote() -> None:
         create_model_attestation(),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_model_quote(), deployment=verify_deployment
+            tdx_quote=lambda _: create_model_quote(), deployment=verify_deployment
         ),
     )
     assert deployment_calls == [APP_COMPOSE]
@@ -609,6 +623,8 @@ async def test_measurement_and_deployment_policy_are_bound_to_quote() -> None:
         await verify_model_attestation(
             create_model_attestation(app_compose='{"changed":true}'),
             MODEL_CLIENT_BINDING,
-            verifiers=ModelAttestationVerifiers(quote=lambda _: create_model_quote()),
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=lambda _: create_model_quote()
+            ),
         )
     assert raised.value.failure.code == 'measurement.app_compose_mrconfigid_mismatch'

@@ -7,18 +7,18 @@ import {
   verify,
 } from '@phala/dcap-qvl';
 import type {
-  CreateDcapQuoteVerifierParams,
-  QuoteVerifier,
+  CreateTdxQuoteVerifierParams,
+  TdxQuoteVerifier,
   VerifiedTdxQuote,
 } from '../types/verification';
-import { decodeQuoteVerifierOutput } from '../boundaries/quote-verifier';
+import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { getIntelPccsApiUrl, hexToBuffer } from './common';
 import { isVerificationError, VerificationError } from './errors';
 
 /** Use Intel DCAP verification with collateral fetched from the selected service. */
-export function createDcapQuoteVerifier({
+export function createTdxQuoteVerifier({
   pccsUrl = getIntelPccsApiUrl(),
-}: CreateDcapQuoteVerifierParams = {}): QuoteVerifier {
+}: CreateTdxQuoteVerifierParams = {}): TdxQuoteVerifier {
   return (quote) => verifyDcapQuote(quote, pccsUrl);
 }
 
@@ -113,7 +113,7 @@ export async function verifyDcapQuote(
   } catch (cause) {
     throw invalidDcapResult(cause);
   }
-  return decodeQuoteVerifierOutput(result);
+  return decodeTdxQuoteVerifierOutput(result);
 }
 
 function getDebugEnabled(value: unknown): boolean {
