@@ -1,7 +1,7 @@
 # NEAR AI Inference SDK examples
 
-These projects verify Gateway and model attestations before sending Chat
-Completions, then verify the response signature. All examples use
+These projects verify deployment evidence before sending Chat Completions,
+then verify the response signature. All examples use
 `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
 
 ```sh
@@ -12,20 +12,25 @@ export NEARAI_API_KEY=sk-your-api-key
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
 
-The three entry points include non-streaming and streaming calls:
+Gateway and direct examples are grouped in separate folders and share the same
+project configuration. Each entry point includes non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
-| `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
-| `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
+| `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
+| `direct/client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
+| `direct/client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
+| `direct/bare.ts` | Fetches and verifies direct model attestations and verifies exact response bytes. | Not implemented |
 
-All three verify Gateway TLS identity. The inference clients also pin later
+The examples in `gateway/` verify the Gateway's TLS identity.
+The Gateway inference clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
 
-The bare example preserves the exact encrypted request and response bytes
+The Gateway bare example preserves the exact encrypted request and response bytes
 before decryption for signature verification. The public E2EE helper creates
 request-specific keys and protocol headers, including `x-no-aliasing: true`.
 The example sets `Accept-Encoding: identity` and displays decrypted JSON or
@@ -47,9 +52,29 @@ pnpm --dir examples/example-js start:client-openai-sdk
 
 Requires Node.js 24 or later.
 
+### Direct model endpoints
+
+`direct/client.ts`, `direct/client-openai-sdk.ts`, and `direct/bare.ts` use
+`https://glm-5-3-flash.completions.near.ai/v1`, without Gateway attestation.
+Set `NEARAI_API_KEY` to a credential accepted by that endpoint; a Gateway key is
+not necessarily valid for direct inference.
+
+```sh
+pnpm --dir examples/example-js start:direct-client
+pnpm --dir examples/example-js start:direct-client-openai-sdk
+pnpm --dir examples/example-js start:direct-bare
+```
+
+All three verify the complete serving model-attestation set. Direct TLS fingerprint
+binding is currently disabled; standard HTTPS certificate validation still applies.
+`DirectInferenceClient` selects a model key for routing and E2EE and requires response
+signatures from the same signer. The bare example sends plaintext over HTTPS
+and selects matching attestations when verifying the response signature.
+
 ### Image provenance
 
-[`client.ts`](example-js/client.ts) and [`bare.ts`](example-js/bare.ts) verify
+[`gateway/client.ts`](example-js/gateway/client.ts) and
+[`gateway/bare.ts`](example-js/gateway/bare.ts) verify
 the build provenance of these four required Gateway images:
 
 | Image | GitHub repository | Build workflow |
@@ -75,10 +100,9 @@ Gateway/model attestation and image-check failures block both Chat modes.
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
 
-These examples verify build provenance, not reproducible builds. Checking the
-running Compose Manager and inference-proxy images requires direct Compose
-Manager evidence, which this SDK does not retrieve. These examples do not check
-GLM runtime-image or model-weight provenance.
+These examples verify build provenance, not reproducible builds. They do not
+verify Compose Manager runtime state, GLM runtime-image, or model-weight
+provenance.
 
 ## Python
 

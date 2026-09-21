@@ -8,7 +8,7 @@ export type CompletionSignatureReference = {
   signer: SigningIdentity;
 };
 
-/** Completion signature normalized from the Cloud API wire response. */
+/** Completion signature normalized from a Gateway or direct endpoint response. */
 export type CompletionSignature = CompletionSignatureReference & {
   signedText: string;
   signature: string;

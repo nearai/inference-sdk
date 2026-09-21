@@ -1,6 +1,7 @@
 import type {
   GpuEvidenceStatus,
   ModelAttestationPolicy,
+  ModelAttestationVerifiers,
   GpuEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
@@ -9,6 +10,7 @@ import { Buffer } from 'buffer';
 import { computeAddress } from 'ethers';
 import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
+import type { ModelAttestation } from '../types/attestation-model';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { createGpuEvidenceVerifier } from '../utils/nvidia';
@@ -20,6 +22,7 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
+import type { VerifiedDstackQuote } from './dstack-attestation';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
@@ -33,7 +36,6 @@ export async function verifyModelAttestation({
   verifiers,
 }: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
   const { nonce } = clientBinding;
-  const gpuEvidenceRequirement = getGpuEvidenceRequirement(policy);
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce,
@@ -46,6 +48,31 @@ export async function verifyModelAttestation({
     nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
   });
+  return verifyModelDeployment({
+    attestation,
+    verifiedQuote,
+    nonce,
+    policy,
+    verifiers,
+  });
+}
+
+type VerifyModelDeploymentParams = {
+  attestation: ModelAttestation;
+  verifiedQuote: VerifiedDstackQuote;
+  nonce: string;
+  policy?: ModelAttestationPolicy;
+  verifiers?: ModelAttestationVerifiers;
+};
+
+/** Shared model checks after the endpoint-specific report-data binding passes. */
+export async function verifyModelDeployment({
+  attestation,
+  verifiedQuote,
+  nonce,
+  policy,
+  verifiers,
+}: VerifyModelDeploymentParams): Promise<VerifiedModelAttestation> {
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
     verifiers?.deployment,
@@ -53,7 +80,7 @@ export async function verifyModelAttestation({
   const gpuEvidence = await verifyGpuEvidence({
     payload: attestation.nvidiaPayload,
     nonce,
-    requirement: gpuEvidenceRequirement,
+    requirement: getGpuEvidenceRequirement(policy),
     verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
   });
 

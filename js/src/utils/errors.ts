@@ -95,7 +95,12 @@ export type VerificationFailure =
       code: 'input.invalid';
       details: {
         field: string;
-        reason: 'invalid_hex' | 'wrong_length' | 'invalid_jwt' | 'invalid_url';
+        reason:
+          | 'invalid_hex'
+          | 'wrong_length'
+          | 'invalid_jwt'
+          | 'invalid_url'
+          | 'not_in_attestation_set';
         expected?: string;
         expectedBytes?: number;
         actualBytes?: number;
@@ -491,7 +496,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'policy.model_attestation_required':
       return `[${failure.code}] Model attestation evidence is required`;
     case 'binding.spki_fingerprint_required':
-      return `[${failure.code}] Gateway attestation requires an observed TLS peer fingerprint`;
+      return `[${failure.code}] Attestation requires an observed TLS peer fingerprint`;
     case 'binding.nonce_mismatch':
       return `[${failure.code}] Nonce in ${failure.details.source} does not match`;
     case 'binding.report_data_invalid':
@@ -583,5 +588,7 @@ function formatInputFailure(
       return `${subject} must be a valid JWT`;
     case 'invalid_url':
       return `${subject} must be an absolute HTTP(S) URL`;
+    case 'not_in_attestation_set':
+      return `${subject} must be one of the supplied attestations`;
   }
 }

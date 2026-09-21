@@ -2,6 +2,7 @@ import type * as v from 'valibot';
 import type {
   CloudApiGatewayAttestationSchema,
   CloudApiModelAttestationSchema,
+  CloudApiCompletionSignatureResultSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
@@ -18,7 +19,7 @@ type AttestationClientBaseOptions = {
 };
 
 /**
- * Request authentication used by attestation and receipt requests. `apiKey`
+ * Request authentication used by attestation and signature requests. `apiKey`
  * is the convenience form for a direct Gateway connection. `headers` supports
  * an aggregator or another compatible endpoint with its own authentication.
  * A configured `apiKey` or Authorization header takes precedence over
@@ -76,6 +77,9 @@ export type CloudApiModelAttestation = v.InferOutput<
 >;
 export type CloudApiGatewayAttestation = v.InferOutput<
   typeof CloudApiGatewayAttestationSchema
+>;
+export type CloudApiCompletionSignatureResult = v.InferOutput<
+  typeof CloudApiCompletionSignatureResultSchema
 >;
 
 export type FetchedGatewayAttestation = {

@@ -4,6 +4,10 @@ Use `InferenceClient` for Chat Completions with deployment verification and E2EE
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
+These clients connect through the NEAR AI Cloud Gateway. For a model's own
+`*.completions.near.ai` endpoint, use the
+[direct clients](#use-a-direct-model-endpoint) instead.
+
 ## Send an E2EE chat completion
 
 `InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
@@ -41,8 +45,9 @@ const client = new InferenceClient({
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The client verifies all returned model attestations
-before selecting a key for that algorithm.
+and response signatures. The Gateway returns the complete serving model-
+attestation set for the requested model. The client verifies that set before
+selecting a key for the chosen algorithm.
 
 ### Cache deployment verification
 
@@ -284,7 +289,64 @@ precedence for evidence, Chat, and signature requests. Other per-request headers
 can override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
-## Verify manually
+## Use a direct model endpoint
+
+`DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
+It fetches and verifies the complete serving model-attestation set before
+sending Chat.
+E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
+just as for `InferenceClient`.
+
+```ts
+import { DirectInferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new DirectInferenceClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+```
+
+Use `client.chat.completions.create()`, `client.fetch`, and
+`client.verifyResponse(id)` as above. Direct endpoints may require different
+credentials from the Gateway and use separate fetch and verification APIs.
+
+The client selects a verified model key for routing and E2EE; response signatures
+must match that selected signer. Both entry points request
+`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
+currently disabled; standard HTTPS certificate validation still applies.
+
+### Verify direct evidence manually
+
+```ts
+import {
+  DirectAttestationClient,
+  verifyDirectModelAttestations,
+} from '@nearai/inference-sdk/node';
+
+const client = new DirectAttestationClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
+const verified = await verifyDirectModelAttestations(fetched);
+```
+
+Send Chat with `fetch` and retain the exact request and response bytes.
+Then fetch its signature with `client.fetchCompletionSignature()` and pass the
+signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
+It returns all verified attestations sharing the response's signer.
+
+For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
+measurements, and available GPU evidence. `verifyDirectModelAttestations()`
+checks every entry. Reports fetched by `DirectAttestationClient` produce
+`tlsBinding.kind: 'none'`.
+
+The runnable [direct/client.ts](../../examples/example-js/direct/client.ts),
+[direct/client-openai-sdk.ts](../../examples/example-js/direct/client-openai-sdk.ts),
+and [direct/bare.ts](../../examples/example-js/direct/bare.ts) examples each
+include streaming and non-streaming calls. The bare example omits E2EE.
+
+## Verify Gateway requests manually
 
 The manual flow has distinct stages:
 
@@ -347,7 +409,7 @@ layout and is suitable for browsers. The `/node` `AttestationClient` observes
 only the peer for its Gateway-attestation request; it does not automatically
 apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
-receipt signature—must be pinned automatically.
+response signature—must be pinned automatically.
 
 ### Encrypt a raw Chat request
 
@@ -391,10 +453,10 @@ const prepared = await prepareE2eeChatRequest({
 const requestBytes = await prepared.request.clone().arrayBuffer();
 const requestBody = new Uint8Array(requestBytes);
 const encryptedResponse = await pinnedTlsFetch(prepared.request);
-const receiptResponse = encryptedResponse.clone();
+const verificationResponse = encryptedResponse.clone();
 const response = await prepared.decryptResponse(encryptedResponse);
 const [responseBytes, plaintext] = await Promise.all([
-  receiptResponse.arrayBuffer(),
+  verificationResponse.arrayBuffer(),
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
@@ -405,7 +467,7 @@ Pass the captured `requestBody` and `responseBody` to the response-signature
 functions below. With `stream: true`, `decryptResponse` returns a decrypted
 SSE `Response`; consume its body as events arrive while retaining the encrypted
 response clone for signature verification. HTTP error responses pass through
-unchanged. The [bare example](../../examples/example-js/bare.ts) demonstrates
+unchanged. The [bare example](../../examples/example-js/gateway/bare.ts) demonstrates
 both response modes without handling protocol keys or encryption headers.
 
 ### Optional image build provenance
@@ -445,8 +507,8 @@ have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/client.ts) and
-[bare example](../../examples/example-js/bare.ts), which require build provenance
+[client example](../../examples/example-js/gateway/client.ts) and
+[bare example](../../examples/example-js/gateway/bare.ts), which require build provenance
 for four Gateway images.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact
