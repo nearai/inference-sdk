@@ -91,7 +91,7 @@ export type InferenceClientCommonOptions = {
   readonly e2ee?: boolean;
   /**
    * Signing and E2EE protocol to use for Gateway/model evidence, model-key
-   * routing, completion receipts, and optional field encryption. Defaults to
+   * routing, response signatures, and optional field encryption. Defaults to
    * `ed25519`.
    */
   readonly signingAlgo?: SigningAlgo;
@@ -117,7 +117,7 @@ export type NodeInferenceClientOptions = AttestationClientOptions &
   };
 
 /** A completion signature verified against the model evidence used for the request. */
-export type VerifiedModelCompletionReceipt = {
+export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
@@ -125,7 +125,7 @@ export type VerifiedModelCompletionReceipt = {
 };
 
 /** A completion signature verified against the Gateway evidence used for the request. */
-export type VerifiedGatewayCompletionReceipt = {
+export type VerifiedGatewayCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
@@ -133,9 +133,9 @@ export type VerifiedGatewayCompletionReceipt = {
 };
 
 /** Successful byte-exact response verification. */
-export type VerifiedCompletionReceipt =
-  | VerifiedModelCompletionReceipt
-  | VerifiedGatewayCompletionReceipt;
+export type VerifiedCompletionResult =
+  | VerifiedModelCompletionResult
+  | VerifiedGatewayCompletionResult;
 
 /** The supported OpenAI-compatible chat surface. */
 export type InferenceChat = {

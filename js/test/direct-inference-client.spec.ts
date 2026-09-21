@@ -305,17 +305,17 @@ describe('DirectInferenceClient', () => {
     expect(sent.headers.get('x-model-pub-key')).toBe(endpoint.publicKey);
     expect(sent.headers.get('x-encryption-version')).toBe('2');
 
-    const receipt = await client.verifyResponse(response.id);
-    expect(receipt.signatureKind).toBe('provider_tee');
-    expect(receipt.attestations.map((item) => item.instanceId)).toEqual([
+    const result = await client.verifyResponse(response.id);
+    expect(result.signatureKind).toBe('provider_tee');
+    expect(result.attestations.map((item) => item.instanceId)).toEqual([
       'instance-0',
       'instance-1',
     ]);
     expect(
-      receipt.attestations.map((item) => item.deployment.appCompose),
+      result.attestations.map((item) => item.deployment.appCompose),
     ).toEqual(composes);
     expect(
-      receipt.attestations.every(
+      result.attestations.every(
         (item) => item.signer.signingAddress === endpoint.publicKey,
       ),
     ).toBe(true);
@@ -345,9 +345,9 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].body.messages[0].content).not.toBe(
       prompt,
     );
-    const receipt = await client.verifyResponse(id);
-    expect(receipt.completionId).toBe(id);
-    expect(receipt.attestations).toHaveLength(2);
+    const result = await client.verifyResponse(id);
+    expect(result.completionId).toBe(id);
+    expect(result.attestations).toHaveLength(2);
     expect(endpoint.state.signatureRequests).toBe(1);
   });
 
@@ -375,8 +375,8 @@ describe('DirectInferenceClient', () => {
     ).toBe('false');
     expect(createPinnedFetch).not.toHaveBeenCalled();
 
-    const receipt = await client.verifyResponse(response.id);
-    expect(receipt.attestations.map((item) => item.instanceId)).toEqual([
+    const result = await client.verifyResponse(response.id);
+    expect(result.attestations.map((item) => item.instanceId)).toEqual([
       'instance-0',
       'instance-1',
     ]);
@@ -417,8 +417,8 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].headers.has('x-client-pub-key')).toBe(
       false,
     );
-    const receipt = await client.verifyResponse(completion.id);
-    expect(receipt.attestations).toHaveLength(2);
+    const result = await client.verifyResponse(completion.id);
+    expect(result.attestations).toHaveLength(2);
   });
 
   test('sends no chat request when the second same-signer quote is rejected', async () => {
