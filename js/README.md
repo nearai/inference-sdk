@@ -12,6 +12,10 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
   its exact request and response bytes and the evidence retained for that request.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
+- `DirectInferenceClient` connects to a model's own endpoint, verifies every
+  attestation in its complete serving set, and provides the same Chat, E2EE, and response-verification
+  methods without Gateway verification. `DirectAttestationClient` fetches direct
+  attestations and signatures for a manual flow.
 - `prepareE2eeChatRequest({ request, modelKey })` encrypts a raw Chat request
   using a model public key and returns the request and a JSON/SSE response
   decryptor. Applications verify the model key, send the request, and verify its
@@ -30,9 +34,13 @@ signature identifies a Gateway signer and does not establish model execution.
 
 ## Defaults
 
-`InferenceClient` supports streaming and non-streaming Chat Completions. E2EE is
+Both inference clients support streaming and non-streaming Chat Completions. E2EE is
 enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
-Setting `e2ee: false` disables encryption while retaining deployment verification.
+Setting `e2ee: false` disables field encryption while retaining deployment verification.
+
+Set `ohttp: true` on either inference client to encrypt the Chat HTTP request
+and response to the attested endpoint. OHTTP requires Ed25519 and is disabled
+by default. Field-level E2EE remains enabled independently.
 
 Attestation results are cached for 60 minutes. Set
 `attestationCacheTimeToLiveMs: 0` to verify before every request. Response
@@ -40,7 +48,9 @@ records have a separate 60-minute retention period, configured through
 `responseCacheTimeToLiveMs`.
 
 Import from `@nearai/inference-sdk/node` for Node.js with Gateway TLS verification
-and subsequent request pinning. Use `@nearai/inference-sdk` in browsers, where
+and subsequent request pinning. Direct TLS fingerprint binding is currently
+disabled in both entry points; standard HTTPS certificate validation still applies.
+Use `@nearai/inference-sdk` in browsers, where
 Fetch does not expose the TLS peer certificate. The package publishes ESM and
 requires Node.js 24 or later for Node usage.
 
@@ -50,5 +60,5 @@ requires Node.js 24 or later for Node usage.
   deployment policies, and response verification.
 - [API reference](./docs/api-reference.md): public functions, parameters,
   defaults, and result fields.
-- [Runnable examples](../examples/README.md): bare verification, InferenceClient,
-  and OpenAI SDK integration.
+- [Runnable examples](../examples/README.md): Gateway and direct-model clients,
+  standalone verification, and OpenAI SDK integration.

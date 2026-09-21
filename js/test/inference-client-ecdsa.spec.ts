@@ -230,7 +230,7 @@ describe('ECDSA inference client', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifies, encrypts, decrypts, and verifies a receipt with ECDSA', async () => {
+  test('verifies, encrypts, decrypts, and verifies a response signature with ECDSA', async () => {
     const gateway = createEcdsaGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({
@@ -274,7 +274,7 @@ describe('ECDSA inference client', () => {
     expect(headers.get('x-encrypt-all-fields')).toBe('true');
   });
 
-  test('verifies an ECDSA Gateway receipt when the Gateway signs the response', async () => {
+  test('verifies an ECDSA Gateway signature when the Gateway signs the response', async () => {
     const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({

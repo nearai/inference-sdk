@@ -147,7 +147,9 @@ from verification; the deployment helper combines them for required images.
 | --- | --- | --- | --- |
 | `fetch_image_provenance` | `repository: &str`, `digest: &str`, `github_token: Option<&str>` | `Result<Vec<String>, ApiError>` | Fetches all inline GitHub attestation bundles, following pagination. `repository` is `owner/repo`; `digest` is `sha256:` plus 64 hexadecimal digits. |
 | `verify_image_provenance` | `bundles: &[String]`, `digest: &str`, `policy: &ImageProvenancePolicy` | `Result<VerifiedImageProvenance, VerificationError>` | Verifies Sigstore and SLSA v1 or v0.2 provenance. At least one complete bundle must satisfy the policy. |
+| `verify_image_provenance_with_signer_identity` | `bundles: &[String]`, `digest: &str`, `policy: &ImageProvenancePolicy`, `signer_identity: &str` | `Result<VerifiedImageProvenance, VerificationError>` | Verifies the same source policy while requiring an exact reusable-workflow certificate SAN URI. |
 | `verify_deployment_image_provenance` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Parses measured Compose, requires every configured image repository and verifies all matching digest-pinned references. |
+| `verify_deployment_image_provenance_with_signer_identities` | `app_compose: &str`, `image_policies: &BTreeMap<String, ImageProvenancePolicy>`, `image_signer_identities: &BTreeMap<String, String>`, `github_token: Option<&str>` | `Result<(), VerificationError>` | Same deployment check, with exact reusable-workflow signer identities keyed by the corresponding image-policy key. |
 
 The deployment helper expects outer JSON with a `docker_compose_file` YAML
 string and a `services` map. YAML aliases and merge keys are supported. Policy
@@ -168,23 +170,35 @@ repository/service details. Fetch failures become
 retryability. Cryptographic verification errors are returned unchanged.
 
 `ImageProvenancePolicy::new(repository: String, workflow: String)` sets the
-GitHub Actions issuer and leaves the optional ref and commit unset.
-The statement's source commit must match the certificate's authenticated source
-SHA before applying the optional commit pin.
+GitHub Actions issuer and leaves the optional ref and commit unset. The source
+repository, ref and commit are bound to the certificate's authenticated source
+claims and signed SLSA statement. The optional commit pin applies to this
+source commit, not a reusable workflow's commit.
 
 | Policy field | Type | Description |
 | --- | --- | --- |
 | `repository` | `String` | Required GitHub source repository, such as `nearai/compose-manager`. |
-| `workflow` | `String` | Required workflow path, such as `.github/workflows/build.yml`. |
-| `git_ref` | `Option<String>` | Optional exact Git ref, such as `refs/heads/master`. Serialized as `ref`. |
+| `workflow` | `String` | Required caller/source workflow path, such as `.github/workflows/build.yml`. |
+| `git_ref` | `Option<String>` | Optional exact source Git ref, such as `refs/heads/master`. Serialized as `ref`. |
 | `commit` | `Option<String>` | Optional full, 40-digit source commit SHA. |
 | `issuer` | `String` | Expected OIDC issuer; defaults to `https://token.actions.githubusercontent.com`. |
+
+`verify_image_provenance` requires the certificate signer to be the configured
+source repository/workflow at the authenticated source ref. For a
+cross-repository reusable workflow, call
+`verify_image_provenance_with_signer_identity` with its exact certificate SAN
+URI, including its ref, tag or SHA. Only the signer identity changes: source
+policy and attestation retrieval still use `repository`, `workflow`, `git_ref`
+and `commit`. The deployment variant accepts the same override per image-policy
+key. Source claims use the modern Fulcio extensions, falling back to each
+corresponding legacy GitHub claim only when that modern extension is absent.
+Malformed modern claims are rejected.
 
 | Verified result field | Type | Description |
 | --- | --- | --- |
 | `digest` | `String` | Verified SHA-256 artifact digest, including its `sha256:` prefix. |
-| `repository`, `workflow`, `git_ref`, `commit` | `String` | Source repository, workflow, ref and commit matched against the verified certificate identity and signed statement. |
-| `certificate_identity`, `issuer` | `String` | Authenticated certificate identity and OIDC issuer. |
+| `repository`, `workflow`, `git_ref`, `commit` | `String` | Caller/source repository, workflow, ref and commit checked against the signed statement and authenticated certificate source claims. |
+| `certificate_identity`, `issuer` | `String` | Authenticated signing workflow SAN URI and OIDC issuer. The signing workflow may differ from the caller/source workflow. |
 | `predicate_type` | `String` | SLSA provenance predicate URI (`v1` or `v0.2`). |
 
 These helpers use an embedded public-good Sigstore trust root. They do not

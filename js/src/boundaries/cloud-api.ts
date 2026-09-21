@@ -13,8 +13,13 @@ import type {
 import type {
   CloudApiGatewayAttestation,
   CloudApiModelAttestation,
+  CloudApiCompletionSignatureResult,
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
+import type {
+  OhttpAttestation,
+  OhttpAttestationResponse,
+} from '../types/ohttp';
 import { trimHexPrefix } from '../utils/common';
 import { ApiError } from '../utils/errors';
 
@@ -77,10 +82,45 @@ export function decodeGatewayAttestationReport(
       fallbackPath: 'gateway attestation report',
     });
   }
-  return mapGatewayAttestation(
-    parsed.output.gateway_attestation,
-    'gateway_attestation',
-  );
+  return {
+    ...mapGatewayAttestation(
+      parsed.output.gateway_attestation,
+      'gateway_attestation',
+    ),
+    ...(parsed.output.ohttp_attestation === undefined
+      ? {}
+      : {
+          ohttpAttestation: mapOhttpAttestation(
+            parsed.output.ohttp_attestation,
+          ),
+        }),
+  };
+}
+
+/** Map report-level OHTTP metadata shared by Gateway and direct endpoints. */
+export function mapOhttpAttestation(
+  attestation: OhttpAttestationResponse,
+): OhttpAttestation {
+  return {
+    signingAlgo: attestation.signing_algo,
+    signingKey: validateWireHex({
+      value: attestation.signing_key,
+      label: 'ohttp_attestation.signing_key',
+      expected: '32-byte hexadecimal Ed25519 public key',
+      expectedBytes: 32,
+    }),
+    keyConfig: validateWireHex({
+      value: attestation.key_config,
+      label: 'ohttp_attestation.key_config',
+      expected: 'non-empty hexadecimal OHTTP key configuration',
+    }),
+    signature: validateWireHex({
+      value: attestation.signature,
+      label: 'ohttp_attestation.signature',
+      expected: '64-byte hexadecimal Ed25519 signature',
+      expectedBytes: 64,
+    }),
+  };
 }
 
 /** Decode a Cloud API completion signature or report an unavailable signature. */
@@ -92,7 +132,13 @@ export function decodeCompletionSignature(value: unknown): CompletionSignature {
       fallbackPath: 'signature',
     });
   }
-  const response = parsed.output;
+  return mapCompletionSignature(parsed.output);
+}
+
+/** Map a decoded wire signature without parsing an HTTP response a second time. */
+export function mapCompletionSignature(
+  response: CloudApiCompletionSignatureResult,
+): CompletionSignature {
   if ('error_code' in response) {
     throw new ApiError({
       code: 'api.completion_signature_unavailable',
@@ -117,7 +163,7 @@ export function decodeCompletionSignature(value: unknown): CompletionSignature {
   };
 }
 
-function mapModelAttestation(
+export function mapModelAttestation(
   attestation: CloudApiModelAttestation,
   label: string,
 ): ModelAttestation {
@@ -236,7 +282,7 @@ function validateWireHex({
   return value;
 }
 
-function invalidCloudApiResponse({
+export function invalidCloudApiResponse({
   ...params
 }: InvalidCloudApiResponseParams): ApiError {
   const details =

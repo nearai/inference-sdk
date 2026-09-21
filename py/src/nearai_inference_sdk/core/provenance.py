@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 from cryptography import x509
+from pyasn1.codec.der.decoder import decode as decode_der
+from pyasn1.error import PyAsn1Error
+from pyasn1.type.char import UTF8String
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -42,8 +45,12 @@ from ..utils.fetch import fetch
 _DIGEST_PATTERN = re.compile(r'sha256:[0-9a-fA-F]{64}')
 _REPOSITORY_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _COMMIT_PATTERN = re.compile(r'[0-9a-fA-F]{40}')
+_SOURCE_REPOSITORY_URI_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.12')
 _SOURCE_REPOSITORY_DIGEST_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.13')
+_SOURCE_REPOSITORY_REF_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.14')
 _GITHUB_WORKFLOW_SHA_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.3')
+_GITHUB_WORKFLOW_REPOSITORY_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.5')
+_GITHUB_WORKFLOW_REF_OID = x509.ObjectIdentifier('1.3.6.1.4.1.57264.1.6')
 
 
 async def verify_deployment_image_provenance(
@@ -315,16 +322,26 @@ class _GitHubBuildIdentity:
             san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             identities = san.value.get_values_for_type(x509.UniformResourceIdentifier)
             for identity in identities:
-                if not identity.startswith(prefix):
-                    continue
-                ref = identity[len(prefix) :]
-                if not ref.startswith('refs/'):
-                    continue
-                if self.expected.ref is not None and ref != self.expected.ref:
-                    continue
+                if self.expected.signer_identity is not None:
+                    if identity != self.expected.signer_identity:
+                        continue
+                else:
+                    if not identity.startswith(prefix):
+                        continue
+                    ref = identity[len(prefix) :]
+                    if not ref.startswith('refs/'):
+                        continue
+                    if self.expected.ref is not None and ref != self.expected.ref:
+                        continue
                 Identity(identity=identity, issuer=self.expected.issuer).verify(cert)
+                source_ref = _verify_certificate_source_ref(cert, self.expected)
+                if (
+                    self.expected.signer_identity is None
+                    and identity != prefix + source_ref
+                ):
+                    raise _StatementMismatch('source_mismatch')
                 self.identity = identity
-                self.ref = ref
+                self.ref = source_ref
                 return
         except (x509.ExtensionNotFound, SigstoreVerificationError) as error:
             raise _IdentityMismatch(
@@ -435,25 +452,59 @@ def _verify_statement(
 
 
 def _certificate_source_commit(certificate: x509.Certificate) -> str:
-    for oid, prefix in (
-        (_SOURCE_REPOSITORY_DIGEST_OID, b'\x0c\x28'),
-        (_GITHUB_WORKFLOW_SHA_OID, b''),
+    commit = _certificate_source_claim(
+        certificate, _SOURCE_REPOSITORY_DIGEST_OID, _GITHUB_WORKFLOW_SHA_OID
+    )
+    if not _COMMIT_PATTERN.fullmatch(commit):
+        raise _StatementMismatch('source_mismatch')
+    return commit.lower()
+
+
+def _verify_certificate_source_ref(
+    certificate: x509.Certificate, policy: ImageProvenancePolicy
+) -> str:
+    repository = _certificate_source_claim(
+        certificate,
+        _SOURCE_REPOSITORY_URI_OID,
+        _GITHUB_WORKFLOW_REPOSITORY_OID,
+        legacy_prefix='https://github.com/',
+    )
+    ref = _certificate_source_claim(
+        certificate, _SOURCE_REPOSITORY_REF_OID, _GITHUB_WORKFLOW_REF_OID
+    )
+    if (
+        repository != f'https://github.com/{policy.repository}'
+        or not ref.startswith('refs/')
+        or (policy.ref is not None and policy.ref != ref)
     ):
+        raise _StatementMismatch('source_mismatch')
+    return ref
+
+
+def _certificate_source_claim(
+    certificate: x509.Certificate,
+    modern_oid: x509.ObjectIdentifier,
+    legacy_oid: x509.ObjectIdentifier,
+    *,
+    legacy_prefix: str = '',
+) -> str:
+    for oid in (modern_oid, legacy_oid):
         try:
             extension = certificate.extensions.get_extension_for_oid(oid).value
         except x509.ExtensionNotFound:
             continue
         if not isinstance(extension, x509.UnrecognizedExtension):
             raise _StatementMismatch('source_mismatch')
-        # The modern field is a DER UTF8String with a 40-byte SHA; the legacy
-        # field is raw text. A present but malformed modern field cannot fall back.
-        value = extension.value
-        if not value.startswith(prefix):
-            raise _StatementMismatch('source_mismatch')
-        commit = value[len(prefix) :]
-        if re.fullmatch(rb'[0-9a-fA-F]{40}', commit) is None:
-            raise _StatementMismatch('source_mismatch')
-        return commit.decode('ascii').lower()
+        # A present but malformed modern field must not fall back to legacy data.
+        try:
+            if oid == modern_oid:
+                value, remainder = decode_der(extension.value, asn1Spec=UTF8String())
+                if remainder:
+                    raise _StatementMismatch('source_mismatch')
+                return str(value)
+            return legacy_prefix + extension.value.decode('utf-8')
+        except (PyAsn1Error, UnicodeError) as error:
+            raise _StatementMismatch('source_mismatch') from error
     raise _StatementMismatch('source_mismatch')
 
 
