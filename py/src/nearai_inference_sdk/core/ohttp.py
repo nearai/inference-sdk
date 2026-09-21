@@ -174,6 +174,8 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
             content=body,
             extensions=dict(request.extensions),
         )
+        # RFC 10036 advises incremental forwarding of this request message only.
+        outer_request.headers['incremental'] = '?1'
         try:
             outer = await self._client.send(
                 outer_request, stream=True, auth=None, follow_redirects=False

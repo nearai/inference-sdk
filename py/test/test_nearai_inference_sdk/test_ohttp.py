@@ -40,7 +40,12 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
             gateway.key_config,
             base_url=BASE_URL,
             http_client=outer,
-            forwarded_headers=['X-Team', 'CONTENT-TYPE', 'x-client-pub-key'],
+            forwarded_headers=[
+                'X-Team',
+                'CONTENT-TYPE',
+                'x-client-pub-key',
+                'Incremental',
+            ],
         ) as client:
             response = await client.post(
                 'chat/completions?test=%2F',
@@ -51,6 +56,7 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
                     'X-Private': 'private header',
                     'content-type': 'application/json',
                     'x-client-pub-key': 'private encryption key',
+                    'Incremental': '?0',
                 },
             )
         assert not outer.is_closed
@@ -60,10 +66,12 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
     assert gateway.requests[0].content == body
     assert gateway.requests[0].url.raw_path == b'/v1/chat/completions?test=%2F'
     assert gateway.requests[0].headers['x-client-pub-key'] == 'private encryption key'
+    assert gateway.requests[0].headers['incremental'] == '?0'
     request = gateway.outer_requests[0]
     assert str(request.url) == 'https://gateway.example/ohttp'
     assert request.headers['authorization'] == 'Bearer key'
     assert request.headers['x-team'] == 'test-team'
+    assert request.headers.get_list('incremental') == ['?1']
     assert 'x-private' not in request.headers
     assert 'x-client-pub-key' not in request.headers
     assert b'private exact bytes' not in request.content
