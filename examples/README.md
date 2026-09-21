@@ -21,10 +21,10 @@ Each entry point includes non-streaming and streaming calls:
 | `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
 | `direct-client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
-| `direct-bare.ts` | Fetches and verifies direct model attestations, pins Chat to their TLS keys, and verifies exact response bytes. | Not implemented |
+| `direct-bare.ts` | Fetches and verifies direct model attestations and verifies exact response bytes. | Not implemented |
 
 The first three connect through the Gateway and verify its TLS identity.
-The inference clients also pin later
+The Gateway inference clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
@@ -64,9 +64,9 @@ pnpm --dir examples/example-js start:direct-client-openai-sdk
 pnpm --dir examples/example-js start:direct-bare
 ```
 
-All three verify the complete serving model-attestation set and bind the endpoint's
-TLS key in Node. `DirectInferenceClient` selects a model key for routing and E2EE, pins
-later requests to that signer's verified TLS keys, and requires response
+All three verify the complete serving model-attestation set. Direct TLS fingerprint
+binding is currently disabled; standard HTTPS certificate validation still applies.
+`DirectInferenceClient` selects a model key for routing and E2EE and requires response
 signatures from the same signer. The bare example sends plaintext over HTTPS
 and selects matching attestations when verifying the response signature.
 

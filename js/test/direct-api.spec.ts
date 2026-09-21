@@ -64,13 +64,10 @@ function directFor(
 }
 
 class CapturingDirectClient extends DirectApiClient {
-  fetchModelAttestations({
-    includeSpkiFingerprint = true,
-    ...params
-  }: NodeFetchDirectModelAttestationsParams = {}) {
+  fetchModelAttestations(params: NodeFetchDirectModelAttestationsParams = {}) {
     return this.fetchModelAttestationsWithOptions({
       ...params,
-      includeSpkiFingerprint,
+      includeSpkiFingerprint: true,
     });
   }
 
@@ -282,10 +279,10 @@ describe('DirectAttestationClient', () => {
         }
         return jsonResponse(report);
       });
-      const client = new CapturingDirectClient({ baseUrl });
-      await expect(
-        client.fetchModelAttestations({ includeSpkiFingerprint: include }),
-      ).rejects.toMatchObject({
+      const client = include
+        ? new CapturingDirectClient({ baseUrl })
+        : new DirectAttestationClient({ baseUrl });
+      await expect(client.fetchModelAttestations()).rejects.toMatchObject({
         name: 'ApiError',
         failure: {
           code: 'api.invalid_response',

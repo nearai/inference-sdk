@@ -5,17 +5,17 @@ import type {
 } from '../types/direct-api';
 import { type HttpsResponse, requestHttps } from './attestation-client';
 
-/** Node client that captures the TLS peer for direct attestation requests. */
+/** Node direct attestation client; TLS fingerprint binding is temporarily disabled. */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({
     signingAlgo,
     signingAddress,
-    includeSpkiFingerprint = true,
   }: NodeFetchDirectModelAttestationsParams = {}): Promise<FetchedDirectModelAttestations> {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      includeSpkiFingerprint,
+      // TODO: Re-enable direct TLS binding once the backend attestation issue is resolved.
+      includeSpkiFingerprint: false,
     });
   }
 

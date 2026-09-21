@@ -11,9 +11,10 @@ async function main(): Promise<void> {
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
   // Direct model verification only: there is no Gateway attestation request.
-  // E2EE and model TLS verification are enabled by default. The complete serving
-  // model-attestation set must pass before Chat is sent; successful checks are cached for 60 minutes.
-  // Chat TLS keys and response signatures must belong to the selected model signer.
+  // E2EE is enabled by default; direct TLS fingerprint binding is disabled.
+  // Every model attestation must pass before Chat is sent. Successful checks
+  // are cached for 60 minutes.
+  // Response signatures must belong to the selected model signer.
   const client = new DirectInferenceClient({
     baseUrl: BASE_URL,
     apiKey,

@@ -195,17 +195,17 @@ export function requireDirectApiBaseUrl(baseUrl: string | undefined): string {
   });
 }
 
-/** Fetch direct provider evidence with standard Fetch (without TLS peer access). */
+/** Fetch direct provider evidence without requesting TLS fingerprint binding. */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({
     signingAlgo,
     signingAddress,
-    includeSpkiFingerprint = false,
   }: FetchDirectModelAttestationsParams = {}): Promise<FetchedDirectModelAttestations> {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      includeSpkiFingerprint,
+      // TODO: Re-enable direct TLS binding once the backend attestation issue is resolved.
+      includeSpkiFingerprint: false,
     });
   }
 }

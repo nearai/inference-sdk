@@ -273,19 +273,15 @@ Use `client.chat.completions.create()`, `client.fetch`, and
 credentials from the Gateway and use separate fetch and verification APIs.
 
 The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. The Node client also verifies the endpoint's
-TLS identity and pins later requests to the verified keys for that signer. The
-generic browser client cannot observe TLS certificates
-and only supports `modelVerification.includeSpkiFingerprint: false`. Node
-defaults to `true`; set it to `false` when TLS binding is unavailable, such as
-when connecting through a proxy.
+must match that selected signer. Both entry points request
+`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
+currently disabled; standard HTTPS certificate validation still applies.
 
 ### Verify direct evidence manually
 
 ```ts
 import {
   DirectAttestationClient,
-  createPinnedTlsFetch,
   verifyDirectModelAttestations,
 } from '@nearai/inference-sdk/node';
 
@@ -295,21 +291,17 @@ const client = new DirectAttestationClient({
 });
 const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
 const verified = await verifyDirectModelAttestations(fetched);
-if (verified.tlsBinding.kind !== 'attested') {
-  throw new Error('Expected TLS-bound direct model attestations');
-}
-const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
 ```
 
-Send Chat with `pinnedTlsFetch` and retain the exact request and response bytes.
+Send Chat with `fetch` and retain the exact request and response bytes.
 Then fetch its signature with `client.fetchCompletionSignature()` and pass the
 signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
 It returns all verified attestations sharing the response's signer.
 
 For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
-measurements, available GPU evidence, and any reported SPKI binding.
-`verifyDirectModelAttestations()` also verifies the observed TLS peer when SPKI
-evidence is enabled.
+measurements, and available GPU evidence. `verifyDirectModelAttestations()`
+checks every entry. Reports fetched by `DirectAttestationClient` produce
+`tlsBinding.kind: 'none'`.
 
 The runnable [direct-client.ts](../../examples/example-js/direct-client.ts),
 [direct-client-openai-sdk.ts](../../examples/example-js/direct-client-openai-sdk.ts),
