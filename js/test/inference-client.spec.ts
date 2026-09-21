@@ -761,7 +761,7 @@ function chatRequest(body: Record<string, unknown>): RequestInit {
   };
 }
 
-function createProviderReceiptFetch(
+function createProviderSignatureFetch(
   gateway: TestGateway,
 ): typeof globalThis.fetch {
   const signatures = new Map<string, Promise<Record<string, string>>>();
@@ -807,10 +807,10 @@ function createProviderReceiptFetch(
   };
 }
 
-function mockProviderReceipts(gateway: TestGateway): void {
+function mockProviderSignatures(gateway: TestGateway): void {
   jest
     .spyOn(globalThis, 'fetch')
-    .mockImplementation(createProviderReceiptFetch(gateway));
+    .mockImplementation(createProviderSignatureFetch(gateway));
 }
 
 function isChatCompletionRequest(input: RequestInfo | URL): boolean {
@@ -824,10 +824,10 @@ describe('inference client', () => {
     jest.useRealTimers();
   });
 
-  test('uses pinned OHTTP for JSON and SSE while retaining raw evidence, receipts and session reuse', async () => {
+  test('uses pinned OHTTP for JSON and SSE while retaining evidence, signatures and session reuse', async () => {
     const gateway = createTestGateway();
     const endpoint = await createOhttpEndpoint({
-      fetch: createProviderReceiptFetch(gateway),
+      fetch: createProviderSignatureFetch(gateway),
       signingKey: keyPair(1),
     });
     mockNodeGatewayAttestation({
@@ -943,7 +943,7 @@ describe('inference client', () => {
 
   test('calls browser Fetch with the global receiver', async () => {
     const gateway = createTestGateway();
-    const providerFetch = createProviderReceiptFetch(gateway);
+    const providerFetch = createProviderSignatureFetch(gateway);
     jest.spyOn(globalThis, 'fetch').mockImplementation(function (
       this: typeof globalThis | undefined,
       input,
@@ -967,7 +967,7 @@ describe('inference client', () => {
 
   test('reuses one OpenAI client for concurrent JSON and streaming responses', async () => {
     const gateway = createTestGateway();
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const inferenceClient = new InferenceClient(
       inferenceClientOptions(gateway),
     );
@@ -1012,7 +1012,7 @@ describe('inference client', () => {
     'expires response records at the %s TTL independently of the attestation cache',
     async (_label, responseCacheTimeToLiveMs, expectedTtl) => {
       const gateway = createTestGateway();
-      mockProviderReceipts(gateway);
+      mockProviderSignatures(gateway);
       const client = new InferenceClient({
         ...inferenceClientOptions(gateway),
         responseCacheTimeToLiveMs,
@@ -1042,7 +1042,7 @@ describe('inference client', () => {
     'retries response verification after HTTP %i',
     async (status) => {
       const gateway = createTestGateway();
-      const providerFetch = createProviderReceiptFetch(gateway);
+      const providerFetch = createProviderSignatureFetch(gateway);
       let signatureRequests = 0;
       jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
         const request = new Request(input, init);
@@ -1082,7 +1082,7 @@ describe('inference client', () => {
     const gateway = createTestGateway({
       expectedRequestHeader: { name: 'authorization', value: authorization },
     });
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const inferenceClient = new InferenceClient({
       ...inferenceClientOptions(gateway),
       headers: { Authorization: authorization },
@@ -1107,7 +1107,7 @@ describe('inference client', () => {
 
   test('verifies the successful response after an OpenAI retry', async () => {
     const gateway = createTestGateway();
-    const providerFetch = createProviderReceiptFetch(gateway);
+    const providerFetch = createProviderSignatureFetch(gateway);
     let attempts = 0;
     jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       if (isChatCompletionRequest(input) && attempts++ === 0) {
@@ -1597,7 +1597,7 @@ describe('inference client', () => {
 
   test('selects a verified model key when multiple candidates are returned', async () => {
     const gateway = createTestGateway({ includeSecondModelAttestation: true });
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const response = await client.fetch(
@@ -1635,7 +1635,7 @@ describe('inference client', () => {
           ),
         };
       });
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const client = new InferenceClient({
       ...inferenceClientOptions(gateway),
       e2ee: false,
@@ -1679,7 +1679,7 @@ describe('inference client', () => {
       const gateway = createTestGateway({
         streamRecordSeparators: [separator],
       });
-      const providerFetch = createProviderReceiptFetch(gateway);
+      const providerFetch = createProviderSignatureFetch(gateway);
       let resumeStream: () => void = () => {};
       const nextEventReady = new Promise<void>((resolve) => {
         resumeStream = resolve;
@@ -1731,7 +1731,7 @@ describe('inference client', () => {
 
   test('returns a non-streaming completion with verifiable entity bodies', async () => {
     const gateway = createTestGateway();
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const completion = await client.chat.completions.create({
@@ -1758,7 +1758,7 @@ describe('inference client', () => {
       const gateway = createTestGateway({
         streamRecordSeparators: separators,
       });
-      mockProviderReceipts(gateway);
+      mockProviderSignatures(gateway);
       const client = new InferenceClient(inferenceClientOptions(gateway));
 
       const stream = await client.chat.completions.create({
@@ -2318,7 +2318,7 @@ describe('inference client', () => {
 
   test('keeps verification and model routing on when E2EE is disabled', async () => {
     const gateway = createTestGateway();
-    mockProviderReceipts(gateway);
+    mockProviderSignatures(gateway);
     const client = new InferenceClient({
       ...inferenceClientOptions(gateway),
       e2ee: false,
@@ -2511,9 +2511,9 @@ describe('inference client', () => {
       expect(gateway.state.completionRequests).toBe(1);
     });
 
-    test('uses the pinned transport for model evidence, completion, and its receipt signature', async () => {
+    test('uses the pinned transport for model evidence, completion, and its response signature', async () => {
       const gateway = createTestGateway();
-      const providerFetch = createProviderReceiptFetch(gateway);
+      const providerFetch = createProviderSignatureFetch(gateway);
       const pinnedPaths: string[] = [];
       const pinnedFetch: typeof globalThis.fetch = async (input, init) => {
         const url =

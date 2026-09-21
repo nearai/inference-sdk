@@ -29,7 +29,7 @@ export type {
 export type {
   DirectInferenceClientOptions,
   DirectModelVerificationOptions,
-  VerifiedDirectCompletionReceipt,
+  VerifiedDirectCompletionResult,
   VerifyDirectModelResponseParams,
 } from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
@@ -60,9 +60,9 @@ export type {
   InferenceChat,
   InferenceChatCompletions,
   InferenceClientOptions,
-  VerifiedCompletionReceipt,
-  VerifiedGatewayCompletionReceipt,
-  VerifiedModelCompletionReceipt,
+  VerifiedCompletionResult,
+  VerifiedGatewayCompletionResult,
+  VerifiedModelCompletionResult,
 } from './types/inference-client';
 export type { Awaitable } from './types/shared';
 

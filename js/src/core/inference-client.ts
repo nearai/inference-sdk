@@ -21,7 +21,7 @@ import type {
   NodeInferenceClientOptions,
   InferenceChat,
   InferenceClientOptions,
-  VerifiedCompletionReceipt,
+  VerifiedCompletionResult,
   InferenceClientCommonOptions,
   InferenceEncryptionOptions,
 } from '../types/inference-client';
@@ -61,12 +61,12 @@ import {
 const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
-export type InferenceSession<Receipt> = {
+export type InferenceSession<VerificationResult> = {
   readonly modelKey: E2eeModelKey;
   readonly transport: InferenceSessionTransport;
   readonly verifyResponse: (
     params: VerifySessionResponseParams,
-  ) => Awaitable<Receipt>;
+  ) => Awaitable<VerificationResult>;
 };
 
 export type VerifySessionResponseParams = {
@@ -90,14 +90,15 @@ export type InferenceTransportOptions = InferenceClientCommonOptions &
     readonly headers?: HeadersInit;
   };
 
-type CachedVerification<Receipt> = {
+type CachedVerification<VerificationResult> = {
   readonly expiresAt: number;
-  readonly session: InferenceSession<Receipt>;
+  readonly session: InferenceSession<VerificationResult>;
 };
 
-type CompletionRecord<Receipt> = VerifyCapturedCompletionParams<Receipt> & {
-  verification?: Promise<Receipt>;
-};
+type CompletionRecord<VerificationResult> =
+  VerifyCapturedCompletionParams<VerificationResult> & {
+    verification?: Promise<VerificationResult>;
+  };
 
 type ParsedSecureRequest = {
   readonly model: string;
@@ -114,26 +115,27 @@ type SendSecureCompletionParams = {
   readonly init?: RequestInit;
 };
 
-type SentSecureCompletion<Receipt> = {
+type SentSecureCompletion<VerificationResult> = {
   response: Response;
-  readonly session: InferenceSession<Receipt>;
+  readonly session: InferenceSession<VerificationResult>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
 
-type CapturedSecureCompletion<Receipt> = SentSecureCompletion<Receipt> & {
-  readonly requestBody: Promise<Uint8Array>;
-  readonly responseBody: Promise<Uint8Array>;
-};
+type CapturedSecureCompletion<VerificationResult> =
+  SentSecureCompletion<VerificationResult> & {
+    readonly requestBody: Promise<Uint8Array>;
+    readonly responseBody: Promise<Uint8Array>;
+  };
 
 type CapturedResponseEntityBody = {
   readonly response: Response;
   readonly responseBody: Promise<Uint8Array>;
 };
 
-type VerifyCapturedCompletionParams<Receipt> = {
+type VerifyCapturedCompletionParams<VerificationResult> = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
-  readonly session: InferenceSession<Receipt>;
+  readonly session: InferenceSession<VerificationResult>;
   readonly contentType: string | null;
 };
 
@@ -142,9 +144,9 @@ type SendCompletionRequestParams = {
   readonly transport: InferenceSessionTransport;
 };
 
-type ClearPendingVerificationParams<Receipt> = {
+type ClearPendingVerificationParams<VerificationResult> = {
   readonly model: string;
-  readonly verification: Promise<InferenceSession<Receipt>>;
+  readonly verification: Promise<InferenceSession<VerificationResult>>;
 };
 
 type AwaitWithAbortParams<T> = {
@@ -186,12 +188,15 @@ export type CreateGatewaySessionTransportParams = {
  * but the Chat request and response remain plaintext while the request stays
  * pinned to the verified model key.
  */
-export abstract class VerifiedInferenceClientBase<Receipt> {
+export abstract class VerifiedInferenceClientBase<VerificationResult> {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   private readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly completions = new Map<string, CompletionRecord<Receipt>>();
+  private readonly completions = new Map<
+    string,
+    CompletionRecord<VerificationResult>
+  >();
   readonly chat: InferenceChat;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
@@ -199,12 +204,12 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<
     string,
-    CachedVerification<Receipt>
+    CachedVerification<VerificationResult>
   >();
   /** Shares same-model verification work while it is in progress. */
   private readonly pendingVerifications = new Map<
     string,
-    Promise<InferenceSession<Receipt>>
+    Promise<InferenceSession<VerificationResult>>
   >();
 
   protected constructor(options: InferenceTransportOptions) {
@@ -228,7 +233,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   /** Verify every required report before creating a transport for Chat requests. */
   protected abstract createVerificationState(
     model: string,
-  ): Promise<InferenceSession<Receipt>>;
+  ): Promise<InferenceSession<VerificationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
@@ -247,7 +252,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
     return verifyOhttpKeyConfig({ ohttpAttestation, signer });
   }
 
-  /** Only Chat uses OHTTP; evidence and receipt fetches retain their transport. */
+  /** Only Chat uses OHTTP; evidence and signature fetches retain their transport. */
   protected createCompletionFetch(
     fetch: typeof globalThis.fetch,
     keyConfig: Uint8Array | undefined,
@@ -282,7 +287,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
     const responseBody = completion.responseBody;
 
     if (completion.response.ok) {
-      const record: CompletionRecord<Receipt> = {
+      const record: CompletionRecord<VerificationResult> = {
         requestBody,
         responseBody,
         session: completion.session,
@@ -308,7 +313,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(completionId: string): Promise<Receipt> {
+  verifyResponse(completionId: string): Promise<VerificationResult> {
     const record = this.completions.get(completionId);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
@@ -328,7 +333,9 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   private async sendSecureCompletion({
     input,
     init,
-  }: SendSecureCompletionParams): Promise<CapturedSecureCompletion<Receipt>> {
+  }: SendSecureCompletionParams): Promise<
+    CapturedSecureCompletion<VerificationResult>
+  > {
     const parsed = await this.parseSecureRequest(input, init);
     if (parsed.request.signal.aborted) {
       throw parsed.request.signal.reason;
@@ -372,7 +379,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   private async toClientResponse({
     response,
     decryptResponse,
-  }: SentSecureCompletion<Receipt>): Promise<Response> {
+  }: SentSecureCompletion<VerificationResult>): Promise<Response> {
     return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
@@ -381,7 +388,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
     responseBody,
     session,
     contentType,
-  }: VerifyCapturedCompletionParams<Receipt>): Promise<Receipt> {
+  }: VerifyCapturedCompletionParams<VerificationResult>): Promise<VerificationResult> {
     const bytes = await responseBody;
     const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
@@ -397,7 +404,9 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
     });
   }
 
-  private startVerification(model: string): Promise<InferenceSession<Receipt>> {
+  private startVerification(
+    model: string,
+  ): Promise<InferenceSession<VerificationResult>> {
     const now = Date.now();
     this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(model);
@@ -438,7 +447,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   private clearPendingVerification({
     model,
     verification,
-  }: ClearPendingVerificationParams<Receipt>): void {
+  }: ClearPendingVerificationParams<VerificationResult>): void {
     if (this.pendingVerifications.get(model) === verification) {
       this.pendingVerifications.delete(model);
     }
@@ -542,7 +551,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
 }
 
 /** Gateway-specific preflight layered over the shared Chat/E2EE transport. */
-export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionReceipt> {
+export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
   protected constructor(options: NodeInferenceClientOptions) {
@@ -558,7 +567,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
 
   protected override async createVerificationState(
     model: string,
-  ): Promise<InferenceSession<VerifiedCompletionReceipt>> {
+  ): Promise<InferenceSession<VerifiedCompletionResult>> {
     const gateway = await this.fetchGatewayAttestation();
     const gatewayAttestation = await verifyGatewayAttestation({
       attestation: gateway.attestation,
@@ -839,7 +848,7 @@ function captureResponseEntityBody(
     resolveBody = resolve;
     rejectBody = reject;
   });
-  // Receipt verification is optional. Preserve a rejection for a caller that
+  // Response verification is optional. Preserve a rejection for a caller that
   // later awaits it without reporting an unhandled rejection in the meantime.
   void responseBody.catch(() => undefined);
 

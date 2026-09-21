@@ -32,7 +32,7 @@ export type VerifyDirectModelResponseParams = {
 };
 
 /** A signed response associated with the preflight-verified signer group. */
-export type VerifiedDirectCompletionReceipt = {
+export type VerifiedDirectCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;

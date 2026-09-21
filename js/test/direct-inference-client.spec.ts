@@ -283,7 +283,7 @@ describe('DirectInferenceClient', () => {
   });
 
   test.each([true, false])(
-    'round-trips OHTTP JSON and SSE with byte-exact receipts and E2EE set to %s',
+    'round-trips OHTTP JSON and SSE with byte-exact response verification and E2EE set to %s',
     async (e2ee) => {
       const provider = createDirectEndpoint({ otherSignerFirst: true });
       const endpoint = await createOhttpEndpoint({
@@ -323,8 +323,8 @@ describe('DirectInferenceClient', () => {
         content += event.choices[0]?.delta.content ?? '';
       }
       expect(content).toBe(answer);
-      const receipt = await client.verifyResponse(id);
-      expect(receipt.attestations.map(({ instanceId }) => instanceId)).toEqual([
+      const result = await client.verifyResponse(id);
+      expect(result.attestations.map(({ instanceId }) => instanceId)).toEqual([
         'instance-0',
         'instance-1',
       ]);
@@ -382,8 +382,8 @@ describe('DirectInferenceClient', () => {
       expect(provider.state.requests[0].headers.get('x-model-pub-key')).toBe(
         provider.publicKey,
       );
-      const receipt = await client.verifyResponse(completion.id);
-      expect(receipt.attestations.map(({ instanceId }) => instanceId)).toEqual([
+      const result = await client.verifyResponse(completion.id);
+      expect(result.attestations.map(({ instanceId }) => instanceId)).toEqual([
         'instance-0',
         'instance-1',
       ]);
@@ -451,7 +451,7 @@ describe('DirectInferenceClient', () => {
     },
   );
 
-  test('rejects the receipt when the final OHTTP authentication is truncated after SSE DONE', async () => {
+  test('rejects response verification when the final OHTTP authentication is truncated after SSE DONE', async () => {
     const provider = createDirectEndpoint();
     const endpoint = await createOhttpEndpoint({
       fetch: provider.fetch,
@@ -515,17 +515,17 @@ describe('DirectInferenceClient', () => {
     expect(sent.headers.get('x-model-pub-key')).toBe(endpoint.publicKey);
     expect(sent.headers.get('x-encryption-version')).toBe('2');
 
-    const receipt = await client.verifyResponse(response.id);
-    expect(receipt.signatureKind).toBe('provider_tee');
-    expect(receipt.attestations.map((item) => item.instanceId)).toEqual([
+    const result = await client.verifyResponse(response.id);
+    expect(result.signatureKind).toBe('provider_tee');
+    expect(result.attestations.map((item) => item.instanceId)).toEqual([
       'instance-0',
       'instance-1',
     ]);
     expect(
-      receipt.attestations.map((item) => item.deployment.appCompose),
+      result.attestations.map((item) => item.deployment.appCompose),
     ).toEqual(composes);
     expect(
-      receipt.attestations.every(
+      result.attestations.every(
         (item) => item.signer.signingAddress === endpoint.publicKey,
       ),
     ).toBe(true);
@@ -555,9 +555,9 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].body.messages[0].content).not.toBe(
       prompt,
     );
-    const receipt = await client.verifyResponse(id);
-    expect(receipt.completionId).toBe(id);
-    expect(receipt.attestations).toHaveLength(2);
+    const result = await client.verifyResponse(id);
+    expect(result.completionId).toBe(id);
+    expect(result.attestations).toHaveLength(2);
     expect(endpoint.state.signatureRequests).toBe(1);
   });
 
@@ -585,8 +585,8 @@ describe('DirectInferenceClient', () => {
     ).toBe('false');
     expect(createPinnedFetch).not.toHaveBeenCalled();
 
-    const receipt = await client.verifyResponse(response.id);
-    expect(receipt.attestations.map((item) => item.instanceId)).toEqual([
+    const result = await client.verifyResponse(response.id);
+    expect(result.attestations.map((item) => item.instanceId)).toEqual([
       'instance-0',
       'instance-1',
     ]);
@@ -627,8 +627,8 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].headers.has('x-client-pub-key')).toBe(
       false,
     );
-    const receipt = await client.verifyResponse(completion.id);
-    expect(receipt.attestations).toHaveLength(2);
+    const result = await client.verifyResponse(completion.id);
+    expect(result.attestations).toHaveLength(2);
   });
 
   test('sends no chat request when the second same-signer quote is rejected', async () => {

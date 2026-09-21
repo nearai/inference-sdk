@@ -70,14 +70,14 @@ async function main(): Promise<void> {
   // browser APIs do not expose the TLS peer certificate needed for this check.
   const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
 
-  // Non-streaming: decrypt and display the JSON response, then verify its receipt.
+  // Non-streaming: decrypt and display the JSON response, then verify its signature.
   // To display only verified output, defer rendering until verification succeeds.
   const nonStreamingCompletion = await runNonStreamingExample({
     apiKey,
     pinnedTlsFetch,
     modelKey,
   });
-  await verifyCompletionReceipt({
+  await verifyCompletionResponse({
     client,
     completion: nonStreamingCompletion,
     gateway,
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
     pinnedTlsFetch,
     modelKey,
   });
-  await verifyCompletionReceipt({
+  await verifyCompletionResponse({
     client,
     completion: streamingCompletion,
     gateway,
@@ -288,12 +288,12 @@ function createGatewayPinnedTlsFetch(
   return createPinnedTlsFetch(tlsBinding.spkiFingerprint);
 }
 
-async function verifyCompletionReceipt({
+async function verifyCompletionResponse({
   client,
   completion,
   gateway,
   model,
-}: VerifyCompletionReceiptParams): Promise<void> {
+}: VerifyCompletionResponseParams): Promise<void> {
   // Retrieve the signature after the full response has been received. The ID is
   // only used for lookup; verification binds the saved bytes to an attested signer.
   const signature = await client.fetchCompletionSignature({
@@ -309,7 +309,7 @@ async function verifyCompletionReceipt({
       signature,
       attestation: model,
     });
-    console.log(`${completion.label}: verified model response receipt.`);
+    console.log(`${completion.label}: verified model response signature.`);
   } else {
     // A Gateway signature authenticates the final bytes returned by the Gateway.
     // It does not prove model execution, even though model attestation passed above.
@@ -319,7 +319,7 @@ async function verifyCompletionReceipt({
       signature,
       attestation: gateway,
     });
-    console.log(`${completion.label}: verified Gateway response receipt.`);
+    console.log(`${completion.label}: verified Gateway response signature.`);
   }
 }
 
@@ -386,7 +386,7 @@ type ReadDecryptedCompletionParams = {
   readonly stream: boolean;
 };
 
-type VerifyCompletionReceiptParams = {
+type VerifyCompletionResponseParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;

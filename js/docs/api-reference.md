@@ -69,7 +69,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
-| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the evidence, model-key routing, receipt, and E2EE protocol. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
+| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `true` | Enables secure Chat field encryption for the selected algorithm. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and still supports response verification. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
@@ -95,9 +95,9 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, verifies it on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
-| `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionReceipt>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `VerifiedCompletionReceipt.completionId` | `string` | Completion ID whose signature was verified. |
-| `VerifiedCompletionReceipt.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence. |
+| `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionResult>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `VerifiedCompletionResult.completionId` | `string` | Completion ID whose signature was verified. |
+| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence. |
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
@@ -133,9 +133,9 @@ There is no `gatewayVerification` option.
 | `getBaseUrl()` | `string` | Resolved direct API base URL. |
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
-| `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionReceipt>` | Verifies retained bytes against the model signer selected for the request. |
+| `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
 
-| `VerifiedDirectCompletionReceipt` field | Type | Description |
+| `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
 | `completionId` | `string` | Verified completion ID. |
 | `signatureKind` | `'provider_tee'` | Direct responses use model signatures. |
