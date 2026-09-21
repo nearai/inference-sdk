@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from ..types.verification import (
+    GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
-    NvidiaEvidenceVerifier,
     VerifiedModelAttestation,
 )
 from ..types.attestation_model import ModelAttestation
@@ -45,11 +45,11 @@ async def verify_model_attestation(
     evidence = await verify_dstack_deployment(
         verified_quote, None if verifiers is None else verifiers.deployment
     )
-    gpu_evidence = await _verify_nvidia_evidence(
+    gpu_evidence = await _verify_gpu_evidence(
         payload=attestation.nvidia_payload,
         nonce=nonce,
         policy=policy,
-        verifier=None if verifiers is None else verifiers.nvidia,
+        verifier=None if verifiers is None else verifiers.gpu,
     )
     return VerifiedModelAttestation(
         signer=evidence.signer,
@@ -61,12 +61,12 @@ async def verify_model_attestation(
     )
 
 
-async def _verify_nvidia_evidence(
+async def _verify_gpu_evidence(
     *,
     payload: str | None,
     nonce: str,
     policy: ModelAttestationPolicy | None,
-    verifier: NvidiaEvidenceVerifier | None,
+    verifier: GpuEvidenceVerifier | None,
 ) -> str:
     requirement = 'if-present' if policy is None else policy.gpu_evidence
     if payload is None:

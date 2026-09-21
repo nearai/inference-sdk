@@ -35,7 +35,7 @@ verification is synchronous.
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
 | `create_dcap_quote_verifier` | `(pccs_url=...)` | `QuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
-| `create_nvidia_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `NvidiaEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
+| `create_gpu_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
@@ -289,10 +289,10 @@ the optional commit pin.
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
 | `AttestationVerifiers` | `quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
 |  | `deployment` | absent | Optional deployment-acceptance verifier. |
-| `ModelAttestationVerifiers` | `quote`, `deployment`, `nvidia` | built in / absent / built in | Optional quote, deployment, and NVIDIA verifier overrides. |
+| `ModelAttestationVerifiers` | `quote`, `deployment`, `gpu` | built in / absent / built in | Optional quote, deployment, and GPU verifier overrides. |
 | `QuoteVerifier` | `(quote: str) -> QuoteVerificationResult \| Awaitable[QuoteVerificationResult]` | — | Authenticates a quote and returns verified fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
-| `NvidiaEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
+| `GpuEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict.
@@ -300,13 +300,13 @@ timestamps, signed nonce, and boolean verdict.
 ### Built-in verifier factories
 
 Both factories are synchronous and return asynchronous verifier callbacks for
-the existing `verifiers.quote` and `verifiers.nvidia` fields. Their optional
+the existing `verifiers.quote` and `verifiers.gpu` fields. Their optional
 arguments are independent of `AttestationClient.base_url`.
 
 | Factory | Argument | Default |
 | --- | --- | --- |
 | `create_dcap_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
-| `create_nvidia_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 `pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral

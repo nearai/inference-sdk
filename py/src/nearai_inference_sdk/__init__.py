@@ -39,11 +39,11 @@ from .types.verification import (
     DeploymentVerifier,
     GatewayClientBinding,
     GatewayTlsBinding,
+    GpuEvidenceVerifier,
     MeasuredDeployment,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
-    NvidiaEvidenceVerifier,
     QuoteVerificationResult,
     QuoteVerifier,
     RuntimeMeasurements,
@@ -58,7 +58,7 @@ from .utils.errors import (
     VerificationFailure,
 )
 from .utils.intel import create_dcap_quote_verifier
-from .utils.nvidia import create_nvidia_evidence_verifier
+from .utils.nvidia import create_gpu_evidence_verifier
 
 
 __all__ = [
@@ -71,7 +71,7 @@ __all__ = [
     'verify_model_response',
     'verify_gateway_response',
     'create_dcap_quote_verifier',
-    'create_nvidia_evidence_verifier',
+    'create_gpu_evidence_verifier',
     'fetch_image_provenance',
     'verify_deployment_image_provenance',
     'verify_image_provenance',
@@ -95,7 +95,7 @@ __all__ = [
     'ModelAttestationVerifiers',
     'ModelClientBinding',
     'QuoteVerifier',
-    'NvidiaEvidenceVerifier',
+    'GpuEvidenceVerifier',
     'DeploymentVerifier',
     'QuoteVerificationResult',
     'RuntimeMeasurements',

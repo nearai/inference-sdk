@@ -14,7 +14,7 @@ from ..schemas import (
     _NrasResponseSchema,
     _NvidiaJwksSchema,
 )
-from ..types.verification import NvidiaEvidenceVerifier
+from ..types.verification import GpuEvidenceVerifier
 from .common import require_byte_length
 from .consts import NVIDIA_GPU_VERIFIER_API_URL
 from .errors import verification_failure
@@ -24,10 +24,10 @@ NVIDIA_ISSUER = 'https://nras.attestation.nvidia.com'
 NVIDIA_JWKS_URL = f'{NVIDIA_ISSUER}/.well-known/jwks.json'
 
 
-def create_nvidia_evidence_verifier(
+def create_gpu_evidence_verifier(
     nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
     jwks_url: str = NVIDIA_JWKS_URL,
-) -> NvidiaEvidenceVerifier:
+) -> GpuEvidenceVerifier:
     """Create the NVIDIA verifier with NRAS and signing-key URLs.
 
     The issuer remains NVIDIA. The JWKS endpoint supplies trusted signing keys;

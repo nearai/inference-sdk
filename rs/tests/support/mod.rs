@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use ed25519_dalek::Signer;
 use nearai_inference_sdk::{
     AttestationEventLog, AttestationEvidence, CompletionSignature, CompletionSignatureKind,
-    DeploymentProvenanceStatus, GatewayAttestation, GpuEvidenceStatus, ModelAttestation,
-    NvidiaEvidenceVerifier, QuoteVerificationResult, QuoteVerifier, SigningAlgo, SigningIdentity,
+    DeploymentProvenanceStatus, GatewayAttestation, GpuEvidenceStatus, GpuEvidenceVerifier,
+    ModelAttestation, QuoteVerificationResult, QuoteVerifier, SigningAlgo, SigningIdentity,
     TcbStatus, VerificationError, VerifiedAttestationEvidence, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
@@ -31,11 +31,11 @@ impl QuoteVerifier for FixtureQuoteVerifier {
     }
 }
 
-pub struct FixtureNvidiaVerifier;
+pub struct FixtureGpuVerifier;
 
 #[async_trait]
-impl NvidiaEvidenceVerifier for FixtureNvidiaVerifier {
-    async fn verify(&self, _nvidia_payload: &str) -> Result<(), VerificationError> {
+impl GpuEvidenceVerifier for FixtureGpuVerifier {
+    async fn verify(&self, _payload: &str) -> Result<(), VerificationError> {
         Ok(())
     }
 }

@@ -1,10 +1,10 @@
 use crate::attestation::{verify_dstack_deployment, verify_dstack_quote};
 use crate::bindings::{verify_report_data_binding, verify_reported_nonce};
 use crate::errors::VerificationError;
-use crate::nvidia::NrasNvidiaEvidenceVerifier;
+use crate::nvidia::NrasGpuEvidenceVerifier;
 use crate::types::{
-    AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, ModelAttestation,
-    ModelAttestationPolicy, ModelAttestationVerifiers, ModelClientBinding, NvidiaEvidenceVerifier,
+    AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, GpuEvidenceVerifier,
+    ModelAttestation, ModelAttestationPolicy, ModelAttestationVerifiers, ModelClientBinding,
     VerifiedModelAttestation,
 };
 use serde_json::Value;
@@ -36,13 +36,13 @@ pub async fn verify_model_attestation(
         &verified_quote.signer.signing_address,
     )?;
     let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
-    let gpu_evidence = verify_nvidia_evidence(
+    let gpu_evidence = verify_gpu_evidence(
         attestation.nvidia_payload.as_deref(),
         &client_binding.nonce,
         policy
             .map(|policy| policy.gpu_evidence)
             .unwrap_or(GpuEvidenceRequirement::IfPresent),
-        verifiers.nvidia,
+        verifiers.gpu,
     )
     .await?;
     Ok(VerifiedModelAttestation {
@@ -51,11 +51,11 @@ pub async fn verify_model_attestation(
     })
 }
 
-async fn verify_nvidia_evidence(
+async fn verify_gpu_evidence(
     payload: Option<&str>,
     nonce: &str,
     requirement: GpuEvidenceRequirement,
-    verifier: Option<&dyn NvidiaEvidenceVerifier>,
+    verifier: Option<&dyn GpuEvidenceVerifier>,
 ) -> Result<GpuEvidenceStatus, VerificationError> {
     let Some(payload) = payload else {
         return match requirement {
@@ -76,7 +76,7 @@ async fn verify_nvidia_evidence(
         })?;
     verify_reported_nonce(reported_nonce, nonce, "nvidia_payload")?;
 
-    let default_verifier = NrasNvidiaEvidenceVerifier::default();
+    let default_verifier = NrasGpuEvidenceVerifier::default();
     let verifier = verifier.unwrap_or(&default_verifier);
     verifier.verify(payload).await?;
     Ok(GpuEvidenceStatus::Verified)

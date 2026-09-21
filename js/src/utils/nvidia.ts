@@ -7,8 +7,8 @@ import {
   decodeNvidiaPayloadNonce,
 } from '../boundaries/nvidia';
 import type {
-  CreateNvidiaEvidenceVerifierParams,
-  NvidiaEvidenceVerifier,
+  CreateGpuEvidenceVerifierParams,
+  GpuEvidenceVerifier,
 } from '../types/verification';
 import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { isVerificationError, VerificationError } from './errors';
@@ -31,10 +31,10 @@ const NVIDIA_JWKS_URL = `${NVIDIA_ISSUER}/.well-known/jwks.json`;
  * trusted source of NVIDIA's public keys; it does not change the expected issuer.
  * Model verification separately binds that payload nonce to the client nonce.
  */
-export function createNvidiaEvidenceVerifier({
+export function createGpuEvidenceVerifier({
   nrasUrl = NVIDIA_GPU_VERIFIER_API_URL,
   jwksUrl = NVIDIA_JWKS_URL,
-}: CreateNvidiaEvidenceVerifierParams = {}): NvidiaEvidenceVerifier {
+}: CreateGpuEvidenceVerifierParams = {}): GpuEvidenceVerifier {
   return async (nvidiaPayload) =>
     nvidiaNrasVerifier({
       nvidiaPayload,

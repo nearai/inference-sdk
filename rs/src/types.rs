@@ -186,11 +186,11 @@ pub trait QuoteVerifier: Send + Sync {
         -> Result<QuoteVerificationResult, VerificationError>;
 }
 
-/// A caller-supplied NVIDIA evidence verifier. The default implementation
+/// A caller-supplied GPU evidence verifier. The default implementation
 /// delegates to NRAS over HTTPS.
 #[async_trait]
-pub trait NvidiaEvidenceVerifier: Send + Sync {
-    async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError>;
+pub trait GpuEvidenceVerifier: Send + Sync {
+    async fn verify(&self, payload: &str) -> Result<(), VerificationError>;
 }
 
 /// A caller-owned deployment-provenance verifier. It receives measurements
@@ -213,7 +213,7 @@ pub enum GpuEvidenceRequirement {
     /// Verify a supplied payload; accept a report that does not provide one.
     #[default]
     IfPresent,
-    /// Reject reports that do not provide NVIDIA evidence.
+    /// Reject reports that do not provide GPU evidence.
     Required,
 }
 
@@ -235,7 +235,7 @@ pub struct AttestationVerifiers<'a> {
 pub struct ModelAttestationVerifiers<'a> {
     pub quote: Option<&'a dyn QuoteVerifier>,
     pub deployment: Option<&'a dyn DeploymentVerifier>,
-    pub nvidia: Option<&'a dyn NvidiaEvidenceVerifier>,
+    pub gpu: Option<&'a dyn GpuEvidenceVerifier>,
 }
 
 /// Runtime measurements reconstructed from dstack's RTMR3 event log.

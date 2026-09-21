@@ -34,7 +34,7 @@ export type { Awaitable } from './types/shared';
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
 export { createDcapQuoteVerifier } from './utils/intel';
-export { createNvidiaEvidenceVerifier } from './utils/nvidia';
+export { createGpuEvidenceVerifier } from './utils/nvidia';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
 export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
@@ -65,17 +65,17 @@ export type {
   AttestationPolicy,
   AttestationVerifiers,
   CreateDcapQuoteVerifierParams,
-  CreateNvidiaEvidenceVerifierParams,
+  CreateGpuEvidenceVerifierParams,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayClientBinding,
   GatewayTlsBinding,
   GpuEvidenceStatus,
+  GpuEvidenceVerifier,
   MeasuredDeployment,
   ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
-  NvidiaEvidenceVerifier,
   QuoteVerifier,
   QuoteVerificationResult,
   RuntimeMeasurements,

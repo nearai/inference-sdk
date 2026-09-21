@@ -34,7 +34,7 @@ class QuoteVerificationResult:
 QuoteVerifier: TypeAlias = Callable[
     [str], Awaitable[QuoteVerificationResult] | QuoteVerificationResult
 ]
-NvidiaEvidenceVerifier: TypeAlias = Callable[[str], Awaitable[None] | None]
+GpuEvidenceVerifier: TypeAlias = Callable[[str], Awaitable[None] | None]
 DeploymentVerifier: TypeAlias = Callable[[MeasuredDeployment], Awaitable[None] | None]
 
 
@@ -56,7 +56,7 @@ class AttestationVerifiers:
 
 @dataclass(frozen=True, kw_only=True)
 class ModelAttestationVerifiers(AttestationVerifiers):
-    nvidia: NvidiaEvidenceVerifier | None = None
+    gpu: GpuEvidenceVerifier | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,7 +104,7 @@ __all__ = [
     'MeasuredDeployment',
     'QuoteVerificationResult',
     'QuoteVerifier',
-    'NvidiaEvidenceVerifier',
+    'GpuEvidenceVerifier',
     'DeploymentVerifier',
     'AttestationPolicy',
     'ModelAttestationPolicy',

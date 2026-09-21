@@ -1,5 +1,5 @@
 use crate::errors::VerificationError;
-use crate::types::NvidiaEvidenceVerifier;
+use crate::types::GpuEvidenceVerifier;
 use crate::util::{require_hex_length, NONCE_BYTES};
 use async_trait::async_trait;
 use jsonwebtoken::errors::ErrorKind;
@@ -22,19 +22,19 @@ const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
 /// Custom submission and JWKS URLs retain the required NVIDIA issuer. Use only
 /// a trusted JWKS proxy: its keys are used to authenticate the signed verdict.
 #[derive(Clone, Debug)]
-pub struct NrasNvidiaEvidenceVerifier {
+pub struct NrasGpuEvidenceVerifier {
     client: Client,
     url: String,
     jwks_url: String,
 }
 
-impl Default for NrasNvidiaEvidenceVerifier {
+impl Default for NrasGpuEvidenceVerifier {
     fn default() -> Self {
         Self::new(DEFAULT_NVIDIA_NRAS_URL)
     }
 }
 
-impl NrasNvidiaEvidenceVerifier {
+impl NrasGpuEvidenceVerifier {
     /// Submit evidence to this URL, using NVIDIA's official JWKS URL by default.
     pub fn new(url: impl Into<String>) -> Self {
         let client = Client::new();
@@ -62,7 +62,7 @@ impl NrasNvidiaEvidenceVerifier {
 }
 
 #[async_trait]
-impl NvidiaEvidenceVerifier for NrasNvidiaEvidenceVerifier {
+impl GpuEvidenceVerifier for NrasGpuEvidenceVerifier {
     async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError> {
         let raw: Value = serde_json::from_str(nvidia_payload).map_err(|_| {
             VerificationError::GpuPayloadInvalid {
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn uses_the_official_nras_endpoint_by_default() {
-        let verifier = NrasNvidiaEvidenceVerifier::default();
+        let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
             verifier.url,
             "https://nras.attestation.nvidia.com/v3/attest/gpu"
@@ -420,7 +420,7 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let verifier = NrasNvidiaEvidenceVerifier::with_client(
+            let verifier = NrasGpuEvidenceVerifier::with_client(
                 Client::builder().no_proxy().build().unwrap(),
                 format!("{}/proxy/attest", server.uri()),
             )
@@ -455,7 +455,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let verifier = NrasNvidiaEvidenceVerifier::new(format!("{}/proxy/nras", server.uri()));
+        let verifier = NrasGpuEvidenceVerifier::new(format!("{}/proxy/nras", server.uri()));
         let error = verifier.verify(&payload).await.unwrap_err();
 
         // A successful proxy HTTP response is not sufficient attestation evidence.
@@ -470,7 +470,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_payload_nonces_before_contacting_the_custom_endpoint() {
         let server = MockServer::start().await;
-        let verifier = NrasNvidiaEvidenceVerifier::new(server.uri());
+        let verifier = NrasGpuEvidenceVerifier::new(server.uri());
         for nonce in [
             "".to_owned(),
             "11".repeat(31),

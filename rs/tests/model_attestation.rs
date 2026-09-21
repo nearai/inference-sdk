@@ -3,12 +3,12 @@ mod support;
 use async_trait::async_trait;
 use nearai_inference_sdk::{
     verify_model_attestation, DeploymentProvenanceStatus, DeploymentVerifier,
-    GpuEvidenceRequirement, GpuEvidenceStatus, MeasuredDeployment, ModelAttestationPolicy,
-    ModelAttestationVerifiers, ModelClientBinding, NvidiaEvidenceVerifier, TcbStatus,
+    GpuEvidenceRequirement, GpuEvidenceStatus, GpuEvidenceVerifier, MeasuredDeployment,
+    ModelAttestationPolicy, ModelAttestationVerifiers, ModelClientBinding, TcbStatus,
     VerificationError,
 };
 use support::{
-    gateway_tls_quote, model_attestation, model_quote, FixtureNvidiaVerifier, FixtureQuoteVerifier,
+    gateway_tls_quote, model_attestation, model_quote, FixtureGpuVerifier, FixtureQuoteVerifier,
     APP_COMPOSE, NONCE,
 };
 
@@ -196,7 +196,7 @@ async fn enforces_required_gpu_policy() {
 #[tokio::test]
 async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
     let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
-    let nvidia = FixtureNvidiaVerifier;
+    let gpu = FixtureGpuVerifier;
     let payload = format!(r#"{{"nonce":"{NONCE}"}}"#);
     let attestation = model_attestation(Some(&payload));
     let client_binding = client_binding();
@@ -207,7 +207,7 @@ async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
-            nvidia: Some(&nvidia),
+            gpu: Some(&gpu),
             ..Default::default()
         },
     )
@@ -218,11 +218,11 @@ async fn verifies_supplied_gpu_evidence_with_a_custom_verifier() {
 }
 
 #[tokio::test]
-async fn checks_the_client_nonce_before_calling_a_custom_nvidia_verifier() {
-    struct UnreachableNvidiaVerifier;
+async fn checks_the_client_nonce_before_calling_a_custom_gpu_verifier() {
+    struct UnreachableGpuVerifier;
 
     #[async_trait]
-    impl NvidiaEvidenceVerifier for UnreachableNvidiaVerifier {
+    impl GpuEvidenceVerifier for UnreachableGpuVerifier {
         async fn verify(&self, _payload: &str) -> Result<(), VerificationError> {
             panic!("invalid payload nonces must be rejected before the override runs");
         }
@@ -237,7 +237,7 @@ async fn checks_the_client_nonce_before_calling_a_custom_nvidia_verifier() {
             None,
             ModelAttestationVerifiers {
                 quote: Some(&quote),
-                nvidia: Some(&UnreachableNvidiaVerifier),
+                gpu: Some(&UnreachableGpuVerifier),
                 ..Default::default()
             },
         )

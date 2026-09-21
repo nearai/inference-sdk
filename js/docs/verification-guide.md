@@ -77,14 +77,14 @@ POST. All three URLs can be overridden:
 ```ts
 import {
   createDcapQuoteVerifier,
-  createNvidiaEvidenceVerifier,
+  createGpuEvidenceVerifier,
   InferenceClient,
 } from '@nearai/inference-sdk';
 
 const quote = createDcapQuoteVerifier({
   pccsUrl: '/api/attestation/intel',
 });
-const nvidia = createNvidiaEvidenceVerifier({
+const gpu = createGpuEvidenceVerifier({
   nrasUrl: '/api/attestation/nvidia',
   jwksUrl: '/api/attestation/nvidia/jwks.json',
 });
@@ -95,7 +95,7 @@ const client = new InferenceClient({
     Authorization: 'Bearer <browser-scoped token>',
   },
   gatewayVerification: { verifiers: { quote } },
-  modelVerification: { verifiers: { quote, nvidia } },
+  modelVerification: { verifiers: { quote, gpu } },
 });
 ```
 

@@ -239,13 +239,13 @@ Gateway `reported_quote_data` is required.
 |  | `gpu_evidence: GpuEvidenceRequirement` | `IfPresent` | `IfPresent` verifies supplied GPU evidence and accepts an absent payload; `Required` rejects absent evidence. |
 | `AttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | TCB statuses accepted by verification. |
 | `AttestationVerifiers<'a>` | `quote`, `deployment` | `None` | Optional `QuoteVerifier` and `DeploymentVerifier` overrides. |
-| `ModelAttestationVerifiers<'a>` | `quote`, `deployment`, `nvidia` | `None` | Optional `QuoteVerifier`, `DeploymentVerifier`, and `NvidiaEvidenceVerifier` overrides. |
+| `ModelAttestationVerifiers<'a>` | `quote`, `deployment`, `gpu` | `None` | Optional `QuoteVerifier`, `DeploymentVerifier`, and `GpuEvidenceVerifier` overrides. |
 
 | Trait | Method | Contract |
 | --- | --- | --- |
 | `QuoteVerifier` | `async fn verify(&self, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | Authenticates a quote and returns verified quote fields. |
 | `DeploymentVerifier` | `async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError>` | Returns `Ok(())` only for a deployment the application accepts. |
-| `NvidiaEvidenceVerifier` | `async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError>` | Returns `Ok(())` only for GPU evidence the application accepts. |
+| `GpuEvidenceVerifier` | `async fn verify(&self, payload: &str) -> Result<(), VerificationError>` | Returns `Ok(())` only for GPU evidence the application accepts. |
 
 `TcbStatus` is one of `UpToDate`, `SwHardeningNeeded`, `ConfigurationNeeded`,
 `ConfigurationAndSwHardeningNeeded`, `OutOfDate`,
@@ -257,8 +257,8 @@ Gateway `reported_quote_data` is required.
 | --- | --- | --- |
 | `DcapQuoteVerifier` | `DcapQuoteVerifier::default()` or `DcapQuoteVerifier::new(pccs_url)` | Built-in Intel DCAP verifier. Pass a custom PCCS base URL when needed. |
 | `verify_dcap_quote` | `async fn verify_dcap_quote(pccs_url: &str, intel_quote: &str) -> Result<QuoteVerificationResult, VerificationError>` | One-off Intel DCAP verification using the supplied PCCS URL. |
-| `NrasNvidiaEvidenceVerifier` | `NrasNvidiaEvidenceVerifier::default()`, `NrasNvidiaEvidenceVerifier::new(url)`, or `NrasNvidiaEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
-| `NrasNvidiaEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
+| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
+| `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
 | `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
 | `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |

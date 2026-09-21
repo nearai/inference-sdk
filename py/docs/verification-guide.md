@@ -306,7 +306,7 @@ then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
 expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
 verdict must be `true`; detached per-device claims are not consumed. See
 [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
-Set `verifiers.nvidia` to use different trust roots or another verification
+Set `verifiers.gpu` to use different trust roots or another verification
 service. Every verifier callback must return only for evidence it accepts.
 
 ## Configure attestation service URLs
@@ -319,14 +319,14 @@ create verifier callbacks with the desired URLs:
 from nearai_inference_sdk import (
     ModelAttestationVerifiers,
     create_dcap_quote_verifier,
-    create_nvidia_evidence_verifier,
+    create_gpu_evidence_verifier,
 )
 
 verifiers = ModelAttestationVerifiers(
     quote=create_dcap_quote_verifier(
         pccs_url='https://attestation.example.com',
     ),
-    nvidia=create_nvidia_evidence_verifier(
+    gpu=create_gpu_evidence_verifier(
         nras_url='https://attestation.example.com/v3/attest/gpu',
         jwks_url='https://attestation.example.com/.well-known/jwks.json',
     ),

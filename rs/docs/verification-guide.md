@@ -180,7 +180,7 @@ GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
-quote, deployment, and—for models—NVIDIA evidence verifiers. A supplied
+quote, deployment, and—for models—GPU evidence verifiers. A supplied
 verifier must return `Ok` only for evidence it accepts. The built-in Intel
 verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier submits
 evidence to NRAS, then verifies the overall JWT's ES384 signature against NVIDIA's
@@ -200,7 +200,7 @@ with custom URLs and pass them through the existing verifier options:
 ```rust,no_run
 use nearai_inference_sdk::{
     verify_model_attestation, DcapQuoteVerifier, ModelAttestation,
-    ModelAttestationVerifiers, ModelClientBinding, NrasNvidiaEvidenceVerifier,
+    ModelAttestationVerifiers, ModelClientBinding, NrasGpuEvidenceVerifier,
     VerificationError, VerifiedModelAttestation,
 };
 
@@ -209,7 +209,7 @@ async fn verify_with_proxies(
     binding: &ModelClientBinding,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
     let quote = DcapQuoteVerifier::new("https://attestation.example.com/intel");
-    let nvidia = NrasNvidiaEvidenceVerifier::new(
+    let gpu = NrasGpuEvidenceVerifier::new(
         "https://attestation.example.com/nvidia/v3/attest/gpu",
     )
     .with_jwks_url("https://attestation.example.com/nvidia/.well-known/jwks.json");
@@ -219,7 +219,7 @@ async fn verify_with_proxies(
         None,
         ModelAttestationVerifiers {
             quote: Some(&quote),
-            nvidia: Some(&nvidia),
+            gpu: Some(&gpu),
             ..Default::default()
         },
     )
@@ -247,7 +247,7 @@ Use only a trusted JWKS proxy: its keys authenticate the signed verdict. The SDK
 still requires issuer `https://nras.attestation.nvidia.com`, an ES384 signature,
 valid timestamps, the matching signed nonce, and a true overall verdict.
 A malformed payload nonce is rejected before submission. Model verification also
-checks that nonce against the client challenge before calling any NVIDIA verifier,
+checks that nonce against the client challenge before calling any GPU verifier,
 including overrides.
 
 ## Verify an image's build provenance
