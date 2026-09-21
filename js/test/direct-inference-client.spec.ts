@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import {
   DirectInferenceClient,
   type DirectInferenceClientOptions,
-  type QuoteVerificationResult,
+  type TdxQuoteVerificationResult,
 } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import * as nodeTls from '../src/node/attestation-client';
@@ -78,7 +78,7 @@ function createDirectEndpoint({
         JSON.stringify({ services: { model: { image: 'model:other-key' } } }),
       ]
     : composes;
-  const quotes = new Map<string, QuoteVerificationResult>();
+  const quotes = new Map<string, TdxQuoteVerificationResult>();
   const signatures = new Map<string, Record<string, string>>();
   const state = {
     attestationRequests: 0,
@@ -254,7 +254,7 @@ function createDirectEndpoint({
   };
 
   jest.spyOn(globalThis, 'fetch').mockImplementation(fetch);
-  const quoteVerifier = (quoteId: string): QuoteVerificationResult => {
+  const tdxQuoteVerifier = (quoteId: string): TdxQuoteVerificationResult => {
     const quote = quotes.get(quoteId);
     if (quote === undefined) throw new Error('Unknown fixture quote');
     state.verifiedQuotes.push(quoteId);
@@ -262,7 +262,7 @@ function createDirectEndpoint({
   };
   const options: DirectInferenceClientOptions = {
     baseUrl,
-    modelVerification: { verifiers: { quote: quoteVerifier } },
+    modelVerification: { verifiers: { tdxQuote: tdxQuoteVerifier } },
   };
   return { state, options, publicKey, fetch };
 }
