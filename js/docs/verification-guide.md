@@ -4,6 +4,10 @@ Use `InferenceClient` for Chat Completions with deployment verification and E2EE
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
+These clients connect through the NEAR AI Cloud Gateway. For a model's own
+`*.completions.near.ai` endpoint, use the
+[direct clients](#use-a-direct-model-endpoint) instead.
+
 ## Send an E2EE chat completion
 
 `InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
@@ -41,8 +45,43 @@ const client = new InferenceClient({
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The client verifies all returned model attestations
-before selecting a key for that algorithm.
+and response signatures. The Gateway returns the complete serving model-
+attestation set for the requested model. The client verifies that set before
+selecting a key for the chosen algorithm.
+
+### Use OHTTP
+
+Set `ohttp: true` to encapsulate Chat requests and responses in OHTTP. Both
+`InferenceClient` and `DirectInferenceClient` support this option for ordinary
+and streaming completions:
+
+```ts
+const client = new InferenceClient({
+  apiKey: process.env.NEARAI_API_KEY!,
+  ohttp: true,
+});
+```
+
+OHTTP is disabled by default and requires `signingAlgo: 'ed25519'` (the default).
+The client verifies the advertised OHTTP key configuration against the attested
+Gateway signer, or the serving model signer for a direct endpoint. Missing or
+invalid OHTTP evidence prevents Chat from being sent. The authenticated
+configuration is cached with the deployment verification result.
+
+`e2ee` is independent and remains enabled by default. Through the Gateway,
+OHTTP protects the HTTP exchange to the Gateway, while E2EE encrypts supported
+Chat fields to the model. With a direct endpoint, both terminate at the model
+service. Set `e2ee: false` only when field encryption is not needed.
+
+Only Chat uses OHTTP; attestation and signature requests keep their normal HTTP
+paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
+Authorization and explicitly configured custom headers are also sent on this
+outer request so the endpoint can authenticate it. OHTTP does not hide these
+outer headers or the client's network address from the endpoint.
+
+Chat calls and `verifyResponse(id)` do not change. Response verification uses
+the inner request and response bodies, before E2EE decryption, not the OHTTP
+ciphertext. Node TLS pinning still checks the outer connection.
 
 ### Cache deployment verification
 
@@ -61,6 +100,10 @@ Reusable deployment checks can also be passed through
 `modelVerification.verifiers.deployment`. For models, this check runs before
 `deploymentPolicy`, which also receives the requested model name. If both are
 configured, both must pass.
+
+CPU and GPU checks run concurrently. Deployment callbacks run only after the
+CPU quote and deployment measurements have been verified. Checks for different
+model reports may also run concurrently.
 
 ## Connect through an application proxy
 
@@ -170,7 +213,8 @@ of the supported fields below. Other fields are forwarded unchanged.
 The client checks each encrypted field's authentication tag before decryption.
 Use `verifyResponse(id)` separately to verify the response's signing identity.
 
-URL query parameters, headers, and fields outside the table are not encrypted.
+Field-level E2EE does not encrypt URL query parameters, headers, or fields
+outside the table.
 Non-2xx responses follow the normal OpenAI error path.
 
 ### Stream an E2EE completion
@@ -284,7 +328,64 @@ precedence for evidence, Chat, and signature requests. Other per-request headers
 can override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
-## Verify manually
+## Use a direct model endpoint
+
+`DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
+It fetches and verifies the complete serving model-attestation set before
+sending Chat.
+E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
+just as for `InferenceClient`.
+
+```ts
+import { DirectInferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new DirectInferenceClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+```
+
+Use `client.chat.completions.create()`, `client.fetch`, and
+`client.verifyResponse(id)` as above. Direct endpoints may require different
+credentials from the Gateway and use separate fetch and verification APIs.
+
+The client selects a verified model key for routing and E2EE; response signatures
+must match that selected signer. Both entry points request
+`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
+currently disabled; standard HTTPS certificate validation still applies.
+
+### Verify direct evidence manually
+
+```ts
+import {
+  DirectAttestationClient,
+  verifyDirectModelAttestations,
+} from '@nearai/inference-sdk/node';
+
+const client = new DirectAttestationClient({
+  baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
+  apiKey: process.env.NEARAI_API_KEY,
+});
+const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
+const verified = await verifyDirectModelAttestations(fetched);
+```
+
+Send Chat with `fetch` and retain the exact request and response bytes.
+Then fetch its signature with `client.fetchCompletionSignature()` and pass the
+signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
+It returns all verified attestations sharing the response's signer.
+
+For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
+measurements, and available GPU evidence. `verifyDirectModelAttestations()`
+checks every entry. Reports fetched by `DirectAttestationClient` produce
+`tlsBinding.kind: 'none'`.
+
+The runnable [direct/client.ts](../../examples/example-js/direct/client.ts),
+[direct/client-openai-sdk.ts](../../examples/example-js/direct/client-openai-sdk.ts),
+and [direct/bare.ts](../../examples/example-js/direct/bare.ts) examples each
+include streaming and non-streaming calls. The bare example omits E2EE.
+
+## Verify Gateway requests manually
 
 The manual flow has distinct stages:
 
@@ -347,7 +448,7 @@ layout and is suitable for browsers. The `/node` `AttestationClient` observes
 only the peer for its Gateway-attestation request; it does not automatically
 apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
-receipt signature—must be pinned automatically.
+response signature—must be pinned automatically.
 
 ### Encrypt a raw Chat request
 
@@ -391,10 +492,10 @@ const prepared = await prepareE2eeChatRequest({
 const requestBytes = await prepared.request.clone().arrayBuffer();
 const requestBody = new Uint8Array(requestBytes);
 const encryptedResponse = await pinnedTlsFetch(prepared.request);
-const receiptResponse = encryptedResponse.clone();
+const verificationResponse = encryptedResponse.clone();
 const response = await prepared.decryptResponse(encryptedResponse);
 const [responseBytes, plaintext] = await Promise.all([
-  receiptResponse.arrayBuffer(),
+  verificationResponse.arrayBuffer(),
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
@@ -405,7 +506,7 @@ Pass the captured `requestBody` and `responseBody` to the response-signature
 functions below. With `stream: true`, `decryptResponse` returns a decrypted
 SSE `Response`; consume its body as events arrive while retaining the encrypted
 response clone for signature verification. HTTP error responses pass through
-unchanged. The [bare example](../../examples/example-js/bare.ts) demonstrates
+unchanged. The [bare example](../../examples/example-js/gateway/bare.ts) demonstrates
 both response modes without handling protocol keys or encryption headers.
 
 ### Optional image build provenance
@@ -445,8 +546,8 @@ have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/client.ts) and
-[bare example](../../examples/example-js/bare.ts), which require build provenance
+[client example](../../examples/example-js/gateway/client.ts) and
+[bare example](../../examples/example-js/gateway/bare.ts), which require build provenance
 for four Gateway images.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact
@@ -454,6 +555,25 @@ digests, and signed SLSA source. Each source commit must match the certificate's
 authenticated source SHA. Set `ref` or `commit` to restrict builds further.
 For individual digests or other configuration formats, use
 `fetchImageProvenance` and `verifyImageProvenance` directly.
+
+For a reusable signing workflow in another repository, set `signerIdentity` to
+its exact certificate SAN URI. Keep `repository`, `workflow`, `ref`, and `commit`
+pointing to the source and caller workflow:
+
+```ts
+const imagePolicy: ImageProvenancePolicy = {
+  repository: 'example/app',
+  workflow: '.github/workflows/release.yml',
+  ref: 'refs/heads/main',
+  signerIdentity:
+    'https://github.com/example/build-workflows/.github/workflows/build.yml@refs/tags/v1',
+};
+```
+
+The signer URI can use a ref or a full workflow commit SHA. Without this option,
+the signer must be the source workflow at the same ref. In both cases, the
+certificate's source repository, ref, and commit must match the signed source.
+Proofs are still fetched from the source repository, not the signer repository.
 
 One complete matching bundle is sufficient; other bundles for the digest may
 come from different builds. The helpers do not maintain an approved-image list,

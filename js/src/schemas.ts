@@ -123,6 +123,18 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
+export const OhttpAttestationSchema = objectSchema({
+  signing_algo: v.literal('ed25519'),
+  signing_key: v.string(),
+  key_config: v.string(),
+  signature: v.string(),
+});
+
+const OptionalOhttpAttestationSchema = v.pipe(
+  v.optional(v.nullable(OhttpAttestationSchema)),
+  v.transform((value) => value ?? undefined),
+);
+
 const CloudApiAttestationEntries = {
   request_nonce: v.string(),
   signing_algo: SigningAlgoSchema,
@@ -134,10 +146,37 @@ const CloudApiAttestationEntries = {
   report_data: OptionalCloudApiStringSchema,
 };
 
-export const CloudApiModelAttestationSchema = objectSchema({
+const CloudApiModelAttestationEntries = {
   ...CloudApiAttestationEntries,
   nvidia_payload: OptionalCloudApiStringSchema,
   signing_public_key: OptionalCloudApiStringSchema,
+};
+
+export const CloudApiModelAttestationSchema = objectSchema(
+  CloudApiModelAttestationEntries,
+);
+
+const DirectApiModelAttestationEntries = {
+  ...CloudApiModelAttestationEntries,
+  model_name: v.pipe(v.string(), v.minLength(1)),
+  info: objectSchema({
+    tcb_info: v.union([CloudApiTcbInfoSchema, CloudApiTcbInfoJsonSchema]),
+    instance_id: OptionalCloudApiStringSchema,
+  }),
+};
+
+export const DirectApiModelAttestationSchema = objectSchema(
+  DirectApiModelAttestationEntries,
+);
+
+export const DirectApiAttestationReportSchema = objectSchema({
+  ...DirectApiModelAttestationEntries,
+  all_attestations: v.pipe(
+    v.array(DirectApiModelAttestationSchema),
+    v.minLength(1),
+  ),
+  compose_manager_attestation: v.optional(v.unknown()),
+  ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 
 export const CloudApiGatewayAttestationSchema = objectSchema({
@@ -153,6 +192,7 @@ export const CloudApiModelAttestationResponseSchema = objectSchema({
 
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({
   gateway_attestation: CloudApiGatewayAttestationSchema,
+  ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 
 // This is the minimal external boundary for secure Chat Completions requests.
@@ -205,6 +245,19 @@ export const CloudApiCompletionSignatureResponseSchema = objectSchema({
 
 export const CloudApiCompletionSignatureResultSchema = v.union([
   CloudApiCompletionSignatureResponseSchema,
+  CloudApiUnavailableSignatureResponseSchema,
+]);
+
+export const DirectApiCompletionSignatureResultSchema = v.union([
+  objectSchema({
+    text: v.string(),
+    signature: v.string(),
+    signing_address: v.string(),
+    signing_algo: SigningAlgoSchema,
+    // Direct provider signatures do not carry a kind discriminator. An
+    // explicit Gateway discriminator must not be silently reinterpreted.
+    signature_kind: v.optional(v.literal('provider_tee')),
+  }),
   CloudApiUnavailableSignatureResponseSchema,
 ]);
 

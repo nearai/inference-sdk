@@ -1,6 +1,6 @@
 import type {
   GpuEvidenceStatus,
-  ModelAttestationPolicy,
+  DeploymentVerifier,
   GpuEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
@@ -9,6 +9,7 @@ import { Buffer } from 'buffer';
 import { computeAddress } from 'ethers';
 import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
+import type { ModelAttestation } from '../types/attestation-model';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { createGpuEvidenceVerifier } from '../utils/nvidia';
@@ -20,20 +21,33 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
+import type { VerifiedDstackQuote } from './dstack-attestation';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
  * and the model signing identity but does not claim a client-to-model TLS
  * binding; the client's TLS connection terminates at the gateway.
  */
-export async function verifyModelAttestation({
+export async function verifyModelAttestation(
+  params: VerifyModelAttestationParams,
+): Promise<VerifiedModelAttestation> {
+  // CPU and GPU evidence bind independently to the same client nonce.
+  const [deployment, gpuEvidence] = await Promise.all([
+    verifyModelCpuAttestation(params),
+    verifyModelGpuEvidence(params),
+  ]);
+  return { ...deployment, gpuEvidence };
+}
+
+type VerifiedModelDeployment = Omit<VerifiedModelAttestation, 'gpuEvidence'>;
+
+async function verifyModelCpuAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
-}: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
+}: VerifyModelAttestationParams): Promise<VerifiedModelDeployment> {
   const { nonce } = clientBinding;
-  const gpuEvidenceRequirement = getGpuEvidenceRequirement(policy);
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce,
@@ -46,16 +60,29 @@ export async function verifyModelAttestation({
     nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
   });
+  return verifyModelDeployment({
+    attestation,
+    verifiedQuote,
+    deploymentVerifier: verifiers?.deployment,
+  });
+}
+
+type VerifyModelDeploymentParams = {
+  attestation: ModelAttestation;
+  verifiedQuote: VerifiedDstackQuote;
+  deploymentVerifier?: DeploymentVerifier;
+};
+
+/** Shared model checks after the endpoint-specific report-data binding passes. */
+export async function verifyModelDeployment({
+  attestation,
+  verifiedQuote,
+  deploymentVerifier,
+}: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
-    verifiers?.deployment,
+    deploymentVerifier,
   );
-  const gpuEvidence = await verifyGpuEvidence({
-    payload: attestation.nvidiaPayload,
-    nonce,
-    requirement: gpuEvidenceRequirement,
-    verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
-  });
 
   const signingPublicKey = verifySigningPublicKey({
     attestation,
@@ -65,9 +92,23 @@ export async function verifyModelAttestation({
 
   return {
     ...evidence,
-    gpuEvidence,
     ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
   };
+}
+
+/** GPU verification is independent of the model's CPU quote and deployment. */
+export function verifyModelGpuEvidence({
+  attestation,
+  clientBinding: { nonce },
+  policy,
+  verifiers,
+}: VerifyModelAttestationParams): Promise<GpuEvidenceStatus> {
+  return verifyGpuEvidence({
+    payload: attestation.nvidiaPayload,
+    nonce,
+    requirement: policy?.gpuEvidence ?? 'if-present',
+    verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
+  });
 }
 
 type VerifySigningPublicKeyParams = {
@@ -175,10 +216,4 @@ async function verifyGpuEvidence(
     );
   }
   return 'verified';
-}
-
-function getGpuEvidenceRequirement(
-  policy: ModelAttestationPolicy | undefined,
-): 'if-present' | 'required' {
-  return policy?.gpuEvidence ?? 'if-present';
 }

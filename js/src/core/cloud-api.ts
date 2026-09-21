@@ -86,7 +86,7 @@ export type CloudApiRequestConfiguration = {
 
 /** Read the static headers used for every SDK request. */
 export function createCloudApiRequestConfiguration(
-  options: AttestationClientOptions,
+  options: Pick<AttestationClientOptions, 'apiKey' | 'headers'>,
 ): CloudApiRequestConfiguration {
   try {
     return {
@@ -380,7 +380,7 @@ export class AttestationClient extends CloudApiClient {
   }
 }
 
-async function readCloudApiJson({
+export async function readCloudApiJson({
   response,
   resource,
 }: ReadCloudApiJsonParams): Promise<unknown> {
@@ -481,7 +481,7 @@ function requireProviderSignature(
   return signature.signer;
 }
 
-function validateApiSigningAddress({
+export function validateApiSigningAddress({
   signingAddress,
   signingAlgo,
   field,
@@ -574,7 +574,7 @@ type RequireMatchingApiNonceParams = {
 };
 
 /** Reject a response that does not echo the nonce sent in its request. */
-function requireMatchingApiNonce({
+export function requireMatchingApiNonce({
   reportedNonce,
   requestedNonce,
   resource,

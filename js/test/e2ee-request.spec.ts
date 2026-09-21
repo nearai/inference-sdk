@@ -1,4 +1,4 @@
-import { prepareE2eeChatRequest } from '../src';
+import { prepareE2eeChatRequest, VerificationError } from '../src';
 import { NO_ALIASING_HEADER } from '../src/core/cloud-api';
 import {
   createE2eeClientKeyPair,
@@ -285,6 +285,24 @@ describe.each(['ed25519', 'ecdsa'] as const)(
     });
   },
 );
+
+test('preserves OHTTP authentication failures while reading encrypted JSON', async () => {
+  const { modelKey } = createModelKeys();
+  const prepared = await prepareE2eeChatRequest({
+    request: chatRequest(),
+    modelKey,
+  });
+  const failure = new VerificationError({ code: 'ohttp.decryption_failed' });
+  const response = new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.error(failure);
+      },
+    }),
+    { headers: { 'content-type': 'application/json' } },
+  );
+  await expect(prepared.decryptResponse(response)).rejects.toBe(failure);
+});
 
 test('passes unsuccessful HTTP responses through without consuming them', async () => {
   const { modelKey } = createModelKeys();
