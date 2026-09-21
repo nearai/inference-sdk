@@ -7,8 +7,10 @@ import {
   verifyModelAttestation,
 } from '../src';
 import type { MeasuredDeployment, TdxQuoteVerifier } from '../src';
+import type { VerifiedTdxQuote } from '../src/types/verification';
 import {
   appCompose,
+  createDeferred,
   createModelAttestation,
   createModelQuote,
   nonce,
@@ -432,6 +434,9 @@ describe('model attestation verification', () => {
   });
 
   test('rejects NVIDIA evidence without a nonce', async () => {
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('Unexpected GPU network request'));
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({ nvidiaPayload: '{}' }),
@@ -444,6 +449,7 @@ describe('model attestation verification', () => {
         details: { reason: 'nonce_missing' },
       },
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('models GPU evidence as an explicit status', async () => {
@@ -471,6 +477,50 @@ describe('model attestation verification', () => {
     expect(result.gpuEvidence).toBe('verified');
   });
 
+  test.each(['CPU', 'GPU'] as const)(
+    'starts CPU and GPU verification together and requires both when %s finishes first',
+    async (first) => {
+      const cpu = createDeferred<VerifiedTdxQuote>();
+      const gpu = createDeferred<void>();
+      const deploymentChecked = createDeferred<void>();
+      const tdxQuote = jest.fn(() => cpu.promise);
+      const gpuEvidence = jest.fn(() => gpu.promise);
+      const deployment = jest.fn(() => deploymentChecked.resolve());
+      const verification = verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        clientBinding: { nonce },
+        verifiers: { tdxQuote, deployment, gpuEvidence },
+      });
+
+      expect(tdxQuote).toHaveBeenCalledTimes(1);
+      expect(gpuEvidence).toHaveBeenCalledTimes(1);
+      expect(deployment).not.toHaveBeenCalled();
+
+      const rejection = expect(verification).rejects.toMatchObject({
+        failure: {
+          code:
+            first === 'CPU'
+              ? 'gpu.attestation_rejected'
+              : 'quote.verification_failed',
+        },
+      });
+      if (first === 'CPU') {
+        cpu.resolve(createModelQuote());
+        await deploymentChecked.promise;
+        gpu.reject(new Error('GPU evidence rejected'));
+      } else {
+        gpu.resolve();
+        await gpu.promise;
+        cpu.reject(new Error('CPU evidence rejected'));
+      }
+
+      await rejection;
+      expect(deployment).toHaveBeenCalledTimes(first === 'CPU' ? 1 : 0);
+    },
+  );
+
   test('normalizes NVIDIA verifier failures', async () => {
     await expect(
       verifyModelAttestation({
@@ -493,25 +543,39 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('verifies NVIDIA evidence through NRAS by default', async () => {
-    mockNrasOverallResult(true);
-
-    const result = await verifyModelAttestation({
+  test('fetches NRAS evidence and JWKS concurrently before verifying the GPU', async () => {
+    const nras = createDeferred<Response>();
+    const jwks = createDeferred<Response>();
+    const nvidiaPayload = JSON.stringify({ nonce });
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation((url) =>
+        String(url).endsWith('/.well-known/jwks.json')
+          ? jwks.promise
+          : nras.promise,
+      );
+    const verification = verifyModelAttestation({
       attestation: createModelAttestation({
-        nvidiaPayload: JSON.stringify({ nonce }),
+        nvidiaPayload,
       }),
       clientBinding: { nonce },
       verifiers: { tdxQuote: tdxQuoteVerifier },
     });
 
-    expect(result.gpuEvidence).toBe('verified');
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://nras.attestation.nvidia.com/v3/attest/gpu',
-      expect.objectContaining({ method: 'POST' }),
-    );
-    expect(globalThis.fetch).toHaveBeenCalledWith(
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith(
       'https://nras.attestation.nvidia.com/.well-known/jwks.json',
     );
+    expect(fetch).toHaveBeenCalledWith(
+      'https://nras.attestation.nvidia.com/v3/attest/gpu',
+      expect.objectContaining({ method: 'POST', body: nvidiaPayload }),
+    );
+    jwks.resolve(new Response(JSON.stringify(NRAS_JWKS)));
+    nras.resolve(
+      new Response(JSON.stringify([['JWT', createNrasJwt(nrasClaims())]])),
+    );
+    const result = await verification;
+    expect(result.gpuEvidence).toBe('verified');
   });
 
   test('verifies NVIDIA evidence through configured NRAS and JWKS proxies', async () => {
@@ -609,11 +673,7 @@ describe('model attestation verification', () => {
   });
 
   test('rejects an NRAS response without a JWT envelope', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify([['TOKEN', 'not-a-jwt']]), { status: 200 }),
-      );
+    mockNrasResponse([['TOKEN', 'not-a-jwt']]);
 
     await expect(
       verifyModelAttestation({

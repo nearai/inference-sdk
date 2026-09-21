@@ -10,19 +10,37 @@ import {
   verifyReportDataBinding,
   verifyReportDataBindingWithTlsFingerprint,
 } from './attestation-common';
-import { verifyModelDeployment } from './attestation-model';
+import {
+  verifyModelDeployment,
+  verifyModelGpuEvidence,
+} from './attestation-model';
 import { verifyDstackQuote } from './dstack-attestation';
 
 /**
  * Verify one direct model attestation. Its optional fingerprint is authenticated by
  * the quote, without claiming a connection to that individual instance.
  */
-export async function verifyDirectModelAttestation({
+export async function verifyDirectModelAttestation(
+  params: VerifyDirectModelAttestationParams,
+): Promise<VerifiedDirectModelAttestation> {
+  const [deployment, gpuEvidence] = await Promise.all([
+    verifyDirectModelCpuAttestation(params),
+    verifyModelGpuEvidence(params),
+  ]);
+  return { ...deployment, gpuEvidence };
+}
+
+type VerifiedDirectModelDeployment = Omit<
+  VerifiedDirectModelAttestation,
+  'gpuEvidence'
+>;
+
+async function verifyDirectModelCpuAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
-}: VerifyDirectModelAttestationParams): Promise<VerifiedDirectModelAttestation> {
+}: VerifyDirectModelAttestationParams): Promise<VerifiedDirectModelDeployment> {
   const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
     attestation,
@@ -49,9 +67,7 @@ export async function verifyDirectModelAttestation({
   const verified = await verifyModelDeployment({
     attestation,
     verifiedQuote,
-    nonce,
-    policy,
-    verifiers,
+    deploymentVerifier: verifiers?.deployment,
   });
   return {
     ...verified,
@@ -79,20 +95,18 @@ export async function verifyDirectModelAttestations({
   if (suppliedAttestations.length === 0) {
     throw new VerificationError({ code: 'policy.model_attestation_required' });
   }
-  const attestations: VerifiedDirectModelAttestation[] = [];
-  let verifiedServingAttestation: VerifiedDirectModelAttestation | undefined;
-  for (const attestation of suppliedAttestations) {
-    const verified = await verifyDirectModelAttestation({
-      attestation,
-      clientBinding,
-      policy,
-      verifiers,
-    });
-    attestations.push(verified);
-    if (attestation === servingAttestation) {
-      verifiedServingAttestation = verified;
-    }
-  }
+  const attestations = await Promise.all(
+    suppliedAttestations.map((attestation) =>
+      verifyDirectModelAttestation({
+        attestation,
+        clientBinding,
+        policy,
+        verifiers,
+      }),
+    ),
+  );
+  const verifiedServingAttestation =
+    attestations[suppliedAttestations.indexOf(servingAttestation)];
 
   if (verifiedServingAttestation === undefined) {
     throw new VerificationError({

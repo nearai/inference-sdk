@@ -9,6 +9,7 @@ import {
   SigstoreVerifier,
   TrustedRootProvider,
 } from '@freedomofpress/sigstore-browser';
+import type { TrustedRoot } from '@freedomofpress/sigstore-browser';
 import {
   GitHubImageAttestationsSchema,
   ImageProvenanceBundleSchema,
@@ -28,6 +29,15 @@ const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
 // TUF authenticates root updates. In-memory caching works in both Node and
 // browsers, without requiring IndexedDB or sharing application credentials.
 const trustedRootProvider = new TrustedRootProvider({ disableCache: true });
+let trustedRootRequest: Promise<TrustedRoot> | undefined;
+
+function getTrustedRoot(): Promise<TrustedRoot> {
+  // Share concurrent refreshes, leaving expiry and completed caching to TUF.
+  trustedRootRequest ??= trustedRootProvider.getTrustedRoot().finally(() => {
+    trustedRootRequest = undefined;
+  });
+  return trustedRootRequest;
+}
 
 /** Fetch all inline Sigstore bundles published for a repository's image digest. */
 export async function fetchImageProvenance({
@@ -185,7 +195,8 @@ export async function verifyImageProvenance({
 
   const verifier = new SigstoreVerifier();
   try {
-    await verifier.loadSigstoreRootWithTUF(trustedRootProvider);
+    const trustedRoot = await getTrustedRoot();
+    await verifier.loadSigstoreRoot(trustedRoot);
   } catch (cause) {
     throw imageFailure({
       digest: normalizedDigest,

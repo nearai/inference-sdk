@@ -67,6 +67,10 @@ Reusable deployment checks can also be passed through
 `deploymentPolicy`, which also receives the requested model name. If both are
 configured, both must pass.
 
+CPU and GPU checks run concurrently. Deployment callbacks run only after the
+CPU quote and deployment measurements have been verified. Checks for different
+model reports may also run concurrently.
+
 ## Connect through an application proxy
 
 A proxy lets your backend keep the NEAR AI API key while users' devices verify
