@@ -213,7 +213,14 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     source = httpx.Response(
         201,
         content=gzip.compress(json.dumps(body).encode()),
-        headers={'content-encoding': 'gzip', 'x-result': 'preserved'},
+        headers={
+            'Content-Encoding': 'gzip',
+            'Content-MD5': 'stale',
+            'Digest': 'sha-256=stale',
+            'Content-Digest': 'sha-256=:stale:',
+            'Repr-Digest': 'sha-256=:stale:',
+            'x-result': 'preserved',
+        },
         extensions={'http_version': b'HTTP/2'},
         request=prepared.request,
     )
@@ -233,7 +240,15 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     assert decrypted['usage'] == body['usage']
     assert response.status_code == 201
     assert response.headers['x-result'] == 'preserved'
-    assert 'content-encoding' not in response.headers
+    assert response.headers['content-length'] == str(len(response.content))
+    for name in (
+        'content-encoding',
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
+    ):
+        assert name not in response.headers
     assert response.extensions == source.extensions
     assert response.request is prepared.request
 
@@ -262,9 +277,26 @@ async def test_decrypts_multiline_sse_across_split_bytes(
     source = ByteStream((prefix + data + separator + suffix).encode())
     response = await prepared.decrypt_response(
         httpx.Response(
-            200, stream=source, headers={'content-type': 'text/event-stream'}
+            200,
+            stream=source,
+            headers={
+                'content-type': 'text/event-stream',
+                'Content-Length': str(len(source.content)),
+                'Content-MD5': 'stale',
+                'Digest': 'sha-256=stale',
+                'Content-Digest': 'sha-256=:stale:',
+                'Repr-Digest': 'sha-256=:stale:',
+            },
         )
     )
+    for name in (
+        'content-length',
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
+    ):
+        assert name not in response.headers
     text = (await response.aread()).decode()
     assert text.startswith(prefix)
     assert text.endswith(suffix)

@@ -130,10 +130,10 @@ async def _decrypt_response(
     if not response.is_success:
         return response
     headers = httpx.Headers(response.headers)
-    # httpx yields decompressed source bytes. Do not decode the transformed
-    # response again or retain its now-incorrect wire content length.
-    headers.pop('content-length', None)
-    headers.pop('content-encoding', None)
+    # Decryption invalidates the wire length and digests. HTTPX already
+    # decompresses source bytes, so the transformed body must not be decoded again.
+    for name in _REPLACED_BODY_HEADERS:
+        headers.pop(name, None)
     try:
         request = response.request
     except RuntimeError:
