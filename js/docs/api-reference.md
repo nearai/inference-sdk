@@ -429,6 +429,7 @@ Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
 artifact digest and signed source. The statement's source commit must match the
 certificate's authenticated source SHA, even when `policy.commit` is omitted.
+The source repository and ref must also match the certificate's source claims.
 No deployment allowlist is provided.
 Rekor entries must use the `dsse` format; legacy `intoto` entries are not supported.
 
@@ -440,20 +441,21 @@ Rekor entries must use the `dsse` format; legacy `intoto` entries are not suppor
 
 | `ImageProvenancePolicy` field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `repository` | `string` | Yes | — | Expected source and workflow repository, `owner/repo`. |
-| `workflow` | `string` | Yes | — | Expected workflow path, such as `.github/workflows/build.yml`. |
-| `ref` | `string` | No | Any matching workflow ref | Restricts the build to one full Git ref, such as `refs/heads/main`. |
+| `repository` | `string` | Yes | — | Expected source/caller repository, `owner/repo`; also used to fetch its attestations. |
+| `workflow` | `string` | Yes | — | Caller workflow path within the source repository, such as `.github/workflows/build.yml`. |
+| `ref` | `string` | No | Any matching source ref | Restricts the source to one full Git ref, such as `refs/heads/main`. |
 | `commit` | `string` | No | Any matching source commit | Restricts the signed source to one full, 40-character Git commit. |
+| `signerIdentity` | `string` | No | Source workflow at its authenticated source ref | Exact certificate SAN URI of a reusable signing workflow, including its ref or SHA. Does not change the source policy or fetch repository. |
 | `issuer` | `string` | No | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
 
 | `VerifiedImageProvenance` field | Type | Description |
 | --- | --- | --- |
 | `digest` | `string` | Verified image manifest digest, normalized to lowercase. |
-| `repository` | `string` | Matched source and workflow repository. |
-| `workflow` | `string` | Matched workflow path. |
-| `ref` | `string` | Git ref shared by the certificate identity and signed source. |
+| `repository` | `string` | Matched source/caller repository. |
+| `workflow` | `string` | Matched caller workflow path. |
+| `ref` | `string` | Source Git ref matched between the certificate's source claims and the signed statement. Independent of a reusable signing workflow's ref. |
 | `commit` | `string` | Source commit matched against the verified certificate, normalized to lowercase. |
-| `certificateIdentity` | `string` | Verified certificate's workflow URI. |
+| `certificateIdentity` | `string` | Verified certificate's signing-workflow SAN URI. |
 | `issuer` | `string` | Verified OIDC issuer. |
 | `predicateType` | `string` | Verified statement's SLSA predicate version. |
 

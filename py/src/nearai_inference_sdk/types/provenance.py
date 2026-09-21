@@ -5,13 +5,18 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, kw_only=True)
 class ImageProvenancePolicy:
-    """The GitHub build identity to trust, optionally pinned to a ref or commit."""
+    """Expected source repository and workflow, optionally pinned to a ref or commit.
+
+    ``signer_identity`` selects an exact certificate identity when a reusable
+    workflow signs the build. It does not replace the source constraints.
+    """
 
     repository: str
     workflow: str
     ref: str | None = None
     commit: str | None = None
     issuer: str = 'https://token.actions.githubusercontent.com'
+    signer_identity: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

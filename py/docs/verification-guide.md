@@ -165,6 +165,25 @@ verified_gateway = await verify_gateway_attestation(
 )
 ```
 
+For a reusable signing workflow, keep `repository`, `workflow`, `ref`, and
+`commit` pointed at the source build. Set `signer_identity` to the exact reusable
+workflow identity, for example:
+
+```python
+policy = ImageProvenancePolicy(
+    repository='example/gateway',
+    workflow='.github/workflows/build.yml',
+    ref='refs/heads/main',
+    signer_identity=(
+        'https://github.com/example/build-workflows/'
+        '.github/workflows/sign.yml@refs/tags/v1'
+    ),
+)
+```
+
+The certificate's source repository, ref, and commit must still match the signed
+build provenance.
+
 The helpers are asynchronous. The deployment helper reports selection, request,
 and verification failures as `VerificationError`; wrapped request failures retain
 their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
