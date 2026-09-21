@@ -24,15 +24,24 @@ pub async fn verify_deployment_image_provenance(
 
 /// Verify deployment image provenance with reusable-workflow signer identities.
 ///
-/// `image_signer_identities` is keyed by the same container image repositories
-/// as `image_policies`; each value is an exact certificate SAN URI. Entries
-/// absent from this map use the source workflow as their signer.
+/// `image_signer_identities` must use exact keys from `image_policies`; each
+/// value is an exact certificate SAN URI. Unknown keys are rejected before
+/// fetching provenance. Policies absent from this map use the source workflow
+/// as their signer.
 pub async fn verify_deployment_image_provenance_with_signer_identities(
     app_compose: &str,
     image_policies: &BTreeMap<String, ImageProvenancePolicy>,
     image_signer_identities: &BTreeMap<String, String>,
     github_token: Option<&str>,
 ) -> Result<(), VerificationError> {
+    for repository in image_signer_identities.keys() {
+        if !image_policies.contains_key(repository) {
+            return Err(VerificationError::InvalidInput {
+                field: "image_signer_identities".to_owned(),
+                reason: format!("{repository:?} must be an exact key from image_policies"),
+            });
+        }
+    }
     verify_deployment_image_provenance_inner(
         app_compose,
         image_policies,
@@ -307,6 +316,34 @@ mod tests {
                 reason: Reason::UnresolvedImage, service: Some(service), ..
             }) if service == "other"
         ));
+    }
+
+    #[tokio::test]
+    async fn rejects_unmatched_signer_keys_before_fetch() {
+        let mut policies = policies();
+        // A fetch would fail locally, so this also checks validation happens first.
+        policies.get_mut("example/app").unwrap().repository = "invalid".to_owned();
+        let app = app_compose(&format!(
+            "services:\n  app:\n    image: example/app@{DIGEST}\n"
+        ));
+
+        for key in ["example/ap", "docker.io/example/app"] {
+            let identities = BTreeMap::from([(key.to_owned(), "signer".to_owned())]);
+            let error = verify_deployment_image_provenance_with_signer_identities(
+                &app,
+                &policies,
+                &identities,
+                None,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(
+                error,
+                VerificationError::InvalidInput { field, reason }
+                    if field == "image_signer_identities" && reason.contains(key)
+            ));
+        }
     }
 
     #[tokio::test]
