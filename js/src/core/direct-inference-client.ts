@@ -52,21 +52,25 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       policy: this.directOptions.modelVerification?.policy,
       verifiers: this.getModelVerifiers(model),
     });
+    const servingSigner = verifiedModelAttestations.servingAttestation.signer;
     const ohttpKeyConfig = this.getOhttpKeyConfig(
       fetched.ohttpAttestation,
-      verifiedModelAttestations.servingAttestation.signer,
+      servingSigner,
     );
     // Every attestation is verified before choosing an encryption key. Entries
     // sharing a key may still have different deployment measurements.
-    // The top-level OHTTP key belongs to the serving report. Use that signer
-    // for field encryption, routing and receipts when OHTTP is enabled.
-    const modelAttestation = this.ohttpEnabled
-      ? verifiedModelAttestations.servingAttestation
-      : verifiedModelAttestations.attestations.find(
-          (candidate) =>
-            candidate.signer.signingAlgo === this.signingAlgo &&
-            candidate.signingPublicKey !== undefined,
-        );
+    // The top-level OHTTP key belongs to the serving signer. Its public key
+    // may come from any verified report sharing that exact signing identity.
+    const modelAttestation = verifiedModelAttestations.attestations.find(
+      (candidate) =>
+        candidate.signer.signingAlgo === this.signingAlgo &&
+        candidate.signingPublicKey !== undefined &&
+        (!this.ohttpEnabled ||
+          (candidate.signer.signingAlgo === servingSigner.signingAlgo &&
+            hexToBuffer(candidate.signer.signingAddress).equals(
+              hexToBuffer(servingSigner.signingAddress),
+            ))),
+    );
     if (modelAttestation?.signingPublicKey === undefined) {
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }

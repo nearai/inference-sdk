@@ -30,6 +30,7 @@ type CreateDirectEndpointParams = {
   readonly wrongSignatureKey?: boolean;
   readonly additionalSigner?: boolean;
   readonly otherSignerFirst?: boolean;
+  readonly omitPublicKeyFor?: readonly number[];
 };
 
 type CreateAttestationParams = {
@@ -68,6 +69,7 @@ function createDirectEndpoint({
   wrongSignatureKey = false,
   additionalSigner = false,
   otherSignerFirst = false,
+  omitPublicKeyFor = [],
 }: CreateDirectEndpointParams = {}) {
   const keyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7));
   const otherKeyPair = nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 8));
@@ -126,7 +128,9 @@ function createDirectEndpoint({
       request_nonce: nonce,
       signing_algo: 'ed25519',
       signing_address: attestedPublicKey,
-      signing_public_key: attestedPublicKey,
+      ...(omitPublicKeyFor.includes(index)
+        ? {}
+        : { signing_public_key: attestedPublicKey }),
       ...(includeSpkiFingerprint
         ? { tls_cert_fingerprint: spkiFingerprints[index] }
         : {}),
@@ -350,6 +354,66 @@ describe('DirectInferenceClient', () => {
       }
     },
   );
+
+  test.each([true, false])(
+    'uses another verified report of the serving signer when its public key is omitted and E2EE is %s',
+    async (e2ee) => {
+      const provider = createDirectEndpoint({
+        otherSignerFirst: true,
+        omitPublicKeyFor: [0],
+      });
+      const endpoint = await createOhttpEndpoint({
+        fetch: provider.fetch,
+        signingKey: nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7)),
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(endpoint.fetch);
+      const client = new DirectInferenceClient({
+        ...provider.options,
+        ohttp: true,
+        signingAlgo: 'ed25519',
+        e2ee,
+      });
+      const completion = await client.chat.completions.create({
+        model,
+        messages,
+      });
+      expect(completion.choices[0].message.content).toBe(answer);
+      expect(provider.state.decryptedPrompts).toEqual([prompt]);
+      expect(provider.state.requests[0].headers.get('x-model-pub-key')).toBe(
+        provider.publicKey,
+      );
+      const receipt = await client.verifyResponse(completion.id);
+      expect(receipt.attestations.map(({ instanceId }) => instanceId)).toEqual([
+        'instance-0',
+        'instance-1',
+      ]);
+      expect(provider.state.verifiedQuotes).toHaveLength(3);
+    },
+  );
+
+  test('rejects OHTTP when only an unrelated signer supplies a public key', async () => {
+    const provider = createDirectEndpoint({
+      otherSignerFirst: true,
+      omitPublicKeyFor: [0, 1],
+    });
+    const endpoint = await createOhttpEndpoint({
+      fetch: provider.fetch,
+      signingKey: nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 7)),
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(endpoint.fetch);
+    const client = new DirectInferenceClient({
+      ...provider.options,
+      ohttp: true,
+      signingAlgo: 'ed25519',
+    });
+    await expect(client.fetch(chatRequest())).rejects.toMatchObject({
+      failure: { code: 'e2ee.model_public_key_required' },
+    });
+    expect(provider.state.verifiedQuotes).toHaveLength(3);
+    expect(
+      endpoint.requests.map((request) => new URL(request.url).pathname),
+    ).toEqual(['/v1/attestation/report']);
+  });
 
   test.each(['missing', 'other-instance-signed'] as const)(
     'blocks direct Chat when OHTTP evidence is %s',
