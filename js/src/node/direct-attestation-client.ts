@@ -14,7 +14,9 @@ export class DirectAttestationClient extends DirectApiClient {
     return this.fetchModelAttestationsWithOptions({
       signingAlgo,
       signingAddress,
-      // TODO: Re-enable direct TLS binding once the backend attestation issue is resolved.
+      // TODO: Re-enable direct TLS binding once all_attestations covers every serving CVM.
+      // An incomplete set can reject a later connection to another CVM's TLS key.
+      // https://github.com/nearai/cloud-api/issues/1087
       includeSpkiFingerprint: false,
     });
   }
