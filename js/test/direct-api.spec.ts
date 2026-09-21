@@ -156,6 +156,59 @@ describe('DirectAttestationClient', () => {
     expect(createClientWithoutBaseUrl).toThrow('[api.invalid_input]');
   });
 
+  test('matches serving evidence regardless of nested event-log object key order', async () => {
+    const api = directFor((request) => {
+      const report = reportFor(request);
+      return jsonResponse({
+        ...report,
+        event_log: [
+          { imr: 3, measurement: { algorithm: 'sha384', digest: 'aa' } },
+        ],
+        all_attestations: [
+          {
+            ...report.all_attestations[0],
+            event_log: [
+              { measurement: { digest: 'aa', algorithm: 'sha384' }, imr: 3 },
+            ],
+          },
+        ],
+      });
+    });
+
+    const { servingAttestation, attestations } =
+      await api.client.fetchModelAttestations();
+    expect(servingAttestation).toBe(attestations[0]);
+  });
+
+  test.each([
+    {
+      change: 'changed event data',
+      events: [{ digest: 'cc' }, { digest: 'bb' }],
+    },
+    {
+      change: 'reordered events',
+      events: [{ digest: 'bb' }, { digest: 'aa' }],
+    },
+  ])('rejects serving evidence with $change', async ({ events }) => {
+    const api = directFor((request) => {
+      const report = reportFor(request);
+      return jsonResponse({
+        ...report,
+        event_log: [{ digest: 'aa' }, { digest: 'bb' }],
+        all_attestations: [
+          { ...report.all_attestations[0], event_log: events },
+        ],
+      });
+    });
+
+    await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
+      failure: {
+        code: 'api.invalid_response',
+        details: { path: 'all_attestations' },
+      },
+    });
+  });
+
   test('rejects a serving attestation absent from the complete attestation set', async () => {
     const api = directFor((request) =>
       jsonResponse({ ...reportFor(request), intel_quote: 'bb' }),
