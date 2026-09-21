@@ -293,7 +293,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 
 | Parameter type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving attestation from the fetch helper; it must be an entry in `attestations`. |
+| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Complete serving model-attestation set from the fetch helper. Every entry is checked. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |

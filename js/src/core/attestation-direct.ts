@@ -4,6 +4,7 @@ import type {
   VerifyDirectModelAttestationsParams,
   VerifyDirectModelAttestationParams,
 } from '../types/direct-verification';
+import { findDirectModelAttestationIndex } from '../utils/direct-attestation';
 import { VerificationError } from '../utils/errors';
 import {
   verifyPeerSpkiFingerprint,
@@ -95,6 +96,19 @@ export async function verifyDirectModelAttestations({
   if (suppliedAttestations.length === 0) {
     throw new VerificationError({ code: 'policy.model_attestation_required' });
   }
+  const servingIndex = findDirectModelAttestationIndex(
+    suppliedAttestations,
+    servingAttestation,
+  );
+  if (servingIndex === -1) {
+    throw new VerificationError({
+      code: 'input.invalid',
+      details: {
+        field: 'servingAttestation',
+        reason: 'not_in_attestation_set',
+      },
+    });
+  }
   const attestations = await Promise.all(
     suppliedAttestations.map((attestation) =>
       verifyDirectModelAttestation({
@@ -105,18 +119,7 @@ export async function verifyDirectModelAttestations({
       }),
     ),
   );
-  const verifiedServingAttestation =
-    attestations[suppliedAttestations.indexOf(servingAttestation)];
-
-  if (verifiedServingAttestation === undefined) {
-    throw new VerificationError({
-      code: 'input.invalid',
-      details: {
-        field: 'servingAttestation',
-        reason: 'not_in_attestation_set',
-      },
-    });
-  }
+  const verifiedServingAttestation = attestations[servingIndex];
 
   let tlsBinding: VerifiedDirectModelAttestations['tlsBinding'];
   if (verifiedServingAttestation.spkiFingerprint !== undefined) {

@@ -3,7 +3,10 @@ import {
   verifyDirectModelAttestations,
   verifyDirectModelAttestation,
 } from '../src/core/attestation-direct';
-import type { DirectModelAttestation } from '../src/types/direct-api';
+import type {
+  DirectModelAttestation,
+  FetchedDirectModelAttestations,
+} from '../src/types/direct-api';
 import type {
   MeasuredDeployment,
   VerifiedTdxQuote,
@@ -154,6 +157,40 @@ describe('direct model attestation verification', () => {
 });
 
 describe('direct model attestations verification', () => {
+  test('verifies a JSON-round-tripped report set and selects the serving result', async () => {
+    const first = createDirectAttestation();
+    const serving = createDirectAttestation({
+      instanceId: 'instance-b',
+      intelQuote: 'bb',
+      spkiFingerprint: tlsFingerprint,
+    });
+    const serialized = JSON.stringify({
+      servingAttestation: serving,
+      attestations: [first, serving],
+      clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
+    });
+    const fetched: FetchedDirectModelAttestations = JSON.parse(serialized);
+    const checkedQuotes: string[] = [];
+
+    const verified = await verifyDirectModelAttestations({
+      ...fetched,
+      verifiers: {
+        tdxQuote: (quote) => {
+          checkedQuotes.push(quote);
+          return quoteFor(quote === first.intelQuote ? first : serving);
+        },
+      },
+    });
+
+    expect(verified.servingAttestation).toBe(verified.attestations[1]);
+    expect(verified.servingAttestation.instanceId).toBe('instance-b');
+    expect(verified.tlsBinding).toEqual({
+      kind: 'attested',
+      spkiFingerprint: tlsFingerprint,
+    });
+    expect(checkedQuotes).toEqual([first.intelQuote, serving.intelQuote]);
+  });
+
   test('verifies reports concurrently while preserving their order and serving identity', async () => {
     const first = createDirectAttestation({ spkiFingerprint: tlsFingerprint });
     const second = createDirectAttestation({
@@ -273,7 +310,7 @@ describe('direct model attestations verification', () => {
     expect(verified.spkiFingerprints).toEqual([]);
   });
 
-  test('requires the serving attestation to be an array entry', async () => {
+  test('rejects different serving evidence despite a shared instance ID and signer', async () => {
     const instance = createDirectAttestation();
     const root = { ...instance, appCompose: '{"unverified-root":true}' };
 
