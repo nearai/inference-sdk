@@ -31,12 +31,12 @@ export function decodeDirectModelAttestations(
   const attestations = response.all_attestations.map((attestation, index) =>
     mapDirectAttestation(attestation, `all_attestations[${index}]`),
   );
-  const serializedRoot = JSON.stringify(root);
+  const serializedRoot = serializeAttestation(root);
   // The top-level report identifies the endpoint that answered this request.
   // The complete serving set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
   const servingAttestation = attestations.find(
-    (candidate) => JSON.stringify(candidate) === serializedRoot,
+    (candidate) => serializeAttestation(candidate) === serializedRoot,
   );
   if (servingAttestation === undefined) {
     throw invalidCloudApiResponse({
@@ -49,6 +49,20 @@ export function decodeDirectModelAttestations(
     servingAttestation,
     attestations,
   };
+}
+
+// Object key order is not evidence. Preserve array order and string contents.
+function serializeAttestation(attestation: DirectModelAttestation): string {
+  return JSON.stringify(attestation, (_key, value: unknown) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      return value;
+    }
+    return Object.fromEntries(
+      Object.entries(value).sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      ),
+    );
+  });
 }
 
 /** This endpoint's signatures are provider_tee, independent of signed text. */
