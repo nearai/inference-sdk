@@ -7,15 +7,9 @@ import type {
   ModelVerificationOptions,
 } from './inference-client';
 
-export type DirectModelVerificationOptions = ModelVerificationOptions & {
-  /** Browser Fetch cannot observe TLS certificates. Defaults to false. */
-  readonly includeSpkiFingerprint?: false;
-};
+export type DirectModelVerificationOptions = ModelVerificationOptions;
 
-export type NodeDirectModelVerificationOptions = ModelVerificationOptions & {
-  /** Request and verify model TLS evidence. Defaults to true. */
-  readonly includeSpkiFingerprint?: boolean;
-};
+export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
 
 /** Verified Chat requests to one direct model endpoint, without a Gateway. */
 export type DirectInferenceClientOptions = DirectAttestationClientOptions &

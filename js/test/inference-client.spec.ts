@@ -5,7 +5,7 @@ import nacl from 'tweetnacl';
 import OpenAI from 'openai';
 import {
   InferenceClient,
-  type QuoteVerificationResult,
+  type TdxQuoteVerificationResult,
   type InferenceClientOptions,
 } from '../src';
 import {
@@ -78,7 +78,7 @@ type TestGateway = {
     requestBody: Uint8Array,
     responseBody: Uint8Array,
   ) => Record<string, string>;
-  readonly quoteVerifier: (quote: string) => QuoteVerificationResult;
+  readonly tdxQuoteVerifier: (quote: string) => TdxQuoteVerificationResult;
   readonly state: TestGatewayState;
 };
 
@@ -216,7 +216,7 @@ function createTestGateway({
     throw new Error('Failed to create the test model X25519 key');
   }
 
-  const quotes = new Map<string, QuoteVerificationResult>();
+  const quotes = new Map<string, TdxQuoteVerificationResult>();
   const state: TestGatewayState = {
     completionRequests: 0,
     gatewayAttestationRequests: 0,
@@ -681,7 +681,7 @@ function createTestGateway({
         signature_kind: 'provider_tee',
       };
     },
-    quoteVerifier(quote: string): QuoteVerificationResult {
+    tdxQuoteVerifier(quote: string): TdxQuoteVerificationResult {
       const result = quotes.get(quote);
       if (result === undefined) {
         throw new Error(`Unknown quote: ${quote}`);
@@ -696,8 +696,8 @@ function inferenceClientOptions(gateway: TestGateway): InferenceClientOptions {
   return {
     baseUrl,
     headers: { [aggregatorHeader.name]: aggregatorHeader.value },
-    gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-    modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+    gatewayVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
+    modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
   };
 }
 
@@ -1147,8 +1147,10 @@ describe('inference client', () => {
     const client = new InferenceClient({
       apiKey: directApiKey,
       baseUrl,
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     await client.fetch(
@@ -1284,7 +1286,7 @@ describe('inference client', () => {
     const client = new InferenceClient({
       ...inferenceClientOptions(gateway),
       modelVerification: {
-        verifiers: { quote: gateway.quoteVerifier, deployment },
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier, deployment },
       },
     });
 
@@ -1320,7 +1322,7 @@ describe('inference client', () => {
     const client = new InferenceClient({
       ...inferenceClientOptions(gateway),
       modelVerification: {
-        verifiers: { quote: gateway.quoteVerifier, deployment },
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier, deployment },
       },
       deploymentPolicy,
     });
@@ -1790,8 +1792,10 @@ describe('inference client', () => {
     const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer browser-token' },
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     const completion = await client.chat.completions.create({
@@ -2366,7 +2370,7 @@ describe('inference client', () => {
       const client = new InferenceClient({
         ...inferenceClientOptions(gateway),
         modelVerification: {
-          verifiers: { quote: gateway.quoteVerifier, deployment },
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier, deployment },
         },
         deploymentPolicy,
       });
@@ -2394,7 +2398,7 @@ describe('inference client', () => {
       ...inferenceClientOptions(gateway),
       modelVerification: {
         verifiers: {
-          quote: () => {
+          tdxQuote: () => {
             throw new Error('model quote rejected');
           },
         },
@@ -2551,7 +2555,7 @@ describe('inference client', () => {
         ...inferenceClientOptions(gateway),
         gatewayVerification: {
           includeSpkiFingerprint: false,
-          verifiers: { quote: gateway.quoteVerifier },
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
         },
       });
 

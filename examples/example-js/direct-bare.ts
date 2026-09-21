@@ -1,13 +1,12 @@
 import {
   DirectAttestationClient,
   NO_ALIASING_HEADER,
-  createPinnedTlsFetch,
   verifyDirectModelAttestations,
   verifyDirectModelResponse,
   type VerifiedDirectModelAttestation,
 } from '@nearai/inference-sdk/node';
 
-// Standalone verification and HTTPS pinning. This example sends plaintext Chat
+// Standalone verification. This example sends plaintext Chat
 // bodies over HTTPS; it does not implement E2EE. See direct-client.ts for E2EE.
 const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/';
 const MODEL = 'z-ai/glm-5.3-flash';
@@ -27,15 +26,9 @@ async function main(): Promise<void> {
     `Verified ${verified.attestations.length} direct model attestations.`,
   );
 
-  if (verified.tlsBinding.kind !== 'attested') {
-    throw new Error('Expected TLS-bound direct model attestations');
-  }
-  // Pin Chat requests to the verified endpoint TLS keys.
-  const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
   const params: CompletionExampleParams = {
     apiKey,
     client,
-    pinnedTlsFetch,
     attestations: verified.attestations,
   };
   await runNonStreamingExample(params);
@@ -94,7 +87,6 @@ async function runStreamingExample(
 
 async function sendChatRequest({
   apiKey,
-  pinnedTlsFetch,
   stream,
 }: SendChatRequestParams): Promise<SentChatRequest> {
   const body = JSON.stringify({
@@ -104,7 +96,7 @@ async function sendChatRequest({
     stream,
   });
   const requestBody = new TextEncoder().encode(body);
-  const response = await pinnedTlsFetch(new URL('chat/completions', BASE_URL), {
+  const response = await fetch(new URL('chat/completions', BASE_URL), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -158,14 +150,10 @@ function readStreamCompletionId(responseText: string): string {
 type CompletionExampleParams = {
   readonly apiKey: string;
   readonly client: DirectAttestationClient;
-  readonly pinnedTlsFetch: typeof globalThis.fetch;
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };
 
-type SendChatRequestParams = Pick<
-  CompletionExampleParams,
-  'apiKey' | 'pinnedTlsFetch'
-> & {
+type SendChatRequestParams = Pick<CompletionExampleParams, 'apiKey'> & {
   readonly stream: boolean;
 };
 

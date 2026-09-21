@@ -34,6 +34,8 @@ verification is synchronous.
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
+| `create_tdx_quote_verifier` | `(pccs_url=...)` | `TdxQuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
+| `create_gpu_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
@@ -136,11 +138,11 @@ TLS binding requires an HTTPS endpoint; use `False` for an HTTP custom endpoint.
 | `verify_model_attestation` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
 |  | `client_binding` | `ModelClientBinding` | Yes | Client binding returned by the matching model-evidence fetch. |
 |  | `policy` | `ModelAttestationPolicy \| None` | No | TCB and GPU-evidence requirements. |
-|  | `verifiers` | `ModelAttestationVerifiers \| None` | No | Quote, deployment, and NVIDIA verifier overrides. |
+|  | `verifiers` | `ModelAttestationVerifiers \| None` | No | TDX quote, deployment, and GPU evidence verifier overrides. |
 | `verify_gateway_attestation` | `attestation` | `GatewayAttestation` | Yes | Raw Gateway evidence. |
 |  | `client_binding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-evidence fetch. |
 |  | `policy` | `AttestationPolicy \| None` | No | Accepted Gateway TCB statuses. |
-|  | `verifiers` | `AttestationVerifiers \| None` | No | Quote and deployment verifier overrides. |
+|  | `verifiers` | `AttestationVerifiers \| None` | No | TDX quote and deployment verifier overrides. |
 
 `client_binding.nonce` must come from the matching fetch result. Model evidence
 always verifies the signer-and-nonce report-data layout and has no TLS-binding
@@ -285,19 +287,49 @@ the optional commit pin.
 | `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate` and `OutOfDate`. |
 | `ModelAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. |
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
-| `AttestationVerifiers` | `quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
+| `AttestationVerifiers` | `tdx_quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
 |  | `deployment` | absent | Optional deployment-acceptance verifier. |
-| `ModelAttestationVerifiers` | `quote`, `deployment`, `nvidia` | built in / absent / built in | Optional quote, deployment, and NVIDIA verifier overrides. |
-| `QuoteVerifier` | `(quote: str) -> QuoteVerificationResult \| Awaitable[QuoteVerificationResult]` | — | Authenticates a quote and returns verified fields. |
+| `ModelAttestationVerifiers` | `tdx_quote`, `deployment`, `gpu_evidence` | built in / absent / built in | Optional TDX quote, deployment, and GPU evidence verifier overrides. |
+| `TdxQuoteVerifier` | `(quote: str) -> TdxQuoteVerificationResult \| Awaitable[TdxQuoteVerificationResult]` | — | Authenticates a quote and returns verified fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) -> None \| Awaitable[None]` | — | Returns only for an accepted deployment. |
-| `NvidiaEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
+| `GpuEvidenceVerifier` | `(payload: str) -> None \| Awaitable[None]` | — | Returns only for accepted GPU evidence. |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict.
 
+### Built-in verifier factories
+
+Both factories are synchronous and return asynchronous verifier callbacks for
+the `verifiers.tdx_quote` and `verifiers.gpu_evidence` fields. Their optional
+arguments are independent of `AttestationClient.base_url`.
+
+| Factory | Argument | Default |
+| --- | --- | --- |
+| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
+| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+`pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral
+paths. A proxy must preserve PCCS bodies and issuer-chain headers, and serve
+`/sgx/certification/v4/rootcacrl` to avoid a direct root-CRL fallback. See the
+[proxy configuration example](./verification-guide.md#configure-attestation-service-urls).
+
+`nras_url` receives the evidence POST; `jwks_url` supplies the trusted signing
+keys. Use only a trusted JWKS source: checking the fixed NVIDIA issuer does not
+authenticate an arbitrary JWKS endpoint. The full signature, issuer, time,
+nonce, and verdict checks remain enabled.
+
+Model verification checks the payload nonce against the client nonce before
+calling a NVIDIA verifier. The factory additionally requires a 32-byte
+hexadecimal payload nonce and verifies that the signed JWT nonce matches it.
+Direct callback users must bind the payload nonce to their own fresh request
+nonce. Nonces accept an optional `0x`/`0X` prefix and compare as bytes.
+
+### Verified quote and deployment measurements
+
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `QuoteVerificationResult` | `tcb_status` | `TcbStatus` | Authenticated quote TCB status. |
+| `TdxQuoteVerificationResult` | `tcb_status` | `TcbStatus` | Authenticated quote TCB status. |
 |  | `advisory_ids` | `tuple[str, ...]` | Authenticated quote advisory IDs. |
 |  | `debug_enabled` | `bool` | Whether the quote enables debug mode. |
 |  | `report_data` | `bytes` | Authenticated quote report data. |

@@ -118,7 +118,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
   }
 }
 
-/** Browser-compatible direct model client. TLS certificate binding requires the Node entry point. */
+/** Browser-compatible direct model client without TLS fingerprint binding. */
 export class DirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
 
@@ -130,7 +130,6 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
   protected override fetchModelAttestations(): Promise<FetchedDirectModelAttestations> {
     return this.attestationClient.fetchModelAttestations({
       signingAlgo: this.signingAlgo,
-      includeSpkiFingerprint: false,
     });
   }
 

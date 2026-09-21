@@ -146,9 +146,9 @@ export type VerifiedCompletionReceipt =
   | VerifiedGatewayCompletionReceipt;
 
 /** The supported OpenAI-compatible chat surface. */
-export type SecureChat = {
-  readonly completions: SecureChatCompletions;
+export type InferenceChat = {
+  readonly completions: InferenceChatCompletions;
 };
 
 /** Standard Chat Completions operations. */
-export type SecureChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
+export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;

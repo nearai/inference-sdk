@@ -19,7 +19,7 @@ import type {
 import type { CompletionSignature } from '../types/chat';
 import type {
   NodeInferenceClientOptions,
-  SecureChat,
+  InferenceChat,
   InferenceClientOptions,
   VerifiedCompletionReceipt,
   InferenceClientCommonOptions,
@@ -192,7 +192,7 @@ export abstract class VerifiedInferenceClientBase<Receipt> {
   private readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
   private readonly completions = new Map<string, CompletionRecord<Receipt>>();
-  readonly chat: SecureChat;
+  readonly chat: InferenceChat;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;

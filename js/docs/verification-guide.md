@@ -108,16 +108,33 @@ evidence and encrypt prompts. Direct server-to-Gateway integrations do not
 need a proxy.
 
 Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
-it accepts:
+it accepts. The Intel verifier uses Phala PCCS in browsers because Intel's
+service does not support CORS; Node.js uses Intel directly. NVIDIA uses its
+official NRAS and JWKS endpoints. Browser clients need a proxy for the NRAS
+POST. All three URLs can be overridden:
 
 ```ts
-import { InferenceClient } from '@nearai/inference-sdk';
+import {
+  createTdxQuoteVerifier,
+  createGpuEvidenceVerifier,
+  InferenceClient,
+} from '@nearai/inference-sdk';
+
+const tdxQuote = createTdxQuoteVerifier({
+  pccsUrl: '/api/attestation/intel',
+});
+const gpuEvidence = createGpuEvidenceVerifier({
+  nrasUrl: '/api/attestation/nvidia',
+  jwksUrl: '/api/attestation/nvidia/jwks.json',
+});
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
+  gatewayVerification: { verifiers: { tdxQuote } },
+  modelVerification: { verifiers: { tdxQuote, gpuEvidence } },
 });
 ```
 
@@ -126,11 +143,32 @@ The proxy must forward `/v1/attestation/report`, `/v1/chat/completions`, and
 NEAR AI credential. Preserve the request and response bodies, model-key routing header,
 and encryption headers unchanged so decryption and signature verification work.
 
+The attestation-service routes are separate from the inference API proxy:
+
+- The Intel route must be PCCS-compatible: support `/sgx/certification/v4/*`
+  and `/tdx/certification/v4/*` below the configured base, preserve query
+  parameters and issuer-chain response headers, and serve the hex-encoded root
+  CRL at `/sgx/certification/v4/rootcacrl`. Without that route, DCAP can fall back
+  to fetching the certificate's CRL URL directly.
+- The NVIDIA routes forward the NRAS JSON POST and JWKS GET without modifying
+  their bodies. Omit `jwksUrl` to fetch NVIDIA's CORS-enabled JWKS directly.
+
+Use same-origin routes or a proxy that permits the application's origin. A
+cross-origin Intel proxy must also expose the issuer-chain response headers.
+Changing these URLs does not disable signature, nonce, or timestamp checks.
+The JWKS URL selects trusted signing keys, so use only a trusted proxy;
+the expected NVIDIA issuer stays fixed.
+
+The same callbacks can be passed to `verifyGatewayAttestation` and
+`verifyModelAttestation` through `verifiers`. The NVIDIA helper checks the signed
+result against the submitted payload nonce; model verification also checks
+that nonce against `clientBinding.nonce`.
+
 Browser Fetch does not expose the TLS peer certificate, so the generic client
 does not verify Gateway TLS binding. Depending on the browser build, the default
 Intel verifier may need `crypto`, `buffer`, and `stream` polyfills. A custom
-quote verifier can be supplied through `gatewayVerification.verifiers.quote`
-and `modelVerification.verifiers.quote`.
+quote verifier can be supplied through `gatewayVerification.verifiers.tdxQuote`
+and `modelVerification.verifiers.tdxQuote`.
 
 For a Node client connecting through a proxy, disable Gateway TLS binding
 because the observed certificate belongs
@@ -308,19 +346,15 @@ Use `client.chat.completions.create()`, `client.fetch`, and
 credentials from the Gateway and use separate fetch and verification APIs.
 
 The client selects a verified model key for routing and E2EE; response signatures
-must match that selected signer. The Node client also verifies the endpoint's
-TLS identity and pins later requests to the verified keys for that signer. The
-generic browser client cannot observe TLS certificates
-and only supports `modelVerification.includeSpkiFingerprint: false`. Node
-defaults to `true`; set it to `false` when TLS binding is unavailable, such as
-when connecting through a proxy.
+must match that selected signer. Both entry points request
+`include_tls_fingerprint=false`. Direct TLS fingerprint binding and pinning are
+currently disabled; standard HTTPS certificate validation still applies.
 
 ### Verify direct evidence manually
 
 ```ts
 import {
   DirectAttestationClient,
-  createPinnedTlsFetch,
   verifyDirectModelAttestations,
 } from '@nearai/inference-sdk/node';
 
@@ -330,21 +364,17 @@ const client = new DirectAttestationClient({
 });
 const fetched = await client.fetchModelAttestations({ signingAlgo: 'ed25519' });
 const verified = await verifyDirectModelAttestations(fetched);
-if (verified.tlsBinding.kind !== 'attested') {
-  throw new Error('Expected TLS-bound direct model attestations');
-}
-const pinnedTlsFetch = createPinnedTlsFetch(verified.spkiFingerprints);
 ```
 
-Send Chat with `pinnedTlsFetch` and retain the exact request and response bytes.
+Send Chat with `fetch` and retain the exact request and response bytes.
 Then fetch its signature with `client.fetchCompletionSignature()` and pass the
 signature, bytes, and `verified.attestations` to `verifyDirectModelResponse()`.
 It returns all verified attestations sharing the response's signer.
 
 For one attestation, `verifyDirectModelAttestation()` checks its quote, nonce,
-measurements, available GPU evidence, and any reported SPKI binding.
-`verifyDirectModelAttestations()` also verifies the observed TLS peer when SPKI
-evidence is enabled.
+measurements, and available GPU evidence. `verifyDirectModelAttestations()`
+checks every entry. Reports fetched by `DirectAttestationClient` produce
+`tlsBinding.kind: 'none'`.
 
 The runnable [direct-client.ts](../../examples/example-js/direct-client.ts),
 [direct-client-openai-sdk.ts](../../examples/example-js/direct-client-openai-sdk.ts),

@@ -47,10 +47,9 @@ Attestation results are cached for 60 minutes. Set
 records have a separate 60-minute retention period, configured through
 `responseCacheTimeToLiveMs`.
 
-Import from `@nearai/inference-sdk/node` for Node.js with endpoint TLS verification
-and subsequent request pinning. The direct client allows TLS keys from the
-verified model attestations sharing its selected model signer; the Gateway client pins
-the Gateway key.
+Import from `@nearai/inference-sdk/node` for Node.js with Gateway TLS verification
+and subsequent request pinning. Direct TLS fingerprint binding is currently
+disabled in both entry points; standard HTTPS certificate validation still applies.
 Use `@nearai/inference-sdk` in browsers, where
 Fetch does not expose the TLS peer certificate. The package publishes ESM and
 requires Node.js 24 or later for Node usage.

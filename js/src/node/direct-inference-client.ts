@@ -23,7 +23,7 @@ class DirectSessionAttestationClient extends DirectApiClient {
   }
 }
 
-/** Direct model transport with preflight verification and a verified TLS-key allowlist. */
+/** Node direct model transport with preflight verification. */
 export class NodeDirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
   private readonly nodeOptions: NodeDirectInferenceClientOptions;
@@ -37,8 +37,6 @@ export class NodeDirectInferenceClient extends DirectInferenceClientBase {
   protected override fetchModelAttestations(): Promise<FetchedDirectModelAttestations> {
     return this.attestationClient.fetchModelAttestations({
       signingAlgo: this.signingAlgo,
-      includeSpkiFingerprint:
-        this.nodeOptions.modelVerification?.includeSpkiFingerprint ?? true,
     });
   }
 

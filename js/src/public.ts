@@ -57,8 +57,8 @@ export type {
   DeploymentPolicy,
   DeploymentPolicyParams,
   ModelVerificationOptions,
-  SecureChat,
-  SecureChatCompletions,
+  InferenceChat,
+  InferenceChatCompletions,
   InferenceClientOptions,
   VerifiedCompletionReceipt,
   VerifiedGatewayCompletionReceipt,
@@ -68,6 +68,8 @@ export type { Awaitable } from './types/shared';
 
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
+export { createTdxQuoteVerifier } from './utils/intel';
+export { createGpuEvidenceVerifier } from './utils/nvidia';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
 export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
@@ -97,18 +99,20 @@ export type {
 export type {
   AttestationPolicy,
   AttestationVerifiers,
+  CreateTdxQuoteVerifierParams,
+  CreateGpuEvidenceVerifierParams,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayClientBinding,
   GatewayTlsBinding,
   GpuEvidenceStatus,
+  GpuEvidenceVerifier,
   MeasuredDeployment,
   ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
-  NvidiaEvidenceVerifier,
-  QuoteVerifier,
-  QuoteVerificationResult,
+  TdxQuoteVerifier,
+  TdxQuoteVerificationResult,
   RuntimeMeasurements,
   TcbStatus,
   VerifiedAttestationEvidence,

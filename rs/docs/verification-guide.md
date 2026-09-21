@@ -180,13 +180,75 @@ GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is
 mandatory.
 
 `AttestationVerifiers` and `ModelAttestationVerifiers` accept caller-owned
-quote, deployment, and—for models—NVIDIA evidence verifiers. A supplied
+TDX quote, deployment, and—for models—GPU evidence verifiers. A supplied
 verifier must return `Ok` only for evidence it accepts. The built-in Intel
 verifier retrieves DCAP collateral from PCCS. The default NVIDIA verifier submits
 evidence to NRAS, then verifies the overall JWT's ES384 signature against NVIDIA's
 JWKS, issuer, expiration, not-before and issued-at times, and signed `eat_nonce`.
 The overall verdict must be `true`; detached per-device claims are not consumed.
 See [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
+
+### Use a PCCS or NRAS proxy
+
+The default Intel collateral base URL is
+`https://api.trustedservices.intel.com`; the default NVIDIA
+submission URL is `https://nras.attestation.nvidia.com/v3/attest/gpu`, with keys
+fetched from `https://nras.attestation.nvidia.com/.well-known/jwks.json`. To route
+these requests through your own services, construct the built-in verifiers
+with custom URLs and pass them through the existing verifier options:
+
+```rust,no_run
+use nearai_inference_sdk::{
+    verify_model_attestation, DefaultTdxQuoteVerifier, ModelAttestation,
+    ModelAttestationVerifiers, ModelClientBinding, NrasGpuEvidenceVerifier,
+    VerificationError, VerifiedModelAttestation,
+};
+
+async fn verify_with_proxies(
+    attestation: &ModelAttestation,
+    binding: &ModelClientBinding,
+) -> Result<VerifiedModelAttestation, VerificationError> {
+    let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/intel");
+    let gpu_evidence = NrasGpuEvidenceVerifier::new(
+        "https://attestation.example.com/nvidia/v3/attest/gpu",
+    )
+    .with_jwks_url("https://attestation.example.com/nvidia/.well-known/jwks.json");
+    verify_model_attestation(
+        attestation,
+        binding,
+        None,
+        ModelAttestationVerifiers {
+            tdx_quote: Some(&tdx_quote),
+            gpu_evidence: Some(&gpu_evidence),
+            ..Default::default()
+        },
+    )
+    .await
+}
+```
+
+Pass the same `tdx_quote` verifier as `AttestationVerifiers { tdx_quote: Some(&tdx_quote),
+..Default::default() }` for Gateway verification. Leave either verifier as
+`None` to use its official default service.
+
+The Intel URL is a PCCS-compatible base, not an endpoint that returns a verdict.
+The `dcap-qvl` adapter appends `/sgx/certification/v4/...` and
+`/tdx/certification/v4/...` beneath this base; a supplied certification-v4
+suffix is normalized automatically. Preserve Intel's JSON bodies and
+URL-encoded issuer-chain headers. The proxy's SGX `rootcacrl` endpoint must
+return the CRL as hex text, while `pckcrl?encoding=der` returns DER bytes.
+If `rootcacrl` is unavailable, the adapter may fetch the root CRL directly
+from its certificate distribution URL.
+
+The NVIDIA URL is the complete POST endpoint. It receives the original JSON
+payload and must return NVIDIA's signed NRAS response. The JWKS URL is a separate
+GET endpoint and defaults to NVIDIA's official URL when `with_jwks_url` is omitted.
+Use only a trusted JWKS proxy: its keys authenticate the signed verdict. The SDK
+still requires issuer `https://nras.attestation.nvidia.com`, an ES384 signature,
+valid timestamps, the matching signed nonce, and a true overall verdict.
+A malformed payload nonce is rejected before submission. Model verification also
+checks that nonce against the client challenge before calling any GPU verifier,
+including overrides.
 
 ## Verify an image's build provenance
 

@@ -6,14 +6,17 @@ This page describes the attestation, E2EE, and response verification APIs in
 
 ## Package entry points
 
-Both entry points export the same verification APIs. Their attestation and
-inference clients differ in whether they can bind endpoint evidence to the TLS peer
-that returned it.
+Both entry points export the same verification APIs. Their Gateway clients differ
+in whether they can bind endpoint evidence to the TLS peer that returned it.
 
 | Import | TLS behavior |
 | --- | --- |
-| `@nearai/inference-sdk` | Gateway and direct clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
-| `@nearai/inference-sdk/node` | Gateway and direct attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. Inference clients pin later requests to verified TLS keys. Disable this through `gatewayVerification.includeSpkiFingerprint` on `InferenceClient`, `modelVerification.includeSpkiFingerprint` on `DirectInferenceClient`, or `includeSpkiFingerprint` on either attestation client's fetch method. |
+| `@nearai/inference-sdk` | Gateway clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
+| `@nearai/inference-sdk/node` | Gateway attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. `InferenceClient` pins later requests to the verified Gateway key. Disable this through `gatewayVerification.includeSpkiFingerprint` or `includeSpkiFingerprint` on `AttestationClient.fetchGatewayAttestation()`. |
+
+Direct clients in both entry points always request `include_tls_fingerprint=false`.
+Direct TLS fingerprint binding and pinning are currently disabled; standard HTTPS
+certificate validation still applies.
 
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 the relevant `includeSpkiFingerprint` option to `false`.
@@ -39,7 +42,7 @@ the attestation socket to be reused.
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
-| `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and the serving attestation's observed TLS binding. |
+| `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
 | `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
@@ -83,7 +86,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
 | `GatewayVerificationOptions` from `@nearai/inference-sdk/node` | `includeSpkiFingerprint?: boolean` | Defaults to `true`. Set `false` for a proxy or HTTP endpoint, where the observed TLS peer is not the attested Gateway. |
 | `ModelVerificationOptions` | `policy?: ModelAttestationPolicy` | Model TCB and GPU-evidence policy override. |
-|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and NVIDIA verifiers. A deployment check must pass before `deploymentPolicy` runs. |
+|  | `verifiers?: ModelAttestationVerifiers` | Model quote, deployment, and GPU verifiers. A deployment check must pass before `deploymentPolicy` runs. |
 
 ### Methods and result
 
@@ -121,9 +124,7 @@ There is no `gatewayVerification` option.
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Additional model-aware deployment check. No approval policy is supplied by default. |
-| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model `policy`, `verifiers`, and the TLS option below. |
-| `modelVerification.includeSpkiFingerprint?` in the generic entry point | `false` | No | `false` | TLS peer observation is unavailable. |
-| `modelVerification.includeSpkiFingerprint?` in the Node entry point | `boolean` | No | `true` | Requests TLS evidence, checks the observed peer, and pins later requests to TLS keys of verified attestations sharing the selected model signer. |
+| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model `policy` and `verifiers`. |
 
 ### Methods and response result
 
@@ -254,6 +255,7 @@ attestation verifier.
 
 Fetches `/attestation/report` and `/signature/{id}` relative to a direct model API
 base URL. Authentication is optional in the SDK and depends on the endpoint.
+Both entry points request `include_tls_fingerprint=false`; this is not configurable.
 
 | Constructor field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -270,8 +272,6 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 | --- | --- | --- | --- |
 | `signingAlgo?` | `SigningAlgo` | Service default | Requested signing algorithm. Use the same algorithm for signature lookup. |
 | `signingAddress?` | `string` | — | Optional signing-address filter. Omit to fetch the endpoint's unfiltered attestation set. |
-| `includeSpkiFingerprint?` in the generic entry point | `false` | `false` | Requests the signer-and-nonce quote layout without TLS evidence. |
-| `includeSpkiFingerprint?` in the Node entry point | `boolean` | `true` | Requests SPKI evidence and captures the actual TLS peer for this fetch. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -280,7 +280,7 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 |  | `clientBinding` | `DirectClientBinding` | Client values for the matching verification call. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration; authenticate against the verified serving signer before use. |
 | `DirectClientBinding` | `nonce` | `string` | Fresh client nonce sent with this request. |
-|  | `spkiFingerprint?` | `string` | SHA-256 SPKI observed from this request's TLS peer in Node. |
+|  | `spkiFingerprint?` | `string` | Optional observed TLS peer SPKI for manually supplied evidence. Direct fetch helpers currently omit it. |
 | `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration for the serving endpoint. |
@@ -295,7 +295,7 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving attestation from the fetch helper; it must be an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Complete serving model-attestation set from the fetch helper. Every entry is checked. |
-|  | `clientBinding` | `DirectClientBinding` | Yes | Nonce and observed peer fingerprint from the matching request. |
+|  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
 | `VerifyDirectModelAttestationParams` | `attestation` | `DirectModelAttestation` | Yes | One direct model attestation. |
@@ -318,7 +318,9 @@ base URL. Authentication is optional in the SDK and depends on the endpoint.
 |  | `spkiFingerprint?` | `string` | Quote-authenticated TLS key; this alone does not claim observation of that instance's TLS peer. |
 
 `verifyDirectModelAttestations` verifies every returned attestation and compares
-the serving attestation with the observed TLS peer when SPKI evidence is enabled.
+the serving attestation with the observed TLS peer when SPKI evidence is supplied.
+For reports fetched by `DirectAttestationClient`, `tlsBinding.kind` is `'none'`
+and `spkiFingerprints` is empty.
 
 ## Model attestation selection
 
@@ -352,7 +354,7 @@ match and performs no additional cryptographic verification.
 | `VerifyModelAttestationParams` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
 |  | `clientBinding` | `ModelClientBinding` | Yes | Client values returned by the matching model-attestation fetch result. |
 |  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
-|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and NVIDIA verifier overrides. |
+|  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
 | `VerifyGatewayAttestationParams` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
 |  | `clientBinding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-attestation fetch result. |
 |  | `policy?` | `AttestationPolicy` | No | Accepted TCB statuses. |
@@ -510,6 +512,31 @@ the provider signature no longer matches the client-visible bytes.
 |  | `reportedQuoteData` | `string` | Yes | Gateway report-data copy. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | No | Signed OHTTP configuration. Authenticate separately with `verifyOhttpKeyConfig` and the verified Gateway signer before use. |
 
+## Configurable verification services
+
+Both factories return callbacks for the existing `verifiers` parameter. They
+retain the built-in verification checks and accept custom service or proxy URLs.
+PCCS defaults to Phala in browsers and Intel in Node.js. NVIDIA defaults are
+the same in both runtimes.
+
+| Function | Parameter type | Returns |
+| --- | --- | --- |
+| `createTdxQuoteVerifier(params?)` | `CreateTdxQuoteVerifierParams` | `TdxQuoteVerifier` |
+| `createGpuEvidenceVerifier(params?)` | `CreateGpuEvidenceVerifierParams` | `GpuEvidenceVerifier` |
+
+| Parameter type | Field | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
+|  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
+
+The NVIDIA callback verifies the signed JWT nonce against the submitted payload
+nonce. `verifyModelAttestation` additionally binds that nonce to
+`clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
+The expected NVIDIA issuer remains fixed when either URL changes.
+See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
+for routing and response-header requirements.
+
 ## Policies and verifier callbacks
 
 ### Policies
@@ -528,27 +555,27 @@ the provider signature no longer matches the client-visible bytes.
 
 | Type | Field or signature | Description |
 | --- | --- | --- |
-| `AttestationVerifiers` | `quote?: QuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
+| `AttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-| `ModelAttestationVerifiers` | `quote?: QuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
+| `ModelAttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-|  | `nvidia?: NvidiaEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
-| `QuoteVerifier` | `(quote: string) => Awaitable<QuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
+|  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
+| `TdxQuoteVerifier` | `(quote: string) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
-| `NvidiaEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
+| `GpuEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
 
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
 directly or asynchronously.
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
-timestamps, signed nonce, and boolean verdict. Provide `nvidia` to use different
+timestamps, signed nonce, and boolean verdict. Provide `gpuEvidence` to use different
 trust roots or another verification service.
 
 ### Quote and deployment values
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `QuoteVerificationResult` | `tcbStatus` | `TcbStatus` | Authenticated TCB status. |
+| `TdxQuoteVerificationResult` | `tcbStatus` | `TcbStatus` | Authenticated TCB status. |
 |  | `advisoryIds` | `readonly string[]` | Authenticated advisory IDs. |
 |  | `debugEnabled` | `boolean` | Whether the authenticated quote enables debug mode. |
 |  | `reportData` | `Uint8Array` | Authenticated quote report data. |
