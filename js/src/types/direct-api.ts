@@ -6,6 +6,7 @@ import type {
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
 import type { ModelAttestation } from './attestation-model';
+import type { OhttpAttestation } from './ohttp';
 
 /** Model evidence returned directly by a provider, without a Cloud envelope. */
 export type DirectModelAttestation = ModelAttestation & {
@@ -19,6 +20,8 @@ export type DirectModelAttestations = {
   /** The top-level attestation returned by the endpoint serving this request. Also an entry in `attestations`. */
   readonly servingAttestation: DirectModelAttestation;
   readonly attestations: readonly DirectModelAttestation[];
+  /** Signed OHTTP configuration advertised by the endpoint, outside the individual reports. */
+  readonly ohttpAttestation?: OhttpAttestation;
 };
 
 /** Client nonce and optional TLS peer evidence supplied to direct verification. */

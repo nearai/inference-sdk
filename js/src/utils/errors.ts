@@ -9,7 +9,8 @@ type ApiResource =
   | 'model_attestation'
   | 'gateway_attestation'
   | 'completion_signature'
-  | 'image_provenance';
+  | 'image_provenance'
+  | 'ohttp';
 
 /** A JSON-safe description of a Cloud API failure.
  *
@@ -91,6 +92,12 @@ export type ApiFailure =
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type VerificationFailure =
+  | { code: 'ohttp.attestation_required' }
+  | { code: 'ohttp.signer_mismatch' }
+  | { code: 'ohttp.signature_invalid' }
+  | { code: 'ohttp.key_config_invalid' }
+  | { code: 'ohttp.encryption_failed' }
+  | { code: 'ohttp.decryption_failed' }
   | {
       code: 'input.invalid';
       details: {
@@ -453,6 +460,18 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'ohttp.attestation_required':
+      return `[${failure.code}] The endpoint did not provide an OHTTP key attestation`;
+    case 'ohttp.signer_mismatch':
+      return `[${failure.code}] OHTTP key signer does not match the verified Ed25519 attestation`;
+    case 'ohttp.signature_invalid':
+      return `[${failure.code}] OHTTP key configuration signature is invalid`;
+    case 'ohttp.key_config_invalid':
+      return `[${failure.code}] OHTTP key configuration is invalid or uses an unsupported cipher suite`;
+    case 'ohttp.encryption_failed':
+      return `[${failure.code}] OHTTP request could not be encrypted`;
+    case 'ohttp.decryption_failed':
+      return `[${failure.code}] OHTTP response could not be authenticated and decoded`;
     case 'api.completion_not_found':
       return 'Completion was not captured by this client or its retention period has expired';
     case 'api.invalid_input':
@@ -566,6 +585,8 @@ function formatApiResource(resource: ApiResource): string {
       return 'completion signature';
     case 'image_provenance':
       return 'image provenance';
+    case 'ohttp':
+      return 'OHTTP';
   }
 }
 

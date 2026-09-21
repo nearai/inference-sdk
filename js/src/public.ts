@@ -33,6 +33,13 @@ export type {
   VerifyDirectModelResponseParams,
 } from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
+export { verifyOhttpKeyConfig } from './core/ohttp-attestation';
+export { createOhttpFetch } from './core/ohttp-fetch';
+export type {
+  CreateOhttpFetchParams,
+  OhttpAttestation,
+  VerifyOhttpKeyConfigParams,
+} from './types/ohttp';
 export type {
   E2eeModelKey,
   PrepareE2eeChatRequestParams,

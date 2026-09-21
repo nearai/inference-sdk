@@ -8,7 +8,8 @@ import type {
   GatewayTlsBinding,
   ModelAttestationVerifiers,
 } from '../types/verification';
-import type { SigningAlgo } from '../types/attestation-common';
+import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
+import type { OhttpAttestation } from '../types/ohttp';
 import type {
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
@@ -22,6 +23,7 @@ import type {
   InferenceClientOptions,
   VerifiedCompletionResult,
   InferenceClientCommonOptions,
+  InferenceEncryptionOptions,
 } from '../types/inference-client';
 import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
@@ -42,6 +44,8 @@ import {
 import type { CloudApiRequestConfiguration } from './cloud-api';
 import { verifyGatewayAttestation } from './attestation-gateway';
 import { verifyModelAttestation } from './attestation-model';
+import { verifyOhttpKeyConfig } from './ohttp-attestation';
+import { createOhttpFetch } from './ohttp-fetch';
 import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
   decodeChatRequest,
@@ -79,11 +83,12 @@ export type InferenceSessionTransport = {
   ) => Promise<CompletionSignature>;
 };
 
-export type InferenceTransportOptions = InferenceClientCommonOptions & {
-  readonly baseUrl?: string;
-  readonly apiKey?: string;
-  readonly headers?: HeadersInit;
-};
+export type InferenceTransportOptions = InferenceClientCommonOptions &
+  InferenceEncryptionOptions & {
+    readonly baseUrl?: string;
+    readonly apiKey?: string;
+    readonly headers?: HeadersInit;
+  };
 
 type CachedVerification<VerificationResult> = {
   readonly expiresAt: number;
@@ -194,6 +199,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   >();
   readonly chat: InferenceChat;
   protected readonly signingAlgo: SigningAlgo;
+  protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<
@@ -212,6 +218,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
     this.e2eeEnabled = options.e2ee !== false;
     this.signingAlgo = options.signingAlgo ?? 'ed25519';
+    this.ohttpEnabled = options.ohttp ?? false;
     this.options = options;
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
@@ -231,6 +238,35 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
     return this.baseUrl;
+  }
+
+  /** Bind the advertised OHTTP key to the endpoint identity already verified. */
+  protected getOhttpKeyConfig(
+    ohttpAttestation: OhttpAttestation | undefined,
+    signer: SigningIdentity,
+  ): Uint8Array | undefined {
+    if (!this.ohttpEnabled) return undefined;
+    if (ohttpAttestation === undefined) {
+      throw new VerificationError({ code: 'ohttp.attestation_required' });
+    }
+    return verifyOhttpKeyConfig({ ohttpAttestation, signer });
+  }
+
+  /** Only Chat uses OHTTP; evidence and signature fetches retain their transport. */
+  protected createCompletionFetch(
+    fetch: typeof globalThis.fetch,
+    keyConfig: Uint8Array | undefined,
+  ): typeof globalThis.fetch {
+    return keyConfig === undefined
+      ? fetch
+      : createOhttpFetch({
+          keyConfig,
+          baseUrl: this.baseUrl,
+          fetch,
+          forwardedHeaders: [
+            ...this.requestConfiguration.defaultHeaders.keys(),
+          ],
+        });
   }
 
   /**
@@ -492,7 +528,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     try {
       return await transport.fetch(request);
     } catch (cause) {
-      if (isVerificationError(cause)) {
+      if (isVerificationError(cause) || isApiError(cause)) {
         throw cause;
       }
       throw new ApiError(
@@ -539,6 +575,10 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
       policy: this.gatewayOptions.gatewayVerification?.policy,
       verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
     });
+    const ohttpKeyConfig = this.getOhttpKeyConfig(
+      gateway.attestation.ohttpAttestation,
+      gatewayAttestation.signer,
+    );
     const transport = this.createGatewaySessionTransport({
       tlsBinding: gatewayAttestation.tlsBinding,
     });
@@ -575,7 +615,10 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         signingAlgo: this.signingAlgo,
         publicKey: modelAttestation.signingPublicKey,
       },
-      transport,
+      transport: {
+        ...transport,
+        fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
+      },
       verifyResponse: ({
         completionId,
         requestBody,

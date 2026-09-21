@@ -123,6 +123,18 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
+export const OhttpAttestationSchema = objectSchema({
+  signing_algo: v.literal('ed25519'),
+  signing_key: v.string(),
+  key_config: v.string(),
+  signature: v.string(),
+});
+
+const OptionalOhttpAttestationSchema = v.pipe(
+  v.optional(v.nullable(OhttpAttestationSchema)),
+  v.transform((value) => value ?? undefined),
+);
+
 const CloudApiAttestationEntries = {
   request_nonce: v.string(),
   signing_algo: SigningAlgoSchema,
@@ -164,6 +176,7 @@ export const DirectApiAttestationReportSchema = objectSchema({
     v.minLength(1),
   ),
   compose_manager_attestation: v.optional(v.unknown()),
+  ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 
 export const CloudApiGatewayAttestationSchema = objectSchema({
@@ -179,6 +192,7 @@ export const CloudApiModelAttestationResponseSchema = objectSchema({
 
 export const CloudApiGatewayAttestationResponseSchema = objectSchema({
   gateway_attestation: CloudApiGatewayAttestationSchema,
+  ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 
 // This is the minimal external boundary for secure Chat Completions requests.

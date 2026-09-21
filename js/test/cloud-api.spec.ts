@@ -12,6 +12,12 @@ import { AttestationClient as NodeAttestationClient } from '../src/node';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
+const ohttpWireAttestation = {
+  signing_algo: 'ed25519',
+  signing_key: '55'.repeat(32),
+  key_config: '010020',
+  signature: '66'.repeat(64),
+};
 
 type RequestAuthenticationCase = {
   name: string;
@@ -592,6 +598,72 @@ describe('AttestationClient', () => {
   });
 
   describe('gateway attestations', () => {
+    test('preserves the envelope OHTTP attestation on the Gateway evidence', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse({
+          ...gatewayReport(requestNonce(request), {
+            tls_cert_fingerprint: null,
+          }),
+          ohttp_attestation: ohttpWireAttestation,
+        }),
+      );
+
+      const { attestation } = await api.client.fetchGatewayAttestation();
+      expect(attestation.ohttpAttestation).toEqual({
+        signingAlgo: 'ed25519',
+        signingKey: ohttpWireAttestation.signing_key,
+        keyConfig: ohttpWireAttestation.key_config,
+        signature: ohttpWireAttestation.signature,
+      });
+    });
+
+    test.each([undefined, null])(
+      'normalizes absent OHTTP Gateway metadata: %s',
+      async (ohttpAttestation) => {
+        const api = cloudFor((request) =>
+          jsonResponse({
+            ...gatewayReport(requestNonce(request), {
+              tls_cert_fingerprint: null,
+            }),
+            ohttp_attestation: ohttpAttestation,
+          }),
+        );
+
+        const { attestation } = await api.client.fetchGatewayAttestation();
+        expect(attestation).not.toHaveProperty('ohttpAttestation');
+      },
+    );
+
+    test.each([
+      ['signing_algo', 'ecdsa'],
+      ['signing_key', 'ab'],
+      ['key_config', null],
+      ['key_config', 'not-hex'],
+      ['signature', undefined],
+    ])(
+      'rejects malformed OHTTP Gateway metadata at %s',
+      async (field, value) => {
+        const api = cloudFor((request) =>
+          jsonResponse({
+            ...gatewayReport(requestNonce(request), {
+              tls_cert_fingerprint: null,
+            }),
+            ohttp_attestation: { ...ohttpWireAttestation, [field]: value },
+          }),
+        );
+
+        await expect(
+          api.client.fetchGatewayAttestation(),
+        ).rejects.toMatchObject({
+          name: 'ApiError',
+          failure: {
+            code: 'api.invalid_response',
+            details: { path: `ohttp_attestation.${field}` },
+          },
+        });
+      },
+    );
+
     test('fetches gateway evidence without TLS binding', async () => {
       const api = cloudFor((request) =>
         jsonResponse(

@@ -11,6 +11,12 @@ import type {
 const baseUrl = 'https://model.example/v1';
 const signingAddress = '22'.repeat(32);
 const spkiFingerprint = '33'.repeat(32);
+const ohttpWireAttestation = {
+  signing_algo: 'ed25519',
+  signing_key: signingAddress,
+  key_config: '010020',
+  signature: '66'.repeat(64),
+};
 
 function attestation(nonce: string, instanceId: string) {
   return {
@@ -87,6 +93,65 @@ class CapturingDirectClient extends DirectApiClient {
 describe('DirectAttestationClient', () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  test('preserves OHTTP metadata on the response envelope without changing serving evidence', async () => {
+    const api = directFor((request) =>
+      jsonResponse({
+        ...reportFor(request),
+        ohttp_attestation: ohttpWireAttestation,
+      }),
+    );
+
+    const result = await api.client.fetchModelAttestations();
+    expect(result.ohttpAttestation).toEqual({
+      signingAlgo: 'ed25519',
+      signingKey: ohttpWireAttestation.signing_key,
+      keyConfig: ohttpWireAttestation.key_config,
+      signature: ohttpWireAttestation.signature,
+    });
+    expect(result.servingAttestation).toBe(result.attestations[0]);
+    for (const attestation of result.attestations) {
+      expect(attestation).not.toHaveProperty('ohttpAttestation');
+    }
+  });
+
+  test.each([undefined, null])(
+    'normalizes absent OHTTP direct metadata: %s',
+    async (ohttpAttestation) => {
+      const api = directFor((request) =>
+        jsonResponse({
+          ...reportFor(request),
+          ohttp_attestation: ohttpAttestation,
+        }),
+      );
+
+      const result = await api.client.fetchModelAttestations();
+      expect(result).not.toHaveProperty('ohttpAttestation');
+    },
+  );
+
+  test.each([
+    ['signing_algo', 'ecdsa'],
+    ['signing_key', 'ab'],
+    ['key_config', null],
+    ['key_config', 'not-hex'],
+    ['signature', undefined],
+  ])('rejects malformed OHTTP direct metadata at %s', async (field, value) => {
+    const api = directFor((request) =>
+      jsonResponse({
+        ...reportFor(request),
+        ohttp_attestation: { ...ohttpWireAttestation, [field]: value },
+      }),
+    );
+
+    await expect(api.client.fetchModelAttestations()).rejects.toMatchObject({
+      name: 'ApiError',
+      failure: {
+        code: 'api.invalid_response',
+        details: { path: `ohttp_attestation.${field}` },
+      },
+    });
   });
 
   test('preserves model attestations with a shared signer and reuses identical serving evidence', async () => {

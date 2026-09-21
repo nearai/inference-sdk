@@ -3,6 +3,7 @@ import type { DirectAttestationClientOptions } from './direct-api';
 import type { VerifiedDirectModelAttestation } from './direct-verification';
 import type {
   InferenceClientCommonOptions,
+  InferenceEncryptionOptions,
   ModelVerificationOptions,
 } from './inference-client';
 
@@ -12,12 +13,14 @@ export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
 
 /** Verified Chat requests to one direct model endpoint, without a Gateway. */
 export type DirectInferenceClientOptions = DirectAttestationClientOptions &
-  Omit<InferenceClientCommonOptions, 'modelVerification'> & {
+  Omit<InferenceClientCommonOptions, 'modelVerification'> &
+  InferenceEncryptionOptions & {
     readonly modelVerification?: DirectModelVerificationOptions;
   };
 
 export type NodeDirectInferenceClientOptions = DirectAttestationClientOptions &
-  Omit<InferenceClientCommonOptions, 'modelVerification'> & {
+  Omit<InferenceClientCommonOptions, 'modelVerification'> &
+  InferenceEncryptionOptions & {
     readonly modelVerification?: NodeDirectModelVerificationOptions;
   };
 
