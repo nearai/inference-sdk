@@ -341,9 +341,9 @@ measurements, and available GPU evidence. `verifyDirectModelAttestations()`
 checks every entry. Reports fetched by `DirectAttestationClient` produce
 `tlsBinding.kind: 'none'`.
 
-The runnable [direct-client.ts](../../examples/example-js/direct-client.ts),
-[direct-client-openai-sdk.ts](../../examples/example-js/direct-client-openai-sdk.ts),
-and [direct-bare.ts](../../examples/example-js/direct-bare.ts) examples each
+The runnable [direct/client.ts](../../examples/example-js/direct/client.ts),
+[direct/client-openai-sdk.ts](../../examples/example-js/direct/client-openai-sdk.ts),
+and [direct/bare.ts](../../examples/example-js/direct/bare.ts) examples each
 include streaming and non-streaming calls. The bare example omits E2EE.
 
 ## Verify Gateway requests manually
@@ -409,7 +409,7 @@ layout and is suitable for browsers. The `/node` `AttestationClient` observes
 only the peer for its Gateway-attestation request; it does not automatically
 apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
 client when the complete Chat flow—including model evidence, completion, and
-receipt signature—must be pinned automatically.
+response signature—must be pinned automatically.
 
 ### Encrypt a raw Chat request
 
@@ -453,10 +453,10 @@ const prepared = await prepareE2eeChatRequest({
 const requestBytes = await prepared.request.clone().arrayBuffer();
 const requestBody = new Uint8Array(requestBytes);
 const encryptedResponse = await pinnedTlsFetch(prepared.request);
-const receiptResponse = encryptedResponse.clone();
+const verificationResponse = encryptedResponse.clone();
 const response = await prepared.decryptResponse(encryptedResponse);
 const [responseBytes, plaintext] = await Promise.all([
-  receiptResponse.arrayBuffer(),
+  verificationResponse.arrayBuffer(),
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
@@ -467,7 +467,7 @@ Pass the captured `requestBody` and `responseBody` to the response-signature
 functions below. With `stream: true`, `decryptResponse` returns a decrypted
 SSE `Response`; consume its body as events arrive while retaining the encrypted
 response clone for signature verification. HTTP error responses pass through
-unchanged. The [bare example](../../examples/example-js/bare.ts) demonstrates
+unchanged. The [bare example](../../examples/example-js/gateway/bare.ts) demonstrates
 both response modes without handling protocol keys or encryption headers.
 
 ### Optional image build provenance
@@ -507,8 +507,8 @@ have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/client.ts) and
-[bare example](../../examples/example-js/bare.ts), which require build provenance
+[client example](../../examples/example-js/gateway/client.ts) and
+[bare example](../../examples/example-js/gateway/bare.ts), which require build provenance
 for four Gateway images.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact

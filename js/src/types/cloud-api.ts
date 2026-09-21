@@ -19,7 +19,7 @@ type AttestationClientBaseOptions = {
 };
 
 /**
- * Request authentication used by attestation and receipt requests. `apiKey`
+ * Request authentication used by attestation and signature requests. `apiKey`
  * is the convenience form for a direct Gateway connection. `headers` supports
  * an aggregator or another compatible endpoint with its own authentication.
  * A configured `apiKey` or Authorization header takes precedence over

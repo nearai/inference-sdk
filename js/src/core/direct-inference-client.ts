@@ -2,7 +2,7 @@ import type { FetchedDirectModelAttestations } from '../types/direct-api';
 import type {
   DirectInferenceClientOptions,
   NodeDirectInferenceClientOptions,
-  VerifiedDirectCompletionReceipt,
+  VerifiedDirectCompletionResult,
   VerifyDirectModelResponseParams,
 } from '../types/direct-inference-client';
 import type {
@@ -25,8 +25,8 @@ export type CreateDirectSessionTransportParams = {
   readonly tlsBinding: DirectTlsBinding;
 };
 
-/** Shared direct-endpoint preflight; Chat, E2EE and receipt caching reuse the Gateway transport core. */
-export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<VerifiedDirectCompletionReceipt> {
+/** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
+export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<VerifiedDirectCompletionResult> {
   private readonly directOptions: NodeDirectInferenceClientOptions;
 
   protected constructor(options: NodeDirectInferenceClientOptions) {
@@ -45,7 +45,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
 
   protected override async createVerificationState(
     model: string,
-  ): Promise<InferenceSession<VerifiedDirectCompletionReceipt>> {
+  ): Promise<InferenceSession<VerifiedDirectCompletionResult>> {
     const fetched = await this.fetchModelAttestations();
     const verifiedModelAttestations = await verifyDirectModelAttestations({
       ...fetched,

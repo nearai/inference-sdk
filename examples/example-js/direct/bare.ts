@@ -7,7 +7,7 @@ import {
 } from '@nearai/inference-sdk/node';
 
 // Standalone verification. This example sends plaintext Chat
-// bodies over HTTPS; it does not implement E2EE. See direct-client.ts for E2EE.
+// bodies over HTTPS; it does not implement E2EE. See client.ts for E2EE.
 const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/';
 const MODEL = 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = 'ed25519';

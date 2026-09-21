@@ -12,24 +12,25 @@ export NEARAI_API_KEY=sk-your-api-key
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
 
-Each entry point includes non-streaming and streaming calls:
+Gateway and direct examples are grouped in separate folders and share the same
+project configuration. Each entry point includes non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
-| `client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
-| `client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
-| `direct-client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
-| `direct-client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
-| `direct-bare.ts` | Fetches and verifies direct model attestations and verifies exact response bytes. | Not implemented |
+| `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
+| `direct/client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
+| `direct/client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
+| `direct/bare.ts` | Fetches and verifies direct model attestations and verifies exact response bytes. | Not implemented |
 
-The first three connect through the Gateway and verify its TLS identity.
+The examples in `gateway/` verify the Gateway's TLS identity.
 The Gateway inference clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
 completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
 
-The bare example preserves the exact encrypted request and response bytes
+The Gateway bare example preserves the exact encrypted request and response bytes
 before decryption for signature verification. The public E2EE helper creates
 request-specific keys and protocol headers, including `x-no-aliasing: true`.
 The example sets `Accept-Encoding: identity` and displays decrypted JSON or
@@ -53,7 +54,7 @@ Requires Node.js 24 or later.
 
 ### Direct model endpoints
 
-`direct-client.ts`, `direct-client-openai-sdk.ts`, and `direct-bare.ts` use
+`direct/client.ts`, `direct/client-openai-sdk.ts`, and `direct/bare.ts` use
 `https://glm-5-3-flash.completions.near.ai/v1`, without Gateway attestation.
 Set `NEARAI_API_KEY` to a credential accepted by that endpoint; a Gateway key is
 not necessarily valid for direct inference.
@@ -72,7 +73,8 @@ and selects matching attestations when verifying the response signature.
 
 ### Image provenance
 
-[`client.ts`](example-js/client.ts) and [`bare.ts`](example-js/bare.ts) verify
+[`gateway/client.ts`](example-js/gateway/client.ts) and
+[`gateway/bare.ts`](example-js/gateway/bare.ts) verify
 the build provenance of these four required Gateway images:
 
 | Image | GitHub repository | Build workflow |
