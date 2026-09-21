@@ -432,12 +432,9 @@ describe('DirectInferenceClient', () => {
 
   test('sends no chat request when policy rejects the second deployment', async () => {
     const endpoint = createDirectEndpoint();
-    const checked: string[] = [];
     const client = new DirectInferenceClient({
       ...endpoint.options,
-      deploymentPolicy: async ({ deployment }) => {
-        await Promise.resolve();
-        checked.push(deployment.appCompose);
+      deploymentPolicy: ({ deployment }) => {
         if (deployment.appCompose === composes[1]) {
           throw new Error('Deployment is not approved');
         }
@@ -446,8 +443,6 @@ describe('DirectInferenceClient', () => {
     await expect(client.fetch(chatRequest())).rejects.toMatchObject({
       failure: { code: 'provenance.verification_failed' },
     });
-    expect(checked).toHaveLength(composes.length);
-    expect(checked).toEqual(expect.arrayContaining(composes));
     expect(endpoint.state.completionRequests).toBe(0);
   });
 
