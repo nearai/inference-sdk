@@ -23,6 +23,8 @@ from .e2ee_chat import (
 
 _REPLACED_BODY_HEADERS = (
     'content-length',
+    'transfer-encoding',
+    'trailer',
     'content-md5',
     'digest',
     'content-digest',

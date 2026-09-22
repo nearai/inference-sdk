@@ -246,9 +246,9 @@ class Gateway:
             ),
         )
 
-    def client(self, **options) -> InferenceClient:
+    def client(self, api_key: str | None = 'test-key', **options) -> InferenceClient:
         return InferenceClient(
-            'test-key',
+            api_key,
             base_url=BASE_URL,
             signing_algo=self.signing_algo,
             gateway_verification=GatewayVerificationOptions(
@@ -486,7 +486,9 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
 ):
     gateway.install(monkeypatch)
 
-    async with gateway.client(headers={'x-aggregator': 'app'}) as client:
+    async with gateway.client(
+        headers={'x-aggregator': 'app', 'Api-Key': 'stale-key'}
+    ) as client:
         completion = await client.chat.completions.create(
             model=MODEL,
             messages=MESSAGES,
@@ -498,7 +500,54 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
         headers['authorization'] == 'Bearer test-key' for headers in gateway.headers
     )
     assert all(headers['x-aggregator'] == 'app' for headers in gateway.headers)
+    assert all('api-key' not in headers for headers in gateway.headers)
     assert gateway.completion_requests[0].headers['x-tenant'] == 'alice'
+
+
+async def test_external_openai_uses_configured_header_only_authentication(
+    monkeypatch, gateway
+):
+    gateway.install(monkeypatch)
+
+    async with gateway.client(
+        api_key=None, headers={'X-API-Key': 'aggregator-key'}
+    ) as client:
+        openai_client = AsyncOpenAI(
+            api_key='placeholder',
+            base_url=BASE_URL,
+            http_client=client.http_client,
+        )
+        completion = await openai_client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        await client.verify_response(completion.id)
+
+    assert all(headers['x-api-key'] == 'aggregator-key' for headers in gateway.headers)
+    assert all('authorization' not in headers for headers in gateway.headers)
+
+
+@pytest.mark.parametrize('e2ee', [False, True])
+async def test_async_request_body_is_sent_with_buffered_framing(
+    monkeypatch, gateway, e2ee
+):
+    gateway.install(monkeypatch)
+    body = json.dumps({'model': MODEL, 'messages': MESSAGES}).encode()
+
+    async with gateway.client(e2ee=e2ee) as client:
+        request = httpx.Request(
+            'POST',
+            BASE_URL + 'chat/completions',
+            content=ChunkStream([body[:10], body[10:]]),
+            headers={'Content-Type': 'application/json', 'Trailer': 'Digest'},
+        )
+        response = await client.http_client.send(request)
+        await client.verify_response(response.json()['id'])
+
+    sent = gateway.completion_requests[0]
+    assert 'transfer-encoding' not in sent.headers
+    assert 'trailer' not in sent.headers
+    assert sent.headers['content-length'] == str(len(sent.content))
+    assert gateway.plaintexts == ['Hello']
 
 
 async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch, gateway):

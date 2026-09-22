@@ -159,6 +159,30 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
 
 
 @pytest.mark.asyncio
+async def test_encrypts_async_request_body_with_buffered_framing():
+    model_key, pair = model_keys('ed25519')
+    request = httpx.Request(
+        'POST',
+        ENDPOINT,
+        content=ByteStream(json.dumps(PROMPT).encode()),
+        headers={'Content-Type': 'application/json', 'Trailer': 'Digest'},
+    )
+
+    prepared = await prepare_e2ee_chat_request(request, model_key)
+
+    assert 'transfer-encoding' not in prepared.request.headers
+    assert 'trailer' not in prepared.request.headers
+    assert prepared.request.headers['content-length'] == str(
+        len(prepared.request.content)
+    )
+    encrypted = json.loads(prepared.request.content)
+    assert (
+        decrypt_e2ee_text(encrypted['messages'][0]['content'], pair, 'content')
+        == PROMPT['messages'][0]['content']
+    )
+
+
+@pytest.mark.asyncio
 async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     model_key, _ = model_keys(signing_algo)
     prepared = await prepare_e2ee_chat_request(
