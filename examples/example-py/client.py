@@ -74,6 +74,7 @@ async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
     # E2EE and Gateway TLS pinning are enabled. Attestations and response records
     # each have a 60-minute TTL; the response TTL starts when its body finishes.
+    # Add ohttp=True to encapsulate Chat HTTP traffic; keep Ed25519 selected.
     async with InferenceClient(
         api_key,
         base_url=BASE_URL,

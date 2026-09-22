@@ -31,6 +31,8 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `inference_client.verify_response` | `(completion_id)` | `VerifiedCompletionReceipt` | Fetches and verifies a signature over retained wire bytes. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a previously verified SPKI before sending HTTP data. |
+| `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
+| `create_ohttp_client` | `(key_config, *, base_url, http_client=None, forwarded_headers=())` | `httpx.AsyncClient` | Encapsulates HTTP requests with OHTTP and returns decoded inner responses. |
 | `AttestationClient` | `(api_key=None, *, base_url=..., headers=None)` | client | Owns Gateway credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
@@ -59,8 +61,9 @@ automatically verify the response signature; use `verify_response` afterwards.
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
 | `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator base URL. |
 | `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
-| `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. |
+| `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `True` | Encrypt supported fields; `False` still verifies deployments. |
+| `ohttp` | `bool` | `False` | Encapsulate Chat requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
 | `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification for this long; `0` verifies each request. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
@@ -111,6 +114,34 @@ encrypted request and response bytes for standalone response verification.
 fingerprint obtained from a verified `GatewayTlsBinding`. Close the returned
 HTTP client after use. Normal certificate-chain and hostname validation remain
 enabled; a different SPKI is rejected before sending request headers or body.
+
+## OHTTP helpers
+
+`InferenceClient` performs these steps automatically when `ohttp=True`.
+For a manual flow, verify Gateway evidence first, pass its signer and the
+advertised configuration to `verify_ohttp_key_config`, then pass the returned
+bytes to `create_ohttp_client`.
+
+| Function | Parameter | Type | Description |
+| --- | --- | --- | --- |
+| `verify_ohttp_key_config` | `ohttp_attestation` | `OhttpAttestation` | Configuration advertised by the Gateway report. |
+|  | `signer` | `SigningIdentity` | Previously verified Ed25519 Gateway identity. Must match the configuration's signing key. |
+| `create_ohttp_client` | `key_config` | `bytes` | Authenticated raw configuration returned by `verify_ohttp_key_config`. |
+|  | `base_url` | `str` | Endpoint whose origin serves `/ohttp`. Inner requests must use the same origin. |
+|  | `http_client` | `httpx.AsyncClient \| None` | Outer transport. Pass a pinned client to preserve TLS binding. If omitted, creates and owns a normal HTTP client. |
+|  | `forwarded_headers` | `Sequence[str]` | Additional inner header names to expose on the outer request. Authorization is forwarded automatically; content and encryption-protocol headers stay inner-only. |
+
+| `OhttpAttestation` field | Type | Description |
+| --- | --- | --- |
+| `signing_algo` | `Literal['ed25519']` | Configuration signature algorithm. |
+| `signing_key` | `str` | Hexadecimal Ed25519 signing public key. |
+| `key_config` | `str` | Hexadecimal encoded OHTTP key configuration. |
+| `signature` | `str` | Hexadecimal signature over the raw configuration bytes. |
+
+Use the returned HTTP client as an asynchronous context manager or close it
+with `aclose()`. A caller-supplied outer client remains open. This helper does
+not fetch attestations, encrypt Chat fields, or retain response bytes for
+signature verification.
 
 ## AttestationClient
 
@@ -352,6 +383,7 @@ source checks.
 |  | `signing_public_key` | `str \| None` | Reported hexadecimal public key, checked against the quote-bound signer during verification. |
 | `GatewayAttestation` | `spki_fingerprint` | `str \| None` | TLS fingerprint returned when the fetch requested it. Its presence selects TLS-bound Gateway verification. |
 |  | `reported_quote_data` | `str` | Gateway report-data copy required by Gateway verification. |
+|  | `ohttp_attestation` | `OhttpAttestation \| None` | Signed OHTTP configuration from the report envelope. Authenticate it with `verify_ohttp_key_config` and the verified Gateway signer before use. |
 
 `CompletionSignatureKind` is `Literal['provider_tee', 'gateway']` and
 `SigningAlgo` is `Literal['ecdsa', 'ed25519']`. `AttestationEventLog` is

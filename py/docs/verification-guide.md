@@ -28,7 +28,7 @@ async def chat(api_key: str) -> None:
 ```
 
 The client verifies Gateway and model attestations before sending Chat. E2EE
-uses the verified model key; setting `e2ee=False` disables encryption but keeps
+uses the verified model key; setting `e2ee=False` disables field encryption but keeps
 attestation verification. `signing_algo` defaults to `'ed25519'` and also accepts
 `'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
 response signatures. ECDSA uses the legacy AES-GCM protocol and omits
@@ -91,6 +91,39 @@ you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
 Use one reusable client for concurrent requests; each response is retained under
 its completion ID. `InferenceClient` owns and closes the shared HTTP transport.
 Only Chat Completions are supported by this transport, not the Responses API.
+
+### Use OHTTP
+
+Set `ohttp=True` to encapsulate Chat HTTP requests and responses to the Gateway:
+
+```python
+async with InferenceClient(api_key, ohttp=True) as inference_client:
+    completion = await inference_client.chat.completions.create(
+        model='z-ai/glm-5.3-flash',
+        messages=[{'role': 'user', 'content': 'Hello'}],
+    )
+    print(completion.choices[0].message.content)
+    verified = await inference_client.verify_response(completion.id)
+```
+
+OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
+The client verifies the advertised OHTTP configuration against the attested
+Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
+The authenticated configuration is reused with the attestation cache.
+
+`e2ee` is independent and remains enabled by default: OHTTP protects the HTTP
+exchange to the Gateway, while field-level E2EE encrypts supported Chat fields
+to the model. Setting `e2ee=False` keeps OHTTP and deployment verification.
+
+JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
+`verify_response()` checks the inner request and response bodies before E2EE
+decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
+
+Only Chat uses OHTTP. Attestation and signature requests keep their normal HTTP
+paths. The configured endpoint or proxy must serve `/ohttp` at its origin.
+Authorization and explicitly configured custom headers are also sent on the
+outer request for authentication; OHTTP does not hide them or the client's
+network address from that endpoint.
 
 ## Standalone workflow
 
