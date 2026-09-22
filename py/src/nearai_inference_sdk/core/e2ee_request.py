@@ -30,6 +30,8 @@ _REPLACED_BODY_HEADERS = (
     'content-digest',
     'repr-digest',
     'content-encoding',
+    'etag',
+    'last-modified',
 )
 
 
@@ -132,7 +134,7 @@ async def _decrypt_response(
     if not response.is_success:
         return response
     headers = httpx.Headers(response.headers)
-    # Decryption invalidates the wire length and digests. HTTPX already
+    # Decryption invalidates body metadata and cache validators. HTTPX already
     # decompresses source bytes, so the transformed body must not be decoded again.
     for name in _REPLACED_BODY_HEADERS:
         headers.pop(name, None)
