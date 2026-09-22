@@ -84,9 +84,10 @@ export type InferenceClientCommonOptions = {
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `true`. Setting this to `false` keeps attestation and
-   * deployment-policy checks, but sends plaintext Chat fields with a verified
-   * model-key routing header.
+   * Defaults to `false` in InferenceClient and `true` in DirectInferenceClient.
+   * Enabling E2EE requires verified NEAR model evidence. With E2EE disabled,
+   * supported NEAR deployments still use model verification and key routing;
+   * Incognito models use Gateway verification only.
    */
   readonly e2ee?: boolean;
   /**

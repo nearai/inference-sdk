@@ -3,6 +3,7 @@ import type {
   CloudApiGatewayAttestationSchema,
   CloudApiModelAttestationSchema,
   CloudApiCompletionSignatureResultSchema,
+  CloudApiModelMetadataResponseSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
@@ -36,6 +37,11 @@ export type AttestationClientOptions =
       /** Sent with every SDK request. Required when no direct Gateway API key is used. */
       readonly headers: HeadersInit;
     });
+
+/** Catalog metadata used to select model or Gateway-only verification. */
+export type ModelMetadata = v.InferOutput<
+  typeof CloudApiModelMetadataResponseSchema
+>['metadata'];
 
 export type FetchModelAttestationsParams = {
   readonly model: string;

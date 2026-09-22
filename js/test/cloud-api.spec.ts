@@ -296,6 +296,68 @@ describe('AttestationClient', () => {
     expect(api.request().headers.get('x-tenant-id')).toBe('tenant-a');
   });
 
+  describe('model metadata', () => {
+    test.each([
+      { providerType: 'vllm', attestationSupported: true },
+      { providerType: 'vllm', attestationSupported: false },
+      { providerType: 'external', attestationSupported: false },
+      { providerType: 'chutes', attestationSupported: true },
+      { providerType: 'future-provider', attestationSupported: true },
+    ])(
+      'reads $providerType metadata with attestationSupported=$attestationSupported',
+      async (metadata) => {
+        const api = cloudFor(() => jsonResponse({ metadata }));
+        const model = 'provider/model?revision=1#test%';
+
+        await expect(api.client.fetchModelMetadata(model)).resolves.toEqual(
+          metadata,
+        );
+        expect(api.request().method).toBe('GET');
+        expect(api.request().url).toBe(
+          `${baseUrl}/model/${encodeURIComponent(model)}`,
+        );
+        expect(api.request().headers.get('authorization')).toBe('Bearer test');
+      },
+    );
+
+    test.each([
+      {},
+      { metadata: null },
+      { metadata: {} },
+      { metadata: { providerType: 'external' } },
+      { metadata: { attestationSupported: false } },
+      { metadata: { providerType: null, attestationSupported: false } },
+      { metadata: { providerType: 1, attestationSupported: false } },
+      { metadata: { provider_type: 'external', attestationSupported: false } },
+      { metadata: { providerType: 'external', attestation_supported: false } },
+      { metadata: { providerType: 'external', attestationSupported: 'false' } },
+      { metadata: { providerType: 'external', attestationSupported: null } },
+    ])(
+      'rejects malformed metadata instead of choosing Gateway-only: %j',
+      async (body) => {
+        const api = cloudFor(() => jsonResponse(body));
+
+        await expect(
+          api.client.fetchModelMetadata('model'),
+        ).rejects.toMatchObject({ failure: { code: 'api.invalid_response' } });
+      },
+    );
+
+    test.each([404, 503])('propagates catalog HTTP %s', async (status) => {
+      const api = cloudFor(() => new Response('', { status }));
+
+      await expect(
+        api.client.fetchModelMetadata('model'),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.http_status',
+          details: { status },
+          retryable: status >= 500,
+        },
+      });
+    });
+  });
+
   describe('model attestations', () => {
     test('preserves every model candidate', async () => {
       const selectedSigningAddress = `0x${'44'.repeat(20)}`;

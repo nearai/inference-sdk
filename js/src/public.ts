@@ -52,6 +52,7 @@ export type {
   FetchedModelAttestations,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
+  ModelMetadata,
 } from './types/cloud-api';
 export type {
   DeploymentPolicy,
