@@ -253,8 +253,10 @@ def _encode_request(request: httpx.Request, body: bytes) -> bytes:
     fields = b''.join(
         _vector(name.lower()) + _vector(value)
         for name, value in request.headers.raw
-        if name.lower() not in excluded and name.lower() != b'host'
+        if name.lower() not in excluded
     )
+    # RFC 9292 keeps Host in the field section, with an empty authority.
+    authority = b'' if 'host' in request.headers else request.url.netloc
     encoded = (
         b'\0'
         + b''.join(
@@ -262,7 +264,7 @@ def _encode_request(request: httpx.Request, body: bytes) -> bytes:
             for value in (
                 request.method.encode('ascii'),
                 request.url.raw_scheme,
-                request.url.netloc,
+                authority,
                 request.url.raw_path,
             )
         )
@@ -350,7 +352,7 @@ async def _read_fields(
         value = await reader.exact(size)
         if any(
             c not in b"!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz"
-            for c in name
+            for c in name.lower()
         ) or any(c in value for c in (b'\0', b'\r', b'\n')):
             raise ValueError('Invalid BHTTP header')
         fields.append((name, value))

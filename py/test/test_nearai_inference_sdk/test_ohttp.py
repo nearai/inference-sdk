@@ -27,8 +27,8 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
     gateway = OhttpGateway()
     gateway.response_status = 422
     gateway.response_headers = {
-        'content-type': 'application/json',
-        'x-request-id': 'signed-id',
+        'Content-Type': 'application/json',
+        'X-Request-Id': 'signed-id',
     }
     gateway.response_framing = framing
     gateway.fragment_size = fragment_size
@@ -61,6 +61,7 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
             )
         assert not outer.is_closed
     assert response.status_code == 422
+    assert response.headers['content-type'] == 'application/json'
     assert response.headers['x-request-id'] == 'signed-id'
     assert response.content == gateway.response_body
     assert gateway.requests[0].content == body
@@ -76,6 +77,23 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
     assert 'x-client-pub-key' not in request.headers
     assert b'private exact bytes' not in request.content
     assert gateway.streams[0].closed
+
+
+async def test_custom_host_is_preserved_inside_the_encrypted_request() -> None:
+    gateway = OhttpGateway()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(gateway.handle)
+    ) as outer:
+        async with create_ohttp_client(
+            gateway.key_config, base_url=BASE_URL, http_client=outer
+        ) as client:
+            response = await client.get('models', headers={'Host': 'tenant.example'})
+
+    assert response.status_code == 200
+    assert gateway.requests[0].headers['host'] == 'tenant.example'
+    assert gateway.requests[0].url.host == 'tenant.example'
+    assert gateway.outer_requests[0].headers['host'] == 'gateway.example'
+    assert gateway.outer_requests[0].url.host == 'gateway.example'
 
 
 @pytest.mark.parametrize(
@@ -320,7 +338,7 @@ async def test_transport_retains_timeouts_and_preserves_tls_verification_failure
         b'\x03' + varint(600),
         b'\x03'
         + varint(200)
-        + vector(b'Content-Type')
+        + vector(b'Content Type')
         + vector(b'text/plain')
         + b'\0\0\0',
         b'\x03' + varint(200) + b'\0\x05abc',

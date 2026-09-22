@@ -123,6 +123,8 @@ class OhttpGateway:
                 body += chunk
         assert read_fields(bhttp, framing == 0) == []
         assert not any(bhttp.read())
+        if not authority:
+            authority = httpx.Headers(headers)['host'].encode('ascii')
         inner = httpx.Request(
             method.decode(),
             b''.join((scheme, b'://', authority, path)).decode(),
@@ -173,9 +175,7 @@ class OhttpGateway:
             if self.plaintext_response is not None:
                 yield self.plaintext_response
                 return
-            fields = b''.join(
-                vector(k.lower()) + vector(v) for k, v in response.headers.raw
-            )
+            fields = b''.join(vector(k) + vector(v) for k, v in response.headers.raw)
             if self.response_framing == 1:
                 yield (
                     b'\x01'
