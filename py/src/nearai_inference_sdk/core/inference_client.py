@@ -149,7 +149,7 @@ class InferenceClient:
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
         self._attestation_client = AttestationClient(
-            api_key, base_url=self.base_url, headers=headers
+            api_key, base_url=self.base_url, headers=self._headers
         )
         self._sessions: dict[str, tuple[float, _VerifiedSession]] = {}
         self._pending: dict[str, asyncio.Task[_VerifiedSession]] = {}
@@ -220,16 +220,17 @@ class InferenceClient:
         session = await self._start_verification(parsed['model'])
         headers = httpx.Headers(self._headers)
         headers.update(request.headers)
-        # Configured authentication applies equally to evidence and inference.
-        if headers.get('authorization') == f'Bearer {_OPENAI_PLACEHOLDER}':
-            headers.pop('authorization')
-            if 'authorization' in self._headers:
-                headers['authorization'] = self._headers['authorization']
-        if self._api_key is not None:
-            headers['authorization'] = f'Bearer {self._api_key}'
-            headers.pop('api-key', None)
-        elif 'authorization' in self._headers:
+        # Use the same configured authorization for evidence, Chat, and signatures,
+        # including when an external OpenAI client supplies its own API key.
+        if 'authorization' in self._headers:
             headers['authorization'] = self._headers['authorization']
+        else:
+            headers.pop('authorization', None)
+        if self._api_key is not None:
+            headers.pop('api-key', None)
+        # The async request body has been buffered; HTTPX sets Content-Length.
+        headers.pop('transfer-encoding', None)
+        headers.pop('trailer', None)
         prepared_request = httpx.Request(
             request.method,
             request.url,

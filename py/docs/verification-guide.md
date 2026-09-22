@@ -83,6 +83,11 @@ async with InferenceClient(api_key) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
+Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
+the authorization for evidence, Chat, and signature requests. An external
+`AsyncOpenAI` client's API key does not override it. With header-only authentication,
+you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
+
 Use one reusable client for concurrent requests; each response is retained under
 its completion ID. `InferenceClient` owns and closes the shared HTTP transport.
 Only Chat Completions are supported by this transport, not the Responses API.
