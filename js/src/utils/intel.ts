@@ -108,6 +108,10 @@ export async function verifyDcapQuote(
       ),
       reportData: (td10 as { reportData: unknown }).reportData,
       mrConfigId: (td10 as { mrConfigId: unknown }).mrConfigId,
+      mrTd: (td10 as { mrTd: unknown }).mrTd,
+      rtMr0: (td10 as { rtMr0: unknown }).rtMr0,
+      rtMr1: (td10 as { rtMr1: unknown }).rtMr1,
+      rtMr2: (td10 as { rtMr2: unknown }).rtMr2,
       rtMr3: (td10 as { rtMr3: unknown }).rtMr3,
     };
   } catch (cause) {

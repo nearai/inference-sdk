@@ -1,8 +1,8 @@
-import type { TcbStatus } from '../types/verification';
 import type {
   DeploymentImagesFailureReason,
   ImageProvenanceFailureReason,
 } from '../types/provenance';
+import type { TcbStatus } from '../types/verification';
 
 type ApiResource =
   | 'completion'
@@ -92,6 +92,8 @@ export type ApiFailure =
  * Future language SDKs should preserve these codes and detail field names.
  */
 export type VerificationFailure =
+  | { code: 'measurement.chutes_baseline_mismatch' }
+  | { code: 'e2ee.provider_unsupported'; details: { provider: 'chutes' } }
   | { code: 'ohttp.attestation_required' }
   | { code: 'ohttp.signer_mismatch' }
   | { code: 'ohttp.signature_invalid' }
@@ -104,6 +106,8 @@ export type VerificationFailure =
         field: string;
         reason:
           | 'invalid_hex'
+          | 'invalid_base64'
+          | 'invalid_certificate'
           | 'wrong_length'
           | 'invalid_jwt'
           | 'invalid_url'
@@ -170,7 +174,12 @@ export type VerificationFailure =
   | {
       code: 'binding.report_data_mismatch';
       details: {
-        source: 'reportedQuoteData' | 'signerBinding' | 'signerTlsBinding';
+        source:
+          | 'reportedQuoteData'
+          | 'signerBinding'
+          | 'signerTlsBinding'
+          | 'chutesFreshness'
+          | 'chutesCertificate';
       };
     }
   | {
@@ -219,7 +228,13 @@ export type VerificationFailure =
     }
   | {
       code: 'gpu.payload_invalid';
-      details: { reason: 'invalid_json' | 'nonce_missing' };
+      details: {
+        reason:
+          | 'invalid_json'
+          | 'nonce_missing'
+          | 'invalid_schema'
+          | 'mixed_architectures';
+      };
     }
   | {
       code: 'gpu.nras_request_failed';
@@ -460,6 +475,10 @@ function serializeFailure<TFailure extends SdkFailure>(
 
 function formatFailureMessage(failure: SdkFailure): string {
   switch (failure.code) {
+    case 'measurement.chutes_baseline_mismatch':
+      return `[${failure.code}] Quote measurements do not match an accepted Chutes VM baseline`;
+    case 'e2ee.provider_unsupported':
+      return `[${failure.code}] Client-to-model E2EE is not supported by ${failure.details.provider}`;
     case 'ohttp.attestation_required':
       return `[${failure.code}] The endpoint did not provide an OHTTP key attestation`;
     case 'ohttp.signer_mismatch':
@@ -597,6 +616,10 @@ function formatInputFailure(
   switch (details.reason) {
     case 'invalid_hex':
       return `${subject} must be hexadecimal`;
+    case 'invalid_base64':
+      return `${subject} must be valid base64`;
+    case 'invalid_certificate':
+      return `${subject} must be a valid X.509 certificate`;
     case 'wrong_length':
       if (details.expected !== undefined) {
         return `${subject} must be ${details.expected}`;

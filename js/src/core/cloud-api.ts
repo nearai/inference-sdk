@@ -4,6 +4,8 @@ import {
   decodeModelAttestationReport,
 } from '../boundaries/cloud-api';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
+import type { ChutesModelAttestation } from '../types/attestation-chutes';
+import type { NearModelAttestation } from '../types/attestation-model';
 import type {
   CompletionSignature,
   CompletionSignatureReference,
@@ -15,9 +17,11 @@ import type {
   FetchedModelAttestations,
   FetchGatewayAttestationParams,
   FetchModelAttestationsParams,
+  FetchNearModelAttestationsParams,
+  FetchChutesModelAttestationsParams,
   FindModelAttestationForSignatureParams,
 } from '../types/cloud-api';
-import type { VerifiedModelAttestation } from '../types/verification';
+import type { VerifiedNearModelAttestation } from '../types/verification';
 import { generateNonce, hexToBuffer } from '../utils/common';
 import {
   ApiError,
@@ -141,12 +145,23 @@ export class CloudApiClient {
   }
 
   /**
-   * Fetch NEAR model attestation candidates with a fresh client nonce.
+   * Fetch model attestation candidates with a fresh client nonce.
+   * An explicit provider narrows the request and the returned evidence type.
    * Optionally narrow the report to a signing algorithm and signing address.
    * Every returned candidate is bound to the same fresh client nonce.
    */
+  fetchModelAttestations(
+    params: FetchNearModelAttestationsParams,
+  ): Promise<FetchedModelAttestations<NearModelAttestation>>;
+  fetchModelAttestations(
+    params: FetchChutesModelAttestationsParams,
+  ): Promise<FetchedModelAttestations<ChutesModelAttestation>>;
+  fetchModelAttestations(
+    params: FetchModelAttestationsParams,
+  ): Promise<FetchedModelAttestations>;
   async fetchModelAttestations({
     model,
+    provider,
     signingAlgo,
     signingAddress,
   }: FetchModelAttestationsParams): Promise<FetchedModelAttestations> {
@@ -160,7 +175,9 @@ export class CloudApiClient {
     const clientNonce = generateNonce();
     const url = new URL('attestation/report', this.baseUrl);
     url.searchParams.set('model', model);
-    url.searchParams.set('provider', 'near');
+    if (provider !== undefined) {
+      url.searchParams.set('provider', provider);
+    }
     url.searchParams.set('nonce', clientNonce);
     url.searchParams.set('include_tls_fingerprint', 'false');
     if (signingAlgo !== undefined) {
@@ -177,7 +194,17 @@ export class CloudApiClient {
         extraHeaders: { [NO_ALIASING_HEADER]: 'true' },
       }),
     );
-    for (const attestation of attestations) {
+    for (const [index, attestation] of attestations.entries()) {
+      if (provider !== undefined && attestation.provider !== provider) {
+        throw new ApiError({
+          code: 'api.invalid_response',
+          details: {
+            path: `model_attestations[${index}].provider`,
+            expected: provider,
+            actual: attestation.provider,
+          },
+        });
+      }
       requireMatchingApiNonce({
         reportedNonce: attestation.nonce,
         requestedNonce: clientNonce,
@@ -425,15 +452,18 @@ export async function readCloudApiJson({
 export function findModelAttestationForSignature({
   attestations,
   signature,
-}: FindModelAttestationForSignatureParams): VerifiedModelAttestation {
+}: FindModelAttestationForSignatureParams): VerifiedNearModelAttestation {
   const signer = requireProviderSignature(signature);
   const signerAddress = validateApiSigningAddress({
     signingAddress: signer.signingAddress,
     signingAlgo: signer.signingAlgo,
     field: 'signature.signer.signingAddress',
   });
-  const matches: VerifiedModelAttestation[] = [];
+  const matches: VerifiedNearModelAttestation[] = [];
   for (const [index, attestation] of attestations.entries()) {
+    if (attestation.provider !== 'near') {
+      continue;
+    }
     const candidateSigner = attestation.signer;
     if (
       candidateSigner.signingAlgo === signer.signingAlgo &&

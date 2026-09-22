@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import * as v from 'valibot';
 import {
   CloudApiCompletionSignatureResultSchema,
@@ -5,14 +6,19 @@ import {
   CloudApiModelAttestationResponseSchema,
 } from '../schemas';
 import type { GatewayAttestation } from '../types/attestation-gateway';
-import type { ModelAttestation } from '../types/attestation-model';
+import type { ChutesModelAttestation } from '../types/attestation-chutes';
+import type {
+  ModelAttestation,
+  NearModelAttestation,
+} from '../types/attestation-model';
 import type {
   AttestationEvidence,
   SigningAlgo,
 } from '../types/attestation-common';
 import type {
   CloudApiGatewayAttestation,
-  CloudApiModelAttestation,
+  CloudApiNearModelAttestation,
+  CloudApiChutesModelAttestation,
   CloudApiCompletionSignatureResult,
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
@@ -25,7 +31,7 @@ import { ApiError } from '../utils/errors';
 
 type CloudApiAttestation =
   | CloudApiGatewayAttestation
-  | CloudApiModelAttestation;
+  | CloudApiNearModelAttestation;
 
 type MapAttestationEvidenceParams = {
   attestation: CloudApiAttestation;
@@ -66,9 +72,12 @@ export function decodeModelAttestationReport(
       fallbackPath: 'model attestation report',
     });
   }
-  return parsed.output.model_attestations.map((attestation, index) =>
-    mapModelAttestation(attestation, `model_attestations[${index}]`),
-  );
+  return parsed.output.model_attestations.map((attestation, index) => {
+    const label = `model_attestations[${index}]`;
+    return attestation.provider === 'chutes'
+      ? mapChutesModelAttestation(attestation, label)
+      : mapModelAttestation(attestation, label);
+  });
 }
 
 /** Decode a Gateway attestation report from Cloud API JSON. */
@@ -164,11 +173,12 @@ export function mapCompletionSignature(
 }
 
 export function mapModelAttestation(
-  attestation: CloudApiModelAttestation,
+  attestation: CloudApiNearModelAttestation,
   label: string,
-): ModelAttestation {
+): NearModelAttestation {
   const evidence = mapAttestationEvidence({ attestation, label });
   return {
+    provider: 'near',
     ...evidence,
     ...(attestation.signing_public_key === undefined
       ? {}
@@ -186,6 +196,92 @@ export function mapModelAttestation(
       ? {}
       : { nvidiaPayload: attestation.nvidia_payload }),
   };
+}
+
+function mapChutesModelAttestation(
+  attestation: CloudApiChutesModelAttestation,
+  label: string,
+): ChutesModelAttestation {
+  // Chutes hashes the textual nonce and key into report_data. Validate their
+  // wire encodings without changing case, padding, or the original strings.
+  if (!/^[0-9a-fA-F]{64}$/.test(attestation.nonce)) {
+    throw invalidCloudApiResponse({
+      path: `${label}.nonce`,
+      expected: '32-byte hexadecimal nonce without a prefix',
+      value: attestation.nonce,
+    });
+  }
+  const quote = validateWireBase64({
+    value: attestation.quote_b64,
+    label: `${label}.quote_b64`,
+    trim: true,
+  });
+  validateWireBase64({
+    value: attestation.certificate_b64,
+    label: `${label}.certificate_b64`,
+    trim: true,
+  });
+  validateWireBase64({
+    value: attestation.e2e_pubkey,
+    label: `${label}.e2e_pubkey`,
+    expectedBytes: 1184,
+  });
+  const gpuEvidence = attestation.gpu_evidence.map((gpu, index) => {
+    for (const field of ['certificate', 'evidence'] as const) {
+      validateWireBase64({
+        value: gpu[field],
+        label: `${label}.gpu_evidence[${index}].${field}`,
+        trim: true,
+      });
+    }
+    return { ...gpu };
+  });
+  return {
+    provider: 'chutes',
+    nonce: attestation.nonce,
+    intelQuote: quote.toString('hex'),
+    certificate: attestation.certificate_b64,
+    publicKey: attestation.e2e_pubkey,
+    gpuEvidence,
+    ...(attestation.instance_id === undefined
+      ? {}
+      : { instanceId: attestation.instance_id }),
+  };
+}
+
+type ValidateWireBase64Params = {
+  value: string;
+  label: string;
+  expectedBytes?: number;
+  trim?: boolean;
+};
+
+function validateWireBase64({
+  value,
+  label,
+  expectedBytes,
+  trim = false,
+}: ValidateWireBase64Params): Buffer {
+  const encoded = trim ? value.trim() : value;
+  const bytes = Buffer.from(encoded, 'base64');
+  if (
+    encoded.length === 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+      encoded,
+    ) ||
+    bytes.toString('base64') !== encoded ||
+    (expectedBytes !== undefined && bytes.length !== expectedBytes)
+  ) {
+    throw invalidCloudApiResponse({
+      path: label,
+      expected:
+        expectedBytes === undefined
+          ? 'non-empty standard base64'
+          : `standard base64 encoding of ${expectedBytes} bytes`,
+      value,
+    });
+  }
+  return bytes;
 }
 
 function mapGatewayAttestation(

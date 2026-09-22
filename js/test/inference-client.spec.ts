@@ -1,22 +1,23 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import ed2curve from 'ed2curve';
-import nacl from 'tweetnacl';
 import OpenAI from 'openai';
+import nacl from 'tweetnacl';
 import {
   InferenceClient,
-  type TdxQuoteVerificationResult,
   type InferenceClientOptions,
+  type TdxQuoteVerificationResult,
 } from '../src';
-import {
-  AttestationClient as NodeAttestationClient,
-  InferenceClient as NodeInferenceClient,
-} from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
   decryptE2eeText as decryptE2eeValue,
   encryptE2eeText as encryptE2eeValue,
 } from '../src/core/e2ee';
+import {
+  AttestationClient as NodeAttestationClient,
+  InferenceClient as NodeInferenceClient,
+} from '../src/node';
 import {
   appCompose,
   createGatewayTlsQuote,
@@ -694,6 +695,7 @@ function createTestGateway({
 
 function inferenceClientOptions(gateway: TestGateway): InferenceClientOptions {
   return {
+    e2ee: true,
     baseUrl,
     headers: { [aggregatorHeader.name]: aggregatorHeader.value },
     gatewayVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
@@ -822,6 +824,76 @@ describe('inference client', () => {
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
+  });
+
+  test('sends the default plaintext OpenAI request byte-for-byte over native fetch', async () => {
+    const gateway = createTestGateway();
+    const nativeFetch = globalThis.fetch.bind(globalThis);
+    let receivedBody = Buffer.alloc(0);
+    let receivedLength: string | undefined;
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      receivedBody = Buffer.concat(chunks);
+      receivedLength = request.headers['content-length'];
+      response.setHeader('content-type', 'application/json');
+      response.end(
+        JSON.stringify({
+          id: 'chatcmpl-native-fetch',
+          object: 'chat.completion',
+          created: 0,
+          model,
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'received' },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    try {
+      const address = server.address();
+      if (address === null || typeof address === 'string')
+        throw new Error('Missing local test port');
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation((input, init) =>
+          isChatCompletionRequest(input)
+            ? nativeFetch(input, init)
+            : gateway.fetch(input, init),
+        );
+      const client = new InferenceClient({
+        baseUrl: `http://127.0.0.1:${address.port}/v1/`,
+        headers: { [aggregatorHeader.name]: aggregatorHeader.value },
+        gatewayVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+        modelVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+      });
+      const body = {
+        model,
+        messages: [{ role: 'user' as const, content: '你好 🌎 — plaintext' }],
+      };
+      const completion = await client.chat.completions.create(body, {
+        maxRetries: 0,
+        timeout: 5_000,
+      });
+      expect(completion.id).toBe('chatcmpl-native-fetch');
+      expect(receivedBody).toEqual(Buffer.from(JSON.stringify(body)));
+      expect(receivedLength).toBe(String(receivedBody.byteLength));
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 
   test('uses pinned OHTTP for JSON and SSE while retaining evidence, signatures and session reuse', async () => {
@@ -1297,6 +1369,7 @@ describe('inference client', () => {
 
     expect(deployment).toHaveBeenCalledTimes(1);
     expect(deployment).toHaveBeenCalledWith({
+      provider: 'near',
       appCompose,
       runtimeMeasurements: expect.any(Object),
     });
@@ -1333,7 +1406,11 @@ describe('inference client', () => {
     );
     expect(deploymentPolicy).toHaveBeenCalledWith({
       model,
-      deployment: { appCompose, runtimeMeasurements: expect.any(Object) },
+      deployment: {
+        provider: 'near',
+        appCompose,
+        runtimeMeasurements: expect.any(Object),
+      },
     });
     expect(calls).toEqual([
       'verifier started',
@@ -1803,8 +1880,13 @@ describe('inference client', () => {
       messages: [{ role: 'user', content: 'hello model' }],
     });
 
-    expect(completion.choices[0]?.message.content).toBe('hello client');
-    expect(gateway.state.decryptedRequestContent).toEqual(['hello model']);
+    expect(completion.choices[0]?.message.content).toBe('plaintext response');
+    expect(gateway.state.completionRequestsSeen[0].body.messages).toEqual([
+      { role: 'user', content: 'hello model' },
+    ]);
+    expect(
+      gateway.state.completionRequestsSeen[0].headers.has('x-client-pub-key'),
+    ).toBe(false);
   });
 
   test('accepts nullable and empty Chat response fields under E2EE', async () => {

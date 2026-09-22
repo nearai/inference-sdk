@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
-import type { ModelAttestation } from '../src';
+import type { NearModelAttestation } from '../src';
 import type { VerifiedTdxQuote } from '../src/types/verification';
 
 export const nonce = '11'.repeat(32);
@@ -80,9 +80,10 @@ export function createModelQuote(
 }
 
 export function createModelAttestation(
-  overrides: Partial<ModelAttestation> = {},
-): ModelAttestation {
+  overrides: Partial<NearModelAttestation> = {},
+): NearModelAttestation {
   return {
+    provider: 'near',
     nonce,
     signer: { signingAlgo: 'ecdsa', signingAddress },
     intelQuote: 'aa',

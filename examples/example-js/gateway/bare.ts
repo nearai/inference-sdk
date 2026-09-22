@@ -13,7 +13,7 @@ import type {
   GatewayTlsBinding,
   ImageProvenancePolicy,
   VerifiedGatewayAttestation,
-  VerifiedModelAttestation,
+  VerifiedNearModelAttestation,
 } from '@nearai/inference-sdk/node';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
@@ -152,11 +152,12 @@ async function fetchAndVerifyGateway(
 
 async function fetchAndVerifyModelAttestations(
   client: AttestationClient,
-): Promise<readonly VerifiedModelAttestation[]> {
+): Promise<readonly VerifiedNearModelAttestation[]> {
   // These reports come through the Gateway, not a direct model TLS connection.
   // The fetch helper requests the signer-and-nonce layout without a TLS binding.
   const fetched = await client.fetchModelAttestations({
     model: MODEL,
+    provider: 'near',
     signingAlgo: SIGNING_ALGO,
   });
   if (fetched.attestations.length === 0) {
@@ -178,7 +179,7 @@ async function fetchAndVerifyModelAttestations(
 }
 
 function findModelAttestationForEncryption(
-  attestations: readonly VerifiedModelAttestation[],
+  attestations: readonly VerifiedNearModelAttestation[],
 ): ModelAttestationWithPublicKey {
   // Choose an encryption recipient before Chat; there is no response signature
   // to select by yet. The E2EE helper also uses this key in the model-routing header.
@@ -227,9 +228,8 @@ async function sendCompletion({
   const requestBody = new Uint8Array(requestBytes);
   const response = await pinnedTlsFetch(prepared.request);
   if (!response.ok) {
-    throw new Error(
-      `Chat request failed (${response.status}): ${await response.text()}`,
-    );
+    const message = await response.text();
+    throw new Error(`Chat request failed (${response.status}): ${message}`);
   }
   // Keep an encrypted copy for verification; decrypt the other branch for display.
   // For SSE, consume both branches concurrently so output remains streaming.
@@ -390,9 +390,9 @@ type VerifyCompletionResponseParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;
-  readonly model: VerifiedModelAttestation;
+  readonly model: VerifiedNearModelAttestation;
 };
 
-type ModelAttestationWithPublicKey = VerifiedModelAttestation & {
+type ModelAttestationWithPublicKey = VerifiedNearModelAttestation & {
   readonly signingPublicKey: string;
 };

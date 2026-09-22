@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
   // Direct model verification only: there is no Gateway attestation request.
-  // E2EE is enabled by default; direct TLS fingerprint binding is disabled.
+  // Opt into E2EE; direct TLS fingerprint binding is disabled.
   // Every model attestation must pass before Chat is sent. Successful checks
   // are cached for 60 minutes.
   // Response signatures must belong to the selected model signer.
@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     baseUrl: BASE_URL,
     apiKey,
     signingAlgo: SIGNING_ALGO,
+    e2ee: true,
   });
 
   await runNonStreamingExample(client);

@@ -1,18 +1,18 @@
 import type OpenAI from 'openai';
 import type * as v from 'valibot';
 import type { ChatCompletionRequestSchema } from '../schemas';
-import type { AttestationClientOptions } from './cloud-api';
-import type { CompletionSignature } from './chat';
-import type { Awaitable } from './shared';
 import type { SigningAlgo } from './attestation-common';
+import type { CompletionSignature } from './chat';
+import type { AttestationClientOptions } from './cloud-api';
+import type { Awaitable } from './shared';
 import type {
   AttestationPolicy,
   AttestationVerifiers,
-  MeasuredDeployment,
+  MeasuredModelDeployment,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
   VerifiedGatewayAttestation,
-  VerifiedModelAttestation,
+  VerifiedNearModelAttestation,
 } from './verification';
 
 /** Parsed JSON used to identify a Chat Completions request. */
@@ -40,7 +40,7 @@ export type DeploymentPolicy = (
 
 export type DeploymentPolicyParams = {
   readonly model: string;
-  readonly deployment: MeasuredDeployment;
+  readonly deployment: MeasuredModelDeployment;
 };
 
 /** Advanced verification settings for Gateway evidence used by `InferenceClient`. */
@@ -84,9 +84,9 @@ export type InferenceClientCommonOptions = {
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `true`. Setting this to `false` keeps attestation and
-   * deployment-policy checks, but sends plaintext Chat fields with a verified
-   * model-key routing header.
+   * Defaults to `false`. Attestation and deployment-policy checks run either
+   * way. Enabling E2EE selects NEAR evidence only; Chutes does not support
+   * client-to-model E2EE. Unencrypted requests still use verified-key routing.
    */
   readonly e2ee?: boolean;
   /**
@@ -129,7 +129,7 @@ export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  readonly attestation: VerifiedModelAttestation;
+  readonly attestation: VerifiedNearModelAttestation;
 };
 
 /** A completion signature verified against the Gateway evidence used for the request. */

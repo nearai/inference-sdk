@@ -1,7 +1,9 @@
+import { Buffer } from 'buffer';
 import type {
   AttestationClientOptions,
   CompletionSignature,
-  VerifiedModelAttestation,
+  VerifiedChutesModelAttestation,
+  VerifiedNearModelAttestation,
 } from '../src';
 import { AttestationClient, findModelAttestationForSignature } from '../src';
 import {
@@ -46,9 +48,10 @@ function gatewaySignature(): CompletionSignature {
 }
 
 function verifiedModelAttestation(
-  overrides: Partial<VerifiedModelAttestation> = {},
-): VerifiedModelAttestation {
+  overrides: Partial<VerifiedNearModelAttestation> = {},
+): VerifiedNearModelAttestation {
   return {
+    provider: 'near',
     signer: { signingAlgo: 'ecdsa', signingAddress },
     tcbStatus: 'UpToDate',
     advisoryIds: [],
@@ -82,6 +85,32 @@ function modelReport(
   ],
 ) {
   return { model_attestations: attestations };
+}
+
+/** Current Cloud API Chutes response shape, with synthetic evidence bytes. */
+function chutesAttestation(
+  nonce: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    provider: 'chutes',
+    verified: true,
+    model: 'canonical-model',
+    instance_id: 'chutes-instance-1',
+    measurement_config: '8xh200 v1.3.1',
+    tcb_status: 'UpToDate',
+    gpu_verdict: 'PASS',
+    e2e_pubkey: Buffer.alloc(1184, 0x42).toString('base64'),
+    nonce,
+    quote_b64: Buffer.from('01020304', 'hex').toString('base64'),
+    certificate_b64: Buffer.from('30010203', 'hex').toString('base64'),
+    gpu_evidence: Array.from({ length: 8 }, (_, index) => ({
+      arch: 'HOPPER',
+      certificate: Buffer.from([0x30, index]).toString('base64'),
+      evidence: Buffer.from([0xab, index]).toString('base64'),
+    })),
+    ...overrides,
+  };
 }
 
 function gatewayReport(
@@ -306,6 +335,7 @@ describe('AttestationClient', () => {
         return jsonResponse(
           modelReport(clientNonce, [
             cloudAttestation(clientNonce, {
+              provider: 'near',
               signing_address: otherSigningAddress,
               report_data: '55'.repeat(64),
             }),
@@ -320,6 +350,7 @@ describe('AttestationClient', () => {
       const { attestations, clientBinding } =
         await api.client.fetchModelAttestations({
           model: 'canonical-model',
+          provider: 'near',
           signingAlgo: signature.signer.signingAlgo,
           signingAddress: signature.signer.signingAddress,
         });
@@ -359,7 +390,45 @@ describe('AttestationClient', () => {
       ).toBe(attestation);
     });
 
-    test('fetches model evidence without signer filters', async () => {
+    test('does not treat a Chutes routing key as a provider-signature signer', () => {
+      const chutes: VerifiedChutesModelAttestation = {
+        provider: 'chutes',
+        tcbStatus: 'UpToDate',
+        advisoryIds: [],
+        publicKey: Buffer.alloc(1184, 0x42).toString('base64'),
+        spkiFingerprint: '33'.repeat(32),
+        gpuEvidence: 'verified',
+        deployment: {
+          baseline: { name: 'chutes', version: '1' },
+          mrTd: '00'.repeat(48),
+          rtMr0: '00'.repeat(48),
+          rtMr1: '00'.repeat(48),
+          rtMr2: '00'.repeat(48),
+          rtMr3: '00'.repeat(48),
+        },
+        deploymentProvenance: 'verified',
+      };
+      const near = verifiedModelAttestation();
+      expect(
+        findModelAttestationForSignature({
+          attestations: [chutes, near],
+          signature: modelSignature(),
+        }),
+      ).toBe(near);
+      expect(() =>
+        findModelAttestationForSignature({
+          attestations: [chutes],
+          signature: modelSignature(),
+        }),
+      ).toThrow(
+        expect.objectContaining({
+          name: 'ApiError',
+          failure: { code: 'api.model_attestation_signer_not_found' },
+        }),
+      );
+    });
+
+    test('omits provider and signer filters unless explicitly requested', async () => {
       const api = cloudFor((request) =>
         jsonResponse(modelReport(requestNonce(request))),
       );
@@ -370,11 +439,168 @@ describe('AttestationClient', () => {
 
       const query = new URL(api.request().url).searchParams;
       expect(query.get('model')).toBe('canonical-model');
-      expect(query.get('provider')).toBe('near');
+      expect(query.has('provider')).toBe(false);
       expect(query.get('nonce')).toBe(fetched.clientBinding.nonce);
       expect(query.has('signing_algo')).toBe(false);
       expect(query.has('signing_address')).toBe(false);
+      expect(fetched.attestations[0].provider).toBe('near');
     });
+
+    test('maps all raw GPU evidence from a Chutes report without NEAR-only fields', async () => {
+      let wire: ReturnType<typeof chutesAttestation> | undefined;
+      const api = cloudFor((request) => {
+        wire = chutesAttestation(requestNonce(request));
+        return jsonResponse(modelReport(requestNonce(request), [wire]));
+      });
+
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+        provider: 'chutes',
+        signingAlgo: 'ed25519',
+      });
+      const [attestation] = fetched.attestations;
+
+      expect(attestation).toEqual({
+        provider: 'chutes',
+        nonce: fetched.clientBinding.nonce,
+        intelQuote: '01020304',
+        certificate: wire?.certificate_b64,
+        publicKey: wire?.e2e_pubkey,
+        gpuEvidence: wire?.gpu_evidence,
+        instanceId: 'chutes-instance-1',
+      });
+      expect(attestation.gpuEvidence).toHaveLength(8);
+      expect(attestation).not.toHaveProperty('signer');
+      expect(attestation).not.toHaveProperty('verified');
+      const query = new URL(api.request().url).searchParams;
+      expect(query.get('provider')).toBe('chutes');
+      expect(query.get('signing_algo')).toBe('ed25519');
+    });
+
+    test('preserves the exact Chutes nonce and key strings used by quote binding', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(
+          modelReport(requestNonce(request), [
+            chutesAttestation(requestNonce(request).toUpperCase()),
+          ]),
+        ),
+      );
+
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+        provider: 'chutes',
+      });
+
+      expect(fetched.attestations[0].nonce).toBe(
+        fetched.clientBinding.nonce.toUpperCase(),
+      );
+      expect(fetched.attestations[0].publicKey).toBe(
+        Buffer.alloc(1184, 0x42).toString('base64'),
+      );
+    });
+
+    test('accepts provider-selected or mixed evidence when no provider is requested', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse(
+          modelReport(requestNonce(request), [
+            cloudAttestation(requestNonce(request)),
+            chutesAttestation(requestNonce(request)),
+          ]),
+        ),
+      );
+      const fetched = await api.client.fetchModelAttestations({
+        model: 'canonical-model',
+      });
+
+      expect(fetched.attestations.map((entry) => entry.provider)).toEqual([
+        'near',
+        'chutes',
+      ]);
+      expect(new URL(api.request().url).searchParams.has('provider')).toBe(
+        false,
+      );
+    });
+
+    test.each(['near', 'chutes'] as const)(
+      'rejects a response that does not respect the explicit %s provider filter',
+      async (provider) => {
+        const api = cloudFor((request) =>
+          jsonResponse(
+            modelReport(requestNonce(request), [
+              provider === 'near'
+                ? chutesAttestation(requestNonce(request))
+                : cloudAttestation(requestNonce(request)),
+            ]),
+          ),
+        );
+
+        await expect(
+          api.client.fetchModelAttestations({
+            model: 'canonical-model',
+            provider,
+          }),
+        ).rejects.toMatchObject({
+          name: 'ApiError',
+          failure: {
+            code: 'api.invalid_response',
+            details: {
+              path: 'model_attestations[0].provider',
+              expected: provider,
+            },
+          },
+        });
+      },
+    );
+
+    test.each([
+      { field: 'quote_b64', value: 'not base64!', path: 'quote_b64' },
+      { field: 'quote_b64', value: 'YR==', path: 'quote_b64' },
+      { field: 'certificate_b64', value: '', path: 'certificate_b64' },
+      { field: 'e2e_pubkey', value: 'YQ==', path: 'e2e_pubkey' },
+      {
+        field: 'e2e_pubkey',
+        value: ` ${Buffer.alloc(1184).toString('base64')}`,
+        path: 'e2e_pubkey',
+      },
+      { field: 'nonce', value: `0x${'ab'.repeat(32)}`, path: 'nonce' },
+      { field: 'nonce', value: 'not-hex', path: 'nonce' },
+      {
+        field: 'gpu_evidence',
+        value: [{ arch: 'HOPPER', certificate: 'YQ==', evidence: 'invalid' }],
+        path: 'gpu_evidence[0].evidence',
+      },
+      {
+        field: 'gpu_evidence',
+        value: [{ arch: 'HOPPER', certificate: 'YQ==' }],
+        path: 'gpu_evidence[0].evidence',
+      },
+      { field: 'gpu_evidence', value: 'not-an-array', path: 'gpu_evidence' },
+      { field: 'provider', value: 'unknown', path: 'provider' },
+    ])(
+      'wraps malformed Chutes $field in ApiError ($path)',
+      async ({ field, value, path }) => {
+        const api = cloudFor((request) =>
+          jsonResponse(
+            modelReport(requestNonce(request), [
+              chutesAttestation(requestNonce(request), { [field]: value }),
+            ]),
+          ),
+        );
+
+        await expect(
+          api.client.fetchModelAttestations({
+            model: 'canonical-model',
+            provider: 'chutes',
+          }),
+        ).rejects.toMatchObject({
+          name: 'ApiError',
+          failure: {
+            code: 'api.invalid_response',
+            details: { path: `model_attestations[0].${path}` },
+          },
+        });
+      },
+    );
 
     test('rejects an invalid signer filter before requesting model evidence', async () => {
       const api = cloudFor(() => {
@@ -438,6 +664,7 @@ describe('AttestationClient', () => {
 
       const { attestations } = await api.client.fetchModelAttestations({
         model: 'canonical-model',
+        provider: 'near',
       });
 
       expect(attestations[0].appCompose).toBe('{"services":{}}');

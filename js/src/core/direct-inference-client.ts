@@ -15,9 +15,9 @@ import { verifyDirectModelAttestations } from './attestation-direct';
 import { parseSignatureHex, verifyModelResponse } from './chat';
 import { DirectAttestationClient, requireDirectApiBaseUrl } from './direct-api';
 import {
-  VerifiedInferenceClientBase,
   type InferenceSession,
   type InferenceSessionTransport,
+  VerifiedInferenceClientBase,
 } from './inference-client';
 
 export type CreateDirectSessionTransportParams = {
@@ -87,7 +87,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       tlsBinding: verifiedModelAttestations.tlsBinding,
     });
     return {
-      modelKey: {
+      modelPublicKey: modelAttestation.signingPublicKey,
+      encryptionKey: {
         signingAlgo: this.signingAlgo,
         publicKey: modelAttestation.signingPublicKey,
       },

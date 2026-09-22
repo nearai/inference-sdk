@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import ed2curve from 'ed2curve';
-import nacl from 'tweetnacl';
 import OpenAI from 'openai';
+import nacl from 'tweetnacl';
 import {
   DirectInferenceClient,
   type DirectInferenceClientOptions,
@@ -272,6 +272,7 @@ function createDirectEndpoint({
   };
   const options: DirectInferenceClientOptions = {
     baseUrl,
+    e2ee: true,
     modelVerification: { verifiers: { tdxQuote: tdxQuoteVerifier } },
   };
   return { state, options, publicKey, fetch };
@@ -492,12 +493,14 @@ describe('DirectInferenceClient', () => {
     expect(createClientWithoutBaseUrl).toThrow('[api.invalid_input]');
   });
 
-  test('encrypts by default after checking every deployment and retains both same-signer reports', async () => {
+  test('encrypts when requested after checking every deployment and retains both same-signer reports', async () => {
     const endpoint = createDirectEndpoint();
     const checked: string[] = [];
     const client = new DirectInferenceClient({
       ...endpoint.options,
       deploymentPolicy: async ({ model: requestedModel, deployment }) => {
+        if (deployment.provider !== 'near')
+          throw new Error('Expected NEAR deployment');
         expect(requestedModel).toBe(model);
         expect(endpoint.state.completionRequests).toBe(0);
         await Promise.resolve();
@@ -647,6 +650,8 @@ describe('DirectInferenceClient', () => {
     const client = new DirectInferenceClient({
       ...endpoint.options,
       deploymentPolicy: ({ deployment }) => {
+        if (deployment.provider !== 'near')
+          throw new Error('Expected NEAR deployment');
         if (deployment.appCompose === composes[1]) {
           throw new Error('Deployment is not approved');
         }

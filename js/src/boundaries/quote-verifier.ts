@@ -32,6 +32,10 @@ export function decodeTdxQuoteVerifierOutput(value: unknown): VerifiedTdxQuote {
     debugEnabled: quote.debugEnabled,
     reportData: Buffer.from(quote.reportData),
     mrConfigId: Buffer.from(quote.mrConfigId),
+    ...(quote.mrTd === undefined ? {} : { mrTd: Buffer.from(quote.mrTd) }),
+    ...(quote.rtMr0 === undefined ? {} : { rtMr0: Buffer.from(quote.rtMr0) }),
+    ...(quote.rtMr1 === undefined ? {} : { rtMr1: Buffer.from(quote.rtMr1) }),
+    ...(quote.rtMr2 === undefined ? {} : { rtMr2: Buffer.from(quote.rtMr2) }),
     rtMr3: Buffer.from(quote.rtMr3),
   };
 }

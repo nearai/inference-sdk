@@ -7,7 +7,7 @@ import type {
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
   ModelClientBinding,
-  VerifiedModelAttestation,
+  VerifiedNearModelAttestation,
 } from './verification';
 
 export type VerifyDirectModelAttestationParams = {
@@ -18,7 +18,7 @@ export type VerifyDirectModelAttestationParams = {
 };
 
 /** One model attestation, independently verified without observing its TLS peer. */
-export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
+export type VerifiedDirectModelAttestation = VerifiedNearModelAttestation & {
   /** Metadata, not a model-name claim authenticated by the quote. */
   readonly modelName: string;
   /** Instance metadata, when supplied by the endpoint. */

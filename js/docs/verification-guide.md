@@ -1,6 +1,7 @@
 # TypeScript verification guide
 
-Use `InferenceClient` for Chat Completions with deployment verification and E2EE.
+Use `InferenceClient` for Chat Completions with deployment verification and
+optional E2EE.
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
@@ -10,7 +11,8 @@ These clients connect through the NEAR AI Cloud Gateway. For a model's own
 
 ## Send an E2EE chat completion
 
-`InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
+`InferenceClient` uses OpenAI Chat Completions types. Set `e2ee: true` to encrypt
+supported fields to a NEAR model; E2EE is disabled by default.
 Before sending a request, it verifies Gateway and model evidence or reuses
 cached results. A verification failure prevents the request from being sent.
 
@@ -25,6 +27,7 @@ import { InferenceClient } from '@nearai/inference-sdk/node';
 const model = 'z-ai/glm-5.3-flash';
 const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
+  e2ee: true,
 });
 
 const completion = await client.chat.completions.create({
@@ -41,13 +44,14 @@ To select ECDSA instead of the default Ed25519 protocol:
 const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
   signingAlgo: 'ecdsa',
+  e2ee: true,
 });
 ```
 
-`signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The Gateway returns the complete serving model-
-attestation set for the requested model. The client verifies that set before
-selecting a key for the chosen algorithm.
+`signingAlgo` selects the NEAR signing and E2EE algorithm and the Gateway
+response-signature algorithm. With E2EE enabled, the client requests
+`provider=near` and verifies every returned model report before selecting a key.
+It fails before Chat if no compatible verified NEAR key is available.
 
 ### Use OHTTP
 
@@ -68,10 +72,10 @@ Gateway signer, or the serving model signer for a direct endpoint. Missing or
 invalid OHTTP evidence prevents Chat from being sent. The authenticated
 configuration is cached with the deployment verification result.
 
-`e2ee` is independent and remains enabled by default. Through the Gateway,
+`e2ee` is independent and defaults to `false`. Through the Gateway,
 OHTTP protects the HTTP exchange to the Gateway, while E2EE encrypts supported
 Chat fields to the model. With a direct endpoint, both terminate at the model
-service. Set `e2ee: false` only when field encryption is not needed.
+service.
 
 Only Chat uses OHTTP; attestation and signature requests keep their normal HTTP
 paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
@@ -91,9 +95,12 @@ Increase the value to check deployments less frequently, or set `0` to
 verify before every request. Deployment changes are not checked while a cached
 result is reused. This setting controls caching, not attestation validity.
 
-The SDK does not check model measurements against an approved-deployment
-allowlist by default. If needed, supply a `deploymentPolicy` callback and
-throw an error to reject a deployment.
+Chutes measurements must match the SDK's bundled baseline snapshot, or a
+caller-supplied `modelVerification.policy.chutesMeasurements` allowlist.
+NEAR has no default deployment allowlist. Supply `deploymentPolicy` for
+additional checks and throw an error to reject a deployment. Its `deployment`
+value is distinguished by `provider`: NEAR supplies `appCompose` and
+`runtimeMeasurements`; Chutes supplies TDX registers and the matched `baseline`.
 
 Reusable deployment checks can also be passed through
 `gatewayVerification.verifiers.deployment` and
@@ -137,6 +144,7 @@ const client = new InferenceClient({
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
+  e2ee: true,
   gatewayVerification: { verifiers: { tdxQuote } },
   modelVerification: { verifiers: { tdxQuote, gpuEvidence } },
 });
@@ -165,8 +173,9 @@ the expected NVIDIA issuer stays fixed.
 
 The same callbacks can be passed to `verifyGatewayAttestation` and
 `verifyModelAttestation` through `verifiers`. The NVIDIA helper checks the signed
-result against the submitted payload nonce; model verification also checks
-that nonce against `clientBinding.nonce`.
+result against the submitted payload nonce. NEAR binds that nonce to
+`clientBinding.nonce`; Chutes derives the GPU challenge from the routing public
+key and client nonce.
 
 Browser Fetch does not expose the TLS peer certificate, so the generic client
 does not verify Gateway TLS binding. Depending on the browser build, the default
@@ -192,8 +201,9 @@ const client = new InferenceClient({
 
 ## E2EE scope and response handling
 
-The client supports `POST /v1/chat/completions` with a model public key bound
-to verified attestation. Responses API and other endpoints are not supported.
+With `e2ee: true`, the client supports `POST /v1/chat/completions` with a NEAR
+model public key bound to verified attestation. Responses API and other
+endpoints are not supported.
 
 Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
 and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the
@@ -231,10 +241,11 @@ for await (const chunk of stream) {
 }
 ```
 
-### Send plaintext after deployment verification
+### Disable E2EE
 
-Set `e2ee: false` to send plaintext. Gateway and model verification,
-deployment policy, and response verification remain available.
+`e2ee: false` is the default. Gateway and model verification, deployment policy,
+and verified-key routing still run. The client automatically handles the
+provider returned by the Gateway.
 
 ```ts
 const client = new InferenceClient({
@@ -243,10 +254,7 @@ const client = new InferenceClient({
 });
 ```
 
-Plaintext requests still use a verified model public key for routing, so the
-model must expose a key for the configured signing algorithm.
-They send `X-Model-Pub-Key` without the encryption headers. Attestation and
-signature lookups still use the configured `signingAlgo`.
+The `chat.completions.create()` and `verifyResponse(id)` calls stay the same.
 
 ## Verify a response
 
@@ -294,7 +302,7 @@ independently of the attestation cache. Unknown or expired IDs produce
 `ApiError` with code `api.completion_not_found`. For active streams, memory
 grows with the received body until the application finishes or cancels reading.
 
-A `provider_tee` signature must match the verified model signer selected for
+A `provider_tee` signature must match the verified NEAR model signer selected for
 the request's `X-Model-Pub-Key`.
 A `gateway` signature binds them to a verified Gateway signer; it does not
 by itself prove model execution.
@@ -331,10 +339,10 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 ## Use a direct model endpoint
 
 `DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
-It fetches and verifies the complete serving model-attestation set before
+It fetches and verifies every returned model attestation before
 sending Chat.
-E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
-just as for `InferenceClient`.
+E2EE defaults to disabled, Ed25519 is the default signing algorithm, and both
+cache defaults are 60 minutes, just as for `InferenceClient`.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -342,6 +350,7 @@ import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 const client = new DirectInferenceClient({
   baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
   apiKey: process.env.NEARAI_API_KEY,
+  e2ee: true,
 });
 ```
 
@@ -423,6 +432,7 @@ const pinnedTlsFetch = createPinnedTlsFetch(
 
 const fetchedModels = await client.fetchModelAttestations({
   model,
+  provider: 'near',
   signingAlgo: 'ed25519',
 });
 if (fetchedModels.attestations.length === 0) {
@@ -438,6 +448,11 @@ const models = await Promise.all(
   ),
 );
 ```
+
+The explicit provider keeps this E2EE example on NEAR. Omit it to fetch either
+provider, or pass `provider: 'chutes'` for Chutes evidence.
+`verifyModelAttestation` dispatches by `attestation.provider`; branch on the
+verified result's `provider` before accessing NEAR signer or Chutes key fields.
 
 Use `pinnedTlsFetch` instead of `fetch` for raw direct-Gateway requests that
 your application sends itself. It performs normal certificate and hostname
@@ -595,7 +610,7 @@ successful verification:
 
 | Kind | Verify with | Establishes |
 | --- | --- | --- |
-| `provider_tee` | The verified model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
+| `provider_tee` | The verified NEAR model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
 | `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
 
 For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext

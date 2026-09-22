@@ -2,6 +2,8 @@ import type * as v from 'valibot';
 import type {
   CloudApiGatewayAttestationSchema,
   CloudApiModelAttestationSchema,
+  CloudApiNearModelAttestationSchema,
+  CloudApiChutesModelAttestationSchema,
   CloudApiCompletionSignatureResultSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
@@ -39,9 +41,20 @@ export type AttestationClientOptions =
 
 export type FetchModelAttestationsParams = {
   readonly model: string;
+  /** Restrict evidence to a provider; omitted means the Gateway chooses. */
+  readonly provider?: 'near' | 'chutes';
   readonly signingAlgo?: SigningAlgo;
   readonly signingAddress?: string;
 };
+
+export type FetchNearModelAttestationsParams = FetchModelAttestationsParams & {
+  readonly provider: 'near';
+};
+
+export type FetchChutesModelAttestationsParams =
+  FetchModelAttestationsParams & {
+    readonly provider: 'chutes';
+  };
 
 export type FindModelAttestationForSignatureParams = {
   /** Successful results returned by `verifyModelAttestation`. */
@@ -75,6 +88,12 @@ export type FetchCompletionSignatureParams = {
 export type CloudApiModelAttestation = v.InferOutput<
   typeof CloudApiModelAttestationSchema
 >;
+export type CloudApiNearModelAttestation = v.InferOutput<
+  typeof CloudApiNearModelAttestationSchema
+>;
+export type CloudApiChutesModelAttestation = v.InferOutput<
+  typeof CloudApiChutesModelAttestationSchema
+>;
 export type CloudApiGatewayAttestation = v.InferOutput<
   typeof CloudApiGatewayAttestationSchema
 >;
@@ -86,8 +105,10 @@ export type FetchedGatewayAttestation = {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
 };
-export type FetchedModelAttestations = {
-  readonly attestations: readonly ModelAttestation[];
+export type FetchedModelAttestations<
+  TAttestation extends ModelAttestation = ModelAttestation,
+> = {
+  readonly attestations: readonly TAttestation[];
   /** Client values associated with this model-attestation request. */
   readonly clientBinding: ModelClientBinding;
 };

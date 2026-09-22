@@ -1,19 +1,21 @@
 # NEAR AI Inference SDK for TypeScript
 
-`@nearai/inference-sdk` verifies Gateway and model attestations in Node.js and
-browsers, and provides encrypted Chat Completions for NEAR model deployments.
+`@nearai/inference-sdk` verifies Gateway and NEAR or Chutes model attestations
+in Node.js and browsers. It provides Chat Completions with optional client E2EE
+for NEAR model deployments.
 
 ## Clients and verification
 
 - `InferenceClient` verifies Gateway and model evidence before sending a chat
-  request, encrypts supported fields, and decrypts the response. It provides
-  `chat.completions.create()` and a reusable `fetch` for the official OpenAI SDK.
+  request. With `e2ee: true`, it encrypts supported fields to a NEAR model and
+  decrypts the response. It provides `chat.completions.create()` and a reusable
+  `fetch` for the official OpenAI SDK.
 - `InferenceClient.verifyResponse(id)` verifies a completion's signature using
   its exact request and response bytes and the evidence retained for that request.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
 - `DirectInferenceClient` connects to a model's own endpoint, verifies every
-  attestation in its complete serving set, and provides the same Chat, E2EE, and response-verification
+  returned model attestation, and provides the same Chat, E2EE, and response-verification
   methods without Gateway verification. `DirectAttestationClient` fetches direct
   attestations and signatures for a manual flow.
 - `prepareE2eeChatRequest({ request, modelKey })` encrypts a raw Chat request
@@ -25,8 +27,10 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
   helpers are also available.
 
 Gateway attestation verifies the Gateway's TEE and signing identity.
-Model attestation verifies the model deployment's TEE, signing identity,
-measurements, and available GPU evidence.
+Model attestation dispatches by `provider`: NEAR evidence binds a model signer
+and deployment configuration; Chutes evidence binds a certificate and routing
+key to a trusted VM measurement baseline and verifies GPU evidence. Chutes
+evidence does not supply a model response signer or attest model weights.
 
 Response signatures bind specific request and response bytes to an attested
 signer. A `provider_tee` signature identifies a model signer; a `gateway`
@@ -34,13 +38,17 @@ signature identifies a Gateway signer and does not establish model execution.
 
 ## Defaults
 
-Both inference clients support streaming and non-streaming Chat Completions. E2EE is
-enabled by default, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also supported.
-Setting `e2ee: false` disables field encryption while retaining deployment verification.
+Both inference clients support streaming and non-streaming Chat Completions.
+E2EE defaults to `false`, with `signingAlgo: 'ed25519'`; `'ecdsa'` is also
+supported. Set `e2ee: true` to enable field encryption. Through the Gateway,
+this selects NEAR evidence only. With E2EE disabled, `InferenceClient` verifies all
+returned NEAR or Chutes reports and routes using a verified model public key.
+Chutes supports Gateway-to-provider encryption, not client-to-model E2EE.
 
 Set `ohttp: true` on either inference client to encrypt the Chat HTTP request
 and response to the attested endpoint. OHTTP requires Ed25519 and is disabled
-by default. Field-level E2EE remains enabled independently.
+by default. OHTTP and field-level E2EE are independent; Gateway OHTTP also works
+with Chutes when `e2ee: false`.
 
 Attestation results are cached for 60 minutes. Set
 `attestationCacheTimeToLiveMs: 0` to verify before every request. Response

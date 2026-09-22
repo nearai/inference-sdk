@@ -37,14 +37,14 @@ the attestation socket to be reused.
 | `verifyOhttpKeyConfig` | `(params: VerifyOhttpKeyConfigParams) => Uint8Array` | Authenticates an OHTTP key configuration against a verified Ed25519 signer. |
 | `createOhttpFetch` | `(params: CreateOhttpFetchParams) => typeof fetch` | Encapsulates requests using an authenticated OHTTP configuration and returns decrypted inner responses. |
 | `createPinnedTlsFetch` from `@nearai/inference-sdk/node` | `(spkiFingerprints: string \| readonly string[]) => typeof fetch` | Pins each HTTPS connection to one of the supplied, already verified SHA-256 SPKI fingerprints. Requires a nonempty set; certificate-chain and hostname checks still run. |
-| `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Verifies model evidence. |
-| `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature and its verified model evidence. |
+| `verifyModelAttestation` | `(params: VerifyModelAttestationParams) => Promise<VerifiedModelAttestation>` | Dispatches NEAR or Chutes verification using `attestation.provider`. |
+| `verifyModelResponse` | `(params: VerifyModelResponseParams) => void` | Verifies a `provider_tee` completion signature against verified NEAR model evidence. |
 | `verifyGatewayAttestation` | `(params: VerifyGatewayAttestationParams) => Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence and its TLS binding when the returned attestation includes an SPKI fingerprint. |
 | `verifyGatewayResponse` | `(params: VerifyGatewayResponseParams) => void` | Verifies a `gateway` completion signature and its verified gateway evidence. |
 | `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
 | `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
 | `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedNearModelAttestation` | Selects the single verified NEAR model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
@@ -69,10 +69,10 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
-| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
-| `e2ee?` | `boolean` | No | `true` | Enables secure Chat field encryption for the selected algorithm. `false` keeps Gateway/model verification and deployment policy checks, routes a plaintext Chat request to a verified model key, and still supports response verification. |
+| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the NEAR signing/E2EE algorithm and Gateway signature algorithm. Chutes routing keys are ML-KEM keys, not response-signing keys. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy NEAR secp256k1 ECDH and AES-GCM protocol. |
+| `e2ee?` | `boolean` | No | `false` | `true` encrypts supported Chat fields and requests only NEAR model evidence. `false` omits the provider filter, verifies all returned NEAR/Chutes evidence, routes using a verified key, and keeps response verification. Chutes has no client E2EE. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. Chutes baseline matching runs independently. Throw to reject. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. |
 
@@ -80,7 +80,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | --- | --- | --- |
 | `DeploymentPolicy` | `(params: DeploymentPolicyParams) => Awaitable<void>` | Resolves only for an accepted model deployment. |
 | `DeploymentPolicyParams` | `model: string` | Model named by the current Chat request. |
-|  | `deployment: MeasuredDeployment` | Authenticated deployment measurements to approve or reject. |
+|  | `deployment: MeasuredModelDeployment` | Authenticated provider-tagged deployment measurements to approve or reject. |
 | `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
 |  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
 |  | `includeSpkiFingerprint?: false` | Generic entry point only. Gateway TLS binding is unavailable, so this may only be `false`. |
@@ -97,7 +97,13 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionResult>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionResult.completionId` | `string` | Completion ID whose signature was verified. |
-| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence. |
+| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the NEAR model signer selected for the request; `gateway` uses Gateway evidence and is the response-verification path for Chutes. |
+
+Provider selection is internal to `InferenceClient`; its options have no
+`provider` field. Every returned model report must pass before the client
+selects a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains a NEAR
+hexadecimal signing key or the unchanged Chutes base64 ML-KEM key, without
+field-encryption headers. OHTTP remains independent and supports either provider.
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
@@ -107,7 +113,7 @@ including after successful or failed verification. TTL starts at body completion
 
 Uses the same Chat, Fetch, E2EE, and cache behavior as `InferenceClient`, but
 verifies direct model attestations instead of Gateway and Gateway-routed model
-evidence. Every attestation in the complete serving set must pass verification
+evidence. Every returned attestation must pass verification
 before Chat is sent.
 There is no `gatewayVerification` option.
 
@@ -119,7 +125,7 @@ There is no `gatewayVerification` option.
 | `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
 | `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. With `ohttp: true`, only `'ed25519'` is accepted. |
-| `e2ee?` | `boolean` | No | `true` | Encrypts supported Chat fields. `false` preserves model verification and sends plaintext over the selected transport. |
+| `e2ee?` | `boolean` | No | `false` | `true` encrypts supported Chat fields. `false` preserves model verification and sends plaintext over the selected transport. Direct clients support NEAR model endpoints. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat through the direct endpoint's `/ohttp`. Authenticates its configuration with the serving attestation's Ed25519 signer, also selected for model-key routing and response verification. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
@@ -218,7 +224,7 @@ The Gateway's report and signature endpoints have different defaults.
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches the complete serving model-attestation set matching the requested model and optional signing filters. Verify every returned attestation for a deployment check. |
+| `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model evidence matching the model and optional provider/signing filters. Verify every returned attestation; the Gateway currently returns the first provider report that passes its checks, not the complete serving fleet. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
 ### Operation-specific parameter fields
@@ -228,6 +234,7 @@ The Gateway's report and signature endpoints have different defaults.
 | `FetchCompletionSignatureParams` | `completionId` | `string` | Yes | Completion ID returned by the API response. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Signing algorithm to request. Omitting it follows the service default. |
 | `FetchModelAttestationsParams` | `model` | `string` | Yes | Canonical model ID. |
+|  | `provider?` | `'near' \| 'chutes'` | No | Restricts the provider and narrows the returned attestation type. Omitted by default: the request sends no provider filter and the result can contain either provider. |
 |  | `signingAlgo?` | `SigningAlgo` | No | Optional signing-algorithm filter for narrowing the Gateway response. |
 |  | `signingAddress?` | `string` | No | Optional signing-address filter for narrowing the Gateway response. It must be hexadecimal: 20 or 32 bytes without `signingAlgo`, or the matching length when an algorithm is selected. Invalid input throws `ApiError` before a request. |
 | `FetchGatewayAttestationParams` | `signingAlgo?` | `SigningAlgo` | No | Gateway signing algorithm. Omit to use the service default. Use the same algorithm when fetching a response signature. |
@@ -244,7 +251,7 @@ attestation verifier.
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedModelAttestations` | `clientBinding` | `ModelClientBinding` | Client values associated with this evidence request. Pass it to `verifyModelAttestation`. |
-|  | `attestations` | `readonly ModelAttestation[]` | Gateway `model_attestations` for the complete serving set. Verify every attestation before a completion. |
+|  | `attestations` | `readonly ModelAttestation[]` | Returned Gateway `model_attestations`. Explicit `provider: 'near'` narrows to `readonly NearModelAttestation[]`; `'chutes'` narrows to `readonly ChutesModelAttestation[]`. Verify every returned attestation before a completion. |
 | `FetchedGatewayAttestation` | `attestation` | `GatewayAttestation` | Returned Gateway attestation. |
 |  | `clientBinding` | `GatewayClientBinding` | Client values associated with this evidence request. Pass it to `verifyGatewayAttestation`. |
 | `ModelClientBinding` | `nonce` | `string` | Client nonce generated and sent by the SDK. |
@@ -265,7 +272,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 
 | Method | Params | Resolves to | Description |
 | --- | --- | --- | --- |
-| `fetchModelAttestations(params?)` | `FetchDirectModelAttestationsParams` | `FetchedDirectModelAttestations` | Generates a nonce and fetches the serving attestation and complete serving model-attestation set matching the optional signing filters; checks echoed nonces before returning. |
+| `fetchModelAttestations(params?)` | `FetchDirectModelAttestationsParams` | `FetchedDirectModelAttestations` | Generates a nonce and fetches the serving attestation and returned model-attestation set matching the optional signing filters; checks echoed nonces before returning. |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Fetches a direct model signature, normalized to `kind: 'provider_tee'`. |
 
 | `FetchDirectModelAttestationsParams` field | Type | Default | Description |
@@ -284,7 +291,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Complete serving model-attestation set matching the requested filters, including `servingAttestation`. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration for the serving endpoint. |
-| `DirectModelAttestation` | Base fields | `ModelAttestation` | Quote, nonce, signer, measurements, and available GPU evidence. |
+| `DirectModelAttestation` | Base fields | `NearModelAttestation` | NEAR quote, nonce, signer, measurements, and available GPU evidence. |
 |  | `modelName` | `string` | Metadata, not a model-name claim authenticated by the quote. |
 |  | `instanceId?` | `string` | Instance metadata when supplied by the endpoint. |
 |  | `spkiFingerprint?` | `string` | Reported TLS SPKI; must be authenticated by quote verification before use. |
@@ -309,11 +316,11 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the complete set. |
-|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified complete serving model-attestation set. |
+| `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the returned set. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Every verified entry in the returned model-attestation set. |
 |  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
-| `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
+| `VerifiedDirectModelAttestation` | Base fields | `VerifiedNearModelAttestation` | Verified NEAR quote, signer, measurements, and GPU result. |
 |  | `modelName` / `instanceId?` | `string` | Preserved metadata, not additional quote-authenticated claims. |
 |  | `spkiFingerprint?` | `string` | Quote-authenticated TLS key; this alone does not claim observation of that instance's TLS peer. |
 
@@ -328,21 +335,22 @@ and `spkiFingerprints` is empty.
 
 Use this function after verifying every candidate returned by
 `client.fetchModelAttestations`. It selects the one verified result whose
-signer matches a `provider_tee` signature. It requires exactly one signer
+NEAR signer matches a `provider_tee` signature. Chutes results have no model
+signer and are skipped. It requires exactly one signer
 match and performs no additional cryptographic verification.
 
 #### `FindModelAttestationForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one NEAR item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
 
 | Function | Params | Returns | Description |
 | --- | --- | --- | --- |
-| `verifyModelAttestation(params)` | `VerifyModelAttestationParams` | `Promise<VerifiedModelAttestation>` | Verifies model attestation evidence and optional GPU evidence. |
+| `verifyModelAttestation(params)` | `VerifyModelAttestationParams` | `Promise<VerifiedModelAttestation>` | Automatically verifies the NEAR or Chutes branch. NEAR input narrows the return type to `VerifiedNearModelAttestation`. |
 | `verifyModelResponse(params)` | `VerifyModelResponseParams` | `void` | Verifies exact completion body bytes, a `provider_tee` signature, and the supplied model-attestation signer. |
 | `verifyGatewayAttestation(params)` | `VerifyGatewayAttestationParams` | `Promise<VerifiedGatewayAttestation>` | Verifies Gateway evidence. A returned `attestation.spkiFingerprint` requires and checks `clientBinding.spkiFingerprint`. |
 | `verifyGatewayResponse(params)` | `VerifyGatewayResponseParams` | `void` | Verifies exact completion body bytes, a `gateway` signature, and the supplied gateway-attestation signer. |
@@ -353,7 +361,7 @@ match and performs no additional cryptographic verification.
 | --- | --- | --- | --- | --- |
 | `VerifyModelAttestationParams` | `attestation` | `ModelAttestation` | Yes | Raw model evidence. |
 |  | `clientBinding` | `ModelClientBinding` | Yes | Client values returned by the matching model-attestation fetch result. |
-|  | `policy?` | `ModelAttestationPolicy` | No | TCB and GPU evidence requirements. |
+|  | `policy?` | `ModelAttestationPolicy` | No | TCB, NEAR GPU requirements, and optional Chutes measurement allowlist. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
 | `VerifyGatewayAttestationParams` | `attestation` | `GatewayAttestation` | Yes | Raw gateway evidence. |
 |  | `clientBinding` | `GatewayClientBinding` | Yes | Client values returned with the matching Gateway-attestation fetch result. |
@@ -379,7 +387,7 @@ verified gateway deployment evidence; it does not establish model execution.
 | `VerifyModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request body bytes sent to the completion endpoint. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact response body bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'provider_tee'`. |
-|  | `attestation` | `VerifiedModelAttestation` | Yes | Successful model-attestation result whose signer must match the signature. |
+|  | `attestation` | `VerifiedNearModelAttestation` | Yes | Successful NEAR model-attestation result whose signer must match the signature. Chutes has no model response signer. |
 | `VerifyGatewayResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request body bytes sent to the completion endpoint. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact response body bytes received from the completion endpoint. |
 |  | `signature` | `CompletionSignature` | Yes | Signature with `kind: 'gateway'`. |
@@ -468,11 +476,12 @@ verified attestation to use.
 
 | Kind | Signed at | Required verified evidence | A successful response verification establishes |
 | --- | --- | --- | --- |
-| `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response body bytes. |
+| `provider_tee` | NEAR model-serving TEE | `VerifiedNearModelAttestation` | A verified model TEE signer signed the exact request and response body bytes. |
 | `gateway` | Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response body bytes. It does not establish model execution. |
 
 The Gateway returns a `gateway` signature when it rewrites a response and
-the provider signature no longer matches the client-visible bytes.
+the provider signature no longer matches the client-visible bytes, and for
+Chutes responses. Chutes attestation does not establish a model response signer.
 
 ### Completion signatures
 
@@ -502,17 +511,38 @@ the provider signature no longer matches the client-visible bytes.
 | `eventLog` | `AttestationEventLog` | Input used to replay RTMR3 measurements. |
 | `appCompose` | `string` | Measured compose configuration text. |
 
-`AttestationEvidence` contains the fields above. `ModelAttestation` and
+`AttestationEvidence` contains the fields above. `NearModelAttestation` and
 `GatewayAttestation` extend it as follows:
 
 | Type | Additional field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
+| `NearModelAttestation` | `provider` | `'near'` | Yes | Identifies NEAR evidence in the `ModelAttestation` union. |
+|  | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
 |  | `signingPublicKey?` | `string` | No | E2EE model public key supplied by the service. Verification binds an Ed25519 key directly, or derives an ECDSA signing address, from the quote-bound signer before returning it. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
 |  | `reportedQuoteData` | `string` | Yes | Gateway report-data copy. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | No | Signed OHTTP configuration. Authenticate separately with `verifyOhttpKeyConfig` and the verified Gateway signer before use. |
+
+`ModelAttestation` is `NearModelAttestation | ChutesModelAttestation`.
+Chutes evidence has the following fields and does not inherit a signer,
+`appCompose`, or an event log:
+
+| `ChutesModelAttestation` field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `provider` | `'chutes'` | Yes | Selects Chutes attestation verification. |
+| `nonce` | `string` | Yes | Exact client nonce echoed by the service. Its original text participates in the quote/GPU challenge. |
+| `intelQuote` | `string` | Yes | Intel TDX quote, normalized to hexadecimal by the HTTP boundary. |
+| `certificate` | `string` | Yes | Standard base64 DER certificate. Verification binds its SPKI hash to quote report data; this does not observe a live Chutes TLS peer. |
+| `publicKey` | `string` | Yes | Standard base64 ML-KEM-768 routing key, decoding to 1184 bytes. Its exact text is bound into the quote/GPU challenge and retained for routing. It is not a response-signing key. |
+| `gpuEvidence` | `readonly ChutesGpuEvidence[]` | Yes | Nonempty GPU evidence set submitted to the GPU verifier with the derived challenge. |
+| `instanceId?` | `string` | No | Provider instance metadata, not a model-workload claim. |
+
+| `ChutesGpuEvidence` field | Type | Description |
+| --- | --- | --- |
+| `certificate` | `string` | NVIDIA device certificate supplied to GPU verification. |
+| `evidence` | `string` | Raw GPU attestation evidence supplied to GPU verification. |
+| `arch` | `string` | GPU architecture supplied to GPU verification. |
 
 ## Configurable verification services
 
@@ -533,8 +563,10 @@ the same in both runtimes.
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
-nonce. `verifyModelAttestation` additionally binds that nonce to
-`clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
+nonce. For NEAR, `verifyModelAttestation` binds it to `clientBinding.nonce`.
+For Chutes, it derives the challenge as SHA-256 of the UTF-8 client nonce
+concatenated with the exact base64 routing-key text, and binds it to both TDX
+report data and the GPU payload. Standalone callers must supply fresh evidence.
 The expected NVIDIA issuer remains fixed when either URL changes.
 See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
 for routing and response-header requirements.
@@ -546,8 +578,9 @@ for routing and response-header requirements.
 | Type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
-| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
-|  | `gpuEvidence?` | `'if-present' \| 'required'` | `'if-present'` | Whether a model report without GPU evidence is accepted. |
+| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | NEAR: `['UpToDate', 'OutOfDate']`; Chutes: `['UpToDate']` | TCB statuses accepted by verification. An explicit list applies to either provider. |
+|  | `gpuEvidence?` | `'if-present' \| 'required'` | `'if-present'` | Whether a NEAR model report without GPU evidence is accepted. Chutes always requires GPU evidence. |
+|  | `chutesMeasurements?` | `readonly ChutesMeasurementBaseline[]` | Bundled 29-baseline snapshot | Accepted Chutes VM measurements. Replaces the bundled snapshot; an empty array rejects every Chutes deployment. Does not affect NEAR verification. |
 
 `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
@@ -560,10 +593,11 @@ for routing and response-header requirements.
 | `AttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
 | `ModelAttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
-|  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
-|  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
+|  | `deployment?: ModelDeploymentVerifier` | Applies caller-defined deployment acceptance to a provider-tagged value, after quote and measurement checks. For Chutes, baseline matching must pass first. |
+|  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier for either provider. Chutes constructs its NRAS payload from the raw GPU evidence and derived challenge. |
 | `TdxQuoteVerifier` | `(quote: string) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
+| `ModelDeploymentVerifier` | `(deployment: MeasuredModelDeployment) => Awaitable<void>` | Resolves only for an accepted model deployment. Branch on `deployment.provider` before reading provider-specific measurements. |
 | `GpuEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
 
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
@@ -582,15 +616,39 @@ trust roots or another verification service.
 |  | `debugEnabled` | `boolean` | Whether the authenticated quote enables debug mode. |
 |  | `reportData` | `Uint8Array` | Authenticated quote report data. |
 |  | `mrConfigId` | `Uint8Array` | Authenticated quote MRCONFIGID. |
+|  | `mrTd?` | `Uint8Array` | Authenticated 48-byte MRTD. Required for Chutes verification. |
+|  | `rtMr0?` | `Uint8Array` | Authenticated 48-byte RTMR0. Required for Chutes verification. |
+|  | `rtMr1?` | `Uint8Array` | Authenticated 48-byte RTMR1. Required for Chutes verification. |
+|  | `rtMr2?` | `Uint8Array` | Authenticated 48-byte RTMR2. Required for Chutes verification. |
 |  | `rtMr3` | `Uint8Array` | Authenticated quote RTMR3. |
 | `MeasuredDeployment` | `readonly appCompose` | `string` | Configuration text bound to MRCONFIGID. |
 |  | `readonly runtimeMeasurements` | `RuntimeMeasurements` | Runtime measurements derived from verified event-log entries. |
 | `RuntimeMeasurements` | `readonly osImageHash?` | `string` | Optional measured OS image hash. |
 |  | `readonly composeHash?` | `string` | Optional measured compose hash. |
 
+`MeasuredModelDeployment` is the provider-tagged value passed to model
+deployment callbacks. The NEAR branch is `MeasuredDeployment & { provider:
+'near' }`; the Chutes branch is `ChutesMeasuredDeployment & { provider:
+'chutes' }`. Gateway callbacks continue to receive `MeasuredDeployment`.
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `ChutesMeasurements` | `mrTd` | `string` | Hexadecimal 48-byte MRTD measurement. |
+|  | `rtMr0` | `string` | Hexadecimal 48-byte RTMR0 measurement. |
+|  | `rtMr1` | `string` | Hexadecimal 48-byte RTMR1 measurement. |
+|  | `rtMr2` | `string` | Hexadecimal 48-byte RTMR2 measurement. |
+|  | `rtMr3` | `string` | Hexadecimal 48-byte RTMR3 measurement. |
+| `ChutesMeasurementBaseline` | Measurement fields | `ChutesMeasurements` | All five expected registers; every register must match. |
+|  | `name` | `string` | Caller-trusted VM baseline name. |
+|  | `version` | `string` | Caller-trusted VM baseline version. |
+| `ChutesMeasuredDeployment` | Measurement fields | `ChutesMeasurements` | Registers authenticated by the quote and matched against the trusted allowlist. |
+|  | `baseline` | `{ name: string; version: string }` | Identity of the matched baseline. Establishes a VM baseline, not model weights or a model workload. |
+
 ## Verified results
 
-`VerifiedAttestationEvidence` is shared by both verified attestation results.
+`VerifiedModelAttestation` is the discriminated union
+`VerifiedNearModelAttestation | VerifiedChutesModelAttestation`.
+`VerifiedAttestationEvidence` is shared by NEAR and Gateway results:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -602,9 +660,21 @@ trust roots or another verification service.
 
 | Type | Additional field | Type | Description |
 | --- | --- | --- | --- |
-| `VerifiedModelAttestation` | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence result. Cloud model verification does not establish a client-to-model TLS binding. |
+| `VerifiedNearModelAttestation` | `provider` | `'near'` | Selects the NEAR branch. |
+|  | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence result. Cloud model verification does not establish a client-to-model TLS binding. |
 |  | `signingPublicKey?` | `string` | Quote-bound model key available for E2EE. |
 | `VerifiedGatewayAttestation` | `tlsBinding` | `GatewayTlsBinding` | Gateway TLS binding established by the returned quote layout. Its `attested` SPKI can pin later Node HTTPS requests. |
+
+| `VerifiedChutesModelAttestation` field | Type | Description |
+| --- | --- | --- |
+| `provider` | `'chutes'` | Selects the Chutes branch, which has no `signer` or `signingPublicKey`. |
+| `tcbStatus` | `TcbStatus` | Accepted Intel TDX TCB status. |
+| `advisoryIds` | `readonly string[]` | Authenticated quote advisory IDs. |
+| `publicKey` | `string` | Quote-bound base64 ML-KEM routing key, preserved exactly. |
+| `spkiFingerprint` | `string` | SHA-256 fingerprint of the quote-bound certificate SPKI. Does not establish client-observed TLS binding. |
+| `gpuEvidence` | `'verified'` | Required GPU evidence passed verification. |
+| `deployment` | `ChutesMeasuredDeployment` | Authenticated registers and matched VM baseline. |
+| `deploymentProvenance` | `'verified'` | The registers matched the trusted baseline policy. Any additional deployment callback also passed. Does not establish image-build or model-weight provenance. |
 
 | Alias | Definition |
 | --- | --- |

@@ -1,12 +1,16 @@
 import { Buffer } from 'node:buffer';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { SigningKey, computeAddress } from 'ethers';
+import { computeAddress, SigningKey } from 'ethers';
+import type {
+  MeasuredDeployment,
+  MeasuredModelDeployment,
+  TdxQuoteVerifier,
+} from '../src';
 import {
   ApiError,
   createGpuEvidenceVerifier,
   verifyModelAttestation,
 } from '../src';
-import type { MeasuredDeployment, TdxQuoteVerifier } from '../src';
 import type { VerifiedTdxQuote } from '../src/types/verification';
 import {
   appCompose,
@@ -792,8 +796,10 @@ describe('model attestation verification', () => {
     const verifiedDeployments: MeasuredDeployment[] = [];
 
     async function verifyDeployment(
-      deployment: MeasuredDeployment,
+      deployment: MeasuredModelDeployment,
     ): Promise<void> {
+      if (deployment.provider !== 'near')
+        throw new Error('Expected NEAR deployment');
       verifiedDeployments.push(deployment);
     }
 
@@ -807,6 +813,7 @@ describe('model attestation verification', () => {
 
     expect(verifiedDeployments).toEqual([
       {
+        provider: 'near',
         appCompose,
         runtimeMeasurements: {
           osImageHash: 'cafe',

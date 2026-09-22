@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import {
-  verifyDirectModelAttestations,
   verifyDirectModelAttestation,
+  verifyDirectModelAttestations,
 } from '../src/core/attestation-direct';
 import type { DirectModelAttestation } from '../src/types/direct-api';
 import type {
@@ -180,6 +180,8 @@ describe('direct model attestations verification', () => {
             : secondQuote.promise;
         },
         deployment: (deployment) => {
+          if (deployment.provider !== 'near')
+            throw new Error('Expected NEAR deployment');
           checkedDeployments.push(deployment);
           if (deployment.appCompose === second.appCompose) {
             secondDeploymentChecked.resolve();

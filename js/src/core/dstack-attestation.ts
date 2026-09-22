@@ -1,15 +1,15 @@
+import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import type { AttestationEvidence } from '../types/attestation-common';
 import type {
   AttestationPolicy,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   MeasuredDeployment,
-  TdxQuoteVerifier,
   TcbStatus,
+  TdxQuoteVerifier,
   VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
-import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { requireByteLength } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { verifyDcapQuote } from '../utils/intel';
@@ -129,7 +129,7 @@ export async function verifyDstackDeployment(
   };
 }
 
-async function verifyQuote(
+export async function verifyQuote(
   verifier: TdxQuoteVerifier | undefined,
   intelQuote: string,
 ): Promise<VerifiedTdxQuote> {

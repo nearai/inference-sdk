@@ -234,6 +234,7 @@ describe('ECDSA inference client', () => {
     const gateway = createEcdsaGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({
+      e2ee: true,
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
@@ -278,6 +279,7 @@ describe('ECDSA inference client', () => {
     const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({
+      e2ee: true,
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',

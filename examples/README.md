@@ -1,8 +1,8 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. All examples use
-`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
+then verify the response signature. They read the API key from `NEARAI_API_KEY`.
+The examples use `z-ai/glm-5.3-flash`.
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key
@@ -20,7 +20,7 @@ project configuration. Each entry point includes non-streaming and streaming cal
 | `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
-| `direct/client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies the complete serving model-attestation set, then verifies responses by ID. | Enabled |
+| `direct/client.ts` | Connects to a model endpoint using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
 | `direct/bare.ts` | Fetches and verifies direct model attestations and verifies exact response bytes. | Not implemented |
 
@@ -28,7 +28,13 @@ The examples in `gateway/` verify the Gateway's TLS identity.
 The Gateway inference clients also pin later
 evidence, Chat, and signature requests to that identity. They cache attestation
 results for 60 minutes and retain response records for 60 minutes after body
-completion. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` to use ECDSA.
+completion. NEAR client examples explicitly enable `e2ee: true`; the SDK default
+is `false`. Change `SIGNING_ALGO` from `'ed25519'` to `'ecdsa'` in a NEAR example
+to use ECDSA.
+
+Set `e2ee: false` to disable field encryption. Attestation verification and
+verified-key routing still run; Chat, streaming, and `verifyResponse(id)` calls
+stay the same.
 
 The Gateway bare example preserves the exact encrypted request and response bytes
 before decryption for signature verification. The public E2EE helper creates
@@ -40,7 +46,7 @@ internally.
 To use OHTTP, add `ohttp: true` to either inference client's constructor and
 keep `SIGNING_ALGO` set to `'ed25519'`. JSON, streaming, and response-verification
 calls stay the same. The endpoint must provide signed OHTTP configuration and
-serve `/ohttp`. E2EE remains enabled independently.
+serve `/ohttp`. OHTTP is independent of `e2ee`.
 
 The SDK must be built first because the example imports the local package's
 published `dist` files.
@@ -70,7 +76,7 @@ pnpm --dir examples/example-js start:direct-client-openai-sdk
 pnpm --dir examples/example-js start:direct-bare
 ```
 
-All three verify the complete serving model-attestation set. Direct TLS fingerprint
+All three verify every returned model attestation. Direct TLS fingerprint
 binding is currently disabled; standard HTTPS certificate validation still applies.
 `DirectInferenceClient` selects a model key for routing and E2EE and requires response
 signatures from the same signer. The bare example sends plaintext over HTTPS

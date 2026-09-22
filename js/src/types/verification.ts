@@ -1,8 +1,16 @@
 import type { Buffer } from 'buffer';
-import type { GatewayAttestation } from './attestation-gateway';
-import type { ModelAttestation } from './attestation-model';
-import type { CompletionSignature } from './chat';
+import type {
+  ChutesMeasuredDeployment,
+  ChutesMeasurementBaseline,
+  VerifiedChutesModelAttestation,
+} from './attestation-chutes';
 import type { SigningIdentity } from './attestation-common';
+import type { GatewayAttestation } from './attestation-gateway';
+import type {
+  ModelAttestation,
+  NearModelAttestation,
+} from './attestation-model';
+import type { CompletionSignature } from './chat';
 import type { Awaitable } from './shared';
 
 export type TcbStatus =
@@ -32,6 +40,10 @@ export type TdxQuoteVerificationResult = {
   debugEnabled: boolean;
   reportData: Uint8Array;
   mrConfigId: Uint8Array;
+  mrTd?: Uint8Array;
+  rtMr0?: Uint8Array;
+  rtMr1?: Uint8Array;
+  rtMr2?: Uint8Array;
   rtMr3: Uint8Array;
 };
 
@@ -63,6 +75,8 @@ export type AttestationPolicy = {
 
 export type ModelAttestationPolicy = AttestationPolicy & {
   readonly gpuEvidence?: 'if-present' | 'required';
+  /** Accepted Chutes VM measurements. Defaults to the bundled Chutes baseline snapshot. */
+  readonly chutesMeasurements?: readonly ChutesMeasurementBaseline[];
 };
 
 export type AttestationVerifiers = {
@@ -70,7 +84,17 @@ export type AttestationVerifiers = {
   readonly deployment?: DeploymentVerifier;
 };
 
-export type ModelAttestationVerifiers = AttestationVerifiers & {
+export type MeasuredModelDeployment =
+  | (MeasuredDeployment & { readonly provider: 'near' })
+  | (ChutesMeasuredDeployment & { readonly provider: 'chutes' });
+
+export type ModelDeploymentVerifier = (
+  deployment: MeasuredModelDeployment,
+) => Awaitable<void>;
+
+export type ModelAttestationVerifiers = {
+  readonly tdxQuote?: TdxQuoteVerifier;
+  readonly deployment?: ModelDeploymentVerifier;
   readonly gpuEvidence?: GpuEvidenceVerifier;
 };
 
@@ -85,6 +109,13 @@ export type VerifyModelAttestationParams = {
   readonly clientBinding: ModelClientBinding;
   readonly policy?: ModelAttestationPolicy;
   readonly verifiers?: ModelAttestationVerifiers;
+};
+
+export type VerifyNearModelAttestationParams = Omit<
+  VerifyModelAttestationParams,
+  'attestation'
+> & {
+  readonly attestation: NearModelAttestation;
 };
 
 /** Values supplied or observed by the client for a Gateway attestation request. */
@@ -106,10 +137,14 @@ export type VerifyGatewayAttestationParams = {
 /** Measurements extracted from an authenticated quote and normalized to Buffers. */
 export type VerifiedTdxQuote = Omit<
   TdxQuoteVerificationResult,
-  'reportData' | 'mrConfigId' | 'rtMr3'
+  'reportData' | 'mrConfigId' | 'rtMr3' | 'mrTd' | 'rtMr0' | 'rtMr1' | 'rtMr2'
 > & {
   reportData: Buffer;
   mrConfigId: Buffer;
+  mrTd?: Buffer;
+  rtMr0?: Buffer;
+  rtMr1?: Buffer;
+  rtMr2?: Buffer;
   rtMr3: Buffer;
 };
 
@@ -142,12 +177,17 @@ export type VerifiedAttestationEvidence = {
 };
 
 /** Result returned by a successful `verifyModelAttestation` call. */
-export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
+export type VerifiedNearModelAttestation = VerifiedAttestationEvidence & {
+  readonly provider: 'near';
   /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
   readonly gpuEvidence: GpuEvidenceStatus;
   /** Quote-bound model public key available for the selected E2EE protocol. */
   readonly signingPublicKey?: string;
 };
+
+export type VerifiedModelAttestation =
+  | VerifiedNearModelAttestation
+  | VerifiedChutesModelAttestation;
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
@@ -160,7 +200,7 @@ export type VerifyModelResponseParams = {
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
   /** Model-attestation result whose signer must match `signature`. */
-  readonly attestation: VerifiedModelAttestation;
+  readonly attestation: VerifiedNearModelAttestation;
 };
 
 export type VerifyGatewayResponseParams = {

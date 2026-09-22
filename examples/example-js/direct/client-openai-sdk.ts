@@ -10,11 +10,12 @@ async function main(): Promise<void> {
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
   // This client verifies the complete serving model-attestation set before
-  // Chat. E2EE is enabled by default; direct TLS fingerprint binding is disabled.
+  // Chat. Opt into E2EE; direct TLS fingerprint binding is disabled.
   const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
     apiKey,
     signingAlgo: SIGNING_ALGO,
+    e2ee: true,
   });
 
   // The OpenAI client uses DirectInferenceClient's verified transport.

@@ -1,52 +1,88 @@
-import type {
-  GpuEvidenceStatus,
-  DeploymentVerifier,
-  GpuEvidenceVerifier,
-  VerifiedModelAttestation,
-  VerifyModelAttestationParams,
-} from '../types/verification';
 import { Buffer } from 'buffer';
 import { computeAddress } from 'ethers';
 import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
-import type { ModelAttestation } from '../types/attestation-model';
+import type { NearModelAttestation } from '../types/attestation-model';
+import type {
+  GpuEvidenceStatus,
+  GpuEvidenceVerifier,
+  ModelDeploymentVerifier,
+  VerifiedModelAttestation,
+  VerifiedNearModelAttestation,
+  VerifyModelAttestationParams,
+  VerifyNearModelAttestationParams,
+} from '../types/verification';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { createGpuEvidenceVerifier } from '../utils/nvidia';
+import { verifyChutesModelAttestation } from './attestation-chutes';
 import {
   verifyReportDataBinding,
   verifyReportedNonce,
 } from './attestation-common';
+import type { VerifiedDstackQuote } from './dstack-attestation';
 import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
-import type { VerifiedDstackQuote } from './dstack-attestation';
 
 /**
- * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
- * and the model signing identity but does not claim a client-to-model TLS
- * binding; the client's TLS connection terminates at the gateway.
+ * Verify provider-specific model evidence returned through the Gateway.
+ * NEAR binds a response signer; Chutes binds a routing key and VM baseline.
+ * Neither path observes a client-to-model TLS connection.
  */
+export function verifyModelAttestation(
+  params: VerifyNearModelAttestationParams,
+): Promise<VerifiedNearModelAttestation>;
+export function verifyModelAttestation(
+  params: VerifyModelAttestationParams,
+): Promise<VerifiedModelAttestation>;
 export async function verifyModelAttestation(
   params: VerifyModelAttestationParams,
 ): Promise<VerifiedModelAttestation> {
+  if (params.attestation.provider === 'chutes') {
+    const deploymentVerifier = params.verifiers?.deployment;
+    return verifyChutesModelAttestation({
+      attestation: params.attestation,
+      clientBinding: params.clientBinding,
+      policy: {
+        acceptedTcbStatuses: params.policy?.acceptedTcbStatuses,
+        baselines: params.policy?.chutesMeasurements,
+      },
+      verifiers: {
+        tdxQuote: params.verifiers?.tdxQuote,
+        gpuEvidence: params.verifiers?.gpuEvidence,
+        deployment:
+          deploymentVerifier === undefined
+            ? undefined
+            : (deployment) =>
+                deploymentVerifier({ ...deployment, provider: 'chutes' }),
+      },
+    });
+  }
+  const nearParams: VerifyNearModelAttestationParams = {
+    ...params,
+    attestation: params.attestation,
+  };
   // CPU and GPU evidence bind independently to the same client nonce.
   const [deployment, gpuEvidence] = await Promise.all([
-    verifyModelCpuAttestation(params),
-    verifyModelGpuEvidence(params),
+    verifyModelCpuAttestation(nearParams),
+    verifyModelGpuEvidence(nearParams),
   ]);
   return { ...deployment, gpuEvidence };
 }
 
-type VerifiedModelDeployment = Omit<VerifiedModelAttestation, 'gpuEvidence'>;
+type VerifiedModelDeployment = Omit<
+  VerifiedNearModelAttestation,
+  'gpuEvidence'
+>;
 
 async function verifyModelCpuAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
-}: VerifyModelAttestationParams): Promise<VerifiedModelDeployment> {
+}: VerifyNearModelAttestationParams): Promise<VerifiedModelDeployment> {
   const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
     attestation,
@@ -68,9 +104,9 @@ async function verifyModelCpuAttestation({
 }
 
 type VerifyModelDeploymentParams = {
-  attestation: ModelAttestation;
+  attestation: NearModelAttestation;
   verifiedQuote: VerifiedDstackQuote;
-  deploymentVerifier?: DeploymentVerifier;
+  deploymentVerifier?: ModelDeploymentVerifier;
 };
 
 /** Shared model checks after the endpoint-specific report-data binding passes. */
@@ -81,7 +117,9 @@ export async function verifyModelDeployment({
 }: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
-    deploymentVerifier,
+    deploymentVerifier === undefined
+      ? undefined
+      : (deployment) => deploymentVerifier({ ...deployment, provider: 'near' }),
   );
 
   const signingPublicKey = verifySigningPublicKey({
@@ -92,6 +130,7 @@ export async function verifyModelDeployment({
 
   return {
     ...evidence,
+    provider: 'near',
     ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
   };
 }
@@ -102,7 +141,7 @@ export function verifyModelGpuEvidence({
   clientBinding: { nonce },
   policy,
   verifiers,
-}: VerifyModelAttestationParams): Promise<GpuEvidenceStatus> {
+}: VerifyNearModelAttestationParams): Promise<GpuEvidenceStatus> {
   return verifyGpuEvidence({
     payload: attestation.nvidiaPayload,
     nonce,
@@ -112,7 +151,7 @@ export function verifyModelGpuEvidence({
 }
 
 type VerifySigningPublicKeyParams = {
-  readonly attestation: VerifyModelAttestationParams['attestation'];
+  readonly attestation: NearModelAttestation;
   readonly signingAlgo: SigningAlgo;
   readonly signingAddress: string;
 };

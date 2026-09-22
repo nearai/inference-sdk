@@ -179,6 +179,7 @@ describe('DirectAttestationClient', () => {
       'instance-b',
     ]);
     expect(servingAttestation).toEqual({
+      provider: 'near',
       nonce: clientBinding.nonce,
       signer: { signingAlgo: 'ed25519', signingAddress },
       intelQuote: 'aa',

@@ -96,6 +96,10 @@ export const TdxQuoteVerificationResultSchema = objectSchema({
   debugEnabled: v.boolean(),
   reportData: Uint8ArraySchema,
   mrConfigId: Uint8ArraySchema,
+  mrTd: v.optional(Uint8ArraySchema),
+  rtMr0: v.optional(Uint8ArraySchema),
+  rtMr1: v.optional(Uint8ArraySchema),
+  rtMr2: v.optional(Uint8ArraySchema),
   rtMr3: Uint8ArraySchema,
 });
 
@@ -148,12 +152,43 @@ const CloudApiAttestationEntries = {
 
 const CloudApiModelAttestationEntries = {
   ...CloudApiAttestationEntries,
+  // Older NEAR providers omit the discriminator; only that legacy shape
+  // defaults to NEAR. An explicit unknown provider must never be inferred.
+  provider: v.optional(v.literal('near'), 'near'),
   nvidia_payload: OptionalCloudApiStringSchema,
   signing_public_key: OptionalCloudApiStringSchema,
 };
 
-export const CloudApiModelAttestationSchema = objectSchema(
+export const CloudApiNearModelAttestationSchema = objectSchema(
   CloudApiModelAttestationEntries,
+);
+
+const CloudApiChutesModelAttestationEntries = {
+  provider: v.literal('chutes'),
+  nonce: v.string(),
+  quote_b64: v.string(),
+  certificate_b64: v.string(),
+  e2e_pubkey: v.string(),
+  gpu_evidence: v.array(
+    objectSchema({
+      certificate: v.string(),
+      evidence: v.string(),
+      arch: v.pipe(v.string(), v.minLength(1)),
+    }),
+  ),
+  instance_id: OptionalCloudApiStringSchema,
+};
+
+export const CloudApiChutesModelAttestationSchema = objectSchema(
+  CloudApiChutesModelAttestationEntries,
+);
+
+export const CloudApiModelAttestationSchema = v.pipe(
+  NonArrayObjectSchema,
+  v.variant('provider', [
+    v.object(CloudApiModelAttestationEntries),
+    v.object(CloudApiChutesModelAttestationEntries),
+  ]),
 );
 
 const DirectApiModelAttestationEntries = {

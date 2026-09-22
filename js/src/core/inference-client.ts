@@ -4,29 +4,29 @@ import {
   ChatCompletionRequestSchema,
   CompletionResponseIdSchema,
 } from '../schemas';
-import type {
-  GatewayTlsBinding,
-  ModelAttestationVerifiers,
-} from '../types/verification';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { OhttpAttestation } from '../types/ohttp';
+import type { CompletionSignature } from '../types/chat';
 import type {
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestations,
   FetchModelAttestationsParams,
 } from '../types/cloud-api';
-import type { CompletionSignature } from '../types/chat';
-import type {
-  NodeInferenceClientOptions,
-  InferenceChat,
-  InferenceClientOptions,
-  VerifiedCompletionResult,
-  InferenceClientCommonOptions,
-  InferenceEncryptionOptions,
-} from '../types/inference-client';
-import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
+import type {
+  InferenceChat,
+  InferenceClientCommonOptions,
+  InferenceClientOptions,
+  InferenceEncryptionOptions,
+  NodeInferenceClientOptions,
+  VerifiedCompletionResult,
+} from '../types/inference-client';
+import type { OhttpAttestation } from '../types/ohttp';
+import type { Awaitable } from '../types/shared';
+import type {
+  GatewayTlsBinding,
+  ModelAttestationVerifiers,
+} from '../types/verification';
 import {
   ApiError,
   isApiError,
@@ -34,6 +34,10 @@ import {
   VerificationError,
 } from '../utils/errors';
 import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
+import { verifyGatewayAttestation } from './attestation-gateway';
+import { verifyModelAttestation } from './attestation-model';
+import { verifyGatewayResponse, verifyModelResponse } from './chat';
+import type { CloudApiRequestConfiguration } from './cloud-api';
 import {
   AttestationClient,
   createCloudApiRequestConfiguration,
@@ -41,12 +45,6 @@ import {
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
-import type { CloudApiRequestConfiguration } from './cloud-api';
-import { verifyGatewayAttestation } from './attestation-gateway';
-import { verifyModelAttestation } from './attestation-model';
-import { verifyOhttpKeyConfig } from './ohttp-attestation';
-import { createOhttpFetch } from './ohttp-fetch';
-import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
   decodeChatRequest,
   isServerSentEventContentType,
@@ -54,6 +52,8 @@ import {
   prepareE2eeChatRequest,
   removeE2eeHeaders,
 } from './e2ee-request';
+import { verifyOhttpKeyConfig } from './ohttp-attestation';
+import { createOhttpFetch } from './ohttp-fetch';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -62,7 +62,10 @@ const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
 export type InferenceSession<VerificationResult> = {
-  readonly modelKey: E2eeModelKey;
+  /** A verified NEAR hex key or Chutes base64 ML-KEM key used only for routing. */
+  readonly modelPublicKey: string;
+  /** Present only when the provider supports client-to-model field encryption. */
+  readonly encryptionKey?: E2eeModelKey;
   readonly transport: InferenceSessionTransport;
   readonly verifyResponse: (
     params: VerifySessionResponseParams,
@@ -107,7 +110,7 @@ type ParsedSecureRequest = {
 
 type PreparePlaintextRequestParams = {
   readonly request: Request;
-  readonly modelKey: E2eeModelKey;
+  readonly modelPublicKey: string;
 };
 
 type SendSecureCompletionParams = {
@@ -181,17 +184,17 @@ export type CreateGatewaySessionTransportParams = {
  *
  * Every `fetch()` call reads its model from the Chat request, then uses a
  * successfully verified endpoint-specific session for that model when it remains
- * within the configured cache lifetime. With the default `e2ee: true`,
+ * within the configured cache lifetime. With explicit `e2ee: true`,
  * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
- * With `e2ee: false`, the same evidence and policy checks run on a cache miss,
+ * With the default `e2ee: false`, the same evidence and policy checks run on a cache miss,
  * but the Chat request and response remain plaintext while the request stays
  * pinned to the verified model key.
  */
 export abstract class VerifiedInferenceClientBase<VerificationResult> {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
-  private readonly e2eeEnabled: boolean;
+  protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
   private readonly completions = new Map<
     string,
@@ -216,7 +219,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.attestationCacheTimeToLiveMs =
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
-    this.e2eeEnabled = options.e2ee !== false;
+    this.e2eeEnabled = options.e2ee ?? false;
     this.signingAlgo = options.signingAlgo ?? 'ed25519';
     this.ohttpEnabled = options.ohttp ?? false;
     this.options = options;
@@ -345,19 +348,26 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
       signal: parsed.request.signal,
     });
 
-    const prepared = this.e2eeEnabled
-      ? await prepareE2eeChatRequest({
-          request: new Request(parsed.request, {
-            headers: this.createCompletionHeaders(parsed.request.headers),
-          }),
-          modelKey: session.modelKey,
-        })
-      : {
-          request: this.preparePlaintextRequest({
-            request: parsed.request,
-            modelKey: session.modelKey,
-          }),
-        };
+    if (this.e2eeEnabled && session.encryptionKey === undefined) {
+      throw new VerificationError({
+        code: 'e2ee.provider_unsupported',
+        details: { provider: 'chutes' },
+      });
+    }
+    const prepared =
+      this.e2eeEnabled && session.encryptionKey !== undefined
+        ? await prepareE2eeChatRequest({
+            request: new Request(parsed.request, {
+              headers: this.createCompletionHeaders(parsed.request.headers),
+            }),
+            modelKey: session.encryptionKey,
+          })
+        : {
+            request: this.preparePlaintextRequest({
+              request: parsed.request,
+              modelPublicKey: session.modelPublicKey,
+            }),
+          };
     const decryptResponse =
       'decryptResponse' in prepared ? prepared.decryptResponse : undefined;
 
@@ -393,7 +403,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
       completionId,
-      signingAlgo: session.modelKey.signingAlgo,
+      signingAlgo: this.signingAlgo,
     });
 
     return session.verifyResponse({
@@ -509,15 +519,14 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 
   private preparePlaintextRequest({
     request,
-    modelKey,
+    modelPublicKey,
   }: PreparePlaintextRequestParams): Request {
     const headers = this.createCompletionHeaders(request.headers);
     headers.set(NO_ALIASING_HEADER, 'true');
     removeE2eeHeaders(headers);
-    // Cloud API uses this routing-only header to select the verified NEAR
-    // backend. It is deliberately not forwarded to the model request body.
+    // This routing-only header selects the verified NEAR or Chutes key.
     // X-Signing-Algo is an encryption header and requires a client key.
-    headers.set('x-model-pub-key', modelKey.publicKey);
+    headers.set('x-model-pub-key', modelPublicKey);
     return new Request(request, { headers });
   }
 
@@ -585,6 +594,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
     const fetchedModels = await transport.fetchModelAttestations({
       model,
       signingAlgo: this.signingAlgo,
+      ...(this.e2eeEnabled ? { provider: 'near' as const } : {}),
     });
     if (fetchedModels.attestations.length === 0) {
       throw new VerificationError({
@@ -604,17 +614,37 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
     );
     const modelAttestation = modelAttestations.find(
       (attestation) =>
-        attestation.signer.signingAlgo === this.signingAlgo &&
-        attestation.signingPublicKey !== undefined,
+        attestation.provider === 'chutes' ||
+        (attestation.signer.signingAlgo === this.signingAlgo &&
+          attestation.signingPublicKey !== undefined),
     );
-    if (modelAttestation?.signingPublicKey === undefined) {
+    if (modelAttestation === undefined) {
+      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+    }
+    if (this.e2eeEnabled && modelAttestation.provider === 'chutes') {
+      throw new VerificationError({
+        code: 'e2ee.provider_unsupported',
+        details: { provider: 'chutes' },
+      });
+    }
+    const encryptionKey =
+      modelAttestation.provider === 'near' &&
+      modelAttestation.signingPublicKey !== undefined
+        ? {
+            signingAlgo: this.signingAlgo,
+            publicKey: modelAttestation.signingPublicKey,
+          }
+        : undefined;
+    const modelPublicKey =
+      modelAttestation.provider === 'chutes'
+        ? modelAttestation.publicKey
+        : modelAttestation.signingPublicKey;
+    if (modelPublicKey === undefined) {
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     return {
-      modelKey: {
-        signingAlgo: this.signingAlgo,
-        publicKey: modelAttestation.signingPublicKey,
-      },
+      modelPublicKey,
+      encryptionKey,
       transport: {
         ...transport,
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
@@ -626,6 +656,12 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         signature,
       }) => {
         if (signature.kind === 'provider_tee') {
+          if (modelAttestation.provider !== 'near') {
+            throw new VerificationError({
+              code: 'signature.kind_mismatch',
+              details: { expected: 'gateway', actual: signature.kind },
+            });
+          }
           verifyModelResponse({
             requestBody,
             responseBody,

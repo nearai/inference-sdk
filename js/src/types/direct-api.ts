@@ -5,11 +5,11 @@ import type {
   DirectApiModelAttestationSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
-import type { ModelAttestation } from './attestation-model';
+import type { NearModelAttestation } from './attestation-model';
 import type { OhttpAttestation } from './ohttp';
 
 /** Model evidence returned directly by a provider, without a Cloud envelope. */
-export type DirectModelAttestation = ModelAttestation & {
+export type DirectModelAttestation = NearModelAttestation & {
   readonly modelName: string;
   readonly instanceId?: string;
   readonly spkiFingerprint?: string;
