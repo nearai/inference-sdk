@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8fb" />
+    <title>Private TEE chat · NEAR AI Inference SDK</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="site-header">
+        <a class="brand" href="/" aria-label="NEAR AI Inference SDK example">
+          <span class="brand-mark" aria-hidden="true">✦</span>
+          <span>near<span class="brand-accent">AI</span></span>
+        </a>
+        <span class="header-label">Inference SDK · Browser example</span>
+      </header>
+
+      <div class="intro">
+        <div>
+          <p class="eyebrow">PRIVATE TEE CHAT</p>
+          <h1>A private conversation, with proof.</h1>
+          <p class="intro-copy">A minimal chat that encrypts supported fields to a verified model and checks every completed response.</p>
+        </div>
+        <span class="intro-badge"><span class="badge-dot" aria-hidden="true"></span>E2EE enabled</span>
+      </div>
+
+      <div class="app-shell">
+        <aside class="sidebar" aria-label="Connection and verification">
+          <section class="side-section connection" aria-label="Connection">
+            <div class="section-heading">
+              <span class="section-kicker">01 / CONNECT</span>
+              <h2>Connection</h2>
+            </div>
+            <div class="connection-field">
+              <label for="base-url">Cloud API URL</label>
+              <input id="base-url" type="url" spellcheck="false" autocomplete="off" value="https://cloud-api.near.ai/v1" />
+            </div>
+            <div class="connection-field">
+              <label for="api-key">NEAR AI API key</label>
+              <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Enter your API key" />
+            </div>
+            <p class="helper">The key stays in this tab and is sent to the Cloud API URL above when you send. Use a trusted endpoint.</p>
+          </section>
+
+          <section class="side-section verification" aria-label="Verification status">
+            <div class="section-heading">
+              <span class="section-kicker">02 / VERIFY</span>
+              <h2>Verification</h2>
+            </div>
+            <div class="verification-item">
+              <div class="verification-title">
+                <span class="step-icon" aria-hidden="true">G</span>
+                <div>
+                  <h3>Gateway evidence</h3>
+                  <strong id="gateway-status" class="status idle">Not checked</strong>
+                </div>
+              </div>
+              <p class="item-caption">Fresh quote before each prompt</p>
+              <details class="evidence-details">
+                <summary>View details</summary>
+                <p id="gateway-details" class="detail-text">A fresh Gateway attestation is checked before each prompt.</p>
+              </details>
+            </div>
+            <div class="verification-item">
+              <div class="verification-title">
+                <span class="step-icon" aria-hidden="true">M</span>
+                <div>
+                  <h3>Model &amp; E2EE</h3>
+                  <strong id="model-status" class="status idle">Not checked</strong>
+                </div>
+              </div>
+              <p class="item-caption">Encrypt after model evidence passes</p>
+              <details class="evidence-details">
+                <summary>View details</summary>
+                <p id="model-details" class="detail-text">Model evidence and the encryption key are verified before Chat is sent.</p>
+              </details>
+            </div>
+          </section>
+
+        </aside>
+
+        <section class="chat" aria-label="Chat">
+          <div class="chat-header">
+            <div id="model-avatar" class="model-avatar" aria-hidden="true">Z</div>
+            <div class="model-heading">
+              <label for="model-select" class="sr-only">Model</label>
+              <select id="model-select" aria-label="Model">
+                <option value="z-ai/glm-5.3-flash">GLM 5.3 Flash</option>
+              </select>
+              <p><span id="model-id">z-ai/glm-5.3-flash</span> <span aria-hidden="true">·</span> Private TEE</p>
+            </div>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite">
+            <div id="empty-state" class="empty-state">
+              <span class="empty-icon" aria-hidden="true">✦</span>
+              <h3>Start a verified conversation</h3>
+              <p>Enter an API key, then send a message. Gateway and model evidence are checked before your encrypted request is sent.</p>
+            </div>
+          </div>
+
+          <div class="chat-bottom">
+            <form id="chat-form">
+              <label for="prompt" class="sr-only">Message</label>
+              <div class="composer">
+                <input id="prompt" autocomplete="off" placeholder="Message GLM 5.3 Flash…" required />
+                <button id="send" type="submit">Send <span aria-hidden="true">↗</span></button>
+              </div>
+            </form>
+            <p id="error" class="error" role="alert"></p>
+            <p class="composer-note">Response signatures are checked after the full stream finishes.</p>
+          </div>
+        </section>
+      </div>
+
+      <details class="security-note">
+        <summary>What is protected?</summary>
+        <p>Supported Chat fields are encrypted to the attested model. HTTP metadata and arbitrary extra fields are not covered.</p>
+        <p>The browser uses HTTPS but cannot inspect or attestation-pin the TLS peer certificate like the Node client can.</p>
+      </details>
+
+      <footer>SDK example · Browser TLS peer pinning is unavailable; see the README for verification boundaries.</footer>
+    </main>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

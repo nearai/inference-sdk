@@ -1,8 +1,9 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. All examples use
-`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
+then verify the response signature. The CLI examples use
+`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`. The browser
+example asks for the key in the page instead.
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key
@@ -56,6 +57,22 @@ pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
 Requires Node.js 24 or later.
+
+## Browser (Private TEE chat)
+
+[`example-browser`](example-browser/README.md) is a small Vite app using the
+browser SDK entry point. It lets the user select a compatible Private TEE chat
+model, streams with E2EE, shows
+Gateway evidence and model status, then verifies the response signature on the
+same client after the stream finishes. Its README covers key handling, CORS,
+NVIDIA evidence relay, and the browser's lack of TLS peer-certificate pinning.
+
+```sh
+pnpm --dir js build
+pnpm --dir examples/example-browser install --frozen-lockfile
+pnpm --dir examples/example-browser build
+pnpm --dir examples/example-browser dev
+```
 
 ### Direct model endpoints
 
