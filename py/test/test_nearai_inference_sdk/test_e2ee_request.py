@@ -243,6 +243,8 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
             'Digest': 'sha-256=stale',
             'Content-Digest': 'sha-256=:stale:',
             'Repr-Digest': 'sha-256=:stale:',
+            'ETag': '"encrypted-body"',
+            'Last-Modified': 'Thu, 17 Sep 2026 00:00:00 GMT',
             'x-result': 'preserved',
         },
         extensions={'http_version': b'HTTP/2'},
@@ -271,6 +273,8 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
         'digest',
         'content-digest',
         'repr-digest',
+        'etag',
+        'last-modified',
     ):
         assert name not in response.headers
     assert response.extensions == source.extensions
@@ -310,6 +314,8 @@ async def test_decrypts_multiline_sse_across_split_bytes(
                 'Digest': 'sha-256=stale',
                 'Content-Digest': 'sha-256=:stale:',
                 'Repr-Digest': 'sha-256=:stale:',
+                'ETag': '"encrypted-stream"',
+                'Last-Modified': 'Thu, 17 Sep 2026 00:00:00 GMT',
             },
         )
     )
@@ -319,6 +325,8 @@ async def test_decrypts_multiline_sse_across_split_bytes(
         'digest',
         'content-digest',
         'repr-digest',
+        'etag',
+        'last-modified',
     ):
         assert name not in response.headers
     text = (await response.aread()).decode()
