@@ -22,7 +22,7 @@ const ohttpWireAttestation = {
 type RequestAuthenticationCase = {
   name: string;
   options: AttestationClientOptions;
-  expectedAuthorization: string;
+  expectedAuthorization: string | null;
 };
 
 function modelSignature(
@@ -168,9 +168,9 @@ describe('request authentication', () => {
       expectedAuthorization: 'Bearer proxy-token',
     },
     {
-      name: 'uses request authentication when none is configured',
+      name: 'omits request authorization when none is configured',
       options: { headers: { 'x-tenant': 'default' } },
-      expectedAuthorization: 'Bearer openai-key',
+      expectedAuthorization: null,
     },
   ])('$name', ({ options, expectedAuthorization }) => {
     const configuration = createCloudApiRequestConfiguration(options);

@@ -556,6 +556,7 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].body.messages[0].content).not.toBe(
       prompt,
     );
+    expect(endpoint.state.requests[0].headers.has('authorization')).toBe(false);
     const result = await client.verifyResponse(id);
     expect(result.completionId).toBe(id);
     expect(result.attestations).toHaveLength(2);
