@@ -1,17 +1,16 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. The CLI examples use
-`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`. The browser
-example asks for the key in the page instead.
-
-```sh
-export NEARAI_API_KEY=sk-your-api-key
-```
+then verify the response signature.
 
 ## JavaScript (Node.js)
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
+They use `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`:
+
+```sh
+export NEARAI_API_KEY=sk-your-api-key
+```
 
 Gateway and direct examples are grouped in separate folders and share the same
 project configuration. Each entry point includes non-streaming and streaming calls:
@@ -57,22 +56,6 @@ pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
 Requires Node.js 24 or later.
-
-## Browser (Private TEE chat)
-
-[`example-browser`](example-browser/README.md) is a small Vite app using the
-browser SDK entry point. It lets the user select a compatible Private TEE chat
-model, streams with E2EE, shows
-Gateway evidence and model status, then verifies the response signature on the
-same client after the stream finishes. Its README covers key handling, CORS,
-NVIDIA evidence relay, and the browser's lack of TLS peer-certificate pinning.
-
-```sh
-pnpm --dir js build
-pnpm --dir examples/example-browser install --frozen-lockfile
-pnpm --dir examples/example-browser build
-pnpm --dir examples/example-browser dev
-```
 
 ### Direct model endpoints
 
@@ -125,6 +108,12 @@ the `start:client` and `start:bare` commands above.
 These examples verify build provenance, not reproducible builds. They do not
 verify Compose Manager runtime state, GLM runtime-image, or model-weight
 provenance.
+
+## Browser (Private TEE chat)
+
+[`example-browser`](example-browser/README.md) demonstrates E2EE streaming and
+Gateway, model, and response verification in a browser. See its README for setup
+and browser-specific limitations.
 
 ## Python
 
