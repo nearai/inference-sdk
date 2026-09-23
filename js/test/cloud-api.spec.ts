@@ -307,7 +307,7 @@ describe('AttestationClient', () => {
       'reads $providerType metadata with attestationSupported=$attestationSupported',
       async (metadata) => {
         const api = cloudFor(() => jsonResponse({ metadata }));
-        const model = 'provider/model?revision=1#test%';
+        const model = 'provider/model.v1?revision=1#test%';
 
         await expect(api.client.fetchModelMetadata(model)).resolves.toEqual(
           metadata,
@@ -319,6 +319,26 @@ describe('AttestationClient', () => {
         expect(api.request().headers.get('authorization')).toBe('Bearer test');
       },
     );
+
+    test.each(['.', '..'])('rejects dot-segment model ID %s', async (model) => {
+      const api = cloudFor(() =>
+        jsonResponse({ metadata: { attestationSupported: false } }),
+      );
+
+      await expect(
+          api.client.fetchModelMetadata(model),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'model',
+            reason: 'unsupported_value',
+            actual: model,
+          },
+        },
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
 
     test.each([
       {},

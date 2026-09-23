@@ -146,6 +146,18 @@ export class CloudApiClient {
 
   /** Read the Gateway catalog's provider and capability; this does not verify a model. */
   async fetchModelMetadata(model: string): Promise<ModelMetadata> {
+    // URL construction normalizes these IDs instead of keeping a model segment.
+    if (model === '.' || model === '..') {
+      throw new ApiError({
+        code: 'api.invalid_input',
+        details: {
+          field: 'model',
+          reason: 'unsupported_value',
+          expected: 'a model ID other than "." or ".."',
+          actual: model,
+        },
+      });
+    }
     const url = new URL(`model/${encodeURIComponent(model)}`, this.baseUrl);
     const json = await this.getCloudApiJson({
       url,
