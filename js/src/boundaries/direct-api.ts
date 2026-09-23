@@ -34,7 +34,7 @@ export function decodeDirectModelAttestations(
   );
   const serializedRoot = serializeAttestation(root);
   // The top-level report identifies the endpoint that answered this request.
-  // The complete serving set must contain that same evidence; do not infer it
+  // The returned attestation set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
   const servingAttestation = attestations.find(
     (candidate) => serializeAttestation(candidate) === serializedRoot,

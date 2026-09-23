@@ -5,8 +5,9 @@ Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
 These clients connect through the NEAR AI Cloud Gateway. For a model's own
-`*.completions.near.ai` endpoint, use the
-[direct clients](#use-a-direct-model-endpoint) instead.
+`*.completions.near.ai` endpoint, the
+[direct clients](#use-a-direct-model-endpoint) are experimental and not
+recommended for production. Use Gateway clients for production integrations.
 
 ## Send an E2EE chat completion
 
@@ -45,8 +46,8 @@ const client = new InferenceClient({
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The Gateway returns the complete serving model-
-attestation set for the requested model. The client verifies that set before
+and response signatures. The Gateway returns model attestations for the
+requested model. The client verifies every returned report before
 selecting a key for the chosen algorithm.
 
 ### Use OHTTP
@@ -330,8 +331,21 @@ With raw `client.fetch()`, consume the returned response body before verificatio
 
 ## Use a direct model endpoint
 
+> **Experimental — not recommended for production.** This applies to both
+> `DirectInferenceClient` and `DirectAttestationClient` in the browser and Node
+> entry points. Use the Gateway `InferenceClient` or `AttestationClient` for production.
+
+Known endpoint limitations affect the direct flow:
+
+- `all_attestations` may contain only the instance handling the attestation
+  request. Preflight can therefore miss other CVMs, including a later serving
+  instance with a different TLS key, and cannot establish a complete set of
+  fleet TLS pins. Verifying all returned reports does not verify every backend CVM.
+- Completion signatures are stored per instance. `/signature/{id}` may return
+  `404` when Chat and signature lookup reach different instances.
+
 `DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
-It fetches and verifies the complete serving model-attestation set before
+It fetches and verifies every returned model attestation before
 sending Chat.
 E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
 just as for `InferenceClient`.

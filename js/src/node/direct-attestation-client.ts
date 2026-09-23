@@ -5,7 +5,12 @@ import type {
 } from '../types/direct-api';
 import { type HttpsResponse, requestHttps } from './attestation-client';
 
-/** Node direct attestation client; TLS fingerprint binding is temporarily disabled. */
+/**
+ * Node direct attestation client; TLS fingerprint binding is temporarily disabled.
+ *
+ * @experimental Not recommended for production. Use `AttestationClient` through
+ * the Gateway instead.
+ */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({
     signingAlgo,

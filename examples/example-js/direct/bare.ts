@@ -1,3 +1,4 @@
+// Experimental direct-endpoint example. Use the Gateway examples for production.
 import {
   DirectAttestationClient,
   NO_ALIASING_HEADER,

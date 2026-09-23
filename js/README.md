@@ -3,6 +3,11 @@
 `@nearai/inference-sdk` verifies Gateway and model attestations in Node.js and
 browsers, and provides encrypted Chat Completions for NEAR model deployments.
 
+> **Experimental:** `DirectInferenceClient` and `DirectAttestationClient` are
+> not recommended for production in either the browser or Node entry point.
+> Use the Gateway `InferenceClient` or `AttestationClient` for production.
+> See the [known direct-endpoint limitations](./docs/verification-guide.md#use-a-direct-model-endpoint).
+
 ## Clients and verification
 
 - `InferenceClient` verifies Gateway and model evidence before sending a chat
@@ -13,7 +18,7 @@ browsers, and provides encrypted Chat Completions for NEAR model deployments.
 - `AttestationClient` fetches evidence and signatures. Standalone verification
   functions let applications control the verification flow.
 - `DirectInferenceClient` connects to a model's own endpoint, verifies every
-  attestation in its complete serving set, and provides the same Chat, E2EE, and response-verification
+  returned attestation, and provides the same Chat, E2EE, and response-verification
   methods without Gateway verification. `DirectAttestationClient` fetches direct
   attestations and signatures for a manual flow.
 - `prepareE2eeChatRequest({ request, modelKey })` encrypts a raw Chat request
