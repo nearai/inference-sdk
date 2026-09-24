@@ -24,8 +24,8 @@ type AttestationClientBaseOptions = {
  * Request authentication used by attestation and signature requests. `apiKey`
  * is the convenience form for a direct Gateway connection. `headers` supports
  * an aggregator or another compatible endpoint with its own authentication.
- * A configured `apiKey` or Authorization header takes precedence over
- * request-specific Authorization headers. Other headers can be overridden per request.
+ * Only a configured `apiKey` or Authorization header supplies bearer authorization.
+ * Request-specific Authorization is ignored. Other headers can be overridden per request.
  */
 export type AttestationClientOptions =
   | (AttestationClientBaseOptions & {

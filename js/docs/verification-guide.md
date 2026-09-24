@@ -330,10 +330,12 @@ const verified = await client.verifyResponse(completion.id);
 
 Streaming uses the same ID-based verification as the built-in client.
 
-For a proxy configured with `headers.Authorization`, OpenAI's required `apiKey`
-can be a placeholder. The inference client's configured authorization takes
-precedence for evidence, Chat, and signature requests. Other per-request headers
-can override their configured defaults.
+Configure authentication on the inference client. Its `apiKey` or
+`headers.Authorization` supplies bearer authorization for evidence, Chat, and
+signature requests. Without either, no Authorization header is sent, including
+when an external OpenAI client adds one. OpenAI's required `apiKey` can therefore
+be a placeholder when a proxy uses custom headers. Other per-request headers can
+override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
 ## Use a direct model endpoint

@@ -120,6 +120,8 @@ export function mergeCloudApiRequestHeaders({
         : `Bearer ${configuration.apiKey}`;
     if (authorization !== null) {
       headers.set('authorization', authorization);
+    } else {
+      headers.delete('authorization');
     }
     return headers;
   } catch (cause) {

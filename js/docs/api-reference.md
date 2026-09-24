@@ -65,7 +65,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
-| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for evidence, signature, and Chat requests. Configured `Authorization` takes precedence over per-request authorization unless `apiKey` is set. Other headers can be overridden per request; SDK protocol headers override conflicts. |
+| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for evidence, signature, and Chat requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful verified Gateway/model session for this many milliseconds for the same model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
@@ -123,7 +123,7 @@ There is no `gatewayVerification` option.
 | --- | --- | --- | --- | --- |
 | `baseUrl` | `string` | Yes | — | Direct model API base URL, including `/v1` where applicable. |
 | `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
-| `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. |
+| `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. With `ohttp: true`, only `'ed25519'` is accepted. |
 | `e2ee?` | `boolean` | No | `false` | `true` encrypts supported Chat fields. `false` preserves model verification and sends plaintext over the selected transport. Direct clients support NEAR model endpoints. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat through the direct endpoint's `/ohttp`. Authenticates its configuration with the serving attestation's Ed25519 signer, also selected for model-key routing and response verification. |
@@ -300,7 +300,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 
 | Parameter type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving attestation from the fetch helper; it must be an entry in `attestations`. |
+| `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Complete serving model-attestation set from the fetch helper. Every entry is checked. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
