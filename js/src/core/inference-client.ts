@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { createSystemOne } from './systemone';
+import type { InferenceSystemOne } from '../types/systemone';
 import * as v from 'valibot';
 import {
   ChatCompletionRequestSchema,
@@ -38,6 +40,7 @@ import {
 import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
 import {
   AttestationClient,
+  findModelAttestationForSignature,
   createCloudApiRequestConfiguration,
   mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
@@ -555,7 +558,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     }
   }
 
-  private createCompletionHeaders(requestHeaders: HeadersInit): Headers {
+  protected createCompletionHeaders(requestHeaders: HeadersInit): Headers {
     return mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
       requestHeaders,
@@ -566,6 +569,20 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 /** Gateway-specific preflight layered over the shared Chat/E2EE transport. */
 export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
+
+  /** Send a non-streaming decision request; verify its receipt with result.verify(). */
+  readonly systemone: InferenceSystemOne = {
+    create: (request, options) =>
+      createSystemOne({
+        request,
+        options,
+        baseUrl: this.getBaseUrl(),
+        signingAlgo: this.signingAlgo,
+        encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
+        headers: this.createCompletionHeaders(options?.headers ?? {}),
+        createSession: (model) => this.createVerificationState(model, true),
+      }),
+  };
 
   protected constructor(options: NodeInferenceClientOptions) {
     super({ ...options, e2ee: options.e2ee ?? false });
@@ -580,6 +597,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
 
   protected override async createVerificationState(
     model: string,
+    systemone = false,
   ): Promise<InferenceSession<VerifiedCompletionResult>> {
     const gateway = await this.fetchGatewayAttestation();
     const gatewayAttestation = await verifyGatewayAttestation({
@@ -595,7 +613,21 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
     const transport = this.createGatewaySessionTransport({
       tlsBinding: gatewayAttestation.tlsBinding,
     });
-    const modelAttestation = await this.verifyModel(model, transport);
+    const modelAttestations = await this.verifyModels(model, transport);
+    const modelAttestation = systemone
+      ? undefined
+      : modelAttestations.find(
+          (attestation) =>
+            attestation.signer.signingAlgo === this.signingAlgo &&
+            attestation.signingPublicKey !== undefined,
+        );
+    if (
+      !systemone &&
+      modelAttestations.length > 0 &&
+      modelAttestation === undefined
+    ) {
+      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+    }
     const modelKey =
       modelAttestation?.signingPublicKey !== undefined
         ? {
@@ -616,7 +648,13 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         signature,
       }) => {
         if (signature.kind === 'provider_tee') {
-          if (modelAttestation === undefined) {
+          const servingAttestation = systemone
+            ? findModelAttestationForSignature({
+                attestations: modelAttestations,
+                signature,
+              })
+            : modelAttestation;
+          if (servingAttestation === undefined) {
             throw new VerificationError({
               code: 'signature.kind_mismatch',
               details: { expected: 'gateway', actual: signature.kind },
@@ -626,13 +664,13 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
             requestBody,
             responseBody,
             signature,
-            attestation: modelAttestation,
+            attestation: servingAttestation,
           });
           return {
             completionId,
             signatureKind: 'provider_tee',
             signature,
-            attestation: modelAttestation,
+            attestation: servingAttestation,
           };
         }
         verifyGatewayResponse({
@@ -652,10 +690,10 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
   }
 
   /** NEAR deployments use model evidence; Incognito sessions verify only the Gateway. */
-  private async verifyModel(
+  private async verifyModels(
     model: string,
     transport: GatewaySessionTransport,
-  ): Promise<VerifiedModelAttestation | undefined> {
+  ): Promise<VerifiedModelAttestation[]> {
     const metadata = await transport.fetchModelMetadata(model);
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
       const { deploymentPolicy, modelVerification } = this.gatewayOptions;
@@ -669,7 +707,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
           code: 'policy.model_attestation_required',
         });
       }
-      return undefined;
+      return [];
     }
 
     const fetchedModels = await transport.fetchModelAttestations({
@@ -692,15 +730,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         }),
       ),
     );
-    const modelAttestation = modelAttestations.find(
-      (attestation) =>
-        attestation.signer.signingAlgo === this.signingAlgo &&
-        attestation.signingPublicKey !== undefined,
-    );
-    if (modelAttestation?.signingPublicKey === undefined) {
-      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
-    }
-    return modelAttestation;
+    return modelAttestations;
   }
 }
 
