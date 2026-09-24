@@ -8,7 +8,7 @@ import type { FetchedGatewayAttestation } from '../types/cloud-api';
 import type { NodeInferenceClientOptions } from '../types/inference-client';
 import { AttestationClient, createPinnedTlsFetch } from './attestation-client';
 
-/** Model attestation and signature client bound to one verified Gateway transport. */
+/** Catalog, model attestation, and signature requests bound to a verified Gateway. */
 class GatewaySessionEvidenceClient extends CloudApiClient {
   private readonly gatewayFetch: typeof globalThis.fetch;
 
@@ -59,6 +59,7 @@ export class NodeInferenceClient extends InferenceClientBase {
     );
     return {
       fetch: gatewayFetch,
+      fetchModelMetadata: (model) => client.fetchModelMetadata(model),
       fetchModelAttestations: (params) => client.fetchModelAttestations(params),
       fetchCompletionSignature: (params) =>
         client.fetchCompletionSignature(params),

@@ -44,6 +44,13 @@ function looseObjectSchema<TEntries extends v.ObjectEntries>(
 // External quote-verifier, Cloud API, and NRAS response shapes
 // ---------------------------------------------------------------------------
 
+export const CloudApiModelMetadataResponseSchema = objectSchema({
+  metadata: objectSchema({
+    providerType: v.string(),
+    attestationSupported: v.boolean(),
+  }),
+});
+
 export const AttestationEventLogSchema = v.union([
   v.string(),
   // The event log is opaque JSON at the wire boundary. Its event-specific
