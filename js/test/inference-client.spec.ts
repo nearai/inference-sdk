@@ -1894,6 +1894,7 @@ describe('inference client', () => {
     const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer browser-token' },
+      e2ee: true,
       gatewayVerification: {
         verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
       },

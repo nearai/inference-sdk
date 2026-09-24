@@ -322,12 +322,12 @@ describe('AttestationClient', () => {
 
     test.each(['.', '..'])('rejects dot-segment model ID %s', async (model) => {
       const api = cloudFor(() =>
-        jsonResponse({ metadata: { attestationSupported: false } }),
+        jsonResponse({
+          metadata: { providerType: 'external', attestationSupported: false },
+        }),
       );
 
-      await expect(
-          api.client.fetchModelMetadata(model),
-      ).rejects.toMatchObject({
+      await expect(api.client.fetchModelMetadata(model)).rejects.toMatchObject({
         failure: {
           code: 'api.invalid_input',
           details: {
