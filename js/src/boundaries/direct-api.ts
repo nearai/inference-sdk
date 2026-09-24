@@ -34,7 +34,7 @@ export function decodeDirectModelAttestations(
     mapDirectAttestation(attestation, `all_attestations[${index}]`),
   );
   // The top-level report identifies the endpoint that answered this request.
-  // The complete serving set must contain that same evidence; do not infer it
+  // The returned attestation set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
   const servingIndex = findDirectModelAttestationIndex(attestations, root);
   const servingAttestation = attestations[servingIndex];

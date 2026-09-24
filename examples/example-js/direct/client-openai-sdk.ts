@@ -1,3 +1,4 @@
+// Experimental direct-endpoint example. Use the Gateway examples for production.
 import OpenAI from 'openai';
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 
@@ -9,7 +10,7 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // This client verifies the complete serving model-attestation set before
+  // This client verifies every returned model attestation before
   // Chat. E2EE is enabled by default; direct TLS fingerprint binding is disabled.
   const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
