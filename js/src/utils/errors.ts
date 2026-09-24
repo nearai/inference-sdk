@@ -45,7 +45,8 @@ export type ApiFailure =
         resource: ApiResource;
         reason: 'request' | 'response_body';
       };
-      retryable: true;
+      /** False for inference failures where replay could duplicate a billable request. */
+      retryable: boolean;
     }
   | {
       code: 'api.http_status';

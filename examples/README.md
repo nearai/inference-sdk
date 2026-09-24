@@ -1,7 +1,7 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. All examples use
+then verify the response signature. The Chat examples use
 `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
 
 ```sh
@@ -139,3 +139,55 @@ cargo run
 The Python and Rust projects use the sibling SDK source through local path
 dependencies. Replace those dependencies with released package versions when
 using these examples outside this repository.
+
+## Jev / System One (TypeScript / Node.js)
+
+[`gateway/jev.ts`](example-js/gateway/jev.ts) sends one non-streaming decision
+request, retrieves the receipt using `X-Signature-Id`, and verifies the exact
+request/response bytes before printing answers. It includes `noul`, `choice`, and
+`score` questions. Node.js 24+ is required.
+
+Build the SDK and install the example dependencies from the repository root:
+
+```sh
+pnpm --dir js install --frozen-lockfile
+pnpm --dir js build
+pnpm --dir examples/example-js install --frozen-lockfile
+pnpm --dir examples/example-js check
+
+export NEARAI_API_KEY='your-staging-cloud-api-key'
+export NEARAI_BASE_URL='https://cloud-stg-api.near.ai/v1'
+# Replace this with the exact active, priced model ID registered in your catalog.
+export NEARAI_MODEL='typesafe/jev-staging'
+export NEARAI_EXPECT_SIGNATURE_KIND='gateway'
+pnpm --dir examples/example-js start:jev
+```
+
+The endpoint must deploy [cloud-api #1126](https://github.com/nearai/cloud-api/pull/1126),
+and the model must have the `decisions` output modality and a configured provider.
+Use a funded **Cloud API** key, not the upstream TypeSafe key. This example makes
+one billable inference call; it does not retry inference automatically. An error
+exits nonzero. Successful output begins with `Verified gateway receipt ...`
+(or `Verified provider_tee receipt ...`) followed by answers and token usage.
+
+The Node client verifies fresh Gateway attestation and pins metadata, inference,
+and receipt requests to the attested TLS key. Hosted TypeSafe/OpenRouter models
+use a **gateway receipt**, proving response integrity and Gateway provenance,
+not confidential execution of the upstream model. For a self-hosted Jev model
+with model attestation and TEE receipts, set its canonical ID and
+`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`; the client verifies model evidence
+and matches the receipt signer to the serving instance. A different receipt kind
+fails the example rather than silently weakening the requested check.
+
+To test the other signature algorithm, rerun with
+`NEARAI_SIGNING_ALGO=ecdsa` (default: `ed25519`). Each run makes a new inference
+call. The example uses the SDK's default attestation verifiers and does not
+install a caller-specific measurement or image-provenance allowlist.
+
+System One requires `e2ee: false` and `ohttp: false`; encryption and model-key
+routing headers are removed. It sends plaintext request fields over pinned
+HTTPS. Streaming is unsupported. Aliases are rejected with `x-no-aliasing`:
+use the canonical catalog ID. Missing `X-Signature-Id`, malformed output, failed
+attestation, an invalid signature, or the wrong expected receipt kind fails the
+check. A missing receipt can also mean the server failed to persist it; retry
+`result.verify()` in your application without submitting inference again.

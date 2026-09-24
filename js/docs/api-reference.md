@@ -642,3 +642,44 @@ trust roots or another verification service.
 | `GatewayTlsBinding` | `{ kind: 'none' } \| { kind: 'attested'; spkiFingerprint: string }` |
 | `GpuEvidenceStatus` | `'not_provided' \| 'verified'` |
 | `DeploymentProvenanceStatus` | `'not_checked' \| 'verified'` |
+
+## System One decisions (`InferenceClient.systemone`)
+
+Available on the generic and Node Gateway `InferenceClient` entry points.
+The experimental direct client and the OpenAI-compatible `fetch`/`chat` surface
+remain Chat-only.
+
+```ts
+const client = new InferenceClient({ apiKey, baseUrl, e2ee: false, ohttp: false });
+const result = await client.systemone.create({
+  model: canonicalModelId,
+  state: { message: 'I was charged twice.' },
+  questions: { billing: { type: 'noul', instructions: 'Is this about billing?' } },
+}, { signal: AbortSignal.timeout(60_000) });
+const verified = await result.verify();
+console.log(verified.signatureKind, result.data.answers);
+```
+
+- `create(request, { headers?, signal? })` returns `SystemOneResult` with `data`,
+  `signatureId` from `X-Signature-Id`, and `verify()`. `data` is unverified until
+  `verify()` succeeds. Do not use the optional `data.id` for receipt lookup.
+- `SystemOneRequest`, `SystemOneQuestion`, `SystemOneResponse`, `SystemOneAnswer`,
+  `SystemOneRequestOptions`, and `SystemOneResult` are exported types. Requests
+  accept text/object/array `state` and `noul`, `choice`, or `score` questions.
+  Streaming, unsupported fields, and invalid question bounds fail locally.
+- Each create call verifies a fresh Gateway/model session before sending any
+  state. Node requests use the attested TLS pin. Configured model/deployment
+  policies continue to apply. System One does not use the Chat attestation cache.
+- Verification preserves exact UTF-8 request and raw response bytes. Ed25519 and
+  ECDSA use the existing response verifiers. Provider receipts select a matching
+  verified fleet attestation; gateway receipts verify against Gateway evidence.
+  A gateway receipt does not prove execution inside a model TEE.
+- `result.verify()` is memoized, except transient receipt lookup failures may be
+  retried. It does not repeat inference. This result is separate from the Chat
+  cache: use `result.verify()`, not `client.verifyResponse(result.signatureId)`.
+- Neither inference nor response-body failures trigger retries. Such failures
+  may occur after billing, so they are marked non-retryable. Abort signals stop
+  inference dispatch if aborted during preflight and cancel the inference fetch;
+  they do not cancel evidence requests or later receipt verification.
+
+See the [runnable Jev example](../../examples/README.md#jev--system-one-typescript--nodejs).
