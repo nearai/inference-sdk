@@ -1105,6 +1105,44 @@ describe('inference client', () => {
     });
   });
 
+  test.each([true, false])(
+    'uses header-only authentication with an external OpenAI client and e2ee=%s',
+    async (e2ee) => {
+      const gateway = createTestGateway({
+        expectedRequestHeader: { name: 'x-api-key', value: 'proxy-key' },
+      });
+      const providerFetch = createProviderSignatureFetch(gateway);
+      const requests: Request[] = [];
+      jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        return providerFetch(request);
+      });
+      const inferenceClient = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        headers: { 'X-API-Key': 'proxy-key' },
+        e2ee,
+      });
+      const openai = new OpenAI({
+        apiKey: 'unused-placeholder',
+        baseURL: baseUrl,
+        fetch: inferenceClient.fetch,
+        maxRetries: 0,
+      });
+
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+      const verified = await inferenceClient.verifyResponse(completion.id);
+
+      expect(verified.completionId).toBe(completion.id);
+      for (const request of requests) {
+        expect(request.headers.has('authorization')).toBe(false);
+      }
+    },
+  );
+
   test('verifies the successful response after an OpenAI retry', async () => {
     const gateway = createTestGateway();
     const providerFetch = createProviderSignatureFetch(gateway);
