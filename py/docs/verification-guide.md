@@ -6,16 +6,103 @@ sends a completion, then verifies the signature returned for that completion.
 `signature.kind` is used only in the final step to select the right response
 verifier.
 
-Create `client = AttestationClient(api_key)` once. It retrieves NEAR AI Cloud
-Gateway evidence and signatures; your application sends the completion request
-and keeps the exact bytes it sends and receives.
+Use `InferenceClient` for verified, encrypted Chat, or the standalone functions
+when your application needs to inspect evidence and control each step.
+
+## Verified Chat client
+
+```python
+from nearai_inference_sdk import InferenceClient
+
+
+async def chat(api_key: str) -> None:
+    async with InferenceClient(api_key) as inference_client:
+        completion = await inference_client.chat.completions.create(
+            model='z-ai/glm-5.3-flash',
+            messages=[{'role': 'user', 'content': 'Hello'}],
+            max_completion_tokens=128,
+        )
+        print(completion.choices[0].message.content)
+        verified = await inference_client.verify_response(completion.id)
+        print(verified.signature_kind)
+```
+
+The client verifies Gateway and model attestations before sending Chat. E2EE
+uses the verified model key; setting `e2ee=False` disables encryption but keeps
+attestation verification. `signing_algo` defaults to `'ed25519'` and also accepts
+`'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
+response signatures. ECDSA uses the legacy AES-GCM protocol and omits
+`X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
+
+Successful attestation checks are reused for 60 minutes per model.
+Set `attestation_cache_time_to_live_ms=0` to check every request.
+`response_cache_time_to_live_ms` separately controls how long exact response
+bytes remain available after completion; its default is also 60 minutes.
+
+Gateway TLS identity is checked by default, and subsequent evidence, Chat, and
+signature requests are pinned to the verified SPKI. When connecting through an
+aggregator that terminates TLS, use
+`GatewayVerificationOptions(include_spki_fingerprint=False)`; that verifies the
+Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
+
+The client delivers decrypted content before response-signature verification.
+Call `verify_response()` after fully consuming a stream:
+
+```python
+stream = await inference_client.chat.completions.create(
+    model='z-ai/glm-5.3-flash',
+    messages=[{'role': 'user', 'content': 'Hello'}],
+    stream=True,
+)
+completion_id = None
+async for chunk in stream:
+    completion_id = chunk.id
+    if chunk.choices:
+        print(chunk.choices[0].delta.content or '', end='', flush=True)
+
+if completion_id is None:
+    raise RuntimeError('Stream returned no completion ID')
+verified = await inference_client.verify_response(completion_id)
+```
+
+For an existing OpenAI integration, reuse the client's HTTP transport:
+
+```python
+from openai import AsyncOpenAI
+
+async with InferenceClient(api_key) as inference_client:
+    openai_client = AsyncOpenAI(
+        api_key=api_key,
+        base_url='https://cloud-api.near.ai/v1/',
+        http_client=inference_client.http_client,
+    )
+    completion = await openai_client.chat.completions.create(
+        model='z-ai/glm-5.3-flash',
+        messages=[{'role': 'user', 'content': 'Hello'}],
+    )
+    verified = await inference_client.verify_response(completion.id)
+```
+
+Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
+the authorization for evidence, Chat, and signature requests. An external
+`AsyncOpenAI` client's API key does not override it. With header-only authentication,
+you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
+
+Use one reusable client for concurrent requests; each response is retained under
+its completion ID. `InferenceClient` owns and closes the shared HTTP transport.
+Only Chat Completions are supported by this transport, not the Responses API.
+
+## Standalone workflow
+
+Create `client = AttestationClient(api_key)` once. It retrieves Gateway evidence
+and signatures; the application sends Chat and retains the exact bytes.
 
 ## Verification lifecycle
 
 | Stage | SDK calls | What a successful result establishes |
 | --- | --- | --- |
 | 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and every returned target-model deployment satisfy your evidence and policy checks. |
-| 2. Send a completion | None | Your application retains the canonical model ID, completion ID, and exact request and response bytes. |
+| 2. Send a completion | Optional `prepare_e2ee_chat_request` | Your application sends Chat and retains the completion ID and exact encrypted request and response bytes. |
 | 3. Verify the response signature | `fetch_completion_signature` → verifier selected by `signature.kind` | The selected model or Gateway signer signed those exact bytes. |
 
 Stage 1 is useful before inference: it lets an application reject a deployment
@@ -209,8 +296,40 @@ Your application must retain:
 - the exact request bytes; and
 - the exact response bytes, including streaming framing when applicable.
 
-The SDK intentionally does not make the completion request or decide retry
-behavior for it.
+### Encrypt a standalone request
+
+After verifying the models, select a public key from a verified result before
+Chat. `find_model_attestation_for_signature` is used later, when the response
+signature is available; it is not the encryption-key selector.
+
+```python
+import httpx
+from nearai_inference_sdk import E2eeModelKey, prepare_e2ee_chat_request
+
+model = next(item for item in verified_models if item.signing_public_key is not None)
+model_key = E2eeModelKey(
+    signing_algo=model.signer.signing_algo,
+    public_key=model.signing_public_key,
+)
+request = httpx.Request(
+    'POST',
+    'https://cloud-api.near.ai/v1/chat/completions',
+    headers={'Authorization': f'Bearer {api_key}', 'Accept-Encoding': 'identity'},
+    json={'model': MODEL, 'messages': [{'role': 'user', 'content': 'Hello'}]},
+)
+prepared = await prepare_e2ee_chat_request(request, model_key)
+request_body = prepared.request.content
+```
+
+`prepared.request` contains the encrypted fields and E2EE/routing headers.
+Send it using `httpx.AsyncClient`; when Gateway TLS verification is enabled, use
+`create_pinned_tls_client(verified_gateway.tls_binding.spki_fingerprint)` instead.
+Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
+decryption. Retain the original encrypted response bytes separately for step 3.
+Each prepared request owns a fresh response-decryption key.
+
+See [`examples/example-py/bare.py`](../../examples/example-py/bare.py) for the
+complete streaming and non-streaming flow, including byte capture and TLS pinning.
 
 ## 3. Verify the returned completion signature
 
@@ -377,6 +496,11 @@ When calling that callback directly, the application must additionally bind the
 payload nonce to its own fresh request nonce.
 
 ## Handle retrieval and verification errors
+
+For integrated Chat, OpenAI wraps transport errors in `APIConnectionError`;
+inspect `error.__cause__` for the original SDK failure. `InferenceClient.send()`
+and `verify_response()` expose SDK errors directly. A failed preflight sends no
+Chat request, while a failed response check occurs after content was received.
 
 `client.fetch_completion_signature()` returns one signature or raises a
 structured error. A 2xx unavailable envelope raises `ApiError` with

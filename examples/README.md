@@ -120,9 +120,25 @@ provenance.
 
 Uses `nearai-inference-sdk`, imported as `nearai_inference_sdk`.
 
+Each entry point includes non-streaming and streaming Chat with E2EE:
+
+| File | Usage |
+| --- | --- |
+| `bare.py` | Verifies attestations and Gateway image provenance, prepares E2EE requests, and verifies encrypted response bytes. |
+| `client.py` | Configures Gateway image provenance and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
+| `client_openai_sdk.py` | Shares `inference_client.http_client` with one reusable `openai.AsyncOpenAI` client. |
+
+Gateway TLS verification and E2EE are enabled. Change `SIGNING_ALGO` from
+`'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
+client caches attestations for 60 minutes and retains response records for
+60 minutes after body completion. Both `bare.py` and `client.py` use the four
+Gateway image policies listed above; they do not check model runtime images.
+
 ```sh
 cd examples/example-py
-uv run python main.py
+uv run python client.py
+uv run python bare.py
+uv run python client_openai_sdk.py
 ```
 
 Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).

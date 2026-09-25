@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from cryptography.hazmat.primitives.asymmetric import ec
+from eth_utils import keccak
+
 from ..types.verification import (
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
@@ -10,7 +13,7 @@ from ..types.verification import (
     VerifiedModelAttestation,
 )
 from ..types.attestation_model import ModelAttestation
-from ..utils.common import maybe_await
+from ..utils.common import hex_to_bytes, maybe_await
 from ..utils.errors import (
     VerificationError,
     verification_failure,
@@ -58,7 +61,36 @@ async def verify_model_attestation(
         deployment=evidence.deployment,
         deployment_provenance=evidence.deployment_provenance,
         gpu_evidence=gpu_evidence,
+        signing_public_key=_verify_signing_public_key(attestation),
     )
+
+
+def _verify_signing_public_key(attestation: ModelAttestation) -> str | None:
+    """Bind an optional E2EE key to the quote-authenticated model signer."""
+
+    if attestation.signing_public_key is None:
+        return None
+    public_key = hex_to_bytes(
+        attestation.signing_public_key, 'attestation.signing_public_key'
+    )
+    address = hex_to_bytes(attestation.signer.signing_address, 'signer.signing_address')
+    if attestation.signer.signing_algo == 'ed25519':
+        matches = len(public_key) == 32 and public_key == address
+    else:
+        if len(public_key) == 65 and public_key[0] == 4:
+            public_key = public_key[1:]
+        matches = False
+        if len(public_key) == 64:
+            try:
+                ec.EllipticCurvePublicKey.from_encoded_point(
+                    ec.SECP256K1(), b'\x04' + public_key
+                )
+                matches = keccak(public_key)[-20:] == address
+            except ValueError:
+                pass
+    if not matches:
+        raise verification_failure('binding.model_public_key_mismatch')
+    return public_key.hex()
 
 
 async def _verify_gpu_evidence(

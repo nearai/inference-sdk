@@ -3,6 +3,18 @@
 from .core.attestation_gateway import verify_gateway_attestation
 from .core.attestation_model import verify_model_attestation
 from .core.chat import verify_gateway_response, verify_model_response
+from .core.e2ee_request import prepare_e2ee_chat_request
+from .core.inference_client import InferenceClient
+from .core.pinned_tls import create_pinned_tls_client
+from .types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
+from .types.inference_client import (
+    DeploymentPolicy,
+    GatewayVerificationOptions,
+    ModelVerificationOptions,
+    VerifiedCompletionReceipt,
+    VerifiedGatewayCompletionReceipt,
+    VerifiedModelCompletionReceipt,
+)
 from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
@@ -65,6 +77,17 @@ __all__ = [
     'DEFAULT_NEAR_AI_CLOUD_BASE_URL',
     'NO_ALIASING_HEADER',
     'AttestationClient',
+    'InferenceClient',
+    'create_pinned_tls_client',
+    'prepare_e2ee_chat_request',
+    'E2eeModelKey',
+    'PreparedE2eeChatRequest',
+    'DeploymentPolicy',
+    'GatewayVerificationOptions',
+    'ModelVerificationOptions',
+    'VerifiedCompletionReceipt',
+    'VerifiedGatewayCompletionReceipt',
+    'VerifiedModelCompletionReceipt',
     'find_model_attestation_for_signature',
     'verify_model_attestation',
     'verify_gateway_attestation',
