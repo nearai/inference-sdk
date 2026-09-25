@@ -10,13 +10,14 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // E2EE and Gateway TLS verification are enabled by default.
+  // Enable E2EE explicitly. Gateway TLS verification is enabled by default.
   // Attestations are reused for 60 minutes. Response records have a separate
   // 60-minute TTL, starting when the response finishes.
   const inferenceClient = new InferenceClient({
     apiKey,
     baseUrl: BASE_URL,
     signingAlgo: SIGNING_ALGO,
+    e2ee: true,
   });
 
   // Both clients are created once and reused, including for concurrent calls.
