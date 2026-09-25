@@ -43,6 +43,7 @@ type VerificationRecord = {
   client?: InferenceClient;
   result?: VerifiedCompletionResult;
   verifiedAt?: number;
+  retryableLookup?: boolean;
   receipt: HTMLElement;
 };
 type HardwareReport = {
@@ -296,7 +297,7 @@ function renderVerificationRecords(): void {
       detail.append(open);
     } else {
       detail.append(node('div', record.status === 'failed' ? 'failure-copy' : undefined, record.error || 'Verification is still running.'));
-      if (record.status === 'failed' && record.client && record.completionId) {
+      if (record.status === 'failed' && record.retryableLookup && record.client && record.completionId) {
         const retry = node('button', 'secondary-button', '↻ Re-verify message');
         retry.type = 'button';
         retry.addEventListener('click', () => void retryVerification(record));
@@ -369,6 +370,10 @@ function requireModelSignature(result: VerifiedCompletionResult): void {
   if (result.signatureKind !== 'provider_tee') throw new Error('The completion was signed by the Gateway, not the verified model TEE.');
 }
 
+function isRetryableSignatureLookup(error: unknown): boolean {
+  return isApiError(error) && error.retryable;
+}
+
 async function retryVerification(record: VerificationRecord): Promise<void> {
   if (!record.client || !record.completionId) return;
   record.status = 'pending'; record.error = undefined;
@@ -376,10 +381,10 @@ async function retryVerification(record: VerificationRecord): Promise<void> {
   try {
     const result = await record.client.verifyResponse(record.completionId);
     requireModelSignature(result);
-    record.result = result; record.verifiedAt = Date.now(); record.status = 'verified';
+    record.result = result; record.verifiedAt = Date.now(); record.status = 'verified'; record.retryableLookup = false;
     rebuildTrustedHistory();
   } catch (error) {
-    record.status = 'failed'; record.error = describeError(error);
+    record.status = 'failed'; record.error = describeError(error); record.retryableLookup = isRetryableSignatureLookup(error);
   }
   renderReceipt(record); updateVerificationSummary();
 }
@@ -653,13 +658,17 @@ form.addEventListener('submit', async (event) => {
     record.completionId = completionId;
     const result = await client.verifyResponse(completionId);
     requireModelSignature(result);
-    record.result = result; record.verifiedAt = Date.now(); record.status = 'verified';
+    record.result = result; record.verifiedAt = Date.now(); record.status = 'verified'; record.retryableLookup = false;
     renderReceipt(record); updateVerificationSummary();
     rebuildTrustedHistory();
   } catch (error) {
     const message = describeError(error);
     if (modelStatus === 'pending') setStageStatus('model', 'failed', message);
-    if (record) { record.status = 'failed'; record.error = message; renderReceipt(record); }
+    if (record) {
+      record.status = 'failed'; record.error = message;
+      record.retryableLookup = isRetryableSignatureLookup(error);
+      renderReceipt(record);
+    }
     updateVerificationSummary(); errorElement.textContent = message;
   } finally {
     isSending = false;
