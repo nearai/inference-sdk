@@ -48,34 +48,15 @@
               <span class="section-kicker">02 / VERIFY</span>
               <h2>Verification</h2>
             </div>
-            <div class="verification-item">
-              <div class="verification-title">
-                <span class="step-icon" aria-hidden="true">G</span>
-                <div>
-                  <h3>Gateway evidence</h3>
-                  <strong id="gateway-status" class="status idle">Not checked</strong>
-                </div>
-              </div>
-              <p class="item-caption">Fresh quote before each prompt</p>
-              <details class="evidence-details">
-                <summary>View details</summary>
-                <p id="gateway-details" class="detail-text">A fresh Gateway attestation is checked before each prompt.</p>
-              </details>
-            </div>
-            <div class="verification-item">
-              <div class="verification-title">
-                <span class="step-icon" aria-hidden="true">M</span>
-                <div>
-                  <h3>Model &amp; E2EE</h3>
-                  <strong id="model-status" class="status idle">Not checked</strong>
-                </div>
-              </div>
-              <p class="item-caption">Encrypt after model evidence passes</p>
-              <details class="evidence-details">
-                <summary>View details</summary>
-                <p id="model-details" class="detail-text">Model evidence and the encryption key are verified before Chat is sent.</p>
-              </details>
-            </div>
+            <button id="open-verification" class="verification-trigger" type="button" aria-haspopup="dialog">
+              <span id="verification-icon" class="verification-shield" aria-hidden="true">◇</span>
+              <span class="verification-trigger-copy">
+                <strong>Verification center</strong>
+                <span id="verification-status" class="status idle">Not checked</span>
+              </span>
+              <span class="trigger-arrow" aria-hidden="true">›</span>
+            </button>
+            <p class="helper">Gateway evidence, model evidence, E2EE and each completion signature are checked in this browser.</p>
           </section>
 
         </aside>
@@ -122,6 +103,98 @@
 
       <footer>SDK example · Browser TLS peer pinning is unavailable; see the README for verification boundaries.</footer>
     </main>
+
+    <dialog id="verification-dialog" class="modal verification-modal" aria-labelledby="verification-title">
+      <div class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <h2 id="verification-title">Verification center</h2>
+            <p>Verification is performed in your browser with the NEAR AI Inference SDK.</p>
+          </div>
+          <button class="icon-button" type="button" data-close="verification-dialog" aria-label="Close verification center">×</button>
+        </header>
+
+        <div class="modal-body verification-body">
+          <section id="assurance-card" class="assurance-card idle">
+            <div class="assurance-heading">
+              <span id="assurance-icon" class="assurance-icon" aria-hidden="true">◇</span>
+              <div>
+                <h3>Private model verification</h3>
+                <strong id="assurance-title">Verification center</strong>
+              </div>
+            </div>
+            <p id="assurance-copy">Send a prompt to verify model evidence, Gateway evidence, E2EE and the completion signature.</p>
+            <div class="hardware-logos" aria-label="Hardware verification providers">
+              <span class="nvidia-wordmark">NVIDIA</span>
+              <span class="intel-wordmark">intel</span>
+            </div>
+            <button id="open-hardware" class="secondary-button full-button" type="button">Show Verification Details</button>
+          </section>
+
+          <section class="message-verification-section">
+            <div class="message-section-heading">
+              <h3><span id="verified-count">0</span> Verified Messages</h3>
+              <span id="message-total">0 total</span>
+            </div>
+            <div id="verification-records" class="verification-records">
+              <div class="empty-verification">Send a prompt to see per-message verification results.</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="hardware-dialog" class="modal hardware-modal" aria-labelledby="hardware-title">
+      <div class="modal-frame wide-modal">
+        <header class="modal-header">
+          <div>
+            <h2 id="hardware-title">Hardware verification</h2>
+            <p>Fresh model and Gateway evidence is verified locally before these details are shown as trusted.</p>
+          </div>
+          <button class="icon-button" type="button" data-close="hardware-dialog" aria-label="Close hardware verification">×</button>
+        </header>
+        <div class="modal-body">
+          <div class="hardware-model-row">
+            <span id="hardware-model-avatar" class="mini-model-avatar" aria-hidden="true">Z</span>
+            <div>
+              <span>Private model</span>
+              <strong id="hardware-model-name">GLM 5.3 Flash</strong>
+            </div>
+            <span id="hardware-badge" class="result-badge idle">Not checked</span>
+          </div>
+
+          <div id="hardware-loading" class="hardware-loading" hidden>
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Verifying fresh model and Gateway evidence…</span>
+          </div>
+          <div id="hardware-error" class="error-panel" hidden></div>
+          <div id="hardware-content" hidden>
+            <div class="tabs" role="tablist" aria-label="Attestation details">
+              <button id="model-tab" class="tab active" type="button" role="tab" aria-selected="true">Model Verification</button>
+              <button id="gateway-tab" class="tab" type="button" role="tab" aria-selected="false">Gateway Verification</button>
+            </div>
+            <div id="hardware-panel" class="hardware-panel"></div>
+          </div>
+        </div>
+        <footer class="modal-actions">
+          <button class="secondary-button" type="button" data-close="hardware-dialog">Close</button>
+          <button id="verify-again" class="primary-button" type="button">↻ Verify Again</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="response-dialog" class="modal response-modal" aria-labelledby="response-title">
+      <div class="modal-frame wide-modal">
+        <header class="modal-header">
+          <div>
+            <h2 id="response-title">Response verification</h2>
+            <p>The completion signature was checked against the exact request and response bytes.</p>
+          </div>
+          <button class="icon-button" type="button" data-close="response-dialog" aria-label="Close response verification">×</button>
+        </header>
+        <div id="response-content" class="modal-body response-content"></div>
+      </div>
+    </dialog>
     <script type="module" src="/main.ts"></script>
   </body>
 </html>

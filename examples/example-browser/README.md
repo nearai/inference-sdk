@@ -3,7 +3,8 @@
 A deliberately small, one-model-at-a-time example using the **browser** entry point of
 `@nearai/inference-sdk`. It sends streaming Chat Completions with E2EE enabled,
 checks fresh Gateway evidence, and verifies each finished response by completion
-ID. The UI has separate Gateway, model/E2EE, and per-message receipt states.
+ID. Its verification center shows the current trust state, fresh model and
+Gateway hardware evidence, and expandable per-message signature results.
 
 ## Run
 
