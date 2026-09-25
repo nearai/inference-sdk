@@ -28,6 +28,11 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm check
+      - name: Build browser example
+        working-directory: examples/example-browser
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
 
   python:
     runs-on: ubuntu-latest
