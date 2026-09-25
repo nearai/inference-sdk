@@ -35,6 +35,7 @@ type CatalogModel = {
 type VerificationRecord = {
   ordinal: number;
   modelName: string;
+  prompt: string;
   content: string;
   status: Status;
   error?: string;
@@ -331,6 +332,17 @@ function resetConversation(): void {
   updateVerificationSummary();
 }
 
+function rebuildTrustedHistory(): void {
+  history.length = 0;
+  for (const record of verificationRecords) {
+    if (record.status !== 'verified') continue;
+    history.push(
+      { role: 'user', content: record.prompt },
+      { role: 'assistant', content: record.content },
+    );
+  }
+}
+
 function getClient(apiKey: string, baseUrl: string): InferenceClient {
   if (activeClient?.apiKey === apiKey && activeClient.baseUrl === baseUrl) return activeClient.client;
   const client = new InferenceClient({
@@ -365,6 +377,7 @@ async function retryVerification(record: VerificationRecord): Promise<void> {
     const result = await record.client.verifyResponse(record.completionId);
     requireModelSignature(result);
     record.result = result; record.verifiedAt = Date.now(); record.status = 'verified';
+    rebuildTrustedHistory();
   } catch (error) {
     record.status = 'failed'; record.error = describeError(error);
   }
@@ -619,7 +632,7 @@ form.addEventListener('submit', async (event) => {
     errorElement.textContent = ''; promptInput.value = '';
     addMessage('user', prompt);
     const assistant = addMessage('assistant', '');
-    record = { ordinal: verificationRecords.length + 1, modelName: selectedModel.label, content: '', status: 'pending', receipt: assistant.receipt };
+    record = { ordinal: verificationRecords.length + 1, modelName: selectedModel.label, prompt, content: '', status: 'pending', receipt: assistant.receipt };
     verificationRecords.push(record); renderReceipt(record); setStageStatus('model', 'pending');
     await checkGateway(apiKey, baseUrl);
     const client = getClient(apiKey, baseUrl);
@@ -642,7 +655,7 @@ form.addEventListener('submit', async (event) => {
     requireModelSignature(result);
     record.result = result; record.verifiedAt = Date.now(); record.status = 'verified';
     renderReceipt(record); updateVerificationSummary();
-    history.push({ role: 'user', content: prompt }, { role: 'assistant', content: answer });
+    rebuildTrustedHistory();
   } catch (error) {
     const message = describeError(error);
     if (modelStatus === 'pending') setStageStatus('model', 'failed', message);
