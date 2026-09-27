@@ -6,7 +6,12 @@ import type {
   SystemOneRequestOptions,
   SystemOneResult,
 } from '../types/systemone';
-import { ApiError, isApiError, isVerificationError } from '../utils/errors';
+import {
+  ApiError,
+  VerificationError,
+  isApiError,
+  isVerificationError,
+} from '../utils/errors';
 import { NO_ALIASING_HEADER } from './cloud-api';
 import { removeE2eeHeaders } from './e2ee-request';
 import type { InferenceSession } from './inference-client';
@@ -130,6 +135,9 @@ export async function createSystemOne({
   const session = await createSession(parsed.model);
   options?.signal?.throwIfAborted();
   removeE2eeHeaders(headers);
+  // These headers must describe the JSON body generated below.
+  headers.delete('content-length');
+  headers.delete('content-encoding');
   headers.set(NO_ALIASING_HEADER, 'true');
   headers.set('content-type', 'application/json');
   headers.set('accept', 'application/json');
@@ -232,6 +240,9 @@ export async function createSystemOne({
           completionId: signatureId,
           signingAlgo,
         });
+        if (signature.signer.signingAlgo !== signingAlgo) {
+          throw new VerificationError({ code: 'signature.signer_mismatch' });
+        }
         return session.verifyResponse({
           completionId: signatureId,
           requestBody,
@@ -239,7 +250,12 @@ export async function createSystemOne({
           signature,
         });
       })().catch((cause: unknown) => {
-        if (isApiError(cause) && cause.retryable) verification = undefined;
+        if (
+          isApiError(cause) &&
+          (cause.retryable ||
+            cause.failure.code === 'api.completion_signature_unavailable')
+        )
+          verification = undefined;
         throw cause;
       });
       return verification;

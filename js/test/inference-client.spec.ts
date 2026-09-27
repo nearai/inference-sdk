@@ -3098,6 +3098,8 @@ describe('System One decisions', () => {
     malformed = false,
     status = 200,
     failSignatureOnce = false,
+    unavailableSignatureOnce = false,
+    requestedSigningAlgo = 'ed25519',
     omitBodyId = false,
     unknownSigner = false,
   } = {}) {
@@ -3151,10 +3153,15 @@ describe('System One decisions', () => {
       }
       if (url.pathname.startsWith('/v1/signature/')) {
         gateway.expectRequestHeader(request);
-        expect(url.searchParams.get('signing_algo')).toBe('ed25519');
+        expect(url.searchParams.get('signing_algo')).toBe(requestedSigningAlgo);
         signaturePaths.push(url.pathname);
         if (failSignatureOnce && signaturePaths.length === 1)
           return new Response('', { status: 404 });
+        if (unavailableSignatureOnce && signaturePaths.length === 1)
+          return jsonResponse({
+            error_code: 'not_found',
+            message: 'Receipt not yet available',
+          });
         return jsonResponse(receipt);
       }
       return gateway.fetch(request);
@@ -3185,7 +3192,9 @@ describe('System One decisions', () => {
         },
         fixture.fetch,
       );
-      const result = await client.systemone.create(decisionRequest);
+      const result = await client.systemone.create(decisionRequest, {
+        headers: { 'Content-Length': '0', 'Content-Encoding': 'gzip' },
+      });
       expect(result.data).toMatchObject(decisionResponse);
       expect(result.signatureId).toBe('decision-receipt');
       // Verification is bound to captured bytes even when the displayed value is edited.
@@ -3209,6 +3218,8 @@ describe('System One decisions', () => {
         'x-client-pub-key',
         'x-encryption-version',
         'x-encrypt-all-fields',
+        'content-length',
+        'content-encoding',
       ])
         expect(fixture.requests[0].headers.has(name)).toBe(false);
       expect(fixture.requests[0].headers.get('x-no-aliasing')).toBe('true');
@@ -3248,6 +3259,47 @@ describe('System One decisions', () => {
     });
     expect(fixture.requests).toHaveLength(1);
     expect(fixture.signaturePaths).toHaveLength(2);
+  });
+
+  test('retries an unavailable receipt without repeating inference', async () => {
+    const fixture = decisionGateway({ unavailableSignatureOnce: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const result = await client.systemone.create(decisionRequest);
+    await expect(result.verify()).rejects.toMatchObject({
+      failure: { code: 'api.completion_signature_unavailable' },
+    });
+    await expect(result.verify()).resolves.toMatchObject({
+      signatureKind: 'gateway',
+    });
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.signaturePaths).toHaveLength(2);
+  });
+
+  test('rejects a valid fleet receipt using an unrequested algorithm', async () => {
+    const fixture = decisionGateway({
+      tee: true,
+      requestedSigningAlgo: 'ecdsa',
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      signingAlgo: 'ecdsa',
+      ohttp: false,
+      e2ee: false,
+    });
+    const result = await client.systemone.create(decisionRequest);
+    await expect(result.verify()).rejects.toMatchObject({
+      failure: { code: 'signature.signer_mismatch' },
+    });
+    await expect(result.verify()).rejects.toMatchObject({
+      failure: { code: 'signature.signer_mismatch' },
+    });
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.signaturePaths).toHaveLength(1);
   });
 
   test.each([{ missingId: true }, { malformed: true }, { status: 429 }])(
