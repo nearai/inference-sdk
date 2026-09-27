@@ -148,6 +148,7 @@ const gpuEvidence = createGpuEvidenceVerifier({
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
@@ -198,6 +199,7 @@ import { InferenceClient } from '@nearai/inference-sdk/node';
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <server-scoped token>',
   },

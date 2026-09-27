@@ -8,9 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@freedomofpress/sigstore-browser':
-        specifier: 0.1.14
-        version: 0.1.14
       '@noble/ciphers':
         specifier: 1.3.0
         version: 1.3.0
@@ -54,6 +51,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.14
         version: 2.5.14
+      '@freedomofpress/sigstore-browser':
+        specifier: 0.1.14
+        version: 0.1.14
       '@types/ed2curve':
         specifier: 0.2.4
         version: 0.2.4
