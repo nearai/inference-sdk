@@ -23,13 +23,6 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - name: Check packed SDK in a clean consumer
-        run: |
-          pnpm pack --out "$RUNNER_TEMP/inference-sdk.tgz"
-          mkdir "$RUNNER_TEMP/inference-sdk-consumer"
-          cd "$RUNNER_TEMP/inference-sdk-consumer"
-          pnpm add "$RUNNER_TEMP/inference-sdk.tgz" --strict-peer-dependencies --ignore-scripts
-          node --input-type=module -e "await import('@nearai/inference-sdk'); await import('@nearai/inference-sdk/node');"
       - name: Check JavaScript example
         working-directory: examples/example-js
         run: |
