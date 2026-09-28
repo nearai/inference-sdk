@@ -56,7 +56,7 @@ const result = await client.systemone.create(
 
 // Lookup uses X-Signature-Id, not the optional upstream JSON id. Verification
 // hashes the exact bytes sent/received. Do not act on answers until this passes.
-const verified = await result.verify();
+const verified = await client.verifyResponse(result.signatureId);
 if (verified.signatureKind !== expectedKind) {
   throw new Error(
     `Expected ${expectedKind}, received ${verified.signatureKind}.`,

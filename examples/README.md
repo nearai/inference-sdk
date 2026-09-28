@@ -190,4 +190,5 @@ HTTPS. Streaming is unsupported. Aliases are rejected with `x-no-aliasing`:
 use the canonical catalog ID. Missing `X-Signature-Id`, malformed output, failed
 attestation, an invalid signature, or the wrong expected receipt kind fails the
 check. A missing receipt can also mean the server failed to persist it; retry
-`result.verify()` in your application without submitting inference again.
+`client.verifyResponse(result.signatureId)` in your application without
+submitting inference again.

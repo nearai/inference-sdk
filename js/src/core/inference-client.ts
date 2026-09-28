@@ -101,6 +101,8 @@ type CachedVerification<VerificationResult> = {
   readonly session: InferenceSession<VerificationResult>;
 };
 
+type InferenceEndpoint = 'chat' | 'systemone';
+
 type CompletionRecord<VerificationResult> =
   VerifyCapturedCompletionParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
@@ -138,11 +140,11 @@ type CapturedResponseEntityBody = {
   readonly responseBody: Promise<Uint8Array>;
 };
 
-type VerifyCapturedCompletionParams<VerificationResult> = {
+export type VerifyCapturedCompletionParams<VerificationResult> = {
+  readonly completionId: string;
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
   readonly session: InferenceSession<VerificationResult>;
-  readonly contentType: string | null;
 };
 
 type SendCompletionRequestParams = {
@@ -151,7 +153,7 @@ type SendCompletionRequestParams = {
 };
 
 type ClearPendingVerificationParams<VerificationResult> = {
-  readonly model: string;
+  readonly cacheKey: string;
   readonly verification: Promise<InferenceSession<VerificationResult>>;
 };
 
@@ -214,7 +216,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     string,
     CachedVerification<VerificationResult>
   >();
-  /** Shares same-model verification work while it is in progress. */
+  /** Shares verification work for the same model and endpoint while in progress. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<InferenceSession<VerificationResult>>
@@ -238,9 +240,10 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     }).chat;
   }
 
-  /** Verify every required report before creating a transport for Chat requests. */
+  /** Verify every required report before creating an endpoint-specific session. */
   protected abstract createVerificationState(
     model: string,
+    endpoint: InferenceEndpoint,
   ): Promise<InferenceSession<VerificationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
@@ -295,26 +298,16 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     const responseBody = completion.responseBody;
 
     if (completion.response.ok) {
-      const record: CompletionRecord<VerificationResult> = {
-        requestBody,
-        responseBody,
-        session: completion.session,
-        contentType: completion.response.headers.get('content-type'),
-      };
       // Register before exposing the response, including its first SSE event.
       completion.response = registerCompletionResponse({
         response: completion.response,
-        register: (id) => {
-          this.completions.set(id, record);
-          const expire = (): void => {
-            const timer = setTimeout(() => {
-              if (this.completions.get(id) === record)
-                this.completions.delete(id);
-            }, this.responseCacheTimeToLiveMs);
-            timer.unref?.();
-          };
-          void responseBody.then(expire, expire);
-        },
+        register: (completionId) =>
+          this.registerResponse({
+            completionId,
+            requestBody,
+            responseBody,
+            session: completion.session,
+          }),
       });
     }
     return this.toClientResponse(completion);
@@ -329,13 +322,32 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     record.verification ??= this.verifyCapturedCompletion(record).catch(
       (cause: unknown) => {
         // Keep the captured bytes so a later call can retry a transient lookup.
-        if (isApiError(cause) && cause.retryable) {
+        if (
+          isApiError(cause) &&
+          (cause.retryable ||
+            cause.failure.code === 'api.completion_signature_unavailable')
+        ) {
           record.verification = undefined;
         }
         throw cause;
       },
     );
     return record.verification;
+  }
+
+  /** Both endpoints share byte retention, expiry, and verification retries. */
+  protected registerResponse(
+    record: CompletionRecord<VerificationResult>,
+  ): void {
+    const id = record.completionId;
+    this.completions.set(id, record);
+    const expire = (): void => {
+      const timer = setTimeout(() => {
+        if (this.completions.get(id) === record) this.completions.delete(id);
+      }, this.responseCacheTimeToLiveMs);
+      timer.unref?.();
+    };
+    void record.responseBody.then(expire, expire);
   }
 
   private async sendSecureCompletion({
@@ -398,17 +410,20 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   }
 
   private async verifyCapturedCompletion({
+    completionId,
     requestBody,
     responseBody,
     session,
-    contentType,
   }: VerifyCapturedCompletionParams<VerificationResult>): Promise<VerificationResult> {
     const bytes = await responseBody;
-    const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
       completionId,
       signingAlgo: this.signingAlgo,
     });
+
+    if (signature.signer.signingAlgo !== this.signingAlgo) {
+      throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
 
     return session.verifyResponse({
       completionId,
@@ -418,52 +433,56 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     });
   }
 
-  private startVerification(
+  protected startVerification(
     model: string,
+    endpoint: InferenceEndpoint = 'chat',
   ): Promise<InferenceSession<VerificationResult>> {
+    // Chat selects a routed model key; System One can use any verified fleet
+    // signer. Reuse caching mechanics without mixing those session assumptions.
+    const cacheKey = `${endpoint}:${model}`;
     const now = Date.now();
     this.removeExpiredVerifications(now);
-    const cached = this.cachedVerifications.get(model);
+    const cached = this.cachedVerifications.get(cacheKey);
     if (this.attestationCacheTimeToLiveMs !== 0 && cached !== undefined) {
       return Promise.resolve(cached.session);
     }
 
-    const existing = this.pendingVerifications.get(model);
+    const existing = this.pendingVerifications.get(cacheKey);
     if (existing !== undefined) {
       return existing;
     }
 
-    const verification = this.createVerificationState(model);
-    this.pendingVerifications.set(model, verification);
+    const verification = this.createVerificationState(model, endpoint);
+    this.pendingVerifications.set(cacheKey, verification);
     void verification.then(
       (session) => {
         if (this.attestationCacheTimeToLiveMs !== 0) {
-          this.cachedVerifications.set(model, {
+          this.cachedVerifications.set(cacheKey, {
             expiresAt: Date.now() + this.attestationCacheTimeToLiveMs,
             session,
           });
         }
-        this.clearPendingVerification({ model, verification });
+        this.clearPendingVerification({ cacheKey, verification });
       },
-      () => this.clearPendingVerification({ model, verification }),
+      () => this.clearPendingVerification({ cacheKey, verification }),
     );
     return verification;
   }
 
   private removeExpiredVerifications(now: number): void {
-    for (const [model, cached] of this.cachedVerifications) {
+    for (const [cacheKey, cached] of this.cachedVerifications) {
       if (cached.expiresAt <= now) {
-        this.cachedVerifications.delete(model);
+        this.cachedVerifications.delete(cacheKey);
       }
     }
   }
 
   private clearPendingVerification({
-    model,
+    cacheKey,
     verification,
   }: ClearPendingVerificationParams<VerificationResult>): void {
-    if (this.pendingVerifications.get(model) === verification) {
-      this.pendingVerifications.delete(model);
+    if (this.pendingVerifications.get(cacheKey) === verification) {
+      this.pendingVerifications.delete(cacheKey);
     }
   }
 
@@ -570,17 +589,22 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
-  /** Send a non-streaming decision request; verify its receipt with result.verify(). */
+  /** Send a decision request; pass result.signatureId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
     create: (request, options) =>
       createSystemOne({
         request,
         options,
         baseUrl: this.getBaseUrl(),
-        signingAlgo: this.signingAlgo,
         encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
         headers: this.createCompletionHeaders(options?.headers ?? {}),
-        createSession: (model) => this.createVerificationState(model, true),
+        getSession: (model) => {
+          const operation = this.startVerification(model, 'systemone');
+          return options?.signal === undefined
+            ? operation
+            : awaitWithAbort({ operation, signal: options.signal });
+        },
+        registerResponse: (record) => this.registerResponse(record),
       }),
   };
 
@@ -597,8 +621,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
 
   protected override async createVerificationState(
     model: string,
-    systemone = false,
+    endpoint: InferenceEndpoint,
   ): Promise<InferenceSession<VerifiedCompletionResult>> {
+    const systemone = endpoint === 'systemone';
     const gateway = await this.fetchGatewayAttestation();
     const gatewayAttestation = await verifyGatewayAttestation({
       attestation: gateway.attestation,
@@ -853,7 +878,7 @@ function registerCompletionResponse({
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
   const streaming = isServerSentEventResponse(response);
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   let pending = '';
   let registered = false;
   const body = response.body.pipeThrough(
@@ -1001,33 +1026,6 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return body;
-}
-
-type GetCompletionIdParams = {
-  readonly bytes: Uint8Array;
-  readonly contentType: string | null;
-};
-
-function getCompletionId({
-  bytes,
-  contentType,
-}: GetCompletionIdParams): string {
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch (cause) {
-    throw invalidCompletionId(cause);
-  }
-  if (isServerSentEventContentType(contentType)) {
-    return getSseCompletionId(text);
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw invalidCompletionId(cause);
-  }
-  return parseCompletionId(value);
 }
 
 function getSseCompletionId(text: string): string {

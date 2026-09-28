@@ -357,7 +357,9 @@ describe('ECDSA inference client', () => {
         state: 'Charged twice',
         questions: { billing: { type: 'noul' } },
       });
-      await expect(result.verify()).resolves.toMatchObject({ signatureKind });
+      await expect(
+        client.verifyResponse(result.signatureId),
+      ).resolves.toMatchObject({ signatureKind });
       expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
       expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
       expect(

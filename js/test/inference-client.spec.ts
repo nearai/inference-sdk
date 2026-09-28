@@ -7,6 +7,7 @@ import {
   InferenceClient,
   type TdxQuoteVerificationResult,
   type InferenceClientOptions,
+  type SystemOneRequest,
 } from '../src';
 import {
   AttestationClient as NodeAttestationClient,
@@ -3050,7 +3051,10 @@ describe('inference client', () => {
 });
 
 describe('System One decisions', () => {
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
 
   const decisionRequest = {
     model,
@@ -3090,6 +3094,22 @@ describe('System One decisions', () => {
     future_field: 'preserved',
   };
 
+  type DecisionGatewayParams = {
+    tee?: boolean;
+    secondSigner?: boolean;
+    tamper?: boolean;
+    missingId?: boolean;
+    malformed?: boolean;
+    status?: number;
+    failSignatureOnce?: boolean;
+    unavailableSignatureOnce?: boolean;
+    requestedSigningAlgo?: string;
+    omitBodyId?: boolean;
+    unknownSigner?: boolean;
+    includeModelPublicKey?: boolean;
+    response?: Record<string, unknown>;
+  };
+
   function decisionGateway({
     tee = false,
     secondSigner = false,
@@ -3102,13 +3122,16 @@ describe('System One decisions', () => {
     requestedSigningAlgo = 'ed25519',
     omitBodyId = false,
     unknownSigner = false,
-  } = {}) {
+    includeModelPublicKey = false,
+    response = decisionResponse,
+  }: DecisionGatewayParams = {}) {
     const gateway = createTestGateway({
       providerType: tee ? 'vllm' : 'external',
       attestationSupported: tee,
-      includeModelPublicKey: false,
+      includeModelPublicKey,
       includeSecondModelAttestation: secondSigner,
     });
+    const chatFetch = createSignatureFetch(gateway);
     const requests: Request[] = [];
     const signaturePaths: string[] = [];
     let receipt: Record<string, string>;
@@ -3119,7 +3142,7 @@ describe('System One decisions', () => {
         gateway.expectRequestHeader(request);
         requests.push(request.clone());
         const requestBytes = new Uint8Array(await request.arrayBuffer());
-        const responseText = `${JSON.stringify({ ...decisionResponse, ...(omitBodyId ? { id: undefined } : {}) }, null, 2)}\n`;
+        const responseText = `${JSON.stringify({ ...response, ...(omitBodyId ? { id: undefined } : {}) }, null, 2)}\n`;
         const responseBytes = new TextEncoder().encode(responseText);
         receipt = tee
           ? gateway.createProviderSignature(requestBytes, responseBytes)
@@ -3151,7 +3174,7 @@ describe('System One decisions', () => {
           },
         );
       }
-      if (url.pathname.startsWith('/v1/signature/')) {
+      if (url.pathname === '/v1/signature/decision-receipt') {
         gateway.expectRequestHeader(request);
         expect(url.searchParams.get('signing_algo')).toBe(requestedSigningAlgo);
         signaturePaths.push(url.pathname);
@@ -3164,7 +3187,7 @@ describe('System One decisions', () => {
           });
         return jsonResponse(receipt);
       }
-      return gateway.fetch(request);
+      return chatFetch(request);
     };
     return { gateway, fetch, requests, signaturePaths };
   }
@@ -3193,18 +3216,25 @@ describe('System One decisions', () => {
         fixture.fetch,
       );
       const result = await client.systemone.create(decisionRequest, {
-        headers: { 'Content-Length': '0', 'Content-Encoding': 'gzip' },
+        headers: {
+          'Content-Length': '0',
+          'Content-Encoding': 'gzip',
+          'Content-MD5': 'old-body',
+          Digest: 'sha-256=old-body',
+          'Content-Digest': 'sha-256=:old-body:',
+          'Repr-Digest': 'sha-256=:old-body:',
+        },
       });
       expect(result.data).toMatchObject(decisionResponse);
       expect(result.signatureId).toBe('decision-receipt');
       // Verification is bound to captured bytes even when the displayed value is edited.
       result.data.model = 'caller-edited';
-      const verified = await result.verify();
+      const verified = await client.verifyResponse(result.signatureId);
       expect(verified.signatureKind).toBe(tee ? 'provider_tee' : 'gateway');
       expect(verified.attestation.signer.signingAddress).toBe(
         keyHex(keyPair(tee ? 3 : 1).publicKey),
       );
-      expect(await result.verify()).toBe(verified);
+      expect(await client.verifyResponse(result.signatureId)).toBe(verified);
       expect(fixture.signaturePaths).toEqual([
         '/v1/signature/decision-receipt',
       ]);
@@ -3220,6 +3250,10 @@ describe('System One decisions', () => {
         'x-encrypt-all-fields',
         'content-length',
         'content-encoding',
+        'content-md5',
+        'digest',
+        'content-digest',
+        'repr-digest',
       ])
         expect(fixture.requests[0].headers.has(name)).toBe(false);
       expect(fixture.requests[0].headers.get('x-no-aliasing')).toBe('true');
@@ -3238,7 +3272,9 @@ describe('System One decisions', () => {
         e2ee: false,
       });
       const result = await client.systemone.create(decisionRequest);
-      await expect(result.verify()).rejects.toMatchObject({
+      await expect(
+        client.verifyResponse(result.signatureId),
+      ).rejects.toMatchObject({
         failure: { code: 'signature.payload_mismatch' },
       });
       expect(fixture.requests).toHaveLength(1);
@@ -3253,8 +3289,12 @@ describe('System One decisions', () => {
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
-    await expect(result.verify()).rejects.toMatchObject({ retryable: true });
-    await expect(result.verify()).resolves.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({ retryable: true });
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
     expect(fixture.requests).toHaveLength(1);
@@ -3269,10 +3309,14 @@ describe('System One decisions', () => {
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
-    await expect(result.verify()).rejects.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({
       failure: { code: 'api.completion_signature_unavailable' },
     });
-    await expect(result.verify()).resolves.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
     expect(fixture.requests).toHaveLength(1);
@@ -3292,10 +3336,14 @@ describe('System One decisions', () => {
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
-    await expect(result.verify()).rejects.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
-    await expect(result.verify()).rejects.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
     expect(fixture.requests).toHaveLength(1);
@@ -3335,17 +3383,15 @@ describe('System One decisions', () => {
     },
   );
 
-  test('rejects streaming, malformed questions and pre-aborted calls locally', async () => {
+  test('rejects streaming and pre-aborted calls before any network request', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch');
     const client = new InferenceClient({ baseUrl, apiKey: 'test-key' });
     await expect(
       client.systemone.create({
         ...decisionRequest,
+        // @ts-expect-error System One does not support streaming.
         stream: true,
-      } as typeof decisionRequest),
-    ).rejects.toMatchObject({ failure: { code: 'api.invalid_input' } });
-    await expect(
-      client.systemone.create({ ...decisionRequest, questions: {} }),
+      }),
     ).rejects.toMatchObject({ failure: { code: 'api.invalid_input' } });
     const signal = AbortSignal.abort(new Error('cancelled'));
     await expect(
@@ -3379,7 +3425,9 @@ describe('System One decisions', () => {
     });
     const result = await client.systemone.create(decisionRequest);
     expect(result.data.id).toBeUndefined();
-    await expect(result.verify()).resolves.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
   });
@@ -3392,7 +3440,9 @@ describe('System One decisions', () => {
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
-    await expect(result.verify()).rejects.toMatchObject({
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({
       failure: { code: 'api.model_attestation_signer_not_found' },
     });
   });
@@ -3415,23 +3465,231 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(0);
   });
 
-  test('aborting during preflight prevents inference dispatch', async () => {
+  test.each(['constructor', 'prototype', '__proto__'])(
+    'preserves %s as a question name, choice label, and structured context key',
+    async (name) => {
+      const request: SystemOneRequest = {
+        model,
+        state: { [name]: 'context' },
+        questions: {
+          [name]: { type: 'noul', instructions: { [name]: 'description' } },
+          action: {
+            type: 'choice',
+            criteria: { [name]: null, ok: 'Continue' },
+          },
+        },
+      };
+      const response = {
+        model,
+        answers: {
+          [name]: { type: 'noul', noul: 0.8 },
+          action: {
+            type: 'choice',
+            choice: name,
+            confidence: 0.7,
+            probabilities: { [name]: 0.7, ok: 0.3 },
+          },
+        },
+        usage: { input_tokens: 10, output_tokens: 2 },
+      };
+      const fixture = decisionGateway({ response });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+
+      const result = await client.systemone.create(request);
+      const sent = await fixture.requests[0].json();
+      expect(sent).toEqual(request);
+      expect(result.data.answers).toEqual(response.answers);
+      const verified = await client.verifyResponse(result.signatureId);
+      expect(verified.signatureKind).toBe('gateway');
+    },
+  );
+
+  test('leaves question business validation to the server', async () => {
+    const fixture = decisionGateway({ status: 400 });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+
+    await expect(
+      client.systemone.create({ ...decisionRequest, questions: {} }),
+    ).rejects.toMatchObject({
+      failure: { code: 'api.http_status', details: { status: 400 } },
+    });
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  test.each([undefined, 100])(
+    'shares concurrent decision preflight and honors the configured attestation TTL (%s)',
+    async (attestationCacheTimeToLiveMs) => {
+      const fixture = decisionGateway({ tee: true });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const now = jest.spyOn(Date, 'now').mockReturnValue(0);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+        attestationCacheTimeToLiveMs,
+      });
+      const ttl = attestationCacheTimeToLiveMs ?? 60 * 60 * 1000;
+
+      await Promise.all([
+        client.systemone.create(decisionRequest),
+        client.systemone.create(decisionRequest),
+      ]);
+      now.mockReturnValue(ttl - 1);
+      await client.systemone.create(decisionRequest);
+      expect(fixture.gateway.state).toMatchObject({
+        gatewayAttestationRequests: 1,
+        modelAttestationRequests: 1,
+        metadataModels: [model],
+      });
+      now.mockReturnValue(ttl);
+      await client.systemone.create(decisionRequest);
+      expect(fixture.gateway.state).toMatchObject({
+        gatewayAttestationRequests: 2,
+        modelAttestationRequests: 2,
+        metadataModels: [model, model],
+      });
+      expect(fixture.requests).toHaveLength(4);
+    },
+  );
+
+  test('disables decision attestation caching when the TTL is zero', async () => {
+    const fixture = decisionGateway({ tee: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+      attestationCacheTimeToLiveMs: 0,
+    });
+    await client.systemone.create(decisionRequest);
+    await client.systemone.create(decisionRequest);
+    expect(fixture.gateway.state.gatewayAttestationRequests).toBe(2);
+    expect(fixture.gateway.state.modelAttestationRequests).toBe(2);
+  });
+
+  test.each(['chat', 'systemone'])(
+    'keeps routed Chat and fleet decision sessions separate (%s first)',
+    async (first) => {
+      const fixture = decisionGateway({
+        tee: true,
+        secondSigner: true,
+        includeModelPublicKey: true,
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const order =
+        first === 'chat' ? ['chat', 'systemone'] : ['systemone', 'chat'];
+      for (const endpoint of [...order, ...order]) {
+        if (endpoint === 'chat') {
+          const completion = await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: 'Hello' }],
+          });
+          const verified = await client.verifyResponse(completion.id);
+          expect(verified.attestation.signer.signingAddress).toBe(
+            keyHex(keyPair(2).publicKey),
+          );
+        } else {
+          const result = await client.systemone.create(decisionRequest);
+          const verified = await client.verifyResponse(result.signatureId);
+          expect(verified.attestation.signer.signingAddress).toBe(
+            keyHex(keyPair(3).publicKey),
+          );
+        }
+      }
+      expect(fixture.gateway.state.gatewayAttestationRequests).toBe(2);
+      expect(fixture.gateway.state.modelAttestationRequests).toBe(2);
+      for (const request of fixture.gateway.state.completionRequestsSeen) {
+        expect(request.headers.get('x-model-pub-key')).toBe(
+          keyHex(keyPair(2).publicKey),
+        );
+      }
+      expect(
+        fixture.requests.every(
+          (request) => !request.headers.has('x-model-pub-key'),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  test('expires decision response records using the shared response TTL', async () => {
+    const fixture = decisionGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+      responseCacheTimeToLiveMs: 100,
+    });
+    jest.useFakeTimers({
+      doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+    });
+    const result = await client.systemone.create(decisionRequest);
+    const verification = client.verifyResponse(result.signatureId);
+    expect(client.verifyResponse(result.signatureId)).toBe(verification);
+    await verification;
+    jest.advanceTimersByTime(99);
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).resolves.toMatchObject({
+      signatureKind: 'gateway',
+    });
+    jest.advanceTimersByTime(1);
+    await expect(
+      client.verifyResponse(result.signatureId),
+    ).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    expect(fixture.signaturePaths).toHaveLength(1);
+  });
+
+  test('aborts a stalled decision preflight without cancelling another caller', async () => {
     const fixture = decisionGateway();
     const controller = new AbortController();
+    let resume!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let notifyStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
     jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
       const request = new Request(input, init);
-      const response = await fixture.fetch(request);
-      if (request.url.includes('/model/'))
-        controller.abort(new Error('cancelled during preflight'));
-      return response;
+      if (request.url.includes('/attestation/report')) {
+        notifyStarted();
+        await blocked;
+      }
+      return fixture.fetch(request);
     });
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
       e2ee: false,
     });
-    await expect(
-      client.systemone.create(decisionRequest, { signal: controller.signal }),
-    ).rejects.toThrow('cancelled during preflight');
-    expect(fixture.requests).toHaveLength(0);
+    const cancelled = client.systemone.create(decisionRequest, {
+      signal: controller.signal,
+    });
+    await started;
+    const succeeding = client.systemone.create(decisionRequest);
+    const reason = new Error('cancelled while waiting for evidence');
+    controller.abort(reason);
+    try {
+      await expect(cancelled).rejects.toBe(reason);
+      expect(fixture.requests).toHaveLength(0);
+    } finally {
+      resume();
+    }
+    const result = await succeeding;
+    await client.verifyResponse(result.signatureId);
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
   });
 });
