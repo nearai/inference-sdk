@@ -906,7 +906,7 @@ describe('inference client', () => {
     });
     expect(completion.choices[0].message.content).toBe('hello client');
     await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
-      completionId: completion.id,
+      id: completion.id,
       signatureKind: 'provider_tee',
     });
     const stream = await client.chat.completions.create({
@@ -922,7 +922,7 @@ describe('inference client', () => {
     }
     expect(content).toBe('hello client');
     await expect(client.verifyResponse(id)).resolves.toMatchObject({
-      completionId: id,
+      id,
       signatureKind: 'provider_tee',
     });
     expect(gateway.state.decryptedRequestContent).toEqual([
@@ -1018,7 +1018,7 @@ describe('inference client', () => {
       messages: [{ role: 'user', content: 'hello' }],
     });
     await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
-      completionId: completion.id,
+      id: completion.id,
     });
   });
 
@@ -1052,12 +1052,12 @@ describe('inference client', () => {
       streamVerification ??= inferenceClient.verifyResponse(streamId);
     }
     await expect(streamVerification).resolves.toMatchObject({
-      completionId: streamId,
+      id: streamId,
     });
     const verification = inferenceClient.verifyResponse(completion.id);
     expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
     await expect(verification).resolves.toMatchObject({
-      completionId: completion.id,
+      id: completion.id,
     });
     expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
   });
@@ -1085,7 +1085,7 @@ describe('inference client', () => {
       jest.advanceTimersByTime(expectedTtl - 1);
       await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
         {
-          completionId: completion.id,
+          id: completion.id,
         },
       );
       jest.advanceTimersByTime(1);
@@ -1127,7 +1127,7 @@ describe('inference client', () => {
       const retry = client.verifyResponse(completion.id);
       expect(client.verifyResponse(completion.id)).toBe(retry);
       await expect(retry).resolves.toMatchObject({
-        completionId: completion.id,
+        id: completion.id,
       });
       expect(client.verifyResponse(completion.id)).toBe(retry);
       expect(signatureRequests).toBe(2);
@@ -1158,7 +1158,7 @@ describe('inference client', () => {
     await expect(
       inferenceClient.verifyResponse(completion.id),
     ).resolves.toMatchObject({
-      completionId: completion.id,
+      id: completion.id,
     });
   });
 
@@ -1193,7 +1193,7 @@ describe('inference client', () => {
       });
       const verified = await inferenceClient.verifyResponse(completion.id);
 
-      expect(verified.completionId).toBe(completion.id);
+      expect(verified.id).toBe(completion.id);
       for (const request of requests) {
         expect(request.headers.has('authorization')).toBe(false);
       }
@@ -1228,7 +1228,7 @@ describe('inference client', () => {
     expect(attempts).toBe(2);
     await expect(
       inferenceClient.verifyResponse(completion.id),
-    ).resolves.toMatchObject({ completionId: completion.id });
+    ).resolves.toMatchObject({ id: completion.id });
   });
 
   test('accepts an API key for a direct Gateway connection', async () => {
@@ -1819,7 +1819,7 @@ describe('inference client', () => {
       const verification = expect(
         client.verifyResponse('chatcmpl-stream'),
       ).resolves.toMatchObject({
-        completionId: 'chatcmpl-stream',
+        id: 'chatcmpl-stream',
         signatureKind: 'provider_tee',
       });
 
@@ -1844,7 +1844,7 @@ describe('inference client', () => {
 
     expect(completion.choices[0]?.message.content).toBe('hello client');
     await expect(client.verifyResponse(completion.id)).resolves.toMatchObject({
-      completionId: 'chatcmpl-test',
+      id: 'chatcmpl-test',
       signatureKind: 'provider_tee',
     });
   });
@@ -1878,7 +1878,7 @@ describe('inference client', () => {
       await expect(
         client.verifyResponse('chatcmpl-stream'),
       ).resolves.toMatchObject({
-        completionId: 'chatcmpl-stream',
+        id: 'chatcmpl-stream',
         signatureKind: 'provider_tee',
       });
     },
@@ -2721,7 +2721,7 @@ describe('inference client', () => {
         await expect(
           client.verifyResponse(completionId),
         ).resolves.toMatchObject({
-          completionId,
+          id: completionId,
           signatureKind: 'gateway',
           attestation: {
             signer: { signingAddress: keyHex(keyPair(1).publicKey) },
@@ -3099,7 +3099,7 @@ describe('System One decisions', () => {
     secondSigner?: boolean;
     tamper?: boolean;
     missingId?: boolean;
-    completionId?: string;
+    decisionId?: string;
     malformed?: boolean;
     status?: number;
     failSignatureOnce?: boolean;
@@ -3116,7 +3116,7 @@ describe('System One decisions', () => {
     secondSigner = false,
     tamper = false,
     missingId = false,
-    completionId = 'decision-receipt',
+    decisionId = 'decision-receipt',
     malformed = false,
     status = 200,
     failSignatureOnce = false,
@@ -3171,14 +3171,12 @@ describe('System One decisions', () => {
             status,
             headers: {
               'content-type': 'application/json',
-              ...(missingId ? {} : { 'x-generation-id': completionId }),
+              ...(missingId ? {} : { 'x-generation-id': decisionId }),
             },
           },
         );
       }
-      if (
-        url.pathname === `/v1/signature/${encodeURIComponent(completionId)}`
-      ) {
+      if (url.pathname === `/v1/signature/${encodeURIComponent(decisionId)}`) {
         gateway.expectRequestHeader(request);
         expect(url.searchParams.get('signing_algo')).toBe(requestedSigningAlgo);
         signaturePaths.push(url.pathname);
@@ -3230,15 +3228,16 @@ describe('System One decisions', () => {
         },
       });
       expect(result.data).toMatchObject(decisionResponse);
-      expect(result.completionId).toBe('decision-receipt');
+      expect(result.decisionId).toBe('decision-receipt');
       // Verification is bound to captured bytes even when the displayed value is edited.
       result.data.model = 'caller-edited';
-      const verified = await client.verifyResponse(result.completionId);
+      const verified = await client.verifyResponse(result.decisionId);
+      expect(verified.id).toBe(result.decisionId);
       expect(verified.signatureKind).toBe(tee ? 'provider_tee' : 'gateway');
       expect(verified.attestation.signer.signingAddress).toBe(
         keyHex(keyPair(tee ? 3 : 1).publicKey),
       );
-      expect(await client.verifyResponse(result.completionId)).toBe(verified);
+      expect(await client.verifyResponse(result.decisionId)).toBe(verified);
       expect(fixture.signaturePaths).toEqual([
         '/v1/signature/decision-receipt',
       ]);
@@ -3277,7 +3276,7 @@ describe('System One decisions', () => {
       });
       const result = await client.systemone.create(decisionRequest);
       await expect(
-        client.verifyResponse(result.completionId),
+        client.verifyResponse(result.decisionId),
       ).rejects.toMatchObject({
         failure: { code: 'signature.payload_mismatch' },
       });
@@ -3294,10 +3293,10 @@ describe('System One decisions', () => {
     });
     const result = await client.systemone.create(decisionRequest);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({ retryable: true });
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
@@ -3314,12 +3313,12 @@ describe('System One decisions', () => {
     });
     const result = await client.systemone.create(decisionRequest);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
       failure: { code: 'api.completion_signature_unavailable' },
     });
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
@@ -3341,12 +3340,12 @@ describe('System One decisions', () => {
     });
     const result = await client.systemone.create(decisionRequest);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
@@ -3356,7 +3355,7 @@ describe('System One decisions', () => {
 
   test.each([
     { missingId: true },
-    { completionId: '' },
+    { decisionId: '' },
     { malformed: true },
     { status: 429 },
   ])(
@@ -3426,23 +3425,24 @@ describe('System One decisions', () => {
   });
 
   test('uses an opaque generation ID when the JSON body has no ID', async () => {
-    const completionId = 'gen:decision.123/result?part=1';
-    const fixture = decisionGateway({ omitBodyId: true, completionId });
+    const decisionId = 'gen:decision.123/result?part=1';
+    const fixture = decisionGateway({ omitBodyId: true, decisionId });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
-    expect(result.completionId).toBe(completionId);
+    expect(result.decisionId).toBe(decisionId);
     expect(result.data.id).toBeUndefined();
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).resolves.toMatchObject({
+      id: decisionId,
       signatureKind: 'gateway',
     });
     expect(fixture.signaturePaths).toEqual([
-      `/v1/signature/${encodeURIComponent(completionId)}`,
+      `/v1/signature/${encodeURIComponent(decisionId)}`,
     ]);
   });
 
@@ -3472,7 +3472,7 @@ describe('System One decisions', () => {
     });
     const result = await client.systemone.create(decisionRequest);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
       failure: { code: 'api.model_attestation_signer_not_found' },
     });
@@ -3534,7 +3534,7 @@ describe('System One decisions', () => {
       const sent = await fixture.requests[0].json();
       expect(sent).toEqual(request);
       expect(result.data.answers).toEqual(response.answers);
-      const verified = await client.verifyResponse(result.completionId);
+      const verified = await client.verifyResponse(result.decisionId);
       expect(verified.signatureKind).toBe('gateway');
     },
   );
@@ -3631,7 +3631,7 @@ describe('System One decisions', () => {
           );
         } else {
           const result = await client.systemone.create(decisionRequest);
-          const verified = await client.verifyResponse(result.completionId);
+          const verified = await client.verifyResponse(result.decisionId);
           expect(verified.attestation.signer.signingAddress).toBe(
             keyHex(keyPair(3).publicKey),
           );
@@ -3664,18 +3664,18 @@ describe('System One decisions', () => {
       doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
     });
     const result = await client.systemone.create(decisionRequest);
-    const verification = client.verifyResponse(result.completionId);
-    expect(client.verifyResponse(result.completionId)).toBe(verification);
+    const verification = client.verifyResponse(result.decisionId);
+    expect(client.verifyResponse(result.decisionId)).toBe(verification);
     await verification;
     jest.advanceTimersByTime(99);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
     jest.advanceTimersByTime(1);
     await expect(
-      client.verifyResponse(result.completionId),
+      client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
       failure: { code: 'api.completion_not_found' },
     });
@@ -3719,7 +3719,7 @@ describe('System One decisions', () => {
       resume();
     }
     const result = await succeeding;
-    await client.verifyResponse(result.completionId);
+    await client.verifyResponse(result.decisionId);
     expect(fixture.requests).toHaveLength(1);
     expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
   });

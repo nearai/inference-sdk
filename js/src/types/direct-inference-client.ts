@@ -37,7 +37,7 @@ export type VerifyDirectModelResponseParams = {
 
 /** A signed response associated with the preflight-verified signer group. */
 export type VerifiedDirectCompletionResult = {
-  readonly completionId: string;
+  readonly id: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
   /** All verified reports sharing this signer, not a claim identifying one CVM. */

@@ -42,11 +42,11 @@ export type SystemOneRequestOptions = {
   readonly signal?: AbortSignal;
 };
 
-/** Unverified output; pass completionId to client.verifyResponse() to verify it. */
+/** Unverified output; pass decisionId to client.verifyResponse() to verify it. */
 export type SystemOneResult = {
   readonly data: SystemOneResponse;
   /** Generation ID from X-Generation-Id, used to retrieve and verify the signature. */
-  readonly completionId: string;
+  readonly decisionId: string;
 };
 
 export type InferenceSystemOne = {

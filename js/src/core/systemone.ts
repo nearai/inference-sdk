@@ -15,7 +15,7 @@ import { NO_ALIASING_HEADER } from './cloud-api';
 import { removeE2eeHeaders } from './e2ee-request';
 import type {
   InferenceSession,
-  VerifyCapturedCompletionParams,
+  VerifyCapturedResponseParams,
 } from './inference-client';
 
 type CreateSystemOneParams = {
@@ -28,7 +28,7 @@ type CreateSystemOneParams = {
     model: string,
   ) => Promise<InferenceSession<VerifiedCompletionResult>>;
   readonly registerResponse: (
-    params: VerifyCapturedCompletionParams<VerifiedCompletionResult>,
+    params: VerifyCapturedResponseParams<VerifiedCompletionResult>,
   ) => void;
 };
 
@@ -110,7 +110,7 @@ export async function createSystemOne({
     await response.body?.cancel();
     throw invalidResponse('System One X-Generation-Id');
   }
-  const completionId = parsedId.output.id;
+  const decisionId = parsedId.output.id;
   let responseBody: Uint8Array;
   try {
     responseBody = new Uint8Array(await response.arrayBuffer());
@@ -136,12 +136,12 @@ export async function createSystemOne({
     throw invalidResponse('System One response');
   }
   registerResponse({
-    completionId,
+    id: decisionId,
     requestBody,
     responseBody: Promise.resolve(responseBody),
     session,
   });
-  return { data, completionId };
+  return { data, decisionId };
 }
 
 function invalidInput(expected: string): ApiError {

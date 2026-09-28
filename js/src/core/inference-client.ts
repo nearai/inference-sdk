@@ -76,7 +76,7 @@ export type InferenceSession<VerificationResult> = {
 };
 
 export type VerifySessionResponseParams = {
-  readonly completionId: string;
+  readonly id: string;
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
@@ -103,8 +103,8 @@ type CachedVerification<VerificationResult> = {
 
 type InferenceEndpoint = 'chat' | 'systemone';
 
-type CompletionRecord<VerificationResult> =
-  VerifyCapturedCompletionParams<VerificationResult> & {
+type ResponseRecord<VerificationResult> =
+  VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
   };
 
@@ -140,8 +140,8 @@ type CapturedResponseEntityBody = {
   readonly responseBody: Promise<Uint8Array>;
 };
 
-export type VerifyCapturedCompletionParams<VerificationResult> = {
-  readonly completionId: string;
+export type VerifyCapturedResponseParams<VerificationResult> = {
+  readonly id: string;
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
   readonly session: InferenceSession<VerificationResult>;
@@ -203,9 +203,9 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly completions = new Map<
+  private readonly responses = new Map<
     string,
-    CompletionRecord<VerificationResult>
+    ResponseRecord<VerificationResult>
   >();
   readonly chat: InferenceChat;
   protected readonly signingAlgo: SigningAlgo;
@@ -303,7 +303,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
         response: completion.response,
         register: (completionId) =>
           this.registerResponse({
-            completionId,
+            id: completionId,
             requestBody,
             responseBody,
             session: completion.session,
@@ -314,12 +314,12 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(completionId: string): Promise<VerificationResult> {
-    const record = this.completions.get(completionId);
+  verifyResponse(id: string): Promise<VerificationResult> {
+    const record = this.responses.get(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
-    record.verification ??= this.verifyCapturedCompletion(record).catch(
+    record.verification ??= this.verifyCapturedResponse(record).catch(
       (cause: unknown) => {
         // Keep the captured bytes so a later call can retry a transient lookup.
         if (
@@ -336,14 +336,12 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   }
 
   /** Both endpoints share byte retention, expiry, and verification retries. */
-  protected registerResponse(
-    record: CompletionRecord<VerificationResult>,
-  ): void {
-    const id = record.completionId;
-    this.completions.set(id, record);
+  protected registerResponse(record: ResponseRecord<VerificationResult>): void {
+    const id = record.id;
+    this.responses.set(id, record);
     const expire = (): void => {
       const timer = setTimeout(() => {
-        if (this.completions.get(id) === record) this.completions.delete(id);
+        if (this.responses.get(id) === record) this.responses.delete(id);
       }, this.responseCacheTimeToLiveMs);
       timer.unref?.();
     };
@@ -409,15 +407,15 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
-  private async verifyCapturedCompletion({
-    completionId,
+  private async verifyCapturedResponse({
+    id,
     requestBody,
     responseBody,
     session,
-  }: VerifyCapturedCompletionParams<VerificationResult>): Promise<VerificationResult> {
+  }: VerifyCapturedResponseParams<VerificationResult>): Promise<VerificationResult> {
     const bytes = await responseBody;
     const signature = await session.transport.fetchCompletionSignature({
-      completionId,
+      completionId: id,
       signingAlgo: this.signingAlgo,
     });
 
@@ -426,7 +424,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     }
 
     return session.verifyResponse({
-      completionId,
+      id,
       requestBody,
       responseBody: bytes,
       signature,
@@ -589,7 +587,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
-  /** Send a decision request; pass result.completionId to verifyResponse(). */
+  /** Send a decision request; pass result.decisionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
     create: async (request, options) =>
       createSystemOne({
@@ -666,12 +664,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         ...transport,
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
-      verifyResponse: ({
-        completionId,
-        requestBody,
-        responseBody,
-        signature,
-      }) => {
+      verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
           const servingAttestation = systemone
             ? findModelAttestationForSignature({
@@ -692,7 +685,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
             attestation: servingAttestation,
           });
           return {
-            completionId,
+            id,
             signatureKind: 'provider_tee',
             signature,
             attestation: servingAttestation,
@@ -705,7 +698,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
           attestation: gatewayAttestation,
         });
         return {
-          completionId,
+          id,
           signatureKind: 'gateway',
           signature,
           attestation: gatewayAttestation,

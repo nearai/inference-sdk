@@ -139,11 +139,11 @@ const result = await client.systemone.create({
   },
 });
 
-const verified = await client.verifyResponse(result.completionId);
+const verified = await client.verifyResponse(result.decisionId);
 console.log(verified.signatureKind, result.data.answers);
 ```
 
-`result.completionId` comes from `X-Generation-Id` and is available even when
+`result.decisionId` comes from `X-Generation-Id` and is available even when
 the provider omits `result.data.id`. Verification uses the captured request and
 response bytes, even if the parsed data is later edited. Wait for it before acting on
 answers. A `provider_tee` receipt matches a signer in the preverified model
@@ -151,7 +151,7 @@ fleet; a `gateway` receipt proves Gateway signing, not model TEE execution.
 
 Response retention, concurrent verification, and receipt lookup retries use the
 same `verifyResponse` lifecycle as Chat. Inference is sent once. If the receipt
-is not available yet, retry `verifyResponse(result.completionId)` without making
+is not available yet, retry `verifyResponse(result.decisionId)` without making
 another decision request.
 
 Pass `signal` in the second argument to cancel a caller's preflight wait or

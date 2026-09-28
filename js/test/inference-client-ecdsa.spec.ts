@@ -287,7 +287,7 @@ describe('ECDSA inference client', () => {
     await expect(
       client.verifyResponse('chatcmpl-ecdsa'),
     ).resolves.toMatchObject({
-      completionId: 'chatcmpl-ecdsa',
+      id: 'chatcmpl-ecdsa',
       signatureKind: 'provider_tee',
     });
 
@@ -330,7 +330,7 @@ describe('ECDSA inference client', () => {
     await expect(
       client.verifyResponse('chatcmpl-ecdsa'),
     ).resolves.toMatchObject({
-      completionId: 'chatcmpl-ecdsa',
+      id: 'chatcmpl-ecdsa',
       signatureKind: 'gateway',
     });
   });
@@ -358,7 +358,7 @@ describe('ECDSA inference client', () => {
         questions: { billing: { type: 'noul' } },
       });
       await expect(
-        client.verifyResponse(result.completionId),
+        client.verifyResponse(result.decisionId),
       ).resolves.toMatchObject({ signatureKind });
       expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
       expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);

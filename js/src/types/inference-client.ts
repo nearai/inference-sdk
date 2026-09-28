@@ -126,17 +126,17 @@ export type NodeInferenceClientOptions = AttestationClientOptions &
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
   } & InferenceEncryptionOptions;
 
-/** A completion signature verified against the model evidence used for the request. */
+/** A response signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionResult = {
-  readonly completionId: string;
+  readonly id: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
   readonly attestation: VerifiedModelAttestation;
 };
 
-/** A completion signature verified against the Gateway evidence used for the request. */
+/** A response signature verified against the Gateway evidence used for the request. */
 export type VerifiedGatewayCompletionResult = {
-  readonly completionId: string;
+  readonly id: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
   readonly attestation: VerifiedGatewayAttestation;

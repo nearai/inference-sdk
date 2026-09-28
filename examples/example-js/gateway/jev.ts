@@ -54,16 +54,16 @@ const result = await client.systemone.create(
   { signal: AbortSignal.timeout(60_000) },
 );
 
-// completionId comes from X-Generation-Id, including when the body has no id.
+// decisionId comes from X-Generation-Id, including when the body has no id.
 // Verification hashes the exact bytes sent/received. Wait before acting on answers.
-const verified = await client.verifyResponse(result.completionId);
+const verified = await client.verifyResponse(result.decisionId);
 if (verified.signatureKind !== expectedKind) {
   throw new Error(
     `Expected ${expectedKind}, received ${verified.signatureKind}.`,
   );
 }
 console.log(
-  `Verified ${verified.signatureKind} receipt ${result.completionId} (${signingAlgo}).`,
+  `Verified ${verified.signatureKind} receipt ${result.decisionId} (${signingAlgo}).`,
 );
 console.log(
   verified.signatureKind === 'gateway'

@@ -190,5 +190,5 @@ HTTPS. Streaming is unsupported. Aliases are rejected with `x-no-aliasing`:
 use the canonical catalog ID. Missing `X-Generation-Id`, malformed output, failed
 attestation, an invalid signature, or the wrong expected receipt kind fails the
 check. A missing receipt can also mean the server failed to persist it; retry
-`client.verifyResponse(result.completionId)` in your application without
+`client.verifyResponse(result.decisionId)` in your application without
 submitting inference again.
