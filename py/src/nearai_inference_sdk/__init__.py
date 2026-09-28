@@ -1,5 +1,9 @@
 """Verification helpers for NEAR AI Cloud attestations and signatures."""
 
+from .core.attestation_direct import (
+    verify_direct_model_attestation,
+    verify_direct_model_attestations,
+)
 from .core.attestation_gateway import verify_gateway_attestation
 from .core.attestation_model import verify_model_attestation
 from .core.chat import verify_gateway_response, verify_model_response
@@ -7,15 +11,24 @@ from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
 )
+from .core.direct_api import DirectAttestationClient
+from .core.direct_inference_client import (
+    DirectInferenceClient,
+    verify_direct_model_response,
+)
+from .core.e2ee_request import prepare_e2ee_chat_request
+from .core.inference_client import InferenceClient
+from .core.ohttp import create_ohttp_client
+from .core.ohttp_attestation import verify_ohttp_key_config
+from .core.pinned_tls import create_pinned_tls_client
 from .core.provenance import (
     fetch_image_provenance,
     verify_deployment_image_provenance,
     verify_image_provenance,
 )
-from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
 from .types.attestation_common import (
-    AttestationEvidence,
     AttestationEventLog,
+    AttestationEvidence,
     SigningAlgo,
     SigningIdentity,
     TcbStatus,
@@ -32,6 +45,34 @@ from .types.cloud_api import (
     NO_ALIASING_HEADER,
     FetchedGatewayAttestation,
     FetchedModelAttestations,
+    ModelMetadata,
+)
+from .types.direct import (
+    DirectClientBinding,
+    DirectModelAttestation,
+    DirectTlsBinding,
+    FetchedDirectModelAttestations,
+    VerifiedDirectCompletionResult,
+    VerifiedDirectModelAttestation,
+    VerifiedDirectModelAttestations,
+)
+from .types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
+from .types.inference_client import (
+    DeploymentPolicy,
+    GatewayVerificationOptions,
+    ModelVerificationOptions,
+    VerifiedCompletionResult,
+    VerifiedGatewayCompletionResult,
+    VerifiedModelCompletionResult,
+)
+from .types.ohttp import OhttpAttestation
+from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
+from .types.systemone import (
+    SystemOneAnswer,
+    SystemOneQuestion,
+    SystemOneRequest,
+    SystemOneResponse,
+    SystemOneResult,
 )
 from .types.verification import (
     AttestationPolicy,
@@ -60,11 +101,42 @@ from .utils.errors import (
 from .utils.intel import create_tdx_quote_verifier
 from .utils.nvidia import create_gpu_evidence_verifier
 
-
 __all__ = [
     'DEFAULT_NEAR_AI_CLOUD_BASE_URL',
     'NO_ALIASING_HEADER',
     'AttestationClient',
+    'InferenceClient',
+    'DirectInferenceClient',
+    'DirectAttestationClient',
+    'verify_direct_model_attestation',
+    'verify_direct_model_attestations',
+    'verify_direct_model_response',
+    'DirectClientBinding',
+    'DirectModelAttestation',
+    'DirectTlsBinding',
+    'FetchedDirectModelAttestations',
+    'VerifiedDirectModelAttestation',
+    'VerifiedDirectModelAttestations',
+    'VerifiedDirectCompletionResult',
+    'ModelMetadata',
+    'SystemOneQuestion',
+    'SystemOneRequest',
+    'SystemOneAnswer',
+    'SystemOneResponse',
+    'SystemOneResult',
+    'create_pinned_tls_client',
+    'create_ohttp_client',
+    'verify_ohttp_key_config',
+    'OhttpAttestation',
+    'prepare_e2ee_chat_request',
+    'E2eeModelKey',
+    'PreparedE2eeChatRequest',
+    'DeploymentPolicy',
+    'GatewayVerificationOptions',
+    'ModelVerificationOptions',
+    'VerifiedCompletionResult',
+    'VerifiedGatewayCompletionResult',
+    'VerifiedModelCompletionResult',
     'find_model_attestation_for_signature',
     'verify_model_attestation',
     'verify_gateway_attestation',

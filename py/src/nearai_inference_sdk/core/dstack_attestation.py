@@ -58,9 +58,13 @@ async def verify_dstack_quote(
         'attestation.signer.signing_address',
     )
 
-    verifier = verify_dcap_quote if tdx_quote_verifier is None else tdx_quote_verifier
+    verifier: TdxQuoteVerifier = (
+        verify_dcap_quote if tdx_quote_verifier is None else tdx_quote_verifier
+    )
     try:
-        quote = await maybe_await(verifier(attestation.intel_quote))
+        quote: TdxQuoteVerificationResult = await maybe_await(
+            verifier(attestation.intel_quote)
+        )
     except VerificationError:
         raise
     except Exception as error:

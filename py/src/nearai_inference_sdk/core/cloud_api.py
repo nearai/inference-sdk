@@ -9,6 +9,7 @@ from typing import NoReturn
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from pydantic import ValidationError
+from pydantic_core import ErrorDetails
 
 from ..schemas import (
     CloudCompletionSignatureSchema,
@@ -17,6 +18,10 @@ from ..schemas import (
     CloudModelAttestationResponseSchema,
     CloudModelAttestationSchema,
     CloudUnavailableSignatureSchema,
+    DirectCompletionSignatureSchema,
+    DirectModelAttestationSchema,
+    ModelMetadataResponseSchema,
+    OhttpAttestationSchema,
 )
 from ..types.attestation_common import SigningAlgo, SigningIdentity
 from ..types.attestation_gateway import GatewayAttestation
@@ -30,7 +35,9 @@ from ..types.cloud_api import (
     NO_ALIASING_HEADER,
     FetchedGatewayAttestation,
     FetchedModelAttestations,
+    ModelMetadata,
 )
+from ..types.ohttp import OhttpAttestation
 from ..types.verification import (
     GatewayClientBinding,
     ModelClientBinding,
@@ -42,7 +49,7 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
-from ..utils.fetch import fetch as default_fetch
+from ..utils.fetch import FetchResponse, fetch as default_fetch
 
 
 SIGNATURE_RESPONSE_FIELDS = {
@@ -62,22 +69,125 @@ class _CloudApiJsonResponse:
     peer_spki_fingerprint: str | None
 
 
-class AttestationClient:
-    """Asynchronous NEAR AI Cloud client for evidence and signature retrieval.
-
-    The client owns the Cloud API credentials and base URL. Its methods create
-    a fresh nonce for every attestation request; they do not send completion
-    requests or retain completion data.
-    """
+class _ApiClient:
+    """Shared HTTP configuration and signature retrieval for both endpoint types."""
 
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None = None,
         *,
         base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = _validate_base_url(base_url)
+        self._headers = {name.lower(): value for name, value in (headers or {}).items()}
+
+    async def fetch_completion_signature(
+        self,
+        completion_id: str,
+        *,
+        signing_algo: SigningAlgo | None = None,
+    ) -> CompletionSignature:
+        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
+
+        query: dict[str, str] = {}
+        if signing_algo is not None:
+            query['signing_algo'] = signing_algo
+        response = await self._get_json(
+            _endpoint(
+                self._base_url,
+                f'signature/{quote(completion_id, safe="")}',
+                query,
+            ),
+            'completion_signature',
+        )
+        return self._decode_signature(response.json)
+
+    async def _fetch(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        _capture_peer_spki: bool = False,
+    ) -> FetchResponse:
+        """Internal transport hook for a verified Gateway's pinned requests."""
+
+        return await default_fetch(
+            url, headers=headers, _capture_peer_spki=_capture_peer_spki
+        )
+
+    async def _get_json(
+        self,
+        url: str,
+        resource: str,
+        *,
+        capture_peer_spki: bool = False,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> _CloudApiJsonResponse:
+        headers = dict(self._headers)
+        if extra_headers is not None:
+            headers.update(extra_headers)
+        if self._api_key is not None:
+            headers['authorization'] = _authorization_header(self._api_key)
+        try:
+            response = await self._fetch(
+                url,
+                headers=headers,
+                _capture_peer_spki=capture_peer_spki,
+            )
+        except VerificationError:
+            # A pinned internal transport has already started TLS verification.
+            raise
+        except Exception as error:
+            raise api_failure(
+                'api.transport_failed',
+                {'resource': resource, 'reason': 'request'},
+                retryable=True,
+                cause=error,
+            ) from error
+        if not response.ok:
+            raise api_failure(
+                'api.http_status',
+                {'resource': resource, 'status': response.status},
+                retryable=_is_retryable_status(response.status, resource),
+            )
+        try:
+            json_body = json.loads(response.text())
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise api_failure(
+                'api.invalid_json', {'resource': resource}, cause=error
+            ) from error
+        return _CloudApiJsonResponse(
+            json=json_body,
+            peer_spki_fingerprint=response.peer_spki_fingerprint,
+        )
+
+    @staticmethod
+    def _decode_signature(value: object) -> CompletionSignature:
+        return _decode_completion_signature(value)
+
+
+class AttestationClient(_ApiClient):
+    """Fetch Gateway evidence, model reports, metadata, and signatures."""
+
+    async def fetch_model_metadata(self, model: str) -> ModelMetadata:
+        """Read catalog capabilities; metadata alone is not model verification."""
+
+        if model in {'.', '..'}:
+            raise _invalid_input('model', 'unsupported_value')
+        response = await self._get_json(
+            _endpoint(self._base_url, f'model/{quote(model, safe="")}', {}),
+            'model_metadata',
+        )
+        try:
+            raw = ModelMetadataResponseSchema.model_validate(response.json).metadata
+        except ValidationError as error:
+            _raise_invalid_wire_response(error, root='model metadata')
+        return ModelMetadata(
+            provider_type=raw.provider_type,
+            attestation_supported=raw.attestation_supported,
+        )
 
     async def fetch_model_attestations(
         self,
@@ -105,8 +215,7 @@ class AttestationClient:
             query['signing_algo'] = signing_algo
         if signing_address is not None:
             query['signing_address'] = signing_address
-        response = await _get_cloud_api_json(
-            self._api_key,
+        response = await self._get_json(
             _endpoint(self._base_url, 'attestation/report', query),
             'model_attestation',
             extra_headers={NO_ALIASING_HEADER: 'true'},
@@ -134,8 +243,7 @@ class AttestationClient:
         }
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
-        response = await _get_cloud_api_json(
-            self._api_key,
+        response = await self._get_json(
             _endpoint(
                 self._base_url,
                 'attestation/report',
@@ -165,28 +273,6 @@ class AttestationClient:
                 spki_fingerprint=response.peer_spki_fingerprint,
             ),
         )
-
-    async def fetch_completion_signature(
-        self,
-        completion_id: str,
-        *,
-        signing_algo: SigningAlgo | None = None,
-    ) -> CompletionSignature:
-        """Fetch one completion signature or raise an ``ApiError`` if unavailable."""
-
-        query: dict[str, str] = {}
-        if signing_algo is not None:
-            query['signing_algo'] = signing_algo
-        response = await _get_cloud_api_json(
-            self._api_key,
-            _endpoint(
-                self._base_url,
-                f'signature/{quote(completion_id, safe="")}',
-                query,
-            ),
-            'completion_signature',
-        )
-        return _decode_completion_signature(response.json)
 
 
 def find_model_attestation_for_signature(
@@ -229,48 +315,6 @@ def find_model_attestation_for_signature(
     return matches[0]
 
 
-async def _get_cloud_api_json(
-    api_key: str,
-    url: str,
-    resource: str,
-    *,
-    capture_peer_spki: bool = False,
-    extra_headers: Mapping[str, str] | None = None,
-) -> _CloudApiJsonResponse:
-    headers = {'authorization': _authorization_header(api_key)}
-    if extra_headers is not None:
-        headers.update(extra_headers)
-    try:
-        response = await default_fetch(
-            url,
-            headers=headers,
-            _capture_peer_spki=capture_peer_spki,
-        )
-    except Exception as error:
-        raise api_failure(
-            'api.transport_failed',
-            {'resource': resource, 'reason': 'request'},
-            retryable=True,
-            cause=error,
-        ) from error
-    if not response.ok:
-        raise api_failure(
-            'api.http_status',
-            {'resource': resource, 'status': response.status},
-            retryable=_is_retryable_status(response.status, resource),
-        )
-    try:
-        json_body = json.loads(response.text())
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise api_failure(
-            'api.invalid_json', {'resource': resource}, cause=error
-        ) from error
-    return _CloudApiJsonResponse(
-        json=json_body,
-        peer_spki_fingerprint=response.peer_spki_fingerprint,
-    )
-
-
 def _authorization_header(api_key: str) -> str:
     value = f'Bearer {api_key}'
     if any(byte != 0x09 and (byte < 0x20 or byte == 0x7F) for byte in value.encode()):
@@ -306,12 +350,22 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
             root='gateway attestation report',
             nested_record_field='gateway_attestation',
         )
-    return _map_gateway_attestation(report.gateway_attestation, 'gateway_attestation')
+    return _map_gateway_attestation(
+        report.gateway_attestation,
+        'gateway_attestation',
+        ohttp_attestation=(
+            _map_ohttp_attestation(report.ohttp_attestation)
+            if report.ohttp_attestation is not None
+            else None
+        ),
+    )
 
 
 def _map_model_attestation(
-    raw: CloudModelAttestationSchema, label: str
+    raw: CloudModelAttestationSchema | DirectModelAttestationSchema, label: str
 ) -> ModelAttestation:
+    if raw.signing_public_key is not None:
+        _api_hex_to_bytes(raw.signing_public_key, f'{label}.signing_public_key')
     return ModelAttestation(
         nonce=_validate_api_nonce(raw.request_nonce, f'{label}.request_nonce'),
         signer=_api_signer(raw.signing_algo, raw.signing_address, label),
@@ -320,11 +374,15 @@ def _map_model_attestation(
         app_compose=raw.info.tcb_info.app_compose,
         reported_quote_data=raw.report_data,
         nvidia_payload=raw.nvidia_payload,
+        signing_public_key=raw.signing_public_key,
     )
 
 
 def _map_gateway_attestation(
-    raw: CloudGatewayAttestationSchema, label: str
+    raw: CloudGatewayAttestationSchema,
+    label: str,
+    *,
+    ohttp_attestation: OhttpAttestation | None = None,
 ) -> GatewayAttestation:
     return GatewayAttestation(
         nonce=_validate_api_nonce(raw.request_nonce, f'{label}.request_nonce'),
@@ -334,10 +392,35 @@ def _map_gateway_attestation(
         app_compose=raw.info.tcb_info.app_compose,
         spki_fingerprint=raw.tls_cert_fingerprint,
         reported_quote_data=raw.report_data,
+        ohttp_attestation=ohttp_attestation,
     )
 
 
-def _decode_completion_signature(value: object) -> CompletionSignature:
+def _map_ohttp_attestation(raw: OhttpAttestationSchema) -> OhttpAttestation:
+    for field, value, byte_length in (
+        ('signing_key', raw.signing_key, 32),
+        ('key_config', raw.key_config, None),
+        ('signature', raw.signature, 64),
+    ):
+        label = f'ohttp_attestation.{field}'
+        decoded = _api_hex_to_bytes(value, label)
+        if byte_length is not None and len(decoded) != byte_length:
+            raise _invalid_response(
+                label, f'{byte_length}-byte hexadecimal text', value
+            )
+    return OhttpAttestation(
+        signing_algo=raw.signing_algo,
+        signing_key=raw.signing_key,
+        key_config=raw.key_config,
+        signature=raw.signature,
+    )
+
+
+def _decode_completion_signature(
+    value: object,
+    schema: type[CloudCompletionSignatureSchema]
+    | type[DirectCompletionSignatureSchema] = CloudCompletionSignatureSchema,
+) -> CompletionSignature:
     if isinstance(value, dict) and not (SIGNATURE_RESPONSE_FIELDS & set(value)):
         try:
             unavailable = CloudUnavailableSignatureSchema.model_validate(value)
@@ -351,7 +434,7 @@ def _decode_completion_signature(value: object) -> CompletionSignature:
             },
         )
     try:
-        raw = CloudCompletionSignatureSchema.model_validate(value)
+        raw = schema.model_validate(value)
     except ValidationError as error:
         _raise_invalid_wire_response(error, root='signature')
     return CompletionSignature(
@@ -374,11 +457,11 @@ def _raise_invalid_wire_response(
 
 
 def _wire_error_path(
-    root: str, issue: dict[str, object], nested_record_field: str | None
+    root: str, issue: ErrorDetails, nested_record_field: str | None
 ) -> str:
     location = issue['loc']
-    if not isinstance(location, tuple):
-        return root
+    if location[:1] == ('ohttp_attestation',):
+        return _format_api_path(location)
     if (
         nested_record_field is not None
         and location[:1] == (nested_record_field,)

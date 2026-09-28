@@ -17,6 +17,12 @@ NO_ALIASING_HEADER = 'x-no-aliasing'
 
 
 @dataclass(frozen=True, kw_only=True)
+class ModelMetadata:
+    provider_type: str
+    attestation_supported: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class FetchedGatewayAttestation:
     attestation: GatewayAttestation
     client_binding: GatewayClientBinding
@@ -33,4 +39,5 @@ __all__ = [
     'NO_ALIASING_HEADER',
     'FetchedGatewayAttestation',
     'FetchedModelAttestations',
+    'ModelMetadata',
 ]

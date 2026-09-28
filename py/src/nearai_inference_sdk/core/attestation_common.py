@@ -84,7 +84,6 @@ def verify_report_data_binding_with_tls_fingerprint(
     nonce: str,
     signer: SigningIdentity,
     reported_spki_fingerprint: str,
-    peer_spki_fingerprint: str,
 ) -> str:
     """Verify the signer-and-TLS report-data layout and return its fingerprint."""
 
@@ -99,6 +98,15 @@ def verify_report_data_binding_with_tls_fingerprint(
             {'source': 'signerTlsBinding'},
         )
 
+    return reported.hex()
+
+
+def verify_peer_spki_fingerprint(
+    reported_spki_fingerprint: str, peer_spki_fingerprint: str
+) -> None:
+    reported = require_byte_length(
+        reported_spki_fingerprint, 32, 'attestation.spki_fingerprint'
+    )
     peer = require_byte_length(
         peer_spki_fingerprint,
         32,
@@ -106,7 +114,6 @@ def verify_report_data_binding_with_tls_fingerprint(
     )
     if reported != peer:
         raise verification_failure('binding.spki_fingerprint_mismatch')
-    return reported.hex()
 
 
 def verify_app_compose_mrconfig_binding(app_compose: str, mr_config_id: bytes) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -125,16 +125,18 @@ class CloudAttestationSchema(ApiSchema):
     signing_address: StrictStr
     intel_quote: StrictStr
     event_log: StrictStr | list[Any]
-    info: CloudInfoSchema
     tls_cert_fingerprint: StrictStr | None = None
-    report_data: StrictStr | None = None
 
 
 class CloudModelAttestationSchema(CloudAttestationSchema):
+    info: CloudInfoSchema
+    report_data: StrictStr | None = None
     nvidia_payload: StrictStr | None = None
+    signing_public_key: StrictStr | None = None
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
+    info: CloudInfoSchema
     report_data: StrictStr
 
 
@@ -143,16 +145,58 @@ class CloudModelAttestationResponseSchema(ApiSchema):
     model_attestations: list[CloudModelAttestationSchema] = Field(default_factory=list)
 
 
+class ModelMetadataSchema(ApiSchema):
+    provider_type: StrictStr = Field(validation_alias='providerType')
+    attestation_supported: StrictBool = Field(validation_alias='attestationSupported')
+
+
+class ModelMetadataResponseSchema(ApiSchema):
+    metadata: ModelMetadataSchema
+
+
+class OhttpAttestationSchema(ApiSchema):
+    signing_algo: Literal['ed25519']
+    signing_key: StrictStr
+    key_config: StrictStr
+    signature: StrictStr
+
+
 class CloudGatewayAttestationResponseSchema(ApiSchema):
     gateway_attestation: CloudGatewayAttestationSchema
+    ohttp_attestation: OhttpAttestationSchema | None = None
 
 
-class CloudCompletionSignatureSchema(ApiSchema):
+class CompletionSignatureFieldsSchema(ApiSchema):
     text: StrictStr
     signature: StrictStr
     signing_address: StrictStr
     signing_algo: Literal['ecdsa', 'ed25519']
+
+
+class CloudCompletionSignatureSchema(CompletionSignatureFieldsSchema):
     signature_kind: Literal['provider_tee', 'gateway']
+
+
+class DirectInfoSchema(CloudInfoSchema):
+    instance_id: StrictStr | None = None
+
+
+class DirectModelAttestationSchema(CloudAttestationSchema):
+    model_name: StrictStr = Field(min_length=1)
+    info: DirectInfoSchema
+    report_data: StrictStr | None = None
+    nvidia_payload: StrictStr | None = None
+    signing_public_key: StrictStr | None = None
+
+
+class DirectAttestationReportSchema(DirectModelAttestationSchema):
+    all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
+    ohttp_attestation: OhttpAttestationSchema | None = None
+
+
+class DirectCompletionSignatureSchema(CompletionSignatureFieldsSchema):
+    # The direct endpoint itself establishes the signature's trust boundary.
+    signature_kind: Literal['provider_tee'] = 'provider_tee'
 
 
 class CloudUnavailableSignatureSchema(ApiSchema):
@@ -164,6 +208,111 @@ class CompletionRequestModelSchema(ApiSchema):
     """The model identifier embedded in signed completion request bytes."""
 
     model: StrictStr = Field(min_length=1)
+
+
+class ChatCompletionRequestSchema(CompletionRequestModelSchema):
+    """Only identify the model; leave Chat field validation to the server."""
+
+    model_config = ConfigDict(extra='allow', strict=True)
+
+
+class ChatCompletionResponseSchema(RootModel[dict[str, Any]]):
+    model_config = ConfigDict(strict=True)
+
+
+class CompletionResponseIdSchema(ApiSchema):
+    id: StrictStr = Field(min_length=1)
+
+
+SystemOneContent = str | dict[str, Any] | list[Any]
+SystemOneProbability = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
+class SystemOneNoulCriteriaSchema(ApiSchema):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    true: SystemOneContent | None = None
+    false: SystemOneContent | None = None
+
+
+class SystemOneNoulQuestionSchema(ApiSchema):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    type: Literal['noul']
+    instructions: SystemOneContent | None = None
+    criteria: SystemOneNoulCriteriaSchema | None = None
+
+
+class SystemOneChoiceQuestionSchema(ApiSchema):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    type: Literal['choice']
+    instructions: SystemOneContent | None = None
+    criteria: dict[str, SystemOneContent | None] = Field(min_length=1, max_length=255)
+
+
+class SystemOneScoreQuestionSchema(ApiSchema):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    type: Literal['score']
+    instructions: SystemOneContent | None = None
+    criteria: list[SystemOneContent] = Field(min_length=1, max_length=10)
+
+
+class SystemOneRequestSchema(ApiSchema):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    model: StrictStr = Field(pattern=r'\S')
+    state: SystemOneContent
+    questions: dict[
+        str,
+        Annotated[
+            SystemOneNoulQuestionSchema
+            | SystemOneChoiceQuestionSchema
+            | SystemOneScoreQuestionSchema,
+            Field(discriminator='type'),
+        ],
+    ] = Field(min_length=1)
+
+
+class SystemOneNoulAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['noul']
+    noul: SystemOneProbability
+
+
+class SystemOneChoiceAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['choice']
+    choice: StrictStr
+    confidence: SystemOneProbability
+    probabilities: dict[str, SystemOneProbability]
+
+
+class SystemOneScoreAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['score']
+    score: float = Field(allow_inf_nan=False)
+    confidence: SystemOneProbability
+    probabilities: dict[str, SystemOneProbability]
+    legend: dict[str, SystemOneContent]
+
+
+class SystemOneUsageSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    input_tokens: StrictInt = Field(ge=0, le=2147483647)
+    output_tokens: StrictInt = Field(ge=0, le=2147483647)
+
+
+class SystemOneResponseSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    id: StrictStr | None = None
+    model: StrictStr = Field(min_length=1)
+    answers: dict[
+        str,
+        Annotated[
+            SystemOneNoulAnswerSchema
+            | SystemOneChoiceAnswerSchema
+            | SystemOneScoreAnswerSchema,
+            Field(discriminator='type'),
+        ],
+    ]
+    usage: SystemOneUsageSchema
 
 
 class NvidiaPayloadNonceSchema(ApiSchema):
