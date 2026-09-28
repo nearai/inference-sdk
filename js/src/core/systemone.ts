@@ -100,10 +100,10 @@ export async function createSystemOne({
       retryable: false,
     });
   }
-  const signatureId = response.headers.get('x-signature-id');
-  if (signatureId === null || !/^[A-Za-z0-9_-]{1,255}$/.test(signatureId)) {
+  const completionId = response.headers.get('x-generation-id');
+  if (completionId === null || !/^[A-Za-z0-9_-]{1,255}$/.test(completionId)) {
     await response.body?.cancel();
-    throw invalidResponse('System One X-Signature-Id');
+    throw invalidResponse('System One X-Generation-Id');
   }
   let responseBody: Uint8Array;
   try {
@@ -130,12 +130,12 @@ export async function createSystemOne({
     throw invalidResponse('System One response');
   }
   registerResponse({
-    completionId: signatureId,
+    completionId,
     requestBody,
     responseBody: Promise.resolve(responseBody),
     session,
   });
-  return { data, signatureId };
+  return { data, completionId };
 }
 
 function invalidInput(expected: string): ApiError {

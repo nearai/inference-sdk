@@ -171,7 +171,7 @@ function createEcdsaGateway({
         answers: { billing: { type: 'noul', noul: 0.9 } },
         usage: { input_tokens: 10, output_tokens: 2 },
       });
-      response.headers.set('x-signature-id', 'decision-ecdsa');
+      response.headers.set('x-generation-id', 'decision-ecdsa');
       const responseBody = new Uint8Array(await response.clone().arrayBuffer());
       const text = `${signatureKind === 'provider_tee' ? `${model}:` : ''}${sha256(requestBody)}:${sha256(responseBody)}`;
       const signer = signatureKind === 'provider_tee' ? modelKey : gatewayKey;
@@ -358,7 +358,7 @@ describe('ECDSA inference client', () => {
         questions: { billing: { type: 'noul' } },
       });
       await expect(
-        client.verifyResponse(result.signatureId),
+        client.verifyResponse(result.completionId),
       ).resolves.toMatchObject({ signatureKind });
       expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
       expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);

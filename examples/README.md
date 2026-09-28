@@ -143,7 +143,7 @@ using these examples outside this repository.
 ## Jev / System One (TypeScript / Node.js)
 
 [`gateway/jev.ts`](example-js/gateway/jev.ts) sends one non-streaming decision
-request, retrieves the receipt using `X-Signature-Id`, and verifies the exact
+request, retrieves the receipt using `X-Generation-Id`, and verifies the exact
 request/response bytes before printing answers. It includes `noul`, `choice`, and
 `score` questions. Node.js 24+ is required.
 
@@ -187,8 +187,8 @@ install a caller-specific measurement or image-provenance allowlist.
 System One requires `e2ee: false` and `ohttp: false`; encryption and model-key
 routing headers are removed. It sends plaintext request fields over pinned
 HTTPS. Streaming is unsupported. Aliases are rejected with `x-no-aliasing`:
-use the canonical catalog ID. Missing `X-Signature-Id`, malformed output, failed
+use the canonical catalog ID. Missing `X-Generation-Id`, malformed output, failed
 attestation, an invalid signature, or the wrong expected receipt kind fails the
 check. A missing receipt can also mean the server failed to persist it; retry
-`client.verifyResponse(result.signatureId)` in your application without
+`client.verifyResponse(result.completionId)` in your application without
 submitting inference again.

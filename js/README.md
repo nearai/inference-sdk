@@ -85,7 +85,7 @@ requires Node.js 24 or later for Node usage.
 ### Jev decisions
 
 Use `client.systemone.create({ model, state, questions })` with `e2ee: false`
-and `ohttp: false`, then call `client.verifyResponse(result.signatureId)` before
-using `result.data.answers`. System One uses `X-Signature-Id` receipt lookup and does
+and `ohttp: false`, then call `client.verifyResponse(result.completionId)` before
+using `result.data.answers`. System One uses `X-Generation-Id` receipt lookup and does
 not use Chat Completions. See the [runnable Node example](../examples/README.md#jev--system-one-typescript--nodejs)
 and [API reference](docs/api-reference.md#system-one-decisions-inferenceclientsystemone).

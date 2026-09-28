@@ -54,16 +54,16 @@ const result = await client.systemone.create(
   { signal: AbortSignal.timeout(60_000) },
 );
 
-// Lookup uses X-Signature-Id, not the optional upstream JSON id. Verification
-// hashes the exact bytes sent/received. Do not act on answers until this passes.
-const verified = await client.verifyResponse(result.signatureId);
+// completionId comes from X-Generation-Id, including when the body has no id.
+// Verification hashes the exact bytes sent/received. Wait before acting on answers.
+const verified = await client.verifyResponse(result.completionId);
 if (verified.signatureKind !== expectedKind) {
   throw new Error(
     `Expected ${expectedKind}, received ${verified.signatureKind}.`,
   );
 }
 console.log(
-  `Verified ${verified.signatureKind} receipt ${result.signatureId} (${signingAlgo}).`,
+  `Verified ${verified.signatureKind} receipt ${result.completionId} (${signingAlgo}).`,
 );
 console.log(
   verified.signatureKind === 'gateway'

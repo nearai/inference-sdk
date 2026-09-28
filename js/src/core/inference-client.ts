@@ -314,8 +314,8 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(id: string): Promise<VerificationResult> {
-    const record = this.completions.get(id);
+  verifyResponse(completionId: string): Promise<VerificationResult> {
+    const record = this.completions.get(completionId);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
@@ -589,7 +589,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
-  /** Send a decision request; pass result.signatureId to verifyResponse(). */
+  /** Send a decision request; pass result.completionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
     create: (request, options) =>
       createSystemOne({
