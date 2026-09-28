@@ -106,7 +106,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, checks model metadata and verifies the required evidence on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
-| `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat ID or System One `signatureId`. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat ID or System One `signatureId`. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionResult.completionId` | `string` | Chat completion ID or System One receipt ID whose signature was verified. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the selected Chat signer or a System One fleet signer. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
@@ -158,7 +158,7 @@ There is no `gatewayVerification` option.
 | `getBaseUrl()` | `string` | Resolved direct API base URL. |
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
-| `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
+| `verifyResponse(id)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
 
 | `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -653,7 +653,7 @@ OpenAI-compatible `fetch`/`chat` surface remain Chat-only.
 | Method | Parameters | Returns |
 | --- | --- | --- |
 | `client.systemone.create(request, options?)` | `SystemOneRequest`, optional `SystemOneRequestOptions` | `Promise<SystemOneResult>` |
-| `client.verifyResponse(signatureId)` | `result.signatureId` from `X-Signature-Id` | `Promise<VerifiedCompletionResult>` |
+| `client.verifyResponse(id)` | `result.signatureId` from `X-Signature-Id` | `Promise<VerifiedCompletionResult>` |
 
 | `SystemOneRequest` field | Type | Description |
 | --- | --- | --- |

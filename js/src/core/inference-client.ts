@@ -314,8 +314,8 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(completionId: string): Promise<VerificationResult> {
-    const record = this.completions.get(completionId);
+  verifyResponse(id: string): Promise<VerificationResult> {
+    const record = this.completions.get(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
