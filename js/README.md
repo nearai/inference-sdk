@@ -68,6 +68,13 @@ and pins subsequent requests to that identity.
    Any output displayed before that call succeeds is not yet signature-verified.
    See the [streaming example](./docs/verification-guide.md#stream-an-e2ee-completion).
 
+To verify when a user selects a model, before they send a message, call
+`await client.verify(model)`. It sends no Chat request and uses the same
+configured checks, cache, and in-flight verification as Chat. It resolves
+without a return value, or rejects if verification fails. This optional
+preflight verifies the deployment; you still call `verifyResponse()` to verify
+a particular reply. See [deployment preverification and caching](./docs/verification-guide.md#cache-deployment-verification).
+
 ## Verification and encryption
 
 These defaults apply to the Gateway `InferenceClient`:
@@ -99,8 +106,10 @@ image provenance policies to check its images against required GitHub builds.
 See [deployment policies](./docs/verification-guide.md#cache-deployment-verification)
 and [image build provenance](./docs/verification-guide.md#optional-image-build-provenance).
 
-Verification results are cached for 60 minutes by default. Set
-`attestationCacheTimeToLiveMs: 0` to check before every request. Response records
+Verification results are cached for 60 minutes after successful verification
+by default. `verify(model)` and Chat share this cache; Chat reuses a preflight
+result while it remains cached. Set `attestationCacheTimeToLiveMs: 0` to check
+before every request, even after a successful `verify(model)`. Response records
 are retained separately for 60 minutes; call `verifyResponse()` before they
 expire. See the [API reference](./docs/api-reference.md) for cache settings and
 signing algorithm options.
