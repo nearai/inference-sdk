@@ -1613,6 +1613,22 @@ describe('inference client', () => {
     });
   });
 
+  test('rejects an empty model before preverification makes any network requests', async () => {
+    const gateway = createTestGateway();
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(gateway.fetch);
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+
+    await expect(client.verify('')).rejects.toMatchObject({
+      failure: {
+        code: 'api.invalid_input',
+        details: { field: 'model', reason: 'missing_model' },
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   test('requires a model before it fetches attestation evidence', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);

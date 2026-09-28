@@ -251,6 +251,13 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
    * TTL of zero, a later Chat request verifies again.
    */
   async verify(model: string): Promise<void> {
+    if (model === '') {
+      throw invalidInput({
+        field: 'model',
+        reason: 'missing_model',
+        expected: 'a non-empty model ID',
+      });
+    }
     await this.startVerification(model);
   }
 
