@@ -62,9 +62,10 @@ by default. OHTTP and field-level E2EE are independent. Gateway OHTTP also works
 with Incognito models, protecting the exchange to the Gateway.
 
 Attestation results and model verification decisions are cached for
-60 minutes. Set `attestationCacheTimeToLiveMs: 0` to check every request. Response
-records have a separate 60-minute retention period, configured through
-`responseCacheTimeToLiveMs`.
+60 minutes. Call `client.verify(model)` to verify ahead of the first Chat request
+and populate this cache. Set `attestationCacheTimeToLiveMs: 0` to check every
+request. Response records have a separate 60-minute retention period, configured
+through `responseCacheTimeToLiveMs`.
 
 Import from `@nearai/inference-sdk/node` for Node.js with Gateway TLS verification
 and subsequent request pinning. Direct TLS fingerprint binding is currently
