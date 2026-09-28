@@ -3,15 +3,15 @@
 `@nearai/inference-sdk` provides OpenAI-compatible Chat Completions with
 Gateway and model attestation verification, response signature verification,
 and optional encryption. Use `InferenceClient` to get started in Node.js or
-[connect a browser application through a proxy](#browser-applications).
+[browser applications](#browser-applications).
 
 ## Install
 
 Requires Node.js 24 or later for Node usage. The package publishes ESM.
-Install the release candidate from npm's `next` tag:
+Install with npm:
 
 ```sh
-npm install @nearai/inference-sdk@next
+npm install @nearai/inference-sdk
 ```
 
 ## Send and verify a Chat completion
@@ -116,11 +116,7 @@ signing algorithm options.
 
 ## Browser applications
 
-Import from `@nearai/inference-sdk` in browsers. Use an application proxy to
-keep your NEAR AI API key on your server while the browser verifies evidence
-and encrypts supported Chat fields. Follow the
-[application-proxy guide](./docs/verification-guide.md#connect-through-an-application-proxy)
-for client and proxy configuration.
+Import from `@nearai/inference-sdk` in browsers.
 
 Browser Fetch does not expose the TLS peer certificate, so the browser client
 cannot perform the attested TLS identity check provided by the Node entry point.
