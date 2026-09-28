@@ -591,7 +591,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
 
   /** Send a decision request; pass result.completionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
-    create: (request, options) =>
+    create: async (request, options) =>
       createSystemOne({
         request,
         options,

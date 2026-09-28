@@ -1,5 +1,8 @@
 import * as v from 'valibot';
-import { SystemOneResponseSchema } from '../schemas';
+import {
+  CompletionResponseIdSchema,
+  SystemOneResponseSchema,
+} from '../schemas';
 import type { VerifiedCompletionResult } from '../types/inference-client';
 import type {
   SystemOneRequest,
@@ -100,11 +103,14 @@ export async function createSystemOne({
       retryable: false,
     });
   }
-  const completionId = response.headers.get('x-generation-id');
-  if (completionId === null || !/^[A-Za-z0-9_-]{1,255}$/.test(completionId)) {
+  const parsedId = v.safeParse(CompletionResponseIdSchema, {
+    id: response.headers.get('x-generation-id'),
+  });
+  if (!parsedId.success) {
     await response.body?.cancel();
     throw invalidResponse('System One X-Generation-Id');
   }
+  const completionId = parsedId.output.id;
   let responseBody: Uint8Array;
   try {
     responseBody = new Uint8Array(await response.arrayBuffer());

@@ -3099,6 +3099,7 @@ describe('System One decisions', () => {
     secondSigner?: boolean;
     tamper?: boolean;
     missingId?: boolean;
+    completionId?: string;
     malformed?: boolean;
     status?: number;
     failSignatureOnce?: boolean;
@@ -3115,6 +3116,7 @@ describe('System One decisions', () => {
     secondSigner = false,
     tamper = false,
     missingId = false,
+    completionId = 'decision-receipt',
     malformed = false,
     status = 200,
     failSignatureOnce = false,
@@ -3169,12 +3171,14 @@ describe('System One decisions', () => {
             status,
             headers: {
               'content-type': 'application/json',
-              ...(missingId ? {} : { 'x-generation-id': 'decision-receipt' }),
+              ...(missingId ? {} : { 'x-generation-id': completionId }),
             },
           },
         );
       }
-      if (url.pathname === '/v1/signature/decision-receipt') {
+      if (
+        url.pathname === `/v1/signature/${encodeURIComponent(completionId)}`
+      ) {
         gateway.expectRequestHeader(request);
         expect(url.searchParams.get('signing_algo')).toBe(requestedSigningAlgo);
         signaturePaths.push(url.pathname);
@@ -3350,7 +3354,12 @@ describe('System One decisions', () => {
     expect(fixture.signaturePaths).toHaveLength(1);
   });
 
-  test.each([{ missingId: true }, { malformed: true }, { status: 429 }])(
+  test.each([
+    { missingId: true },
+    { completionId: '' },
+    { malformed: true },
+    { status: 429 },
+  ])(
     'rejects invalid/failed responses without replay: %j',
     async (scenario) => {
       const fixture = decisionGateway(scenario);
@@ -3416,20 +3425,42 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(0);
   });
 
-  test('hosted responses need no JSON id', async () => {
-    const fixture = decisionGateway({ omitBodyId: true });
+  test('uses an opaque generation ID when the JSON body has no ID', async () => {
+    const completionId = 'gen:decision.123/result?part=1';
+    const fixture = decisionGateway({ omitBodyId: true, completionId });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
       e2ee: false,
     });
     const result = await client.systemone.create(decisionRequest);
+    expect(result.completionId).toBe(completionId);
     expect(result.data.id).toBeUndefined();
     await expect(
       client.verifyResponse(result.completionId),
     ).resolves.toMatchObject({
       signatureKind: 'gateway',
     });
+    expect(fixture.signaturePaths).toEqual([
+      `/v1/signature/${encodeURIComponent(completionId)}`,
+    ]);
+  });
+
+  test('rejects invalid request headers through the returned promise', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    const client = new InferenceClient({ baseUrl, apiKey: 'test-key' });
+
+    const operation = client.systemone.create(decisionRequest, {
+      headers: { 'x-client': 'invalid\nvalue' },
+    });
+
+    await expect(operation).rejects.toMatchObject({
+      failure: {
+        code: 'api.invalid_input',
+        details: { field: 'headers', reason: 'invalid_header_value' },
+      },
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('rejects a provider receipt whose signer has no verified attestation', async () => {
