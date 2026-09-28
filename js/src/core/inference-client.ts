@@ -245,6 +245,22 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
     return this.baseUrl;
   }
 
+  /**
+   * Verify the deployment for a model without sending a Chat request.
+   * Reuses the same cache and in-flight verification as Chat. With a cache
+   * TTL of zero, a later Chat request verifies again.
+   */
+  async verify(model: string): Promise<void> {
+    if (model === '') {
+      throw invalidInput({
+        field: 'model',
+        reason: 'missing_model',
+        expected: 'a non-empty model ID',
+      });
+    }
+    await this.startVerification(model);
+  }
+
   /** Bind the advertised OHTTP key to the endpoint identity already verified. */
   protected getOhttpKeyConfig(
     ohttpAttestation: OhttpAttestation | undefined,

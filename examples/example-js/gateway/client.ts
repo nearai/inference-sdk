@@ -55,6 +55,9 @@ async function main(): Promise<void> {
 
   // Gateway/model attestations and all four Gateway image checks must pass
   // before Chat is sent. These policies do not verify model runtime images.
+  // Optional: verify ahead of the first message, for example on model selection.
+  await inferenceClient.verify(MODEL);
+
   await runNonStreamingExample(inferenceClient);
   await runStreamingExample(inferenceClient);
 }
