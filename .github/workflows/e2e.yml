@@ -1,0 +1,100 @@
+name: Live E2E
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 10:17 Asia/Shanghai, away from the busiest hourly schedule boundary.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-e2e-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  configuration:
+    if: github.repository == 'nearai/inference-sdk' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require live test secrets
+        env:
+          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+        run: |
+          : "${NEARAI_E2E_BASE_URL:?Set the NEARAI_E2E_BASE_URL repository secret}"
+          : "${NEARAI_E2E_API_KEY:?Set the NEARAI_E2E_API_KEY repository secret}"
+
+  javascript:
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck:e2e
+      - name: Run live Gateway tests
+        env:
+          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
+        run: pnpm test:e2e
+
+  python:
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: py
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - name: Run live Gateway tests
+        env:
+          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
+        run: uv run --no-sync pytest e2e -v --tb=short
+
+  rust:
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: rs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile live tests without credentials
+        id: build
+        run: |
+          cargo test --locked --test e2e --no-run --message-format=json > "$RUNNER_TEMP/e2e-rust-build.json"
+          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' "$RUNNER_TEMP/e2e-rust-build.json")
+          test -n "$binary"
+          printf 'binary=%s\n' "$binary" >> "$GITHUB_OUTPUT"
+      - name: Run live Gateway tests
+        env:
+          E2E_TEST_BINARY: ${{ steps.build.outputs.binary }}
+          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
+        run: '"$E2E_TEST_BINARY" --ignored --nocapture --test-threads=1'
