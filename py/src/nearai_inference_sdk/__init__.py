@@ -67,6 +67,13 @@ from .types.inference_client import (
 )
 from .types.ohttp import OhttpAttestation
 from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
+from .types.systemone import (
+    SystemOneAnswer,
+    SystemOneQuestion,
+    SystemOneRequest,
+    SystemOneResponse,
+    SystemOneResult,
+)
 from .types.verification import (
     AttestationPolicy,
     AttestationVerifiers,
@@ -112,6 +119,11 @@ __all__ = [
     'VerifiedDirectModelAttestations',
     'VerifiedDirectCompletionResult',
     'ModelMetadata',
+    'SystemOneQuestion',
+    'SystemOneRequest',
+    'SystemOneAnswer',
+    'SystemOneResponse',
+    'SystemOneResult',
     'create_pinned_tls_client',
     'create_ohttp_client',
     'verify_ohttp_key_config',

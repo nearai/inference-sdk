@@ -20,6 +20,7 @@ from .chat import _parse_signature_hex, verify_model_response
 from .direct_api import DirectAttestationClient
 from .inference_client import (
     DEFAULT_CACHE_TIME_TO_LIVE_MS,
+    _InferenceEndpoint,
     _VerifiedInferenceClient,
     _VerifiedSession,
 )
@@ -85,7 +86,7 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
         )
 
     async def _create_session(
-        self, model: str
+        self, model: str, *, endpoint: _InferenceEndpoint
     ) -> _VerifiedSession[VerifiedDirectCompletionResult]:
         fetched = await self._attestation_client.fetch_model_attestations(
             signing_algo=self._signing_algo

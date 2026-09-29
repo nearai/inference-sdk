@@ -77,7 +77,7 @@ Ed25519 and Gateway TLS verification are enabled by default. Set `e2ee=True`
 to encrypt protocol-supported fields to a verified model key. ECDSA is
 available through `signing_algo='ecdsa'`. E2EE or a model deployment policy
 requires model attestation and rejects Incognito models. Successful attestations are cached for
-60 minutes per model; set `attestation_cache_time_to_live_ms=0` to
+60 minutes per model and endpoint; set `attestation_cache_time_to_live_ms=0` to
 verify every request. Call `await inference_client.verify(model)` to warm Chat's
 verification cache before the first request. Gateway and model verification run
 concurrently, and all required checks must pass before Chat is sent.
@@ -116,7 +116,7 @@ verifies the signer-and-nonce quote layout, and returns
 `GatewayClientBinding.spki_fingerprint` is client-observed, and a successful
 `GatewayTlsBinding.spki_fingerprint` is their verified match.
 
-## Direct endpoints
+## Direct endpoints and System One
 
 `DirectInferenceClient` and `DirectAttestationClient` connect to a model's own
 endpoint. They are experimental. Every supplied
@@ -124,6 +124,15 @@ model report is verified; response verification returns the matching signer
 group. Direct Chat enables E2EE by default and supports optional OHTTP. Direct
 TLS fingerprint requests are temporarily disabled because the endpoint does not
 yet provide complete fleet coverage; normal HTTPS verification remains enabled.
+
+`InferenceClient.systemone.create()` sends typed `noul`, `choice`, and `score`
+decision requests after Gateway and applicable model verification. Its result
+provides `data` and `decision_id` from the `X-Generation-Id` header, including for
+hosted responses without a JSON ID. Call `client.verify_response(result.decision_id)`
+to verify the captured bytes. Chat and System One share caching, response retention,
+and verification retries, with separate attestation sessions for each endpoint.
+System One does not support streaming, E2EE, or OHTTP and never automatically
+repeats inference. Receipt lookups can be retried without sending another decision.
 
 ## Documentation
 
