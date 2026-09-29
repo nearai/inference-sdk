@@ -1,0 +1,8 @@
+# Shared by the Rust SDK and example. Audit every target and feature in their
+# committed lockfiles; the workflow controls whether findings block merges.
+[graph]
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+ignore = []
