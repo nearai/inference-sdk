@@ -5,7 +5,6 @@ import {
   CompletionResponseIdSchema,
 } from '../schemas';
 import type {
-  GatewayTlsBinding,
   ModelAttestationVerifiers,
   VerifiedModelAttestation,
 } from '../types/verification';
@@ -163,7 +162,7 @@ type CreateOpenAiClientParams = {
   readonly requestConfiguration: CloudApiRequestConfiguration;
 };
 
-/** Internal request operations bound to one verified Gateway session. */
+/** Internal Gateway operations used to fetch evidence and, after verification, send inference. */
 export type GatewaySessionTransport = {
   readonly fetch: typeof globalThis.fetch;
   readonly fetchModelMetadata: (model: string) => Promise<ModelMetadata>;
@@ -173,11 +172,6 @@ export type GatewaySessionTransport = {
   readonly fetchCompletionSignature: (
     params: FetchCompletionSignatureParams,
   ) => Promise<CompletionSignature>;
-};
-
-/** Parameters used to create an internal Gateway session transport. */
-export type CreateGatewaySessionTransportParams = {
-  readonly tlsBinding: GatewayTlsBinding;
 };
 
 /**
@@ -591,27 +585,32 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
   protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
 
   protected abstract createGatewaySessionTransport(
-    params: CreateGatewaySessionTransportParams,
+    peerSpkiFingerprint?: string,
   ): GatewaySessionTransport;
 
   protected override async createVerificationState(
     model: string,
   ): Promise<InferenceSession<VerifiedCompletionResult>> {
     const gateway = await this.fetchGatewayAttestation();
-    const gatewayAttestation = await verifyGatewayAttestation({
-      attestation: gateway.attestation,
-      clientBinding: gateway.clientBinding,
-      policy: this.gatewayOptions.gatewayVerification?.policy,
-      verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
-    });
+    // Pin evidence requests to the observed peer without treating it as trusted
+    // yet. Gateway verification must authenticate that same fingerprint before
+    // this session can be cached or used to send inference.
+    const transport = this.createGatewaySessionTransport(
+      gateway.clientBinding.spkiFingerprint,
+    );
+    const [gatewayAttestation, modelAttestation] = await Promise.all([
+      verifyGatewayAttestation({
+        attestation: gateway.attestation,
+        clientBinding: gateway.clientBinding,
+        policy: this.gatewayOptions.gatewayVerification?.policy,
+        verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+      }),
+      this.verifyModel(model, transport),
+    ]);
     const ohttpKeyConfig = this.getOhttpKeyConfig(
       gateway.attestation.ohttpAttestation,
       gatewayAttestation.signer,
     );
-    const transport = this.createGatewaySessionTransport({
-      tlsBinding: gatewayAttestation.tlsBinding,
-    });
-    const modelAttestation = await this.verifyModel(model, transport);
     const modelKey =
       modelAttestation?.signingPublicKey !== undefined
         ? {
@@ -736,9 +735,7 @@ export class InferenceClient extends InferenceClientBase {
     });
   }
 
-  protected override createGatewaySessionTransport(
-    _params: CreateGatewaySessionTransportParams,
-  ): GatewaySessionTransport {
+  protected override createGatewaySessionTransport(): GatewaySessionTransport {
     return {
       fetch: globalThis.fetch.bind(globalThis),
       fetchModelMetadata: (model) =>

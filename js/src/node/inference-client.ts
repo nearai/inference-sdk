@@ -1,14 +1,14 @@
 import { CloudApiClient } from '../core/cloud-api';
 import {
   InferenceClientBase,
-  type CreateGatewaySessionTransportParams,
   type GatewaySessionTransport,
 } from '../core/inference-client';
 import type { FetchedGatewayAttestation } from '../types/cloud-api';
 import type { NodeInferenceClientOptions } from '../types/inference-client';
+import { VerificationError } from '../utils/errors';
 import { AttestationClient, createPinnedTlsFetch } from './attestation-client';
 
-/** Catalog, model attestation, and signature requests bound to a verified Gateway. */
+/** Catalog, model attestation, and signature requests over the Gateway session transport. */
 class GatewaySessionEvidenceClient extends CloudApiClient {
   private readonly gatewayFetch: typeof globalThis.fetch;
 
@@ -46,13 +46,18 @@ export class NodeInferenceClient extends InferenceClientBase {
     });
   }
 
-  protected override createGatewaySessionTransport({
-    tlsBinding,
-  }: CreateGatewaySessionTransportParams): GatewaySessionTransport {
-    const gatewayFetch =
-      tlsBinding.kind === 'attested'
-        ? this.createPinnedTlsFetch(tlsBinding.spkiFingerprint)
-        : globalThis.fetch.bind(globalThis);
+  protected override createGatewaySessionTransport(
+    peerSpkiFingerprint?: string,
+  ): GatewaySessionTransport {
+    let gatewayFetch = globalThis.fetch.bind(globalThis);
+    if (this.includeSpkiFingerprint) {
+      if (peerSpkiFingerprint === undefined) {
+        throw new VerificationError({
+          code: 'binding.spki_fingerprint_required',
+        });
+      }
+      gatewayFetch = this.createPinnedTlsFetch(peerSpkiFingerprint);
+    }
     const client = new GatewaySessionEvidenceClient(
       this.nodeOptions,
       gatewayFetch,

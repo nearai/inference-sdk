@@ -67,7 +67,8 @@ export class AttestationClient extends CloudApiClient {
 
 /**
  * Create a Fetch-compatible HTTPS transport that requires each TLS peer to
- * present one of the SPKI fingerprints authenticated by verified attestations.
+ * present one of the supplied SPKI fingerprints. Pinning checks peer identity;
+ * it does not verify attestation or establish trust in that identity by itself.
  *
  * Standard certificate-chain and hostname verification still run first. The
  * transport creates a new native HTTPS request for each call, so it does not
