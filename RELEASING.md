@@ -6,9 +6,9 @@ start a release.
 
 | Language input | Registry package | Version source | Release tag |
 | --- | --- | --- | --- |
-| `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` | `npm-v<version>` |
-| `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` | `pypi-v<version>` |
-| `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` | `crates-v<version>` |
+| `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` | `javascript-v<version>` |
+| `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` | `python-v<version>` |
+| `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` | `rust-v<version>` |
 
 The input version must exactly match the selected manifest. The workflow does
 not bump versions or require the other SDKs to use the same version.
@@ -92,7 +92,7 @@ default stable install.
 
 Create a GitHub Actions environment named `release`, restrict deployments to
 the default branch, and optionally add required reviewers. Add a tag ruleset for
-`npm-v*`, `pypi-v*`, and `crates-v*` that restricts updates and deletions, without
+`javascript-v*`, `python-v*`, and `rust-v*` that restricts updates and deletions, without
 blocking creation by the release workflow. Draft-release tags are not immutable;
 these rules prevent changes between the workflow's tag check and publication.
 Configure trusted publishing for each registry you intend to use:

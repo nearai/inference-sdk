@@ -67,15 +67,12 @@ jobs:
           if language == "javascript":
               path = Path("js/package.json")
               expected = json.loads(path.read_text(encoding="utf-8"))["version"]
-              prefix = "npm"
           elif language == "python":
               path = Path("py/pyproject.toml")
               expected = tomllib.loads(path.read_text(encoding="utf-8"))["project"]["version"]
-              prefix = "pypi"
           elif language == "rust":
               path = Path("rs/Cargo.toml")
               expected = tomllib.loads(path.read_text(encoding="utf-8"))["package"]["version"]
-              prefix = "crates"
           else:
               raise SystemExit(f"Unknown language: {language!r}")
 
@@ -101,7 +98,7 @@ jobs:
               prerelease = match.group(1) is not None
 
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-              print(f"release-tag={prefix}-v{version}", file=output)
+              print(f"release-tag={language}-v{version}", file=output)
               print(f"prerelease={str(prerelease).lower()}", file=output)
               print(f"npm-tag={'next' if prerelease else 'latest'}", file=output)
           PY

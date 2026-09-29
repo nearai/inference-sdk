@@ -46,7 +46,7 @@ class ReleaseGuardTests(unittest.TestCase):
                 "RELEASE_HELPERS": str(HELPERS),
                 "COMMAND_LOG": str(log),
                 "GH_REPO": "nearai/inference-sdk",
-                "RELEASE_TAG": "npm-v1.2.3",
+                "RELEASE_TAG": "javascript-v1.2.3",
                 "RELEASE_VERSION": "1.2.3",
                 "NPM_TAG": "latest",
                 "CHANNEL_VERSION": "1.2.2",
