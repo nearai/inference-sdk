@@ -1,18 +1,28 @@
 # TypeScript verification guide
 
-Use `InferenceClient` for Chat Completions with deployment verification and E2EE.
+Use `InferenceClient` for Chat Completions with deployment verification and optional E2EE.
 Use `AttestationClient` and the standalone verification functions to manage
 the verification steps yourself.
 
 These clients connect through the NEAR AI Cloud Gateway. For a model's own
-`*.completions.near.ai` endpoint, use the
-[direct clients](#use-a-direct-model-endpoint) instead.
+`*.completions.near.ai` endpoint, the
+[direct clients](#use-a-direct-model-endpoint) are experimental and not
+recommended for production. Use Gateway clients for production integrations.
+
+`InferenceClient` always verifies Gateway evidence. On a model-session cache
+miss, it reads model metadata from `GET /v1/model/{model}` using a URL-encoded
+model ID. Models with `providerType: 'vllm'` and `attestationSupported: true`
+require all returned NEAR model reports to pass before key routing. Other models
+use Incognito mode: the SDK verifies the Gateway without verifying model evidence.
+A metadata lookup error, malformed metadata, or failed model verification stops
+Chat without falling back to Gateway-only mode.
 
 ## Send an E2EE chat completion
 
-`InferenceClient` uses OpenAI Chat Completions types and enables E2EE by default.
-Before sending a request, it verifies Gateway and model evidence or reuses
-cached results. A verification failure prevents the request from being sent.
+`InferenceClient` uses OpenAI Chat Completions types. Set `e2ee: true` to
+encrypt supported fields to an attested model. Before sending a request, the
+client verifies Gateway and model evidence or reuses cached results. A
+verification failure prevents the request from being sent.
 
 This Node.js example connects directly to the Gateway with a server-side API
 key. The Node client verifies the Gateway's TLS identity and pins subsequent
@@ -25,6 +35,7 @@ import { InferenceClient } from '@nearai/inference-sdk/node';
 const model = 'z-ai/glm-5.3-flash';
 const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
+  e2ee: true,
 });
 
 const completion = await client.chat.completions.create({
@@ -41,12 +52,13 @@ To select ECDSA instead of the default Ed25519 protocol:
 const client = new InferenceClient({
   apiKey: process.env.NEARAI_API_KEY!,
   signingAlgo: 'ecdsa',
+  e2ee: true,
 });
 ```
 
 `signingAlgo` selects the algorithm for attestation, model-key routing, E2EE,
-and response signatures. The Gateway returns the complete serving model-
-attestation set for the requested model. The client verifies that set before
+and response signatures. The Gateway returns model attestations for the
+requested model. The client verifies every returned report before
 selecting a key for the chosen algorithm.
 
 ### Use OHTTP
@@ -68,13 +80,14 @@ Gateway signer, or the serving model signer for a direct endpoint. Missing or
 invalid OHTTP evidence prevents Chat from being sent. The authenticated
 configuration is cached with the deployment verification result.
 
-`e2ee` is independent and remains enabled by default. Through the Gateway,
-OHTTP protects the HTTP exchange to the Gateway, while E2EE encrypts supported
-Chat fields to the model. With a direct endpoint, both terminate at the model
-service. Set `e2ee: false` only when field encryption is not needed.
+`e2ee` is independent: it defaults to `false` for `InferenceClient` and `true`
+for `DirectInferenceClient`. Through the Gateway, OHTTP protects the HTTP
+exchange to the Gateway, while E2EE encrypts supported Chat fields to the model.
+Gateway OHTTP also works with Incognito models; it does not provide model
+encryption. With a direct endpoint, both terminate at the model service.
 
-Only Chat uses OHTTP; attestation and signature requests keep their normal HTTP
-paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
+Only Chat uses OHTTP; metadata, attestation, and signature requests keep their
+normal HTTP paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
 Authorization and explicitly configured custom headers are also sent on this
 outer request so the endpoint can authenticate it. OHTTP does not hide these
 outer headers or the client's network address from the endpoint.
@@ -85,11 +98,36 @@ ciphertext. Node TLS pinning still checks the outer connection.
 
 ### Cache deployment verification
 
+Call `verify(model)` when the user selects a model or opens a chat to complete
+deployment verification before their first message:
+
+```ts
+await client.verify(model);
+
+// Later, send the user's message using the same client and model.
+const completion = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+```
+
+`verify(model)` sends no Chat request. It performs the same Gateway and model
+checks as Chat, including configured policies, and rejects if they fail.
+For Incognito models, only the Gateway is verified. The method returns no value
+and shares cached results and in-flight verification with Chat. It also works
+when using the client's `fetch` with the OpenAI SDK. `DirectInferenceClient`
+provides the same method for direct model verification.
+
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model share verification work and cached results.
-Increase the value to check deployments less frequently, or set `0` to
-verify before every request. Deployment changes are not checked while a cached
-result is reused. This setting controls caching, not attestation validity.
+The TTL starts when verification succeeds. A later Chat request reuses that
+result while it is cached. Increase the value to check deployments less
+frequently, or set `0` to verify before every request, even after `verify(model)`.
+Deployment changes are not checked while a cached result is reused.
+This setting controls caching, not attestation validity.
+
+This verifies the deployment, not a particular reply. Use `verifyResponse(completion.id)`
+after receiving the reply to verify its signature.
 
 The SDK does not check model measurements against an approved-deployment
 allowlist by default. If needed, supply a `deploymentPolicy` callback and
@@ -100,6 +138,15 @@ Reusable deployment checks can also be passed through
 `modelVerification.verifiers.deployment`. For models, this check runs before
 `deploymentPolicy`, which also receives the requested model name. If both are
 configured, both must pass.
+
+Gateway verification runs concurrently with model metadata retrieval and model
+attestation verification. With Node TLS binding enabled, model metadata and
+evidence requests are pinned to the TLS fingerprint observed when fetching the
+Gateway report. Gateway verification must authenticate that same fingerprint
+before the session is cached or Chat is sent. All required checks must pass.
+If preflight fails, pending model metadata and attestation requests are aborted.
+Already-running third-party or custom verifiers without cancellation support
+may still finish in the background.
 
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
@@ -134,6 +181,7 @@ const gpuEvidence = createGpuEvidenceVerifier({
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
@@ -142,8 +190,9 @@ const client = new InferenceClient({
 });
 ```
 
-The proxy must forward `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. It authenticates the user and supplies its upstream
+The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
+`/v1/chat/completions`, and `/v1/signature/{id}`. Preserve the URL-encoded model
+ID. It authenticates the user and supplies its upstream
 NEAR AI credential. Preserve the request and response bodies, model-key routing header,
 and encryption headers unchanged so decryption and signature verification work.
 
@@ -183,6 +232,7 @@ import { InferenceClient } from '@nearai/inference-sdk/node';
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <server-scoped token>',
   },
@@ -233,8 +283,10 @@ for await (const chunk of stream) {
 
 ### Send plaintext after deployment verification
 
-Set `e2ee: false` to send plaintext. Gateway and model verification,
-deployment policy, and response verification remain available.
+`e2ee: false` is the default. Gateway verification always runs. For attested models,
+model verification, deployment policy, and verified-key routing still run.
+For Incognito models, the client skips model attestations, model-key routing, and
+field encryption; response verification accepts only a Gateway signature.
 
 ```ts
 const client = new InferenceClient({
@@ -243,10 +295,17 @@ const client = new InferenceClient({
 });
 ```
 
-Plaintext requests still use a verified model public key for routing, so the
-model must expose a key for the configured signing algorithm.
-They send `X-Model-Pub-Key` without the encryption headers. Attestation and
-signature lookups still use the configured `signingAlgo`.
+Attested models still use a verified model public key for routing, so the model
+must expose a key for the configured signing algorithm. These requests send
+`X-Model-Pub-Key` without field-encryption headers. Signature lookups use the
+configured `signingAlgo` in both modes.
+
+The `chat.completions.create()` and `verifyResponse(id)` calls stay the same.
+Setting `e2ee: true`, `deploymentPolicy`, `modelVerification.policy`, or
+`modelVerification.verifiers.deployment` requires model attestation and rejects
+Incognito models before Chat with `policy.model_attestation_required`. An empty
+`modelVerification` or quote/GPU verifier overrides alone are allowed, so proxy
+configuration can be shared across models.
 
 ## Verify a response
 
@@ -297,7 +356,8 @@ grows with the received body until the application finishes or cancels reading.
 A `provider_tee` signature must match the verified model signer selected for
 the request's `X-Model-Pub-Key`.
 A `gateway` signature binds them to a verified Gateway signer; it does not
-by itself prove model execution.
+by itself prove model execution. Incognito model sessions accept only this kind;
+successful Gateway verification does not imply that the model runs in a TEE.
 
 ### Use the official OpenAI SDK
 
@@ -322,19 +382,34 @@ const verified = await client.verifyResponse(completion.id);
 
 Streaming uses the same ID-based verification as the built-in client.
 
-For a proxy configured with `headers.Authorization`, OpenAI's required `apiKey`
-can be a placeholder. The inference client's configured authorization takes
-precedence for evidence, Chat, and signature requests. Other per-request headers
-can override their configured defaults.
+Configure authentication on the inference client. Its `apiKey` or
+`headers.Authorization` supplies bearer authorization for evidence, Chat, and
+signature requests. Without either, no Authorization header is sent, including
+when an external OpenAI client adds one. OpenAI's required `apiKey` can therefore
+be a placeholder when a proxy uses custom headers. Other per-request headers can
+override their configured defaults.
 With raw `client.fetch()`, consume the returned response body before verification.
 
 ## Use a direct model endpoint
 
-`DirectInferenceClient` verifies the model endpoint without a Gateway preflight.
-It fetches and verifies the complete serving model-attestation set before
+> **Experimental — not recommended for production.** This applies to both
+> `DirectInferenceClient` and `DirectAttestationClient` in the browser and Node
+> entry points. Use the Gateway `InferenceClient` or `AttestationClient` for production.
+
+Known endpoint limitations affect the direct flow:
+
+- `all_attestations` may contain only the instance handling the attestation
+  request. Preflight can therefore miss other CVMs, including a later serving
+  instance with a different TLS key, and cannot establish a complete set of
+  fleet TLS pins. Verifying all returned reports does not verify every backend CVM.
+- Completion signatures are stored per instance. `/signature/{id}` may return
+  `404` when Chat and signature lookup reach different instances.
+
+`DirectInferenceClient` verifies the model endpoint without a Gateway preflight
+or model-metadata lookup.
+It fetches and verifies every returned model attestation before
 sending Chat.
-E2EE defaults to enabled with Ed25519, and both cache defaults are 60 minutes,
-just as for `InferenceClient`.
+E2EE defaults to enabled with Ed25519. Both cache defaults are 60 minutes.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -387,12 +462,18 @@ include streaming and non-streaming calls. The bare example omits E2EE.
 
 ## Verify Gateway requests manually
 
-The manual flow has distinct stages:
+The manual flow below uses a TEE model and has distinct stages:
 
 1. Verify Gateway and model deployment evidence before sending a request.
 2. Send the request and retain the exact body bytes sent and received.
 3. Fetch the completion signature later and verify it against the retained
    evidence and bytes.
+
+For model capability lookup, `await client.fetchModelMetadata(model)` returns
+`providerType` and `attestationSupported`. A `vllm` provider with attestation
+support can use NEAR model verification; other models use Gateway-only
+verification. Metadata retrieval performs no cryptographic verification;
+verify Gateway evidence separately before using that decision.
 
 ### Verify Gateway and model evidence
 

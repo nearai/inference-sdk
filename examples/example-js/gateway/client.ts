@@ -34,13 +34,14 @@ async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // E2EE and Gateway TLS verification are enabled by default.
+  // Enable E2EE explicitly. Gateway TLS verification is enabled by default.
   // Attestations are reused for 60 minutes. Response records have a separate
   // 60-minute TTL, starting when the response finishes.
   const inferenceClient = new InferenceClient({
     apiKey,
     baseUrl: BASE_URL,
     signingAlgo: SIGNING_ALGO,
+    e2ee: true,
     gatewayVerification: {
       verifiers: {
         deployment: ({ appCompose }) =>
@@ -54,6 +55,9 @@ async function main(): Promise<void> {
 
   // Gateway/model attestations and all four Gateway image checks must pass
   // before Chat is sent. These policies do not verify model runtime images.
+  // Optional: verify ahead of the first message, for example on model selection.
+  await inferenceClient.verify(MODEL);
+
   await runNonStreamingExample(inferenceClient);
   await runStreamingExample(inferenceClient);
 }

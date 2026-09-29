@@ -77,21 +77,23 @@ export type ModelVerificationOptions = {
 export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model. Defaults to 60 minutes. Set `0` to verify every request.
+   * same model across verify() and Chat. Defaults to 60 minutes.
+   * Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
   /** Retain response verification records for this long after the body finishes. Defaults to 60 minutes. */
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `true`. Setting this to `false` keeps attestation and
-   * deployment-policy checks, but sends plaintext Chat fields with a verified
-   * model-key routing header.
+   * Defaults to `false` in InferenceClient and `true` in DirectInferenceClient.
+   * Enabling E2EE requires verified NEAR model evidence. With E2EE disabled,
+   * supported NEAR deployments still use model verification and key routing;
+   * Incognito models use Gateway verification only.
    */
   readonly e2ee?: boolean;
   /**
    * Optional caller-owned allowlist for authenticated model measurements.
-   * It receives the model named by each Chat request.
+   * It receives the model passed to verify() or named by each Chat request.
    * Runs after `modelVerification.verifiers.deployment` when both are supplied.
    */
   readonly deploymentPolicy?: DeploymentPolicy;

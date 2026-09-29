@@ -15,7 +15,7 @@ export type DirectModelAttestation = ModelAttestation & {
   readonly spkiFingerprint?: string;
 };
 
-/** The serving attestation and complete serving set supplied by a direct endpoint. */
+/** Reports supplied by a direct endpoint; they may not cover every serving CVM. */
 export type DirectModelAttestations = {
   /** The top-level attestation returned by the endpoint serving this request. Also an entry in `attestations`. */
   readonly servingAttestation: DirectModelAttestation;
@@ -34,6 +34,7 @@ export type FetchedDirectModelAttestations = DirectModelAttestations & {
   readonly clientBinding: DirectClientBinding;
 };
 
+/** @experimental Options for the direct client, which is not recommended for production. */
 export type DirectAttestationClientOptions = {
   /** Provider API base URL, including its version path (for example /v1). */
   readonly baseUrl: string;

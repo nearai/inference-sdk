@@ -38,7 +38,7 @@ export type DirectTlsBinding = GatewayTlsBinding;
 
 /** Every supplied model attestation passed, plus the serving endpoint's TLS binding. */
 export type VerifiedDirectModelAttestations = {
-  /** The verified serving entry from the complete attestation set. */
+  /** The verified serving entry from the returned attestation set. */
   readonly servingAttestation: VerifiedDirectModelAttestation;
   readonly attestations: readonly VerifiedDirectModelAttestation[];
   /** Only the serving attestation is compared with the TLS peer of this request. */

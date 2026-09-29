@@ -556,6 +556,7 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.requests[0].body.messages[0].content).not.toBe(
       prompt,
     );
+    expect(endpoint.state.requests[0].headers.has('authorization')).toBe(false);
     const result = await client.verifyResponse(id);
     expect(result.completionId).toBe(id);
     expect(result.attestations).toHaveLength(2);
@@ -658,9 +659,12 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.completionRequests).toBe(0);
   });
 
-  test('reuses the verified report for repeated same-model requests by default', async () => {
+  test('preverifies direct reports and reuses them for same-model Chat', async () => {
     const endpoint = createDirectEndpoint();
     const client = new DirectInferenceClient(endpoint.options);
+    await client.verify(model);
+    expect(endpoint.state.completionRequests).toBe(0);
+    expect(endpoint.state.signatureRequests).toBe(0);
     const first = await client.chat.completions.create({ model, messages });
     const second = await client.chat.completions.create({ model, messages });
     expect(endpoint.state.attestationRequests).toBe(1);

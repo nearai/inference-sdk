@@ -118,7 +118,12 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
   }
 }
 
-/** Browser-compatible direct model client without TLS fingerprint binding. */
+/**
+ * Browser-compatible direct model client without TLS fingerprint binding.
+ *
+ * @experimental Not recommended for production. Use `InferenceClient` through
+ * the Gateway instead.
+ */
 export class DirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
 

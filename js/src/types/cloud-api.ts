@@ -3,6 +3,7 @@ import type {
   CloudApiGatewayAttestationSchema,
   CloudApiModelAttestationSchema,
   CloudApiCompletionSignatureResultSchema,
+  CloudApiModelMetadataResponseSchema,
 } from '../schemas';
 import type { SigningAlgo } from './attestation-common';
 import type { GatewayAttestation } from './attestation-gateway';
@@ -22,8 +23,8 @@ type AttestationClientBaseOptions = {
  * Request authentication used by attestation and signature requests. `apiKey`
  * is the convenience form for a direct Gateway connection. `headers` supports
  * an aggregator or another compatible endpoint with its own authentication.
- * A configured `apiKey` or Authorization header takes precedence over
- * request-specific Authorization headers. Other headers can be overridden per request.
+ * Only a configured `apiKey` or Authorization header supplies bearer authorization.
+ * Request-specific Authorization is ignored. Other headers can be overridden per request.
  */
 export type AttestationClientOptions =
   | (AttestationClientBaseOptions & {
@@ -36,6 +37,11 @@ export type AttestationClientOptions =
       /** Sent with every SDK request. Required when no direct Gateway API key is used. */
       readonly headers: HeadersInit;
     });
+
+/** Catalog metadata used to select model or Gateway-only verification. */
+export type ModelMetadata = v.InferOutput<
+  typeof CloudApiModelMetadataResponseSchema
+>['metadata'];
 
 export type FetchModelAttestationsParams = {
   readonly model: string;

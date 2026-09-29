@@ -3,6 +3,7 @@ import {
   CloudApiCompletionSignatureResultSchema,
   CloudApiGatewayAttestationResponseSchema,
   CloudApiModelAttestationResponseSchema,
+  CloudApiModelMetadataResponseSchema,
 } from '../schemas';
 import type { GatewayAttestation } from '../types/attestation-gateway';
 import type { ModelAttestation } from '../types/attestation-model';
@@ -14,6 +15,7 @@ import type {
   CloudApiGatewayAttestation,
   CloudApiModelAttestation,
   CloudApiCompletionSignatureResult,
+  ModelMetadata,
 } from '../types/cloud-api';
 import type { CompletionSignature } from '../types/chat';
 import type {
@@ -56,6 +58,18 @@ type InvalidCloudApiResponseParams =
  * The request helper owns transport and JSON errors; this module owns wire
  * shape, JSON-in-JSON `tcb_info`, and the snake_case-to-domain mapping.
  */
+export function decodeModelMetadata(value: unknown): ModelMetadata {
+  const parsed = v.safeParse(CloudApiModelMetadataResponseSchema, value);
+  if (!parsed.success) {
+    throw invalidCloudApiResponse({
+      issue: parsed.issues[0],
+      fallbackPath: 'model metadata',
+    });
+  }
+  return parsed.output.metadata;
+}
+
+/** Decode the model reports returned by the Gateway. */
 export function decodeModelAttestationReport(
   value: unknown,
 ): readonly ModelAttestation[] {

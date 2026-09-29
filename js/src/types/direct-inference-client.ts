@@ -11,13 +11,17 @@ export type DirectModelVerificationOptions = ModelVerificationOptions;
 
 export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
 
-/** Verified Chat requests to one direct model endpoint, without a Gateway. */
+/**
+ * Verified Chat requests to one direct model endpoint, without a Gateway.
+ * @experimental Direct clients are not recommended for production.
+ */
 export type DirectInferenceClientOptions = DirectAttestationClientOptions &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
     readonly modelVerification?: DirectModelVerificationOptions;
   };
 
+/** @experimental Options for the Node direct client, which is not recommended for production. */
 export type NodeDirectInferenceClientOptions = DirectAttestationClientOptions &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {

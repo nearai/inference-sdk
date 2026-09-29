@@ -110,6 +110,13 @@ function createEcdsaGateway({
     const request = new Request(input, init);
     const url = new URL(request.url);
 
+    if (url.pathname === `/v1/model/${encodeURIComponent(model)}`) {
+      expect(request.method).toBe('GET');
+      return jsonResponse({
+        metadata: { providerType: 'vllm', attestationSupported: true },
+      });
+    }
+
     if (url.pathname === '/v1/attestation/report') {
       const nonce = url.searchParams.get('nonce');
       if (nonce === null) {
@@ -237,6 +244,7 @@ describe('ECDSA inference client', () => {
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
+      e2ee: true,
       gatewayVerification: {
         verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
       },
@@ -281,6 +289,7 @@ describe('ECDSA inference client', () => {
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
+      e2ee: true,
       gatewayVerification: {
         verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
       },

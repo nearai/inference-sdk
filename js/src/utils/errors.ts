@@ -6,6 +6,7 @@ import type {
 
 type ApiResource =
   | 'completion'
+  | 'model_metadata'
   | 'model_attestation'
   | 'gateway_attestation'
   | 'completion_signature'
@@ -577,6 +578,8 @@ function formatApiResource(resource: ApiResource): string {
   switch (resource) {
     case 'completion':
       return 'completion';
+    case 'model_metadata':
+      return 'model metadata';
     case 'model_attestation':
       return 'model attestation';
     case 'gateway_attestation':

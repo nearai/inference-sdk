@@ -1,3 +1,4 @@
+// Experimental direct-endpoint example. Use the Gateway examples for production.
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 
 const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1';
@@ -12,7 +13,7 @@ async function main(): Promise<void> {
 
   // Direct model verification only: there is no Gateway attestation request.
   // E2EE is enabled by default; direct TLS fingerprint binding is disabled.
-  // Every model attestation must pass before Chat is sent. Successful checks
+  // Every returned model attestation must pass before Chat is sent. Successful checks
   // are cached for 60 minutes.
   // Response signatures must belong to the selected model signer.
   const client = new DirectInferenceClient({
