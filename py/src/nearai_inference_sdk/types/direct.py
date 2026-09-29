@@ -54,7 +54,7 @@ class VerifiedDirectModelAttestations:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDirectCompletionResult:
-    completion_id: str
+    id: str
     signature: CompletionSignature
     attestations: tuple[VerifiedDirectModelAttestation, ...]
     signature_kind: Literal['provider_tee'] = 'provider_tee'

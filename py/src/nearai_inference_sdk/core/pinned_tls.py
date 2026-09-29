@@ -1,4 +1,4 @@
-"""HTTPX-compatible HTTPS transport pinned to verified SPKI fingerprints."""
+"""HTTPX-compatible HTTPS transport pinned to supplied SPKI fingerprints."""
 
 from __future__ import annotations
 
@@ -17,11 +17,12 @@ from ..utils.errors import verification_failure
 def create_pinned_tls_client(
     spki_fingerprint: str | Sequence[str],
 ) -> httpx.AsyncClient:
-    """Create an HTTP client with HTTPS connections pinned to an attested SPKI.
+    """Create an HTTP client with HTTPS connections pinned to the supplied SPKIs.
 
     Normal certificate-chain and hostname verification remain enabled. Use the
     returned client as an async context manager, or call ``await client.aclose()``
     when finished. It can also be passed to OpenAI's ``AsyncOpenAI(http_client=)``.
+    Pinning checks peer identity; attestation verification establishes trust in it.
     """
 
     fingerprints = (

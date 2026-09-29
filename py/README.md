@@ -77,7 +77,10 @@ Ed25519 and Gateway TLS verification are enabled by default. Set `e2ee=True`
 to encrypt protocol-supported fields to a verified model key. ECDSA is
 available through `signing_algo='ecdsa'`. E2EE or a model deployment policy
 requires model attestation and rejects Incognito models. Successful attestations are cached for
-60 minutes; set `attestation_cache_time_to_live_ms=0` to verify every request.
+60 minutes per model and endpoint; set `attestation_cache_time_to_live_ms=0` to
+verify every request. Call `await inference_client.verify(model)` to warm Chat's
+verification cache before the first request. Gateway and model verification run
+concurrently, and all required checks must pass before Chat is sent.
 Optional deployment callbacks can enforce an application-owned approval policy;
 no approved-release allowlist is supplied by default.
 
@@ -86,7 +89,7 @@ Gateway. OHTTP is disabled by default and requires Ed25519. Field-level E2EE
 is configured independently; JSON, streaming, and response verification use
 the same interfaces.
 
-Response-signature verification is explicit: call `verify_response(completion_id)`
+Response-signature verification is explicit: call `verify_response(id)`
 after consuming the response. It uses the exact encrypted bytes retained by the
 client, without delaying delivery of decrypted content. Response records expire
 60 minutes after the body finishes by default.
@@ -124,11 +127,12 @@ yet provide complete fleet coverage; normal HTTPS verification remains enabled.
 
 `InferenceClient.systemone.create()` sends typed `noul`, `choice`, and `score`
 decision requests after Gateway and applicable model verification. Its result
-provides `data`, `signature_id`, and an asynchronous `verify()` method. Verification
-uses the captured bytes and the `X-Signature-Id` header, including for hosted
-responses without a JSON ID. System One does not support streaming, E2EE, or
-OHTTP and never automatically repeats inference. Receipt lookups can be retried
-without sending another decision request.
+provides `data` and `decision_id` from the `X-Generation-Id` header, including for
+hosted responses without a JSON ID. Call `client.verify_response(result.decision_id)`
+to verify the captured bytes. Chat and System One share caching, response retention,
+and verification retries, with separate attestation sessions for each endpoint.
+System One does not support streaming, E2EE, or OHTTP and never automatically
+repeats inference. Receipt lookups can be retried without sending another decision.
 
 ## Documentation
 

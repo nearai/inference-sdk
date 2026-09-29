@@ -35,7 +35,7 @@ from nearai_inference_sdk.core.e2ee import (
 )
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import APP_COMPOSE, create_model_quote
+from .fixtures import APP_COMPOSE, TLS_FINGERPRINT, create_model_quote
 
 
 BASE_URL = 'https://gateway.test/v1/'
@@ -67,6 +67,8 @@ class Gateway:
         self.signature_requests = 0
         self.plaintexts: list[str] = []
         self.headers: list[httpx.Headers] = []
+        self.pins: list[str | None] = []
+        self.peer_spki_fingerprint: str | None = TLS_FINGERPRINT
         self.quotes = {}
         self.signatures = {}
         self.metadata = {'providerType': 'vllm', 'attestationSupported': True}
@@ -142,15 +144,26 @@ class Gateway:
                     attestations.append(self.attestation(nonce))
                 return httpx.Response(200, json={'model_attestations': attestations})
             self.gateway_requests += 1
-            assert request.url.params['include_tls_fingerprint'] == 'false'
-            return httpx.Response(
-                200, json={'gateway_attestation': self.attestation(nonce)}
-            )
+            report = self.attestation(nonce)
+            if request.url.params['include_tls_fingerprint'] == 'true':
+                signer = bytes.fromhex(self.address.removeprefix('0x'))
+                prefix = hashlib.sha256(
+                    signer + bytes.fromhex(TLS_FINGERPRINT)
+                ).digest()
+                quote = replace(
+                    self.quotes[report['intel_quote']],
+                    report_data=prefix + bytes.fromhex(nonce),
+                )
+                self.quotes[report['intel_quote']] = quote
+                report['report_data'] = quote.report_data.hex()
+                report['tls_cert_fingerprint'] = TLS_FINGERPRINT
+            return httpx.Response(200, json={'gateway_attestation': report})
 
         if request.url.path.startswith('/v1/signature/'):
             self.signature_requests += 1
             return httpx.Response(
-                200, json=self.signatures[request.url.path.rsplit('/', 1)[1]]
+                200,
+                json=self.signatures[request.url.path.removeprefix('/v1/signature/')],
             )
 
         assert request.url.path == '/v1/chat/completions'
@@ -238,33 +251,39 @@ class Gateway:
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         async def fetch(url, *, headers=None, **kwargs):
             response = await self.handle(httpx.Request('GET', url, headers=headers))
-            return FetchResponse(status=response.status_code, body=response.content)
+            return FetchResponse(
+                status=response.status_code,
+                body=response.content,
+                peer_spki_fingerprint=self.peer_spki_fingerprint,
+            )
 
         monkeypatch.setattr(cloud_api, 'default_fetch', fetch)
-        monkeypatch.setattr(
-            InferenceClient,
-            '_create_gateway_client',
-            lambda _client, _binding: httpx.AsyncClient(
-                transport=httpx.MockTransport(self.handle)
-            ),
-        )
+
+        def create_client(_client, fingerprint):
+            self.pins.append(fingerprint)
+            return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
+
+        monkeypatch.setattr(InferenceClient, '_create_gateway_client', create_client)
 
     def client(self, api_key: str | None = 'test-key', **options) -> InferenceClient:
         options.setdefault('e2ee', True)
+        options.setdefault('signing_algo', self.signing_algo)
         options.setdefault(
             'model_verification',
             ModelVerificationOptions(
                 verifiers=ModelAttestationVerifiers(tdx_quote=self.quotes.__getitem__),
             ),
         )
-        return InferenceClient(
-            api_key,
-            base_url=BASE_URL,
-            signing_algo=self.signing_algo,
-            gateway_verification=GatewayVerificationOptions(
+        options.setdefault(
+            'gateway_verification',
+            GatewayVerificationOptions(
                 include_spki_fingerprint=False,
                 verifiers=AttestationVerifiers(tdx_quote=self.quotes.__getitem__),
             ),
+        )
+        return InferenceClient(
+            api_key,
+            base_url=BASE_URL,
             **options,
         )
 
@@ -283,6 +302,7 @@ async def test_chat_decrypts_and_verifies_json_and_streaming_responses(
         )
         assert completion.choices[0].message.content == 'Hello back'
         verified = await client.verify_response(completion.id)
+        assert verified.id == completion.id
         assert verified.signature_kind == kind
 
         stream = await client.chat.completions.create(
@@ -397,6 +417,125 @@ async def test_expired_attestations_are_refreshed_before_sending_chat(
         await client.chat.completions.create(model=MODEL, messages=MESSAGES)
 
     assert gateway.model_requests == [MODEL, MODEL]
+
+
+@pytest.mark.parametrize('ttl_ms', [0, 60_000])
+async def test_verify_checks_deployments_without_chat_and_obeys_cache_ttl(
+    monkeypatch, gateway, ttl_ms
+):
+    gateway.install(monkeypatch)
+    async with gateway.client(attestation_cache_time_to_live_ms=ttl_ms) as client:
+        await client.verify(MODEL)
+        assert gateway.completion_requests == []
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        await client.verify_response(completion.id)
+    assert gateway.gateway_requests == (2 if ttl_ms == 0 else 1)
+    assert len(gateway.model_requests) == gateway.gateway_requests
+
+
+async def test_failed_preverification_is_not_cached(monkeypatch):
+    gateway = Gateway()
+    gateway.bad_quote = True
+    gateway.install(monkeypatch)
+    async with gateway.client() as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.verify(MODEL)
+        assert raised.value.failure.code == 'policy.debug_enabled'
+        gateway.bad_quote = False
+        await client.verify(MODEL)
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        await client.verify_response(completion.id)
+    assert gateway.gateway_requests == 2
+    assert len(gateway.completion_requests) == 1
+
+
+async def test_verify_rejects_an_empty_model_without_fetching_evidence(monkeypatch):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+    async with gateway.client() as client:
+        with pytest.raises(ApiError) as raised:
+            await client.verify('')
+        assert raised.value.failure.code == 'api.invalid_input'
+        assert raised.value.failure.details['field'] == 'model'
+    assert gateway.gateway_requests == 0
+
+
+async def test_model_verification_overlaps_gateway_but_chat_waits_for_both(monkeypatch):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+    release_gateway = asyncio.Event()
+    model_verified = asyncio.Event()
+
+    async def verify_gateway_quote(quote):
+        await release_gateway.wait()
+        return gateway.quotes[quote]
+
+    async def verify_model_deployment(_deployment):
+        model_verified.set()
+
+    async with gateway.client(
+        gateway_verification=GatewayVerificationOptions(
+            verifiers=AttestationVerifiers(tdx_quote=verify_gateway_quote)
+        ),
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=gateway.quotes.__getitem__,
+                deployment=verify_model_deployment,
+            )
+        ),
+    ) as client:
+        preflight = asyncio.create_task(client.verify(MODEL))
+        async with asyncio.timeout(1):
+            await model_verified.wait()
+        chat = asyncio.create_task(
+            client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        )
+        await asyncio.sleep(0)
+        assert not preflight.done()
+        assert not chat.done()
+        assert gateway.completion_requests == []
+        assert gateway.pins == [TLS_FINGERPRINT]
+
+        release_gateway.set()
+        await preflight
+        completion = await chat
+        await client.verify_response(completion.id)
+
+    assert gateway.gateway_requests == 1
+    assert gateway.model_requests == [MODEL]
+    assert len(gateway.completion_requests) == 1
+
+
+@pytest.mark.parametrize('peer_fingerprint', [None, '44' * 32])
+async def test_unverified_tls_peer_never_allows_chat(monkeypatch, peer_fingerprint):
+    gateway = Gateway()
+    gateway.peer_spki_fingerprint = peer_fingerprint
+    gateway.install(monkeypatch)
+    async with gateway.client(
+        gateway_verification=GatewayVerificationOptions(
+            verifiers=AttestationVerifiers(tdx_quote=gateway.quotes.__getitem__)
+        )
+    ) as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+        assert raised.value.failure.code == (
+            'binding.spki_fingerprint_required'
+            if peer_fingerprint is None
+            else 'binding.spki_fingerprint_mismatch'
+        )
+    # Pinning uses the observed peer, never the report's unauthenticated claim.
+    assert gateway.pins == ([] if peer_fingerprint is None else [peer_fingerprint])
+    assert gateway.completion_requests == []
 
 
 async def test_concurrent_receipt_checks_share_signature_retrieval(

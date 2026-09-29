@@ -2,14 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal, NotRequired, TypedDict
-
-from ..utils.errors import ApiError
-from .inference_client import VerifiedCompletionResult
-
 
 SystemOneContent = str | dict[str, Any] | list[Any]
 
@@ -83,35 +77,10 @@ class SystemOneResponse(TypedDict):
     usage: SystemOneUsage
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class SystemOneResult:
-    """Output is unverified until verify() succeeds over the captured wire bytes."""
+    """Unverified output; pass decision_id to client.verify_response()."""
 
     data: SystemOneResponse
-    signature_id: str
-    _verify: Callable[[], Coroutine[Any, Any, VerifiedCompletionResult]] = field(
-        repr=False
-    )
-    _verification: asyncio.Task[VerifiedCompletionResult] | None = field(
-        default=None, init=False, repr=False
-    )
-
-    async def verify(self) -> VerifiedCompletionResult:
-        if self._verification is None:
-            self._verification = asyncio.create_task(self._verify())
-            self._verification.add_done_callback(_observe_verification)
-        task = self._verification
-        try:
-            return await asyncio.shield(task)
-        except ApiError as error:
-            if (
-                error.retryable
-                or error.failure.code == 'api.completion_signature_unavailable'
-            ) and self._verification is task:
-                self._verification = None
-            raise
-
-
-def _observe_verification(task: asyncio.Task[VerifiedCompletionResult]) -> None:
-    if not task.cancelled():
-        task.exception()
+    # X-Generation-Id indexes the signature independently of optional data['id'].
+    decision_id: str

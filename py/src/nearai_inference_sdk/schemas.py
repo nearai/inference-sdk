@@ -228,48 +228,6 @@ SystemOneContent = str | dict[str, Any] | list[Any]
 SystemOneProbability = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
-class SystemOneNoulCriteriaSchema(ApiSchema):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    true: SystemOneContent | None = None
-    false: SystemOneContent | None = None
-
-
-class SystemOneNoulQuestionSchema(ApiSchema):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    type: Literal['noul']
-    instructions: SystemOneContent | None = None
-    criteria: SystemOneNoulCriteriaSchema | None = None
-
-
-class SystemOneChoiceQuestionSchema(ApiSchema):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    type: Literal['choice']
-    instructions: SystemOneContent | None = None
-    criteria: dict[str, SystemOneContent | None] = Field(min_length=1, max_length=255)
-
-
-class SystemOneScoreQuestionSchema(ApiSchema):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    type: Literal['score']
-    instructions: SystemOneContent | None = None
-    criteria: list[SystemOneContent] = Field(min_length=1, max_length=10)
-
-
-class SystemOneRequestSchema(ApiSchema):
-    model_config = ConfigDict(extra='forbid', strict=True)
-    model: StrictStr = Field(pattern=r'\S')
-    state: SystemOneContent
-    questions: dict[
-        str,
-        Annotated[
-            SystemOneNoulQuestionSchema
-            | SystemOneChoiceQuestionSchema
-            | SystemOneScoreQuestionSchema,
-            Field(discriminator='type'),
-        ],
-    ] = Field(min_length=1)
-
-
 class SystemOneNoulAnswerSchema(ApiSchema):
     model_config = ConfigDict(extra='allow', strict=True)
     type: Literal['noul']
@@ -295,8 +253,8 @@ class SystemOneScoreAnswerSchema(ApiSchema):
 
 class SystemOneUsageSchema(ApiSchema):
     model_config = ConfigDict(extra='allow', strict=True)
-    input_tokens: StrictInt = Field(ge=0, le=2147483647)
-    output_tokens: StrictInt = Field(ge=0, le=2147483647)
+    input_tokens: StrictInt = Field(ge=0)
+    output_tokens: StrictInt = Field(ge=0)
 
 
 class SystemOneResponseSchema(ApiSchema):

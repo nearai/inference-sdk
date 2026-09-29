@@ -8,7 +8,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Self, cast
+from typing import Literal, Self
 
 import httpx
 from openai import AsyncOpenAI
@@ -17,7 +17,11 @@ from pydantic import ValidationError
 from ..schemas import CompletionResponseIdSchema
 from ..types.attestation_common import SigningAlgo
 from ..types.chat import CompletionSignature
-from ..types.cloud_api import DEFAULT_NEAR_AI_CLOUD_BASE_URL, NO_ALIASING_HEADER
+from ..types.cloud_api import (
+    DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+    NO_ALIASING_HEADER,
+    FetchedGatewayAttestation,
+)
 from ..types.e2ee import E2eeModelKey
 from ..types.inference_client import (
     DeploymentPolicy,
@@ -28,9 +32,9 @@ from ..types.inference_client import (
     VerifiedModelCompletionResult,
 )
 from ..types.verification import (
-    GatewayTlsBinding,
     MeasuredDeployment,
     ModelAttestationVerifiers,
+    VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 )
 from ..utils.common import maybe_await
@@ -63,6 +67,7 @@ from .systemone import InferenceSystemOne
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
+_InferenceEndpoint = Literal['chat', 'systemone']
 
 
 @dataclass(frozen=True)
@@ -74,11 +79,10 @@ class _VerifiedSession[Result]:
 
 
 @dataclass
-class _CompletionRecord[Result]:
+class _ResponseRecord[Result]:
     request_body: bytes
     response_body: asyncio.Future[bytes]
     session: _VerifiedSession[Result]
-    content_type: str
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
 
@@ -165,11 +169,15 @@ class _VerifiedInferenceClient[Result]:
         self._response_ttl = response_cache_time_to_live_ms / 1000
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
-        self._sessions: dict[str, tuple[float, _VerifiedSession[Result]]] = {}
-        self._pending: dict[str, asyncio.Task[_VerifiedSession[Result]]] = {}
+        self._sessions: dict[
+            tuple[_InferenceEndpoint, str], tuple[float, _VerifiedSession[Result]]
+        ] = {}
+        self._pending: dict[
+            tuple[_InferenceEndpoint, str], asyncio.Task[_VerifiedSession[Result]]
+        ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._ohttp_clients: list[httpx.AsyncClient] = []
-        self._completions: dict[str, _CompletionRecord[Result]] = {}
+        self._responses: dict[str, _ResponseRecord[Result]] = {}
         self._drains: set[asyncio.Task[None]] = set()
         self.http_client = httpx.AsyncClient(
             transport=_InferenceTransport(self), timeout=None
@@ -196,14 +204,14 @@ class _VerifiedInferenceClient[Result]:
         pending = [*self._pending.values(), *self._drains]
         pending.extend(
             record.verification
-            for record in self._completions.values()
+            for record in self._responses.values()
             if record.verification is not None
         )
         for task in pending:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        for record in self._completions.values():
+        for record in self._responses.values():
             if record.expiry is not None:
                 record.expiry.cancel()
         await asyncio.gather(
@@ -215,7 +223,25 @@ class _VerifiedInferenceClient[Result]:
         self._http_clients.clear()
         self._ohttp_clients.clear()
         self._sessions.clear()
-        self._completions.clear()
+        self._responses.clear()
+
+    async def verify(self, model: str) -> None:
+        """Verify the deployment without sending Chat.
+
+        Shares Chat's attestation cache and in-flight work. A later Chat verifies
+        again when the cache expires or its time to live is zero.
+        """
+
+        if model == '':
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'model',
+                    'reason': 'missing_model',
+                    'expected': 'a non-empty model ID',
+                },
+            )
+        await self._start_verification(model)
 
     async def send(self, request: httpx.Request) -> httpx.Response:
         """Send a Chat request; the returned body can be read or streamed.
@@ -278,16 +304,15 @@ class _VerifiedInferenceClient[Result]:
             return response
         response_body = asyncio.get_running_loop().create_future()
         response_body.add_done_callback(_observe_exception)
-        record = _CompletionRecord(
-            request_body=await prepared_request.aread(),
-            response_body=response_body,
-            session=session,
-            content_type=response.headers.get('content-type', ''),
-        )
+        request_body = await prepared_request.aread()
+
+        def register(completion_id: str) -> None:
+            self._register_response(completion_id, request_body, response_body, session)
+
         captured = httpx.Response(
             response.status_code,
             headers=_decoded_headers(response.headers),
-            stream=_CapturedResponseStream(response, record, self),
+            stream=_CapturedResponseStream(response, response_body, register, self),
             extensions=response.extensions,
             request=prepared_request,
         )
@@ -308,59 +333,72 @@ class _VerifiedInferenceClient[Result]:
             headers.pop('api-key', None)
         return headers
 
-    async def verify_response(self, completion_id: str) -> Result:
+    async def verify_response(self, id: str) -> Result:
         """Verify a retained response against the evidence used before sending."""
 
-        record = self._completions.get(completion_id)
+        record = self._responses.get(id)
         if record is None:
             raise api_failure('api.completion_not_found')
         if record.verification is None:
-            record.verification = asyncio.create_task(self._verify_record(record))
+            record.verification = asyncio.create_task(self._verify_record(id, record))
             record.verification.add_done_callback(_observe_exception)
-        task = record.verification
+        return await asyncio.shield(record.verification)
+
+    async def _verify_record(self, id: str, record: _ResponseRecord[Result]) -> Result:
         try:
-            return await asyncio.shield(task)
+            body = await record.response_body
+            signature = (
+                await record.session.attestation_client.fetch_completion_signature(
+                    id, signing_algo=self._signing_algo
+                )
+            )
+            if signature.signer.signing_algo != self._signing_algo:
+                raise verification_failure('signature.signer_mismatch')
+            return record.session.verify_response(
+                id, record.request_body, body, signature
+            )
         except ApiError as error:
-            if error.retryable and record.verification is task:
+            # Reset shared retry state even when every waiter has been cancelled.
+            if (
+                error.retryable
+                or error.failure.code == 'api.completion_signature_unavailable'
+            ):
                 record.verification = None
             raise
 
-    async def _verify_record(self, record: _CompletionRecord[Result]) -> Result:
-        body = await record.response_body
-        completion_id = _completion_id(body, record.content_type)
-        signature = await record.session.attestation_client.fetch_completion_signature(
-            completion_id, signing_algo=self._signing_algo
-        )
-        return record.session.verify_response(
-            completion_id, record.request_body, body, signature
-        )
-
-    async def _start_verification(self, model: str) -> _VerifiedSession[Result]:
+    async def _start_verification(
+        self, model: str, *, endpoint: _InferenceEndpoint = 'chat'
+    ) -> _VerifiedSession[Result]:
+        # Chat routes to a selected key; System One can use any verified fleet
+        # signer. Share cache mechanics without mixing these session assumptions.
+        cache_key = (endpoint, model)
         now = monotonic()
         self._sessions = {
             name: value for name, value in self._sessions.items() if value[0] > now
         }
-        if self._attestation_ttl != 0 and model in self._sessions:
-            return self._sessions[model][1]
-        task = self._pending.get(model)
+        if self._attestation_ttl != 0 and cache_key in self._sessions:
+            return self._sessions[cache_key][1]
+        task = self._pending.get(cache_key)
         if task is None:
-            task = asyncio.create_task(self._create_session(model))
-            self._pending[model] = task
+            task = asyncio.create_task(self._create_session(model, endpoint=endpoint))
+            self._pending[cache_key] = task
 
             def finished(completed: asyncio.Task[_VerifiedSession[Result]]) -> None:
-                self._pending.pop(model, None)
+                self._pending.pop(cache_key, None)
                 if not completed.cancelled() and completed.exception() is None:
                     if self._attestation_ttl != 0:
-                        self._sessions[model] = (
+                        self._sessions[cache_key] = (
                             monotonic() + self._attestation_ttl,
                             completed.result(),
                         )
 
             task.add_done_callback(finished)
-        # Cancelling one chat must not cancel shared verification for others.
+        # Cancelling one caller must not cancel shared verification for others.
         return await asyncio.shield(task)
 
-    async def _create_session(self, model: str) -> _VerifiedSession[Result]:
+    async def _create_session(
+        self, model: str, *, endpoint: _InferenceEndpoint
+    ) -> _VerifiedSession[Result]:
         raise NotImplementedError
 
     def _get_model_verifiers(self, model: str) -> ModelAttestationVerifiers | None:
@@ -393,16 +431,25 @@ class _VerifiedInferenceClient[Result]:
         self._ohttp_clients.append(wrapped)
         return wrapped
 
-    def _register(self, completion_id: str, record: _CompletionRecord[Result]) -> None:
-        previous = self._completions.get(completion_id)
+    def _register_response(
+        self,
+        id: str,
+        request_body: bytes,
+        response_body: asyncio.Future[bytes],
+        session: _VerifiedSession[Result],
+    ) -> None:
+        """Both endpoints share byte retention, expiry, and verification retries."""
+
+        record = _ResponseRecord(request_body, response_body, session)
+        previous = self._responses.get(id)
         if previous is not None and previous.expiry is not None:
             previous.expiry.cancel()
-        self._completions[completion_id] = record
+        self._responses[id] = record
 
         def settled(_future: asyncio.Future[bytes]) -> None:
             def expire() -> None:
-                if self._completions.get(completion_id) is record:
-                    del self._completions[completion_id]
+                if self._responses.get(id) is record:
+                    del self._responses[id]
 
             record.expiry = asyncio.get_running_loop().call_later(
                 self._response_ttl, expire
@@ -452,34 +499,40 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
         self.systemone = InferenceSystemOne(self)
 
     async def _create_session(
-        self, model: str, *, systemone: bool = False
+        self, model: str, *, endpoint: _InferenceEndpoint
     ) -> _VerifiedSession[VerifiedCompletionResult]:
+        systemone = endpoint == 'systemone'
         fetched = await self._attestation_client.fetch_gateway_attestation(
             signing_algo=self._signing_algo,
             include_spki_fingerprint=self._gateway_options.include_spki_fingerprint,
         )
-        gateway = await verify_gateway_attestation(
-            fetched.attestation,
-            fetched.client_binding,
-            policy=self._gateway_options.policy,
-            verifiers=self._gateway_options.verifiers,
-        )
-        key_config = None
-        if self._ohttp:
-            if fetched.attestation.ohttp_attestation is None:
-                raise verification_failure('ohttp.attestation_required')
-            key_config = verify_ohttp_key_config(
-                fetched.attestation.ohttp_attestation, gateway.signer
-            )
-        fingerprint = gateway.tls_binding.spki_fingerprint
+        # Pin evidence requests to the observed TLS peer, not the report's claim.
+        # The peer only becomes trusted after Gateway verification succeeds.
+        fingerprint = fetched.client_binding.spki_fingerprint
+        if self._gateway_options.include_spki_fingerprint:
+            if fingerprint is None:
+                raise verification_failure('binding.spki_fingerprint_required')
+        else:
+            fingerprint = None
         client = self._http_clients.get(fingerprint)
         if client is None:
-            client = self._create_gateway_client(gateway.tls_binding)
+            client = self._create_gateway_client(fingerprint)
             self._http_clients[fingerprint] = client
         attestations = _SessionAttestationClient(
             client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
         )
-        models = await self._verify_models(model, attestations)
+        gateway_task = asyncio.create_task(self._verify_gateway(fetched))
+        model_task = asyncio.create_task(self._verify_models(model, attestations))
+        try:
+            (gateway, key_config), models = await asyncio.gather(
+                gateway_task, model_task
+            )
+        except BaseException:
+            # Do not leave evidence requests running after failure or client close.
+            gateway_task.cancel()
+            model_task.cancel()
+            await asyncio.gather(gateway_task, model_task, return_exceptions=True)
+            raise
         selected = (
             None
             if systemone
@@ -502,7 +555,7 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             raise verification_failure('e2ee.model_public_key_required')
 
         def verify_response(
-            completion_id: str,
+            id: str,
             request_body: bytes,
             response_body: bytes,
             signature: CompletionSignature,
@@ -520,13 +573,13 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
                     )
                 verify_model_response(request_body, response_body, signature, serving)
                 return VerifiedModelCompletionResult(
-                    completion_id=completion_id,
+                    id=id,
                     signature=signature,
                     attestation=serving,
                 )
             verify_gateway_response(request_body, response_body, signature, gateway)
             return VerifiedGatewayCompletionResult(
-                completion_id=completion_id, signature=signature, attestation=gateway
+                id=id, signature=signature, attestation=gateway
             )
 
         return _VerifiedSession(
@@ -535,6 +588,24 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             attestations,
             verify_response,
         )
+
+    async def _verify_gateway(
+        self, fetched: FetchedGatewayAttestation
+    ) -> tuple[VerifiedGatewayAttestation, bytes | None]:
+        gateway = await verify_gateway_attestation(
+            fetched.attestation,
+            fetched.client_binding,
+            policy=self._gateway_options.policy,
+            verifiers=self._gateway_options.verifiers,
+        )
+        key_config = None
+        if self._ohttp:
+            if fetched.attestation.ohttp_attestation is None:
+                raise verification_failure('ohttp.attestation_required')
+            key_config = verify_ohttp_key_config(
+                fetched.attestation.ohttp_attestation, gateway.signer
+            )
+        return gateway, key_config
 
     async def _verify_models(
         self, model: str, client: AttestationClient
@@ -573,11 +644,10 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
         )
 
     def _create_gateway_client(
-        self, tls_binding: GatewayTlsBinding
+        self, peer_spki_fingerprint: str | None
     ) -> httpx.AsyncClient:
-        if tls_binding.kind == 'attested':
-            # verify_gateway_attestation only returns attested with a matched SPKI.
-            return create_pinned_tls_client(cast(str, tls_binding.spki_fingerprint))
+        if peer_spki_fingerprint is not None:
+            return create_pinned_tls_client(peer_spki_fingerprint)
         return httpx.AsyncClient(timeout=None)
 
 
@@ -587,15 +657,18 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
     def __init__(
         self,
         response: httpx.Response,
-        record: _CompletionRecord,
+        response_body: asyncio.Future[bytes],
+        register: Callable[[str], None],
         client: _VerifiedInferenceClient,
     ) -> None:
         self._response = response
-        self._record = record
+        self._response_body = response_body
+        self._register = register
         self._client = client
         self._chunks: list[bytes] = []
         self._reader = response.aiter_bytes()
-        self._streaming = record.content_type.lower().startswith('text/event-stream')
+        self._content_type = response.headers.get('content-type', '')
+        self._streaming = self._content_type.lower().startswith('text/event-stream')
         self._decoder = codecs.getincrementaldecoder('utf-8')()
         self._pending = ''
         self._registered = False
@@ -642,24 +715,22 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
                         ).id
                     except ValidationError:
                         continue
-                    self._client._register(completion_id, self._record)
+                    self._register(completion_id)
                     self._registered = True
 
     def _complete(self) -> None:
-        if self._record.response_body.done():
+        if self._response_body.done():
             return
         body = b''.join(self._chunks)
         if not self._registered:
-            self._client._register(
-                _completion_id(body, self._record.content_type), self._record
-            )
+            self._register(_completion_id(body, self._content_type))
             self._registered = True
-        self._record.response_body.set_result(body)
+        self._response_body.set_result(body)
         self._chunks.clear()
 
     def _fail(self, cause: BaseException) -> None:
-        if not self._record.response_body.done():
-            self._record.response_body.set_exception(
+        if not self._response_body.done():
+            self._response_body.set_exception(
                 cause
                 if isinstance(cause, (ApiError, VerificationError))
                 else api_failure(
@@ -674,7 +745,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
     async def aclose(self) -> None:
         if self._drain_task is not None:
             return
-        if not self._record.response_body.done():
+        if not self._response_body.done():
             if self._done:
                 # OpenAI stops exposing events at [DONE]. Retain any trailing
                 # wire bytes without delaying presentation of the completed

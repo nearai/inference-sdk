@@ -135,7 +135,7 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 Gateway Chat examples explicitly enable E2EE; the Gateway SDK defaults to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
-client caches attestations for 60 minutes and retains response records for
+client caches attestations for 60 minutes per model and endpoint and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
 Gateway image policies listed above; they do not check model runtime images.
 
@@ -164,7 +164,8 @@ uv run python gateway/jev.py
 ```
 
 Set `NEARAI_SIGNING_ALGO=ecdsa` to exercise ECDSA. This example never retries
-inference and prints answers only after the receipt passes verification.
+inference and prints answers only after `client.verify_response(result.decision_id)`
+succeeds. The endpoint must return `X-Generation-Id`, even when the JSON body has no `id`.
 
 ## Rust
 

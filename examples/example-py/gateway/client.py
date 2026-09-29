@@ -84,6 +84,8 @@ async def main() -> None:
             verifiers=AttestationVerifiers(deployment=verify_gateway_images)
         ),
     ) as inference_client:
+        # Optional: verify before Chat. Both calls reuse the successful preflight.
+        await inference_client.verify(MODEL)
         await run_non_streaming_example(inference_client)
         await run_streaming_example(inference_client)
 

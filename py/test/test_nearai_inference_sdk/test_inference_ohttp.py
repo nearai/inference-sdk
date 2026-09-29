@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 
 import httpx
@@ -158,6 +159,14 @@ async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee
 async def test_untrusted_ohttp_proof_blocks_inference(monkeypatch, failure, code):
     gateway = ObliviousGateway()
     gateway.proof_failure = failure
+    handle = gateway.handle
+
+    async def hold_model_metadata(request):
+        if request.url.path.startswith('/v1/model/'):
+            await asyncio.Event().wait()
+        return await handle(request)
+
+    monkeypatch.setattr(gateway, 'handle', hold_model_metadata)
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -166,8 +175,10 @@ async def test_untrusted_ohttp_proof_blocks_inference(monkeypatch, failure, code
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},
         )
-        with pytest.raises(VerificationError) as raised:
-            await client.send(request)
+        # An invalid Gateway proof must fail without waiting on the model arm.
+        async with asyncio.timeout(1):
+            with pytest.raises(VerificationError) as raised:
+                await client.send(request)
 
     assert raised.value.failure.code == code
     assert gateway.outer_requests == []

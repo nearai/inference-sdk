@@ -1,4 +1,4 @@
-"""System One decisions: inspect answers only after result.verify() succeeds."""
+"""System One decisions: verify captured bytes before using the answers."""
 
 import asyncio
 import os
@@ -42,13 +42,13 @@ async def main() -> None:
                 },
             }
         )
-        verified = await result.verify()
+        verified = await client.verify_response(result.decision_id)
         if verified.signature_kind != expected_kind:
             raise RuntimeError(
                 f'Expected {expected_kind}, got {verified.signature_kind}'
             )
         print(result.data['answers'])
-        print(f'Verified {result.signature_id}: {verified.signature_kind}')
+        print(f'Verified {result.decision_id}: {verified.signature_kind}')
 
 
 if __name__ == '__main__':

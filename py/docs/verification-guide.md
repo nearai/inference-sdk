@@ -40,14 +40,17 @@ E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 response signatures. ECDSA uses the legacy AES-GCM protocol and omits
 `X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
 
-Successful attestation checks are reused for 60 minutes per model.
+Successful attestation checks are reused for 60 minutes per model and endpoint.
 Set `attestation_cache_time_to_live_ms=0` to check every request.
 `response_cache_time_to_live_ms` separately controls how long exact response
 bytes remain available after completion; its default is also 60 minutes.
 
-Gateway TLS identity is checked by default, and subsequent evidence, Chat, and
-signature requests are pinned to the verified SPKI. When connecting through an
-aggregator that terminates TLS, use
+Gateway TLS identity is checked by default. After fetching its report, the client
+pins subsequent requests to the observed TLS peer and runs Gateway verification
+alongside model evidence retrieval and verification. The Gateway quote must
+authenticate that peer's SPKI. All required checks, including configured deployment
+policies and OHTTP evidence, must pass before caching the session or sending Chat.
+When connecting through an aggregator that terminates TLS, use
 `GatewayVerificationOptions(include_spki_fingerprint=False)`; that verifies the
 Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
 
@@ -97,6 +100,30 @@ you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
 Use one reusable client for concurrent requests; each response is retained under
 its completion ID. `InferenceClient` owns and closes the shared HTTP transport.
 Only Chat Completions are supported by this transport, not the Responses API.
+
+### Verify before the first Chat request
+
+Call `verify(model)` to check the deployment while your application prepares its
+first request:
+
+```python
+async with InferenceClient(api_key, e2ee=True) as inference_client:
+    await inference_client.verify('z-ai/glm-5.3-flash')
+
+    # Application code prepares the conversation after verification succeeds.
+    completion = await inference_client.chat.completions.create(
+        model='z-ai/glm-5.3-flash',
+        messages=[{'role': 'user', 'content': 'Hello'}],
+    )
+    verified = await inference_client.verify_response(completion.id)
+```
+
+`verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
+verification, including TLS, model policy, and optional OHTTP checks. It raises if
+any required check fails. With a cache TTL of zero, the later Chat verifies again.
+`DirectInferenceClient.verify(model)` provides the same model-only workflow for
+direct endpoints. System One keeps its own session cache; `verify(model)` warms
+the Chat path.
 
 ### Use OHTTP
 
@@ -155,9 +182,12 @@ async with InferenceClient(
 ```
 
 Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. Preserve the URL-encoded model ID, bodies, model-key routing
-header, and encryption headers. The device verifies evidence and response
-signatures; the proxy can only forward the encrypted Chat fields.
+`/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+`X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
+bodies, model-key routing, and encryption headers. A browser-facing proxy must
+expose `X-Generation-Id` through CORS. The device verifies evidence and response
+signatures; the proxy can only forward the encrypted Chat fields. System One
+decision content is not encrypted by this SDK.
 
 ## Direct model endpoints
 
@@ -227,20 +257,28 @@ async with InferenceClient(api_key, base_url=base_url) as inference_client:
         'state': {'message': 'Please explain this briefly.'},
         'questions': {'brief': {'type': 'noul', 'instructions': 'Should the answer be brief?'}},
     })
-    verified = await result.verify()
+    verified = await inference_client.verify_response(result.decision_id)
     print(result.data['answers'])
 ```
 
-`result.signature_id` comes from `X-Signature-Id`, independently of the optional
-JSON `id`. `verify()` checks the captured request and response bytes, so later
+`result.decision_id` comes from `X-Generation-Id`, independently of the optional
+JSON `id`. `verify_response()` checks the captured request and response bytes, so later
 changes to `result.data` do not change what is verified. A provider TEE receipt
 selects its signer from the preverified model reports; a hosted Gateway receipt
 proves the Gateway signature without claiming model TEE execution.
 
-System One rejects streaming, E2EE, and OHTTP before sending. It performs fresh
-preflight for each decision and never retries inference automatically. A transient
-receipt lookup or an unavailable signature can be retried with `result.verify()`.
-Cancel the calling asyncio task to cancel an in-flight decision request.
+System One rejects streaming, E2EE, and OHTTP before sending. Request business
+rules are checked by the server; the SDK validates the response at the JSON boundary.
+System One shares the configured attestation TTL and concurrent preflight work.
+Its cache entries are separate from Chat because decisions can be signed by any
+verified model in the returned set, while Chat routes to a selected model key.
+
+Responses use the same retention, expiry, and verification lifecycle as Chat.
+Repeated `verify_response(result.decision_id)` calls share in-flight work and reuse
+successful results or terminal failures. A transient lookup failure or an unavailable
+signature allows a later call to retry only the signature lookup. Inference is never
+automatically repeated. Cancel the calling asyncio task to stop waiting; cancelling
+one caller does not cancel preflight or receipt verification shared with others.
 
 ## Standalone workflow
 

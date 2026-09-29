@@ -38,7 +38,7 @@ class ModelVerificationOptions:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelCompletionResult:
-    completion_id: str
+    id: str
     signature: CompletionSignature
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
@@ -46,7 +46,7 @@ class VerifiedModelCompletionResult:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedGatewayCompletionResult:
-    completion_id: str
+    id: str
     signature: CompletionSignature
     attestation: VerifiedGatewayAttestation
     signature_kind: Literal['gateway'] = 'gateway'

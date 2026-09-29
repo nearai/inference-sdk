@@ -91,11 +91,14 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
     endpoint = DirectEndpoint(signing_algo)
     endpoint.install(monkeypatch)
     async with endpoint.client(e2ee=e2ee, ohttp=ohttp) as client:
+        await client.verify(MODEL)
+        assert endpoint.completion_requests == []
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
         assert completion.choices[0].message.content == 'Hello back'
         result = await client.verify_response(completion.id)
+        assert result.id == completion.id
         assert result.signature_kind == 'provider_tee'
         assert len(result.attestations) == 2
 
