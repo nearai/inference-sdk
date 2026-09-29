@@ -144,6 +144,9 @@ attestation verification. With Node TLS binding enabled, model metadata and
 evidence requests are pinned to the TLS fingerprint observed when fetching the
 Gateway report. Gateway verification must authenticate that same fingerprint
 before the session is cached or Chat is sent. All required checks must pass.
+If preflight fails, pending model metadata and attestation requests are aborted.
+Already-running third-party or custom verifiers without cancellation support
+may still finish in the background.
 
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different

@@ -5,6 +5,7 @@ import nacl from 'tweetnacl';
 import OpenAI from 'openai';
 import {
   InferenceClient,
+  VerificationError,
   type TdxQuoteVerificationResult,
   type InferenceClientOptions,
 } from '../src';
@@ -3009,6 +3010,110 @@ describe('inference client', () => {
       },
     );
   });
+
+  describe.each(['browser', 'Node'] as const)(
+    '%s preflight cancellation',
+    (runtime) => {
+      test.each([
+        'metadata',
+        'model attestation',
+        'model attestation body',
+      ] as const)(
+        'cancels stalled %s requests before retrying a failed preflight',
+        async (resource) => {
+          const gateway = createTestGateway();
+          const providerFetch = createSignatureFetch(gateway);
+          const pendingSignals: AbortSignal[] = [];
+          const failure = new VerificationError({
+            code: 'policy.debug_enabled',
+          });
+          let rejectGateway = true;
+          let requestStarted = Promise.resolve();
+          let notifyRequestStarted: () => void = () => {};
+          const transportFetch: typeof globalThis.fetch = (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            const shouldStall =
+              resource === 'metadata'
+                ? url.pathname.startsWith('/v1/model/')
+                : url.pathname === '/v1/attestation/report' &&
+                  url.searchParams.has('model');
+            if (!rejectGateway || !shouldStall) return providerFetch(request);
+
+            pendingSignals.push(request.signal);
+            notifyRequestStarted();
+            if (resource === 'model attestation body') {
+              return Promise.resolve(
+                new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      request.signal.addEventListener(
+                        'abort',
+                        () => {
+                          controller.error(request.signal.reason);
+                        },
+                        { once: true },
+                      );
+                    },
+                  }),
+                ),
+              );
+            }
+            return new Promise((_, reject) => {
+              request.signal.addEventListener(
+                'abort',
+                () => {
+                  reject(request.signal.reason);
+                },
+                { once: true },
+              );
+            });
+          };
+          jest.spyOn(globalThis, 'fetch').mockImplementation(transportFetch);
+          const options: InferenceClientOptions = {
+            ...inferenceClientOptions(gateway),
+            gatewayVerification: {
+              verifiers: {
+                tdxQuote: async (quote) => {
+                  if (rejectGateway) {
+                    await requestStarted;
+                    throw failure;
+                  }
+                  return gateway.tdxQuoteVerifier(quote);
+                },
+              },
+            },
+          };
+          if (runtime === 'Node') mockNodeGatewayAttestation({ gateway });
+          const client =
+            runtime === 'Node'
+              ? new TestNodeInferenceClient(options, transportFetch)
+              : new InferenceClient(options);
+
+          for (let attempt = 1; attempt <= 2; attempt += 1) {
+            requestStarted = new Promise((resolve) => {
+              notifyRequestStarted = resolve;
+            });
+            await expect(client.verify(model)).rejects.toBe(failure);
+            expect(pendingSignals).toHaveLength(attempt);
+            for (const signal of pendingSignals)
+              expect(signal.aborted).toBe(true);
+            expect(gateway.state.completionRequests).toBe(0);
+          }
+
+          rejectGateway = false;
+          await client.verify(model);
+          const completion = await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: 'hello after retry' }],
+          });
+          await client.verifyResponse(completion.id);
+          expect(gateway.state.gatewayAttestationRequests).toBe(3);
+          expect(gateway.state.completionRequests).toBe(1);
+        },
+      );
+    },
+  );
 
   describe('Node inference client', () => {
     test('verifies model evidence while Gateway verification is pending and blocks Chat until both pass', async () => {
