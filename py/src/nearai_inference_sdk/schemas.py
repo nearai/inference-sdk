@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -222,55 +222,6 @@ class ChatCompletionResponseSchema(RootModel[dict[str, Any]]):
 
 class CompletionResponseIdSchema(ApiSchema):
     id: StrictStr = Field(min_length=1)
-
-
-SystemOneContent = str | dict[str, Any] | list[Any]
-SystemOneProbability = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
-
-
-class SystemOneNoulAnswerSchema(ApiSchema):
-    model_config = ConfigDict(extra='allow', strict=True)
-    type: Literal['noul']
-    noul: SystemOneProbability
-
-
-class SystemOneChoiceAnswerSchema(ApiSchema):
-    model_config = ConfigDict(extra='allow', strict=True)
-    type: Literal['choice']
-    choice: StrictStr
-    confidence: SystemOneProbability
-    probabilities: dict[str, SystemOneProbability]
-
-
-class SystemOneScoreAnswerSchema(ApiSchema):
-    model_config = ConfigDict(extra='allow', strict=True)
-    type: Literal['score']
-    score: float = Field(allow_inf_nan=False)
-    confidence: SystemOneProbability
-    probabilities: dict[str, SystemOneProbability]
-    legend: dict[str, SystemOneContent]
-
-
-class SystemOneUsageSchema(ApiSchema):
-    model_config = ConfigDict(extra='allow', strict=True)
-    input_tokens: StrictInt = Field(ge=0)
-    output_tokens: StrictInt = Field(ge=0)
-
-
-class SystemOneResponseSchema(ApiSchema):
-    model_config = ConfigDict(extra='allow', strict=True)
-    id: StrictStr | None = None
-    model: StrictStr = Field(min_length=1)
-    answers: dict[
-        str,
-        Annotated[
-            SystemOneNoulAnswerSchema
-            | SystemOneChoiceAnswerSchema
-            | SystemOneScoreAnswerSchema,
-            Field(discriminator='type'),
-        ],
-    ]
-    usage: SystemOneUsageSchema
 
 
 class NvidiaPayloadNonceSchema(ApiSchema):

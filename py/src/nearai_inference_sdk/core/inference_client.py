@@ -8,7 +8,7 @@ import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Literal, Self
+from typing import Self
 
 import httpx
 from openai import AsyncOpenAI
@@ -53,7 +53,6 @@ from .cloud_api import (
     AttestationClient,
     _ApiClient,
     _validate_base_url,
-    find_model_attestation_for_signature,
 )
 from .e2ee_request import (
     decode_chat_request,
@@ -63,11 +62,9 @@ from .e2ee_request import (
 from .ohttp import create_ohttp_client
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
-from .systemone import InferenceSystemOne
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
-_InferenceEndpoint = Literal['chat', 'systemone']
 
 
 @dataclass(frozen=True)
@@ -169,12 +166,8 @@ class _VerifiedInferenceClient[Result]:
         self._response_ttl = response_cache_time_to_live_ms / 1000
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
-        self._sessions: dict[
-            tuple[_InferenceEndpoint, str], tuple[float, _VerifiedSession[Result]]
-        ] = {}
-        self._pending: dict[
-            tuple[_InferenceEndpoint, str], asyncio.Task[_VerifiedSession[Result]]
-        ] = {}
+        self._sessions: dict[str, tuple[float, _VerifiedSession[Result]]] = {}
+        self._pending: dict[str, asyncio.Task[_VerifiedSession[Result]]] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._ohttp_clients: list[httpx.AsyncClient] = []
         self._responses: dict[str, _ResponseRecord[Result]] = {}
@@ -366,28 +359,23 @@ class _VerifiedInferenceClient[Result]:
                 record.verification = None
             raise
 
-    async def _start_verification(
-        self, model: str, *, endpoint: _InferenceEndpoint = 'chat'
-    ) -> _VerifiedSession[Result]:
-        # Chat routes to a selected key; System One can use any verified fleet
-        # signer. Share cache mechanics without mixing these session assumptions.
-        cache_key = (endpoint, model)
+    async def _start_verification(self, model: str) -> _VerifiedSession[Result]:
         now = monotonic()
         self._sessions = {
             name: value for name, value in self._sessions.items() if value[0] > now
         }
-        if self._attestation_ttl != 0 and cache_key in self._sessions:
-            return self._sessions[cache_key][1]
-        task = self._pending.get(cache_key)
+        if self._attestation_ttl != 0 and model in self._sessions:
+            return self._sessions[model][1]
+        task = self._pending.get(model)
         if task is None:
-            task = asyncio.create_task(self._create_session(model, endpoint=endpoint))
-            self._pending[cache_key] = task
+            task = asyncio.create_task(self._create_session(model))
+            self._pending[model] = task
 
             def finished(completed: asyncio.Task[_VerifiedSession[Result]]) -> None:
-                self._pending.pop(cache_key, None)
+                self._pending.pop(model, None)
                 if not completed.cancelled() and completed.exception() is None:
                     if self._attestation_ttl != 0:
-                        self._sessions[cache_key] = (
+                        self._sessions[model] = (
                             monotonic() + self._attestation_ttl,
                             completed.result(),
                         )
@@ -396,9 +384,7 @@ class _VerifiedInferenceClient[Result]:
         # Cancelling one caller must not cancel shared verification for others.
         return await asyncio.shield(task)
 
-    async def _create_session(
-        self, model: str, *, endpoint: _InferenceEndpoint
-    ) -> _VerifiedSession[Result]:
+    async def _create_session(self, model: str) -> _VerifiedSession[Result]:
         raise NotImplementedError
 
     def _get_model_verifiers(self, model: str) -> ModelAttestationVerifiers | None:
@@ -438,7 +424,7 @@ class _VerifiedInferenceClient[Result]:
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result],
     ) -> None:
-        """Both endpoints share byte retention, expiry, and verification retries."""
+        """Retain exact wire bytes for expiry and independent verification retries."""
 
         record = _ResponseRecord(request_body, response_body, session)
         previous = self._responses.get(id)
@@ -459,7 +445,7 @@ class _VerifiedInferenceClient[Result]:
 
 
 class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
-    """Gateway Chat and System One with preflight and explicit response verification.
+    """Gateway Chat with preflight and explicit response verification.
 
     E2EE is opt-in. NEAR TEE models require model evidence; Incognito models
     verify only the Gateway. All calls share the configured authentication.
@@ -496,12 +482,10 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
-        self.systemone = InferenceSystemOne(self)
 
     async def _create_session(
-        self, model: str, *, endpoint: _InferenceEndpoint
+        self, model: str
     ) -> _VerifiedSession[VerifiedCompletionResult]:
-        systemone = endpoint == 'systemone'
         fetched = await self._attestation_client.fetch_gateway_attestation(
             signing_algo=self._signing_algo,
             include_spki_fingerprint=self._gateway_options.include_spki_fingerprint,
@@ -533,25 +517,21 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             model_task.cancel()
             await asyncio.gather(gateway_task, model_task, return_exceptions=True)
             raise
-        selected = (
-            None
-            if systemone
-            else next(
-                (
-                    item
-                    for item in models
-                    if item.signer.signing_algo == self._signing_algo
-                    and item.signing_public_key is not None
-                ),
-                None,
-            )
+        selected = next(
+            (
+                item
+                for item in models
+                if item.signer.signing_algo == self._signing_algo
+                and item.signing_public_key is not None
+            ),
+            None,
         )
         model_key = None
         if selected is not None and selected.signing_public_key is not None:
             model_key = E2eeModelKey(
                 signing_algo=self._signing_algo, public_key=selected.signing_public_key
             )
-        elif not systemone and models:
+        elif models:
             raise verification_failure('e2ee.model_public_key_required')
 
         def verify_response(
@@ -561,21 +541,16 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             signature: CompletionSignature,
         ) -> VerifiedCompletionResult:
             if signature.kind == 'provider_tee':
-                serving = (
-                    find_model_attestation_for_signature(models, signature)
-                    if systemone
-                    else selected
-                )
-                if serving is None:
+                if selected is None:
                     raise verification_failure(
                         'signature.kind_mismatch',
                         {'expected': 'gateway', 'actual': signature.kind},
                     )
-                verify_model_response(request_body, response_body, signature, serving)
+                verify_model_response(request_body, response_body, signature, selected)
                 return VerifiedModelCompletionResult(
                     id=id,
                     signature=signature,
-                    attestation=serving,
+                    attestation=selected,
                 )
             verify_gateway_response(request_body, response_body, signature, gateway)
             return VerifiedGatewayCompletionResult(

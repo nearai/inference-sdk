@@ -130,12 +130,11 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
-| `gateway/jev.py` | System One decisions; verifies the receipt before displaying answers. |
 
 Gateway Chat examples explicitly enable E2EE; the Gateway SDK defaults to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
-client caches attestations for 60 minutes per model and endpoint and retains response records for
+client caches attestations for 60 minutes per model and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
 Gateway image policies listed above; they do not check model runtime images.
 
@@ -153,19 +152,6 @@ Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 
 Direct examples share the JavaScript clients' experimental limitations above.
 For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
-
-System One requires an endpoint deploying `/v1/systemone`, an active priced
-decision model, and a funded credential. Set `NEARAI_BASE_URL`,
-`NEARAI_SYSTEMONE_MODEL`, and `NEARAI_EXPECTED_SIGNATURE_KIND` (`gateway` for
-hosted TypeSafe or `provider_tee` for a self-hosted TEE model), then run:
-
-```sh
-uv run python gateway/jev.py
-```
-
-Set `NEARAI_SIGNING_ALGO=ecdsa` to exercise ECDSA. This example never retries
-inference and prints answers only after `client.verify_response(result.decision_id)`
-succeeds. The endpoint must return `X-Generation-Id`, even when the JSON body has no `id`.
 
 ## Rust
 
