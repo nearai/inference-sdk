@@ -598,19 +598,22 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
     const transport = this.createGatewaySessionTransport(
       gateway.clientBinding.spkiFingerprint,
     );
-    const [gatewayAttestation, modelAttestation] = await Promise.all([
-      verifyGatewayAttestation({
-        attestation: gateway.attestation,
-        clientBinding: gateway.clientBinding,
-        policy: this.gatewayOptions.gatewayVerification?.policy,
-        verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
-      }),
-      this.verifyModel(model, transport),
-    ]);
-    const ohttpKeyConfig = this.getOhttpKeyConfig(
-      gateway.attestation.ohttpAttestation,
-      gatewayAttestation.signer,
-    );
+    const [{ gatewayAttestation, ohttpKeyConfig }, modelAttestation] =
+      await Promise.all([
+        verifyGatewayAttestation({
+          attestation: gateway.attestation,
+          clientBinding: gateway.clientBinding,
+          policy: this.gatewayOptions.gatewayVerification?.policy,
+          verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+        }).then((gatewayAttestation) => ({
+          gatewayAttestation,
+          ohttpKeyConfig: this.getOhttpKeyConfig(
+            gateway.attestation.ohttpAttestation,
+            gatewayAttestation.signer,
+          ),
+        })),
+        this.verifyModel(model, transport),
+      ]);
     const modelKey =
       modelAttestation?.signingPublicKey !== undefined
         ? {

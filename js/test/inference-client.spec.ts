@@ -957,7 +957,7 @@ describe('inference client', () => {
   });
 
   test.each(['missing', 'model-signed'] as const)(
-    'blocks Chat when Gateway OHTTP evidence is %s',
+    'rejects %s Gateway OHTTP evidence while model verification is pending',
     async (evidence) => {
       const gateway = createTestGateway();
       const endpoint = await createOhttpEndpoint({
@@ -969,24 +969,44 @@ describe('inference client', () => {
         .mockImplementation(
           evidence === 'missing' ? gateway.fetch : endpoint.fetch,
         );
+      let releaseModelVerification: () => void = () => {};
+      const modelVerificationPending = new Promise<void>((resolve) => {
+        releaseModelVerification = resolve;
+      });
       const client = new InferenceClient({
         ...inferenceClientOptions(gateway),
         ohttp: true,
         signingAlgo: 'ed25519',
+        modelVerification: {
+          verifiers: {
+            tdxQuote: async (quote) => {
+              await modelVerificationPending;
+              return gateway.tdxQuoteVerifier(quote);
+            },
+          },
+        },
       });
-      await expect(
-        client.fetch(
-          `${baseUrl}chat/completions`,
-          chatRequest({ messages: [] }),
-        ),
-      ).rejects.toMatchObject({
+      const verification = client.verify(model);
+      const completion = client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [] }),
+      );
+      const expectedError = {
         failure: {
           code:
             evidence === 'missing'
               ? 'ohttp.attestation_required'
               : 'ohttp.signer_mismatch',
         },
-      });
+      };
+      try {
+        await Promise.all([
+          expect(verification).rejects.toMatchObject(expectedError),
+          expect(completion).rejects.toMatchObject(expectedError),
+        ]);
+      } finally {
+        releaseModelVerification();
+      }
       expect(gateway.state.completionRequests).toBe(0);
       expect(
         endpoint.requests.every(

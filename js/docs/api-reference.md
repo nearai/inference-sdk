@@ -55,8 +55,12 @@ the attestation socket to be reused.
 
 Provides `chat.completions.create()`, a reusable `fetch` adapter, and
 `verifyResponse(id)`. Supports streaming and non-streaming Chat Completions.
-On a cache miss, Gateway verification runs first. The client then reads
-`metadata.providerType` and `metadata.attestationSupported` from
+On a cache miss, the client fetches Gateway evidence, then verifies it and any
+required OHTTP evidence concurrently with model metadata retrieval and model
+attestation verification. All required checks must pass before the session is
+cached or Chat is sent.
+
+The client reads `metadata.providerType` and `metadata.attestationSupported` from
 `GET /v1/model/{model}`, with the model ID URL-encoded. A `vllm` provider with
 attestation support requires NEAR model verification. Other models use the
 Incognito flow, which verifies only the Gateway. HTTP errors, malformed metadata,
