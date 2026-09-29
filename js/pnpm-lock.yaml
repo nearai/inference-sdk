@@ -39,8 +39,8 @@ importers:
         specifier: 0.6.0
         version: 0.6.0(hpke@1.1.7)
       openai:
-        specifier: 7.20.0
-        version: 7.20.0(ws@8.21.0)
+        specifier: 7.21.0
+        version: 7.21.0(ws@8.21.0)
       tweetnacl:
         specifier: ^1.0.3
         version: 1.0.3
@@ -1982,8 +1982,8 @@ packages:
     resolution: {integrity: sha512-kbpaSSGJTWdAY5KPVeMOKXSrPtr8C8C7wodJbcsd51jRnmD+GZu8Y0VoU6Dm5Z4vWr0Ig/1NKuWRKf7j5aaYSg==}
     engines: {node: '>=6'}
 
-  openai@7.20.0:
-    resolution: {integrity: sha512-5x5ru4cKEvEqHqYZbdIbT57OE7KqmP9YYxZiUKuKng016grOHXqom1vmu34MTPPW30q+lcP9RhxAbaRse+Xlcw==}
+  openai@7.21.0:
+    resolution: {integrity: sha512-APwDcMhduWCSkKDLF4VZtAC5MGLRdJ0l+PUirz2fuSPXo/LNfEe8OuJVWOk8iJbO55sd8F5aOXvx8cfR5Eax1g==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
@@ -4461,7 +4461,7 @@ snapshots:
     dependencies:
       mimic-fn: 2.1.0
 
-  openai@7.20.0(ws@8.21.0):
+  openai@7.21.0(ws@8.21.0):
     optionalDependencies:
       ws: 8.21.0
 
