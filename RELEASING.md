@@ -74,12 +74,13 @@ gh workflow run release.yml --repo nearai/inference-sdk --ref main \
 The workflow:
 
 1. Requires the default branch and checks the selected manifest's version.
-2. Runs CI for that language only. Ordinary PR and branch CI still checks all
-   three languages.
+2. Runs the release-workflow tests and CI for the selected language. Ordinary
+   PR and branch CI still checks all three languages.
 3. Creates the package-specific tag at the run's commit and a draft GitHub
    Release. An existing tag must point to that same commit.
-4. Publishes only the selected package, using the `release` environment.
-5. Makes its GitHub Release public after that package is published successfully.
+4. Rechecks the remote tag and publishes only the selected package, using the
+   `release` environment. A pre-existing registry version fails a fresh run.
+5. Rechecks the remote tag before making its GitHub Release public.
 
 JavaScript and Rust accept `X.Y.Z` or prerelease versions such as `X.Y.Z-rc.1`.
 Python uses normalized public PEP 440 versions, such as `1.0.0` or `1.0.0rc1`.
@@ -90,8 +91,11 @@ default stable install.
 ## Registry setup
 
 Create a GitHub Actions environment named `release`, restrict deployments to
-the default branch, and optionally add required reviewers. Configure trusted
-publishing for each registry you intend to use:
+the default branch, and optionally add required reviewers. Add a tag ruleset for
+`npm-v*`, `pypi-v*`, and `crates-v*` that restricts updates and deletions, without
+blocking creation by the release workflow. Draft-release tags are not immutable;
+these rules prevent changes between the workflow's tag check and publication.
+Configure trusted publishing for each registry you intend to use:
 
 | Setting | Value |
 | --- | --- |
@@ -120,8 +124,16 @@ Registry setup guides: [npm](https://docs.npmjs.com/trusted-publishers/),
 Keep the package tag and draft release, confirm whether the registry accepted
 the upload, fix the cause, and rerun the failed jobs in the original workflow
 run. This keeps the same source commit and inputs even if `main` has advanced.
-Already uploaded versions are skipped on retry; an existing public GitHub
-Release stops a fresh release attempt.
+An existing version is skipped only if an earlier attempt of the **same run**
+recorded a successful upload step for that registry. A draft release, an existing
+tag, or a new manual dispatch is not sufficient. Registry lookup errors stop the
+workflow; only HTTP 404 means the version is absent.
+
+If an upload reached the registry but the upload step failed (including a partial
+PyPI upload), automatic recovery stops. Check the registry artifacts against the
+original build and reconcile the release manually. If uploading succeeded and
+only GitHub Release publication failed, rerun the failed jobs to finish it.
+An existing public GitHub Release stops a fresh release attempt.
 
 Published versions cannot be overwritten. If the fix changes package contents,
 prepare a new version instead of moving its tag. After publication, install the
