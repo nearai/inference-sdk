@@ -64,11 +64,11 @@ changes. Commit those changes and repeat without that flag before publication.
 
 In GitHub, open **Actions → Publish package → Run workflow**. Select `main`,
 choose `javascript`, `python`, or `rust`, and enter the version without a `v`
-prefix. For example, after merging an npm version bump to `0.1.0-rc.6`:
+prefix. For example, after merging an npm version bump to `0.1.0`:
 
 ```sh
 gh workflow run release.yml --repo nearai/inference-sdk --ref main \
-  -f language=javascript -f version=0.1.0-rc.6
+  -f language=javascript -f version=0.1.0
 ```
 
 The workflow:
