@@ -9,6 +9,7 @@ import {
   SigstoreVerifier,
   TrustedRootProvider,
 } from '@freedomofpress/sigstore-browser';
+import type { TrustedRoot } from '@freedomofpress/sigstore-browser';
 import {
   GitHubImageAttestationsSchema,
   ImageProvenanceBundleSchema,
@@ -28,6 +29,15 @@ const GITHUB_ISSUER = 'https://token.actions.githubusercontent.com';
 // TUF authenticates root updates. In-memory caching works in both Node and
 // browsers, without requiring IndexedDB or sharing application credentials.
 const trustedRootProvider = new TrustedRootProvider({ disableCache: true });
+let trustedRootRequest: Promise<TrustedRoot> | undefined;
+
+function getTrustedRoot(): Promise<TrustedRoot> {
+  // Share concurrent refreshes, leaving expiry and completed caching to TUF.
+  trustedRootRequest ??= trustedRootProvider.getTrustedRoot().finally(() => {
+    trustedRootRequest = undefined;
+  });
+  return trustedRootRequest;
+}
 
 /** Fetch all inline Sigstore bundles published for a repository's image digest. */
 export async function fetchImageProvenance({
@@ -185,7 +195,8 @@ export async function verifyImageProvenance({
 
   const verifier = new SigstoreVerifier();
   try {
-    await verifier.loadSigstoreRootWithTUF(trustedRootProvider);
+    const trustedRoot = await getTrustedRoot();
+    await verifier.loadSigstoreRoot(trustedRoot);
   } catch (cause) {
     throw imageFailure({
       digest: normalizedDigest,
@@ -254,30 +265,63 @@ async function verifyBundle({
     verify(cert) {
       const identity = cert.extSubjectAltName?.uri ?? '';
       const candidateRef = identity.slice(identityPrefix.length);
-      if (
-        !identity.startsWith(identityPrefix) ||
-        !candidateRef.startsWith('refs/') ||
-        (policy.ref !== undefined && policy.ref !== candidateRef)
-      ) {
+      const signerMatches =
+        policy.signerIdentity !== undefined
+          ? identity === policy.signerIdentity
+          : identity.startsWith(identityPrefix) &&
+            candidateRef.startsWith('refs/') &&
+            (policy.ref === undefined || policy.ref === candidateRef);
+      if (!signerMatches) {
         throw new PolicyError(
-          'The certificate does not match the required repository, workflow and ref',
+          'The certificate does not match the required signing workflow',
         );
       }
       new Identity({ identity }).verify(cert);
       new AnyOf([new OIDCIssuer(issuer), new OIDCIssuerV2(issuer)]).verify(
         cert,
       );
+      let sourceRepository: string | undefined;
+      let sourceRef: string | undefined;
       try {
+        const repositoryExtension = cert.extSourceRepositoryURI;
+        if (repositoryExtension !== undefined) {
+          sourceRepository = repositoryExtension.sourceRepositoryURI;
+        } else {
+          const legacyRepository =
+            cert.extGitHubWorkflowRepository?.workflowRepository;
+          sourceRepository =
+            legacyRepository === undefined
+              ? undefined
+              : `https://github.com/${legacyRepository}`;
+        }
+        const refExtension = cert.extSourceRepositoryRef;
+        sourceRef =
+          refExtension !== undefined
+            ? refExtension.sourceRepositoryRef
+            : cert.extGitHubWorkflowRef?.workflowRef;
         // Both extensions identify the source SHA, not a reusable workflow's SHA.
         // Use the legacy claim only when the modern extension is absent.
+        const commitExtension = cert.extSourceRepositoryDigest;
         certificateSourceCommit =
-          cert.extSourceRepositoryDigest?.sourceRepositoryDigest ??
-          cert.extGitHubWorkflowSHA?.workflowSHA;
+          commitExtension !== undefined
+            ? commitExtension.sourceRepositoryDigest
+            : cert.extGitHubWorkflowSHA?.workflowSHA;
       } catch (cause) {
         throw imageFailure({ digest, reasons: ['source_mismatch'], cause });
       }
+      // A trusted reusable workflow can build several repositories. Its SAN
+      // does not establish which source was built; use the certificate claims.
+      if (
+        sourceRepository !== `https://github.com/${policy.repository}` ||
+        sourceRef === undefined ||
+        !sourceRef.startsWith('refs/') ||
+        (policy.ref !== undefined && policy.ref !== sourceRef) ||
+        (policy.signerIdentity === undefined && candidateRef !== sourceRef)
+      ) {
+        throw imageFailure({ digest, reasons: ['source_mismatch'] });
+      }
       certificateIdentity = identity;
-      ref = candidateRef;
+      ref = sourceRef;
     },
   });
 

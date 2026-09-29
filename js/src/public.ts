@@ -4,7 +4,42 @@ export {
   NO_ALIASING_HEADER,
 } from './core/cloud-api';
 export { InferenceClient } from './core/inference-client';
+export {
+  DirectInferenceClient,
+  verifyDirectModelResponse,
+} from './core/direct-inference-client';
+export {
+  verifyDirectModelAttestation,
+  verifyDirectModelAttestations,
+} from './core/attestation-direct';
+export type {
+  DirectAttestationClientOptions,
+  DirectClientBinding,
+  DirectModelAttestation,
+  DirectModelAttestations,
+  FetchedDirectModelAttestations,
+} from './types/direct-api';
+export type {
+  VerifiedDirectModelAttestation,
+  VerifiedDirectModelAttestations,
+  DirectTlsBinding,
+  VerifyDirectModelAttestationParams,
+  VerifyDirectModelAttestationsParams,
+} from './types/direct-verification';
+export type {
+  DirectInferenceClientOptions,
+  DirectModelVerificationOptions,
+  VerifiedDirectCompletionResult,
+  VerifyDirectModelResponseParams,
+} from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
+export { verifyOhttpKeyConfig } from './core/ohttp-attestation';
+export { createOhttpFetch } from './core/ohttp-fetch';
+export type {
+  CreateOhttpFetchParams,
+  OhttpAttestation,
+  VerifyOhttpKeyConfigParams,
+} from './types/ohttp';
 export type {
   E2eeModelKey,
   PrepareE2eeChatRequestParams,
@@ -17,22 +52,25 @@ export type {
   FetchedModelAttestations,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
+  ModelMetadata,
 } from './types/cloud-api';
 export type {
   DeploymentPolicy,
   DeploymentPolicyParams,
   ModelVerificationOptions,
-  SecureChat,
-  SecureChatCompletions,
+  InferenceChat,
+  InferenceChatCompletions,
   InferenceClientOptions,
-  VerifiedCompletionReceipt,
-  VerifiedGatewayCompletionReceipt,
-  VerifiedModelCompletionReceipt,
+  VerifiedCompletionResult,
+  VerifiedGatewayCompletionResult,
+  VerifiedModelCompletionResult,
 } from './types/inference-client';
 export type { Awaitable } from './types/shared';
 
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
+export { createTdxQuoteVerifier } from './utils/intel';
+export { createGpuEvidenceVerifier } from './utils/nvidia';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
 export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
@@ -62,18 +100,20 @@ export type {
 export type {
   AttestationPolicy,
   AttestationVerifiers,
+  CreateTdxQuoteVerifierParams,
+  CreateGpuEvidenceVerifierParams,
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   GatewayClientBinding,
   GatewayTlsBinding,
   GpuEvidenceStatus,
+  GpuEvidenceVerifier,
   MeasuredDeployment,
   ModelClientBinding,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
-  NvidiaEvidenceVerifier,
-  QuoteVerifier,
-  QuoteVerificationResult,
+  TdxQuoteVerifier,
+  TdxQuoteVerificationResult,
   RuntimeMeasurements,
   TcbStatus,
   VerifiedAttestationEvidence,

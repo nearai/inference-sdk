@@ -12,11 +12,17 @@ import { AttestationClient as NodeAttestationClient } from '../src/node';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
+const ohttpWireAttestation = {
+  signing_algo: 'ed25519',
+  signing_key: '55'.repeat(32),
+  key_config: '010020',
+  signature: '66'.repeat(64),
+};
 
 type RequestAuthenticationCase = {
   name: string;
   options: AttestationClientOptions;
-  expectedAuthorization: string;
+  expectedAuthorization: string | null;
 };
 
 function modelSignature(
@@ -162,9 +168,9 @@ describe('request authentication', () => {
       expectedAuthorization: 'Bearer proxy-token',
     },
     {
-      name: 'uses request authentication when none is configured',
+      name: 'omits request authorization when none is configured',
       options: { headers: { 'x-tenant': 'default' } },
-      expectedAuthorization: 'Bearer openai-key',
+      expectedAuthorization: null,
     },
   ])('$name', ({ options, expectedAuthorization }) => {
     const configuration = createCloudApiRequestConfiguration(options);
@@ -288,6 +294,88 @@ describe('AttestationClient', () => {
       'Bearer direct-key',
     );
     expect(api.request().headers.get('x-tenant-id')).toBe('tenant-a');
+  });
+
+  describe('model metadata', () => {
+    test.each([
+      { providerType: 'vllm', attestationSupported: true },
+      { providerType: 'vllm', attestationSupported: false },
+      { providerType: 'external', attestationSupported: false },
+      { providerType: 'chutes', attestationSupported: true },
+      { providerType: 'future-provider', attestationSupported: true },
+    ])(
+      'reads $providerType metadata with attestationSupported=$attestationSupported',
+      async (metadata) => {
+        const api = cloudFor(() => jsonResponse({ metadata }));
+        const model = 'provider/model.v1?revision=1#test%';
+
+        await expect(api.client.fetchModelMetadata(model)).resolves.toEqual(
+          metadata,
+        );
+        expect(api.request().method).toBe('GET');
+        expect(api.request().url).toBe(
+          `${baseUrl}/model/${encodeURIComponent(model)}`,
+        );
+        expect(api.request().headers.get('authorization')).toBe('Bearer test');
+      },
+    );
+
+    test.each(['.', '..'])('rejects dot-segment model ID %s', async (model) => {
+      const api = cloudFor(() =>
+        jsonResponse({
+          metadata: { providerType: 'external', attestationSupported: false },
+        }),
+      );
+
+      await expect(api.client.fetchModelMetadata(model)).rejects.toMatchObject({
+        failure: {
+          code: 'api.invalid_input',
+          details: {
+            field: 'model',
+            reason: 'unsupported_value',
+            actual: model,
+          },
+        },
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {},
+      { metadata: null },
+      { metadata: {} },
+      { metadata: { providerType: 'external' } },
+      { metadata: { attestationSupported: false } },
+      { metadata: { providerType: null, attestationSupported: false } },
+      { metadata: { providerType: 1, attestationSupported: false } },
+      { metadata: { provider_type: 'external', attestationSupported: false } },
+      { metadata: { providerType: 'external', attestation_supported: false } },
+      { metadata: { providerType: 'external', attestationSupported: 'false' } },
+      { metadata: { providerType: 'external', attestationSupported: null } },
+    ])(
+      'rejects malformed metadata instead of choosing Gateway-only: %j',
+      async (body) => {
+        const api = cloudFor(() => jsonResponse(body));
+
+        await expect(
+          api.client.fetchModelMetadata('model'),
+        ).rejects.toMatchObject({ failure: { code: 'api.invalid_response' } });
+      },
+    );
+
+    test.each([404, 503])('propagates catalog HTTP %s', async (status) => {
+      const api = cloudFor(() => new Response('', { status }));
+
+      await expect(
+        api.client.fetchModelMetadata('model'),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.http_status',
+          details: { status },
+          retryable: status >= 500,
+        },
+      });
+    });
   });
 
   describe('model attestations', () => {
@@ -592,6 +680,72 @@ describe('AttestationClient', () => {
   });
 
   describe('gateway attestations', () => {
+    test('preserves the envelope OHTTP attestation on the Gateway evidence', async () => {
+      const api = cloudFor((request) =>
+        jsonResponse({
+          ...gatewayReport(requestNonce(request), {
+            tls_cert_fingerprint: null,
+          }),
+          ohttp_attestation: ohttpWireAttestation,
+        }),
+      );
+
+      const { attestation } = await api.client.fetchGatewayAttestation();
+      expect(attestation.ohttpAttestation).toEqual({
+        signingAlgo: 'ed25519',
+        signingKey: ohttpWireAttestation.signing_key,
+        keyConfig: ohttpWireAttestation.key_config,
+        signature: ohttpWireAttestation.signature,
+      });
+    });
+
+    test.each([undefined, null])(
+      'normalizes absent OHTTP Gateway metadata: %s',
+      async (ohttpAttestation) => {
+        const api = cloudFor((request) =>
+          jsonResponse({
+            ...gatewayReport(requestNonce(request), {
+              tls_cert_fingerprint: null,
+            }),
+            ohttp_attestation: ohttpAttestation,
+          }),
+        );
+
+        const { attestation } = await api.client.fetchGatewayAttestation();
+        expect(attestation).not.toHaveProperty('ohttpAttestation');
+      },
+    );
+
+    test.each([
+      ['signing_algo', 'ecdsa'],
+      ['signing_key', 'ab'],
+      ['key_config', null],
+      ['key_config', 'not-hex'],
+      ['signature', undefined],
+    ])(
+      'rejects malformed OHTTP Gateway metadata at %s',
+      async (field, value) => {
+        const api = cloudFor((request) =>
+          jsonResponse({
+            ...gatewayReport(requestNonce(request), {
+              tls_cert_fingerprint: null,
+            }),
+            ohttp_attestation: { ...ohttpWireAttestation, [field]: value },
+          }),
+        );
+
+        await expect(
+          api.client.fetchGatewayAttestation(),
+        ).rejects.toMatchObject({
+          name: 'ApiError',
+          failure: {
+            code: 'api.invalid_response',
+            details: { path: `ohttp_attestation.${field}` },
+          },
+        });
+      },
+    );
+
     test('fetches gateway evidence without TLS binding', async () => {
       const api = cloudFor((request) =>
         jsonResponse(

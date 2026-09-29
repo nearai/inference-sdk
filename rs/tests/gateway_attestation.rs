@@ -8,7 +8,7 @@ use nearai_inference_sdk::{
 };
 use support::{
     gateway_attestation, gateway_attestation_without_tls_binding, gateway_tls_quote, model_quote,
-    FixtureQuoteVerifier, APP_COMPOSE, NONCE, TLS_FINGERPRINT,
+    FixtureTdxQuoteVerifier, APP_COMPOSE, NONCE, TLS_FINGERPRINT,
 };
 
 fn client_binding(spki_fingerprint: Option<String>) -> GatewayClientBinding {
@@ -42,7 +42,7 @@ impl DeploymentVerifier for RejectingDeploymentVerifier {
 
 #[tokio::test]
 async fn binds_the_observed_tls_peer_when_gateway_attestation_reports_an_spki_fingerprint() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
 
     let verified = verify_gateway_attestation(
@@ -50,7 +50,7 @@ async fn binds_the_observed_tls_peer_when_gateway_attestation_reports_an_spki_fi
         &client_binding(Some(TLS_FINGERPRINT.to_owned())),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -67,7 +67,7 @@ async fn binds_the_observed_tls_peer_when_gateway_attestation_reports_an_spki_fi
 
 #[tokio::test]
 async fn requires_an_observed_spki_fingerprint_when_gateway_attestation_reports_one() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
 
     let error = verify_gateway_attestation(
@@ -75,7 +75,7 @@ async fn requires_an_observed_spki_fingerprint_when_gateway_attestation_reports_
         &client_binding(None),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -88,7 +88,7 @@ async fn requires_an_observed_spki_fingerprint_when_gateway_attestation_reports_
 
 #[tokio::test]
 async fn rejects_another_tls_peer() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
 
     let error = verify_gateway_attestation(
@@ -96,7 +96,7 @@ async fn rejects_another_tls_peer() {
         &client_binding(Some("44".repeat(32))),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -108,7 +108,7 @@ async fn rejects_another_tls_peer() {
 
 #[tokio::test]
 async fn uses_signer_and_nonce_binding_when_gateway_attestation_has_no_spki_fingerprint() {
-    let quote = FixtureQuoteVerifier(model_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation_without_tls_binding();
 
     let verified = verify_gateway_attestation(
@@ -116,7 +116,7 @@ async fn uses_signer_and_nonce_binding_when_gateway_attestation_has_no_spki_fing
         &client_binding(Some("44".repeat(32))),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -128,7 +128,7 @@ async fn uses_signer_and_nonce_binding_when_gateway_attestation_has_no_spki_fing
 
 #[tokio::test]
 async fn rejects_an_invalid_tls_fingerprint() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let mut attestation = gateway_attestation();
     attestation.spki_fingerprint = Some(String::new());
 
@@ -137,7 +137,7 @@ async fn rejects_an_invalid_tls_fingerprint() {
         &client_binding(Some(TLS_FINGERPRINT.to_owned())),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -151,7 +151,7 @@ async fn rejects_an_invalid_tls_fingerprint() {
 
 #[tokio::test]
 async fn applies_an_explicit_gateway_tcb_policy() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
     let policy = AttestationPolicy {
         accepted_tcb_statuses: Some(vec![TcbStatus::OutOfDate]),
@@ -162,7 +162,7 @@ async fn applies_an_explicit_gateway_tcb_policy() {
         &client_binding(Some(TLS_FINGERPRINT.to_owned())),
         Some(&policy),
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             ..Default::default()
         },
     )
@@ -181,7 +181,7 @@ async fn applies_an_explicit_gateway_tcb_policy() {
 
 #[tokio::test]
 async fn runs_gateway_deployment_verifiers() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
     let deployment = ExpectedDeploymentVerifier;
 
@@ -190,7 +190,7 @@ async fn runs_gateway_deployment_verifiers() {
         &client_binding(Some(TLS_FINGERPRINT.to_owned())),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             deployment: Some(&deployment),
         },
     )
@@ -205,7 +205,7 @@ async fn runs_gateway_deployment_verifiers() {
 
 #[tokio::test]
 async fn propagates_a_rejected_gateway_deployment_verifier() {
-    let quote = FixtureQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
+    let tdx_quote = FixtureTdxQuoteVerifier(gateway_tls_quote(TcbStatus::UpToDate));
     let attestation = gateway_attestation();
     let deployment = RejectingDeploymentVerifier;
 
@@ -214,7 +214,7 @@ async fn propagates_a_rejected_gateway_deployment_verifier() {
         &client_binding(Some(TLS_FINGERPRINT.to_owned())),
         None,
         AttestationVerifiers {
-            quote: Some(&quote),
+            tdx_quote: Some(&tdx_quote),
             deployment: Some(&deployment),
         },
     )

@@ -14,8 +14,8 @@ from ..types.verification import (
     AttestationPolicy,
     DeploymentVerifier,
     MeasuredDeployment,
-    QuoteVerificationResult,
-    QuoteVerifier,
+    TdxQuoteVerificationResult,
+    TdxQuoteVerifier,
     VerifiedAttestationEvidence,
 )
 from ..utils.common import maybe_await, require_byte_length
@@ -38,7 +38,7 @@ DEFAULT_ACCEPTED_TCB_STATUSES: tuple[TcbStatus, ...] = ('UpToDate', 'OutOfDate')
 @dataclass(frozen=True, kw_only=True)
 class VerifiedDstackQuote:
     attestation: AttestationEvidence
-    quote: QuoteVerificationResult
+    quote: TdxQuoteVerificationResult
     signer: SigningIdentity
 
 
@@ -48,7 +48,7 @@ async def verify_dstack_quote(
     advertised_report_data: str | None,
     nonce: str,
     policy: AttestationPolicy | None,
-    quote_verifier: QuoteVerifier | None,
+    tdx_quote_verifier: TdxQuoteVerifier | None,
 ) -> VerifiedDstackQuote:
     verify_reported_nonce(attestation.nonce, nonce)
     signer = attestation.signer
@@ -58,7 +58,7 @@ async def verify_dstack_quote(
         'attestation.signer.signing_address',
     )
 
-    verifier = verify_dcap_quote if quote_verifier is None else quote_verifier
+    verifier = verify_dcap_quote if tdx_quote_verifier is None else tdx_quote_verifier
     try:
         quote = await maybe_await(verifier(attestation.intel_quote))
     except VerificationError:
@@ -131,13 +131,13 @@ def _accepted_tcb_statuses(policy: AttestationPolicy | None) -> tuple[TcbStatus,
     return policy.accepted_tcb_statuses
 
 
-def _validate_quote_result(quote: QuoteVerificationResult) -> None:
-    if not isinstance(quote, QuoteVerificationResult):
+def _validate_quote_result(quote: TdxQuoteVerificationResult) -> None:
+    if not isinstance(quote, TdxQuoteVerificationResult):
         raise verification_failure(
             'quote.invalid_result',
             {
                 'path': 'quote',
-                'expected': 'QuoteVerificationResult',
+                'expected': 'TdxQuoteVerificationResult',
                 'actual': type(quote).__name__,
             },
         )

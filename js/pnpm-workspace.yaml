@@ -1,3 +1,5 @@
 allowBuilds:
+  # Jest uses the platform prebuilt binary; no source build is needed.
+  '@parcel/watcher': false
   esbuild: true
   unrs-resolver: true

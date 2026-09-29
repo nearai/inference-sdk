@@ -2,18 +2,23 @@ import { readFileSync } from 'node:fs';
 import { Buffer } from 'node:buffer';
 import { resolve } from 'node:path';
 import {
-  SigstoreVerifier,
+  TrustedRootProvider,
   X509Certificate,
   X509SourceRepositoryDigestExtension,
+  X509SourceRepositoryURIExtension,
+  X509SourceRepositoryRefExtension,
 } from '@freedomofpress/sigstore-browser';
+import type { TrustedRoot } from '@freedomofpress/sigstore-browser';
 import * as v from 'valibot';
 import {
   fetchImageProvenance,
   verifyDeploymentImageProvenance,
   verifyImageProvenance,
+  type ImageProvenancePolicy,
 } from '../src';
 import { verifyImageProvenanceSource } from '../src/core/provenance';
 import { ImageProvenanceStatementSchema } from '../src/schemas';
+import { createDeferred } from './fixtures';
 
 const FIXTURES = resolve(__dirname, '../../test-fixtures/provenance');
 const BUNDLE = readFileSync(
@@ -31,16 +36,28 @@ const POLICY = {
   ref: 'refs/heads/master',
   commit: '8e07c3583909c9ab9da94d883e87add1ae90832d',
 };
+const REUSABLE_BUNDLE = readFileSync(
+  resolve(FIXTURES, 'reusable-workflow.bundle.json'),
+  'utf8',
+);
+const REUSABLE_DIGEST =
+  'sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25';
+const REUSABLE_POLICY = {
+  repository: 'malancas/attest-demo',
+  workflow: '.github/workflows/shared.yml',
+  ref: 'refs/heads/main',
+  commit: '95baf27389e83e6a5c48f42e190d48d7abcea19e',
+  signerIdentity:
+    'https://github.com/github/artifact-attestations-workflows/.github/workflows/attest.yml@09b495c3f12c7881b3cc17209a327792065c1a1d',
+};
 
 describe('image provenance verification', () => {
   beforeEach(() => {
     // Pin only the network root input. Certificate, signature, SCT and Rekor
     // checks run against the real published bundle in every verification test.
     jest
-      .spyOn(SigstoreVerifier.prototype, 'loadSigstoreRootWithTUF')
-      .mockImplementation(function (this: SigstoreVerifier) {
-        return this.loadSigstoreRoot(TRUSTED_ROOT);
-      });
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockResolvedValue(TRUSTED_ROOT);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -69,12 +86,126 @@ describe('image provenance verification', () => {
     });
   });
 
+  test('verifies a real cross-repository workflow and returns the caller source ref', async () => {
+    const verified = await verifyImageProvenance({
+      bundles: [REUSABLE_BUNDLE],
+      digest: REUSABLE_DIGEST,
+      policy: REUSABLE_POLICY,
+    });
+
+    expect(verified).toMatchObject({
+      repository: REUSABLE_POLICY.repository,
+      workflow: REUSABLE_POLICY.workflow,
+      ref: REUSABLE_POLICY.ref,
+      commit: REUSABLE_POLICY.commit,
+      certificateIdentity: REUSABLE_POLICY.signerIdentity,
+    });
+  });
+
+  test('fetches reusable-workflow proofs from the source repository', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      Response.json({
+        attestations: [{ bundle: JSON.parse(REUSABLE_BUNDLE) }],
+      }),
+    );
+    const appCompose = JSON.stringify({
+      docker_compose_file: `services:\n  app:\n    image: example/app@${REUSABLE_DIGEST}`,
+    });
+
+    await verifyDeploymentImageProvenance({
+      appCompose,
+      imagePolicies: { 'example/app': REUSABLE_POLICY },
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      `https://api.github.com/repos/${REUSABLE_POLICY.repository}/attestations/${encodeURIComponent(REUSABLE_DIGEST)}?per_page=100`,
+      expect.any(Object),
+    );
+  });
+
+  test.each([
+    [
+      'unconfigured signer',
+      { signerIdentity: undefined },
+      'untrusted_identity',
+    ],
+    [
+      'another signer',
+      {
+        signerIdentity:
+          'https://github.com/other/build/.github/workflows/build.yml@refs/heads/main',
+      },
+      'untrusted_identity',
+    ],
+    [
+      'source repository',
+      { repository: 'github/artifact-attestations-workflows' },
+      'source_mismatch',
+    ],
+    [
+      'caller workflow',
+      { workflow: '.github/workflows/other.yml' },
+      'source_mismatch',
+    ],
+    ['source ref', { ref: 'refs/heads/other' }, 'source_mismatch'],
+    ['source commit', { commit: 'ab'.repeat(20) }, 'commit_mismatch'],
+  ] satisfies [string, Partial<ImageProvenancePolicy>, string][])(
+    'rejects a reusable-workflow proof with an unapproved %s',
+    async (_label, override, reason) => {
+      await expect(
+        verifyImageProvenance({
+          bundles: [REUSABLE_BUNDLE],
+          digest: REUSABLE_DIGEST,
+          policy: { ...REUSABLE_POLICY, ...override },
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'provenance.image_verification_failed',
+          details: { reasons: [reason] },
+        },
+      });
+    },
+  );
+
+  test.each(['repository', 'ref'])(
+    'rejects a malformed certificate source %s instead of falling back to the legacy value',
+    async (field) => {
+      if (field === 'repository') {
+        jest
+          .spyOn(
+            X509SourceRepositoryURIExtension.prototype,
+            'sourceRepositoryURI',
+            'get',
+          )
+          .mockReturnValue('');
+      } else {
+        jest
+          .spyOn(
+            X509SourceRepositoryRefExtension.prototype,
+            'sourceRepositoryRef',
+            'get',
+          )
+          .mockReturnValue('');
+      }
+      await expect(
+        verifyImageProvenance({
+          bundles: [REUSABLE_BUNDLE],
+          digest: REUSABLE_DIGEST,
+          policy: REUSABLE_POLICY,
+        }),
+      ).rejects.toMatchObject({
+        failure: { details: { reasons: ['source_mismatch'] } },
+      });
+    },
+  );
+
   test('verifies every required image from compose, including YAML merges and tagged digests', async () => {
+    const firstRequest = createDeferred<Response>();
+    const secondRequest = createDeferred<Response>();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
-      .mockImplementation(async () =>
-        Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
-      );
+      .mockReturnValueOnce(firstRequest.promise)
+      .mockReturnValueOnce(secondRequest.promise);
     const appCompose = JSON.stringify({
       docker_compose_file: `
 x-image: &manager
@@ -93,12 +224,21 @@ services:
 `,
     });
 
-    await verifyDeploymentImageProvenance({
+    const verification = verifyDeploymentImageProvenance({
       appCompose,
       imagePolicies: { 'docker.io/nearaidev/compose-manager': POLICY },
       githubToken: 'test-github-token',
     });
+    const startedRequests = fetch.mock.calls.length;
+    firstRequest.resolve(
+      Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+    );
+    secondRequest.resolve(
+      Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+    );
+    await verification;
 
+    expect(startedRequests).toBe(2);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledWith(
       expect.stringContaining(encodeURIComponent(DIGEST)),
@@ -108,6 +248,59 @@ services:
         }),
       }),
     );
+  });
+
+  test('shares an in-flight root refresh without retaining the completed request', async () => {
+    const root = createDeferred<TrustedRoot>();
+    const getRoot = jest
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockReturnValueOnce(root.promise);
+    const input = { bundles: [BUNDLE], digest: DIGEST, policy: POLICY };
+    const verifications = [
+      verifyImageProvenance(input),
+      verifyImageProvenance(input),
+    ];
+    const startedRequests = getRoot.mock.calls.length;
+    root.resolve(TRUSTED_ROOT);
+
+    await expect(Promise.all(verifications)).resolves.toHaveLength(2);
+    expect(startedRequests).toBe(1);
+
+    await verifyImageProvenance(input);
+    expect(getRoot).toHaveBeenCalledTimes(2);
+  });
+
+  test('shares a failed root refresh and allows a later retry', async () => {
+    const root = createDeferred<TrustedRoot>();
+    const getRoot = jest
+      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+      .mockReturnValueOnce(root.promise);
+    const input = { bundles: [BUNDLE], digest: DIGEST, policy: POLICY };
+    const verifications = Promise.allSettled([
+      verifyImageProvenance(input),
+      verifyImageProvenance(input),
+    ]);
+    const startedRequests = getRoot.mock.calls.length;
+    const cause = new Error('root request failed');
+    root.reject(cause);
+
+    for (const result of await verifications) {
+      expect(result).toMatchObject({
+        status: 'rejected',
+        reason: {
+          failure: {
+            code: 'provenance.image_verification_failed',
+            details: { digest: DIGEST, reasons: ['trust_root_unavailable'] },
+          },
+          retryable: true,
+          cause,
+        },
+      });
+    }
+    expect(startedRequests).toBe(1);
+
+    await verifyImageProvenance(input);
+    expect(getRoot).toHaveBeenCalledTimes(2);
   });
 
   test.each(['', ':latest', '@sha256:bad', `@${DIGEST}@${DIGEST}`])(
@@ -376,7 +569,13 @@ services:
     },
   );
 
-  test('uses the legacy source SHA only when the modern extension is absent', async () => {
+  test('uses legacy source claims when their modern extensions are absent', async () => {
+    jest
+      .spyOn(X509Certificate.prototype, 'extSourceRepositoryURI', 'get')
+      .mockReturnValue(undefined);
+    jest
+      .spyOn(X509Certificate.prototype, 'extSourceRepositoryRef', 'get')
+      .mockReturnValue(undefined);
     jest
       .spyOn(X509Certificate.prototype, 'extSourceRepositoryDigest', 'get')
       .mockReturnValue(undefined);

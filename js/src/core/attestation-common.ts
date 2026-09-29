@@ -15,7 +15,6 @@ type VerifyReportDataBindingWithTlsFingerprintParams = {
   nonce: string;
   signingAddress: string;
   reportedSpkiFingerprint: string;
-  peerSpkiFingerprint: string;
 };
 
 type VerifyReportDataBindingParams = {
@@ -61,8 +60,9 @@ export function verifyReportedNonce({
  * - bytes [0, 32): SHA-256(signing-address bytes || TLS SPKI fingerprint)
  * - bytes [32, 64): caller's 32-byte nonce
  *
- * The first half binds the Gateway signing key and TLS key. The returned
- * fingerprint is valid only when it also matches the caller-observed TLS peer.
+ * The returned fingerprint is authenticated by the quote. Comparing it with a
+ * live TLS peer is a separate check: a report can contain evidence for several
+ * instances, but the client observes only the endpoint serving this request.
  */
 export async function verifyReportDataBindingWithTlsFingerprint(
   input: VerifyReportDataBindingWithTlsFingerprintParams,
@@ -91,8 +91,21 @@ export async function verifyReportDataBindingWithTlsFingerprint(
     });
   }
 
+  return reportedSpkiFingerprint.toString('hex');
+}
+
+/** Bind an already quote-authenticated SPKI fingerprint to the observed peer. */
+export function verifyPeerSpkiFingerprint(
+  attestedSpkiFingerprint: string,
+  observedSpkiFingerprint: string,
+): void {
+  const reportedSpkiFingerprint = requireByteLength({
+    value: attestedSpkiFingerprint,
+    byteLength: 32,
+    label: 'attestation.spkiFingerprint',
+  });
   const peerSpkiFingerprint = requireByteLength({
-    value: input.peerSpkiFingerprint,
+    value: observedSpkiFingerprint,
     byteLength: 32,
     label: 'clientBinding.spkiFingerprint',
   });
@@ -101,8 +114,6 @@ export async function verifyReportDataBindingWithTlsFingerprint(
       code: 'binding.spki_fingerprint_mismatch',
     });
   }
-
-  return reportedSpkiFingerprint.toString('hex');
 }
 
 /**

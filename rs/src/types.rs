@@ -9,9 +9,9 @@ use serde_json::Value;
 pub struct ImageProvenancePolicy {
     /// GitHub source repository in `owner/repo` form.
     pub repository: String,
-    /// Workflow path, for example `.github/workflows/build.yml`.
+    /// Caller/source workflow path, for example `.github/workflows/build.yml`.
     pub workflow: String,
-    /// Optional exact Git ref, such as `refs/heads/main`.
+    /// Optional exact source Git ref, such as `refs/heads/main`.
     #[serde(rename = "ref")]
     pub git_ref: Option<String>,
     /// Optional full source commit SHA, matched against both the SLSA statement
@@ -44,10 +44,12 @@ pub struct VerifiedImageProvenance {
     pub digest: String,
     pub repository: String,
     pub workflow: String,
+    /// Authenticated source ref, not the reusable signing workflow's ref.
     #[serde(rename = "ref")]
     pub git_ref: String,
     /// Source commit matched between the SLSA statement and signing certificate.
     pub commit: String,
+    /// Authenticated signing workflow SAN URI; it may differ from the source.
     pub certificate_identity: String,
     pub issuer: String,
     pub predicate_type: String,
@@ -166,9 +168,9 @@ pub enum TcbStatus {
     Unknown,
 }
 
-/// Facts returned by a quote verifier before SDK policy and binding checks.
+/// Facts returned by a TDX quote verifier before SDK policy and binding checks.
 #[derive(Clone, Debug)]
-pub struct QuoteVerificationResult {
+pub struct TdxQuoteVerificationResult {
     pub tcb_status: TcbStatus,
     pub advisory_ids: Vec<String>,
     pub debug_enabled: bool,
@@ -177,20 +179,22 @@ pub struct QuoteVerificationResult {
     pub rt_mr3: Vec<u8>,
 }
 
-/// A caller-supplied Intel quote verifier. The SDK's default verifier uses
+/// A caller-supplied Intel TDX quote verifier. The SDK's default verifier uses
 /// Intel DCAP through PCCS, but tests and specialized deployments can supply
 /// their own implementation.
 #[async_trait]
-pub trait QuoteVerifier: Send + Sync {
-    async fn verify(&self, intel_quote: &str)
-        -> Result<QuoteVerificationResult, VerificationError>;
+pub trait TdxQuoteVerifier: Send + Sync {
+    async fn verify(
+        &self,
+        intel_quote: &str,
+    ) -> Result<TdxQuoteVerificationResult, VerificationError>;
 }
 
-/// A caller-supplied NVIDIA evidence verifier. The default implementation
+/// A caller-supplied GPU evidence verifier. The default implementation
 /// delegates to NRAS over HTTPS.
 #[async_trait]
-pub trait NvidiaEvidenceVerifier: Send + Sync {
-    async fn verify(&self, nvidia_payload: &str) -> Result<(), VerificationError>;
+pub trait GpuEvidenceVerifier: Send + Sync {
+    async fn verify(&self, payload: &str) -> Result<(), VerificationError>;
 }
 
 /// A caller-owned deployment-provenance verifier. It receives measurements
@@ -213,7 +217,7 @@ pub enum GpuEvidenceRequirement {
     /// Verify a supplied payload; accept a report that does not provide one.
     #[default]
     IfPresent,
-    /// Reject reports that do not provide NVIDIA evidence.
+    /// Reject reports that do not provide GPU evidence.
     Required,
 }
 
@@ -226,16 +230,16 @@ pub struct ModelAttestationPolicy {
 /// Optional verifier implementations used by a Gateway verification call.
 #[derive(Default)]
 pub struct AttestationVerifiers<'a> {
-    pub quote: Option<&'a dyn QuoteVerifier>,
+    pub tdx_quote: Option<&'a dyn TdxQuoteVerifier>,
     pub deployment: Option<&'a dyn DeploymentVerifier>,
 }
 
 /// Optional verifier implementations used by a model verification call.
 #[derive(Default)]
 pub struct ModelAttestationVerifiers<'a> {
-    pub quote: Option<&'a dyn QuoteVerifier>,
+    pub tdx_quote: Option<&'a dyn TdxQuoteVerifier>,
     pub deployment: Option<&'a dyn DeploymentVerifier>,
-    pub nvidia: Option<&'a dyn NvidiaEvidenceVerifier>,
+    pub gpu_evidence: Option<&'a dyn GpuEvidenceVerifier>,
 }
 
 /// Runtime measurements reconstructed from dstack's RTMR3 event log.

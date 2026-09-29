@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import * as https from 'node:https';
 import { Readable } from 'node:stream';
-import * as tls from 'node:tls';
 import type { DetailedPeerCertificate } from 'node:tls';
+import * as tls from 'node:tls';
 import { createPinnedTlsFetch } from '../src/node';
 
 jest.mock('node:crypto', () => {
@@ -185,5 +185,51 @@ describe('createPinnedTlsFetch', () => {
 
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(requests).toHaveLength(1);
+  });
+
+  test('accepts every verified peer fingerprint and rejects an unknown peer', async () => {
+    const firstSpki = Buffer.from('first-model-spki');
+    const secondSpki = Buffer.from('second-model-spki');
+    const requests = installHttpsRequests({
+      peerCertificates: [firstSpki, secondSpki, Buffer.from('unknown-spki')],
+    });
+    const fetch = createPinnedTlsFetch([
+      spkiFingerprint(firstSpki),
+      spkiFingerprint(secondSpki),
+    ]);
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await fetch('https://model.test/v1/chat/completions');
+      await expect(response.json()).resolves.toEqual({ ok: true });
+    }
+    await expect(
+      fetch('https://model.test/v1/chat/completions'),
+    ).rejects.toMatchObject({
+      failure: { code: 'binding.spki_fingerprint_mismatch' },
+    });
+    expect(requests).toHaveLength(3);
+    for (const request of requests) {
+      expect(request.options?.rejectUnauthorized).toBe(true);
+    }
+  });
+
+  test('does not let a matching pin bypass hostname verification', async () => {
+    const matchingSpki = Buffer.from('matching-spki');
+    installHttpsRequests({ peerCertificates: [matchingSpki] });
+    const hostnameError = new Error('Certificate hostname does not match');
+    jest.mocked(tls.checkServerIdentity).mockReturnValueOnce(hostnameError);
+    const fetch = createPinnedTlsFetch([spkiFingerprint(matchingSpki)]);
+
+    await expect(
+      fetch('https://model.test/v1/attestation/report'),
+    ).rejects.toBe(hostnameError);
+  });
+
+  test('requires at least one verified fingerprint', () => {
+    expect(() => createPinnedTlsFetch([])).toThrow(
+      expect.objectContaining({
+        failure: { code: 'binding.spki_fingerprint_required' },
+      }),
+    );
   });
 });

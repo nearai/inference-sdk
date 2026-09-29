@@ -1,10 +1,16 @@
 import { Buffer } from 'node:buffer';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { SigningKey, computeAddress } from 'ethers';
-import { ApiError, verifyModelAttestation } from '../src';
-import type { MeasuredDeployment, QuoteVerifier } from '../src';
+import {
+  ApiError,
+  createGpuEvidenceVerifier,
+  verifyModelAttestation,
+} from '../src';
+import type { MeasuredDeployment, TdxQuoteVerifier } from '../src';
+import type { VerifiedTdxQuote } from '../src/types/verification';
 import {
   appCompose,
+  createDeferred,
   createModelAttestation,
   createModelQuote,
   nonce,
@@ -64,7 +70,7 @@ function createModelQuoteForSigner(signer: string) {
 }
 
 describe('model attestation verification', () => {
-  const quoteVerifier: QuoteVerifier = async () => createModelQuote();
+  const tdxQuoteVerifier: TdxQuoteVerifier = async () => createModelQuote();
 
   afterEach(() => {
     jest.restoreAllMocks();
@@ -74,7 +80,7 @@ describe('model attestation verification', () => {
     const result = await verifyModelAttestation({
       attestation: createModelAttestation(),
       clientBinding: { nonce },
-      verifiers: { quote: quoteVerifier },
+      verifiers: { tdxQuote: tdxQuoteVerifier },
     });
 
     expect(result).toMatchObject({
@@ -93,7 +99,7 @@ describe('model attestation verification', () => {
           nonce: '44'.repeat(32),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -121,7 +127,7 @@ describe('model attestation verification', () => {
         eventLog: JSON.stringify(eventLog),
       }),
       clientBinding: { nonce },
-      verifiers: { quote: async () => quote },
+      verifiers: { tdxQuote: async () => quote },
     });
 
     expect(result).toMatchObject({
@@ -141,7 +147,7 @@ describe('model attestation verification', () => {
       }),
       clientBinding: { nonce },
       verifiers: {
-        quote: async () => createModelQuoteForSigner(ed25519SigningAddress),
+        tdxQuote: async () => createModelQuoteForSigner(ed25519SigningAddress),
       },
     });
 
@@ -161,7 +167,7 @@ describe('model attestation verification', () => {
       }),
       clientBinding: { nonce },
       verifiers: {
-        quote: async () => createModelQuoteForSigner(signingAddress),
+        tdxQuote: async () => createModelQuoteForSigner(signingAddress),
       },
     });
 
@@ -180,7 +186,7 @@ describe('model attestation verification', () => {
       }),
       clientBinding: { nonce },
       verifiers: {
-        quote: async () => createModelQuoteForSigner(signingAddress),
+        tdxQuote: async () => createModelQuoteForSigner(signingAddress),
       },
     });
 
@@ -204,7 +210,7 @@ describe('model attestation verification', () => {
         }),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => createModelQuoteForSigner(signingAddress),
+          tdxQuote: async () => createModelQuoteForSigner(signingAddress),
         },
       }),
     ).rejects.toMatchObject({
@@ -217,7 +223,7 @@ describe('model attestation verification', () => {
       verifyModelAttestation({
         attestation: createModelAttestation({ eventLog: '[{}]' }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -232,7 +238,7 @@ describe('model attestation verification', () => {
       verifyModelAttestation({
         attestation: createModelAttestation({ eventLog: '[' }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -254,7 +260,7 @@ describe('model attestation verification', () => {
       verifyModelAttestation({
         attestation: createModelAttestation(),
         clientBinding: { nonce },
-        verifiers: { quote: async () => quote },
+        verifiers: { tdxQuote: async () => quote },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -270,7 +276,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => createModelQuote({ debugEnabled: true }),
+          tdxQuote: async () => createModelQuote({ debugEnabled: true }),
         },
       }),
     ).rejects.toMatchObject({
@@ -284,7 +290,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => {
+          tdxQuote: async () => {
             throw new ApiError({
               code: 'api.transport_failed',
               details: { resource: 'model_attestation', reason: 'request' },
@@ -321,7 +327,7 @@ describe('model attestation verification', () => {
       attestation: createModelAttestation(),
       clientBinding: { nonce },
       verifiers: {
-        quote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
+        tdxQuote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
       },
     });
 
@@ -333,7 +339,7 @@ describe('model attestation verification', () => {
         clientBinding: { nonce },
         policy: { acceptedTcbStatuses: ['UpToDate'] },
         verifiers: {
-          quote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
+          tdxQuote: async () => createModelQuote({ tcbStatus: 'OutOfDate' }),
         },
       }),
     ).rejects.toMatchObject({
@@ -350,7 +356,8 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: async () => createModelQuote({ reportData: Buffer.alloc(63) }),
+          tdxQuote: async () =>
+            createModelQuote({ reportData: Buffer.alloc(63) }),
         },
       }),
     ).rejects.toMatchObject({
@@ -381,7 +388,7 @@ describe('model attestation verification', () => {
           ],
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -398,7 +405,7 @@ describe('model attestation verification', () => {
           appCompose: '{"changed":true}',
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -408,13 +415,14 @@ describe('model attestation verification', () => {
   });
 
   test('rejects NVIDIA evidence with a different nonce', async () => {
+    const gpuEvidence = jest.fn(createGpuEvidenceVerifier());
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce: '55'.repeat(32) }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -422,14 +430,18 @@ describe('model attestation verification', () => {
         details: { source: 'nvidiaPayload' },
       },
     });
+    expect(gpuEvidence).not.toHaveBeenCalled();
   });
 
   test('rejects NVIDIA evidence without a nonce', async () => {
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('Unexpected GPU network request'));
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({ nvidiaPayload: '{}' }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -437,6 +449,7 @@ describe('model attestation verification', () => {
         details: { reason: 'nonce_missing' },
       },
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('models GPU evidence as an explicit status', async () => {
@@ -445,7 +458,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         policy: { gpuEvidence: 'required' },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: { code: 'policy.gpu_evidence_required' },
@@ -456,10 +469,57 @@ describe('model attestation verification', () => {
         nvidiaPayload: JSON.stringify({ nonce }),
       }),
       clientBinding: { nonce },
-      verifiers: { quote: quoteVerifier, nvidia: async () => undefined },
+      verifiers: {
+        tdxQuote: tdxQuoteVerifier,
+        gpuEvidence: async () => undefined,
+      },
     });
     expect(result.gpuEvidence).toBe('verified');
   });
+
+  test.each(['CPU', 'GPU'] as const)(
+    'starts CPU and GPU verification together and requires both when %s finishes first',
+    async (first) => {
+      const cpu = createDeferred<VerifiedTdxQuote>();
+      const gpu = createDeferred<void>();
+      const deploymentChecked = createDeferred<void>();
+      const tdxQuote = jest.fn(() => cpu.promise);
+      const gpuEvidence = jest.fn(() => gpu.promise);
+      const deployment = jest.fn(() => deploymentChecked.resolve());
+      const verification = verifyModelAttestation({
+        attestation: createModelAttestation({
+          nvidiaPayload: JSON.stringify({ nonce }),
+        }),
+        clientBinding: { nonce },
+        verifiers: { tdxQuote, deployment, gpuEvidence },
+      });
+
+      expect(tdxQuote).toHaveBeenCalledTimes(1);
+      expect(gpuEvidence).toHaveBeenCalledTimes(1);
+      expect(deployment).not.toHaveBeenCalled();
+
+      const rejection = expect(verification).rejects.toMatchObject({
+        failure: {
+          code:
+            first === 'CPU'
+              ? 'gpu.attestation_rejected'
+              : 'quote.verification_failed',
+        },
+      });
+      if (first === 'CPU') {
+        cpu.resolve(createModelQuote());
+        await deploymentChecked.promise;
+        gpu.reject(new Error('GPU evidence rejected'));
+      } else {
+        gpu.resolve();
+        await gpu.promise;
+        cpu.reject(new Error('CPU evidence rejected'));
+      }
+
+      await rejection;
+      expect(deployment).toHaveBeenCalledTimes(first === 'CPU' ? 1 : 0);
+    },
+  );
 
   test('normalizes NVIDIA verifier failures', async () => {
     await expect(
@@ -469,8 +529,8 @@ describe('model attestation verification', () => {
         }),
         clientBinding: { nonce },
         verifiers: {
-          quote: quoteVerifier,
-          nvidia: async () => {
+          tdxQuote: tdxQuoteVerifier,
+          gpuEvidence: async () => {
             throw new Error('GPU evidence was rejected');
           },
         },
@@ -483,18 +543,76 @@ describe('model attestation verification', () => {
     });
   });
 
-  test('verifies NVIDIA evidence through NRAS by default', async () => {
-    mockNrasOverallResult(true);
-
-    const result = await verifyModelAttestation({
+  test('fetches NRAS evidence and JWKS concurrently before verifying the GPU', async () => {
+    const nras = createDeferred<Response>();
+    const jwks = createDeferred<Response>();
+    const nvidiaPayload = JSON.stringify({ nonce });
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation((url) =>
+        String(url).endsWith('/.well-known/jwks.json')
+          ? jwks.promise
+          : nras.promise,
+      );
+    const verification = verifyModelAttestation({
       attestation: createModelAttestation({
-        nvidiaPayload: JSON.stringify({ nonce }),
+        nvidiaPayload,
       }),
       clientBinding: { nonce },
-      verifiers: { quote: quoteVerifier },
+      verifiers: { tdxQuote: tdxQuoteVerifier },
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://nras.attestation.nvidia.com/.well-known/jwks.json',
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      'https://nras.attestation.nvidia.com/v3/attest/gpu',
+      expect.objectContaining({ method: 'POST', body: nvidiaPayload }),
+    );
+    jwks.resolve(new Response(JSON.stringify(NRAS_JWKS)));
+    nras.resolve(
+      new Response(JSON.stringify([['JWT', createNrasJwt(nrasClaims())]])),
+    );
+    const result = await verification;
+    expect(result.gpuEvidence).toBe('verified');
+  });
+
+  test('verifies NVIDIA evidence through configured NRAS and JWKS proxies', async () => {
+    mockNrasOverallResult(true);
+    const nvidiaPayload = JSON.stringify({ nonce });
+    const gpuEvidence = createGpuEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+      jwksUrl: '/api/attestation/nvidia/jwks.json',
+    });
+
+    const result = await verifyModelAttestation({
+      attestation: createModelAttestation({ nvidiaPayload }),
+      clientBinding: { nonce },
+      verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
     });
 
     expect(result.gpuEvidence).toBe('verified');
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/attestation/nvidia', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: nvidiaPayload,
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/attestation/nvidia/jwks.json',
+    );
+  });
+
+  test('rejects a malformed payload nonce before contacting NRAS', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    const verify = createGpuEvidenceVerifier();
+
+    // A helper can be used independently, outside verifyModelAttestation.
+    const payload = JSON.stringify({ nonce: 'not-a-nonce' });
+    await expect(verify(payload)).rejects.toMatchObject({
+      failure: { code: 'input.invalid' },
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('reports rejected NVIDIA evidence from NRAS', async () => {
@@ -506,7 +624,7 @@ describe('model attestation verification', () => {
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -525,7 +643,7 @@ describe('model attestation verification', () => {
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -544,7 +662,7 @@ describe('model attestation verification', () => {
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -555,11 +673,7 @@ describe('model attestation verification', () => {
   });
 
   test('rejects an NRAS response without a JWT envelope', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify([['TOKEN', 'not-a-jwt']]), { status: 200 }),
-      );
+    mockNrasResponse([['TOKEN', 'not-a-jwt']]);
 
     await expect(
       verifyModelAttestation({
@@ -567,7 +681,7 @@ describe('model attestation verification', () => {
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -589,13 +703,16 @@ describe('model attestation verification', () => {
     ['wrong signed nonce', { eat_nonce: '44'.repeat(32) }, 'nonce_mismatch'],
   ])('rejects an NRAS token with %s', async (_, overrides, reason) => {
     mockNrasJwtPayload(nrasClaims(overrides));
+    const gpuEvidence = createGpuEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+    });
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
       }),
     ).rejects.toMatchObject({
       failure: { code: 'gpu.jwt_verification_failed', details: { reason } },
@@ -611,13 +728,16 @@ describe('model attestation verification', () => {
       'base64url',
     );
     mockNrasResponse([['JWT', `${header}.${modifiedPayload}.${signature}`]]);
+    const gpuEvidence = createGpuEvidenceVerifier({
+      nrasUrl: '/api/attestation/nvidia',
+    });
     await expect(
       verifyModelAttestation({
         attestation: createModelAttestation({
           nvidiaPayload: JSON.stringify({ nonce }),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -640,7 +760,7 @@ describe('model attestation verification', () => {
             nvidiaPayload: JSON.stringify({ nonce }),
           }),
           clientBinding: { nonce },
-          verifiers: { quote: quoteVerifier },
+          verifiers: { tdxQuote: tdxQuoteVerifier },
         }),
       ).rejects.toMatchObject({
         failure: { code: 'gpu.jwt_verification_failed', details: { reason } },
@@ -655,7 +775,7 @@ describe('model attestation verification', () => {
           reportedQuoteData: 'ff'.repeat(64),
         }),
         clientBinding: { nonce },
-        verifiers: { quote: quoteVerifier },
+        verifiers: { tdxQuote: tdxQuoteVerifier },
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -682,7 +802,7 @@ describe('model attestation verification', () => {
         eventLog: [osImageEvent, composeEvent],
       }),
       clientBinding: { nonce },
-      verifiers: { quote: async () => quote, deployment: verifyDeployment },
+      verifiers: { tdxQuote: async () => quote, deployment: verifyDeployment },
     });
 
     expect(verifiedDeployments).toEqual([
@@ -703,7 +823,7 @@ describe('model attestation verification', () => {
         attestation: createModelAttestation(),
         clientBinding: { nonce },
         verifiers: {
-          quote: quoteVerifier,
+          tdxQuote: tdxQuoteVerifier,
           deployment: async () => {
             throw new Error('verifier implementation detail');
           },
@@ -762,9 +882,7 @@ function mockNrasResponse(body: unknown): void {
     .mockImplementation(
       async (url) =>
         new Response(
-          JSON.stringify(
-            String(url).endsWith('/.well-known/jwks.json') ? NRAS_JWKS : body,
-          ),
+          JSON.stringify(String(url).endsWith('/jwks.json') ? NRAS_JWKS : body),
           { status: 200 },
         ),
     );

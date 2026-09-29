@@ -13,5 +13,5 @@
     "ignoreDeprecations": "6.0",
     "types": ["node"]
   },
-  "include": ["*.ts"]
+  "include": ["**/*.ts"]
 }

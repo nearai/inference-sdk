@@ -32,7 +32,7 @@ async def verify_gateway_attestation(
         advertised_report_data=attestation.reported_quote_data,
         nonce=client_binding.nonce,
         policy=policy,
-        quote_verifier=None if verifiers is None else verifiers.quote,
+        tdx_quote_verifier=None if verifiers is None else verifiers.tdx_quote,
     )
     if attestation.spki_fingerprint is not None:
         peer_spki_fingerprint = client_binding.spki_fingerprint

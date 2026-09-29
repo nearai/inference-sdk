@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use nearai_inference_sdk::{
-    verify_image_provenance, ImageProvenanceFailureReason as Reason, ImageProvenancePolicy,
-    VerificationError,
+    verify_image_provenance, verify_image_provenance_with_signer_identity,
+    ImageProvenanceFailureReason as Reason, ImageProvenancePolicy, VerificationError,
 };
 use serde_json::Value;
 
@@ -9,12 +9,110 @@ const BUNDLE: &str =
     include_str!("../../test-fixtures/provenance/compose-manager-launcher.bundle.json");
 const DIGEST: &str = "sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56";
 const COMMIT: &str = "8e07c3583909c9ab9da94d883e87add1ae90832d";
+const REUSABLE_BUNDLE: &str =
+    include_str!("../../test-fixtures/provenance/reusable-workflow.bundle.json");
+const REUSABLE_DIGEST: &str =
+    "sha256:49a3aa6075e0f49f82843e74b5baa614ad2a588e6675612bf108a0a008c5ac25";
+const SOURCE_COMMIT: &str = "95baf27389e83e6a5c48f42e190d48d7abcea19e";
+const SIGNER_IDENTITY: &str = "https://github.com/github/artifact-attestations-workflows/.github/workflows/attest.yml@09b495c3f12c7881b3cc17209a327792065c1a1d";
 
 fn policy() -> ImageProvenancePolicy {
     ImageProvenancePolicy::new(
         "nearai/compose-manager".to_owned(),
         ".github/workflows/build.yml".to_owned(),
     )
+}
+
+fn reusable_policy() -> ImageProvenancePolicy {
+    let mut policy = ImageProvenancePolicy::new(
+        "malancas/attest-demo".to_owned(),
+        ".github/workflows/shared.yml".to_owned(),
+    );
+    policy.git_ref = Some("refs/heads/main".to_owned());
+    policy.commit = Some(SOURCE_COMMIT.to_owned());
+    policy
+}
+
+#[tokio::test]
+async fn verifies_a_real_cross_repository_reusable_workflow_and_returns_source_identity() {
+    let policy = reusable_policy();
+    let verified = verify_image_provenance_with_signer_identity(
+        &[REUSABLE_BUNDLE.to_owned()],
+        REUSABLE_DIGEST,
+        &policy,
+        SIGNER_IDENTITY,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(verified.repository, policy.repository);
+    assert_eq!(verified.workflow, policy.workflow);
+    assert_eq!(verified.git_ref, "refs/heads/main");
+    assert_eq!(verified.commit, SOURCE_COMMIT);
+    assert_eq!(verified.certificate_identity, SIGNER_IDENTITY);
+    assert_eq!(verified.digest, REUSABLE_DIGEST);
+}
+
+#[tokio::test]
+async fn requires_the_reusable_signer_and_independent_source_policy() {
+    let missing_signer = reusable_policy();
+    let wrong_signer = reusable_policy();
+    let mut wrong_repository = reusable_policy();
+    wrong_repository.repository = "another/source".to_owned();
+    let mut wrong_workflow = reusable_policy();
+    wrong_workflow.workflow = ".github/workflows/other.yml".to_owned();
+    let mut wrong_ref = reusable_policy();
+    wrong_ref.git_ref = Some("refs/heads/other".to_owned());
+    let mut wrong_commit = reusable_policy();
+    wrong_commit.commit = Some("a".repeat(40));
+    for (policy, signer_identity, expected) in [
+        (missing_signer, None, Reason::UntrustedIdentity),
+        (
+            wrong_signer,
+            Some(format!("{SIGNER_IDENTITY}-wrong")),
+            Reason::UntrustedIdentity,
+        ),
+        (
+            wrong_repository,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_workflow,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_ref,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::SourceMismatch,
+        ),
+        (
+            wrong_commit,
+            Some(SIGNER_IDENTITY.to_owned()),
+            Reason::CommitMismatch,
+        ),
+    ] {
+        let bundles = [REUSABLE_BUNDLE.to_owned()];
+        let error = match signer_identity.as_deref() {
+            Some(signer_identity) => verify_image_provenance_with_signer_identity(
+                &bundles,
+                REUSABLE_DIGEST,
+                &policy,
+                signer_identity,
+            )
+            .await
+            .unwrap_err(),
+            None => verify_image_provenance(&bundles, REUSABLE_DIGEST, &policy)
+                .await
+                .unwrap_err(),
+        };
+        assert!(matches!(
+            error,
+            VerificationError::ImageProvenanceVerificationFailed { reasons, .. }
+                if reasons == vec![expected]
+        ));
+    }
 }
 
 fn tampered_bundle() -> String {

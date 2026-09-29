@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { ethers } from 'ethers';
-import { InferenceClient, type QuoteVerificationResult } from '../src';
+import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
 
@@ -58,7 +58,7 @@ function quoteForSigner({
 }: {
   readonly nonce: string;
   readonly signerAddress: string;
-}): QuoteVerificationResult {
+}): TdxQuoteVerificationResult {
   const signerBinding = Buffer.alloc(32);
   Buffer.from(signerAddress.slice(2), 'hex').copy(signerBinding);
   return createGatewayTlsQuote({
@@ -70,10 +70,10 @@ function createEcdsaGateway({
   signatureKind = 'provider_tee',
 }: CreateEcdsaGatewayParams = {}): {
   readonly fetch: typeof globalThis.fetch;
-  readonly quoteVerifier: (quote: string) => QuoteVerificationResult;
+  readonly tdxQuoteVerifier: (quote: string) => TdxQuoteVerificationResult;
   readonly state: EcdsaGatewayState;
 } {
-  const quotes = new Map<string, QuoteVerificationResult>();
+  const quotes = new Map<string, TdxQuoteVerificationResult>();
   const signatures = new Map<string, StoredSignature>();
   const state: EcdsaGatewayState = {
     attestationAlgorithms: [],
@@ -109,6 +109,13 @@ function createEcdsaGateway({
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
+
+    if (url.pathname === `/v1/model/${encodeURIComponent(model)}`) {
+      expect(request.method).toBe('GET');
+      return jsonResponse({
+        metadata: { providerType: 'vllm', attestationSupported: true },
+      });
+    }
 
     if (url.pathname === '/v1/attestation/report') {
       const nonce = url.searchParams.get('nonce');
@@ -214,7 +221,7 @@ function createEcdsaGateway({
 
   return {
     fetch,
-    quoteVerifier(quote: string): QuoteVerificationResult {
+    tdxQuoteVerifier(quote: string): TdxQuoteVerificationResult {
       const result = quotes.get(quote);
       if (result === undefined) {
         throw new Error(`Unknown quote: ${quote}`);
@@ -230,15 +237,18 @@ describe('ECDSA inference client', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifies, encrypts, decrypts, and verifies a receipt with ECDSA', async () => {
+  test('verifies, encrypts, decrypts, and verifies a response signature with ECDSA', async () => {
     const gateway = createEcdsaGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      e2ee: true,
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     const response = await client.fetch(`${baseUrl}chat/completions`, {
@@ -272,15 +282,18 @@ describe('ECDSA inference client', () => {
     expect(headers.get('x-encrypt-all-fields')).toBe('true');
   });
 
-  test('verifies an ECDSA Gateway receipt when the Gateway signs the response', async () => {
+  test('verifies an ECDSA Gateway signature when the Gateway signs the response', async () => {
     const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient({
       baseUrl,
       headers: { authorization: 'Bearer test-token' },
       signingAlgo: 'ecdsa',
-      gatewayVerification: { verifiers: { quote: gateway.quoteVerifier } },
-      modelVerification: { verifiers: { quote: gateway.quoteVerifier } },
+      e2ee: true,
+      gatewayVerification: {
+        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+      },
+      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
     });
 
     const response = await client.fetch(`${baseUrl}chat/completions`, {

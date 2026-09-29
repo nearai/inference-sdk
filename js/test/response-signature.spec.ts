@@ -76,7 +76,7 @@ async function verifiedModelAttestation(signingAddress: string) {
       signer: { signingAlgo: 'ecdsa', signingAddress },
     }),
     clientBinding: { nonce },
-    verifiers: { quote: async () => quote },
+    verifiers: { tdxQuote: async () => quote },
   });
 }
 
@@ -94,7 +94,7 @@ async function verifiedGatewayAttestation(
       reportedQuoteData: Buffer.from(quote.reportData).toString('hex'),
     },
     clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
-    verifiers: { quote: async () => quote },
+    verifiers: { tdxQuote: async () => quote },
   });
 }
 

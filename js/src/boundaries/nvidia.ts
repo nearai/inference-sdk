@@ -3,12 +3,43 @@ import {
   NrasOverallAttestationJwtClaimsSchema,
   NrasResponseSchema,
   NvidiaJwksSchema,
+  NvidiaPayloadNonceSchema,
 } from '../schemas';
 import type {
   NrasOverallAttestationJwtClaims,
   NvidiaJwks,
 } from '../types/nvidia';
 import { VerificationError } from '../utils/errors';
+import { requireByteLength } from '../utils/common';
+
+/** Decode the nonce shared by the model binding check and the NRAS request. */
+export function decodeNvidiaPayloadNonce(nvidiaPayload: string): string {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(nvidiaPayload);
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        code: 'gpu.payload_invalid',
+        details: { reason: 'invalid_json' },
+      },
+      { cause },
+    );
+  }
+  const parsed = v.safeParse(NvidiaPayloadNonceSchema, payload);
+  if (!parsed.success) {
+    throw new VerificationError({
+      code: 'gpu.payload_invalid',
+      details: { reason: 'nonce_missing' },
+    });
+  }
+  requireByteLength({
+    value: parsed.output.nonce,
+    byteLength: 32,
+    label: 'nvidiaPayload.nonce',
+  });
+  return parsed.output.nonce;
+}
 
 export function decodeNvidiaJwks(value: unknown): NvidiaJwks {
   const parsed = v.safeParse(NvidiaJwksSchema, value);

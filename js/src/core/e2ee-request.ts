@@ -5,7 +5,7 @@ import type {
   PrepareE2eeChatRequestParams,
 } from '../types/e2ee';
 import type { SecureChatCompletionResponse } from '../types/inference-client';
-import { ApiError } from '../utils/errors';
+import { ApiError, isApiError, isVerificationError } from '../utils/errors';
 import { NO_ALIASING_HEADER } from './cloud-api';
 import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
 import {
@@ -192,6 +192,7 @@ async function decodeResponseBody(
   try {
     text = await response.text();
   } catch (cause) {
+    if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
         code: 'api.transport_failed',

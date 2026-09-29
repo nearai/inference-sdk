@@ -69,7 +69,7 @@ async def test_model_response_accepts_equivalent_signer_hex() -> None:
             )
         ),
         MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(quote=lambda _: quote),
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
     )
 
     verify_model_response(
@@ -133,7 +133,7 @@ async def test_gateway_response_verifies_ed25519_signature() -> None:
             nonce=NONCE,
             spki_fingerprint=TLS_FINGERPRINT,
         ),
-        verifiers=AttestationVerifiers(quote=lambda _: quote),
+        verifiers=AttestationVerifiers(tdx_quote=lambda _: quote),
     )
 
     verify_gateway_response(
@@ -157,7 +157,7 @@ async def test_response_verifier_rejects_the_other_signature_kind() -> None:
         ),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            quote=lambda _: create_model_quote(signing_address='11' * 20)
+            tdx_quote=lambda _: create_model_quote(signing_address='11' * 20)
         ),
     )
 

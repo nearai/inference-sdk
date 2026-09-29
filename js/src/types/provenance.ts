@@ -7,10 +7,15 @@ import type {
 
 /** Caller-owned GitHub Actions build identity and optional version approval. */
 export type ImageProvenancePolicy = {
+  /** Source repository and location of its published attestations. */
   readonly repository: string;
+  /** Caller workflow path within the source repository. */
   readonly workflow: string;
+  /** Optional source ref; independent of a reusable workflow's ref. */
   readonly ref?: string;
   readonly commit?: string;
+  /** Exact certificate SAN URI for a reusable signing workflow, including its ref or SHA. */
+  readonly signerIdentity?: string;
   /** Defaults to GitHub Actions' OIDC issuer. */
   readonly issuer?: string;
 };
@@ -59,8 +64,10 @@ export type VerifiedImageProvenance = {
   readonly digest: string;
   readonly repository: string;
   readonly workflow: string;
+  /** Authenticated source ref, not the reusable workflow's ref. */
   readonly ref: string;
   readonly commit: string;
+  /** Actual signing workflow's certificate SAN URI. */
   readonly certificateIdentity: string;
   readonly issuer: string;
   readonly predicateType: string;

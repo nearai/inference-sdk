@@ -74,50 +74,60 @@ export type ModelVerificationOptions = {
 };
 
 /** Settings shared by generic and Node verified Chat clients. */
-type InferenceClientCommonOptions = {
+export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model. Defaults to 60 minutes. Set `0` to verify every request.
+   * same model across verify() and Chat. Defaults to 60 minutes.
+   * Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
   /** Retain response verification records for this long after the body finishes. Defaults to 60 minutes. */
   readonly responseCacheTimeToLiveMs?: number;
   /**
    * Encrypt supported Chat fields directly to the verified model key.
-   * Defaults to `true`. Setting this to `false` keeps attestation and
-   * deployment-policy checks, but sends plaintext Chat fields with a verified
-   * model-key routing header.
+   * Defaults to `false` in InferenceClient and `true` in DirectInferenceClient.
+   * Enabling E2EE requires verified NEAR model evidence. With E2EE disabled,
+   * supported NEAR deployments still use model verification and key routing;
+   * Incognito models use Gateway verification only.
    */
   readonly e2ee?: boolean;
   /**
-   * Signing and E2EE protocol to use for Gateway/model evidence, model-key
-   * routing, completion receipts, and optional field encryption. Defaults to
-   * `ed25519`.
-   */
-  readonly signingAlgo?: SigningAlgo;
-  /**
    * Optional caller-owned allowlist for authenticated model measurements.
-   * It receives the model named by each Chat request.
+   * It receives the model passed to verify() or named by each Chat request.
    * Runs after `modelVerification.verifiers.deployment` when both are supplied.
    */
   readonly deploymentPolicy?: DeploymentPolicy;
   readonly modelVerification?: ModelVerificationOptions;
 };
 
+/** OHTTP key attestations are signed with Ed25519 on both endpoint types. */
+export type InferenceEncryptionOptions =
+  | {
+      /** Encapsulate Chat requests with OHTTP. Defaults to false. Independent of field-level E2EE. */
+      readonly ohttp?: false;
+      /** Signing and field-encryption algorithm. Defaults to ed25519. */
+      readonly signingAlgo?: SigningAlgo;
+    }
+  | {
+      readonly ohttp: true;
+      /** OHTTP requires Ed25519 evidence. Defaults to ed25519. */
+      readonly signingAlgo?: 'ed25519';
+    };
+
 /** Configuration for browser-compatible verified Chat Completions. */
 export type InferenceClientOptions = AttestationClientOptions &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: GatewayVerificationOptions;
-  };
+  } & InferenceEncryptionOptions;
 
 /** Options accepted by the Node-specific `InferenceClient`. */
 export type NodeInferenceClientOptions = AttestationClientOptions &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
-  };
+  } & InferenceEncryptionOptions;
 
 /** A completion signature verified against the model evidence used for the request. */
-export type VerifiedModelCompletionReceipt = {
+export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
@@ -125,7 +135,7 @@ export type VerifiedModelCompletionReceipt = {
 };
 
 /** A completion signature verified against the Gateway evidence used for the request. */
-export type VerifiedGatewayCompletionReceipt = {
+export type VerifiedGatewayCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
@@ -133,14 +143,14 @@ export type VerifiedGatewayCompletionReceipt = {
 };
 
 /** Successful byte-exact response verification. */
-export type VerifiedCompletionReceipt =
-  | VerifiedModelCompletionReceipt
-  | VerifiedGatewayCompletionReceipt;
+export type VerifiedCompletionResult =
+  | VerifiedModelCompletionResult
+  | VerifiedGatewayCompletionResult;
 
 /** The supported OpenAI-compatible chat surface. */
-export type SecureChat = {
-  readonly completions: SecureChatCompletions;
+export type InferenceChat = {
+  readonly completions: InferenceChatCompletions;
 };
 
 /** Standard Chat Completions operations. */
-export type SecureChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
+export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;

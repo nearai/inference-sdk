@@ -12,4 +12,8 @@ Language-specific implementations and verification guides:
 For small end-to-end projects that send a completion and verify its returned
 signature, see the [examples](./examples/README.md).
 
+The TypeScript [direct-endpoint clients](./js/docs/verification-guide.md#use-a-direct-model-endpoint)
+are experimental and not recommended for production. Use Gateway clients for
+production integrations.
+
 Maintainers can follow the [release process](./RELEASING.md).

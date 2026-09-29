@@ -30,27 +30,29 @@ export async function verifyDeploymentImageProvenance({
   githubToken,
 }: VerifyDeploymentImageProvenanceParams): Promise<void> {
   const requiredImages = selectRequiredImages(appCompose, imagePolicies);
-  for (const { repository, digest, policy } of requiredImages) {
-    let bundles: readonly string[];
-    try {
-      bundles = await fetchImageProvenance({
-        repository: policy.repository,
-        digest,
-        githubToken,
-      });
-    } catch (cause) {
-      if (!(cause instanceof ApiError)) throw cause;
-      throw new VerificationError(
-        {
-          code: 'provenance.image_request_failed',
-          details: { imageRepository: repository, digest },
-          retryable: cause.retryable,
-        },
-        { cause },
-      );
-    }
-    await verifyImageProvenance({ bundles, digest, policy });
-  }
+  await Promise.all(
+    requiredImages.map(async ({ repository, digest, policy }) => {
+      let bundles: readonly string[];
+      try {
+        bundles = await fetchImageProvenance({
+          repository: policy.repository,
+          digest,
+          githubToken,
+        });
+      } catch (cause) {
+        if (!(cause instanceof ApiError)) throw cause;
+        throw new VerificationError(
+          {
+            code: 'provenance.image_request_failed',
+            details: { imageRepository: repository, digest },
+            retryable: cause.retryable,
+          },
+          { cause },
+        );
+      }
+      await verifyImageProvenance({ bundles, digest, policy });
+    }),
+  );
 }
 
 function selectRequiredImages(

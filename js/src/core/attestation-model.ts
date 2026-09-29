@@ -1,18 +1,18 @@
 import type {
   GpuEvidenceStatus,
-  ModelAttestationPolicy,
-  NvidiaEvidenceVerifier,
+  DeploymentVerifier,
+  GpuEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
 } from '../types/verification';
 import { Buffer } from 'buffer';
-import * as v from 'valibot';
 import { computeAddress } from 'ethers';
-import { NvidiaPayloadNonceSchema } from '../schemas';
+import { decodeNvidiaPayloadNonce } from '../boundaries/nvidia';
 import type { SigningAlgo } from '../types/attestation-common';
+import type { ModelAttestation } from '../types/attestation-model';
 import { hexToBuffer } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
-import { nvidiaNrasVerifier } from '../utils/nvidia';
+import { createGpuEvidenceVerifier } from '../utils/nvidia';
 import {
   verifyReportDataBinding,
   verifyReportedNonce,
@@ -21,25 +21,38 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
+import type { VerifiedDstackQuote } from './dstack-attestation';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
  * and the model signing identity but does not claim a client-to-model TLS
  * binding; the client's TLS connection terminates at the gateway.
  */
-export async function verifyModelAttestation({
+export async function verifyModelAttestation(
+  params: VerifyModelAttestationParams,
+): Promise<VerifiedModelAttestation> {
+  // CPU and GPU evidence bind independently to the same client nonce.
+  const [deployment, gpuEvidence] = await Promise.all([
+    verifyModelCpuAttestation(params),
+    verifyModelGpuEvidence(params),
+  ]);
+  return { ...deployment, gpuEvidence };
+}
+
+type VerifiedModelDeployment = Omit<VerifiedModelAttestation, 'gpuEvidence'>;
+
+async function verifyModelCpuAttestation({
   attestation,
   clientBinding,
   policy,
   verifiers,
-}: VerifyModelAttestationParams): Promise<VerifiedModelAttestation> {
+}: VerifyModelAttestationParams): Promise<VerifiedModelDeployment> {
   const { nonce } = clientBinding;
-  const gpuEvidenceRequirement = getGpuEvidenceRequirement(policy);
   const verifiedQuote = await verifyDstackQuote({
     attestation,
     nonce,
     policy,
-    quoteVerifier: verifiers?.quote,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
   });
   verifyReportDataBinding({
@@ -47,17 +60,29 @@ export async function verifyModelAttestation({
     nonce,
     signingAddress: verifiedQuote.signer.signingAddress,
   });
+  return verifyModelDeployment({
+    attestation,
+    verifiedQuote,
+    deploymentVerifier: verifiers?.deployment,
+  });
+}
+
+type VerifyModelDeploymentParams = {
+  attestation: ModelAttestation;
+  verifiedQuote: VerifiedDstackQuote;
+  deploymentVerifier?: DeploymentVerifier;
+};
+
+/** Shared model checks after the endpoint-specific report-data binding passes. */
+export async function verifyModelDeployment({
+  attestation,
+  verifiedQuote,
+  deploymentVerifier,
+}: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
   const evidence = await verifyDstackDeployment(
     verifiedQuote,
-    verifiers?.deployment,
+    deploymentVerifier,
   );
-  const gpuEvidence = await verifyNvidiaEvidence({
-    payload: attestation.nvidiaPayload,
-    nonce,
-    requirement: gpuEvidenceRequirement,
-    verifier:
-      verifiers?.nvidia ?? ((payload) => nvidiaNrasVerifier(payload, nonce)),
-  });
 
   const signingPublicKey = verifySigningPublicKey({
     attestation,
@@ -67,9 +92,23 @@ export async function verifyModelAttestation({
 
   return {
     ...evidence,
-    gpuEvidence,
     ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
   };
+}
+
+/** GPU verification is independent of the model's CPU quote and deployment. */
+export function verifyModelGpuEvidence({
+  attestation,
+  clientBinding: { nonce },
+  policy,
+  verifiers,
+}: VerifyModelAttestationParams): Promise<GpuEvidenceStatus> {
+  return verifyGpuEvidence({
+    payload: attestation.nvidiaPayload,
+    nonce,
+    requirement: policy?.gpuEvidence ?? 'if-present',
+    verifier: verifiers?.gpuEvidence ?? createGpuEvidenceVerifier(),
+  });
 }
 
 type VerifySigningPublicKeyParams = {
@@ -138,15 +177,15 @@ function ecdsaPublicKeyMatchesSigner(
   }
 }
 
-type VerifyNvidiaEvidenceParams = {
+type VerifyGpuEvidenceParams = {
   payload?: string;
   nonce: string;
   requirement: 'if-present' | 'required';
-  verifier: NvidiaEvidenceVerifier;
+  verifier: GpuEvidenceVerifier;
 };
 
-async function verifyNvidiaEvidence(
-  input: VerifyNvidiaEvidenceParams,
+async function verifyGpuEvidence(
+  input: VerifyGpuEvidenceParams,
 ): Promise<GpuEvidenceStatus> {
   if (input.payload === undefined) {
     if (input.requirement === 'required') {
@@ -158,28 +197,9 @@ async function verifyNvidiaEvidence(
   }
 
   // Bind the provider payload to the same nonce before handing it to either
-  // the default NRAS verifier or a caller-supplied NVIDIA verifier.
-  let payload: unknown;
-  try {
-    payload = JSON.parse(input.payload);
-  } catch (cause) {
-    throw new VerificationError(
-      {
-        code: 'gpu.payload_invalid',
-        details: { reason: 'invalid_json' },
-      },
-      { cause },
-    );
-  }
-  const parsed = v.safeParse(NvidiaPayloadNonceSchema, payload);
-  if (!parsed.success) {
-    throw new VerificationError({
-      code: 'gpu.payload_invalid',
-      details: { reason: 'nonce_missing' },
-    });
-  }
+  // the default NRAS verifier or a caller-supplied GPU verifier.
   verifyReportedNonce({
-    reportedNonce: parsed.output.nonce,
+    reportedNonce: decodeNvidiaPayloadNonce(input.payload),
     nonce: input.nonce,
     source: 'nvidiaPayload',
   });
@@ -196,10 +216,4 @@ async function verifyNvidiaEvidence(
     );
   }
   return 'verified';
-}
-
-function getGpuEvidenceRequirement(
-  policy: ModelAttestationPolicy | undefined,
-): 'if-present' | 'required' {
-  return policy?.gpuEvidence ?? 'if-present';
 }

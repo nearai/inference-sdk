@@ -6,12 +6,18 @@ on:
     branches:
       - "**"
   workflow_call:
+    inputs:
+      language:
+        description: SDK to check, or all for the full suite
+        type: string
+        default: all
 
 permissions:
   contents: read
 
 jobs:
   javascript:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -33,6 +39,7 @@ jobs:
           pnpm check
 
   python:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'python'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,6 +55,7 @@ jobs:
       - run: uv build
 
   rust:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
     runs-on: ubuntu-latest
     defaults:
       run:

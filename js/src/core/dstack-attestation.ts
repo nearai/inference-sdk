@@ -4,12 +4,12 @@ import type {
   DeploymentProvenanceStatus,
   DeploymentVerifier,
   MeasuredDeployment,
-  QuoteVerifier,
+  TdxQuoteVerifier,
   TcbStatus,
   VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
-import { decodeQuoteVerifierOutput } from '../boundaries/quote-verifier';
+import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { requireByteLength } from '../utils/common';
 import { VerificationError, wrapVerificationError } from '../utils/errors';
 import { verifyDcapQuote } from '../utils/intel';
@@ -36,7 +36,7 @@ type VerifyDstackQuoteParams = {
   attestation: AttestationEvidence;
   nonce: string;
   policy?: AttestationPolicy;
-  quoteVerifier?: QuoteVerifier;
+  tdxQuoteVerifier?: TdxQuoteVerifier;
   advertisedReportData?: string;
 };
 
@@ -49,7 +49,7 @@ export async function verifyDstackQuote({
   attestation,
   nonce,
   policy,
-  quoteVerifier,
+  tdxQuoteVerifier,
   advertisedReportData,
 }: VerifyDstackQuoteParams): Promise<VerifiedDstackQuote> {
   const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
@@ -63,7 +63,7 @@ export async function verifyDstackQuote({
     attestation.signer.signingAddress,
   );
 
-  const quote = await verifyQuote(quoteVerifier, attestation.intelQuote);
+  const quote = await verifyQuote(tdxQuoteVerifier, attestation.intelQuote);
   verifyAdvertisedReportData(advertisedReportData, quote.reportData);
   if (quote.debugEnabled) {
     throw new VerificationError({
@@ -130,7 +130,7 @@ export async function verifyDstackDeployment(
 }
 
 async function verifyQuote(
-  verifier: QuoteVerifier | undefined,
+  verifier: TdxQuoteVerifier | undefined,
   intelQuote: string,
 ): Promise<VerifiedTdxQuote> {
   if (verifier === undefined) {
@@ -150,7 +150,7 @@ async function verifyQuote(
     );
   }
 
-  return decodeQuoteVerifierOutput(quote);
+  return decodeTdxQuoteVerifierOutput(quote);
 }
 
 function getAcceptedTcbStatuses(

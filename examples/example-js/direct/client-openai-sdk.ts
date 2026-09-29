@@ -1,58 +1,59 @@
+// Experimental direct-endpoint example. Use the Gateway examples for production.
 import OpenAI from 'openai';
-import { InferenceClient } from '@nearai/inference-sdk/node';
+import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 
-const BASE_URL = 'https://cloud-api.near.ai/v1/';
+const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1';
 const MODEL = 'z-ai/glm-5.3-flash';
-// Selects the algorithm for attestation, E2EE, and response signatures.
 const SIGNING_ALGO = 'ed25519';
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
 
-  // E2EE and Gateway TLS verification are enabled by default.
-  // Attestations are reused for 60 minutes. Response records have a separate
-  // 60-minute TTL, starting when the response finishes.
-  const inferenceClient = new InferenceClient({
-    apiKey,
+  // This client verifies every returned model attestation before
+  // Chat. E2EE is enabled by default; direct TLS fingerprint binding is disabled.
+  const directClient = new DirectInferenceClient({
     baseUrl: BASE_URL,
+    apiKey,
     signingAlgo: SIGNING_ALGO,
   });
 
-  // Both clients are created once and reused, including for concurrent calls.
+  // The OpenAI client uses DirectInferenceClient's verified transport.
   const openai = new OpenAI({
     apiKey,
     baseURL: BASE_URL,
-    fetch: inferenceClient.fetch,
+    fetch: directClient.fetch,
   });
 
-  await runNonStreamingExample(openai, inferenceClient);
-  await runStreamingExample(openai, inferenceClient);
+  await runNonStreamingExample(openai, directClient);
+  await runStreamingExample(openai, directClient);
 }
 
 async function runNonStreamingExample(
   openai: OpenAI,
-  inferenceClient: InferenceClient,
+  directClient: DirectInferenceClient,
 ): Promise<void> {
   const completion = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 8,
+    max_completion_tokens: 128,
   });
   console.log(completion.choices[0]?.message.content ?? '');
 
-  const verified = await inferenceClient.verifyResponse(completion.id);
-  console.log(`Verified ${verified.signatureKind} response.`);
+  const verified = await directClient.verifyResponse(completion.id);
+  console.log(
+    `Verified model response against ${verified.attestations.length} matching attestations.`,
+  );
 }
 
 async function runStreamingExample(
   openai: OpenAI,
-  inferenceClient: InferenceClient,
+  directClient: DirectInferenceClient,
 ): Promise<void> {
   const stream = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 8,
+    max_completion_tokens: 128,
     stream: true,
   });
 
@@ -63,11 +64,12 @@ async function runStreamingExample(
   }
   process.stdout.write('\n');
 
-  // Consume the full stream before verifying its exact bytes.
   if (completionId === undefined)
     throw new Error('Stream returned no completion ID');
-  const verified = await inferenceClient.verifyResponse(completionId);
-  console.log(`Verified ${verified.signatureKind} streaming response.`);
+  const verified = await directClient.verifyResponse(completionId);
+  console.log(
+    `Verified streaming response against ${verified.attestations.length} matching attestations.`,
+  );
 }
 
 await main();
