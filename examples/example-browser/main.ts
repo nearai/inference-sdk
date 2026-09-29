@@ -72,13 +72,13 @@ let catalogRequestId = 0;
 let catalogLoading = false;
 let isSending = false;
 let endpointDirty = false;
-let gatewayStatus: Status = 'idle';
-let modelStatus: Status = 'idle';
-let gatewayError: string | undefined;
-let modelError: string | undefined;
+let deploymentStatus: Status = 'idle';
+let deploymentError: string | undefined;
 let hardwareReport: HardwareReport | undefined;
 let hardwareTab: 'model' | 'gateway' = 'model';
 let hardwareRequestId = 0;
+let preparationRequestId = 0;
+let preparationTimer: number | undefined;
 
 // verifyResponse(id) must run on the client that captured the exact encrypted
 // request and response bytes, so keep that client alive for each receipt.
@@ -208,22 +208,25 @@ async function switchEndpoint(baseUrl: string): Promise<void> {
 }
 
 function combinedStatus(): Status {
-  if (gatewayStatus === 'failed' || modelStatus === 'failed' || verificationRecords.some((record) => record.status === 'failed')) return 'failed';
-  if (gatewayStatus === 'pending' || modelStatus === 'pending' || verificationRecords.some((record) => record.status === 'pending')) return 'pending';
-  if (gatewayStatus === 'verified' && modelStatus === 'verified' && verificationRecords.length > 0 && verificationRecords.every((record) => record.status === 'verified')) return 'verified';
+  if (deploymentStatus === 'failed' || verificationRecords.some((record) => record.status === 'failed')) return 'failed';
+  if (deploymentStatus === 'pending' || verificationRecords.some((record) => record.status === 'pending')) return 'pending';
+  if (deploymentStatus === 'verified' && verificationRecords.every((record) => record.status === 'verified')) return 'verified';
   return 'idle';
 }
 
 function updateVerificationSummary(): void {
   const status = combinedStatus();
+  const hasResponses = verificationRecords.length > 0;
   const labels: Record<Status, string> = {
-    idle: 'Not checked', pending: 'Verifying confidentiality', verified: 'Chat is confidential', failed: 'Verification needs attention',
+    idle: 'Not checked', pending: 'Verifying model and Gateway', verified: hasResponses ? 'Chat is confidential' : 'Model and Gateway verified', failed: 'Verification needs attention',
   };
   const copy: Record<Status, string> = {
-    idle: 'Send a prompt to verify model evidence, Gateway evidence, E2EE and the completion signature.',
-    pending: 'Verification is running. A response is not trusted until its completion signature has been checked.',
-    verified: 'Model evidence, Gateway evidence and every completion signature in this conversation were verified.',
-    failed: gatewayError || modelError || 'At least one verification check failed. Treat the affected response as unverified.',
+    idle: 'Enter an API key to verify model and Gateway evidence before sending a prompt.',
+    pending: 'The SDK is verifying the selected model and Gateway. No prompt is sent during this check.',
+    verified: hasResponses
+      ? 'Model evidence, Gateway evidence and every completion signature in this conversation were verified.'
+      : 'Model and Gateway evidence are verified. The same SDK session will be reused when you send.',
+    failed: deploymentError || 'At least one verification check failed. Treat the affected response as unverified.',
   };
   const glyph: Record<Status, string> = { idle: '◇', pending: '◌', verified: '✓', failed: '!' };
   const statusLabel = element<HTMLElement>('verification-status');
@@ -240,9 +243,9 @@ function updateVerificationSummary(): void {
   renderVerificationRecords();
 }
 
-function setStageStatus(stage: 'gateway' | 'model', status: Status, error?: string): void {
-  if (stage === 'gateway') { gatewayStatus = status; gatewayError = error; }
-  else { modelStatus = status; modelError = error; }
+function setDeploymentStatus(status: Status, error?: string): void {
+  deploymentStatus = status;
+  deploymentError = error;
   updateVerificationSummary();
 }
 
@@ -321,13 +324,16 @@ function addMessage(role: 'user' | 'assistant', content: string): { body: HTMLPa
 }
 
 function resetConversation(): void {
+  preparationRequestId += 1;
+  if (preparationTimer !== undefined) window.clearTimeout(preparationTimer);
+  preparationTimer = undefined;
   activeClient = undefined;
   hardwareRequestId += 1;
   history.length = 0;
   verificationRecords.length = 0;
   hardwareReport = undefined;
-  gatewayStatus = 'idle'; modelStatus = 'idle';
-  gatewayError = undefined; modelError = undefined;
+  deploymentStatus = 'idle';
+  deploymentError = undefined;
   messagesElement.replaceChildren(emptyState.cloneNode(true));
   errorElement.textContent = '';
   updateVerificationSummary();
@@ -354,16 +360,40 @@ function getClient(apiKey: string, baseUrl: string): InferenceClient {
   return client;
 }
 
-async function checkGateway(apiKey: string, baseUrl: string): Promise<void> {
-  setStageStatus('gateway', 'pending');
+async function verifySelectedDeployment(apiKey: string, baseUrl: string, modelId: string): Promise<InferenceClient> {
+  if (preparationTimer !== undefined) window.clearTimeout(preparationTimer);
+  preparationTimer = undefined;
+  const requestId = ++preparationRequestId;
+  const client = getClient(apiKey, baseUrl);
+  setDeploymentStatus('pending');
   try {
-    const evidence = await new AttestationClient({ apiKey, baseUrl }).fetchGatewayAttestation({ signingAlgo: SIGNING_ALGO, includeSpkiFingerprint: false });
-    await verifyGatewayAttestation(evidence);
-    setStageStatus('gateway', 'verified');
+    // This public preflight performs the same Gateway + model checks used by
+    // Chat. The later Chat call reuses the SDK's cache or in-flight work.
+    await client.verify(modelId);
+    if (requestId === preparationRequestId) setDeploymentStatus('verified');
+    return client;
   } catch (error) {
-    setStageStatus('gateway', 'failed', describeError(error));
+    if (requestId === preparationRequestId) setDeploymentStatus('failed', describeError(error));
     throw error;
   }
+}
+
+function schedulePreparation(delay = 500): void {
+  preparationRequestId += 1;
+  if (preparationTimer !== undefined) window.clearTimeout(preparationTimer);
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey || endpointDirty || catalogLoading) return;
+  let baseUrl: string;
+  try { baseUrl = normalizeBaseUrl(baseUrlInput.value); }
+  catch { return; }
+  const modelId = selectedModel.id;
+  preparationTimer = window.setTimeout(() => {
+    preparationTimer = undefined;
+    void verifySelectedDeployment(apiKey, baseUrl, modelId).catch(() => {
+      // Preparation is visible in the verification UI. Send retries through
+      // the same verified SDK path and remains fail-closed.
+    });
+  }, delay);
 }
 
 function requireModelSignature(result: VerifiedCompletionResult): void {
@@ -567,9 +597,9 @@ function openHardwareDialog(): void {
 modelSelect.addEventListener('change', () => {
   const nextModel = availableModels.find((model) => model.id === modelSelect.value);
   if (!nextModel || nextModel.id === selectedModel.id) return;
-  selectedModel = nextModel; resetConversation(); updateSelectedModel();
+  selectedModel = nextModel; resetConversation(); updateSelectedModel(); schedulePreparation();
 });
-apiKeyInput.addEventListener('input', resetConversation);
+apiKeyInput.addEventListener('input', () => { resetConversation(); schedulePreparation(); });
 baseUrlInput.addEventListener('input', () => {
   const edited = baseUrlInput.value.trim() !== currentBaseUrl;
   if (edited && !endpointDirty) resetConversation();
@@ -580,11 +610,17 @@ baseUrlInput.addEventListener('change', () => {
     const baseUrl = normalizeBaseUrl(baseUrlInput.value);
     baseUrlInput.value = baseUrl; endpointDirty = false;
     baseUrlInput.removeAttribute('aria-invalid'); errorElement.textContent = '';
-    void switchEndpoint(baseUrl);
+    void switchEndpoint(baseUrl).then(() => schedulePreparation());
   } catch (error) {
     baseUrlInput.setAttribute('aria-invalid', 'true'); errorElement.textContent = describeError(error);
   }
 });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') schedulePreparation(0);
+});
+window.setInterval(() => {
+  if (document.visibilityState === 'visible') schedulePreparation(0);
+}, 60_000);
 
 element<HTMLButtonElement>('open-verification').addEventListener('click', () => showDialog(verificationDialog));
 element<HTMLButtonElement>('open-hardware').addEventListener('click', openHardwareDialog);
@@ -638,14 +674,12 @@ form.addEventListener('submit', async (event) => {
     addMessage('user', prompt);
     const assistant = addMessage('assistant', '');
     record = { ordinal: verificationRecords.length + 1, modelName: selectedModel.label, prompt, content: '', status: 'pending', receipt: assistant.receipt };
-    verificationRecords.push(record); renderReceipt(record); setStageStatus('model', 'pending');
-    await checkGateway(apiKey, baseUrl);
-    const client = getClient(apiKey, baseUrl);
+    verificationRecords.push(record); renderReceipt(record); updateVerificationSummary();
+    const client = await verifySelectedDeployment(apiKey, baseUrl, selectedModel.id);
     record.client = client;
     const stream = await client.chat.completions.create({
       model: selectedModel.id, messages: [...history, { role: 'user', content: prompt }], stream: true,
     });
-    setStageStatus('model', 'verified');
     let completionId: string | undefined;
     let answer = '';
     for await (const chunk of stream) {
@@ -663,7 +697,7 @@ form.addEventListener('submit', async (event) => {
     rebuildTrustedHistory();
   } catch (error) {
     const message = describeError(error);
-    if (modelStatus === 'pending') setStageStatus('model', 'failed', message);
+    if (deploymentStatus === 'pending') setDeploymentStatus('failed', message);
     if (record) {
       record.status = 'failed'; record.error = message;
       record.retryableLookup = isRetryableSignatureLookup(error);
@@ -678,4 +712,4 @@ form.addEventListener('submit', async (event) => {
 });
 
 updateVerificationSummary();
-void loadModels(currentBaseUrl);
+void loadModels(currentBaseUrl).then(() => schedulePreparation());

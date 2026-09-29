@@ -2,9 +2,10 @@
 
 A deliberately small, one-model-at-a-time example using the **browser** entry point of
 `@nearai/inference-sdk`. It sends streaming Chat Completions with E2EE enabled,
-checks fresh Gateway evidence, and verifies each finished response by completion
-ID. Its verification center shows the current trust state, fresh model and
-Gateway hardware evidence, and expandable per-message signature results.
+preverifies the selected deployment with the high-level `client.verify(model)`
+API, and verifies each finished response by completion ID. Its verification
+center shows the current trust state, fresh model and Gateway hardware evidence,
+and expandable per-message signature results.
 
 ## Run
 
@@ -20,10 +21,10 @@ pnpm --dir examples/example-browser dev
 Open `http://127.0.0.1:5173`. The Cloud API URL defaults to
 `https://cloud-api.near.ai/v1`; you can edit it before sending. Enter a key
 accepted by that endpoint, choose a model, and send a message. **The key is
-sent to the URL you enter**, so use only an endpoint you trust. The URL and key
-are kept in tab memory, not persisted. Non-HTTPS URLs are rejected except for
-loopback development addresses. Changing the URL or key starts a new SDK
-session and conversation.
+sent to the URL you enter when deployment verification starts**, so use only an
+endpoint you trust. The URL and key are kept in tab memory, not persisted.
+Non-HTTPS URLs are rejected except for loopback development addresses. Changing
+the URL or key starts a new SDK session and conversation.
 
 The example loads the public model catalog from the selected URL without the
 key and lists ready text-chat models marked as verifiable
@@ -43,15 +44,13 @@ pnpm --dir examples/example-browser build
 
 ## What the UI means
 
-1. **Gateway evidence verified**: the example independently fetches a fresh
-   Gateway quote with `AttestationClient` and passes it to
-   `verifyGatewayAttestation`. This exposes signer, TCB status, and deployment
-   measurements. The `InferenceClient` separately verifies Gateway and model
-   evidence before it sends each Chat request (or reuses its verified session
-   within the configured attestation-cache lifetime).
-2. **Model evidence verified · E2EE**: `InferenceClient` accepted the model
-   evidence and bound its E2EE public key before the Chat request was sent.
-   `e2ee: true` is explicit in the example, although it is the SDK default.
+1. **Model and Gateway verified**: after the key or model changes, the example
+   calls `client.verify(model)`. This sends no Chat request and performs the
+   same Gateway and model checks used by Chat. Send calls the same high-level
+   method again; the SDK shares in-flight work and cached verification.
+2. **Model evidence verified · E2EE**: successful preverification means the SDK
+   accepted the model evidence and bound its E2EE public key before Chat can be
+   sent. `e2ee: true` is explicit in the example.
 3. **Model response verified**: only after the entire stream is consumed does
    the example call `client.verifyResponse(completionId)` on the **same client**
    that sent it. A `provider_tee` signature is shown as model-verified. If only
@@ -61,6 +60,12 @@ pnpm --dir examples/example-browser build
 
 Verification errors show the SDK's structured failure code. Transient evidence
 services can fail; that does not make an unverified response safe to trust.
+
+The normal chat flow intentionally uses only `InferenceClient.verify()`, Chat,
+and `verifyResponse()`. The optional **Show Verification Details** dialog uses
+`AttestationClient` and the standalone verification helpers because it displays
+raw quotes, measurements, and signer details that the high-level preflight does
+not return.
 
 ## Browser and deployment boundaries
 
