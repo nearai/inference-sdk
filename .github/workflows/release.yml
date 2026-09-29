@@ -196,6 +196,7 @@ jobs:
           NPM_TAG: ${{ needs.validate-release.outputs.npm-tag }}
         run: |
           source ../.github/scripts/release.sh
+          verify_npm_channel
           verify_release_tag
           npm publish --access public --tag "$NPM_TAG"
 
@@ -219,6 +220,7 @@ jobs:
           name: python-distributions
           path: py/dist/
           if-no-files-found: error
+          overwrite: true
 
   publish-pypi:
     needs:

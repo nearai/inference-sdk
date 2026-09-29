@@ -25,6 +25,15 @@ gh() {
   esac
   return 0
 }
+npm() {
+  printf 'npm %s\n' "$*" >> "$COMMAND_LOG"
+  printf '%s\n' "$CHANNEL_VERSION"
+  return "$NPM_EXIT"
+}
+pnpm() {
+  printf 'pnpm %s\n' "$*" >> "$COMMAND_LOG"
+  return "$SEMVER_EXIT"
+}
 """
 
 
@@ -38,6 +47,11 @@ class ReleaseGuardTests(unittest.TestCase):
                 "COMMAND_LOG": str(log),
                 "GH_REPO": "nearai/inference-sdk",
                 "RELEASE_TAG": "npm-v1.2.3",
+                "RELEASE_VERSION": "1.2.3",
+                "NPM_TAG": "latest",
+                "CHANNEL_VERSION": "1.2.2",
+                "NPM_EXIT": "0",
+                "SEMVER_EXIT": "0",
                 "GITHUB_SHA": "a" * 40,
                 "GITHUB_RUN_ID": "12345",
                 "GITHUB_RUN_ATTEMPT": "1",
@@ -96,6 +110,56 @@ class ReleaseGuardTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode == 0, valid, result.stderr)
                 self.assertEqual("publish" in result.stdout, valid)
+
+    def test_first_npm_channel_release_needs_no_version_comparison(self):
+        result, calls = self.run_guard(
+            "verify_npm_channel\necho upload", HTTP_STATUS="404"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("upload", result.stdout)
+        self.assertNotIn("npm view", calls)
+        self.assertNotIn("pnpm dlx", calls)
+
+    def test_npm_upload_requires_semver_check_on_fresh_runs_and_retries(self):
+        for tag, current, candidate, exit_code in [
+            ("latest", "1.2.3", "1.2.4", "0"),
+            ("latest", "1.2.3", "1.2.2", "1"),
+            ("next", "1.2.3-rc.9", "1.2.3-rc.10", "0"),
+            ("next", "1.2.3-rc.10", "1.2.3-rc.9", "1"),
+        ]:
+            for attempt in ["1", "2"]:
+                with self.subTest(tag=tag, attempt=attempt, candidate=candidate):
+                    result, calls = self.run_guard(
+                        "verify_npm_channel\necho upload",
+                        NPM_TAG=tag,
+                        CHANNEL_VERSION=current,
+                        RELEASE_VERSION=candidate,
+                        GITHUB_RUN_ATTEMPT=attempt,
+                        SEMVER_EXIT=exit_code,
+                    )
+                    self.assertEqual(result.returncode == 0, exit_code == "0")
+                    self.assertEqual("upload" in result.stdout, exit_code == "0")
+                    self.assertIn(
+                        f"npm view @nearai/inference-sdk@{tag} version", calls
+                    )
+                    self.assertIn(
+                        "pnpm dlx semver@7.8.5 --include-prerelease "
+                        f"--range >={current} {candidate}",
+                        calls,
+                    )
+
+    def test_npm_channel_lookup_failures_stop_upload(self):
+        for failure in [
+            {"HTTP_STATUS": "503"},
+            {"CURL_EXIT": "7"},
+            {"NPM_EXIT": "1"},
+            {"CHANNEL_VERSION": ""},
+            {"SEMVER_EXIT": "127"},
+        ]:
+            with self.subTest(failure=failure):
+                result, _ = self.run_guard("verify_npm_channel\necho upload", **failure)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("upload", result.stdout)
 
     def test_tag_lookup_errors_stop_publication(self):
         result, _ = self.run_guard("verify_release_tag\necho publish", GH_EXIT="1")

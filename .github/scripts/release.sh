@@ -23,6 +23,27 @@ registry_version_exists() {
   esac
 }
 
+verify_npm_channel() {
+  local exists current_version
+  exists=$(registry_version_exists "https://registry.npmjs.org/@nearai%2finference-sdk/$NPM_TAG") || return $?
+  if [ "$exists" = false ]; then return 0; fi
+
+  current_version=$(npm view "@nearai/inference-sdk@$NPM_TAG" version \
+    --registry=https://registry.npmjs.org) || return $?
+  if [ -z "$current_version" ]; then
+    printf 'Could not read the current npm %s version.\n' "$NPM_TAG" >&2
+    return 1
+  fi
+  # Use SemVer ordering, including numeric prerelease identifiers, for retries
+  # as well as fresh releases. A delayed retry must not roll back latest/next.
+  if ! pnpm dlx semver@7.8.5 --include-prerelease \
+    --range ">=$current_version" "$RELEASE_VERSION" >/dev/null; then
+    printf 'Cannot confirm npm %s is at least %s (%s); refusing publication.\n' \
+      "$RELEASE_VERSION" "$current_version" "$NPM_TAG" >&2
+    return 1
+  fi
+}
+
 require_verified_retry() {
   local job="$1" upload_step="$2" attempt uploaded
   # Re-runs retain the original run ID, commit, and inputs. An existing draft

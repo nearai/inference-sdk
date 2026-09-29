@@ -129,6 +129,12 @@ recorded a successful upload step for that registry. A draft release, an existin
 tag, or a new manual dispatch is not sufficient. Registry lookup errors stop the
 workflow; only HTTP 404 means the version is absent.
 
+Before an npm upload, the workflow compares the requested version with the
+current `latest` or `next` version using SemVer. It refuses an older version,
+including on a delayed retry, so publishing cannot move the channel backward.
+A full Python workflow rerun replaces that run's build artifact. Rerunning only
+failed publishing jobs reuses the artifact from the successful build.
+
 If an upload reached the registry but the upload step failed (including a partial
 PyPI upload), automatic recovery stops. Check the registry artifacts against the
 original build and reconcile the release manually. If uploading succeeded and
