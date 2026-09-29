@@ -1,5 +1,5 @@
 version: 2
-# Match chat-api/private-assistant: weekly grouped minor/patch updates, with
+# Weekly grouped minor/patch updates, with
 # seven days for new releases to settle. Security updates are not delayed by
 # cooldown or the version-update-only major ignore rule.
 updates:

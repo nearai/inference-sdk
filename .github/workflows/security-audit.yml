@@ -12,9 +12,9 @@ on:
 permissions:
   contents: read
 
-# Match the initial rollout in chat-api and private-assistant: audit findings
-# are report-only until the existing backlog is triaged. Remove the audit
-# steps' continue-on-error flags to gate merges. Separate setup/export steps
+# Audit findings are report-only until the existing backlog is triaged.
+# Remove the audit steps' continue-on-error flags to gate merges.
+# Separate setup/export steps
 # remain blocking; no advisory IDs are suppressed.
 jobs:
   typescript:

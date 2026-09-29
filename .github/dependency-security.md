@@ -23,9 +23,9 @@ independently:
 | Python | `pip-audit` | Hashed uv exports, including all dependency groups; local project entries are omitted |
 | Rust | `cargo deny check advisories` | Locked RustSec checks across all features and targets, with shared `deny.toml` |
 
-Audits initially run in **report-only mode**, matching `chat-api` and
-`private-assistant`. Existing dependency findings need triage. Each audit's
-exit status appears in the job summary, and its full report appears in the
+Audits initially run in **report-only mode** while existing dependency
+findings are triaged. Each audit's exit status appears in the job summary,
+and its full report appears in the
 step log. A successful workflow does **not** mean there are no vulnerabilities:
 audit failures, including scanner/network errors, do not block merges.
 Separate setup and export failures remain blocking. No advisory allowlist is
@@ -37,10 +37,3 @@ publish check runs outside the workflow, or run dependency lifecycle scripts.
 Its action references are pinned to commits. The Python scanner version is
 pinned in the workflow and requires manual updates; Rust's scanner comes from
 the pinned cargo-deny action.
-
-References:
-
-- [chat-api audit workflow](https://github.com/nearai/chat-api/blob/main/.github/workflows/security-audit.yml)
-- [private-assistant audit workflow](https://github.com/nearai/private-assistant/blob/main/.github/workflows/security-audit.yml)
-- [Dependabot options and supported package versions](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
-- [uv's Dependabot integration](https://docs.astral.sh/uv/guides/integration/dependabot/)
