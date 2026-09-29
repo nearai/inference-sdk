@@ -74,12 +74,12 @@ gh workflow run release.yml --repo nearai/inference-sdk --ref main \
 The workflow:
 
 1. Requires the default branch and checks the selected manifest's version.
-2. Runs the release-workflow tests and CI for the selected language. Ordinary
-   PR and branch CI still checks all three languages.
+2. Runs CI for the selected language. Ordinary PR and push CI still checks all
+   three languages.
 3. Creates the package-specific tag at the run's commit and a draft GitHub
    Release. An existing tag must point to that same commit.
 4. Rechecks the remote tag and publishes only the selected package, using the
-   `release` environment. A pre-existing registry version fails a fresh run.
+   `release` environment. Published versions are not automatically skipped.
 5. Rechecks the remote tag before making its GitHub Release public.
 
 JavaScript and Rust accept `X.Y.Z` or prerelease versions such as `X.Y.Z-rc.1`.
@@ -121,25 +121,21 @@ Registry setup guides: [npm](https://docs.npmjs.com/trusted-publishers/),
 
 ## Retry a failed release
 
-Keep the package tag and draft release, confirm whether the registry accepted
-the upload, fix the cause, and rerun the failed jobs in the original workflow
-run. This keeps the same source commit and inputs even if `main` has advanced.
-An existing version is skipped only if an earlier attempt of the **same run**
-recorded a successful upload step for that registry. A draft release, an existing
-tag, or a new manual dispatch is not sufficient. Registry lookup errors stop the
-workflow; only HTTP 404 means the version is absent.
+Check the failed job and whether the registry accepted the upload before
+retrying. Keep the package tag and draft release. Rerunning failed jobs in the
+original workflow run keeps the same source commit and inputs even if `main`
+has advanced.
 
-Before an npm upload, the workflow compares the requested version with the
-current `latest` or `next` version using SemVer. It refuses an older version,
-including on a delayed retry, so publishing cannot move the channel backward.
-A full Python workflow rerun replaces that run's build artifact. Rerunning only
-failed publishing jobs reuses the artifact from the successful build.
+- If the upload did not reach the registry, fix the cause and rerun failed jobs.
+- If the package job succeeded and only GitHub Release publication failed,
+  rerun failed jobs to finish the release without repeating the upload.
+- If the upload was accepted but the package job failed, or a Python upload is
+  partial, check the registry artifacts against the original build and finish
+  recovery manually. The workflow does not skip existing versions or repair
+  partial uploads.
 
-If an upload reached the registry but the upload step failed (including a partial
-PyPI upload), automatic recovery stops. Check the registry artifacts against the
-original build and reconcile the release manually. If uploading succeeded and
-only GitHub Release publication failed, rerun the failed jobs to finish it.
-An existing public GitHub Release stops a fresh release attempt.
+npm uploads also check that the candidate will not move `latest` or `next`
+backward. A version comparison or registry lookup failure stops publication.
 
 Published versions cannot be overwritten. If the fix changes package contents,
 prepare a new version instead of moving its tag. After publication, install the

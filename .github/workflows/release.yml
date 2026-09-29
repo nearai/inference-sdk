@@ -160,7 +160,6 @@ jobs:
         working-directory: js
     permissions:
       contents: read
-      actions: read
       id-token: write
     env:
       GH_REPO: ${{ github.repository }}
@@ -177,18 +176,7 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
-      - name: Check whether the npm version is already published
-        id: npm-version
-        run: |
-          source ../.github/scripts/release.sh
-          verify_release_tag
-          published=$(registry_version_exists "https://registry.npmjs.org/@nearai%2finference-sdk/$RELEASE_VERSION")
-          if [ "$published" = true ]; then
-            require_verified_retry publish-npm 'Upload npm package'
-          fi
-          echo "published=$published" >> "$GITHUB_OUTPUT"
       - name: Upload npm package
-        if: steps.npm-version.outputs.published != 'true'
         env:
           NPM_TAG: ${{ needs.validate-release.outputs.npm-tag }}
         run: |
@@ -227,31 +215,22 @@ jobs:
     environment: release
     permissions:
       contents: read
-      actions: read
       id-token: write
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
-      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: python-distributions
           path: dist/
-      - name: Check whether the Python version is already published
-        id: python-version
+      - name: Verify release tag
         run: |
           source .github/scripts/release.sh
           verify_release_tag
-          published=$(registry_version_exists "https://pypi.org/pypi/nearai-inference-sdk/$RELEASE_VERSION/json")
-          if [ "$published" = true ]; then
-            require_verified_retry publish-pypi 'Upload Python distributions'
-          fi
-          echo "published=$published" >> "$GITHUB_OUTPUT"
       - name: Upload Python distributions
-        if: steps.python-version.outputs.published != 'true'
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
           packages-dir: dist/
@@ -268,31 +247,17 @@ jobs:
         working-directory: rs
     permissions:
       contents: read
-      actions: read
       id-token: write
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
-      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-      - name: Check whether the crate is already published
-        id: crate-version
-        run: |
-          source ../.github/scripts/release.sh
-          verify_release_tag
-          published=$(registry_version_exists "https://crates.io/api/v1/crates/nearai-inference-sdk/$RELEASE_VERSION")
-          if [ "$published" = true ]; then
-            require_verified_retry publish-crates 'Upload crate'
-          fi
-          echo "published=$published" >> "$GITHUB_OUTPUT"
       - id: crates-io-auth
-        if: steps.crate-version.outputs.published != 'true'
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
       - name: Upload crate
-        if: steps.crate-version.outputs.published != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: |
