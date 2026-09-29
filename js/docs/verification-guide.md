@@ -98,14 +98,38 @@ ciphertext. Node TLS pinning still checks the outer connection.
 
 ### Cache deployment verification
 
+Call `verify(model)` when the user selects a model or opens a chat to complete
+deployment verification before their first message:
+
+```ts
+await client.verify(model);
+
+// Later, send the user's message using the same client and model.
+const completion = await client.chat.completions.create({
+  model,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+```
+
+`verify(model)` sends no Chat request. It performs the same Gateway and model
+checks as Chat, including configured policies, and rejects if they fail.
+For Incognito models, only the Gateway is verified. The method returns no value
+and shares cached results and in-flight verification with Chat. It also works
+when using the client's `fetch` with the OpenAI SDK. `DirectInferenceClient`
+provides the same method for direct model verification.
+
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model and endpoint share verification work and cached
-results. Chat and System One use separate sessions because their model-routing
-rules differ.
-The model's verification decision uses this same cache.
-Increase the value to check deployments less frequently, or set `0` to
-verify before every request. Deployment changes are not checked while a cached
-result is reused. This setting controls caching, not attestation validity.
+results. `verify(model)` and Chat share a session; System One uses a separate
+session because its model-routing rules differ.
+The TTL starts when verification succeeds. A later Chat request reuses that
+result while it is cached. Increase the value to check deployments less
+frequently, or set `0` to verify before every request, even after `verify(model)`.
+Deployment changes are not checked while a cached result is reused.
+This setting controls caching, not attestation validity.
+
+This verifies the deployment, not a particular reply. Use `verifyResponse(completion.id)`
+after receiving the reply to verify its signature.
 
 The SDK does not check model measurements against an approved-deployment
 allowlist by default. If needed, supply a `deploymentPolicy` callback and

@@ -77,7 +77,8 @@ export type ModelVerificationOptions = {
 export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model and endpoint. Chat and System One keep separate sessions.
+   * same model and endpoint. verify() and Chat share a session; System One
+   * uses a separate session.
    * Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
@@ -93,7 +94,8 @@ export type InferenceClientCommonOptions = {
   readonly e2ee?: boolean;
   /**
    * Optional caller-owned allowlist for authenticated model measurements.
-   * It receives the model named by each Chat or System One request.
+   * It receives the model passed to verify() or named by each Chat or
+   * System One request.
    * Runs after `modelVerification.verifiers.deployment` when both are supplied.
    */
   readonly deploymentPolicy?: DeploymentPolicy;
