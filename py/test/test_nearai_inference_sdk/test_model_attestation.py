@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import replace
@@ -7,16 +8,23 @@ from dataclasses import replace
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from eth_utils import keccak
+from nacl.signing import SigningKey
 
 from nearai_inference_sdk import (
+    DirectModelAttestation,
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
+    SigningIdentity,
     VerificationError,
     create_gpu_evidence_verifier,
+    verify_direct_model_attestation,
     verify_model_attestation,
 )
 from nearai_inference_sdk.utils import nvidia
+from nearai_inference_sdk.utils.errors import verification_failure
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
@@ -201,6 +209,114 @@ async def test_model_attestation_returns_verified_evidence() -> None:
     assert result.gpu_evidence == 'not_provided'
     assert result.deployment.app_compose == APP_COMPOSE
     assert result.deployment_provenance == 'not_checked'
+
+
+@pytest.mark.parametrize(
+    'verify_attestation', [verify_model_attestation, verify_direct_model_attestation]
+)
+@pytest.mark.parametrize('failed_verifier', ['cpu', 'gpu'])
+async def test_failed_verification_awaits_sibling_cleanup(
+    verify_attestation, failed_verifier
+):
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+    failure = verification_failure('policy.debug_enabled')
+
+    async def pending(_value):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            cleaned_up.set()
+
+    async def fail(_value):
+        await started.wait()
+        raise failure
+
+    attestation = DirectModelAttestation(
+        **vars(create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE}))),
+        model_name='test-model',
+    )
+    async with asyncio.timeout(1):
+        with pytest.raises(VerificationError) as raised:
+            await verify_attestation(
+                attestation,
+                MODEL_CLIENT_BINDING,
+                verifiers=ModelAttestationVerifiers(
+                    tdx_quote=fail if failed_verifier == 'cpu' else pending,
+                    gpu_evidence=fail if failed_verifier == 'gpu' else pending,
+                ),
+            )
+    assert raised.value is failure
+    assert cleaned_up.is_set()
+
+
+async def test_cancelling_model_verification_waits_for_verifier_cleanup():
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def verify_cpu(_quote):
+        await asyncio.Future()
+
+    async def verify_gpu(_payload):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            # CPU cancellation finishes first, while GPU cleanup still awaits I/O.
+            await asyncio.sleep(0.01)
+            cleaned_up.set()
+
+    async with asyncio.timeout(1):
+        verification = asyncio.create_task(
+            verify_model_attestation(
+                create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+                MODEL_CLIENT_BINDING,
+                verifiers=ModelAttestationVerifiers(
+                    tdx_quote=verify_cpu, gpu_evidence=verify_gpu
+                ),
+            )
+        )
+        await started.wait()
+        verification.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await verification
+    assert cleaned_up.is_set()
+
+
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_model_public_key_is_bound_to_the_quote_signer(signing_algo) -> None:
+    if signing_algo == 'ed25519':
+        public_key = bytes(SigningKey.generate().verify_key)
+        address = public_key
+    else:
+        public_key = (
+            ec.generate_private_key(ec.SECP256K1())
+            .public_key()
+            .public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        )
+        address = keccak(public_key[1:])[-20:]
+    signer = SigningIdentity(signing_algo=signing_algo, signing_address=address.hex())
+    quote = create_model_quote(signing_address=signer.signing_address)
+    attestation = create_model_attestation(
+        signer=signer, signing_public_key=public_key.hex()
+    )
+    verified = await verify_model_attestation(
+        attestation,
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
+    )
+    expected = public_key if signing_algo == 'ed25519' else public_key[1:]
+    assert verified.signing_public_key == expected.hex()
+
+    with pytest.raises(VerificationError) as mismatch:
+        await verify_model_attestation(
+            replace(attestation, signing_public_key='11' * len(expected)),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
+        )
+    assert mismatch.value.failure.code == 'binding.model_public_key_mismatch'
 
 
 async def test_model_attestation_uses_signer_nonce_report_data_binding() -> None:

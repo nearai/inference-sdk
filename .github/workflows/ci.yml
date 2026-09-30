@@ -55,6 +55,11 @@ jobs:
       - run: uv sync --locked
       - run: make lint
       - run: uv build
+      - name: Check Python examples
+        working-directory: examples/example-py
+        run: |
+          uv sync --locked
+          uv run python -c "from gateway import bare, client, client_openai_sdk; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'

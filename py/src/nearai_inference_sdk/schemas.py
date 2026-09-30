@@ -125,16 +125,18 @@ class CloudAttestationSchema(ApiSchema):
     signing_address: StrictStr
     intel_quote: StrictStr
     event_log: StrictStr | list[Any]
-    info: CloudInfoSchema
     tls_cert_fingerprint: StrictStr | None = None
-    report_data: StrictStr | None = None
 
 
 class CloudModelAttestationSchema(CloudAttestationSchema):
+    info: CloudInfoSchema
+    report_data: StrictStr | None = None
     nvidia_payload: StrictStr | None = None
+    signing_public_key: StrictStr | None = None
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
+    info: CloudInfoSchema
     report_data: StrictStr
 
 
@@ -143,16 +145,58 @@ class CloudModelAttestationResponseSchema(ApiSchema):
     model_attestations: list[CloudModelAttestationSchema] = Field(default_factory=list)
 
 
+class ModelMetadataSchema(ApiSchema):
+    provider_type: StrictStr = Field(validation_alias='providerType')
+    attestation_supported: StrictBool = Field(validation_alias='attestationSupported')
+
+
+class ModelMetadataResponseSchema(ApiSchema):
+    metadata: ModelMetadataSchema
+
+
+class OhttpAttestationSchema(ApiSchema):
+    signing_algo: Literal['ed25519']
+    signing_key: StrictStr
+    key_config: StrictStr
+    signature: StrictStr
+
+
 class CloudGatewayAttestationResponseSchema(ApiSchema):
     gateway_attestation: CloudGatewayAttestationSchema
+    ohttp_attestation: OhttpAttestationSchema | None = None
 
 
-class CloudCompletionSignatureSchema(ApiSchema):
+class CompletionSignatureFieldsSchema(ApiSchema):
     text: StrictStr
     signature: StrictStr
     signing_address: StrictStr
     signing_algo: Literal['ecdsa', 'ed25519']
+
+
+class CloudCompletionSignatureSchema(CompletionSignatureFieldsSchema):
     signature_kind: Literal['provider_tee', 'gateway']
+
+
+class DirectInfoSchema(CloudInfoSchema):
+    instance_id: StrictStr | None = None
+
+
+class DirectModelAttestationSchema(CloudAttestationSchema):
+    model_name: StrictStr = Field(min_length=1)
+    info: DirectInfoSchema
+    report_data: StrictStr | None = None
+    nvidia_payload: StrictStr | None = None
+    signing_public_key: StrictStr | None = None
+
+
+class DirectAttestationReportSchema(DirectModelAttestationSchema):
+    all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
+    ohttp_attestation: OhttpAttestationSchema | None = None
+
+
+class DirectCompletionSignatureSchema(CompletionSignatureFieldsSchema):
+    # The direct endpoint itself establishes the signature's trust boundary.
+    signature_kind: Literal['provider_tee'] = 'provider_tee'
 
 
 class CloudUnavailableSignatureSchema(ApiSchema):
@@ -164,6 +208,20 @@ class CompletionRequestModelSchema(ApiSchema):
     """The model identifier embedded in signed completion request bytes."""
 
     model: StrictStr = Field(min_length=1)
+
+
+class ChatCompletionRequestSchema(CompletionRequestModelSchema):
+    """Only identify the model; leave Chat field validation to the server."""
+
+    model_config = ConfigDict(extra='allow', strict=True)
+
+
+class ChatCompletionResponseSchema(RootModel[dict[str, Any]]):
+    model_config = ConfigDict(strict=True)
+
+
+class CompletionResponseIdSchema(ApiSchema):
+    id: StrictStr = Field(min_length=1)
 
 
 class NvidiaPayloadNonceSchema(ApiSchema):
