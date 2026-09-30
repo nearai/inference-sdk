@@ -28,12 +28,12 @@ export async function verifyDirectModelAttestation(
     verifyDirectModelCpuAttestation(params),
     verifyModelGpuEvidence(params),
   ]);
-  return { ...deployment, gpuEvidence };
+  return { ...deployment, gpuEvidence, report: params.attestation };
 }
 
 type VerifiedDirectModelDeployment = Omit<
   VerifiedDirectModelAttestation,
-  'gpuEvidence'
+  'gpuEvidence' | 'report'
 >;
 
 async function verifyDirectModelCpuAttestation({

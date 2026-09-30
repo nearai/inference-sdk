@@ -24,8 +24,9 @@ function createGatewayAttestation(
 
 describe('gateway attestation verification', () => {
   test('binds gateway evidence to the caller-observed peer SPKI', async () => {
+    const attestation = createGatewayAttestation();
     const result = await verifyGatewayAttestation({
-      attestation: createGatewayAttestation(),
+      attestation,
       clientBinding: { nonce, spkiFingerprint: tlsFingerprint },
       verifiers: { tdxQuote: async () => createGatewayTlsQuote() },
     });
@@ -34,6 +35,7 @@ describe('gateway attestation verification', () => {
       tcbStatus: 'UpToDate',
       tlsBinding: { kind: 'attested', spkiFingerprint: tlsFingerprint },
       deploymentProvenance: 'not_checked',
+      report: attestation,
     });
   });
 

@@ -12,6 +12,8 @@ Language-specific implementations and verification guides:
 For small end-to-end projects that send a completion and verify its returned
 signature, see the [examples](./examples/README.md).
 
+See [live E2E tests](./e2e/README.md) for real-service coverage and CI setup.
+
 The [TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint) and
 [Python](./py/docs/verification-guide.md#direct-model-endpoints) direct-endpoint
 clients are experimental and not recommended for production. Use Gateway clients for

@@ -36,10 +36,13 @@ export async function verifyModelAttestation(
     verifyModelCpuAttestation(params),
     verifyModelGpuEvidence(params),
   ]);
-  return { ...deployment, gpuEvidence };
+  return { ...deployment, gpuEvidence, report: params.attestation };
 }
 
-type VerifiedModelDeployment = Omit<VerifiedModelAttestation, 'gpuEvidence'>;
+type VerifiedModelDeployment = Omit<
+  VerifiedModelAttestation,
+  'gpuEvidence' | 'report'
+>;
 
 async function verifyModelCpuAttestation({
   attestation,

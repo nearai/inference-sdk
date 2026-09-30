@@ -77,8 +77,9 @@ describe('model attestation verification', () => {
   });
 
   test('returns verified model evidence with explicit verification states', async () => {
+    const attestation = createModelAttestation();
     const result = await verifyModelAttestation({
-      attestation: createModelAttestation(),
+      attestation,
       clientBinding: { nonce },
       verifiers: { tdxQuote: tdxQuoteVerifier },
     });
@@ -88,6 +89,7 @@ describe('model attestation verification', () => {
       tcbStatus: 'UpToDate',
       gpuEvidence: 'not_provided',
       deploymentProvenance: 'not_checked',
+      report: attestation,
     });
     expect(result.deployment).toEqual({ appCompose, runtimeMeasurements: {} });
   });
