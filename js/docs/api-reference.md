@@ -12,7 +12,7 @@ in whether they can bind endpoint evidence to the TLS peer that returned it.
 | Import | TLS behavior |
 | --- | --- |
 | `@nearai/inference-sdk` | Gateway clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
-| `@nearai/inference-sdk/node` | Gateway attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. `InferenceClient` pins later requests to the verified Gateway key. Disable this through `gatewayVerification.includeSpkiFingerprint` or `includeSpkiFingerprint` on `AttestationClient.fetchGatewayAttestation()`. |
+| `@nearai/inference-sdk/node` | Gateway attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. `InferenceClient` pins later requests to that observed key and verifies it against Gateway attestation before sending Chat. Disable this through `gatewayVerification.includeSpkiFingerprint` or `includeSpkiFingerprint` on `AttestationClient.fetchGatewayAttestation()`. |
 
 Direct clients are experimental and not recommended for production in either
 entry point. Use the Gateway `InferenceClient` or `AttestationClient` for production.
@@ -56,8 +56,12 @@ the attestation socket to be reused.
 Provides `chat.completions.create()`, a reusable Chat `fetch` adapter,
 `systemone.create()`, and `verifyResponse(id)`. Supports streaming and
 non-streaming Chat Completions and non-streaming System One decisions.
-On a cache miss, Gateway verification runs first. The client then reads
-`metadata.providerType` and `metadata.attestationSupported` from
+On a cache miss, the client fetches Gateway evidence, then verifies it and any
+required OHTTP evidence concurrently with model metadata retrieval and model
+attestation verification. All required checks must pass before the session is
+cached or an inference request is sent.
+
+The client reads `metadata.providerType` and `metadata.attestationSupported` from
 `GET /v1/model/{model}`, with the model ID URL-encoded. A `vllm` provider with
 attestation support requires NEAR model verification. Other models use the
 Incognito flow, which verifies only the Gateway. HTTP errors, malformed metadata,

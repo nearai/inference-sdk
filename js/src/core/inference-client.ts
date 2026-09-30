@@ -7,13 +7,13 @@ import {
   CompletionResponseIdSchema,
 } from '../schemas';
 import type {
-  GatewayTlsBinding,
   ModelAttestationVerifiers,
   VerifiedModelAttestation,
 } from '../types/verification';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type { OhttpAttestation } from '../types/ohttp';
 import type {
+  AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestations,
@@ -41,6 +41,7 @@ import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
 import {
   AttestationClient,
   findModelAttestationForSignature,
+  CloudApiClient,
   createCloudApiRequestConfiguration,
   mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
@@ -168,8 +169,8 @@ type CreateOpenAiClientParams = {
   readonly requestConfiguration: CloudApiRequestConfiguration;
 };
 
-/** Internal request operations bound to one verified Gateway session. */
-export type GatewaySessionTransport = {
+/** Internal Gateway operations used to fetch evidence and, after verification, send inference. */
+type GatewaySessionTransport = {
   readonly fetch: typeof globalThis.fetch;
   readonly fetchModelMetadata: (model: string) => Promise<ModelMetadata>;
   readonly fetchModelAttestations: (
@@ -180,9 +181,33 @@ export type GatewaySessionTransport = {
   ) => Promise<CompletionSignature>;
 };
 
-/** Parameters used to create an internal Gateway session transport. */
-export type CreateGatewaySessionTransportParams = {
-  readonly tlsBinding: GatewayTlsBinding;
+type GatewaySessionEvidenceClientParams = {
+  readonly options: AttestationClientOptions;
+  readonly fetch: typeof globalThis.fetch;
+  readonly signal: AbortSignal;
+};
+
+/** Session evidence requests share the transport and cancellation owned by preflight. */
+class GatewaySessionEvidenceClient extends CloudApiClient {
+  private readonly gatewayFetch: typeof globalThis.fetch;
+  private readonly signal: AbortSignal;
+
+  constructor({ options, fetch, signal }: GatewaySessionEvidenceClientParams) {
+    super(options);
+    this.gatewayFetch = fetch;
+    this.signal = signal;
+  }
+
+  protected override requestCloudApi(request: Request): Promise<Response> {
+    this.signal.throwIfAborted();
+    return this.gatewayFetch(new Request(request, { signal: this.signal }));
+  }
+}
+
+type VerifyModelsParams = {
+  readonly model: string;
+  readonly transport: GatewaySessionTransport;
+  readonly signal: AbortSignal;
 };
 
 /**
@@ -629,9 +654,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
 
   protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
 
-  protected abstract createGatewaySessionTransport(
-    params: CreateGatewaySessionTransportParams,
-  ): GatewaySessionTransport;
+  protected abstract createGatewayFetch(
+    peerSpkiFingerprint?: string,
+  ): typeof globalThis.fetch;
 
   protected override async createVerificationState(
     model: string,
@@ -639,20 +664,50 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
   ): Promise<InferenceSession<VerifiedCompletionResult>> {
     const systemone = endpoint === 'systemone';
     const gateway = await this.fetchGatewayAttestation();
-    const gatewayAttestation = await verifyGatewayAttestation({
-      attestation: gateway.attestation,
-      clientBinding: gateway.clientBinding,
-      policy: this.gatewayOptions.gatewayVerification?.policy,
-      verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
-    });
-    const ohttpKeyConfig = this.getOhttpKeyConfig(
-      gateway.attestation.ohttpAttestation,
-      gatewayAttestation.signer,
+    // Pin evidence requests to the observed peer without treating it as trusted
+    // yet. Gateway verification must authenticate that same fingerprint before
+    // this session can be cached or used to send inference.
+    const gatewayFetch = this.createGatewayFetch(
+      gateway.clientBinding.spkiFingerprint,
     );
-    const transport = this.createGatewaySessionTransport({
-      tlsBinding: gatewayAttestation.tlsBinding,
+    const controller = new AbortController();
+    const { signal } = controller;
+    const client = new GatewaySessionEvidenceClient({
+      options: this.gatewayOptions,
+      fetch: gatewayFetch,
+      signal,
     });
-    const modelAttestations = await this.verifyModels(model, transport);
+    const transport: GatewaySessionTransport = {
+      fetch: gatewayFetch,
+      fetchModelMetadata: (model) => client.fetchModelMetadata(model),
+      fetchModelAttestations: (params) => client.fetchModelAttestations(params),
+      fetchCompletionSignature: (params) =>
+        client.fetchCompletionSignature(params),
+    };
+    const [{ gatewayAttestation, ohttpKeyConfig }, modelAttestations] =
+      await Promise.all([
+        verifyGatewayAttestation({
+          attestation: gateway.attestation,
+          clientBinding: gateway.clientBinding,
+          policy: this.gatewayOptions.gatewayVerification?.policy,
+          verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+        }).then((gatewayAttestation) => {
+          signal.throwIfAborted();
+          return {
+            gatewayAttestation,
+            ohttpKeyConfig: this.getOhttpKeyConfig(
+              gateway.attestation.ohttpAttestation,
+              gatewayAttestation.signer,
+            ),
+          };
+        }),
+        this.verifyModels({ model, transport, signal }),
+      ]).catch((cause: unknown) => {
+        // Cancel outstanding evidence I/O before a retry can start a new preflight.
+        // Keep the original failure instead of replacing it with an abort error.
+        controller.abort(cause);
+        throw cause;
+      });
     const modelAttestation = systemone
       ? undefined
       : modelAttestations.find(
@@ -724,11 +779,13 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
   }
 
   /** NEAR deployments use model evidence; Incognito sessions verify only the Gateway. */
-  private async verifyModels(
-    model: string,
-    transport: GatewaySessionTransport,
-  ): Promise<VerifiedModelAttestation[]> {
+  private async verifyModels({
+    model,
+    transport,
+    signal,
+  }: VerifyModelsParams): Promise<VerifiedModelAttestation[]> {
     const metadata = await transport.fetchModelMetadata(model);
+    signal.throwIfAborted();
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
       const { deploymentPolicy, modelVerification } = this.gatewayOptions;
       if (
@@ -748,6 +805,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
       model,
       signingAlgo: this.signingAlgo,
     });
+    signal.throwIfAborted();
     if (fetchedModels.attestations.length === 0) {
       throw new VerificationError({
         code: 'policy.model_attestation_required',
@@ -784,18 +842,8 @@ export class InferenceClient extends InferenceClientBase {
     });
   }
 
-  protected override createGatewaySessionTransport(
-    _params: CreateGatewaySessionTransportParams,
-  ): GatewaySessionTransport {
-    return {
-      fetch: globalThis.fetch.bind(globalThis),
-      fetchModelMetadata: (model) =>
-        this.attestationClient.fetchModelMetadata(model),
-      fetchModelAttestations: (params) =>
-        this.attestationClient.fetchModelAttestations(params),
-      fetchCompletionSignature: (params) =>
-        this.attestationClient.fetchCompletionSignature(params),
-    };
+  protected override createGatewayFetch(): typeof globalThis.fetch {
+    return globalThis.fetch.bind(globalThis);
   }
 }
 
