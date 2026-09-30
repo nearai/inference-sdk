@@ -6,7 +6,8 @@ use nearai_inference_sdk::{
     CompletionSignature, CompletionSignatureKind, GatewayAttestationFetchOptions,
     GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE, RETRY_AFTER};
+use reqwest::{RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -98,15 +99,14 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
             "max_completion_tokens": 1024,
             "stream": stream,
         }))?;
-        let response = http
+        let request = http
             .post(&url)
             .bearer_auth(&api_key)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT_ENCODING, "identity")
             .header("x-no-aliasing", "true")
-            .body(request_body.clone())
-            .send()
-            .await?;
+            .body(request_body.clone());
+        let response = send_chat_with_retry(request).await?;
         assert!(
             response.status().is_success(),
             "Chat returned HTTP {}",
@@ -145,6 +145,30 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         );
     }
     Ok(())
+}
+
+async fn send_chat_with_retry(request: RequestBuilder) -> Result<Response, reqwest::Error> {
+    for backoff_seconds in [5, 10, 20] {
+        let response = request
+            .try_clone()
+            .expect("Chat request uses replayable bytes")
+            .send()
+            .await?;
+        if response.status() != StatusCode::TOO_MANY_REQUESTS {
+            return Ok(response);
+        }
+        let requested_delay = response
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or_default();
+        let wait_seconds = backoff_seconds.max(requested_delay);
+        drop(response);
+        eprintln!("Chat returned HTTP 429; retrying in {wait_seconds}s");
+        tokio::time::sleep(Duration::from_secs(wait_seconds)).await;
+    }
+    request.send().await
 }
 
 async fn fetch_signature_with_retry(

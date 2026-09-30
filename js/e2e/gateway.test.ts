@@ -23,6 +23,7 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '../dist/node.js';
+import { retryRateLimit } from './retry.ts';
 
 type LiveModel = {
   id: string;
@@ -105,9 +106,11 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
     });
     await inferenceClient.verify(model.id);
     if (model.provider === 'chutes') {
-      const completion = await inferenceClient.chat.completions.create(
-        { ...CHAT_REQUEST, model: model.id },
-        { maxRetries: 0 },
+      const completion = await retryRateLimit(() =>
+        inferenceClient.chat.completions.create(
+          { ...CHAT_REQUEST, model: model.id },
+          { maxRetries: 0 },
+        ),
       );
       assert.ok(completion.id);
       assert.equal(completion.choices[0]?.finish_reason, 'stop');
@@ -175,9 +178,9 @@ async function verifyClientCompletions({
   expectedSignatureKind,
 }: VerifyClientCompletionsParams): Promise<void> {
   const request = { ...CHAT_REQUEST, model };
-  const completion = await chat.completions.create(request, {
-    maxRetries: 0,
-  });
+  const completion = await retryRateLimit(() =>
+    chat.completions.create(request, { maxRetries: 0 }),
+  );
   assert.ok(completion.id);
   assert.equal(completion.choices[0]?.finish_reason, 'stop');
   assert.ok(completion.choices[0]?.message.content?.trim());
@@ -189,9 +192,8 @@ async function verifyClientCompletions({
     assert.equal(verified.signature.kind, expectedSignatureKind);
   }
 
-  const stream = await chat.completions.create(
-    { ...request, stream: true },
-    { maxRetries: 0 },
+  const stream = await retryRateLimit(() =>
+    chat.completions.create({ ...request, stream: true }, { maxRetries: 0 }),
   );
   let completionId: string | undefined;
   let content = '';
@@ -268,9 +270,8 @@ for (const selectedModel of MODELS) {
       const requestBody = new TextEncoder().encode(
         JSON.stringify({ ...CHAT_REQUEST, model: selectedModel.id, stream }),
       );
-      const response = await pinnedTlsFetch(
-        new URL('chat/completions', BASE_URL),
-        {
+      const response = await retryRateLimit(() =>
+        pinnedTlsFetch(new URL('chat/completions', BASE_URL), {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${API_KEY}`,
@@ -279,7 +280,7 @@ for (const selectedModel of MODELS) {
             'x-no-aliasing': 'true',
           },
           body: requestBody,
-        },
+        }),
       );
       assert.equal(response.status, 200, 'Chat request must succeed');
       const responseBody = new Uint8Array(await response.arrayBuffer());
