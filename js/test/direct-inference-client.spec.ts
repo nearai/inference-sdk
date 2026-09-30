@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import {
   DirectInferenceClient,
   type DirectInferenceClientOptions,
+  type DirectAttestationVerificationResult,
   type TdxQuoteVerificationResult,
 } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
@@ -660,20 +661,32 @@ describe('DirectInferenceClient', () => {
   });
 
   test('preverifies direct reports and reuses them for same-model Chat', async () => {
-    const endpoint = createDirectEndpoint();
+    const endpoint = createDirectEndpoint({ additionalSigner: true });
     const client = new DirectInferenceClient(endpoint.options);
-    await client.verify(model);
+    const result: DirectAttestationVerificationResult =
+      await client.verify(model);
+    expect(result.attestations.map(({ instanceId }) => instanceId)).toEqual([
+      'instance-0',
+      'instance-1',
+      'instance-2',
+    ]);
+    expect(result.servingAttestation.report.instanceId).toBe('instance-0');
+    expect(result.tlsBinding).toEqual({ kind: 'none' });
     expect(endpoint.state.completionRequests).toBe(0);
     expect(endpoint.state.signatureRequests).toBe(0);
     const first = await client.chat.completions.create({ model, messages });
     const second = await client.chat.completions.create({ model, messages });
     expect(endpoint.state.attestationRequests).toBe(1);
-    expect(endpoint.state.verifiedQuotes).toHaveLength(2);
+    expect(endpoint.state.verifiedQuotes).toHaveLength(3);
     expect(endpoint.state.completionRequests).toBe(2);
-    expect((await client.verifyResponse(first.id)).completionId).toBe(first.id);
-    expect((await client.verifyResponse(second.id)).completionId).toBe(
-      second.id,
-    );
+    const firstVerified = await client.verifyResponse(first.id);
+    const secondVerified = await client.verifyResponse(second.id);
+    expect(firstVerified.completionId).toBe(first.id);
+    expect(firstVerified.attestations).toHaveLength(2);
+    expect(secondVerified.completionId).toBe(second.id);
+    const cached = await client.verify(model);
+    expect(cached).toEqual(result);
+    expect(endpoint.state.attestationRequests).toBe(1);
   });
 
   test.each([
