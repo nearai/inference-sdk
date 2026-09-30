@@ -176,6 +176,10 @@ footer { padding: 17px 0 0; color: #a0a9b7; font-size: 11px; text-align: center;
 .tab { padding: 9px; border: 0; border-radius: 7px; background: transparent; color: #727e91; font-size: 11px; font-weight: 700; }
 .tab.active { background: white; color: #283449; box-shadow: 0 1px 4px rgba(23, 33, 54, .1); }
 .hardware-panel { display: grid; gap: 14px; }
+.hardware-report { display: grid; gap: 14px; }
+.hardware-report + .hardware-report { padding-top: 18px; border-top: 1px solid #e1e6ed; }
+.hardware-report h3 { margin: 0; color: #344157; font-size: 13px; }
+.verification-time { margin: 14px 0 0; color: #707c8f; font-size: 11px; line-height: 1.6; }
 .evidence-section { overflow: hidden; border: 1px solid #e1e6ed; border-radius: 11px; }
 .evidence-section summary { display: flex; align-items: center; justify-content: space-between; padding: 13px; cursor: pointer; font-size: 12px; font-weight: 700; }
 .evidence-section-body { display: grid; gap: 12px; padding: 14px; border-top: 1px solid #e7ebf1; }

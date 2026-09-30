@@ -1,14 +1,10 @@
 import {
-  AttestationClient,
   InferenceClient,
   createGpuEvidenceVerifier,
   isApiError,
   isVerificationError,
-  verifyGatewayAttestation,
-  verifyModelAttestation,
-  type GatewayAttestation,
-  type ModelAttestation,
   type VerifiedCompletionResult,
+  type VerifiedDeployment,
   type VerifiedGatewayAttestation,
   type VerifiedModelAttestation,
 } from '@nearai/inference-sdk';
@@ -46,10 +42,6 @@ type VerificationRecord = {
   retryableLookup?: boolean;
   receipt: HTMLElement;
 };
-type HardwareReport = {
-  gateway: { raw: GatewayAttestation; verified: VerifiedGatewayAttestation };
-  model: { raw: ModelAttestation; verified: VerifiedModelAttestation };
-};
 
 const baseUrlInput = element<HTMLInputElement>('base-url');
 const apiKeyInput = element<HTMLInputElement>('api-key');
@@ -74,7 +66,7 @@ let isSending = false;
 let endpointDirty = false;
 let deploymentStatus: Status = 'idle';
 let deploymentError: string | undefined;
-let hardwareReport: HardwareReport | undefined;
+let hardwareReport: VerifiedDeployment | undefined;
 let hardwareTab: 'model' | 'gateway' = 'model';
 let hardwareRequestId = 0;
 let preparationRequestId = 0;
@@ -465,9 +457,19 @@ function evidenceSection(title: string, description: string, ...children: Array<
 
 function renderHardwarePanel(): void {
   if (!hardwareReport) return;
+  const verifiedAt = new Date(hardwareReport.verifiedAt).toLocaleString();
+  element<HTMLElement>('hardware-verified-at').textContent = `Verified at ${verifiedAt}. Cached results retain this timestamp.`;
   const panel = element<HTMLElement>('hardware-panel');
-  const entry = hardwareTab === 'model' ? hardwareReport.model : hardwareReport.gateway;
-  const { raw, verified } = entry;
+  const entries = hardwareTab === 'model'
+    ? hardwareReport.models.map((attestation, index) => attestationPanel(attestation, `Model report ${index + 1}`))
+    : [attestationPanel(hardwareReport.gateway, 'Gateway report')];
+  panel.replaceChildren(...entries);
+}
+
+function attestationPanel(verified: VerifiedGatewayAttestation | VerifiedModelAttestation, title: string): HTMLElement {
+  const raw = verified.report;
+  const panel = node('section', 'hardware-report');
+  panel.append(node('h3', undefined, title));
   const summary = node('div', 'summary-grid');
   summary.append(
     detailCell('Status', 'Verified'), detailCell('TCB status', verified.tcbStatus),
@@ -486,20 +488,19 @@ function renderHardwarePanel(): void {
     copyBlock('Advisories', verified.advisoryIds.length ? verified.advisoryIds.join(', ') : 'None'),
   );
   const children: HTMLElement[] = [summary, copyBlock('Signing address', verified.signer.signingAddress)!];
-  if (hardwareTab === 'model') {
-    const modelRaw = raw as ModelAttestation;
-    const modelVerified = verified as VerifiedModelAttestation;
+  if ('gpuEvidence' in verified) {
     children.push(evidenceSection(
       'GPU Attestation · NVIDIA',
-      modelVerified.gpuEvidence === 'verified'
+      verified.gpuEvidence === 'verified'
         ? 'NVIDIA Remote Attestation Service verified the GPU evidence and the SDK checked its signed verdict.'
         : 'This attestation did not provide GPU evidence.',
-      copyBlock('Raw NVIDIA payload', modelRaw.nvidiaPayload),
-      copyBlock('Model signing public key', modelVerified.signingPublicKey),
+      copyBlock('Raw NVIDIA payload', verified.report.nvidiaPayload),
+      copyBlock('Model signing public key', verified.signingPublicKey),
     ));
   }
   children.push(tdx);
-  panel.replaceChildren(...children);
+  panel.append(...children);
+  return panel;
 }
 
 function showHardwareError(message: string): void {
@@ -514,7 +515,7 @@ async function verifyHardware(): Promise<void> {
   try { baseUrl = normalizeBaseUrl(baseUrlInput.value); }
   catch (error) { showHardwareError(describeError(error)); return; }
   const apiKey = apiKeyInput.value.trim();
-  if (!apiKey) { showHardwareError('Enter an API key to fetch fresh attestation evidence.'); return; }
+  if (!apiKey) { showHardwareError('Enter an API key to verify the deployment.'); return; }
   const loading = element<HTMLElement>('hardware-loading');
   const error = element<HTMLElement>('hardware-error');
   const content = element<HTMLElement>('hardware-content');
@@ -523,25 +524,11 @@ async function verifyHardware(): Promise<void> {
   badge.className = 'result-badge pending'; badge.textContent = 'Verifying';
   element<HTMLButtonElement>('verify-again').disabled = true;
   try {
-    const client = new AttestationClient({ apiKey, baseUrl });
-    const [gatewayFetched, modelFetched] = await Promise.all([
-      client.fetchGatewayAttestation({ signingAlgo: SIGNING_ALGO, includeSpkiFingerprint: false }),
-      client.fetchModelAttestations({ model: selectedModel.id, signingAlgo: SIGNING_ALGO }),
-    ]);
-    const [gatewayVerified, modelVerified] = await Promise.all([
-      verifyGatewayAttestation(gatewayFetched),
-      Promise.all(modelFetched.attestations.map((attestation) => verifyModelAttestation({
-        attestation, clientBinding: modelFetched.clientBinding,
-        verifiers: { gpuEvidence: gpuVerifier() },
-      }))),
-    ]);
+    // Preverification, Chat, and this view share the same client's cache.
+    const client = getClient(apiKey, baseUrl);
+    const deployment = await client.verify(selectedModel.id);
     if (requestId !== hardwareRequestId) return;
-    const modelIndex = modelVerified.findIndex((result) => result.signingPublicKey !== undefined);
-    if (modelIndex < 0) throw new Error('No verified model attestation supplied an E2EE public key.');
-    hardwareReport = {
-      gateway: { raw: gatewayFetched.attestation, verified: gatewayVerified },
-      model: { raw: modelFetched.attestations[modelIndex]!, verified: modelVerified[modelIndex]! },
-    };
+    hardwareReport = deployment;
     badge.className = 'result-badge verified'; badge.textContent = 'Verified';
     loading.hidden = true; content.hidden = false;
     renderHardwarePanel();

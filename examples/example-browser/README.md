@@ -4,7 +4,7 @@ A deliberately small, one-model-at-a-time example using the **browser** entry po
 `@nearai/inference-sdk`. It sends streaming Chat Completions with E2EE enabled,
 preverifies the selected deployment with the high-level `client.verify(model)`
 API, and verifies each finished response by completion ID. Its verification
-center shows the current trust state, fresh model and Gateway hardware evidence,
+center shows the current trust state, verified model and Gateway hardware evidence,
 and expandable per-message signature results.
 
 ## Run
@@ -61,11 +61,17 @@ pnpm --dir examples/example-browser build
 Verification errors show the SDK's structured failure code. Transient evidence
 services can fail; that does not make an unverified response safe to trust.
 
-The normal chat flow intentionally uses only `InferenceClient.verify()`, Chat,
-and `verifyResponse()`. The optional **Show Verification Details** dialog uses
-`AttestationClient` and the standalone verification helpers because it displays
-raw quotes, measurements, and signer details that the high-level preflight does
-not return.
+Chat preparation and **Show Verification Details** call `verify(model)` on the
+same `InferenceClient` used for Chat. The dialog displays the returned Gateway
+and every verified model report. Quotes, event logs, and NVIDIA payloads come
+from each result's `report`; verification conclusions come from the result's
+typed fields.
+
+Opening the dialog or clicking **Update Details** reuses cached verification
+while it remains valid under the configured cache lifetime. The dialog shows
+the result's `verifiedAt` timestamp, not the time it was opened. Once the cache
+expires, the SDK fetches and verifies new evidence. No separate attestation
+client or standalone verification flow is needed for the details view.
 
 ## Browser and deployment boundaries
 
