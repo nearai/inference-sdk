@@ -2,8 +2,9 @@ use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
     find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
-    verify_model_attestation, verify_model_response, AttestationClient, CompletionSignatureKind,
-    GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
+    verify_model_attestation, verify_model_response, ApiError, AttestationClient,
+    CompletionSignature, CompletionSignatureKind, GatewayAttestationFetchOptions,
+    GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde_json::{json, Value};
@@ -92,9 +93,7 @@ async fn verify_chat(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
         );
         let response_body = response.bytes().await?;
         let id = read_completion_id(&response_body, stream)?;
-        let signature = client
-            .fetch_completion_signature(&id, Some(signing_algo))
-            .await?;
+        let signature = fetch_signature_with_retry(&client, &id, signing_algo).await?;
         assert_eq!(signature.signer.signing_algo, signing_algo);
 
         // The signature must cover the exact wire bytes, including whitespace.
@@ -122,6 +121,28 @@ async fn verify_chat(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
         );
     }
     Ok(())
+}
+
+async fn fetch_signature_with_retry(
+    client: &AttestationClient,
+    id: &str,
+    signing_algo: SigningAlgo,
+) -> Result<CompletionSignature, ApiError> {
+    // Retry receipt propagation only. Never repeat Chat or cryptographic checks.
+    for backoff_ms in [500, 1_000, 2_000, 4_000] {
+        match client
+            .fetch_completion_signature(id, Some(signing_algo))
+            .await
+        {
+            Err(error) if error.retryable() => {
+                tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+            }
+            result => return result,
+        }
+    }
+    client
+        .fetch_completion_signature(id, Some(signing_algo))
+        .await
 }
 
 fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<dyn Error>> {

@@ -9,7 +9,9 @@ import aiohttp
 import pytest
 
 from nearai_inference_sdk import (
+    ApiError,
     AttestationClient,
+    CompletionSignature,
     ModelAttestationPolicy,
     SigningAlgo,
     VerificationError,
@@ -79,9 +81,8 @@ async def test_gateway_chat_receipt(signing_algo: SigningAlgo, stream: bool) -> 
                 response_body = await response.read()
 
         completion_id = read_completion_id(response_body, stream)
-        signature = await client.fetch_completion_signature(
-            completion_id,
-            signing_algo=signing_algo,
+        signature = await fetch_signature_with_retry(
+            client, completion_id, signing_algo
         )
         assert signature.signer.signing_algo == signing_algo
         # Keep original wire bytes. Even appended whitespace must invalidate them.
@@ -95,6 +96,24 @@ async def test_gateway_chat_receipt(signing_algo: SigningAlgo, stream: bool) -> 
             verify_gateway_response(request_body, response_body, signature, gateway)
             with pytest.raises(VerificationError):
                 verify_gateway_response(request_body, altered, signature, gateway)
+
+
+async def fetch_signature_with_retry(
+    client: AttestationClient, completion_id: str, signing_algo: SigningAlgo
+) -> CompletionSignature:
+    # Retry receipt propagation only. Never repeat Chat or cryptographic checks.
+    for delay in (0.5, 1, 2, 4):
+        try:
+            return await client.fetch_completion_signature(
+                completion_id, signing_algo=signing_algo
+            )
+        except ApiError as error:
+            if not error.retryable:
+                raise
+        await asyncio.sleep(delay)
+    return await client.fetch_completion_signature(
+        completion_id, signing_algo=signing_algo
+    )
 
 
 def read_completion_id(response_body: bytes, stream: bool) -> str:

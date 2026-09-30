@@ -48,6 +48,9 @@ deployment allowlist.
 
 A complete run sends 22 small Chat requests per environment (44 total), each
 capped at 128 completion tokens. JavaScript disables OpenAI request retries.
+Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
+2, and 4 second backoffs, within each test's 180 second deadline. It never
+resends Chat or retries a cryptographic verification failure.
 Test failures and timeouts fail CI; they are not converted into skipped or
 successful tests.
 

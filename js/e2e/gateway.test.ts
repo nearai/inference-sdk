@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import OpenAI from 'openai';
-import { InferenceClient as GenericInferenceClient } from '../dist/index.js';
+import {
+  InferenceClient as GenericInferenceClient,
+  isApiError as isGenericApiError,
+} from '../dist/index.js';
 import type {
   InferenceChat,
   InferenceClientOptions,
@@ -12,6 +16,7 @@ import {
   createPinnedTlsFetch,
   findModelAttestationForSignature,
   InferenceClient,
+  isApiError,
   VerificationError,
   verifyGatewayAttestation,
   verifyGatewayResponse,
@@ -129,7 +134,9 @@ async function verifyClientCompletions({
   });
   assert.ok(completion.id);
   assert.match(completion.choices[0]?.message.content ?? '', /\bOK\b/i);
-  const verified = await inferenceClient.verifyResponse(completion.id);
+  const verified = await retryReceipt(() =>
+    inferenceClient.verifyResponse(completion.id),
+  );
   assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
 
   const stream = await chat.completions.create(
@@ -148,7 +155,10 @@ async function verifyClientCompletions({
   assert.ok(completionId, 'SSE must contain a completion ID');
   assert.ok(finished, 'SSE must contain a terminal completion chunk');
   assert.match(content, /\bOK\b/i);
-  const verifiedStream = await inferenceClient.verifyResponse(completionId);
+  const streamedId = completionId;
+  const verifiedStream = await retryReceipt(() =>
+    inferenceClient.verifyResponse(streamedId),
+  );
   assert.equal(verifiedStream.signature.signer.signingAlgo, signingAlgo);
 }
 
@@ -208,10 +218,9 @@ test('Standalone APIs verify deployments and byte-exact JSON/SSE receipts', {
     assert.equal(response.status, 200, 'Chat request must succeed');
     const responseBody = new Uint8Array(await response.arrayBuffer());
     const id = readCompletionId({ responseBody, stream });
-    const signature = await client.fetchCompletionSignature({
-      completionId: id,
-      signingAlgo,
-    });
+    const signature = await retryReceipt(() =>
+      client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+    );
     assert.equal(signature.signer.signingAlgo, signingAlgo);
     // Changing even whitespace must invalidate the receipt's byte binding.
     const altered = new Uint8Array([...responseBody, 0x20]);
@@ -241,6 +250,25 @@ test('Standalone APIs verify deployments and byte-exact JSON/SSE receipts', {
     }
   }
 });
+
+// Allow receipt propagation after Chat, without repeating inference or masking
+// cryptographic verification failures. The enclosing test still has a deadline.
+async function retryReceipt<T>(lookup: () => Promise<T>): Promise<T> {
+  for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
+    try {
+      return await lookup();
+    } catch (error) {
+      if (
+        !(isApiError(error) || isGenericApiError(error)) ||
+        !error.retryable
+      ) {
+        throw error;
+      }
+    }
+    await delay(backoffMs);
+  }
+  return lookup();
+}
 
 type ReadCompletionIdParams = {
   responseBody: Uint8Array;
