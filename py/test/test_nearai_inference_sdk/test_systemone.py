@@ -321,6 +321,24 @@ async def test_unsupported_decision_modes_fail_before_preflight(
     assert gateway.requests == []
 
 
+@pytest.mark.parametrize(
+    'model_fields', [{}, {'model': ''}, {'model': None}, {'model': 1}]
+)
+async def test_invalid_decision_model_fails_before_preflight(monkeypatch, model_fields):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    request = {key: value for key, value in REQUEST.items() if key != 'model'}
+    request.update(model_fields)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(ApiError) as raised:
+            await client.systemone.create(request)
+        assert raised.value.failure.code == 'api.invalid_input'
+        assert raised.value.failure.details['field'] == 'model'
+    assert gateway.gateway_requests == 0
+    assert gateway.model_requests == []
+    assert gateway.requests == []
+
+
 async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(monkeypatch):
     gateway = DecisionGateway()
     gateway.decision_id = 'jev/run:1?variant=2#decision'

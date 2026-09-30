@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, cast
 import httpx
 from pydantic import ValidationError
 
-from ..schemas import CompletionResponseIdSchema, SystemOneResponseSchema
+from ..schemas import (
+    CompletionRequestModelSchema,
+    CompletionResponseIdSchema,
+    SystemOneResponseSchema,
+)
 from ..types.cloud_api import NO_ALIASING_HEADER
 from ..types.systemone import SystemOneRequest, SystemOneResponse, SystemOneResult
 from ..utils.errors import (
@@ -39,13 +43,23 @@ class InferenceSystemOne:
         if 'stream' in request:
             raise _invalid_input('System One does not support streaming')
         try:
+            model = CompletionRequestModelSchema.model_validate(request).model
+        except ValidationError as cause:
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'model',
+                    'reason': 'missing_model',
+                    'expected': 'a non-empty model ID',
+                },
+                cause=cause,
+            ) from cause
+        try:
             request_body = json.dumps(request, allow_nan=False).encode()
         except (ValueError, TypeError):
             raise _invalid_input('a JSON-serializable System One request') from None
         # Leave request business rules to the server and retain the exact bytes.
-        session = await client._start_verification(
-            request['model'], endpoint='systemone'
-        )
+        session = await client._start_verification(model, endpoint='systemone')
         request_headers = client._request_headers(headers or {})
         remove_e2ee_headers(request_headers)
         for name in (
