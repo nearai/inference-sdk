@@ -59,7 +59,6 @@ class InferenceSystemOne:
         except (ValueError, TypeError):
             raise _invalid_input('a JSON-serializable System One request') from None
         # Leave request business rules to the server and retain the exact bytes.
-        session = await client._start_verification(model, endpoint='systemone')
         request_headers = client._request_headers(headers or {})
         remove_e2ee_headers(request_headers)
         for name in (
@@ -86,6 +85,7 @@ class InferenceSystemOne:
             headers=request_headers,
             content=request_body,
         )
+        session = await client._start_verification(model, endpoint='systemone')
         try:
             response = await session.http_client.send(http_request, stream=True)
         except (ApiError, VerificationError):

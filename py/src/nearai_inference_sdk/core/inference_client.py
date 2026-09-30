@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic
@@ -264,8 +265,8 @@ class _VerifiedInferenceClient[Result]:
             )
         parsed = await decode_chat_request(request)
         body = request.content
-        session = await self._start_verification(parsed['model'])
         headers = self._request_headers(request.headers)
+        session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
         headers.pop('transfer-encoding', None)
         headers.pop('trailer', None)
@@ -324,7 +325,13 @@ class _VerifiedInferenceClient[Result]:
 
     def _request_headers(self, request_headers: Mapping[str, str]) -> httpx.Headers:
         headers = httpx.Headers(self._headers)
-        headers.update(request_headers)
+        try:
+            headers.update(request_headers)
+        except UnicodeError:
+            raise api_failure(
+                'api.invalid_input',
+                {'field': 'headers', 'reason': 'invalid_header_value'},
+            ) from None
         # Use the same configured authorization for evidence, Chat, and signatures,
         # including when an external OpenAI client supplies its own API key.
         if 'authorization' in self._headers:
@@ -333,6 +340,15 @@ class _VerifiedInferenceClient[Result]:
             headers.pop('authorization', None)
         if self._api_key is not None:
             headers.pop('api-key', None)
+        # HTTPX stores headers without checking the syntax sent on the wire.
+        for name, value in headers.raw:
+            if not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) or re.search(
+                rb'[\x00-\x08\x0a-\x1f\x7f]', value
+            ):
+                raise api_failure(
+                    'api.invalid_input',
+                    {'field': 'headers', 'reason': 'invalid_header_value'},
+                )
         return headers
 
     async def verify_response(self, id: str) -> Result:

@@ -339,6 +339,23 @@ async def test_invalid_decision_model_fails_before_preflight(monkeypatch, model_
     assert gateway.requests == []
 
 
+@pytest.mark.parametrize(
+    'headers',
+    [{'x-tenant': 'invalid\nvalue'}, {'invalid name': 'value'}, {'x-tenant': '雪'}],
+)
+async def test_invalid_decision_headers_fail_before_preflight(monkeypatch, headers):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(ApiError) as raised:
+            await client.systemone.create(REQUEST, headers=headers)
+        assert raised.value.failure.code == 'api.invalid_input'
+        assert raised.value.failure.details['field'] == 'headers'
+    assert gateway.gateway_requests == 0
+    assert gateway.model_requests == []
+    assert gateway.requests == []
+
+
 async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(monkeypatch):
     gateway = DecisionGateway()
     gateway.decision_id = 'jev/run:1?variant=2#decision'
