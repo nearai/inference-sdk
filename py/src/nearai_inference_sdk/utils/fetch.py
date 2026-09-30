@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING
 
 import aiohttp
 from cryptography import x509
@@ -12,6 +13,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 if TYPE_CHECKING:
     from asyncio import BaseTransport
+
     from aiohttp.connector import Connection
 
 
@@ -49,20 +51,22 @@ async def fetch(
     response_class = (
         _PeerSpkiCapturingResponse if _capture_peer_spki else aiohttp.ClientResponse
     )
-    async with aiohttp.ClientSession(
-        response_class=response_class,
-    ) as session:
-        async with session.request(method, url, data=data, headers=headers) as response:
-            return FetchResponse(
-                status=response.status,
-                body=await response.read(),
-                headers=response.headers,
-                peer_spki_fingerprint=(
-                    response.peer_spki_fingerprint
-                    if isinstance(response, _PeerSpkiCapturingResponse)
-                    else None
-                ),
-            )
+    async with (
+        aiohttp.ClientSession(
+            response_class=response_class,
+        ) as session,
+        session.request(method, url, data=data, headers=headers) as response,
+    ):
+        return FetchResponse(
+            status=response.status,
+            body=await response.read(),
+            headers=response.headers,
+            peer_spki_fingerprint=(
+                response.peer_spki_fingerprint
+                if isinstance(response, _PeerSpkiCapturingResponse)
+                else None
+            ),
+        )
 
 
 class _PeerSpkiCapturingResponse(aiohttp.ClientResponse):

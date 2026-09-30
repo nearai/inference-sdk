@@ -1,6 +1,9 @@
 import type { CompletionSignature } from './chat';
 import type { DirectAttestationClientOptions } from './direct-api';
-import type { VerifiedDirectModelAttestation } from './direct-verification';
+import type {
+  VerifiedDirectModelAttestation,
+  VerifiedDirectModelAttestations,
+} from './direct-verification';
 import type {
   InferenceClientCommonOptions,
   InferenceEncryptionOptions,
@@ -33,6 +36,12 @@ export type VerifyDirectModelResponseParams = {
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
   readonly attestations: readonly VerifiedDirectModelAttestation[];
+};
+
+/** All verified direct reports and endpoint TLS binding, shared by verify() and Chat. */
+export type VerifiedDirectDeployment = VerifiedDirectModelAttestations & {
+  /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+  readonly verifiedAt: number;
 };
 
 /** A signed response associated with the preflight-verified signer group. */

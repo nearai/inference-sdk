@@ -7,8 +7,8 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from nearai_inference_sdk import (
-    AttestationClient,
     ApiError,
+    AttestationClient,
     CompletionSignature,
     CompletionSignatureReference,
     MeasuredDeployment,
@@ -19,7 +19,6 @@ from nearai_inference_sdk import (
 )
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
-
 
 SIGNING_ADDRESS = f'0x{"22" * 20}'
 API_KEY = 'test'

@@ -44,7 +44,6 @@ from ..utils.errors import (
 )
 from ..utils.fetch import fetch as default_fetch
 
-
 SIGNATURE_RESPONSE_FIELDS = {
     'text',
     'signature',

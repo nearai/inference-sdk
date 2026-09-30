@@ -126,6 +126,15 @@ export type NodeInferenceClientOptions = AttestationClientOptions &
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
   } & InferenceEncryptionOptions;
 
+/** Successful Gateway preflight, shared by verify() and Chat for this model. */
+export type VerifiedDeployment = {
+  readonly gateway: VerifiedGatewayAttestation;
+  /** Every returned model report. Empty for Gateway-only models. */
+  readonly models: readonly VerifiedModelAttestation[];
+  /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+  readonly verifiedAt: number;
+};
+
 /** A completion signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionResult = {
   readonly completionId: string;

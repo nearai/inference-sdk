@@ -7,12 +7,8 @@ import inspect
 import re
 import secrets
 from collections.abc import Awaitable
-from typing import TypeVar
 
 from .errors import verification_failure
-
-
-T = TypeVar('T')
 
 
 def hex_to_bytes(value: str, field: str = 'hex') -> bytes:
@@ -61,7 +57,7 @@ def sha384(value: bytes) -> bytes:
     return hashlib.sha384(value).digest()
 
 
-async def maybe_await(value: T | Awaitable[T]) -> T:
+async def maybe_await[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
