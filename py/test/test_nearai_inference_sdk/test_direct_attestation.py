@@ -14,9 +14,9 @@ from nearai_inference_sdk import (
 from .fixtures import (
     NONCE,
     TLS_FINGERPRINT,
+    create_gateway_tls_quote,
     create_model_attestation,
     create_model_quote,
-    create_gateway_tls_quote,
 )
 
 

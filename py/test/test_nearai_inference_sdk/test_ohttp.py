@@ -99,19 +99,19 @@ async def test_response_content_length_matches_decoded_body(
     gateway.response_body = b'test'
     gateway.response_framing = framing
     gateway.response_headers = {'Content-Length': content_length}
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            if valid:
-                response = await client.get('models')
-                assert response.content == b'test'
-            else:
-                with pytest.raises(VerificationError) as caught:
-                    await client.get('models')
-                assert caught.value.failure.code == 'ohttp.decryption_failed'
+        ) as client,
+    ):
+        if valid:
+            response = await client.get('models')
+            assert response.content == b'test'
+        else:
+            with pytest.raises(VerificationError) as caught:
+                await client.get('models')
+            assert caught.value.failure.code == 'ohttp.decryption_failed'
     assert gateway.streams[0].closed
 
 
@@ -145,31 +145,31 @@ async def test_bodyless_response_length_semantics(
     gateway.response_headers = (
         {} if content_length is None else {'Content-Length': content_length}
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            if valid:
-                response = await client.request(method, 'models')
-                assert response.content == b''
-            else:
-                with pytest.raises(VerificationError) as caught:
-                    await client.request(method, 'models')
-                assert caught.value.failure.code == 'ohttp.decryption_failed'
+        ) as client,
+    ):
+        if valid:
+            response = await client.request(method, 'models')
+            assert response.content == b''
+        else:
+            with pytest.raises(VerificationError) as caught:
+                await client.request(method, 'models')
+            assert caught.value.failure.code == 'ohttp.decryption_failed'
     assert gateway.streams[0].closed
 
 
 async def test_custom_host_is_preserved_inside_the_encrypted_request() -> None:
     gateway = OhttpGateway()
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            response = await client.get('models', headers={'Host': 'tenant.example'})
+        ) as client,
+    ):
+        response = await client.get('models', headers={'Host': 'tenant.example'})
 
     assert response.status_code == 200
     assert gateway.requests[0].headers['host'] == 'tenant.example'
@@ -192,18 +192,16 @@ async def test_sse_done_does_not_skip_final_chunk_authentication(damage: str) ->
     gateway.response_body = b'data: {"choices": []}\r\n\r\ndata: [DONE]\n\n'
     setattr(gateway, damage, True)
     seen = bytearray()
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            async with client.stream(
-                'POST', 'chat/completions', content=b'{}'
-            ) as response:
-                with pytest.raises(VerificationError) as caught:
-                    async for chunk in response.aiter_bytes():
-                        seen.extend(chunk)
+        ) as client,
+        client.stream('POST', 'chat/completions', content=b'{}') as response,
+    ):
+        with pytest.raises(VerificationError) as caught:
+            async for chunk in response.aiter_bytes():
+                seen.extend(chunk)
     assert bytes(seen) == gateway.response_body
     assert caught.value.failure.code == 'ohttp.decryption_failed'
     assert gateway.streams[0].closed
@@ -219,14 +217,14 @@ async def test_bodyless_responses_still_authenticate_final_chunk(
     gateway.response_status = status
     gateway.response_body = b''
     gateway.corrupt_final_response = True
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(VerificationError) as caught:
-                await client.request(method, 'chat/completions')
+        ) as client,
+    ):
+        with pytest.raises(VerificationError) as caught:
+            await client.request(method, 'chat/completions')
     assert caught.value.failure.code == 'ohttp.decryption_failed'
 
 
@@ -247,22 +245,22 @@ async def test_streaming_backpressure_early_close_and_cancellation() -> None:
         )
 
     gateway = OhttpGateway(handler)
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            async with client.stream('POST', 'chat/completions') as response:
-                chunks = response.aiter_bytes()
-                assert await anext(chunks) == b'data: first\n\n'
-                assert not started.is_set()
-                pending = asyncio.create_task(anext(chunks))
-                await started.wait()
-                pending.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await pending
-            assert not outer.is_closed
+        ) as client,
+    ):
+        async with client.stream('POST', 'chat/completions') as response:
+            chunks = response.aiter_bytes()
+            assert await anext(chunks) == b'data: first\n\n'
+            assert not started.is_set()
+            pending = asyncio.create_task(anext(chunks))
+            await started.wait()
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        assert not outer.is_closed
     assert source.closed
     assert gateway.streams[0].closed
 
@@ -285,13 +283,11 @@ def test_invalid_or_unsupported_key_config_fails_locally(invalid_config: bytes) 
 async def test_key_config_can_advertise_additional_cipher_suites() -> None:
     gateway = OhttpGateway()
     config = gateway.key_config[:35] + b'\x00\x08\x00\x01\x00\x03\x00\x01\x00\x01'
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
-            config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            assert (await client.get('models')).status_code == 200
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(config, base_url=BASE_URL, http_client=outer) as client,
+    ):
+        assert (await client.get('models')).status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -334,34 +330,34 @@ async def test_outer_network_failure_is_retryable_and_cancellation_is_preserved(
     async def handle(_request: httpx.Request) -> httpx.Response:
         raise failure
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer,
+        create_ohttp_client(
             OhttpGateway().key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(ApiError) as caught:
-                await client.get('models')
-            assert caught.value.failure.code == 'api.transport_failed'
-            assert caught.value.retryable
-            assert caught.value.cause is failure
-            failure = asyncio.CancelledError('cancelled')
-            with pytest.raises(asyncio.CancelledError) as cancelled:
-                await client.get('models')
-            assert cancelled.value is failure
+        ) as client,
+    ):
+        with pytest.raises(ApiError) as caught:
+            await client.get('models')
+        assert caught.value.failure.code == 'api.transport_failed'
+        assert caught.value.retryable
+        assert caught.value.cause is failure
+        failure = asyncio.CancelledError('cancelled')
+        with pytest.raises(asyncio.CancelledError) as cancelled:
+            await client.get('models')
+        assert cancelled.value is failure
 
 
 async def test_cross_origin_and_unusable_key_fail_before_transport() -> None:
     gateway = OhttpGateway()
     config = gateway.key_config[:3] + bytes(32) + gateway.key_config[35:]
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
-            config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(ApiError) as invalid_url:
-                await client.get('https://elsewhere.example/data')
-            with pytest.raises(VerificationError) as encryption:
-                await client.get('models')
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(config, base_url=BASE_URL, http_client=outer) as client,
+    ):
+        with pytest.raises(ApiError) as invalid_url:
+            await client.get('https://elsewhere.example/data')
+        with pytest.raises(VerificationError) as encryption:
+            await client.get('models')
     assert invalid_url.value.failure.code == 'api.invalid_input'
     assert encryption.value.failure.code == 'ohttp.encryption_failed'
     assert gateway.outer_requests == []
@@ -378,14 +374,16 @@ async def test_outer_http_status_is_structured(status: int, retryable: bool) -> 
         calls.append(request)
         return httpx.Response(status, headers={'location': 'https://elsewhere.example'})
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handle), follow_redirects=True
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.MockTransport(handle), follow_redirects=True
+        ) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(ApiError) as caught:
-                await client.get('models')
+        ) as client,
+    ):
+        with pytest.raises(ApiError) as caught:
+            await client.get('models')
     assert caught.value.failure.code == 'api.http_status'
     assert caught.value.failure.details == {'resource': 'ohttp', 'status': status}
     assert caught.value.retryable is retryable
@@ -403,12 +401,14 @@ async def test_transport_retains_timeouts_and_preserves_tls_verification_failure
         requests.append(request)
         raise failure
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(VerificationError) as caught:
-                await client.get('models', timeout=httpx.Timeout(1, read=3))
+        ) as client,
+    ):
+        with pytest.raises(VerificationError) as caught:
+            await client.get('models', timeout=httpx.Timeout(1, read=3))
     assert caught.value is failure
     assert requests[0].extensions['timeout']['read'] == 3
 
@@ -432,14 +432,14 @@ async def test_transport_retains_timeouts_and_preserves_tls_verification_failure
 async def test_authenticated_but_malformed_bhttp_is_rejected(payload: bytes) -> None:
     gateway = OhttpGateway()
     gateway.plaintext_response = payload
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            with pytest.raises(VerificationError) as caught:
-                await client.get('models')
+        ) as client,
+    ):
+        with pytest.raises(VerificationError) as caught:
+            await client.get('models')
     assert caught.value.failure.code == 'ohttp.decryption_failed'
 
 
@@ -447,12 +447,12 @@ async def test_authenticated_but_malformed_bhttp_is_rejected(payload: bytes) -> 
 async def test_informational_status_and_omitted_empty_sections(framing: int) -> None:
     gateway = OhttpGateway()
     gateway.plaintext_response = bytes([framing]) + varint(103) + b'\0' + varint(200)
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
-    ) as outer:
-        async with create_ohttp_client(
+    async with (
+        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
-        ) as client:
-            response = await client.get('models')
+        ) as client,
+    ):
+        response = await client.get('models')
     assert response.status_code == 200
     assert response.content == b''

@@ -30,7 +30,6 @@ from .fixtures import (
     create_model_quote,
 )
 
-
 REQUEST_BODY = b'{"model":"canonical-model"}'
 RESPONSE_BODY = b'data: hello\n\n'
 

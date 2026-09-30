@@ -5,7 +5,7 @@ import hashlib
 import ssl
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -35,7 +35,7 @@ class TlsServer:
 async def tls_server(tmp_path: Path) -> AsyncIterator[TlsServer]:
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, 'localhost')])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -149,16 +149,18 @@ async def test_pinned_client_honors_an_explicit_httpx_read_timeout(
 ) -> None:
     trust_test_certificate(monkeypatch, tls_server)
 
-    async with create_pinned_tls_client(tls_server.spki_fingerprint) as client:
-        async with client.stream(
+    async with (
+        create_pinned_tls_client(tls_server.spki_fingerprint) as client,
+        client.stream(
             'GET',
             f'{tls_server.url}/stream',
             timeout=httpx.Timeout(None, read=0.01),
-        ) as response:
-            chunks = response.aiter_bytes()
-            assert await anext(chunks) == b'first'
-            with pytest.raises(httpx.ReadTimeout):
-                await anext(chunks)
+        ) as response,
+    ):
+        chunks = response.aiter_bytes()
+        assert await anext(chunks) == b'first'
+        with pytest.raises(httpx.ReadTimeout):
+            await anext(chunks)
 
 
 async def test_spki_mismatch_stops_request_before_headers_and_body_are_sent(

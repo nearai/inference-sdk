@@ -49,8 +49,8 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
-from ..utils.fetch import FetchResponse, fetch as default_fetch
-
+from ..utils.fetch import FetchResponse
+from ..utils.fetch import fetch as default_fetch
 
 SIGNATURE_RESPONSE_FIELDS = {
     'text',
@@ -418,8 +418,9 @@ def _map_ohttp_attestation(raw: OhttpAttestationSchema) -> OhttpAttestation:
 
 def _decode_completion_signature(
     value: object,
-    schema: type[CloudCompletionSignatureSchema]
-    | type[DirectCompletionSignatureSchema] = CloudCompletionSignatureSchema,
+    schema: type[
+        CloudCompletionSignatureSchema | DirectCompletionSignatureSchema
+    ] = CloudCompletionSignatureSchema,
 ) -> CompletionSignature:
     if isinstance(value, dict) and not (SIGNATURE_RESPONSE_FIELDS & set(value)):
         try:

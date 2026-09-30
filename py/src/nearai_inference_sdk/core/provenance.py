@@ -41,7 +41,6 @@ from ..utils.errors import (
 )
 from ..utils.fetch import fetch
 
-
 _DIGEST_PATTERN = re.compile(r'sha256:[0-9a-fA-F]{64}')
 _REPOSITORY_PATTERN = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _COMMIT_PATTERN = re.compile(r'[0-9a-fA-F]{40}')

@@ -10,7 +10,7 @@ from nearai_inference_sdk import (
 )
 
 from .ohttp_fixtures import OhttpGateway
-from .test_inference_client import BASE_URL, MODEL, MESSAGES, Gateway
+from .test_inference_client import BASE_URL, MESSAGES, MODEL, Gateway
 
 
 class DirectEndpoint(Gateway):

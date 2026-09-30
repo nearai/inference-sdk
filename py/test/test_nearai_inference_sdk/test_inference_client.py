@@ -37,7 +37,6 @@ from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import APP_COMPOSE, TLS_FINGERPRINT, create_model_quote
 
-
 BASE_URL = 'https://gateway.test/v1/'
 MODEL = 'test-model'
 MESSAGES = [{'role': 'user', 'content': 'Hello'}]

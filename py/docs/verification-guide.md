@@ -221,13 +221,20 @@ from nearai_inference_sdk import (
 )
 
 direct_client = DirectAttestationClient(direct_base_url, api_key=direct_api_key)
-fetched_attestations = await direct_client.fetch_model_attestations(signing_algo='ed25519')
+fetched_attestations = await direct_client.fetch_model_attestations(
+    signing_algo='ed25519'
+)
 verified = await verify_direct_model_attestations(fetched_attestations)
 
 # Application code sends Chat and retains its exact request and response bytes.
-signature = await direct_client.fetch_completion_signature(completion_id, signing_algo='ed25519')
+signature = await direct_client.fetch_completion_signature(
+    completion_id, signing_algo='ed25519'
+)
 matching = verify_direct_model_response(
-    request_body, response_body, signature, verified.attestations,
+    request_body,
+    response_body,
+    signature,
+    verified.attestations,
 )
 ```
 
