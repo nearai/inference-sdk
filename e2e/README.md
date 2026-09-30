@@ -2,7 +2,7 @@
 
 These tests send real Chat requests and verify real attestation evidence and
 response signatures. They run after pushes to `main` (including merged PRs)
-and daily at 02:17 UTC / 10:17 Asia/Shanghai. GitHub may delay scheduled runs.
+and daily at 00:00 UTC / 08:00 Asia/Shanghai. GitHub may delay scheduled runs.
 The **Live E2E** workflow can also be started manually from `main`.
 
 ## Configuration

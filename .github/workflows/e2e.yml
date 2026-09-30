@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # 10:17 Asia/Shanghai, away from the busiest hourly schedule boundary.
-    - cron: '17 2 * * *'
+    # 00:00 UTC / 08:00 Asia/Shanghai.
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
