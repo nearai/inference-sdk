@@ -1,0 +1,114 @@
+name: Security Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 9 * * 1" # Monday, 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Audit findings are report-only until the existing backlog is triaged.
+# Remove the audit steps' continue-on-error flags to gate merges.
+# Separate setup/export steps
+# remain blocking; no advisory IDs are suppressed.
+jobs:
+  typescript:
+    name: TypeScript (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [js, examples/example-js]
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          package_json_file: js/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      # pnpm audit reads the lockfile; no dependency install or scripts needed.
+      - name: Audit runtime and development dependencies
+        id: audit
+        continue-on-error: true
+        run: pnpm audit
+      - name: Summarize audit outcome
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          echo "pnpm audit: $AUDIT_OUTCOME (report-only; see the audit step for findings or errors)." >> "$GITHUB_STEP_SUMMARY"
+
+  python:
+    name: Python (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [py, examples/example-py]
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          python-version: "3.12"
+      - name: Export locked runtime and development dependencies
+        # Omit the local SDK itself, but retain all of its dependencies when
+        # exporting the example's lockfile. Keep hashes for pip-audit.
+        run: >-
+          uv export --locked --all-groups --no-emit-project
+          --no-emit-package nearai-inference-sdk --format requirements-txt
+          --output-file "$RUNNER_TEMP/audit-requirements.txt"
+      - name: Install audit tool
+        run: uv tool install pip-audit==2.10.1
+      - name: Audit locked dependencies
+        id: audit
+        continue-on-error: true
+        run: >-
+          uv tool run pip-audit --require-hashes --disable-pip
+          --requirement "$RUNNER_TEMP/audit-requirements.txt"
+      - name: Summarize audit outcome
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          echo "pip-audit: $AUDIT_OUTCOME (report-only; see the audit step for findings or errors)." >> "$GITHUB_STEP_SUMMARY"
+
+  rust:
+    name: Rust (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [rs, examples/example-rs]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Audit locked dependencies against RustSec
+        id: audit
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          manifest-path: ${{ matrix.directory }}/Cargo.toml
+          rust-version: stable
+          arguments: --locked --all-features
+          command: check advisories
+          command-arguments: --config deny.toml
+      - name: Summarize audit outcome
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        run: |
+          echo "cargo deny: $AUDIT_OUTCOME (report-only; see the audit step for findings or errors)." >> "$GITHUB_STEP_SUMMARY"

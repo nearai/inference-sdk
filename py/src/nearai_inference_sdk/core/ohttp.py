@@ -213,9 +213,12 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
                 if not 100 <= status <= 599:
                     raise ValueError('Invalid BHTTP status')
                 response_headers = await _read_fields(reader, known_length)
+                expected_length = _response_content_length(
+                    response_headers, request.method, status
+                )
                 if status >= 200:
                     break
-            stream = _ResponseBody(reader, known_length, outer)
+            stream = _ResponseBody(reader, known_length, outer, expected_length)
             if request.method == 'HEAD' or status in (204, 205, 304):
                 async for _ in stream:
                     pass
@@ -402,17 +405,49 @@ async def _decrypt_response(
             return
 
 
+def _response_content_length(
+    headers: list[tuple[bytes, bytes]], method: str, status: int
+) -> int | None:
+    """Apply HTTP content-length semantics to decoded BHTTP response fields."""
+    lengths = set()
+    for name, value in headers:
+        if name.lower() != b'content-length':
+            continue
+        for item in value.split(b','):
+            item = item.strip(b' \t')
+            if not item.isdigit():
+                raise ValueError('Invalid BHTTP Content-Length')
+            lengths.add(int(item))
+    if len(lengths) > 1:
+        raise ValueError('Conflicting BHTTP Content-Length values')
+    length = next(iter(lengths), None)
+    if length is not None and (status < 200 or status == 204):
+        raise ValueError('Content-Length is not allowed for this response status')
+    if status == 205 and length not in (None, 0):
+        raise ValueError('A 205 response cannot contain content')
+    # HEAD and 304 may describe a representation length without carrying content.
+    if method == 'HEAD' or status in (204, 205, 304):
+        return 0
+    return length
+
+
 class _ResponseBody(httpx.AsyncByteStream):
     def __init__(
-        self, reader: _Reader, known_length: bool, outer: httpx.Response
+        self,
+        reader: _Reader,
+        known_length: bool,
+        outer: httpx.Response,
+        expected_length: int | None,
     ) -> None:
         self._reader = reader
         self._known_length = known_length
         self._outer = outer
+        self._expected_length = expected_length
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
         try:
             first = True
+            received = 0
             while size := await self._reader.varint(eof_zero=first):
                 first = False
                 if size > _MAX_MESSAGE_SIZE:
@@ -421,10 +456,18 @@ class _ResponseBody(httpx.AsyncByteStream):
                     piece = await self._reader.some(min(size, _CHUNK_SIZE))
                     if not piece:
                         raise ValueError('Truncated BHTTP content')
+                    received += len(piece)
+                    if (
+                        self._expected_length is not None
+                        and received > self._expected_length
+                    ):
+                        raise ValueError('BHTTP content exceeds Content-Length')
                     size -= len(piece)
                     yield piece
                 if self._known_length:
                     break
+            if self._expected_length is not None and received != self._expected_length:
+                raise ValueError('BHTTP content does not match Content-Length')
             await _read_fields(self._reader, self._known_length)
             # Consume padding and authenticate final OHTTP framing even when
             # content has ended (including SSE [DONE] or an empty entity).

@@ -10,7 +10,14 @@ import pytest
 from eth_account.messages import encode_defunct
 from nacl.signing import SigningKey
 
-from nearai_inference_sdk import ApiError, VerificationError
+from nearai_inference_sdk import (
+    ApiError,
+    AttestationVerifiers,
+    GatewayVerificationOptions,
+    ModelAttestationVerifiers,
+    ModelVerificationOptions,
+    VerificationError,
+)
 from nearai_inference_sdk.core import inference_client
 
 from .test_inference_client import MESSAGES, MODEL, Gateway
@@ -452,6 +459,45 @@ async def test_decision_receipt_must_use_the_configured_signing_algorithm(monkey
                 await client.verify_response(result.decision_id)
             assert raised.value.failure.code == 'signature.signer_mismatch'
     assert gateway.signature_requests == 1
+
+
+async def test_decision_preflight_is_concurrent_but_blocks_inference(monkeypatch):
+    gateway = DecisionGateway(kind='provider_tee')
+    gateway.install(monkeypatch)
+    release_gateway = asyncio.Event()
+    model_verified = asyncio.Event()
+
+    async def verify_gateway_quote(quote):
+        await release_gateway.wait()
+        return gateway.quotes[quote]
+
+    async def verify_model_deployment(_deployment):
+        model_verified.set()
+
+    async with gateway.client(
+        e2ee=False,
+        gateway_verification=GatewayVerificationOptions(
+            verifiers=AttestationVerifiers(tdx_quote=verify_gateway_quote)
+        ),
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=gateway.quotes.__getitem__,
+                deployment=verify_model_deployment,
+            )
+        ),
+    ) as client:
+        decision = asyncio.create_task(client.systemone.create(REQUEST))
+        async with asyncio.timeout(1):
+            await model_verified.wait()
+        assert gateway.requests == []
+        assert not decision.done()
+        release_gateway.set()
+        result = await decision
+        await client.verify_response(result.decision_id)
+
+    assert gateway.gateway_requests == 1
+    assert gateway.model_requests == [MODEL]
+    assert len(gateway.requests) == 1
 
 
 async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypatch):

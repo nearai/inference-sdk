@@ -79,6 +79,88 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
     assert gateway.streams[0].closed
 
 
+@pytest.mark.parametrize('framing', [1, 3])
+@pytest.mark.parametrize(
+    'content_length,valid',
+    [
+        ('4', True),
+        ('4, 4', True),
+        ('0', False),
+        ('5', False),
+        ('4, 5', False),
+        ('-4', False),
+        ('', False),
+    ],
+)
+async def test_response_content_length_matches_decoded_body(
+    framing: int, content_length: str, valid: bool
+) -> None:
+    gateway = OhttpGateway()
+    gateway.response_body = b'test'
+    gateway.response_framing = framing
+    gateway.response_headers = {'Content-Length': content_length}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(gateway.handle)
+    ) as outer:
+        async with create_ohttp_client(
+            gateway.key_config, base_url=BASE_URL, http_client=outer
+        ) as client:
+            if valid:
+                response = await client.get('models')
+                assert response.content == b'test'
+            else:
+                with pytest.raises(VerificationError) as caught:
+                    await client.get('models')
+                assert caught.value.failure.code == 'ohttp.decryption_failed'
+    assert gateway.streams[0].closed
+
+
+@pytest.mark.parametrize('framing', [1, 3])
+@pytest.mark.parametrize(
+    'method,status,content_length,body,valid',
+    [
+        ('HEAD', 200, '4', b'', True),
+        ('GET', 304, '4', b'', True),
+        ('GET', 204, None, b'', True),
+        ('GET', 205, '0', b'', True),
+        ('HEAD', 200, '4', b'test', False),
+        ('GET', 304, '4', b'test', False),
+        ('GET', 204, None, b'test', False),
+        ('GET', 204, '0', b'', False),
+        ('GET', 205, '4', b'', False),
+    ],
+)
+async def test_bodyless_response_length_semantics(
+    framing: int,
+    method: str,
+    status: int,
+    content_length: str | None,
+    body: bytes,
+    valid: bool,
+) -> None:
+    gateway = OhttpGateway()
+    gateway.response_status = status
+    gateway.response_framing = framing
+    gateway.response_body = body
+    gateway.response_headers = (
+        {} if content_length is None else {'Content-Length': content_length}
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(gateway.handle)
+    ) as outer:
+        async with create_ohttp_client(
+            gateway.key_config, base_url=BASE_URL, http_client=outer
+        ) as client:
+            if valid:
+                response = await client.request(method, 'models')
+                assert response.content == b''
+            else:
+                with pytest.raises(VerificationError) as caught:
+                    await client.request(method, 'models')
+                assert caught.value.failure.code == 'ohttp.decryption_failed'
+    assert gateway.streams[0].closed
+
+
 async def test_custom_host_is_preserved_inside_the_encrypted_request() -> None:
     gateway = OhttpGateway()
     async with httpx.AsyncClient(

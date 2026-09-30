@@ -119,9 +119,6 @@ class _InferenceTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         return await self._client.send(request)
 
-    async def aclose(self) -> None:
-        await self._client._close_sessions()
-
 
 class _VerifiedInferenceClient[Result]:
     """Verify before sending Chat requests, then verify responses explicitly.
@@ -176,10 +173,9 @@ class _VerifiedInferenceClient[Result]:
             tuple[_InferenceEndpoint, str], asyncio.Task[_VerifiedSession[Result]]
         ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
-        self._ohttp_clients: list[httpx.AsyncClient] = []
         self._responses: dict[str, _ResponseRecord[Result]] = {}
         self._drains: set[asyncio.Task[None]] = set()
-        self.http_client = httpx.AsyncClient(
+        self._chat_client = httpx.AsyncClient(
             transport=_InferenceTransport(self), timeout=None
         )
         # The wrapper requires a key even when an aggregator uses custom
@@ -187,9 +183,18 @@ class _VerifiedInferenceClient[Result]:
         self._openai = AsyncOpenAI(
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
-            http_client=self.http_client,
+            http_client=self._chat_client,
         )
         self.chat = self._openai.chat
+
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Return a non-owning HTTPX adapter for an external OpenAI client.
+
+        Each adapter may be closed independently; the inference client owns
+        the connections, sessions, and response-verification records.
+        """
+        return httpx.AsyncClient(transport=_InferenceTransport(self), timeout=None)
 
     async def __aenter__(self) -> Self:
         return self
@@ -198,7 +203,8 @@ class _VerifiedInferenceClient[Result]:
         await self.aclose()
 
     async def aclose(self) -> None:
-        await self.http_client.aclose()
+        await self._chat_client.aclose()
+        await self._close_sessions()
 
     async def _close_sessions(self) -> None:
         pending = [*self._pending.values(), *self._drains]
@@ -215,13 +221,9 @@ class _VerifiedInferenceClient[Result]:
             if record.expiry is not None:
                 record.expiry.cancel()
         await asyncio.gather(
-            *(
-                client.aclose()
-                for client in [*self._ohttp_clients, *self._http_clients.values()]
-            )
+            *(client.aclose() for client in self._http_clients.values())
         )
         self._http_clients.clear()
-        self._ohttp_clients.clear()
         self._sessions.clear()
         self._responses.clear()
 
@@ -369,6 +371,8 @@ class _VerifiedInferenceClient[Result]:
     async def _start_verification(
         self, model: str, *, endpoint: _InferenceEndpoint = 'chat'
     ) -> _VerifiedSession[Result]:
+        if self._chat_client.is_closed:
+            raise RuntimeError('InferenceClient is closed')
         # Chat routes to a selected key; System One can use any verified fleet
         # signer. Share cache mechanics without mixing these session assumptions.
         cache_key = (endpoint, model)
@@ -422,14 +426,14 @@ class _VerifiedInferenceClient[Result]:
     ) -> httpx.AsyncClient:
         if key_config is None:
             return client
-        wrapped = create_ohttp_client(
+        # The wrapper borrows this client's connections. Its session/response
+        # records retain it only while needed; no separate owner registry is needed.
+        return create_ohttp_client(
             key_config,
             base_url=self.base_url,
             http_client=client,
             forwarded_headers=tuple(self._headers),
         )
-        self._ohttp_clients.append(wrapped)
-        return wrapped
 
     def _register_response(
         self,

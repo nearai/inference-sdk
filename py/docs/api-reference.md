@@ -96,9 +96,11 @@ inference. The catalog decision shares the attestation cache's lifetime.
 
 ### HTTP integration and receipt results
 
-`http_client` is an `httpx.AsyncClient` accepted by `openai.AsyncOpenAI`.
-It uses the same verification, encryption, cache, and receipt capture as the
-built-in Chat interface. Keep the owning `InferenceClient` open while using it.
+`http_client` returns a new, non-owning `httpx.AsyncClient` adapter accepted by
+`openai.AsyncOpenAI`. It uses the same verification, encryption, cache, and receipt
+capture as the built-in Chat interface. Closing an adapter or an external OpenAI
+client does not close the owning `InferenceClient` or discard its receipts. Keep
+the owner open while sending requests and verifying responses.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |

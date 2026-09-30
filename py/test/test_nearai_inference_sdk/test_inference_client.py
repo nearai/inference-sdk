@@ -355,6 +355,36 @@ async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch, g
     assert len(gateway.completion_requests) == 2
 
 
+async def test_external_openai_close_preserves_receipts_and_owner(monkeypatch, gateway):
+    gateway.install(monkeypatch)
+
+    async with gateway.client() as client:
+        async with AsyncOpenAI(
+            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+        ) as openai:
+            completion = await openai.chat.completions.create(
+                model=MODEL, messages=MESSAGES
+            )
+        verified = await client.verify_response(completion.id)
+        assert verified.id == completion.id
+
+        # Both the built-in Chat client and a new external adapter still work.
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        await client.verify_response(completion.id)
+        async with AsyncOpenAI(
+            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+        ) as openai:
+            completion = await openai.chat.completions.create(
+                model=MODEL, messages=MESSAGES
+            )
+        await client.verify_response(completion.id)
+
+    assert gateway.gateway_requests == 1
+    assert len(gateway.completion_requests) == 3
+
+
 async def test_cancelling_one_chat_preserves_shared_preflight(monkeypatch, gateway):
     preflight_started = asyncio.Event()
     release_preflight = asyncio.Event()
