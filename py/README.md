@@ -7,10 +7,10 @@ encryption. Use the asynchronous `InferenceClient` to get started.
 ## Install
 
 Requires **Python 3.12 or later**. Clients use `asyncio`; there is no synchronous
-Chat client. Install the current release candidate explicitly:
+Chat client. Install with pip:
 
 ```sh
-pip install nearai-inference-sdk==0.1.0rc1
+pip install nearai-inference-sdk==0.1.0
 ```
 
 ## Send and verify a Chat completion
