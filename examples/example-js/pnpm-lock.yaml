@@ -12,8 +12,8 @@ importers:
         specifier: link:../../js
         version: link:../../js
       openai:
-        specifier: 7.20.0
-        version: 7.20.0
+        specifier: 7.22.0
+        version: 7.22.0
     devDependencies:
       '@types/node':
         specifier: 24.13.6
@@ -27,8 +27,8 @@ packages:
   '@types/node@24.13.6':
     resolution: {integrity: sha512-SGrw/h3KPFshy3OE6ZL53LMBG5vGQQ8/gIpiqz/kRZhPJ7HgwCEs8LBuNtWLa8dvGZVpSF7+Bf+c11HUrCb/yg==}
 
-  openai@7.20.0:
-    resolution: {integrity: sha512-5x5ru4cKEvEqHqYZbdIbT57OE7KqmP9YYxZiUKuKng016grOHXqom1vmu34MTPPW30q+lcP9RhxAbaRse+Xlcw==}
+  openai@7.22.0:
+    resolution: {integrity: sha512-C4bv09YtQQb1qcFrEAENJXkuCZA72kGRwws6QIXgf0oJW6pDOmDC2WaZpQVII3Rl+RNE3Z+TQI92uNfetGwY3w==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
@@ -65,7 +65,7 @@ snapshots:
     dependencies:
       undici-types: 7.18.2
 
-  openai@7.20.0: {}
+  openai@7.22.0: {}
 
   typescript@6.0.3: {}
 
