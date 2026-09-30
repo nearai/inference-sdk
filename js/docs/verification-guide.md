@@ -142,6 +142,15 @@ Reusable deployment checks can also be passed through
 `deploymentPolicy`, which also receives the requested model name. If both are
 configured, both must pass.
 
+Gateway verification runs concurrently with model metadata retrieval and model
+attestation verification. With Node TLS binding enabled, model metadata and
+evidence requests are pinned to the TLS fingerprint observed when fetching the
+Gateway report. Gateway verification must authenticate that same fingerprint
+before the session is cached or Chat is sent. All required checks must pass.
+If preflight fails, pending model metadata and attestation requests are aborted.
+Already-running third-party or custom verifiers without cancellation support
+may still finish in the background.
+
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
@@ -175,6 +184,7 @@ const gpuEvidence = createGpuEvidenceVerifier({
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
@@ -225,6 +235,7 @@ import { InferenceClient } from '@nearai/inference-sdk/node';
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
+  e2ee: true,
   headers: {
     Authorization: 'Bearer <server-scoped token>',
   },

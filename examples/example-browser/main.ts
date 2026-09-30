@@ -292,7 +292,8 @@ function renderVerificationRecords(): void {
     if (record.status === 'verified' && record.result) {
       detail.append(node('div', 'verified-line', `✓ Verified ${record.result.signature.signer.signingAlgo.toUpperCase()} signature`));
       const grid = node('div', 'compact-grid');
-      grid.append(detailCell('Completion ID', record.result.completionId), detailCell('Signature scope', record.result.signatureKind === 'provider_tee' ? 'Model TEE' : 'Cloud gateway'));
+      if (record.completionId) grid.append(detailCell('Completion ID', record.completionId));
+      grid.append(detailCell('Signature scope', record.result.signatureKind === 'provider_tee' ? 'Model TEE' : 'Cloud gateway'));
       detail.append(grid);
       const open = node('button', 'secondary-button', 'View response verification');
       open.type = 'button';
@@ -566,7 +567,7 @@ function openResponseDetails(record: VerificationRecord): void {
   signature.append(node('strong', undefined, 'Response signature'));
   const list = node('dl', 'detail-list');
   appendDefined(
-    list, detailRow('Completion ID', result.completionId),
+    list, detailRow('Completion ID', record.completionId),
     detailRow('Signature scope', result.signatureKind === 'provider_tee' ? 'Model TEE' : 'Cloud gateway'),
     detailRow('Signing algorithm', result.signature.signer.signingAlgo.toUpperCase()),
     detailRow('Completion signer', result.signature.signer.signingAddress),
