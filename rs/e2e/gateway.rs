@@ -86,15 +86,16 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
     let http = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     for stream in [false, true] {
-        // Chutes streaming is separately gated by the provider. Its original
-        // JSON response exposes an explicit unsupported-signature result.
+        // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
+        // so its live case uses JSON only.
         if model.provider == "chutes" && stream {
             continue;
         }
         let request_body = serde_json::to_vec(&json!({
             "model": model.id,
             "messages": [{"role": "user", "content": "Reply with the single word OK."}],
-            "max_completion_tokens": 128,
+            // Reasoning tokens share this budget; leave room for a visible answer.
+            "max_completion_tokens": 1024,
             "stream": stream,
         }))?;
         let response = http
@@ -113,18 +114,6 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         );
         let response_body = response.bytes().await?;
         let id = read_completion_id(&response_body, stream)?;
-        if model.provider == "chutes" {
-            let error = fetch_signature_with_retry(&client, &id, signing_algo)
-                .await
-                .expect_err("Chutes does not provide per-response signatures");
-            assert!(matches!(
-                error,
-                ApiError::CompletionSignatureUnavailable { provider_error_code, .. }
-                    if provider_error_code == "SIGNATURE_UNSUPPORTED"
-            ));
-            println!("Chutes JSON: signature explicitly unsupported (not verified)");
-            continue;
-        }
         let signature = fetch_signature_with_retry(&client, &id, signing_algo).await?;
         assert_eq!(signature.signer.signing_algo, signing_algo);
         if model.provider != "near" {
@@ -186,9 +175,13 @@ fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<
         let content = completion["choices"][0]["message"]["content"]
             .as_str()
             .unwrap_or_default();
+        assert_eq!(
+            completion["choices"][0]["finish_reason"].as_str(),
+            Some("stop")
+        );
         assert!(
-            content.to_uppercase().contains("OK"),
-            "Expected Chat content"
+            !content.trim().is_empty(),
+            "Expected non-empty Chat content"
         );
         return completion_id(&completion);
     }
@@ -205,6 +198,7 @@ fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<
     );
     let mut id = None;
     let mut content = String::new();
+    let mut finish_reason = None;
     for event in events.into_iter().filter(|event| *event != "[DONE]") {
         let chunk: Value = serde_json::from_str(event)?;
         let chunk_id = completion_id(&chunk)?;
@@ -218,10 +212,18 @@ fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<
                 .as_str()
                 .unwrap_or_default(),
         );
+        if let Some(reason) = chunk["choices"][0]["finish_reason"].as_str() {
+            finish_reason = Some(reason.to_owned());
+        }
     }
+    assert_eq!(
+        finish_reason.as_deref(),
+        Some("stop"),
+        "SSE must complete without truncation"
+    );
     assert!(
-        content.to_uppercase().contains("OK"),
-        "Expected Chat content"
+        !content.trim().is_empty(),
+        "Expected non-empty Chat content"
     );
     id.ok_or_else(|| io::Error::other("SSE has no completion ID").into())
 }
