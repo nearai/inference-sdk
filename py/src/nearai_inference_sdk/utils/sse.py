@@ -67,7 +67,7 @@ def get_sse_data(line: str) -> str | None:
     if not line.startswith('data:'):
         return None
     value = line[len('data:') :]
-    return value[1:] if value.startswith(' ') else value
+    return value.removeprefix(' ')
 
 
 def get_sse_data_records(text: str) -> list[str]:

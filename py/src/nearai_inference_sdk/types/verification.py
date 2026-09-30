@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .attestation_common import SigningIdentity, TcbStatus
 
@@ -31,11 +31,11 @@ class TdxQuoteVerificationResult:
     rt_mr3: bytes
 
 
-TdxQuoteVerifier: TypeAlias = Callable[
+type TdxQuoteVerifier = Callable[
     [str], Awaitable[TdxQuoteVerificationResult] | TdxQuoteVerificationResult
 ]
-GpuEvidenceVerifier: TypeAlias = Callable[[str], Awaitable[None] | None]
-DeploymentVerifier: TypeAlias = Callable[[MeasuredDeployment], Awaitable[None] | None]
+type GpuEvidenceVerifier = Callable[[str], Awaitable[None] | None]
+type DeploymentVerifier = Callable[[MeasuredDeployment], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,20 +101,20 @@ class VerifiedGatewayAttestation(VerifiedAttestationEvidence):
 
 
 __all__ = [
-    'RuntimeMeasurements',
-    'MeasuredDeployment',
-    'TdxQuoteVerificationResult',
-    'TdxQuoteVerifier',
-    'GpuEvidenceVerifier',
-    'DeploymentVerifier',
     'AttestationPolicy',
-    'ModelAttestationPolicy',
     'AttestationVerifiers',
-    'ModelAttestationVerifiers',
-    'ModelClientBinding',
+    'DeploymentVerifier',
     'GatewayClientBinding',
     'GatewayTlsBinding',
+    'GpuEvidenceVerifier',
+    'MeasuredDeployment',
+    'ModelAttestationPolicy',
+    'ModelAttestationVerifiers',
+    'ModelClientBinding',
+    'RuntimeMeasurements',
+    'TdxQuoteVerificationResult',
+    'TdxQuoteVerifier',
     'VerifiedAttestationEvidence',
-    'VerifiedModelAttestation',
     'VerifiedGatewayAttestation',
+    'VerifiedModelAttestation',
 ]

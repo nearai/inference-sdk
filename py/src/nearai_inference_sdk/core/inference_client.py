@@ -389,12 +389,15 @@ class _VerifiedInferenceClient[Result]:
 
             def finished(completed: asyncio.Task[_VerifiedSession[Result]]) -> None:
                 self._pending.pop(cache_key, None)
-                if not completed.cancelled() and completed.exception() is None:
-                    if self._attestation_ttl != 0:
-                        self._sessions[cache_key] = (
-                            monotonic() + self._attestation_ttl,
-                            completed.result(),
-                        )
+                if (
+                    not completed.cancelled()
+                    and completed.exception() is None
+                    and self._attestation_ttl != 0
+                ):
+                    self._sessions[cache_key] = (
+                        monotonic() + self._attestation_ttl,
+                        completed.result(),
+                    )
 
             task.add_done_callback(finished)
         # Cancelling one caller must not cancel shared verification for others.
@@ -767,7 +770,11 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             async for chunk in self._reader:
                 self._capture(chunk)
             self._complete()
-        except BaseException as error:
+        except asyncio.CancelledError as error:
+            self._fail(error)
+            raise
+        except Exception as error:  # noqa: BLE001
+            # Forward background reader failures to verify_response's future.
             self._fail(error)
         finally:
             await self._response.aclose()

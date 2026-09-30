@@ -20,7 +20,6 @@ from .e2ee_chat import (
     parse_e2ee_chat_response,
 )
 
-
 _REPLACED_BODY_HEADERS = (
     'content-length',
     'transfer-encoding',

@@ -16,7 +16,6 @@ from nearai_inference_sdk.types.e2ee import E2eeModelKey
 from nearai_inference_sdk.utils.errors import ApiError, VerificationError
 from nearai_inference_sdk.utils.sse import get_sse_data_records
 
-
 ENDPOINT = 'https://gateway.test/v1/chat/completions'
 PROMPT = {'model': 'test-model', 'messages': [{'role': 'user', 'content': '私密问题'}]}
 

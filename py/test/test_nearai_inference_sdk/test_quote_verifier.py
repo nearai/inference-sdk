@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import nearai_inference_sdk.utils.intel as intel
 from nearai_inference_sdk import VerificationError, create_tdx_quote_verifier
+from nearai_inference_sdk.utils import intel
 
 from .fixtures import create_model_quote
 

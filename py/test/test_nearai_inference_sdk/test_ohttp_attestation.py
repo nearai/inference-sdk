@@ -12,7 +12,6 @@ from nearai_inference_sdk import (
     verify_ohttp_key_config,
 )
 
-
 SIGNING_KEY = SigningKey(bytes([7]) * 32)
 KEY_CONFIG = bytes.fromhex('010020' + '33' * 32 + '000400010001')
 SIGNER = SigningIdentity(

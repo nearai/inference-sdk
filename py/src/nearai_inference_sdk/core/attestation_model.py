@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from typing import Literal
+
 from cryptography.hazmat.primitives.asymmetric import ec
 from eth_utils.crypto import keccak
 
+from ..types.attestation_model import ModelAttestation
 from ..types.verification import (
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
@@ -15,7 +17,6 @@ from ..types.verification import (
     VerifiedAttestationEvidence,
     VerifiedModelAttestation,
 )
-from ..types.attestation_model import ModelAttestation
 from ..utils.common import hex_to_bytes, maybe_await
 from ..utils.errors import (
     VerificationError,

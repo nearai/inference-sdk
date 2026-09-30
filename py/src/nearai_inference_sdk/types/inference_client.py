@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal
 
 from .chat import CompletionSignature
 from .verification import (
@@ -17,10 +17,7 @@ from .verification import (
     VerifiedModelAttestation,
 )
 
-
-DeploymentPolicy: TypeAlias = Callable[
-    [str, MeasuredDeployment], Awaitable[None] | None
-]
+type DeploymentPolicy = Callable[[str, MeasuredDeployment], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -52,6 +49,6 @@ class VerifiedGatewayCompletionResult:
     signature_kind: Literal['gateway'] = 'gateway'
 
 
-VerifiedCompletionResult: TypeAlias = (
+type VerifiedCompletionResult = (
     VerifiedModelCompletionResult | VerifiedGatewayCompletionResult
 )

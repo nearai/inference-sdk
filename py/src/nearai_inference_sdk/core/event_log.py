@@ -10,7 +10,6 @@ from ..types.verification import RuntimeMeasurements
 from ..utils.common import sha384, trim_hex_prefix
 from ..utils.errors import verification_failure
 
-
 DSTACK_RUNTIME_EVENT_TYPE = 0x08000001
 
 EVENT_LOG_FIELD_EXPECTATIONS = {

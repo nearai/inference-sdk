@@ -22,7 +22,6 @@ from nearai_inference_sdk.core import inference_client
 
 from .test_inference_client import MESSAGES, MODEL, Gateway
 
-
 REQUEST = {
     'model': MODEL,
     'state': {'question': 'Is this a useful answer?'},

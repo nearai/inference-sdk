@@ -11,7 +11,6 @@ from .verification import (
     ModelClientBinding,
 )
 
-
 DEFAULT_NEAR_AI_CLOUD_BASE_URL = 'https://cloud-api.near.ai/v1'
 NO_ALIASING_HEADER = 'x-no-aliasing'
 
