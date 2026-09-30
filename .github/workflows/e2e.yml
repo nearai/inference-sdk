@@ -1,0 +1,155 @@
+name: Live E2E
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      language:
+        description: SDK to test, or all for the full suite
+        type: string
+        default: all
+    secrets:
+      NEARAI_STG_API_KEY:
+        required: true
+      NEARAI_PRD_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  STG_BASE_URL: https://cloud-stg-api.near.ai/v1
+  PRD_BASE_URL: https://cloud-api.near.ai/v1
+
+concurrency:
+  group: live-e2e-${{ github.workflow }}-${{ github.sha }}-${{ inputs.language || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  configuration:
+    if: github.repository == 'nearai/inference-sdk' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      stg-models: ${{ steps.stg.outputs.models }}
+      prd-models: ${{ steps.prd.outputs.models }}
+    steps:
+      - name: Require live test secrets
+        env:
+          NEARAI_STG_API_KEY: ${{ secrets.NEARAI_STG_API_KEY }}
+          NEARAI_PRD_API_KEY: ${{ secrets.NEARAI_PRD_API_KEY }}
+        run: |
+          : "${NEARAI_STG_API_KEY:?Set the NEARAI_STG_API_KEY repository secret}"
+          : "${NEARAI_PRD_API_KEY:?Set the NEARAI_PRD_API_KEY repository secret}"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Select STG models from the public catalog
+        id: stg
+        env:
+          NEARAI_BASE_URL: ${{ env.STG_BASE_URL }}
+        run: |
+          models=$(node e2e/select-models.mjs)
+          printf 'models=%s\n' "$models" >> "$GITHUB_OUTPUT"
+          printf 'STG models: %s\n' "$models"
+      - name: Select PRD models from the public catalog
+        id: prd
+        env:
+          NEARAI_BASE_URL: ${{ env.PRD_BASE_URL }}
+        run: |
+          models=$(node e2e/select-models.mjs)
+          printf 'models=%s\n' "$models" >> "$GITHUB_OUTPUT"
+          printf 'PRD models: %s\n' "$models"
+
+  javascript:
+    name: JavaScript (${{ matrix.environment }})
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript'
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck:e2e
+      - name: Run live Gateway tests
+        env:
+          NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
+        run: pnpm test:e2e
+
+  python:
+    name: Python (${{ matrix.environment }})
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'python'
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
+    defaults:
+      run:
+        working-directory: py
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: uv sync --locked
+      - name: Run live Gateway tests
+        env:
+          NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
+        run: uv run --no-sync pytest e2e -v --tb=short
+
+  rust:
+    name: Rust (${{ matrix.environment }})
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
+    needs: configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
+    defaults:
+      run:
+        working-directory: rs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - name: Compile live tests without credentials
+        id: build
+        run: |
+          cargo test --locked --test e2e --no-run --message-format=json > "$RUNNER_TEMP/e2e-rust-build.json"
+          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "e2e" and .profile.test) | .executable' "$RUNNER_TEMP/e2e-rust-build.json")
+          test -n "$binary"
+          printf 'binary=%s\n' "$binary" >> "$GITHUB_OUTPUT"
+      - name: Run live Gateway tests
+        env:
+          E2E_TEST_BINARY: ${{ steps.build.outputs.binary }}
+          NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
+          NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
+        run: '"$E2E_TEST_BINARY" --ignored --nocapture --test-threads=1'

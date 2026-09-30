@@ -30,6 +30,10 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - name: Typecheck live tests without contacting the service
+        run: |
+          pnpm typecheck:e2e
+          node --check ../e2e/select-models.mjs
       - name: Check JavaScript example
         working-directory: examples/example-js
         run: |
