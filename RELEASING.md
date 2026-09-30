@@ -74,8 +74,9 @@ gh workflow run release.yml --repo nearai/inference-sdk --ref main \
 The workflow:
 
 1. Requires the default branch and checks the selected manifest's version.
-2. Runs CI for the selected language. Ordinary PR and push CI still checks all
-   three languages.
+2. Runs CI and live E2E against both STG and PRD for the selected language.
+   A failure blocks tag creation and publication. Ordinary PR and push CI still
+   checks all three languages without contacting the service.
 3. Creates the package-specific tag at the run's commit and a draft GitHub
    Release. An existing tag must point to that same commit.
 4. Rechecks the remote tag and publishes only the selected package, using the
@@ -89,6 +90,9 @@ dist-tag, while stable versions use `latest`; candidates do not replace the
 default stable install.
 
 ## Registry setup
+
+Configure the `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` repository secrets
+for the live release checks. See [Live E2E configuration](e2e/README.md#configuration).
 
 Create a GitHub Actions environment named `release`, restrict deployments to
 the default branch, and optionally add required reviewers. Add a tag ruleset for

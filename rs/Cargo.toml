@@ -8,7 +8,12 @@ repository = "https://github.com/nearai/inference-sdk"
 readme = "README.md"
 # This repository-only test uses a signed fixture shared by all three SDKs
 # outside the crate root. Do not publish a test whose fixture is unavailable.
-exclude = ["tests/image_provenance.rs"]
+# Live E2E tests also stay in the repository, not the published crate.
+exclude = ["tests/image_provenance.rs", "e2e/**"]
+
+[[test]]
+name = "e2e"
+path = "e2e/gateway.rs"
 
 [dependencies]
 reqwest = { version = "0.12.26", features = ["json"] }
