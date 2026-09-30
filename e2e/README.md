@@ -42,11 +42,11 @@ credentials, request bodies, or full attestation reports.
 
 | SDK | Live checks |
 | --- | --- |
-| All three, all selected models | Gateway quote and peer TLS binding, JSON Chat responses and signature lookup |
+| All three, all selected models | Gateway quote and peer TLS binding, JSON Chat responses and exact-byte receipt verification |
 | All three, NEAR and external models | Complete SSE responses and exact-byte receipt verification |
 | All three, NEAR models | Every returned model report and GPU evidence; model or Gateway receipt verification according to the returned signature kind |
 | All three, external models | Gateway receipt verification; no NEAR model attestation or E2EE claims |
-| All three, Chutes | Original JSON responses must report `SIGNATURE_UNSUPPORTED`; this is not successful response verification |
+| All three, Chutes | Gateway receipt verification for JSON responses; no Chutes model attestation or E2EE claims |
 | All three, signed responses | An altered response is rejected using the real receipt, without sending another request |
 | JavaScript | Node `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
 | JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
@@ -59,7 +59,10 @@ default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
 deployment allowlist.
 
 A complete three-language run sends 50 small Chat requests per environment (100 total), each
-capped at 128 completion tokens. JavaScript disables OpenAI request retries.
+capped at 1,024 completion tokens to leave room for reasoning and a visible answer.
+Responses must have non-empty answer content and finish with `stop`; empty or
+token-truncated responses fail. The test does not require the model to return a
+particular word. JavaScript disables OpenAI request retries.
 Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
 2, and 4 second backoffs, within each model case's 180 second deadline. It never
 resends Chat or retries a cryptographic verification failure.
@@ -68,8 +71,8 @@ successful tests.
 
 Chutes' own evidence format and encrypted channel are outside these SDK
 verification APIs. Its streaming support is separately gated by the provider,
-so this suite tests Chutes with JSON only and checks the explicit unavailable
-signature error. A missing signature still fails every NEAR/external receipt test.
+so this suite tests Chutes with JSON only and verifies the Gateway signature over
+the client-facing response. A missing signature fails every receipt test.
 
 ## Local use
 

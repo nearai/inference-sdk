@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import re
 
 import aiohttp
 import pytest
@@ -84,7 +83,8 @@ async def verify_chat(
         {
             'model': model,
             'messages': [{'role': 'user', 'content': 'Reply with the single word OK.'}],
-            'max_completion_tokens': 128,
+            # Reasoning tokens share this budget; leave room for a visible answer.
+            'max_completion_tokens': 1024,
             'stream': stream,
         },
         separators=(',', ':'),
@@ -105,16 +105,6 @@ async def verify_chat(
         response_body = await response.read()
 
     completion_id = read_completion_id(response_body, stream)
-    if provider == 'chutes':
-        # Chutes' original JSON response has no per-response signature.
-        with pytest.raises(ApiError) as raised:
-            await fetch_signature_with_retry(client, completion_id, signing_algo)
-        failure = raised.value.failure
-        assert failure.code == 'api.completion_signature_unavailable'
-        assert failure.details is not None
-        assert failure.details['providerErrorCode'] == 'SIGNATURE_UNSUPPORTED'
-        return
-
     signature = await fetch_signature_with_retry(client, completion_id, signing_algo)
     assert signature.signer.signing_algo == signing_algo
     if provider != 'near':
@@ -154,8 +144,9 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     if not stream:
         completion = json.loads(response_body)
         assert isinstance(completion['id'], str) and completion['id']
-        assert re.search(
-            r'\bOK\b', completion['choices'][0]['message']['content'], re.IGNORECASE
+        assert completion['choices'][0]['finish_reason'] == 'stop'
+        assert completion['choices'][0]['message']['content'].strip(), (
+            'Expected non-empty Chat content'
         )
         return completion['id']
 
@@ -169,12 +160,21 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     completion_id = chunks[0]['id']
     assert isinstance(completion_id, str) and completion_id
     assert all(chunk['id'] == completion_id for chunk in chunks)
+    finish_reasons = [
+        choice['finish_reason']
+        for chunk in chunks
+        for choice in chunk.get('choices', [])
+        if choice.get('finish_reason') is not None
+    ]
+    assert finish_reasons and finish_reasons[-1] == 'stop', (
+        'SSE must complete without truncation'
+    )
     content = ''.join(
         choice.get('delta', {}).get('content') or ''
         for chunk in chunks
         for choice in chunk.get('choices', [])
     )
-    assert re.search(r'\bOK\b', content, re.IGNORECASE)
+    assert content.strip(), 'Expected non-empty Chat content'
     return completion_id
 
 
