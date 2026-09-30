@@ -78,8 +78,10 @@ to encrypt protocol-supported fields to a verified model key. ECDSA is
 available through `signing_algo='ecdsa'`. E2EE or a model deployment policy
 requires model attestation and rejects Incognito models. Successful attestations are cached for
 60 minutes per model; set `attestation_cache_time_to_live_ms=0` to
-verify every request. Call `await inference_client.verify(model)` to warm Chat's
-verification cache before the first request. Gateway and model verification run
+verify every request. Call `await inference_client.verify(model)` to retrieve
+verified Gateway and model evidence while warming Chat's verification cache
+before the first request. The result includes the verification time, preserved
+on cache hits. Gateway and model verification run
 concurrently, and all required checks must pass before Chat is sent.
 Optional deployment callbacks can enforce an application-owned approval policy;
 no approved-release allowlist is supplied by default.
