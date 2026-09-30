@@ -16,3 +16,5 @@ The [TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint) an
 [Python](./py/docs/verification-guide.md#direct-model-endpoints) direct-endpoint
 clients are experimental and not recommended for production. Use Gateway clients for
 production integrations.
+
+Maintainers can follow the [release process](./RELEASING.md).

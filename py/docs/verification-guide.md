@@ -80,15 +80,15 @@ For an existing OpenAI integration, reuse the client's HTTP transport:
 from openai import AsyncOpenAI
 
 async with InferenceClient(api_key, e2ee=True) as inference_client:
-    openai_client = AsyncOpenAI(
+    async with AsyncOpenAI(
         api_key=api_key,
         base_url='https://cloud-api.near.ai/v1/',
         http_client=inference_client.http_client,
-    )
-    completion = await openai_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
+    ) as openai_client:
+        completion = await openai_client.chat.completions.create(
+            model='z-ai/glm-5.3-flash',
+            messages=[{'role': 'user', 'content': 'Hello'}],
+        )
     verified = await inference_client.verify_response(completion.id)
 ```
 
@@ -98,7 +98,9 @@ the authorization for evidence, Chat, and signature requests. An external
 you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
 
 Use one reusable client for concurrent requests; each response is retained under
-its completion ID. `InferenceClient` owns and closes the shared HTTP transport.
+its completion ID. `InferenceClient` owns and closes the shared HTTP connections.
+Closing the external OpenAI client only closes its adapter; receipts remain
+available until the owning inference client closes or their cache entries expire.
 Only Chat Completions are supported by this transport, not the Responses API.
 
 ### Verify before the first Chat request

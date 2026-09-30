@@ -5,6 +5,7 @@ import nacl from 'tweetnacl';
 import OpenAI from 'openai';
 import {
   InferenceClient,
+  VerificationError,
   type TdxQuoteVerificationResult,
   type InferenceClientOptions,
 } from '../src';
@@ -957,7 +958,7 @@ describe('inference client', () => {
   });
 
   test.each(['missing', 'model-signed'] as const)(
-    'blocks Chat when Gateway OHTTP evidence is %s',
+    'rejects %s Gateway OHTTP evidence while model verification is pending',
     async (evidence) => {
       const gateway = createTestGateway();
       const endpoint = await createOhttpEndpoint({
@@ -969,26 +970,45 @@ describe('inference client', () => {
         .mockImplementation(
           evidence === 'missing' ? gateway.fetch : endpoint.fetch,
         );
+      let releaseModelVerification: () => void = () => {};
+      const modelVerificationPending = new Promise<void>((resolve) => {
+        releaseModelVerification = resolve;
+      });
       const client = new InferenceClient({
         ...inferenceClientOptions(gateway),
         ohttp: true,
         signingAlgo: 'ed25519',
+        modelVerification: {
+          verifiers: {
+            tdxQuote: async (quote) => {
+              await modelVerificationPending;
+              return gateway.tdxQuoteVerifier(quote);
+            },
+          },
+        },
       });
-      await expect(
-        client.fetch(
-          `${baseUrl}chat/completions`,
-          chatRequest({ messages: [] }),
-        ),
-      ).rejects.toMatchObject({
+      const verification = client.verify(model);
+      const completion = client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [] }),
+      );
+      const expectedError = {
         failure: {
           code:
             evidence === 'missing'
               ? 'ohttp.attestation_required'
               : 'ohttp.signer_mismatch',
         },
-      });
+      };
+      try {
+        await Promise.all([
+          expect(verification).rejects.toMatchObject(expectedError),
+          expect(completion).rejects.toMatchObject(expectedError),
+        ]);
+      } finally {
+        releaseModelVerification();
+      }
       expect(gateway.state.completionRequests).toBe(0);
-      expect(gateway.state.modelAttestationRequests).toBe(0);
       expect(
         endpoint.requests.every(
           (request) => new URL(request.url).pathname !== '/ohttp',
@@ -2991,31 +3011,171 @@ describe('inference client', () => {
     );
   });
 
+  describe.each(['browser', 'Node'] as const)(
+    '%s preflight cancellation',
+    (runtime) => {
+      test.each([
+        'metadata',
+        'model attestation',
+        'model attestation body',
+      ] as const)(
+        'cancels stalled %s requests before retrying a failed preflight',
+        async (resource) => {
+          const gateway = createTestGateway();
+          const providerFetch = createSignatureFetch(gateway);
+          const pendingSignals: AbortSignal[] = [];
+          const failure = new VerificationError({
+            code: 'policy.debug_enabled',
+          });
+          let rejectGateway = true;
+          let requestStarted = Promise.resolve();
+          let notifyRequestStarted: () => void = () => {};
+          const transportFetch: typeof globalThis.fetch = (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            const shouldStall =
+              resource === 'metadata'
+                ? url.pathname.startsWith('/v1/model/')
+                : url.pathname === '/v1/attestation/report' &&
+                  url.searchParams.has('model');
+            if (!rejectGateway || !shouldStall) return providerFetch(request);
+
+            pendingSignals.push(request.signal);
+            notifyRequestStarted();
+            if (resource === 'model attestation body') {
+              return Promise.resolve(
+                new Response(
+                  new ReadableStream({
+                    start(controller) {
+                      request.signal.addEventListener(
+                        'abort',
+                        () => {
+                          controller.error(request.signal.reason);
+                        },
+                        { once: true },
+                      );
+                    },
+                  }),
+                ),
+              );
+            }
+            return new Promise((_, reject) => {
+              request.signal.addEventListener(
+                'abort',
+                () => {
+                  reject(request.signal.reason);
+                },
+                { once: true },
+              );
+            });
+          };
+          jest.spyOn(globalThis, 'fetch').mockImplementation(transportFetch);
+          const options: InferenceClientOptions = {
+            ...inferenceClientOptions(gateway),
+            gatewayVerification: {
+              verifiers: {
+                tdxQuote: async (quote) => {
+                  if (rejectGateway) {
+                    await requestStarted;
+                    throw failure;
+                  }
+                  return gateway.tdxQuoteVerifier(quote);
+                },
+              },
+            },
+          };
+          if (runtime === 'Node') mockNodeGatewayAttestation({ gateway });
+          const client =
+            runtime === 'Node'
+              ? new TestNodeInferenceClient(options, transportFetch)
+              : new InferenceClient(options);
+
+          for (let attempt = 1; attempt <= 2; attempt += 1) {
+            requestStarted = new Promise((resolve) => {
+              notifyRequestStarted = resolve;
+            });
+            await expect(client.verify(model)).rejects.toBe(failure);
+            expect(pendingSignals).toHaveLength(attempt);
+            for (const signal of pendingSignals)
+              expect(signal.aborted).toBe(true);
+            expect(gateway.state.completionRequests).toBe(0);
+          }
+
+          rejectGateway = false;
+          await client.verify(model);
+          const completion = await client.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: 'hello after retry' }],
+          });
+          await client.verifyResponse(completion.id);
+          expect(gateway.state.gatewayAttestationRequests).toBe(3);
+          expect(gateway.state.completionRequests).toBe(1);
+        },
+      );
+    },
+  );
+
   describe('Node inference client', () => {
-    test('preverifies the Gateway TLS peer and reuses its pin for Chat', async () => {
+    test('verifies model evidence while Gateway verification is pending and blocks Chat until both pass', async () => {
       const gateway = createTestGateway();
-      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const unpinnedFetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Unexpected unpinned Gateway request'));
       const capturedPeerSpkiFingerprints = mockNodeGatewayAttestation({
         gateway,
       });
+      let releaseGatewayVerification: () => void = () => {};
+      const gatewayVerificationPending = new Promise<void>((resolve) => {
+        releaseGatewayVerification = resolve;
+      });
+      let notifyModelVerified: () => void = () => {};
+      const modelVerified = new Promise<void>((resolve) => {
+        notifyModelVerified = resolve;
+      });
       const client = new TestNodeInferenceClient(
-        inferenceClientOptions(gateway),
+        {
+          ...inferenceClientOptions(gateway),
+          gatewayVerification: {
+            verifiers: {
+              tdxQuote: async (quote) => {
+                await gatewayVerificationPending;
+                return gateway.tdxQuoteVerifier(quote);
+              },
+            },
+          },
+          modelVerification: {
+            verifiers: {
+              tdxQuote: gateway.tdxQuoteVerifier,
+              deployment: notifyModelVerified,
+            },
+          },
+        },
         gateway.fetch,
       );
 
-      await client.verify(model);
+      const preverification = client.verify(model);
+      const completion = client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello model' }],
+      });
+      await modelVerified;
+      expect(gateway.state.modelAttestationRequests).toBe(1);
       expect(gateway.state.completionRequests).toBe(0);
-      await client.fetch(
-        `${baseUrl}chat/completions`,
-        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
-      );
+      expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
+
+      releaseGatewayVerification();
+      await preverification;
+      await completion;
 
       expect(capturedPeerSpkiFingerprints).toEqual([true]);
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
         true,
       ]);
+      expect(gateway.state.gatewayAttestationRequests).toBe(1);
+      expect(gateway.state.modelAttestationRequests).toBe(1);
       expect(gateway.state.completionRequests).toBe(1);
+      expect(unpinnedFetch).not.toHaveBeenCalled();
     });
 
     test('uses the pinned transport for model evidence, completion, and its response signature', async () => {
@@ -3081,12 +3241,18 @@ describe('inference client', () => {
 
     test('blocks the completion when the Gateway TLS peer does not match', async () => {
       const gateway = createTestGateway();
-      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const unpinnedFetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Unexpected unpinned Gateway request'));
+      const peerSpkiFingerprint = '44'.repeat(32);
       mockNodeGatewayAttestation({
         gateway,
-        peerSpkiFingerprint: '44'.repeat(32),
+        peerSpkiFingerprint,
       });
-      const client = new NodeInferenceClient(inferenceClientOptions(gateway));
+      const client = new TestNodeInferenceClient(
+        inferenceClientOptions(gateway),
+        gateway.fetch,
+      );
 
       await expect(
         client.fetch(
@@ -3096,8 +3262,32 @@ describe('inference client', () => {
       ).rejects.toMatchObject({
         failure: { code: 'binding.spki_fingerprint_mismatch' },
       });
-      expect(gateway.state.modelAttestationRequests).toBe(0);
+      // The pin comes from the observed peer, not the report's claimed key.
+      expect(client.pinnedSpkiFingerprints).toEqual([peerSpkiFingerprint]);
+      expect(gateway.state.completionRequests).toBe(0);
+      expect(unpinnedFetch).not.toHaveBeenCalled();
+    });
+
+    test('requires an observed TLS fingerprint before fetching model evidence', async () => {
+      const gateway = createTestGateway();
+      const prototype =
+        NodeAttestationClient.prototype as unknown as NodeAttestationClientPrototype;
+      jest
+        .spyOn(prototype, 'requestGatewayAttestation')
+        .mockImplementation(async (request) => ({
+          response: await gateway.fetch(request),
+        }));
+      const client = new TestNodeInferenceClient(
+        inferenceClientOptions(gateway),
+        gateway.fetch,
+      );
+
+      await expect(client.verify(model)).rejects.toMatchObject({
+        failure: { code: 'binding.spki_fingerprint_required' },
+      });
+      expect(client.pinnedSpkiFingerprints).toEqual([]);
       expect(gateway.state.metadataModels).toEqual([]);
+      expect(gateway.state.modelAttestationRequests).toBe(0);
       expect(gateway.state.completionRequests).toBe(0);
     });
   });
