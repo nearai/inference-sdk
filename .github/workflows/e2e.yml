@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+env:
+  STG_BASE_URL: https://cloud-stg-api.near.ai/v1
+  PRD_BASE_URL: https://cloud-api.near.ai/v1
+
 concurrency:
   group: live-e2e-${{ github.sha }}
   cancel-in-progress: false
@@ -22,16 +26,21 @@ jobs:
     steps:
       - name: Require live test secrets
         env:
-          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
-          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_STG_API_KEY: ${{ secrets.NEARAI_E2E_STG_API_KEY }}
+          NEARAI_E2E_PRD_API_KEY: ${{ secrets.NEARAI_E2E_PRD_API_KEY }}
         run: |
-          : "${NEARAI_E2E_BASE_URL:?Set the NEARAI_E2E_BASE_URL repository secret}"
-          : "${NEARAI_E2E_API_KEY:?Set the NEARAI_E2E_API_KEY repository secret}"
+          : "${NEARAI_E2E_STG_API_KEY:?Set the NEARAI_E2E_STG_API_KEY repository secret}"
+          : "${NEARAI_E2E_PRD_API_KEY:?Set the NEARAI_E2E_PRD_API_KEY repository secret}"
 
   javascript:
+    name: JavaScript (${{ matrix.environment }})
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
     defaults:
       run:
         working-directory: js
@@ -48,15 +57,20 @@ jobs:
       - run: pnpm typecheck:e2e
       - name: Run live Gateway tests
         env:
-          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
-          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets[format('NEARAI_E2E_{0}_API_KEY', matrix.environment)] }}
           NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
         run: pnpm test:e2e
 
   python:
+    name: Python (${{ matrix.environment }})
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
     defaults:
       run:
         working-directory: py
@@ -69,15 +83,20 @@ jobs:
       - run: uv sync --locked
       - name: Run live Gateway tests
         env:
-          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
-          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets[format('NEARAI_E2E_{0}_API_KEY', matrix.environment)] }}
           NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
         run: uv run --no-sync pytest e2e -v --tb=short
 
   rust:
+    name: Rust (${{ matrix.environment }})
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [STG, PRD]
     defaults:
       run:
         working-directory: rs
@@ -94,7 +113,7 @@ jobs:
       - name: Run live Gateway tests
         env:
           E2E_TEST_BINARY: ${{ steps.build.outputs.binary }}
-          NEARAI_E2E_BASE_URL: ${{ secrets.NEARAI_E2E_BASE_URL }}
-          NEARAI_E2E_API_KEY: ${{ secrets.NEARAI_E2E_API_KEY }}
+          NEARAI_E2E_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
+          NEARAI_E2E_API_KEY: ${{ secrets[format('NEARAI_E2E_{0}_API_KEY', matrix.environment)] }}
           NEARAI_E2E_MODEL: ${{ vars.NEARAI_E2E_MODEL || 'z-ai/glm-5.3-flash' }}
         run: '"$E2E_TEST_BINARY" --ignored --nocapture --test-threads=1'

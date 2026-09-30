@@ -4,20 +4,27 @@ These tests send real Chat requests and verify real attestation evidence and
 response signatures. They run after pushes to `main` (including merged PRs)
 and daily at 00:00 UTC / 08:00 Asia/Shanghai. GitHub may delay scheduled runs.
 The **Live E2E** workflow can also be started manually from `main`.
+Every run tests both staging and production with all three SDKs, as six
+separate jobs. A failing test job does not cancel the other environment.
 
 ## Configuration
 
 Add these repository secrets in **Settings → Secrets and variables → Actions**:
 
-| Secret | Value |
-| --- | --- |
-| `NEARAI_E2E_BASE_URL` | Gateway HTTPS API base URL including `/v1`, such as `https://cloud-api.near.ai/v1/` |
-| `NEARAI_E2E_API_KEY` | API key for a dedicated test account with inference credits |
+| Environment | Fixed API URL | API key secret |
+| --- | --- | --- |
+| STG | `https://cloud-stg-api.near.ai/v1` | `NEARAI_E2E_STG_API_KEY` |
+| PRD | `https://cloud-api.near.ai/v1` | `NEARAI_E2E_PRD_API_KEY` |
+
+Use a dedicated test account with inference credits in each environment. URLs
+are defined in the workflow; no URL secret is needed. Each test job receives only
+its environment's API key, and both secrets are required before tests start.
 
 The optional repository variable `NEARAI_E2E_MODEL` selects the model. It
-defaults to `z-ai/glm-5.3-flash`. Use a canonical NEAR-hosted GPU model that
-supports both signing algorithms, E2EE, and OHTTP. The endpoint must expose the
-Gateway's own TLS certificate, not an aggregator's certificate.
+defaults to `z-ai/glm-5.3-flash` in both environments. Use a canonical NEAR-hosted
+GPU model available in both, supporting both signing algorithms, E2EE, and OHTTP.
+The endpoint must expose the Gateway's own TLS certificate, not an
+aggregator's certificate.
 
 Missing secrets fail the workflow. It does not run on pull requests and does
 not expose credentials to build or dependency-install steps. Tests do not log
@@ -39,14 +46,17 @@ Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
 default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
 deployment allowlist.
 
-A complete run sends 22 small Chat requests, each capped at 128 completion
-tokens. JavaScript disables OpenAI request retries. Test failures and timeouts
-fail CI; they are not converted into skipped or successful tests.
+A complete run sends 22 small Chat requests per environment (44 total), each
+capped at 128 completion tokens. JavaScript disables OpenAI request retries.
+Test failures and timeouts fail CI; they are not converted into skipped or
+successful tests.
 
 ## Local use
 
-Provide the same environment variables through your local secret manager or
-shell. Do not commit a key or paste it into a command that saves shell history.
+Select one environment by setting `NEARAI_E2E_BASE_URL` to its URL above and
+`NEARAI_E2E_API_KEY` to that environment's key through your local secret manager
+or shell. `NEARAI_E2E_MODEL` is optional. Do not commit a key or paste it into a
+command that saves shell history.
 Run the relevant command from the repository root:
 
 ```sh
