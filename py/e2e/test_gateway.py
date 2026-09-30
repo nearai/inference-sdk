@@ -73,12 +73,14 @@ async def test_gateway_chat_receipt(signing_algo: SigningAlgo, stream: bool) -> 
             'Accept-Encoding': 'identity',
             'x-no-aliasing': 'true',
         }
-        async with aiohttp.ClientSession(auto_decompress=False) as session:
-            async with session.post(
+        async with (
+            aiohttp.ClientSession(auto_decompress=False) as session,
+            session.post(
                 base_url + 'chat/completions', data=request_body, headers=headers
-            ) as response:
-                assert response.status == 200, f'Chat returned HTTP {response.status}'
-                response_body = await response.read()
+            ) as response,
+        ):
+            assert response.status == 200, f'Chat returned HTTP {response.status}'
+            response_body = await response.read()
 
         completion_id = read_completion_id(response_body, stream)
         signature = await fetch_signature_with_retry(
@@ -121,7 +123,7 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
         completion = json.loads(response_body)
         assert isinstance(completion['id'], str) and completion['id']
         assert re.search(
-            r'\bOK\b', completion['choices'][0]['message']['content'], re.I
+            r'\bOK\b', completion['choices'][0]['message']['content'], re.IGNORECASE
         )
         return completion['id']
 
@@ -140,7 +142,7 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
         for chunk in chunks
         for choice in chunk.get('choices', [])
     )
-    assert re.search(r'\bOK\b', content, re.I)
+    assert re.search(r'\bOK\b', content, re.IGNORECASE)
     return completion_id
 
 
