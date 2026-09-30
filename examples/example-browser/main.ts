@@ -1,6 +1,7 @@
 import {
   InferenceClient,
   createGpuEvidenceVerifier,
+  createTdxQuoteVerifier,
   isApiError,
   isVerificationError,
   type VerifiedCompletionResult,
@@ -345,9 +346,13 @@ function rebuildTrustedHistory(): void {
 
 function getClient(apiKey: string, baseUrl: string): InferenceClient {
   if (activeClient?.apiKey === apiKey && activeClient.baseUrl === baseUrl) return activeClient.client;
+  const tdxQuote = createTdxQuoteVerifier({
+    pccsUrl: new URL('/intel', location.origin).href,
+  });
   const client = new InferenceClient({
     apiKey, baseUrl, signingAlgo: SIGNING_ALGO, e2ee: true,
-    modelVerification: { verifiers: { gpuEvidence: gpuVerifier() } },
+    gatewayVerification: { verifiers: { tdxQuote } },
+    modelVerification: { verifiers: { tdxQuote, gpuEvidence: gpuVerifier() } },
   });
   activeClient = { apiKey, baseUrl, client };
   return client;

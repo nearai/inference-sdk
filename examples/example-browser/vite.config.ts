@@ -16,15 +16,41 @@ const stripBrowserHeaders: ProxyOptions['configure'] = (proxy) => {
   });
 };
 
-// Development-only transport for NVIDIA NRAS, whose endpoint does not allow
-// browser CORS preflights. The SDK still checks NVIDIA's signed JWT in-browser.
+// Development-only relays for Intel collateral and NVIDIA evidence services.
+// Cryptographic verification still runs in the browser.
 // Do not expose this unauthenticated Vite proxy as a production relay.
 export default defineConfig({
+  plugins: [{
+    name: 'intel-root-ca-crl',
+    configureServer(server) {
+      // PCCS serves a hex-encoded root CRL here. Intel PCS has no equivalent
+      // endpoint, so relay the DER file from Intel's certificate service.
+      server.middlewares.use('/intel/sgx/certification/v4/rootcacrl', async (_request, response, next) => {
+        try {
+          const upstream = await fetch('https://certificates.trustedservices.intel.com/IntelSGXRootCA.der');
+          response.statusCode = upstream.status;
+          if (!upstream.ok) { response.end(); return; }
+          const bytes = new Uint8Array(await upstream.arrayBuffer());
+          const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+          response.setHeader('Content-Type', 'text/plain');
+          response.end(hex);
+        } catch (error) {
+          next(error);
+        }
+      });
+    },
+  }],
   server: {
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
     proxy: {
+      '/intel': {
+        target: 'https://api.trustedservices.intel.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/intel/, ''),
+        configure: stripBrowserHeaders,
+      },
       '/nvidia/nras': {
         target: 'https://nras.attestation.nvidia.com',
         changeOrigin: true,

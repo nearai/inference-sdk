@@ -80,15 +80,17 @@ client or standalone verification flow is needed for the details view.
   peer certificate to the Gateway quote. The UI explicitly says so.
 - E2EE encrypts the SDK's supported Chat fields to the attested model key. It
   does **not** promise to hide HTTP metadata or arbitrary extra JSON fields.
-- NVIDIA NRAS does not accept browser CORS preflights. The Vite server proxies
-  **only** the NRAS evidence POST and NVIDIA JWKS GET during local development.
-  It removes the browser's `Origin` and other local credentials before forwarding;
-  NRAS otherwise rejects the POST with `403 Invalid CORS request`.
-  The SDK still verifies NVIDIA's signed JWT, nonce, issuer, and result in the
-  browser. This proxy never receives the API key or plaintext Chat prompts.
-  Do not publish this unauthenticated development proxy. A production app needs
-  a restricted/authenticated evidence relay (or an appropriately CORS-enabled
-  upstream), plus a trusted JWKS source.
+- Intel PCS and NVIDIA NRAS need a relay for browser access. During local
+  development, Vite forwards `/intel` to Intel's official collateral service,
+  `/nvidia/nras` to NVIDIA NRAS, and `/nvidia/jwks` to NVIDIA's public keys.
+  The Intel relay also serves the root CA revocation list in PCCS format.
+  Gateway and model quote verification use this relay instead of Phala PCCS.
+  The relays strip browser credentials and `Origin`; they do not receive Chat
+  prompts or the API key from this example. All quote, certificate, JWT, nonce,
+  and verdict checks still run in the browser.
+  Do not publish these unauthenticated development relays. A production app
+  needs restricted/authenticated relays (or suitable CORS-enabled upstreams)
+  and a trusted NVIDIA JWKS source.
 - A cross-origin Cloud API endpoint must allow the web app's origin for its
   model catalog, authenticated evidence, Chat, and signature requests. The development origin is
   `http://127.0.0.1:5173`; another deployment may require CORS configuration.
