@@ -109,10 +109,20 @@ jobs:
     with:
       language: ${{ inputs.language }}
 
+  live-checks:
+    needs: validate-release
+    uses: ./.github/workflows/e2e.yml
+    with:
+      language: ${{ inputs.language }}
+    secrets:
+      NEARAI_STG_API_KEY: ${{ secrets.NEARAI_STG_API_KEY }}
+      NEARAI_PRD_API_KEY: ${{ secrets.NEARAI_PRD_API_KEY }}
+
   create-release:
     needs:
       - validate-release
       - checks
+      - live-checks
     runs-on: ubuntu-latest
     permissions:
       contents: write

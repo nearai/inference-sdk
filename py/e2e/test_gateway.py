@@ -25,29 +25,53 @@ from nearai_inference_sdk import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
-@pytest.mark.parametrize('stream', [False, True], ids=['json', 'sse'])
-async def test_gateway_chat_receipt(signing_algo: SigningAlgo, stream: bool) -> None:
-    base_url = required_env('NEARAI_E2E_BASE_URL').rstrip('/') + '/'
-    api_key = required_env('NEARAI_E2E_API_KEY')
-    model = os.environ.get('NEARAI_E2E_MODEL') or 'z-ai/glm-5.3-flash'
+@pytest.mark.parametrize(
+    ('provider', 'stream'),
+    [
+        ('near', False),
+        ('near', True),
+        ('chutes', False),
+        ('external', False),
+        ('external', True),
+    ],
+    ids=['near-json', 'near-sse', 'chutes-json', 'external-json', 'external-sse'],
+)
+async def test_gateway_chat_receipt(
+    signing_algo: SigningAlgo, stream: bool, provider: str
+) -> None:
+    selected = json.loads(required_env('NEARAI_E2E_MODELS'))
+    models = [model['id'] for model in selected if model['provider'] == provider]
+    assert models, f'Expected {provider} models from the catalog'
+    for model in models:
+        print(f'{provider}: {model}, {signing_algo}, stream={stream}')
+        async with asyncio.timeout(180):
+            await verify_chat(model, provider, signing_algo, stream)
+
+
+async def verify_chat(
+    model: str, provider: str, signing_algo: SigningAlgo, stream: bool
+) -> None:
+    base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
+    api_key = required_env('NEARAI_API_KEY')
     client = AttestationClient(api_key, base_url=base_url)
 
-    async with asyncio.timeout(180):
-        fetched_gateway = await client.fetch_gateway_attestation(
-            signing_algo=signing_algo,
-        )
-        gateway = await verify_gateway_attestation(
-            fetched_gateway.attestation,
-            fetched_gateway.client_binding,
-        )
-        assert gateway.tls_binding.kind == 'attested'
+    # Only NEAR model evidence uses this SDK's model verification path.
+    fetched_gateway = await client.fetch_gateway_attestation(
+        signing_algo=signing_algo,
+    )
+    gateway = await verify_gateway_attestation(
+        fetched_gateway.attestation,
+        fetched_gateway.client_binding,
+    )
+    assert gateway.tls_binding.kind == 'attested'
 
+    models = []
+    if provider == 'near':
         fetched_models = await client.fetch_model_attestations(
             model,
             signing_algo=signing_algo,
         )
         assert fetched_models.attestations, 'Expected NEAR model evidence'
-        models = []
         for attestation in fetched_models.attestations:
             verified = await verify_model_attestation(
                 attestation,
@@ -56,48 +80,56 @@ async def test_gateway_chat_receipt(signing_algo: SigningAlgo, stream: bool) -> 
             )
             models.append(verified)
 
-        request_body = json.dumps(
-            {
-                'model': model,
-                'messages': [
-                    {'role': 'user', 'content': 'Reply with the single word OK.'}
-                ],
-                'max_completion_tokens': 128,
-                'stream': stream,
-            },
-            separators=(',', ':'),
-        ).encode()
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-            'Accept-Encoding': 'identity',
-            'x-no-aliasing': 'true',
-        }
-        async with (
-            aiohttp.ClientSession(auto_decompress=False) as session,
-            session.post(
-                base_url + 'chat/completions', data=request_body, headers=headers
-            ) as response,
-        ):
-            assert response.status == 200, f'Chat returned HTTP {response.status}'
-            response_body = await response.read()
+    request_body = json.dumps(
+        {
+            'model': model,
+            'messages': [{'role': 'user', 'content': 'Reply with the single word OK.'}],
+            'max_completion_tokens': 128,
+            'stream': stream,
+        },
+        separators=(',', ':'),
+    ).encode()
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'identity',
+        'x-no-aliasing': 'true',
+    }
+    async with (
+        aiohttp.ClientSession(auto_decompress=False) as session,
+        session.post(
+            base_url + 'chat/completions', data=request_body, headers=headers
+        ) as response,
+    ):
+        assert response.status == 200, f'Chat returned HTTP {response.status}'
+        response_body = await response.read()
 
-        completion_id = read_completion_id(response_body, stream)
-        signature = await fetch_signature_with_retry(
-            client, completion_id, signing_algo
-        )
-        assert signature.signer.signing_algo == signing_algo
-        # Keep original wire bytes. Even appended whitespace must invalidate them.
-        altered = response_body + b' '
-        if signature.kind == 'provider_tee':
-            attestation = find_model_attestation_for_signature(models, signature)
-            verify_model_response(request_body, response_body, signature, attestation)
-            with pytest.raises(VerificationError):
-                verify_model_response(request_body, altered, signature, attestation)
-        else:
-            verify_gateway_response(request_body, response_body, signature, gateway)
-            with pytest.raises(VerificationError):
-                verify_gateway_response(request_body, altered, signature, gateway)
+    completion_id = read_completion_id(response_body, stream)
+    if provider == 'chutes':
+        # Chutes' original JSON response has no per-response signature.
+        with pytest.raises(ApiError) as raised:
+            await fetch_signature_with_retry(client, completion_id, signing_algo)
+        failure = raised.value.failure
+        assert failure.code == 'api.completion_signature_unavailable'
+        assert failure.details is not None
+        assert failure.details['providerErrorCode'] == 'SIGNATURE_UNSUPPORTED'
+        return
+
+    signature = await fetch_signature_with_retry(client, completion_id, signing_algo)
+    assert signature.signer.signing_algo == signing_algo
+    if provider != 'near':
+        assert signature.kind == 'gateway'
+    # Keep original wire bytes. Even appended whitespace must invalidate them.
+    altered = response_body + b' '
+    if signature.kind == 'provider_tee':
+        attestation = find_model_attestation_for_signature(models, signature)
+        verify_model_response(request_body, response_body, signature, attestation)
+        with pytest.raises(VerificationError):
+            verify_model_response(request_body, altered, signature, attestation)
+    else:
+        verify_gateway_response(request_body, response_body, signature, gateway)
+        with pytest.raises(VerificationError):
+            verify_gateway_response(request_body, altered, signature, gateway)
 
 
 async def fetch_signature_with_retry(

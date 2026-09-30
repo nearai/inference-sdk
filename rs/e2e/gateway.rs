@@ -7,27 +7,40 @@ use nearai_inference_sdk::{
     GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[tokio::test]
-#[ignore = "requires NEARAI_E2E_BASE_URL and NEARAI_E2E_API_KEY"]
+#[ignore = "requires NEARAI_BASE_URL, NEARAI_API_KEY and NEARAI_E2E_MODELS"]
 async fn ed25519_gateway_chat_receipts() -> Result<(), Box<dyn Error>> {
-    tokio::time::timeout(Duration::from_secs(180), verify_chat(SigningAlgo::Ed25519)).await?
+    verify_models(SigningAlgo::Ed25519).await
 }
 
 #[tokio::test]
-#[ignore = "requires NEARAI_E2E_BASE_URL and NEARAI_E2E_API_KEY"]
+#[ignore = "requires NEARAI_BASE_URL, NEARAI_API_KEY and NEARAI_E2E_MODELS"]
 async fn ecdsa_gateway_chat_receipts() -> Result<(), Box<dyn Error>> {
-    tokio::time::timeout(Duration::from_secs(180), verify_chat(SigningAlgo::Ecdsa)).await?
+    verify_models(SigningAlgo::Ecdsa).await
 }
 
-async fn verify_chat(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
-    let base_url = required_env("NEARAI_E2E_BASE_URL")?;
-    let api_key = required_env("NEARAI_E2E_API_KEY")?;
-    let model = env::var("NEARAI_E2E_MODEL")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "z-ai/glm-5.3-flash".to_owned());
+#[derive(Deserialize)]
+struct LiveModel {
+    id: String,
+    provider: String,
+}
+
+async fn verify_models(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
+    let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
+    assert!(!models.is_empty(), "Expected representative Chat models");
+    for model in &models {
+        println!("{}: {}, {signing_algo}", model.provider, model.id);
+        tokio::time::timeout(Duration::from_secs(180), verify_chat(signing_algo, model)).await??;
+    }
+    Ok(())
+}
+
+async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(), Box<dyn Error>> {
+    let base_url = required_env("NEARAI_BASE_URL")?;
+    let api_key = required_env("NEARAI_API_KEY")?;
     let client = AttestationClient::with_base_url(api_key.clone(), &base_url)?;
 
     let fetched_gateway = client
@@ -48,31 +61,38 @@ async fn verify_chat(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
         GatewayTlsBinding::Attested { .. }
     ));
 
-    let fetched_models = client
-        .fetch_model_attestations(&model, Some(signing_algo), None)
-        .await?;
-    assert!(
-        !fetched_models.attestations.is_empty(),
-        "Expected NEAR model evidence"
-    );
     let mut models = Vec::new();
-    for attestation in &fetched_models.attestations {
-        let verified = verify_model_attestation(
-            attestation,
-            &fetched_models.client_binding,
-            None,
-            Default::default(),
-        )
-        .await?;
-        assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
-        models.push(verified);
+    if model.provider == "near" {
+        let fetched_models = client
+            .fetch_model_attestations(&model.id, Some(signing_algo), None)
+            .await?;
+        assert!(
+            !fetched_models.attestations.is_empty(),
+            "Expected NEAR model evidence"
+        );
+        for attestation in &fetched_models.attestations {
+            let verified = verify_model_attestation(
+                attestation,
+                &fetched_models.client_binding,
+                None,
+                Default::default(),
+            )
+            .await?;
+            assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
+            models.push(verified);
+        }
     }
 
     let http = reqwest::Client::new();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     for stream in [false, true] {
+        // Chutes streaming is separately gated by the provider. Its original
+        // JSON response exposes an explicit unsupported-signature result.
+        if model.provider == "chutes" && stream {
+            continue;
+        }
         let request_body = serde_json::to_vec(&json!({
-            "model": model,
+            "model": model.id,
             "messages": [{"role": "user", "content": "Reply with the single word OK."}],
             "max_completion_tokens": 128,
             "stream": stream,
@@ -93,8 +113,23 @@ async fn verify_chat(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
         );
         let response_body = response.bytes().await?;
         let id = read_completion_id(&response_body, stream)?;
+        if model.provider == "chutes" {
+            let error = fetch_signature_with_retry(&client, &id, signing_algo)
+                .await
+                .expect_err("Chutes does not provide per-response signatures");
+            assert!(matches!(
+                error,
+                ApiError::CompletionSignatureUnavailable { provider_error_code, .. }
+                    if provider_error_code == "SIGNATURE_UNSUPPORTED"
+            ));
+            println!("Chutes JSON: signature explicitly unsupported (not verified)");
+            continue;
+        }
         let signature = fetch_signature_with_retry(&client, &id, signing_algo).await?;
         assert_eq!(signature.signer.signing_algo, signing_algo);
+        if model.provider != "near" {
+            assert_eq!(signature.kind, CompletionSignatureKind::Gateway);
+        }
 
         // The signature must cover the exact wire bytes, including whitespace.
         let mut altered = response_body.to_vec();
