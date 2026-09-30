@@ -7,7 +7,8 @@ import hashlib
 import inspect
 import re
 import secrets
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Coroutine
+from typing import Any
 
 from .errors import verification_failure
 
@@ -64,14 +65,17 @@ async def maybe_await[T](value: T | Awaitable[T]) -> T:
     return value
 
 
-async def gather_cancel_on_error[T](*awaitables: Awaitable[T]) -> list[T]:
+async def gather_cancel_on_error[T](*coroutines: Coroutine[Any, Any, T]) -> list[T]:
     """Run in parallel, cancelling and awaiting siblings on failure or cancellation."""
 
-    tasks = [asyncio.ensure_future(item) for item in awaitables]
+    tasks = [asyncio.create_task(item) for item in coroutines]
     try:
         return await asyncio.gather(*tasks)
     except BaseException:
         for task in tasks:
-            task.cancel()
+            # gather may already have propagated caller cancellation. A second
+            # cancel would interrupt asynchronous cleanup in the task's finally.
+            if not task.cancelling():
+                task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
