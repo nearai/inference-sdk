@@ -143,6 +143,8 @@ export type VerifiedAttestationEvidence = {
 
 /** Result returned by a successful `verifyModelAttestation` call. */
 export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
+  /** Original report retained for inspection. Use the verified fields for trust decisions. */
+  readonly report: ModelAttestation;
   /** A supplied NVIDIA payload was verified, or the CVM did not provide one. */
   readonly gpuEvidence: GpuEvidenceStatus;
   /** Quote-bound model public key available for the selected E2EE protocol. */
@@ -151,6 +153,8 @@ export type VerifiedModelAttestation = VerifiedAttestationEvidence & {
 
 /** Result returned by a successful `verifyGatewayAttestation` call. */
 export type VerifiedGatewayAttestation = VerifiedAttestationEvidence & {
+  /** Original report retained for inspection. Use the verified fields for trust decisions. */
+  readonly report: GatewayAttestation;
   /** TLS binding established from the quote layout returned by Cloud API. */
   readonly tlsBinding: GatewayTlsBinding;
 };

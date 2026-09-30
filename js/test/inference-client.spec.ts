@@ -8,6 +8,7 @@ import {
   VerificationError,
   type TdxQuoteVerificationResult,
   type InferenceClientOptions,
+  type VerifiedDeployment,
 } from '../src';
 import {
   AttestationClient as NodeAttestationClient,
@@ -1293,13 +1294,20 @@ describe('inference client', () => {
         e2ee: attestationSupported,
       });
 
-      await client.verify(model);
+      const deployment: VerifiedDeployment = await client.verify(model);
+      expect(deployment).toMatchObject({
+        verifiedAt: 0,
+        gateway: { tcbStatus: 'UpToDate', tlsBinding: { kind: 'none' } },
+      });
+      expect(deployment.models).toHaveLength(attestationSupported ? 1 : 0);
       expect(gateway.state).toMatchObject({
         gatewayAttestationRequests: 1,
         modelAttestationRequests: attestationSupported ? 1 : 0,
         completionRequests: 0,
       });
-      await client.verify(model);
+      now.mockReturnValue(42);
+      const cached = await client.verify(model);
+      expect(cached).toEqual(deployment);
       now.mockReturnValue(60 * 60 * 1000 - 1);
       await client.chat.completions.create({
         model,
@@ -1324,6 +1332,12 @@ describe('inference client', () => {
         modelAttestationRequests: attestationSupported ? 2 : 0,
         completionRequests: 2,
       });
+      const refreshed = await client.verify(model);
+      expect(refreshed.verifiedAt).toBe(60 * 60 * 1000);
+      expect(refreshed.gateway.report.nonce).not.toBe(
+        deployment.gateway.report.nonce,
+      );
+      expect(gateway.state.gatewayAttestationRequests).toBe(2);
     },
   );
 
@@ -1525,7 +1539,7 @@ describe('inference client', () => {
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
-    await Promise.all([
+    const [first, second] = await Promise.all([
       client.verify(model),
       client.verify(model),
       client.fetch(
@@ -1540,6 +1554,8 @@ describe('inference client', () => {
       ),
     ]);
 
+    expect(second).toEqual(first);
+    expect(first.models).toHaveLength(1);
     expect(gateway.state).toMatchObject({
       gatewayAttestationRequests: 1,
       modelAttestationRequests: 1,
@@ -1771,6 +1787,19 @@ describe('inference client', () => {
     mockProviderSignatures(gateway);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
+    const deployment = await client.verify(model);
+    expect(
+      deployment.models.map(({ signer }) => signer.signingAddress),
+    ).toEqual([keyHex(keyPair(2).publicKey), keyHex(keyPair(3).publicKey)]);
+    for (const attestation of [deployment.gateway, ...deployment.models]) {
+      expect(attestation.report).toMatchObject({
+        signer: attestation.signer,
+        intelQuote: `${attestation.signer.signingAddress}:${attestation.report.nonce}`,
+        eventLog,
+        appCompose: attestation.deployment.appCompose,
+      });
+    }
+
     const response = await client.fetch(
       `${baseUrl}chat/completions`,
       chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
@@ -1780,6 +1809,7 @@ describe('inference client', () => {
       choices: [{ message: { content: 'hello client' } }],
     });
     expect(gateway.state.decryptedRequestContent).toEqual(['hello model']);
+    expect(gateway.state.modelAttestationRequests).toBe(1);
     await expect(client.verifyResponse('chatcmpl-test')).resolves.toMatchObject(
       {
         signatureKind: 'provider_tee',
@@ -3164,7 +3194,11 @@ describe('inference client', () => {
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
 
       releaseGatewayVerification();
-      await preverification;
+      const deployment = await preverification;
+      expect(deployment.gateway.tlsBinding).toEqual({
+        kind: 'attested',
+        spkiFingerprint: tlsFingerprint,
+      });
       await completion;
 
       expect(capturedPeerSpkiFingerprints).toEqual([true]);

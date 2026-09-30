@@ -56,5 +56,5 @@ export async function verifyGatewayAttestation({
     verifiers?.deployment,
   );
 
-  return { ...evidence, tlsBinding };
+  return { ...evidence, tlsBinding, report: attestation };
 }

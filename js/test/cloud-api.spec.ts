@@ -9,6 +9,7 @@ import {
   mergeCloudApiRequestHeaders,
 } from '../src/core/cloud-api';
 import { AttestationClient as NodeAttestationClient } from '../src/node';
+import { createModelAttestation } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
 const signingAddress = `0x${'22'.repeat(20)}`;
@@ -55,6 +56,7 @@ function verifiedModelAttestation(
     deployment: { appCompose: '{}', runtimeMeasurements: {} },
     deploymentProvenance: 'not_checked',
     gpuEvidence: 'not_provided',
+    report: createModelAttestation(),
     ...overrides,
   };
 }
