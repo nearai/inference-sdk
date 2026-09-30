@@ -37,7 +37,7 @@ from ..types.verification import (
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 )
-from ..utils.common import maybe_await
+from ..utils.common import gather_cancel_on_error, maybe_await
 from ..utils.errors import (
     ApiError,
     VerificationError,
@@ -512,18 +512,9 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
         attestations = _SessionAttestationClient(
             client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
         )
-        gateway_task = asyncio.create_task(self._verify_gateway(fetched))
-        model_task = asyncio.create_task(self._verify_models(model, attestations))
-        try:
-            (gateway, key_config), models = await asyncio.gather(
-                gateway_task, model_task
-            )
-        except BaseException:
-            # Do not leave evidence requests running after failure or client close.
-            gateway_task.cancel()
-            model_task.cancel()
-            await asyncio.gather(gateway_task, model_task, return_exceptions=True)
-            raise
+        (gateway, key_config), models = await gather_cancel_on_error(
+            self._verify_gateway(fetched), self._verify_models(model, attestations)
+        )
         selected = next(
             (
                 item
@@ -580,6 +571,8 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             policy=self._gateway_options.policy,
             verifiers=self._gateway_options.verifiers,
         )
+        if gateway.signer.signing_algo != self._signing_algo:
+            raise verification_failure('signature.signer_mismatch')
         key_config = None
         if self._ohttp:
             if fetched.attestation.ohttp_attestation is None:
@@ -612,7 +605,7 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             raise verification_failure('policy.model_attestation_required')
         verifiers = self._get_model_verifiers(model)
         return tuple(
-            await asyncio.gather(
+            await gather_cancel_on_error(
                 *(
                     verify_model_attestation(
                         report,

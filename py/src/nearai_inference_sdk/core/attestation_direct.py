@@ -1,7 +1,5 @@
 """Direct model verification, including the report set and observed TLS peer."""
 
-import asyncio
-
 from ..types.direct import (
     DirectModelAttestation,
     DirectTlsBinding,
@@ -15,6 +13,7 @@ from ..types.verification import (
     ModelClientBinding,
     VerifiedAttestationEvidence,
 )
+from ..utils.common import gather_cancel_on_error
 from ..utils.errors import verification_failure
 from .attestation_common import (
     verify_peer_spki_fingerprint,
@@ -34,7 +33,7 @@ async def verify_direct_model_attestation(
 ) -> VerifiedDirectModelAttestation:
     """Verify one report, authenticating its optional SPKI without observing a peer."""
 
-    (evidence, fingerprint), gpu = await asyncio.gather(
+    (evidence, fingerprint), gpu = await gather_cancel_on_error(
         _verify_direct_cpu(attestation, client_binding, policy, verifiers),
         _verify_gpu_evidence(
             payload=attestation.nvidia_payload,
@@ -109,7 +108,7 @@ async def verify_direct_model_attestations(
             {'field': 'serving_attestation', 'reason': 'not_in_attestation_set'},
         ) from None
     attestations = tuple(
-        await asyncio.gather(
+        await gather_cancel_on_error(
             *(
                 verify_direct_model_attestation(
                     item,

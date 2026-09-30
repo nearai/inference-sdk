@@ -88,6 +88,27 @@ async def test_invalid_metadata_does_not_fall_back_to_incognito(monkeypatch):
     assert gateway.completion_requests == []
 
 
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_mismatched_gateway_algorithm_stops_incognito_before_chat(
+    monkeypatch, signing_algo
+):
+    other_algo = 'ecdsa' if signing_algo == 'ed25519' else 'ed25519'
+    gateway = Gateway(signing_algo=other_algo, kind='gateway')
+    gateway.metadata = {'providerType': 'openai', 'attestationSupported': False}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, signing_algo=signing_algo) as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+        assert raised.value.failure.code == 'signature.signer_mismatch'
+    assert gateway.completion_requests == []
+
+
 async def test_incognito_cannot_accept_a_provider_tee_receipt(monkeypatch):
     gateway = Gateway(kind='provider_tee')
     gateway.metadata = {'providerType': 'openai', 'attestationSupported': False}

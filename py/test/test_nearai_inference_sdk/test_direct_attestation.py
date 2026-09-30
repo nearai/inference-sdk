@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -99,3 +100,34 @@ async def test_invalid_direct_report_set_or_peer_fails_verification(fault):
             'serving_missing': 'input.invalid',
         }[fault]
     )
+
+
+async def test_invalid_direct_report_cancels_and_awaits_sibling_verification():
+    root = direct_report()
+    sibling = replace(root, intel_quote='bb')
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def verify_quote(quote):
+        if quote == 'bb':
+            await started.wait()
+            return create_model_quote(debug_enabled=True)
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            cleaned_up.set()
+
+    fetched = FetchedDirectModelAttestations(
+        serving_attestation=root,
+        attestations=(root, sibling),
+        client_binding=DirectClientBinding(nonce=NONCE),
+    )
+    async with asyncio.timeout(1):
+        with pytest.raises(VerificationError) as raised:
+            await verify_direct_model_attestations(
+                fetched, verifiers=ModelAttestationVerifiers(tdx_quote=verify_quote)
+            )
+    assert raised.value.failure.code == 'policy.debug_enabled'
+    assert cleaned_up.is_set()
