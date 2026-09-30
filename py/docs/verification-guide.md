@@ -1,701 +1,482 @@
-# Python verification guide
+# Python guide
 
-Use this SDK to verify NEAR AI Cloud deployment attestations and completion
-signatures. The recommended workflow starts with deployment evidence, then
-sends a completion, then verifies the signature returned for that completion.
-`signature.kind` is used only in the final step to select the right response
-verifier.
+Start with the [quick start](../README.md#quick-start) for a non-streaming Chat
+request. The examples here use the same `NEARAI_API_KEY` environment variable
+and Python 3.12+. Save a complete example as `example.py` and run
+`python example.py`.
 
-Use `InferenceClient` for verified Chat with optional encryption, or the standalone functions
-when your application needs to inspect evidence and control each step.
+- [Stream a response](#stream-an-e2ee-completion)
+- [Use the OpenAI SDK](#use-the-official-openai-sdk)
+- [Verification and caching](#cache-deployment-verification)
+- [Encryption](#e2ee-scope-and-response-handling)
+- [Policies and image provenance](#set-verification-policy)
+- [Proxy setup](#connect-through-an-application-proxy)
+- [Manual verification](#verify-gateway-requests-manually)
+- [Direct endpoints](#direct-model-endpoints)
+- [Errors](#handle-errors)
 
-## Verified Chat client
+For option and result fields, see the [API reference](./api-reference.md).
+
+## What verification proves
+
+Before sending Chat, the client verifies the Gateway and every returned model
+attestation for supported NEAR TEE models. Those checks authenticate the signing
+keys, Intel TDX quotes, nonces, and measured deployment configuration. Model
+checks also verify NVIDIA GPU evidence when present.
+
+Models without supported model attestation use **Incognito** mode: only the
+Gateway is verified. E2EE and model deployment policies require model evidence,
+so they reject Incognito models. A failed model check never falls back to
+Gateway-only verification.
+
+Attestation checks a deployment. A response signature connects the exact
+request and response bytes to a verified signer:
+
+| Signature kind | What response verification proves |
+| --- | --- |
+| `provider_tee` | A verified model TEE signer signed the request and response bytes. |
+| `gateway` | A verified Gateway signer signed the client-visible bytes. This does not prove model execution. |
+
+The Gateway may sign a response after rewriting it, such as normalizing streaming
+usage fields. In that case the original model signature cannot verify the
+rewritten bytes. The client selects the response verifier from the returned
+signature kind. Verifying both deployments does not add a missing model signature
+to a Gateway-signed response ([tracking issue](https://github.com/nearai/cloud-api/issues/986)).
+
+## Stream an E2EE completion
+
+Consume the full stream, then verify it using the completion ID from its chunks.
+This example displays tokens as they arrive, before signature verification.
+Buffer them instead if your application must display only verified output.
 
 ```python
+import asyncio
+import os
+
 from nearai_inference_sdk import InferenceClient
 
 
-async def chat(api_key: str) -> None:
-    async with InferenceClient(api_key, e2ee=True) as inference_client:
-        completion = await inference_client.chat.completions.create(
+async def main() -> None:
+    async with InferenceClient(
+        os.environ['NEARAI_API_KEY'],
+        e2ee=True,
+    ) as client:
+        stream = await client.chat.completions.create(
             model='z-ai/glm-5.3-flash',
-            messages=[{'role': 'user', 'content': 'Hello'}],
-            max_completion_tokens=128,
+            messages=[{'role': 'user', 'content': 'Write a short greeting.'}],
+            stream=True,
         )
-        print(completion.choices[0].message.content)
-        verified = await inference_client.verify_response(completion.id)
-        print(verified.signature_kind)
+
+        completion_id = None
+        async for chunk in stream:
+            completion_id = chunk.id
+            if chunk.choices:
+                print(chunk.choices[0].delta.content or '', end='', flush=True)
+        print()
+
+        if not completion_id:
+            raise RuntimeError('Stream returned no completion ID')
+        verified = await client.verify_response(completion_id)
+        print(f'Verified {verified.signature_kind} response')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
 ```
 
-The client always verifies Gateway attestation. It reads model metadata on a
-session cache miss; `providerType='vllm'` with `attestationSupported=True`
-requires every returned NEAR model report to pass before Chat. Other models use
-Incognito mode, which verifies the Gateway only. Invalid metadata or failed
-model verification stops Chat without falling back to Incognito.
+`verify_response()` uses the request and response bytes captured by the client,
+including encrypted bytes when E2EE is enabled. It does not send Chat again.
 
-E2EE is opt-in for the Gateway client and uses a verified model key. Setting
-`e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
-`signing_algo` defaults to `'ed25519'` and also accepts
-`'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
-response signatures. ECDSA uses the legacy AES-GCM protocol and omits
-`X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
+## Use the official OpenAI SDK
 
-Successful attestation checks are reused for 60 minutes per model.
-Set `attestation_cache_time_to_live_ms=0` to check every request.
-`response_cache_time_to_live_ms` separately controls how long exact response
-bytes remain available after completion; its default is also 60 minutes.
-
-Gateway TLS identity is checked by default. After fetching its report, the client
-pins subsequent requests to the observed TLS peer and runs Gateway verification
-alongside model evidence retrieval and verification. The Gateway quote must
-authenticate that peer's SPKI. All required checks, including configured deployment
-policies and OHTTP evidence, must pass before caching the session or sending Chat.
-When connecting through an aggregator that terminates TLS, use
-`GatewayVerificationOptions(include_spki_fingerprint=False)`; that verifies the
-Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
-
-The client delivers decrypted content before response-signature verification.
-Call `verify_response()` after fully consuming a stream:
+The SDK includes the `openai` dependency. Pass the inference client's HTTP
+adapter to `AsyncOpenAI`, and verify through the same inference client:
 
 ```python
-stream = await inference_client.chat.completions.create(
-    model='z-ai/glm-5.3-flash',
-    messages=[{'role': 'user', 'content': 'Hello'}],
-    stream=True,
-)
-completion_id = None
-async for chunk in stream:
-    completion_id = chunk.id
-    if chunk.choices:
-        print(chunk.choices[0].delta.content or '', end='', flush=True)
+import asyncio
+import os
 
-if completion_id is None:
-    raise RuntimeError('Stream returned no completion ID')
-verified = await inference_client.verify_response(completion_id)
-```
-
-For an existing OpenAI integration, reuse the client's HTTP transport:
-
-```python
 from openai import AsyncOpenAI
+from nearai_inference_sdk import InferenceClient
 
-async with InferenceClient(api_key, e2ee=True) as inference_client:
-    async with AsyncOpenAI(
-        api_key=api_key,
-        base_url='https://cloud-api.near.ai/v1/',
-        http_client=inference_client.http_client,
-    ) as openai_client:
-        completion = await openai_client.chat.completions.create(
-            model='z-ai/glm-5.3-flash',
-            messages=[{'role': 'user', 'content': 'Hello'}],
-        )
-    verified = await inference_client.verify_response(completion.id)
+
+async def main() -> None:
+    api_key = os.environ['NEARAI_API_KEY']
+    base_url = 'https://cloud-api.near.ai/v1'
+    async with InferenceClient(api_key, base_url=base_url, e2ee=True) as client:
+        async with AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=client.http_client,
+        ) as openai:
+            completion = await openai.chat.completions.create(
+                model='z-ai/glm-5.3-flash',
+                messages=[{'role': 'user', 'content': 'Hello!'}],
+            )
+        await client.verify_response(completion.id)
+        print(completion.choices[0].message.content or '')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
 ```
 
-Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
-the authorization for evidence, Chat, and signature requests. An external
-`AsyncOpenAI` client's API key does not override it. With header-only authentication,
-you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
+The adapter supports Chat Completions, including streaming, not the Responses
+API. Configure authentication on `InferenceClient`; its credentials take
+precedence over those supplied by the OpenAI client. Keep the inference client
+open until response verification finishes. Closing the external OpenAI client
+does not close the inference client's connections or discard its response records.
 
-Use one reusable client for concurrent requests; each response is retained under
-its completion ID. `InferenceClient` owns and closes the shared HTTP connections.
-Closing the external OpenAI client only closes its adapter; receipts remain
-available until the owning inference client closes or their cache entries expire.
-Only Chat Completions are supported by this transport, not the Responses API.
+## Cache deployment verification
 
-### Verify before the first Chat request
-
-Call `verify(model)` to check the deployment while your application prepares its
-first request:
+Reuse a client across requests. Successful deployment checks are cached per
+model for 60 minutes. To verify while a user selects a model, put this call
+before Chat in the quick start:
 
 ```python
-async with InferenceClient(api_key, e2ee=True) as inference_client:
-    await inference_client.verify('z-ai/glm-5.3-flash')
-
-    # Application code prepares the conversation after verification succeeds.
-    completion = await inference_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    verified = await inference_client.verify_response(completion.id)
+await client.verify('z-ai/glm-5.3-flash')
 ```
 
-`verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
-verification, including TLS, model policy, and optional OHTTP checks. It raises if
-any required check fails. With a cache TTL of zero, the later Chat verifies again.
-`DirectInferenceClient.verify(model)` provides the same model-only workflow for
-direct endpoints.
+This sends no Chat request and returns `None` on success. It uses the same
+checks and cache as Chat, and concurrent calls for the same model share
+in-flight verification.
+
+To change cache durations, construct the client as below inside `main()`.
+Use `async with client:` for the Chat calls:
+
+```python
+client = InferenceClient(
+    os.environ['NEARAI_API_KEY'],
+    e2ee=True,
+    attestation_cache_time_to_live_ms=15 * 60 * 1000,
+    response_cache_time_to_live_ms=5 * 60 * 1000,
+)
+```
+
+Set `attestation_cache_time_to_live_ms=0` to verify before every request, even
+after an explicit `verify()`. Cached checks do not detect deployment changes
+until they expire.
+
+The response cache is separate. It retains complete request and response bodies
+in memory, and its TTL starts when the response finishes. Call
+`verify_response(id)` before expiry. Unknown or expired IDs fail with
+`api.completion_not_found`.
+
+## E2EE scope and response handling
+
+Set `e2ee=True` to encrypt supported Chat fields to a verified model key.
+Leave it off to send plaintext over HTTPS while keeping deployment and response
+verification available.
+
+E2EE covers message content, including rich-content arrays, reasoning fields,
+audio data, and supported tool/function fields. Other fields, URL parameters,
+and HTTP headers are not field-encrypted. Decryption checks the encrypted
+message's authentication tag; response-signature verification remains a
+separate `verify_response()` call.
+
+`signing_algo` selects one algorithm for attestation, model-key routing,
+encryption, and response signatures. It defaults to `'ed25519'`.
+Add `signing_algo='ecdsa'` to the client constructor to use ECDSA.
+
+Ed25519 encryption uses XChaCha20-Poly1305 and `X-Encryption-Version: 2`.
+ECDSA uses secp256k1 ECDH with AES-GCM and omits that header because version 2
+selects the Ed25519 protocol. Both modes use all-fields encryption.
 
 ### Use OHTTP
 
-Set `ohttp=True` to encapsulate Chat HTTP requests and responses to the Gateway:
+Add `ohttp=True` to the client constructor to encrypt the Chat HTTP exchange
+to the Gateway. Keep the default Ed25519 algorithm; OHTTP does not support ECDSA.
+Chat, streaming, and response-verification calls stay the same.
 
-```python
-async with InferenceClient(api_key, ohttp=True) as inference_client:
-    completion = await inference_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    print(completion.choices[0].message.content)
-    verified = await inference_client.verify_response(completion.id)
-```
+OHTTP and model E2EE protect different parts of a request. They can be enabled
+together, or OHTTP can be used alone with Incognito models. The endpoint must
+serve `/ohttp` at its origin and provide a signed key configuration, which the
+client verifies before use.
 
-OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
-The client verifies the advertised OHTTP configuration against the attested
-Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
-The authenticated configuration is reused with the attestation cache.
+Metadata, attestation, and signature lookups do not use OHTTP. Authorization and
+configured custom headers are also sent on the outer request. OHTTP does not
+hide them or the client's network address from that endpoint.
 
-`e2ee` is independent: it defaults to `False` for `InferenceClient` and `True`
-for `DirectInferenceClient`. OHTTP protects the HTTP exchange to the Gateway,
-while `e2ee=True` encrypts supported Chat fields to the model. Gateway OHTTP
-also works with Incognito models, without providing model encryption.
+## Set verification policy
 
-JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
-`verify_response()` checks the inner request and response bodies before E2EE
-decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
-
-Only Chat uses OHTTP. Metadata, attestation, and signature requests keep their normal HTTP
-paths. The configured endpoint or proxy must serve `/ohttp` at its origin.
-Authorization and explicitly configured custom headers are also sent on the
-outer request for authentication; OHTTP does not hide them or the client's
-network address from that endpoint.
-
-### Connect through an application proxy
-
-The proxy supplies the upstream NEAR AI credential. Configure its own
-authentication through `headers`, and disable Gateway SPKI binding if the proxy
-terminates TLS:
-
-```python
-from nearai_inference_sdk import GatewayVerificationOptions
-
-async with InferenceClient(
-    base_url='https://proxy.example/v1',
-    headers={'Authorization': 'Bearer application-token'},
-    e2ee=True,
-    gateway_verification=GatewayVerificationOptions(include_spki_fingerprint=False),
-) as inference_client:
-    completion = await inference_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    verified = await inference_client.verify_response(completion.id)
-```
-
-Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. Preserve URL-encoded model and signature IDs, bodies,
-model-key routing, and encryption headers. The device verifies evidence and
-response signatures; the proxy can only forward the encrypted Chat fields.
-
-## Direct model endpoints
-
-Direct clients are experimental and not recommended for production. They use a
-model's own base URL, without Gateway verification or catalog lookup.
-
-```python
-from nearai_inference_sdk import DirectInferenceClient
-
-async with DirectInferenceClient(
-    'https://glm-5-3-flash.completions.near.ai/v1/',
-    api_key=direct_api_key,
-) as direct_client:
-    completion = await direct_client.chat.completions.create(
-        model='z-ai/glm-5.3-flash',
-        messages=[{'role': 'user', 'content': 'Hello'}],
-    )
-    verified = await direct_client.verify_response(completion.id)
-```
-
-Every supplied report is verified before selecting a model key. E2EE defaults to
-`True`; Ed25519/ECDSA, streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the
-same interfaces as Gateway Chat. Response verification returns every verified
-report sharing the selected signer, without identifying one particular CVM.
-
-For a manual workflow:
+The default policy accepts `UpToDate` and `OutOfDate` Intel TCB statuses and
+verifies GPU evidence when present. This client configuration requires an
+up-to-date platform and GPU evidence. Add the imports, then use this client
+inside `main()` with `async with client:`:
 
 ```python
 from nearai_inference_sdk import (
-    DirectAttestationClient,
-    verify_direct_model_attestations,
-    verify_direct_model_response,
+    AttestationPolicy,
+    GatewayVerificationOptions,
+    ModelAttestationPolicy,
+    ModelVerificationOptions,
 )
 
-direct_client = DirectAttestationClient(direct_base_url, api_key=direct_api_key)
-fetched_attestations = await direct_client.fetch_model_attestations(
-    signing_algo='ed25519'
-)
-verified = await verify_direct_model_attestations(fetched_attestations)
-
-# Application code sends Chat and retains its exact request and response bytes.
-signature = await direct_client.fetch_completion_signature(
-    completion_id, signing_algo='ed25519'
-)
-matching = verify_direct_model_response(
-    request_body,
-    response_body,
-    signature,
-    verified.attestations,
+client = InferenceClient(
+    os.environ['NEARAI_API_KEY'],
+    e2ee=True,
+    gateway_verification=GatewayVerificationOptions(
+        policy=AttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
+    ),
+    model_verification=ModelVerificationOptions(
+        policy=ModelAttestationPolicy(
+            accepted_tcb_statuses=('UpToDate',),
+            gpu_evidence='required',
+        ),
+    ),
 )
 ```
 
-The top-level serving report must also occur in `all_attestations`. Direct fetch
-currently requests `include_tls_fingerprint=false`, matching JavaScript. When
-verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
-by its own quote and the serving fingerprint must match the observed TLS peer.
-The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
+These checks authenticate measurements but do not approve a software release.
+Use `deployment_policy` to compare each model's authenticated measurements
+with your own allowlist. The callback receives the requested model and its
+measured deployment; raise to reject it. There is no built-in release allowlist.
 
-Known endpoint limitations are tracked in [cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087):
-reports may omit other serving CVMs, and signature lookup may return 404 when
-inference and lookup reach different instances. Use Gateway clients for production.
+### Optional image build provenance
 
-## Standalone workflow
-
-The following flow uses a NEAR TEE model. For Incognito, verify Gateway evidence
-and Gateway response signatures only. `fetch_model_metadata(model)` exposes
-catalog capabilities; it does not perform cryptographic verification.
-
-Create `client = AttestationClient(api_key)` once. It retrieves Gateway evidence
-and signatures; the application sends Chat and retains the exact bytes.
-
-## Verification lifecycle
-
-| Stage | SDK calls | What a successful result establishes |
-| --- | --- | --- |
-| 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and every returned target-model deployment satisfy your evidence and policy checks. |
-| 2. Send a completion | Optional `prepare_e2ee_chat_request` | Your application sends Chat and retains the completion ID and exact encrypted request and response bytes. |
-| 3. Verify the response signature | `fetch_completion_signature` → verifier selected by `signature.kind` | The selected model or Gateway signer signed those exact bytes. |
-
-Stage 1 is useful before inference: it lets an application reject a deployment
-that does not meet its TCB, measurement, GPU, or Gateway-TLS requirements.
-Each fetch is a fresh observation, so the application decides when to refresh
-that evidence.
-
-## 1. Verify Gateway and model deployments
-
-Verify both deployments before sending the completion. Choose the signing
-algorithm your application expects; this example uses ECDSA for all three
-requests. Pass the same explicit algorithm to both attestation fetches and the
-completion-signature fetch: the Gateway's report and signature endpoints have
-different defaults.
+A deployment callback can also check measured container images against their
+published GitHub build proofs. This configuration checks one Gateway image.
+Add the imports and callback, then construct this client inside `main()` and
+use it with `async with client:`:
 
 ```python
+from nearai_inference_sdk import (
+    AttestationVerifiers,
+    GatewayVerificationOptions,
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    verify_deployment_image_provenance,
+)
+
+IMAGE_POLICIES = {
+    'nearaidev/cloud-api': ImageProvenancePolicy(
+        repository='nearai/cloud-api',
+        workflow='.github/workflows/build.yml',
+    ),
+}
+
+
+async def check_images(deployment: MeasuredDeployment) -> None:
+    await verify_deployment_image_provenance(deployment.app_compose, IMAGE_POLICIES)
+
+
+client = InferenceClient(
+    os.environ['NEARAI_API_KEY'],
+    e2ee=True,
+    gateway_verification=GatewayVerificationOptions(
+        verifiers=AttestationVerifiers(deployment=check_images),
+    ),
+)
+```
+
+The callback runs after the configuration is authenticated by attestation.
+Every image repository in the policy must be present and digest-pinned.
+Unlisted images are not checked. A valid build proof establishes the repository,
+workflow, and source commit; add an approved `commit` to restrict accepted
+versions. This is not proof of the containers currently running after boot.
+
+The [client example](../../examples/example-py/gateway/client.py) checks four
+Gateway images. Those policies are example configuration, not SDK defaults or
+model-image policies. For reusable workflows and other policy fields, see
+[image build provenance](./api-reference.md#image-build-provenance).
+
+## Connect through an application proxy
+
+Keep the NEAR API key on your backend. Forward metadata, attestation, Chat, and
+signature requests without rewriting bodies or dropping model-routing and
+encryption headers.
+
+Use your application's token in `headers` instead of a NEAR API key. If the
+proxy terminates TLS, disable attested Gateway TLS binding: the proxy's
+certificate is not the attested Gateway's. Normal HTTPS validation still applies.
+This factory uses a placeholder URL for your backend:
+
+```python
+from nearai_inference_sdk import GatewayVerificationOptions, InferenceClient
+
+
+def create_proxy_client(application_token: str) -> InferenceClient:
+    return InferenceClient(
+        base_url='https://api.example.com/v1',
+        headers={'Authorization': f'Bearer {application_token}'},
+        e2ee=True,
+        gateway_verification=GatewayVerificationOptions(
+            include_spki_fingerprint=False,
+        ),
+    )
+```
+
+Your application passes its own login token to this factory and manages the
+returned client with `async with`, as in the quick start.
+
+The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
+`/v1/chat/completions`, and `/v1/signature/{id}`.
+Preserve URL-encoded IDs. With OHTTP, also forward `/ohttp`.
+
+### Configure attestation service URLs
+
+The quote verifier uses Intel's collateral service by default. NVIDIA
+verification uses NRAS and NVIDIA's JWKS. To use trusted proxies, add these
+imports, then construct this client inside `main()` and use it with
+`async with client:`:
+
+```python
+from nearai_inference_sdk import (
+    AttestationVerifiers,
+    GatewayVerificationOptions,
+    ModelAttestationVerifiers,
+    ModelVerificationOptions,
+    create_gpu_evidence_verifier,
+    create_tdx_quote_verifier,
+)
+
+tdx_quote = create_tdx_quote_verifier(
+    pccs_url='https://attestation.example.com',
+)
+gpu_evidence = create_gpu_evidence_verifier(
+    nras_url='https://attestation.example.com/v3/attest/gpu',
+    jwks_url='https://attestation.example.com/.well-known/jwks.json',
+)
+client = InferenceClient(
+    os.environ['NEARAI_API_KEY'],
+    e2ee=True,
+    gateway_verification=GatewayVerificationOptions(
+        verifiers=AttestationVerifiers(tdx_quote=tdx_quote),
+    ),
+    model_verification=ModelVerificationOptions(
+        verifiers=ModelAttestationVerifiers(
+            tdx_quote=tdx_quote,
+            gpu_evidence=gpu_evidence,
+        ),
+    ),
+)
+```
+
+A PCCS proxy must preserve collateral bodies and issuer-chain headers for the
+SGX and TDX v4 paths. Serve the hex-encoded root CRL at
+`/sgx/certification/v4/rootcacrl` to avoid a direct CRL fallback.
+
+Changing URLs does not disable cryptographic checks. A custom JWKS endpoint
+does select the trusted source of NVIDIA signing keys, so use only a trusted
+proxy. An issuer check alone cannot authenticate keys from an arbitrary server.
+
+## Verify Gateway requests manually
+
+Use `AttestationClient` and standalone verifiers when you need to inspect
+evidence or control when checks run. This complete example audits deployments
+without sending Chat:
+
+```python
+import asyncio
+import os
+
 from nearai_inference_sdk import (
     AttestationClient,
     verify_gateway_attestation,
     verify_model_attestation,
 )
 
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ecdsa'
 
-
-async def verify_deployments(client: AttestationClient):
-    fetched_gateway = await client.fetch_gateway_attestation(
-        signing_algo=SIGNING_ALGO,
-    )
-    verified_gateway = await verify_gateway_attestation(
+async def main() -> None:
+    client = AttestationClient(os.environ['NEARAI_API_KEY'])
+    fetched_gateway = await client.fetch_gateway_attestation(signing_algo='ed25519')
+    gateway = await verify_gateway_attestation(
         fetched_gateway.attestation,
         fetched_gateway.client_binding,
     )
+    print(f'Gateway TCB: {gateway.tcb_status}')
 
-    fetched_model = await client.fetch_model_attestations(
-        MODEL,
-        signing_algo=SIGNING_ALGO,
+    fetched_models = await client.fetch_model_attestations(
+        'z-ai/glm-5.3-flash',
+        signing_algo='ed25519',
     )
-    if not fetched_model.attestations:
-        raise RuntimeError('Gateway returned no model attestations')
-
-    verified_models = []
-    for attestation in fetched_model.attestations:
-        verified_models.append(
-            await verify_model_attestation(
-                attestation,
-                fetched_model.client_binding,
-            )
+    if not fetched_models.attestations:
+        raise RuntimeError('No model attestations returned')
+    for attestation in fetched_models.attestations:
+        model = await verify_model_attestation(
+            attestation,
+            fetched_models.client_binding,
         )
-    return verified_gateway, tuple(verified_models)
+        print(f'Model TCB: {model.tcb_status}; GPU: {model.gpu_evidence}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
 ```
 
-`fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
-Gateway report endpoint, but ask for evidence with different client bindings:
+Fetch generates a fresh nonce and checks the echoed value. Verification
+authenticates that nonce in the quote along with the signer and measurements.
+Gateway evidence also binds the observed TLS key. Model evidence retrieved
+through the Gateway has no client-to-model TLS binding.
 
-- Gateway evidence requests an SPKI fingerprint by default. The Python SDK
-  captures the peer fingerprint from that same HTTPS evidence request, and
-  `verify_gateway_attestation` checks that the peer, quote, signer, and nonce
-  agree.
-- Model evidence requests no TLS fingerprint. The client connects to the
-  Gateway rather than directly to a model CVM, so model verification checks the
-  signer and nonce binding without making a client-to-model TLS claim.
+To verify a Chat response manually, follow the complete
+[bare example](../../examples/example-py/gateway/bare.py). It verifies
+deployments first, encrypts and sends Chat, saves the exact encrypted request
+and response bytes, decrypts the response, and verifies its signature. It
+includes both JSON and streaming calls.
 
-The fetch helpers generate fresh nonces and reject a response whose echoed
-nonce does not match. `fetch_model_attestations()` preserves every returned
-model record. This deployment-first workflow rejects an empty collection and
-verifies every returned record before inference. `verify_*_attestation` then
-verifies the quote, measurements, deployment configuration, and policy.
+Keep the same explicit signing algorithm for attestation and signature fetches;
+the service endpoints have different defaults. Verify every fetched model
+report before Chat. Later, `find_model_attestation_for_signature` selects the
+verified model matching a `provider_tee` signature. A `gateway` signature
+uses the verified Gateway result instead.
 
-### Gateway TLS identity
+### Encrypt a raw Chat request
 
-The default Gateway fetch requests and verifies quote-bound TLS identity:
+For application-owned HTTP requests, `prepare_e2ee_chat_request` takes an
+`httpx.Request` and an already verified model public key. It returns an
+encrypted request and its paired JSON/SSE response decryptor. It does not verify
+the attestation or send the request.
 
-```python
-fetched_gateway = await client.fetch_gateway_attestation(
-    signing_algo=SIGNING_ALGO,
-)
-verified_gateway = await verify_gateway_attestation(
-    fetched_gateway.attestation,
-    fetched_gateway.client_binding,
-)
-assert verified_gateway.tls_binding.kind == 'attested'
-```
+The bare example shows key selection and byte capture. Response verification
+uses the encrypted bytes, not decrypted or reserialized JSON.
+`create_pinned_tls_client` can bind application-owned requests to the
+previously verified Gateway SPKI.
 
-If the runtime cannot observe the peer certificate, request evidence without an
-SPKI fingerprint instead:
+## Direct model endpoints
 
-```python
-fetched_gateway = await client.fetch_gateway_attestation(
-    signing_algo=SIGNING_ALGO,
-    include_spki_fingerprint=False,
-)
-verified_gateway = await verify_gateway_attestation(
-    fetched_gateway.attestation,
-    fetched_gateway.client_binding,
-)
-assert verified_gateway.tls_binding.kind == 'none'
-```
+Direct clients are experimental and not recommended for production. They verify
+model evidence without Gateway attestation or catalog lookup.
 
-The second form still verifies the Gateway quote, signer, nonce, deployment,
-and policy. It does not make a claim about the TLS peer serving the evidence
-request.
+`DirectInferenceClient` takes the model endpoint's `base_url` and defaults
+to E2EE enabled. Chat, streaming, OpenAI integration, and response verification
+use the same interfaces as the Gateway client.
+See the runnable [direct client](../../examples/example-py/direct/client.py)
+and [manual verification](../../examples/example-py/direct/bare.py) examples.
 
-### Optional image build provenance
+Direct clients currently request no TLS fingerprint and perform no attested
+TLS pinning. Standard HTTPS validation remains enabled. Reports may omit other
+serving instances, and a signature lookup may return 404 when it reaches a
+different instance ([endpoint limitations](https://github.com/nearai/cloud-api/issues/1087)).
+Every report returned is still verified.
 
-`fetch_image_provenance` retrieves a digest's GitHub attestation bundles.
-`verify_image_provenance` verifies them against Sigstore's production trust root,
-matches the signed artifact digest, and checks your expected repository and
-workflow. The statement's source commit must match the verified certificate's
-source commit, including when no commit pin is supplied. Set `ref` or `commit` to
-restrict the accepted build further.
+## Handle errors
 
-`verify_deployment_image_provenance` selects configured image repositories from
-the measured app-compose JSON's `docker_compose_file` YAML. Every configured
-repository must occur, and all matching service images must be digest-pinned.
-Unrelated literal images are ignored; image references containing `$` are rejected.
-Selection completes before any GitHub requests. The application supplies its
-trusted image repositories and build policies:
+Deployment verification failures stop Chat before it is sent. Response
+verification failures happen after receiving content.
+
+The built-in Chat interface and external OpenAI clients preserve OpenAI's error
+behavior. A transport failure is wrapped in `APIConnectionError`; its
+`__cause__` contains the SDK error. `client.send()` and
+`client.verify_response()` expose SDK errors directly.
+
+Add these imports and replace the response check in the quick start:
 
 ```python
-from nearai_inference_sdk import (
-    AttestationVerifiers,
-    ImageProvenancePolicy,
-    MeasuredDeployment,
-    verify_deployment_image_provenance,
-    verify_gateway_attestation,
-)
-
-image_policies = {
-    'ghcr.io/example/gateway': ImageProvenancePolicy(
-        repository='example/gateway',
-        workflow='.github/workflows/build.yml',
-        ref='refs/heads/main',
-    ),
-}
-
-
-async def check_gateway_images(deployment: MeasuredDeployment) -> None:
-    await verify_deployment_image_provenance(deployment.app_compose, image_policies)
-
-
-verified_gateway = await verify_gateway_attestation(
-    fetched_gateway.attestation,
-    fetched_gateway.client_binding,
-    verifiers=AttestationVerifiers(deployment=check_gateway_images),
-)
-```
-
-For a reusable signing workflow, keep `repository`, `workflow`, `ref`, and
-`commit` pointed at the source build. Set `signer_identity` to the exact reusable
-workflow identity, for example:
-
-```python
-policy = ImageProvenancePolicy(
-    repository='example/gateway',
-    workflow='.github/workflows/build.yml',
-    ref='refs/heads/main',
-    signer_identity=(
-        'https://github.com/example/build-workflows/'
-        '.github/workflows/sign.yml@refs/tags/v1'
-    ),
-)
-```
-
-The certificate's source repository, ref, and commit must still match the signed
-build provenance.
-
-The helpers are asynchronous. The deployment helper reports selection, request,
-and verification failures as `VerificationError`; wrapped request failures retain
-their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks. An optional GitHub
-token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
-
-This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides, inspect compose-manager,
-or prove which containers are currently running.
-
-## 2. Send the completion and retain exact bytes
-
-After deployment verification succeeds, send the completion with the canonical
-model ID. For model-signature compatibility, send `x-no-aliasing: true` and
-retain the request bytes exactly as sent and response bytes exactly as received.
-Do not parse and serialize them again: JSON whitespace, key order, SSE framing,
-or text encoding changes the signed bytes.
-
-Your application must retain:
-
-- the canonical model ID;
-- the completion ID returned by the Gateway;
-- the exact request bytes; and
-- the exact response bytes, including streaming framing when applicable.
-
-### Encrypt a standalone request
-
-After verifying the models, select a public key from a verified result before
-Chat. `find_model_attestation_for_signature` is used later, when the response
-signature is available; it is not the encryption-key selector.
-
-```python
-import httpx
-from nearai_inference_sdk import E2eeModelKey, prepare_e2ee_chat_request
-
-model = next(item for item in verified_models if item.signing_public_key is not None)
-model_key = E2eeModelKey(
-    signing_algo=model.signer.signing_algo,
-    public_key=model.signing_public_key,
-)
-request = httpx.Request(
-    'POST',
-    'https://cloud-api.near.ai/v1/chat/completions',
-    headers={'Authorization': f'Bearer {api_key}', 'Accept-Encoding': 'identity'},
-    json={'model': MODEL, 'messages': [{'role': 'user', 'content': 'Hello'}]},
-)
-prepared = await prepare_e2ee_chat_request(request, model_key)
-request_body = prepared.request.content
-```
-
-`prepared.request` contains the encrypted fields and E2EE/routing headers.
-Send it using `httpx.AsyncClient`; when Gateway TLS verification is enabled, use
-`create_pinned_tls_client(verified_gateway.tls_binding.spki_fingerprint)` instead.
-Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
-decryption. Retain the original encrypted response bytes separately for step 3.
-Each prepared request owns a fresh response-decryption key.
-
-See [`examples/example-py/gateway/bare.py`](../../examples/example-py/gateway/bare.py) for the
-complete streaming and non-streaming flow, including byte capture and TLS pinning.
-
-## 3. Verify the returned completion signature
-
-Fetch the signature after the completion has reached its terminal state. A
-provider signature selects exactly one verified model result from stage 1; a
-Gateway signature uses the verified Gateway result.
-
-```python
-from nearai_inference_sdk import (
-    find_model_attestation_for_signature,
-    verify_gateway_response,
-    verify_model_response,
-)
-
-# completion_id, request_body, and response_body came from your completion
-# request. verified_gateway and verified_models came from stage 1.
-signature = await client.fetch_completion_signature(
-    completion_id,
-    signing_algo=SIGNING_ALGO,
-)
-
-if signature.kind == 'provider_tee':
-    verified_model = find_model_attestation_for_signature(
-        verified_models,
-        signature,
-    )
-    verify_model_response(
-        request_body,
-        response_body,
-        signature,
-        verified_model,
-    )
-else:
-    verify_gateway_response(
-        request_body,
-        response_body,
-        signature,
-        verified_gateway,
-    )
-```
-
-The Gateway provides two signature kinds. They are different response signatures,
-not two top-level deployment workflows:
-
-| `signature.kind` | Call | A successful result establishes | It does not establish |
-| --- | --- | --- | --- |
-| `provider_tee` | `verify_model_response` | A verified model-serving TEE signer signed the exact request and response bytes. | Which Gateway deployment or TLS endpoint returned them. |
-| `gateway` | `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated them. |
-
-The Gateway can rewrite a response before returning it, for example while
-normalizing a stream for OpenAI compatibility. A provider signature over the
-upstream bytes cannot verify rewritten bytes, so the Gateway may return a
-`gateway` signature for the final client-visible bytes. Always use the kind
-returned for that completion; never infer it from signed text.
-
-## Current evidence boundary
-
-The two preflight attestations and the single completion signature do not yet
-form a complete model-to-Gateway-to-final-bytes cryptographic chain.
-
-- With `provider_tee`, model evidence and the model signature bind the
-  model signer to the exact bytes, but do not bind those bytes to the Gateway
-  deployment verified separately.
-- With `gateway`, Gateway evidence and the Gateway signature bind the Gateway
-  signer to the final client-visible bytes, but do not prove model execution or
-  connect an upstream model response to those bytes.
-
-Consequently, successfully verifying both preflight deployments must not be
-presented as proof that they served the same inference. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks the missing chain: preserving a provider signature and adding a Gateway
-receipt that binds the upstream and final response hashes for the same
-inference.
-
-## Set policy and trust roots
-
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU evidence
-is verified when present; require it when your application needs it:
-
-```python
-from nearai_inference_sdk import (
-    ModelAttestationPolicy,
-    ModelAttestationVerifiers,
-    verify_model_attestation,
-)
-
-policy = ModelAttestationPolicy(
-    accepted_tcb_statuses=('UpToDate',),
-    gpu_evidence='required',
-)
-verifiers = ModelAttestationVerifiers(
-    deployment=verify_deployment_release,
-)
-
-for attestation in fetched_model.attestations:
-    await verify_model_attestation(
-        attestation,
-        fetched_model.client_binding,
-        policy=policy,
-        verifiers=verifiers,
-    )
-```
-
-`verify_deployment_release` is application code. It receives the measured
-deployment and must raise for every deployment the application does not accept.
-The SDK authenticates measured values; the callback decides which values are
-acceptable.
-
-`verify_gateway_attestation` accepts `AttestationPolicy` when an application
-needs to restrict Gateway TCB statuses. `verifiers.tdx_quote` replaces the built-in
-Intel DCAP quote verifier. The default NVIDIA verifier submits evidence to NRAS,
-then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
-expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
-verdict must be `true`; detached per-device claims are not consumed. See
-[NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
-Set `verifiers.gpu_evidence` to use different trust roots or another verification
-service. Every verifier callback must return only for evidence it accepts.
-
-## Configure attestation service URLs
-
-The built-in verifiers use Intel's official PCS endpoint and NVIDIA's official
-NRAS and JWKS endpoints. To use proxies with the same verification checks,
-create verifier callbacks with the desired URLs:
-
-```python
-from nearai_inference_sdk import (
-    ModelAttestationVerifiers,
-    create_tdx_quote_verifier,
-    create_gpu_evidence_verifier,
-)
-
-verifiers = ModelAttestationVerifiers(
-    tdx_quote=create_tdx_quote_verifier(
-        pccs_url='https://attestation.example.com',
-    ),
-    gpu_evidence=create_gpu_evidence_verifier(
-        nras_url='https://attestation.example.com/v3/attest/gpu',
-        jwks_url='https://attestation.example.com/.well-known/jwks.json',
-    ),
-)
-```
-
-Pass `verifiers` to `verify_model_attestation`; Gateway verification accepts the
-same quote callback through `AttestationVerifiers(tdx_quote=...)`. Each URL is
-optional and defaults to its official endpoint. Configuration belongs to the
-returned callback and does not change other verifiers.
-
-The PCCS proxy must serve compatible collateral bodies and issuer-chain headers
-under both `/sgx/certification/v4/...` and `/tdx/certification/v4/...`;
-`dcap-qvl` constructs these paths. Provide the PCCS-compatible, hex-encoded root
-CA CRL at `/sgx/certification/v4/rootcacrl` to avoid its fallback to the root
-certificate's CRL distribution URL. Quote signatures, certificate chains, and
-collateral are still verified locally.
-
-The NVIDIA adapter submits the unchanged evidence JSON to `nras_url` and obtains
-signing keys from `jwks_url`. A custom JWKS URL selects a trust source: use only
-a trusted proxy. The fixed NVIDIA issuer check does not authenticate arbitrary
-JWKS sources. ES384 signatures, issuer, timestamps, signed nonce, and the boolean
-verdict remain checked.
-
-`verify_model_attestation` checks the payload nonce against the matching client
-nonce before invoking any NVIDIA callback. The factory's callback also requires
-a 32-byte hexadecimal payload nonce and checks it against the signed JWT nonce.
-When calling that callback directly, the application must additionally bind the
-payload nonce to its own fresh request nonce.
-
-## Handle retrieval and verification errors
-
-For integrated Chat, OpenAI wraps transport errors in `APIConnectionError`;
-inspect `error.__cause__` for the original SDK failure. `InferenceClient.send()`
-and `verify_response()` expose SDK errors directly. A failed preflight sends no
-Chat request, while a failed response check occurs after content was received.
-
-`client.fetch_completion_signature()` returns one signature or raises a
-structured error. A 2xx unavailable envelope raises `ApiError` with
-`api.completion_signature_unavailable`; its details contain the service's
-`providerErrorCode` and `providerMessage`.
-
-An HTTP 404 raises `api.http_status` and remains retryable. It means the Gateway
-has no stored signature for that ID at that time. Retry only when the
-application has reason to expect a later signature, such as before the
-completion has reached its terminal state.
-
-`AttestationClient` methods and evidence selection raise `ApiError` for
-request, HTTP, response-format, nonce, unavailable-signature,
-candidate-selection, or helper-input failures. Explicit verification functions
-raise `VerificationError` for local input, cryptographic, policy, and binding
-failures. Handle each stage separately: client and selection handlers catch
-`ApiError`, while explicit verification handlers catch `VerificationError`.
-
-| Field | Meaning |
-| --- | --- |
-| `error.failure.code` | Stable code for an application to branch on. |
-| `error.failure.details` (when present) | Code-specific diagnostic context. Do not parse `error.message`. |
-| `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
-
-```python
-from nearai_inference_sdk import ApiError
+from nearai_inference_sdk import ApiError, VerificationError
 
 try:
-    signature = await client.fetch_completion_signature(completion_id)
-except ApiError as error:
-    match error.failure.code:
-        case 'api.completion_signature_unavailable':
-            print('The completion has no usable signature')
-        case 'api.http_status' if error.retryable:
-            print('A later signature request may succeed')
-        case _:
-            raise
+    await client.verify_response(completion.id)
+    print(completion.choices[0].message.content or '')
+except (ApiError, VerificationError) as error:
+    print(error.failure.code, error.failure.details)
+    raise
 ```
+
+Use the structured failure code for application decisions. `retryable` means
+a failed external operation may succeed on another attempt, not that Chat
+should be replayed. An expired response record cannot be recovered by retrying
+verification.
+
+In a manual flow, fetching and selecting evidence raise `ApiError`;
+verification functions raise `VerificationError`.
