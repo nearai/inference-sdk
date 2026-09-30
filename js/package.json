@@ -57,7 +57,7 @@
     "hpke": "1.1.7",
     "jose": "6.2.12",
     "ohttp-ts": "0.6.0",
-    "openai": "7.20.0",
+    "openai": "7.22.0",
     "tweetnacl": "^1.0.3",
     "valibot": "1.5.0",
     "yaml": "2.9.1"
