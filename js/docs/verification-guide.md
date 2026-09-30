@@ -123,9 +123,9 @@ model for 60 minutes. To verify while a user selects a model, put this call
 before Chat in the quick start:
 
 ```ts
-const verified = await client.verify('z-ai/glm-5.3-flash');
-console.log(verified.gateway.tcbStatus);
-console.log(verified.models.map((model) => model.tcbStatus));
+const deployments = await client.verify('z-ai/glm-5.3-flash');
+console.log(deployments.gateway.tcbStatus);
+console.log(deployments.models.map((model) => model.tcbStatus));
 ```
 
 This sends no Chat request. It returns the same verified evidence used by Chat,
@@ -177,7 +177,8 @@ const client = new InferenceClient({
 
 Ed25519 encryption uses XChaCha20-Poly1305 and `X-Encryption-Version: 2`.
 ECDSA uses secp256k1 ECDH with AES-GCM and omits that header because version 2
-selects the Ed25519 protocol. Both modes use all-fields encryption.
+selects the Ed25519 protocol. Both modes enable `X-Encrypt-All-Fields` for the
+supported fields listed above.
 
 ### Use OHTTP
 
@@ -441,7 +442,7 @@ behavior. A transport failure is wrapped in `APIConnectionError`; its
 `cause` contains the SDK error. `client.fetch()` and
 `client.verifyResponse()` expose SDK errors directly.
 
-Add these imports and replace the response check in the quick start:
+Add these imports and replace the verification and output lines in the quick start:
 
 ```ts
 import { ApiError, VerificationError } from '@nearai/inference-sdk/node';

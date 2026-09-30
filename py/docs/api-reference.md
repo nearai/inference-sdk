@@ -19,8 +19,9 @@ Standalone response-signature verification is synchronous.
 ## InferenceClient
 
 Use as an asynchronous context manager in an `asyncio` event loop, or call
-`await client.aclose()` when finished. Chat Completions are supported. `chat.completions.create` does not
-automatically verify the response signature; use `verify_response` afterwards.
+`await client.aclose()` when finished. Chat Completions are supported.
+`chat.completions.create` does not automatically verify the response signature.
+Use `verify_response` afterwards.
 
 ### Constructor
 
@@ -88,8 +89,7 @@ creates a fresh nonce for every attestation fetch.
 `ModelMetadata(provider_type: str, attestation_supported: bool)`, mapped from the
 Gateway's `metadata.providerType` and `metadata.attestationSupported` fields.
 
-Use the same explicit
-`signing_algo` for attestation and signature fetches in one flow.
+Use the same explicit `signing_algo` for attestation and signature fetches in one flow.
 The Gateway's report and signature endpoints have different defaults.
 
 ### Constructor
@@ -259,7 +259,7 @@ bytes to `create_ohttp_client`.
 | Function | Parameter | Type | Description |
 | --- | --- | --- | --- |
 | `verify_ohttp_key_config` | `ohttp_attestation` | `OhttpAttestation` | Configuration advertised by the Gateway report. |
-|  | `signer` | `SigningIdentity` | Previously verified Ed25519 Gateway identity. Must match the configuration's signing key. |
+|  | `signer` | `SigningIdentity` | Previously verified Ed25519 Gateway or direct serving model identity. Must match the configuration's signing key. |
 | `create_ohttp_client` | `key_config` | `bytes` | Authenticated raw configuration returned by `verify_ohttp_key_config`. |
 |  | `base_url` | `str` | Endpoint whose origin serves `/ohttp`. Inner requests must use the same origin. |
 |  | `http_client` | `httpx.AsyncClient \| None` | Outer transport. Pass a pinned client to preserve TLS binding. If omitted, creates and owns a normal HTTP client. |

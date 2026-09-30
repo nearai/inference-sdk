@@ -180,7 +180,8 @@ Add `signing_algo='ecdsa'` to the client constructor to use ECDSA.
 
 Ed25519 encryption uses XChaCha20-Poly1305 and `X-Encryption-Version: 2`.
 ECDSA uses secp256k1 ECDH with AES-GCM and omits that header because version 2
-selects the Ed25519 protocol. Both modes use all-fields encryption.
+selects the Ed25519 protocol. Both modes enable `X-Encrypt-All-Fields` for the
+supported fields listed above.
 
 ### Use OHTTP
 
@@ -460,7 +461,7 @@ behavior. A transport failure is wrapped in `APIConnectionError`; its
 `__cause__` contains the SDK error. `client.send()` and
 `client.verify_response()` expose SDK errors directly.
 
-Add these imports and replace the response check in the quick start:
+Add these imports and replace the verification and output lines in the quick start:
 
 ```python
 from nearai_inference_sdk import ApiError, VerificationError

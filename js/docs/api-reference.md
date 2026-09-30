@@ -308,6 +308,8 @@ preserve the `ApiError` cause and retryability.
 
 ### `fetchImageProvenance`
 
+`fetchImageProvenance(params)` returns `Promise<readonly string[]>`.
+
 Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 
 | `FetchImageProvenanceParams` field | Type | Required | Description |
@@ -317,6 +319,8 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
 
 ### `verifyImageProvenance`
+
+`verifyImageProvenance(params)` returns `Promise<VerifiedImageProvenance>`.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
@@ -588,6 +592,12 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 
 ## Direct verification functions
 
+| Function | Params | Returns |
+| --- | --- | --- |
+| `verifyDirectModelAttestation(params)` | `VerifyDirectModelAttestationParams` | `Promise<VerifiedDirectModelAttestation>` |
+| `verifyDirectModelAttestations(params)` | `VerifyDirectModelAttestationsParams` | `Promise<VerifiedDirectModelAttestations>` |
+| `verifyDirectModelResponse(params)` | `VerifyDirectModelResponseParams` | `readonly VerifiedDirectModelAttestation[]` |
+
 | Parameter type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
@@ -608,7 +618,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | --- | --- | --- | --- |
 | `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the returned set. |
 |  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified returned model-attestation set; verification does not establish fleet completeness. |
-|  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
+|  | `tlsBinding` | `DirectTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
 | `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
 |  | `report` | `DirectModelAttestation` | Original direct report retained for inspection. |
