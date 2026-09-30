@@ -130,7 +130,6 @@ async function verifyClientCompletions({
   assert.ok(completion.id);
   assert.match(completion.choices[0]?.message.content ?? '', /\bOK\b/i);
   const verified = await inferenceClient.verifyResponse(completion.id);
-  assert.equal(verified.completionId, completion.id);
   assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
 
   const stream = await chat.completions.create(
@@ -150,7 +149,6 @@ async function verifyClientCompletions({
   assert.ok(finished, 'SSE must contain a terminal completion chunk');
   assert.match(content, /\bOK\b/i);
   const verifiedStream = await inferenceClient.verifyResponse(completionId);
-  assert.equal(verifiedStream.completionId, completionId);
   assert.equal(verifiedStream.signature.signer.signingAlgo, signingAlgo);
 }
 

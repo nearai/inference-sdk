@@ -17,3 +17,5 @@ See [live E2E tests](./e2e/README.md) for real-service coverage and CI setup.
 The TypeScript [direct-endpoint clients](./js/docs/verification-guide.md#use-a-direct-model-endpoint)
 are experimental and not recommended for production. Use Gateway clients for
 production integrations.
+
+Maintainers can follow the [release process](./RELEASING.md).
