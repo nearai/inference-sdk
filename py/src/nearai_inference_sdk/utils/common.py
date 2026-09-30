@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
 import re
@@ -61,3 +62,16 @@ async def maybe_await[T](value: T | Awaitable[T]) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
+
+
+async def gather_cancel_on_error[T](*awaitables: Awaitable[T]) -> list[T]:
+    """Run in parallel, cancelling and awaiting siblings on failure or cancellation."""
+
+    tasks = [asyncio.ensure_future(item) for item in awaitables]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise

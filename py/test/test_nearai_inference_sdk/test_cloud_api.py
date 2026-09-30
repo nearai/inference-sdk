@@ -11,6 +11,9 @@ from nearai_inference_sdk import (
     AttestationClient,
     CompletionSignature,
     CompletionSignatureReference,
+    DirectAttestationClient,
+    DirectInferenceClient,
+    InferenceClient,
     MeasuredDeployment,
     OhttpAttestation,
     RuntimeMeasurements,
@@ -75,17 +78,30 @@ async def test_model_metadata_decodes_capabilities_at_the_http_boundary(
         pytest.param('not a URL', id='malformed'),
         pytest.param('/v1', id='relative'),
         pytest.param('ftp://cloud.example/v1', id='non-http'),
+        pytest.param(BASE_URL + '?tenant=example', id='query'),
+        pytest.param(BASE_URL + '#section', id='fragment'),
+        pytest.param(BASE_URL + '?', id='empty-query'),
+        pytest.param(BASE_URL + '#', id='empty-fragment'),
     ),
 )
-def test_client_rejects_invalid_base_urls_at_construction(base_url: str) -> None:
+@pytest.mark.parametrize(
+    'client_type',
+    [
+        AttestationClient,
+        DirectAttestationClient,
+        InferenceClient,
+        DirectInferenceClient,
+    ],
+)
+def test_client_rejects_invalid_base_urls_at_construction(base_url, client_type):
     with pytest.raises(ApiError) as raised:
-        AttestationClient(API_KEY, base_url=base_url)
+        client_type(base_url=base_url)
 
     assert raised.value.failure.code == 'api.invalid_input'
     assert raised.value.failure.details == {
         'field': 'base_url',
         'reason': 'invalid_url',
-        'expected': 'an absolute HTTP(S) URL',
+        'expected': 'an absolute HTTP(S) URL without a query or fragment',
     }
     assert raised.value.retryable is False
 

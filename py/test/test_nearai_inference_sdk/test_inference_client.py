@@ -642,15 +642,36 @@ async def test_every_returned_model_report_must_pass_preflight(monkeypatch):
     gateway = Gateway()
     gateway.additional_model_is_invalid = True
     gateway.install(monkeypatch)
+    sibling_started = asyncio.Event()
+    sibling_cleaned_up = asyncio.Event()
 
-    async with gateway.client() as client:
+    async def verify_quote(quote):
+        result = gateway.quotes[quote]
+        if result.debug_enabled:
+            await sibling_started.wait()
+            return result
+        sibling_started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            sibling_cleaned_up.set()
+
+    async with gateway.client(
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(tdx_quote=verify_quote)
+        )
+    ) as client:
         request = httpx.Request(
             'POST',
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},
         )
-        with pytest.raises(VerificationError):
-            await client.send(request)
+        async with asyncio.timeout(1):
+            with pytest.raises(VerificationError) as raised:
+                await client.send(request)
+        assert raised.value.failure.code == 'policy.debug_enabled'
+        assert sibling_cleaned_up.is_set()
 
     assert gateway.completion_requests == []
 

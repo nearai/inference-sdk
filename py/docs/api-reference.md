@@ -67,7 +67,7 @@ automatically verify the response signature; use `verify_response` afterwards.
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
-| `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator base URL. |
+| `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator HTTP(S) base URL, without a query or fragment. |
 | `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
@@ -265,7 +265,7 @@ The Gateway's report and signature endpoints have different defaults.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `api_key` | `str \| None` | No | `None` | Bearer token for signature and evidence requests. |
-| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) NEAR AI Cloud Gateway base URL. |
+| `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
 
 `AttestationClient` construction and methods, plus

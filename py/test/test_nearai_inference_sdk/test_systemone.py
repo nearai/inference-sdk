@@ -446,18 +446,18 @@ async def test_decision_response_expires_without_repeating_inference(monkeypatch
     assert gateway.signature_requests == 0
 
 
-async def test_decision_receipt_must_use_the_configured_signing_algorithm(monkeypatch):
+async def test_decision_preflight_requires_the_configured_signing_algorithm(
+    monkeypatch,
+):
     gateway = DecisionGateway(kind='provider_tee')
     gateway.install(monkeypatch)
-    # The endpoint incorrectly returns valid Ed25519 reports and a receipt even
-    # though the caller requested ECDSA. Matching that fleet signer is not enough.
+    # The endpoint ignores the requested algorithm; stop before sending a decision.
     async with gateway.client(e2ee=False, signing_algo='ecdsa') as client:
-        result = await client.systemone.create(REQUEST)
-        for _ in range(2):
-            with pytest.raises(VerificationError) as raised:
-                await client.verify_response(result.decision_id)
-            assert raised.value.failure.code == 'signature.signer_mismatch'
-    assert gateway.signature_requests == 1
+        with pytest.raises(VerificationError) as raised:
+            await client.systemone.create(REQUEST)
+        assert raised.value.failure.code == 'signature.signer_mismatch'
+    assert gateway.requests == []
+    assert gateway.signature_requests == 0
 
 
 async def test_decision_preflight_is_concurrent_but_blocks_inference(monkeypatch):

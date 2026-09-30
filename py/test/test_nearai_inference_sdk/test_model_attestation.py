@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from dataclasses import replace
@@ -12,15 +13,18 @@ from eth_utils import keccak
 from nacl.signing import SigningKey
 
 from nearai_inference_sdk import (
+    DirectModelAttestation,
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     SigningIdentity,
     VerificationError,
     create_gpu_evidence_verifier,
+    verify_direct_model_attestation,
     verify_model_attestation,
 )
 from nearai_inference_sdk.utils import nvidia
+from nearai_inference_sdk.utils.errors import verification_failure
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
@@ -205,6 +209,47 @@ async def test_model_attestation_returns_verified_evidence() -> None:
     assert result.gpu_evidence == 'not_provided'
     assert result.deployment.app_compose == APP_COMPOSE
     assert result.deployment_provenance == 'not_checked'
+
+
+@pytest.mark.parametrize(
+    'verify_attestation', [verify_model_attestation, verify_direct_model_attestation]
+)
+@pytest.mark.parametrize('failed_verifier', ['cpu', 'gpu'])
+async def test_failed_verification_awaits_sibling_cleanup(
+    verify_attestation, failed_verifier
+):
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+    failure = verification_failure('policy.debug_enabled')
+
+    async def pending(_value):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            await asyncio.sleep(0)
+            cleaned_up.set()
+
+    async def fail(_value):
+        await started.wait()
+        raise failure
+
+    attestation = DirectModelAttestation(
+        **vars(create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE}))),
+        model_name='test-model',
+    )
+    async with asyncio.timeout(1):
+        with pytest.raises(VerificationError) as raised:
+            await verify_attestation(
+                attestation,
+                MODEL_CLIENT_BINDING,
+                verifiers=ModelAttestationVerifiers(
+                    tdx_quote=fail if failed_verifier == 'cpu' else pending,
+                    gpu_evidence=fail if failed_verifier == 'gpu' else pending,
+                ),
+            )
+    assert raised.value is failure
+    assert cleaned_up.is_set()
 
 
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])

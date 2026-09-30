@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Literal
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -17,7 +16,7 @@ from ..types.verification import (
     VerifiedAttestationEvidence,
     VerifiedModelAttestation,
 )
-from ..utils.common import hex_to_bytes, maybe_await
+from ..utils.common import gather_cancel_on_error, hex_to_bytes, maybe_await
 from ..utils.errors import (
     VerificationError,
     verification_failure,
@@ -36,7 +35,7 @@ async def verify_model_attestation(
 ) -> VerifiedModelAttestation:
     """Verify model evidence returned through NEAR AI Cloud."""
 
-    evidence, gpu_evidence = await asyncio.gather(
+    evidence, gpu_evidence = await gather_cancel_on_error(
         _verify_model_cpu(attestation, client_binding, policy, verifiers),
         _verify_gpu_evidence(
             payload=attestation.nvidia_payload,

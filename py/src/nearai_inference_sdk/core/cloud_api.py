@@ -514,6 +514,8 @@ def _validate_base_url(base_url: str) -> str:
         parsed.scheme not in {'http', 'https'}
         or not parsed.netloc
         or parsed.hostname is None
+        or '?' in base_url
+        or '#' in base_url
     ):
         raise _invalid_base_url()
     return base_url
@@ -523,7 +525,7 @@ def _invalid_base_url() -> ApiError:
     return _invalid_input(
         'base_url',
         'invalid_url',
-        expected='an absolute HTTP(S) URL',
+        expected='an absolute HTTP(S) URL without a query or fragment',
     )
 
 
