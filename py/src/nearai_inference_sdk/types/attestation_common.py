@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-
 SigningAlgo = Literal['ecdsa', 'ed25519']
 TcbStatus = Literal[
     'UpToDate',

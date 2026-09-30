@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..types.attestation_model import ModelAttestation
 from ..types.verification import (
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
@@ -9,7 +10,6 @@ from ..types.verification import (
     ModelClientBinding,
     VerifiedModelAttestation,
 )
-from ..types.attestation_model import ModelAttestation
 from ..utils.common import maybe_await
 from ..utils.errors import (
     VerificationError,
