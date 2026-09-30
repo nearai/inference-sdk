@@ -106,14 +106,14 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `InferenceClient.verify(model: string)` | `Promise<VerifiedDeployment>` | Returns verified deployment evidence without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
+| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
 | `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, checks model metadata and verifies the required evidence on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionResult>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionResult.completionId` | `string` | Completion ID whose signature was verified. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence and is the only accepted kind for Incognito model sessions. |
 
-| `VerifiedDeployment` field | Type | Description |
+| `AttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
 | `gateway` | `VerifiedGatewayAttestation` | Verified Gateway result and original `report`. |
 | `models` | `readonly VerifiedModelAttestation[]` | Every verified model report, in response order. Empty for Gateway-only models. |
@@ -165,12 +165,12 @@ There is no `gatewayVerification` option.
 | Method | Returns | Description |
 | --- | --- | --- |
 | `getBaseUrl()` | `string` | Resolved direct API base URL. |
-| `verify(model: string)` | `Promise<VerifiedDirectDeployment>` | Returns all verified direct model evidence without sending Chat. Requires a non-empty model ID. Uses the same checks and cache as Chat. |
+| `verify(model: string)` | `Promise<DirectAttestationVerificationResult>` | Returns all direct model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same checks and cache as Chat. |
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
 | `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
 
-| `VerifiedDirectDeployment` field | Type | Description |
+| `DirectAttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
 | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Every verified report, including reports with a signer not selected for Chat. Each includes its original `report`. |
 | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified entry for the endpoint that returned the report. |

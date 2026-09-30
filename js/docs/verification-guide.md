@@ -105,11 +105,11 @@ Call `verify(model)` when the user selects a model or opens a chat to complete
 deployment verification before their first message:
 
 ```ts
-const deployment = await client.verify(model);
+const result = await client.verify(model);
 
 // Populate your verification UI from these results.
-console.log('Gateway TCB status:', deployment.gateway.tcbStatus);
-for (const attestation of deployment.models) {
+console.log('Gateway TCB status:', result.gateway.tcbStatus);
+for (const attestation of result.models) {
   console.log('Model TCB status:', attestation.tcbStatus);
   console.log('Intel quote:', attestation.report.intelQuote);
 }

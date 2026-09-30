@@ -24,7 +24,7 @@ import type {
   InferenceChat,
   InferenceClientOptions,
   VerifiedCompletionResult,
-  VerifiedDeployment,
+  AttestationVerificationResult,
   InferenceClientCommonOptions,
   InferenceEncryptionOptions,
 } from '../types/inference-client';
@@ -65,8 +65,11 @@ import {
 const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
-export type InferenceSession<VerificationResult, DeploymentResult = unknown> = {
-  readonly deployment: DeploymentResult;
+export type InferenceSession<
+  VerificationResult,
+  AttestationResult = unknown,
+> = {
+  readonly attestationResult: AttestationResult;
   /** Verified NEAR key for routing and encryption. Absent in Gateway-only sessions. */
   readonly modelKey?: E2eeModelKey;
   readonly transport: InferenceSessionTransport;
@@ -96,9 +99,9 @@ export type InferenceTransportOptions = InferenceClientCommonOptions &
     readonly headers?: HeadersInit;
   };
 
-type CachedVerification<VerificationResult, DeploymentResult> = {
+type CachedVerification<VerificationResult, AttestationResult> = {
   readonly expiresAt: number;
-  readonly session: InferenceSession<VerificationResult, DeploymentResult>;
+  readonly session: InferenceSession<VerificationResult, AttestationResult>;
 };
 
 type CompletionRecord<VerificationResult> =
@@ -227,7 +230,7 @@ type VerifiedModelState = {
  */
 export abstract class VerifiedInferenceClientBase<
   VerificationResult,
-  DeploymentResult,
+  AttestationResult,
 > {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
@@ -244,12 +247,12 @@ export abstract class VerifiedInferenceClientBase<
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<
     string,
-    CachedVerification<VerificationResult, DeploymentResult>
+    CachedVerification<VerificationResult, AttestationResult>
   >();
   /** Shares same-model verification work while it is in progress. */
   private readonly pendingVerifications = new Map<
     string,
-    Promise<InferenceSession<VerificationResult, DeploymentResult>>
+    Promise<InferenceSession<VerificationResult, AttestationResult>>
   >();
 
   protected constructor(options: InferenceTransportOptions) {
@@ -273,7 +276,7 @@ export abstract class VerifiedInferenceClientBase<
   /** Verify every required report before creating a transport for Chat requests. */
   protected abstract createVerificationState(
     model: string,
-  ): Promise<InferenceSession<VerificationResult, DeploymentResult>>;
+  ): Promise<InferenceSession<VerificationResult, AttestationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
@@ -281,11 +284,11 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Verify the deployment for a model and return its evidence without sending Chat.
+   * Verify the required attestations for a model and return the results without sending Chat.
    * Reuses the same cache and in-flight verification as Chat. With a cache
    * TTL of zero, a later Chat request verifies again.
    */
-  async verify(model: string): Promise<DeploymentResult> {
+  async verify(model: string): Promise<AttestationResult> {
     if (model === '') {
       throw invalidInput({
         field: 'model',
@@ -294,7 +297,7 @@ export abstract class VerifiedInferenceClientBase<
       });
     }
     const session = await this.startVerification(model);
-    return session.deployment;
+    return session.attestationResult;
   }
 
   /** Bind the advertised OHTTP key to the endpoint identity already verified. */
@@ -469,7 +472,7 @@ export abstract class VerifiedInferenceClientBase<
 
   private startVerification(
     model: string,
-  ): Promise<InferenceSession<VerificationResult, DeploymentResult>> {
+  ): Promise<InferenceSession<VerificationResult, AttestationResult>> {
     const now = Date.now();
     this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(model);
@@ -618,7 +621,7 @@ export abstract class VerifiedInferenceClientBase<
 /** Gateway-specific preflight layered over the shared Chat/E2EE transport. */
 export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   VerifiedCompletionResult,
-  VerifiedDeployment
+  AttestationVerificationResult
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
@@ -635,7 +638,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 
   protected override async createVerificationState(
     model: string,
-  ): Promise<InferenceSession<VerifiedCompletionResult, VerifiedDeployment>> {
+  ): Promise<
+    InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
+  > {
     const gateway = await this.fetchGatewayAttestation();
     // Pin evidence requests to the observed peer without treating it as trusted
     // yet. Gateway verification must authenticate that same fingerprint before
@@ -690,7 +695,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           }
         : undefined;
     return {
-      deployment: {
+      attestationResult: {
         gateway: gatewayAttestation,
         models: modelState.attestations,
         verifiedAt: Date.now(),

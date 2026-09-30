@@ -3,7 +3,7 @@ import type {
   DirectInferenceClientOptions,
   NodeDirectInferenceClientOptions,
   VerifiedDirectCompletionResult,
-  VerifiedDirectDeployment,
+  DirectAttestationVerificationResult,
   VerifyDirectModelResponseParams,
 } from '../types/direct-inference-client';
 import type {
@@ -29,7 +29,7 @@ export type CreateDirectSessionTransportParams = {
 /** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
 export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<
   VerifiedDirectCompletionResult,
-  VerifiedDirectDeployment
+  DirectAttestationVerificationResult
 > {
   private readonly directOptions: NodeDirectInferenceClientOptions;
 
@@ -50,7 +50,10 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
   protected override async createVerificationState(
     model: string,
   ): Promise<
-    InferenceSession<VerifiedDirectCompletionResult, VerifiedDirectDeployment>
+    InferenceSession<
+      VerifiedDirectCompletionResult,
+      DirectAttestationVerificationResult
+    >
   > {
     const fetched = await this.fetchModelAttestations();
     const verifiedModelAttestations = await verifyDirectModelAttestations({
@@ -93,7 +96,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       tlsBinding: verifiedModelAttestations.tlsBinding,
     });
     return {
-      deployment: {
+      attestationResult: {
         ...verifiedModelAttestations,
         verifiedAt: Date.now(),
       },

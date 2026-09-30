@@ -62,8 +62,8 @@ Verification errors show the SDK's structured failure code. Transient evidence
 services can fail; that does not make an unverified response safe to trust.
 
 Chat preparation and **Show Verification Details** call `verify(model)` on the
-same `InferenceClient` used for Chat. The dialog displays the returned Gateway
-and every verified model report. Quotes, event logs, and NVIDIA payloads come
+same `InferenceClient` used for Chat. The dialog displays the Gateway and every
+verified model report from its `AttestationVerificationResult`. Quotes, event logs, and NVIDIA payloads come
 from each result's `report`; verification conclusions come from the result's
 typed fields.
 

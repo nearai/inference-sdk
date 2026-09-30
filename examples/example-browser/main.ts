@@ -5,7 +5,7 @@ import {
   isApiError,
   isVerificationError,
   type VerifiedCompletionResult,
-  type VerifiedDeployment,
+  type AttestationVerificationResult,
   type VerifiedGatewayAttestation,
   type VerifiedModelAttestation,
 } from '@nearai/inference-sdk';
@@ -67,7 +67,7 @@ let isSending = false;
 let endpointDirty = false;
 let deploymentStatus: Status = 'idle';
 let deploymentError: string | undefined;
-let hardwareReport: VerifiedDeployment | undefined;
+let hardwareReport: AttestationVerificationResult | undefined;
 let hardwareTab: 'model' | 'gateway' = 'model';
 let hardwareRequestId = 0;
 let preparationRequestId = 0;
@@ -531,9 +531,9 @@ async function verifyHardware(): Promise<void> {
   try {
     // Preverification, Chat, and this view share the same client's cache.
     const client = getClient(apiKey, baseUrl);
-    const deployment = await client.verify(selectedModel.id);
+    const result = await client.verify(selectedModel.id);
     if (requestId !== hardwareRequestId) return;
-    hardwareReport = deployment;
+    hardwareReport = result;
     badge.className = 'result-badge verified'; badge.textContent = 'Verified';
     loading.hidden = true; content.hidden = false;
     renderHardwarePanel();

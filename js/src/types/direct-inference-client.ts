@@ -39,10 +39,11 @@ export type VerifyDirectModelResponseParams = {
 };
 
 /** All verified direct reports and endpoint TLS binding, shared by verify() and Chat. */
-export type VerifiedDirectDeployment = VerifiedDirectModelAttestations & {
-  /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
-  readonly verifiedAt: number;
-};
+export type DirectAttestationVerificationResult =
+  VerifiedDirectModelAttestations & {
+    /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+    readonly verifiedAt: number;
+  };
 
 /** A signed response associated with the preflight-verified signer group. */
 export type VerifiedDirectCompletionResult = {
