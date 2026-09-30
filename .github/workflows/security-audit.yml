@@ -103,9 +103,8 @@ jobs:
         with:
           manifest-path: ${{ matrix.directory }}/Cargo.toml
           rust-version: stable
-          arguments: --locked --all-features
+          arguments: --locked --all-features --config deny.toml
           command: check advisories
-          command-arguments: --config deny.toml
       - name: Summarize audit outcome
         if: always()
         env:
