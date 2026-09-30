@@ -71,8 +71,8 @@ and pins subsequent requests to that identity.
 To verify when a user selects a model, before they send a message, call
 `await client.verify(model)`. It sends no Chat request and uses the same
 configured checks, cache, and in-flight verification as Chat. It resolves
-without a return value, or rejects if verification fails. This optional
-preflight verifies the deployment; you still call `verifyResponse()` to verify
+with verified Gateway and model reports for your UI, or rejects if verification
+fails. This optional preflight verifies the deployment; you still call `verifyResponse()` to verify
 a particular reply. See [deployment preverification and caching](./docs/verification-guide.md#cache-deployment-verification).
 
 ## Verification and encryption

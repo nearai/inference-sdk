@@ -4,11 +4,10 @@ import json
 import time
 from dataclasses import replace
 
-import pytest
 import jwt
+import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 
-import nearai_inference_sdk.utils.nvidia as nvidia
 from nearai_inference_sdk import (
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
@@ -17,17 +16,17 @@ from nearai_inference_sdk import (
     create_gpu_evidence_verifier,
     verify_model_attestation,
 )
+from nearai_inference_sdk.utils import nvidia
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
     APP_COMPOSE,
     MODEL_CLIENT_BINDING,
     NONCE,
+    create_gateway_tls_quote,
     create_model_attestation,
     create_model_quote,
-    create_gateway_tls_quote,
 )
-
 
 NRAS_TEST_KEY = ec.generate_private_key(ec.SECP384R1())
 NRAS_TEST_JWK = jwt.algorithms.ECAlgorithm.to_jwk(
