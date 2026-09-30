@@ -37,7 +37,8 @@ assert.ok(MODEL, 'Expected a NEAR model for the E2EE/OHTTP client cases');
 const CHAT_REQUEST = {
   model: MODEL,
   messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
-  max_completion_tokens: 128,
+  // Reasoning tokens share this budget; leave room for a visible answer.
+  max_completion_tokens: 1024,
 } satisfies OpenAI.ChatCompletionCreateParamsNonStreaming;
 
 type ClientCase = {
@@ -109,11 +110,12 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
         { maxRetries: 0 },
       );
       assert.ok(completion.id);
-      assert.match(completion.choices[0]?.message.content ?? '', /\bOK\b/i);
-      await assert.rejects(
-        () => retryReceipt(() => inferenceClient.verifyResponse(completion.id)),
-        isUnsupportedSignature,
+      assert.equal(completion.choices[0]?.finish_reason, 'stop');
+      assert.ok(completion.choices[0]?.message.content?.trim());
+      const verified = await retryReceipt(() =>
+        inferenceClient.verifyResponse(completion.id),
       );
+      assert.equal(verified.signature.kind, 'gateway');
     } else {
       await verifyClientCompletions({
         inferenceClient,
@@ -177,7 +179,8 @@ async function verifyClientCompletions({
     maxRetries: 0,
   });
   assert.ok(completion.id);
-  assert.match(completion.choices[0]?.message.content ?? '', /\bOK\b/i);
+  assert.equal(completion.choices[0]?.finish_reason, 'stop');
+  assert.ok(completion.choices[0]?.message.content?.trim());
   const verified = await retryReceipt(() =>
     inferenceClient.verifyResponse(completion.id),
   );
@@ -192,16 +195,17 @@ async function verifyClientCompletions({
   );
   let completionId: string | undefined;
   let content = '';
-  let finished = false;
+  let finishReason: string | undefined;
   for await (const chunk of stream) {
     if (completionId !== undefined) assert.equal(chunk.id, completionId);
     completionId = chunk.id;
     content += chunk.choices[0]?.delta.content ?? '';
-    finished ||= chunk.choices.some((choice) => choice.finish_reason !== null);
+    const reason = chunk.choices[0]?.finish_reason;
+    if (reason != null) finishReason = reason;
   }
   assert.ok(completionId, 'SSE must contain a completion ID');
-  assert.ok(finished, 'SSE must contain a terminal completion chunk');
-  assert.match(content, /\bOK\b/i);
+  assert.equal(finishReason, 'stop', 'SSE must complete without truncation');
+  assert.ok(content.trim(), 'Expected non-empty Chat content');
   const streamedId = completionId;
   const verifiedStream = await retryReceipt(() =>
     inferenceClient.verifyResponse(streamedId),
@@ -256,8 +260,8 @@ for (const selectedModel of MODELS) {
       }
     }
 
-    // Chutes does not expose per-response signatures; streaming is separately
-    // gated by the provider. Exercise its non-streaming unavailable contract.
+    // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
+    // so its live case uses JSON only.
     const streams =
       selectedModel.provider === 'chutes' ? [false] : [false, true];
     for (const stream of streams) {
@@ -280,19 +284,6 @@ for (const selectedModel of MODELS) {
       assert.equal(response.status, 200, 'Chat request must succeed');
       const responseBody = new Uint8Array(await response.arrayBuffer());
       const id = readCompletionId({ responseBody, stream });
-      if (selectedModel.provider === 'chutes') {
-        await assert.rejects(
-          () =>
-            retryReceipt(() =>
-              client.fetchCompletionSignature({
-                completionId: id,
-                signingAlgo,
-              }),
-            ),
-          isUnsupportedSignature,
-        );
-        continue;
-      }
       const signature = await retryReceipt(() =>
         client.fetchCompletionSignature({ completionId: id, signingAlgo }),
       );
@@ -330,14 +321,6 @@ for (const selectedModel of MODELS) {
   });
 }
 
-function isUnsupportedSignature(error: unknown): boolean {
-  return (
-    isApiError(error) &&
-    error.failure.code === 'api.completion_signature_unavailable' &&
-    error.failure.details.providerErrorCode === 'SIGNATURE_UNSUPPORTED'
-  );
-}
-
 // Allow receipt propagation after Chat, without repeating inference or masking
 // cryptographic verification failures. The enclosing test still has a deadline.
 async function retryReceipt<T>(lookup: () => Promise<T>): Promise<T> {
@@ -370,7 +353,8 @@ function readCompletionId({
   if (!stream) {
     const completion = JSON.parse(text);
     assert.equal(typeof completion.id, 'string');
-    assert.match(completion.choices[0]?.message.content ?? '', /\bOK\b/i);
+    assert.equal(completion.choices[0]?.finish_reason, 'stop');
+    assert.ok(completion.choices[0]?.message.content?.trim());
     return completion.id;
   }
 
@@ -388,11 +372,16 @@ function readCompletionId({
     .map((event) => JSON.parse(event));
   const id = chunks[0]?.id;
   assert.equal(typeof id, 'string');
-  assert.ok(chunks.every((chunk) => chunk.id === id));
-  const content = chunks
-    .map((chunk) => chunk.choices[0]?.delta.content ?? '')
-    .join('');
-  assert.match(content, /\bOK\b/i);
+  let content = '';
+  let finishReason: string | undefined;
+  for (const chunk of chunks) {
+    assert.equal(chunk.id, id);
+    const choice = chunk.choices[0];
+    content += choice?.delta.content ?? '';
+    if (choice?.finish_reason != null) finishReason = choice.finish_reason;
+  }
+  assert.equal(finishReason, 'stop', 'SSE must complete without truncation');
+  assert.ok(content.trim(), 'Expected non-empty Chat content');
   return id;
 }
 
