@@ -1,6 +1,6 @@
 [project]
 name = "nearai-inference-sdk"
-version = "0.1.0rc1"
+version = "0.1.0"
 description = "Python SDK for NEAR AI inference with attestation verification and end-to-end encryption"
 readme = "README.md"
 license = "MIT"
