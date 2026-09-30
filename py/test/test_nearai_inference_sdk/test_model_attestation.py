@@ -252,6 +252,39 @@ async def test_failed_verification_awaits_sibling_cleanup(
     assert cleaned_up.is_set()
 
 
+async def test_cancelling_model_verification_waits_for_verifier_cleanup():
+    started = asyncio.Event()
+    cleaned_up = asyncio.Event()
+
+    async def verify_cpu(_quote):
+        await asyncio.Future()
+
+    async def verify_gpu(_payload):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            # CPU cancellation finishes first, while GPU cleanup still awaits I/O.
+            await asyncio.sleep(0.01)
+            cleaned_up.set()
+
+    async with asyncio.timeout(1):
+        verification = asyncio.create_task(
+            verify_model_attestation(
+                create_model_attestation(nvidia_payload=json.dumps({'nonce': NONCE})),
+                MODEL_CLIENT_BINDING,
+                verifiers=ModelAttestationVerifiers(
+                    tdx_quote=verify_cpu, gpu_evidence=verify_gpu
+                ),
+            )
+        )
+        await started.wait()
+        verification.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await verification
+    assert cleaned_up.is_set()
+
+
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 async def test_model_public_key_is_bound_to_the_quote_signer(signing_algo) -> None:
     if signing_algo == 'ed25519':
