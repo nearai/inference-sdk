@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 
-import nearai_inference_sdk.core.provenance as provenance
 from nearai_inference_sdk import (
     ApiError,
     ApiFailure,
@@ -14,7 +13,7 @@ from nearai_inference_sdk import (
     VerificationFailure,
     verify_deployment_image_provenance,
 )
-
+from nearai_inference_sdk.core import provenance
 
 IMAGE = 'registry.example/gateway'
 DIGEST = 'sha256:' + 'ab' * 32

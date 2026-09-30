@@ -12,6 +12,7 @@ from ..types.verification import (
 )
 from ..utils.errors import verification_failure
 from .attestation_common import (
+    verify_peer_spki_fingerprint,
     verify_report_data_binding,
     verify_report_data_binding_with_tls_fingerprint,
 )
@@ -43,8 +44,8 @@ async def verify_gateway_attestation(
             nonce=client_binding.nonce,
             signer=verified_quote.signer,
             reported_spki_fingerprint=attestation.spki_fingerprint,
-            peer_spki_fingerprint=peer_spki_fingerprint,
         )
+        verify_peer_spki_fingerprint(spki_fingerprint, peer_spki_fingerprint)
         tls_binding = GatewayTlsBinding(
             kind='attested', spki_fingerprint=spki_fingerprint
         )

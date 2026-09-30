@@ -120,12 +120,38 @@ provenance.
 
 Uses `nearai-inference-sdk`, imported as `nearai_inference_sdk`.
 
+Gateway and direct Chat entry points include non-streaming and streaming calls:
+
+| File | Usage |
+| --- | --- |
+| `gateway/bare.py` | Verifies attestations and Gateway image provenance, prepares E2EE requests, and verifies encrypted response bytes. |
+| `gateway/client.py` | Configures Gateway image provenance and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
+| `gateway/client_openai_sdk.py` | Shares `inference_client.http_client` with one reusable `openai.AsyncOpenAI` client. |
+| `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
+| `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
+| `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
+
+Gateway Chat examples explicitly enable E2EE; the Gateway SDK defaults to
+`e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
+`'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
+client caches attestations for 60 minutes per model and retains response records for
+60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
+Gateway image policies listed above; they do not check model runtime images.
+
 ```sh
 cd examples/example-py
-uv run python main.py
+uv run python gateway/client.py
+uv run python gateway/bare.py
+uv run python gateway/client_openai_sdk.py
+uv run python direct/client.py
+uv run python direct/client_openai_sdk.py
+uv run python direct/bare.py
 ```
 
 Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
+
+Direct examples share the JavaScript clients' experimental limitations above.
+For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
 
 ## Rust
 

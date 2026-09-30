@@ -87,6 +87,7 @@ describe('direct model attestation verification', () => {
       spkiFingerprint: tlsFingerprint,
       signingPublicKey,
       gpuEvidence: 'verified',
+      report: attestation,
     });
     expect(gpuPayloads).toEqual([attestation.nvidiaPayload]);
   });

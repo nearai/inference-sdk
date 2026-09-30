@@ -19,6 +19,8 @@ export type VerifyDirectModelAttestationParams = {
 
 /** One model attestation, independently verified without observing its TLS peer. */
 export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
+  /** Original direct report, including endpoint metadata. */
+  readonly report: DirectModelAttestation;
   /** Metadata, not a model-name claim authenticated by the quote. */
   readonly modelName: string;
   /** Instance metadata, when supplied by the endpoint. */

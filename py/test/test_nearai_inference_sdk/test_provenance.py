@@ -4,7 +4,7 @@ import base64
 import json
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,7 +15,6 @@ from pyasn1.type.char import UTF8String
 from sigstore.models import TrustedRoot
 from sigstore.verify import Verifier
 
-import nearai_inference_sdk.core.provenance as provenance
 from nearai_inference_sdk import (
     ApiError,
     ImageProvenancePolicy,
@@ -23,9 +22,9 @@ from nearai_inference_sdk import (
     fetch_image_provenance,
     verify_image_provenance,
 )
+from nearai_inference_sdk.core import provenance
 from nearai_inference_sdk.schemas import SlsaStatementSchema
 from nearai_inference_sdk.utils.fetch import FetchResponse
-
 
 FIXTURE = (
     Path(__file__).resolve().parents[3]
@@ -193,8 +192,8 @@ def _certificate_with_extensions(extensions: dict[int, bytes]) -> x509.Certifica
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(1)
-        .not_valid_before(datetime(2026, 1, 1, tzinfo=timezone.utc))
-        .not_valid_after(datetime(2027, 1, 1, tzinfo=timezone.utc))
+        .not_valid_before(datetime(2026, 1, 1, tzinfo=UTC))
+        .not_valid_after(datetime(2027, 1, 1, tzinfo=UTC))
     )
     for suffix, value in extensions.items():
         builder = builder.add_extension(

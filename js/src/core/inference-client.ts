@@ -26,6 +26,7 @@ import type {
   InferenceChat,
   InferenceClientOptions,
   VerifiedCompletionResult,
+  AttestationVerificationResult,
   InferenceClientCommonOptions,
   InferenceEncryptionOptions,
 } from '../types/inference-client';
@@ -67,7 +68,11 @@ import {
 const OPENAI_WRAPPER_API_KEY = '@nearai/inference-sdk-internal';
 const DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000;
 
-export type InferenceSession<VerificationResult> = {
+export type InferenceSession<
+  VerificationResult,
+  AttestationResult = unknown,
+> = {
+  readonly attestationResult: AttestationResult;
   /** Verified NEAR key for routing and encryption. Absent in Gateway-only sessions. */
   readonly modelKey?: E2eeModelKey;
   readonly transport: InferenceSessionTransport;
@@ -97,9 +102,9 @@ export type InferenceTransportOptions = InferenceClientCommonOptions &
     readonly headers?: HeadersInit;
   };
 
-type CachedVerification<VerificationResult> = {
+type CachedVerification<VerificationResult, AttestationResult> = {
   readonly expiresAt: number;
-  readonly session: InferenceSession<VerificationResult>;
+  readonly session: InferenceSession<VerificationResult, AttestationResult>;
 };
 
 type InferenceEndpoint = 'chat' | 'systemone';
@@ -223,7 +228,10 @@ type VerifyModelsParams = {
  * Incognito models use Gateway verification only. Direct clients always
  * require model attestation.
  */
-export abstract class VerifiedInferenceClientBase<VerificationResult> {
+export abstract class VerifiedInferenceClientBase<
+  VerificationResult,
+  AttestationResult,
+> {
   private readonly baseUrl: string;
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
@@ -239,12 +247,12 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   private readonly requestConfiguration: CloudApiRequestConfiguration;
   private readonly cachedVerifications = new Map<
     string,
-    CachedVerification<VerificationResult>
+    CachedVerification<VerificationResult, AttestationResult>
   >();
   /** Shares verification work for the same model and endpoint while in progress. */
   private readonly pendingVerifications = new Map<
     string,
-    Promise<InferenceSession<VerificationResult>>
+    Promise<InferenceSession<VerificationResult, AttestationResult>>
   >();
 
   protected constructor(options: InferenceTransportOptions) {
@@ -269,7 +277,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   protected abstract createVerificationState(
     model: string,
     endpoint: InferenceEndpoint,
-  ): Promise<InferenceSession<VerificationResult>>;
+  ): Promise<InferenceSession<VerificationResult, AttestationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
   getBaseUrl(): string {
@@ -277,11 +285,11 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   }
 
   /**
-   * Verify the deployment for a model without sending a Chat request.
+   * Verify the required attestations for a model and return the results without sending Chat.
    * Reuses the same cache and in-flight verification as Chat. With a cache
    * TTL of zero, a later Chat request verifies again.
    */
-  async verify(model: string): Promise<void> {
+  async verify(model: string): Promise<AttestationResult> {
     if (model === '') {
       throw invalidInput({
         field: 'model',
@@ -289,7 +297,8 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
         expected: 'a non-empty model ID',
       });
     }
-    await this.startVerification(model);
+    const session = await this.startVerification(model);
+    return session.attestationResult;
   }
 
   /** Bind the advertised OHTTP key to the endpoint identity already verified. */
@@ -475,7 +484,7 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
   protected startVerification(
     model: string,
     endpoint: InferenceEndpoint = 'chat',
-  ): Promise<InferenceSession<VerificationResult>> {
+  ): Promise<InferenceSession<VerificationResult, AttestationResult>> {
     // Chat selects a routed model key; System One can use any verified fleet
     // signer. Reuse caching mechanics without mixing those session assumptions.
     const cacheKey = `${endpoint}:${model}`;
@@ -625,7 +634,10 @@ export abstract class VerifiedInferenceClientBase<VerificationResult> {
 }
 
 /** Gateway-specific preflight layered over the shared Chat/E2EE transport. */
-export abstract class InferenceClientBase extends VerifiedInferenceClientBase<VerifiedCompletionResult> {
+export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
+  VerifiedCompletionResult,
+  AttestationVerificationResult
+> {
   private readonly gatewayOptions: NodeInferenceClientOptions;
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
@@ -661,7 +673,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
   protected override async createVerificationState(
     model: string,
     endpoint: InferenceEndpoint,
-  ): Promise<InferenceSession<VerifiedCompletionResult>> {
+  ): Promise<
+    InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
+  > {
     const systemone = endpoint === 'systemone';
     const gateway = await this.fetchGatewayAttestation();
     // Pin evidence requests to the observed peer without treating it as trusted
@@ -730,6 +744,11 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
           }
         : undefined;
     return {
+      attestationResult: {
+        gateway: gatewayAttestation,
+        models: modelAttestations,
+        verifiedAt: Date.now(),
+      },
       modelKey,
       transport: {
         ...transport,
@@ -812,7 +831,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
       });
     }
     const modelVerifiers = this.getModelVerifiers(model);
-    const modelAttestations = await Promise.all(
+    const attestations = await Promise.all(
       fetchedModels.attestations.map((attestation) =>
         verifyModelAttestation({
           attestation,
@@ -822,7 +841,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<Ve
         }),
       ),
     );
-    return modelAttestations;
+    return attestations;
   }
 }
 

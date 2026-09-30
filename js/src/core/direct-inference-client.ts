@@ -3,6 +3,7 @@ import type {
   DirectInferenceClientOptions,
   NodeDirectInferenceClientOptions,
   VerifiedDirectCompletionResult,
+  DirectAttestationVerificationResult,
   VerifyDirectModelResponseParams,
 } from '../types/direct-inference-client';
 import type {
@@ -26,7 +27,10 @@ export type CreateDirectSessionTransportParams = {
 };
 
 /** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
-export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<VerifiedDirectCompletionResult> {
+export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<
+  VerifiedDirectCompletionResult,
+  DirectAttestationVerificationResult
+> {
   private readonly directOptions: NodeDirectInferenceClientOptions;
 
   protected constructor(options: NodeDirectInferenceClientOptions) {
@@ -45,7 +49,12 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
 
   protected override async createVerificationState(
     model: string,
-  ): Promise<InferenceSession<VerifiedDirectCompletionResult>> {
+  ): Promise<
+    InferenceSession<
+      VerifiedDirectCompletionResult,
+      DirectAttestationVerificationResult
+    >
+  > {
     const fetched = await this.fetchModelAttestations();
     const verifiedModelAttestations = await verifyDirectModelAttestations({
       ...fetched,
@@ -87,6 +96,10 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       tlsBinding: verifiedModelAttestations.tlsBinding,
     });
     return {
+      attestationResult: {
+        ...verifiedModelAttestations,
+        verifiedAt: Date.now(),
+      },
       modelKey: {
         signingAlgo: this.signingAlgo,
         publicKey: modelAttestation.signingPublicKey,

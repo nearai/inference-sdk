@@ -7,11 +7,15 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from nearai_inference_sdk import (
-    AttestationClient,
     ApiError,
+    AttestationClient,
     CompletionSignature,
     CompletionSignatureReference,
+    DirectAttestationClient,
+    DirectInferenceClient,
+    InferenceClient,
     MeasuredDeployment,
+    OhttpAttestation,
     RuntimeMeasurements,
     SigningIdentity,
     VerifiedModelAttestation,
@@ -20,10 +24,15 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-
 SIGNING_ADDRESS = f'0x{"22" * 20}'
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'
+OHTTP_WIRE_ATTESTATION = {
+    'signing_algo': 'ed25519',
+    'signing_key': '55' * 32,
+    'key_config': '010020' + '33' * 32 + '000400010001',
+    'signature': '66' * 64,
+}
 
 
 CloudApiResponder = Callable[[str, Mapping[str, str]], Awaitable[FetchResponse]]
@@ -33,23 +42,66 @@ def cloud_client() -> AttestationClient:
     return AttestationClient(API_KEY, base_url=BASE_URL)
 
 
+@pytest.mark.parametrize('supported', [True, False, 'true'])
+async def test_model_metadata_decodes_capabilities_at_the_http_boundary(
+    monkeypatch, supported
+):
+    async def fetch(url, **kwargs):
+        assert '/model/org%2Fmodel%20name' in url
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'metadata': {
+                        'providerType': 'vllm',
+                        'attestationSupported': supported,
+                    },
+                }
+            ).encode(),
+        )
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fetch)
+    client = cloud_client()
+    if isinstance(supported, str):
+        with pytest.raises(ApiError) as raised:
+            await client.fetch_model_metadata('org/model name')
+        assert raised.value.failure.code == 'api.invalid_response'
+    else:
+        metadata = await client.fetch_model_metadata('org/model name')
+        assert metadata.provider_type == 'vllm'
+        assert metadata.attestation_supported is supported
+
+
 @pytest.mark.parametrize(
     ('base_url'),
     (
         pytest.param('not a URL', id='malformed'),
         pytest.param('/v1', id='relative'),
         pytest.param('ftp://cloud.example/v1', id='non-http'),
+        pytest.param(BASE_URL + '?tenant=example', id='query'),
+        pytest.param(BASE_URL + '#section', id='fragment'),
+        pytest.param(BASE_URL + '?', id='empty-query'),
+        pytest.param(BASE_URL + '#', id='empty-fragment'),
     ),
 )
-def test_client_rejects_invalid_base_urls_at_construction(base_url: str) -> None:
+@pytest.mark.parametrize(
+    'client_type',
+    [
+        AttestationClient,
+        DirectAttestationClient,
+        InferenceClient,
+        DirectInferenceClient,
+    ],
+)
+def test_client_rejects_invalid_base_urls_at_construction(base_url, client_type):
     with pytest.raises(ApiError) as raised:
-        AttestationClient(API_KEY, base_url=base_url)
+        client_type(base_url=base_url)
 
     assert raised.value.failure.code == 'api.invalid_input'
     assert raised.value.failure.details == {
         'field': 'base_url',
         'reason': 'invalid_url',
-        'expected': 'an absolute HTTP(S) URL',
+        'expected': 'an absolute HTTP(S) URL without a query or fragment',
     }
     assert raised.value.retryable is False
 
@@ -77,6 +129,32 @@ async def test_client_rejects_an_invalid_api_key_before_request(
         'expected': 'an HTTP header value',
     }
     assert requests == 0
+
+
+@pytest.mark.parametrize('api_key', [None, API_KEY])
+async def test_client_uses_custom_headers_and_prefers_an_explicit_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+    api_key: str | None,
+) -> None:
+    async def fake_fetch(_: str, headers: Mapping[str, str]) -> FetchResponse:
+        assert headers['authorization'] == (
+            'Bearer test' if api_key is not None else 'Bearer aggregator-token'
+        )
+        assert headers['x-tenant'] == 'example'
+        return completion_signature_response(
+            signing_algo='ecdsa', kind='gateway', signing_address=SIGNING_ADDRESS
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
+    client = AttestationClient(
+        api_key,
+        base_url=BASE_URL,
+        headers={'Authorization': 'Bearer aggregator-token', 'X-Tenant': 'example'},
+    )
+
+    signature = await client.fetch_completion_signature('completion-id')
+
+    assert signature.kind == 'gateway'
 
 
 def use_fake_cloud_api_fetch(
@@ -166,7 +244,11 @@ async def test_model_helper_requests_fresh_evidence(
             body=json.dumps(
                 {
                     'model_attestations': [
-                        cloud_attestation(nonce, report_data='44' * 64),
+                        cloud_attestation(
+                            nonce,
+                            report_data='44' * 64,
+                            signing_public_key='55' * 65,
+                        ),
                         cloud_attestation(
                             nonce,
                             signing_address='33' * 20,
@@ -187,6 +269,8 @@ async def test_model_helper_requests_fresh_evidence(
     assert tuple(
         attestation.signer.signing_address for attestation in fetched.attestations
     ) == (SIGNING_ADDRESS, '33' * 20)
+    assert fetched.attestations[0].signing_public_key == '55' * 65
+    assert fetched.attestations[1].signing_public_key is None
     assert len(calls) == 1
     url, headers = calls[0]
     query = parse_qs(urlsplit(url).query)
@@ -367,6 +451,83 @@ async def test_gateway_helper_rejects_a_mismatched_nonce(
 
     assert raised.value.failure.code == 'api.nonce_mismatch'
     assert raised.value.failure.details == {'resource': 'gateway_attestation'}
+
+
+@pytest.mark.parametrize(
+    'metadata',
+    [{}, {'ohttp_attestation': None}, {'ohttp_attestation': OHTTP_WIRE_ATTESTATION}],
+)
+async def test_gateway_helper_maps_optional_envelope_ohttp_attestation(
+    monkeypatch: pytest.MonkeyPatch, metadata: dict[str, object]
+) -> None:
+    async def response(url: str, _: Mapping[str, str]) -> FetchResponse:
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='00' * 64,
+                    ),
+                    **metadata,
+                }
+            ).encode(),
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, response)
+    fetched = await cloud_client().fetch_gateway_attestation()
+
+    assert fetched.attestation.ohttp_attestation == (
+        OhttpAttestation(**OHTTP_WIRE_ATTESTATION)
+        if metadata.get('ohttp_attestation') is not None
+        else None
+    )
+
+
+@pytest.mark.parametrize(
+    ('field', 'value'),
+    [
+        ('signing_algo', 'ecdsa'),
+        ('signing_key', 'ab'),
+        ('signing_key', 'not-hex'),
+        ('key_config', None),
+        ('key_config', 'not-hex'),
+        ('key_config', ''),
+        ('signature', '00'),
+        ('signature', None),
+        ('signature', ...),
+    ],
+)
+async def test_gateway_helper_rejects_malformed_ohttp_attestation_as_api_error(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    proof = {**OHTTP_WIRE_ATTESTATION, field: value}
+    if value is ...:
+        proof.pop(field)
+
+    async def response(url: str, _: Mapping[str, str]) -> FetchResponse:
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='00' * 64,
+                    ),
+                    'ohttp_attestation': proof,
+                }
+            ).encode(),
+        )
+
+    use_fake_cloud_api_fetch(monkeypatch, response)
+    with pytest.raises(ApiError) as raised:
+        await cloud_client().fetch_gateway_attestation()
+
+    assert raised.value.failure.code == 'api.invalid_response'
+    assert raised.value.failure.details['path'] == f'ohttp_attestation.{field}'
+    assert raised.value.retryable is False
 
 
 async def test_gateway_helper_requires_tls_fingerprint_evidence(

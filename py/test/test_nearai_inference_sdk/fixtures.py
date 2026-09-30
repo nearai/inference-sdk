@@ -6,14 +6,12 @@ from dataclasses import replace
 
 from nearai_inference_sdk import (
     GatewayAttestation,
-    ModelClientBinding,
     ModelAttestation,
-    TdxQuoteVerificationResult,
+    ModelClientBinding,
     SigningIdentity,
+    TdxQuoteVerificationResult,
 )
-
 from nearai_inference_sdk.utils.common import sha256, sha384
-
 
 NONCE = '11' * 32
 MODEL_CLIENT_BINDING = ModelClientBinding(nonce=NONCE)

@@ -30,6 +30,7 @@ export type {
   DirectInferenceClientOptions,
   DirectModelVerificationOptions,
   VerifiedDirectCompletionResult,
+  DirectAttestationVerificationResult,
   VerifyDirectModelResponseParams,
 } from './types/direct-inference-client';
 export { prepareE2eeChatRequest } from './core/e2ee-request';
@@ -62,6 +63,7 @@ export type {
   InferenceChatCompletions,
   InferenceClientOptions,
   VerifiedCompletionResult,
+  AttestationVerificationResult,
   VerifiedGatewayCompletionResult,
   VerifiedModelCompletionResult,
 } from './types/inference-client';

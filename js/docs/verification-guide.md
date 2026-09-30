@@ -102,7 +102,14 @@ Call `verify(model)` when the user selects a model or opens a chat to complete
 deployment verification before their first message:
 
 ```ts
-await client.verify(model);
+const result = await client.verify(model);
+
+// Populate your verification UI from these results.
+console.log('Gateway TCB status:', result.gateway.tcbStatus);
+for (const attestation of result.models) {
+  console.log('Model TCB status:', attestation.tcbStatus);
+  console.log('Intel quote:', attestation.report.intelQuote);
+}
 
 // Later, send the user's message using the same client and model.
 const completion = await client.chat.completions.create({
@@ -113,17 +120,27 @@ const completion = await client.chat.completions.create({
 
 `verify(model)` sends no Chat request. It performs the same Gateway and model
 checks as Chat, including configured policies, and rejects if they fail.
-For Incognito models, only the Gateway is verified. The method returns no value
-and shares cached results and in-flight verification with Chat. It also works
+It returns the verified Gateway, every verified model report, and `verifiedAt`
+(Unix time in milliseconds). For Incognito models, only the Gateway is verified
+and `models` is empty. Results share the cache and in-flight verification with
+Chat, so opening a details view can call `verify(model)` without fetching and
+verifying evidence again while the result is cached. It also works
 when using the client's `fetch` with the OpenAI SDK. `DirectInferenceClient`
-provides the same method for direct model verification.
+returns the full verified direct-attestation set, endpoint TLS binding, and
+`verifiedAt` through the same method.
+
+Each verified attestation includes its original input under `report`, including
+the quote, event log, and any NVIDIA payload. The sibling fields such as
+`signer`, `tcbStatus`, and `deployment` contain the verification conclusions.
+Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model and endpoint share verification work and cached
 results. `verify(model)` and Chat share a session; System One uses a separate
 session because its model-routing rules differ.
-The TTL starts when verification succeeds. A later Chat request reuses that
-result while it is cached. Increase the value to check deployments less
+The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
+so the UI can show when the evidence was actually verified. A later Chat request
+reuses that result while it is cached. Increase the value to check deployments less
 frequently, or set `0` to verify before every request, even after `verify(model)`.
 Deployment changes are not checked while a cached result is reused.
 This setting controls caching, not attestation validity.
