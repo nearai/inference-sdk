@@ -126,8 +126,8 @@ export type NodeInferenceClientOptions = AttestationClientOptions &
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
   } & InferenceEncryptionOptions;
 
-/** Successful Gateway preflight, shared by verify() and Chat for this model. */
-export type VerifiedDeployment = {
+/** Gateway and model attestation results, shared by verify() and Chat for this model. */
+export type AttestationVerificationResult = {
   readonly gateway: VerifiedGatewayAttestation;
   /** Every returned model report. Empty for Gateway-only models. */
   readonly models: readonly VerifiedModelAttestation[];

@@ -8,7 +8,7 @@ import {
   VerificationError,
   type TdxQuoteVerificationResult,
   type InferenceClientOptions,
-  type VerifiedDeployment,
+  type AttestationVerificationResult,
 } from '../src';
 import {
   AttestationClient as NodeAttestationClient,
@@ -1294,12 +1294,12 @@ describe('inference client', () => {
         e2ee: attestationSupported,
       });
 
-      const deployment: VerifiedDeployment = await client.verify(model);
-      expect(deployment).toMatchObject({
+      const result: AttestationVerificationResult = await client.verify(model);
+      expect(result).toMatchObject({
         verifiedAt: 0,
         gateway: { tcbStatus: 'UpToDate', tlsBinding: { kind: 'none' } },
       });
-      expect(deployment.models).toHaveLength(attestationSupported ? 1 : 0);
+      expect(result.models).toHaveLength(attestationSupported ? 1 : 0);
       expect(gateway.state).toMatchObject({
         gatewayAttestationRequests: 1,
         modelAttestationRequests: attestationSupported ? 1 : 0,
@@ -1307,7 +1307,7 @@ describe('inference client', () => {
       });
       now.mockReturnValue(42);
       const cached = await client.verify(model);
-      expect(cached).toEqual(deployment);
+      expect(cached).toEqual(result);
       now.mockReturnValue(60 * 60 * 1000 - 1);
       await client.chat.completions.create({
         model,
@@ -1335,7 +1335,7 @@ describe('inference client', () => {
       const refreshed = await client.verify(model);
       expect(refreshed.verifiedAt).toBe(60 * 60 * 1000);
       expect(refreshed.gateway.report.nonce).not.toBe(
-        deployment.gateway.report.nonce,
+        result.gateway.report.nonce,
       );
       expect(gateway.state.gatewayAttestationRequests).toBe(2);
     },
@@ -1787,11 +1787,12 @@ describe('inference client', () => {
     mockProviderSignatures(gateway);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
-    const deployment = await client.verify(model);
-    expect(
-      deployment.models.map(({ signer }) => signer.signingAddress),
-    ).toEqual([keyHex(keyPair(2).publicKey), keyHex(keyPair(3).publicKey)]);
-    for (const attestation of [deployment.gateway, ...deployment.models]) {
+    const result = await client.verify(model);
+    expect(result.models.map(({ signer }) => signer.signingAddress)).toEqual([
+      keyHex(keyPair(2).publicKey),
+      keyHex(keyPair(3).publicKey),
+    ]);
+    for (const attestation of [result.gateway, ...result.models]) {
       expect(attestation.report).toMatchObject({
         signer: attestation.signer,
         intelQuote: `${attestation.signer.signingAddress}:${attestation.report.nonce}`,
@@ -3194,8 +3195,8 @@ describe('inference client', () => {
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
 
       releaseGatewayVerification();
-      const deployment = await preverification;
-      expect(deployment.gateway.tlsBinding).toEqual({
+      const result = await preverification;
+      expect(result.gateway.tlsBinding).toEqual({
         kind: 'attested',
         spkiFingerprint: tlsFingerprint,
       });

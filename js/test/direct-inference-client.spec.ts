@@ -5,7 +5,7 @@ import OpenAI from 'openai';
 import {
   DirectInferenceClient,
   type DirectInferenceClientOptions,
-  type VerifiedDirectDeployment,
+  type DirectAttestationVerificationResult,
   type TdxQuoteVerificationResult,
 } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
@@ -663,12 +663,15 @@ describe('DirectInferenceClient', () => {
   test('preverifies direct reports and reuses them for same-model Chat', async () => {
     const endpoint = createDirectEndpoint({ additionalSigner: true });
     const client = new DirectInferenceClient(endpoint.options);
-    const deployment: VerifiedDirectDeployment = await client.verify(model);
-    expect(deployment.attestations.map(({ instanceId }) => instanceId)).toEqual(
-      ['instance-0', 'instance-1', 'instance-2'],
-    );
-    expect(deployment.servingAttestation.report.instanceId).toBe('instance-0');
-    expect(deployment.tlsBinding).toEqual({ kind: 'none' });
+    const result: DirectAttestationVerificationResult =
+      await client.verify(model);
+    expect(result.attestations.map(({ instanceId }) => instanceId)).toEqual([
+      'instance-0',
+      'instance-1',
+      'instance-2',
+    ]);
+    expect(result.servingAttestation.report.instanceId).toBe('instance-0');
+    expect(result.tlsBinding).toEqual({ kind: 'none' });
     expect(endpoint.state.completionRequests).toBe(0);
     expect(endpoint.state.signatureRequests).toBe(0);
     const first = await client.chat.completions.create({ model, messages });
@@ -682,7 +685,7 @@ describe('DirectInferenceClient', () => {
     expect(firstVerified.attestations).toHaveLength(2);
     expect(secondVerified.completionId).toBe(second.id);
     const cached = await client.verify(model);
-    expect(cached).toEqual(deployment);
+    expect(cached).toEqual(result);
     expect(endpoint.state.attestationRequests).toBe(1);
   });
 
