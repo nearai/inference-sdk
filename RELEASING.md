@@ -71,6 +71,13 @@ gh workflow run release.yml --repo nearai/inference-sdk --ref main \
   -f language=javascript -f version=0.1.0
 ```
 
+To publish Python `0.1.0` after its version preparation is merged:
+
+```sh
+gh workflow run release.yml --repo nearai/inference-sdk --ref main \
+  -f language=python -f version=0.1.0
+```
+
 The workflow:
 
 1. Requires the default branch and checks the selected manifest's version.

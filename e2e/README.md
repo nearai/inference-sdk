@@ -29,10 +29,10 @@ selector uses Chat capabilities, prefers non-reasoning models and lower token
 prices, and fails if a category is missing. It does not silently fall back to a
 hardcoded model.
 
-The first NEAR model also runs JavaScript's E2EE and OHTTP feature cases. These
-capabilities are not listed separately in the catalog; missing support fails
-the relevant case. The Gateway URL must expose its own TLS certificate, not an
-aggregator's certificate.
+The first NEAR model also runs the JavaScript and Python E2EE/OHTTP cases.
+These capabilities are not listed separately in the catalog; missing support
+fails the relevant case. The Gateway URL must expose its own TLS certificate,
+not an aggregator's certificate.
 
 Missing secrets fail the workflow. It does not run on pull requests and does
 not expose credentials to build or dependency-install steps. Tests do not log
@@ -48,9 +48,11 @@ credentials, request bodies, or full attestation reports.
 | All three, external models | Gateway receipt verification; no NEAR model attestation or E2EE claims |
 | All three, Chutes | Gateway receipt verification for JSON responses; no Chutes model attestation or E2EE claims |
 | All three, signed responses | An altered response is rejected using the real receipt, without sending another request |
-| JavaScript | Node `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
+| JavaScript and Python | `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
 | JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
+| Python | External `AsyncOpenAI` using `InferenceClient.http_client`; explicit preflight and automatic preflight on the first Chat |
 | Python and Rust | Standalone verification with both Ed25519 and ECDSA |
+| JavaScript and Python | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
 
 The JavaScript tests import the built package entry points. Its generic entry
 is exercised in Node; this is not a browser or CORS test. This suite targets
@@ -58,11 +60,13 @@ Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
 default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
 deployment allowlist.
 
-A complete three-language run sends 50 small Chat requests per environment (100 total), each
-capped at 1,024 completion tokens to leave room for reasoning and a visible answer.
+A complete three-language run without retries sends 63 small Chat requests per
+environment (126 total), each capped at 1,024 completion tokens to leave room for
+reasoning and a visible answer.
 Responses must have non-empty answer content and finish with `stop`; empty or
 token-truncated responses fail. The test does not require the model to return a
-particular word. JavaScript disables OpenAI request retries.
+particular word. JavaScript and the external Python OpenAI client disable OpenAI
+request retries. Python's built-in Chat interface retains its SDK retry defaults.
 Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
 2, and 4 second backoffs, within each model case's 180 second deadline. It never
 resends Chat or retries a cryptographic verification failure.

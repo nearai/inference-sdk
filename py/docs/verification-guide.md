@@ -22,9 +22,9 @@ async def chat(api_key: str) -> None:
             messages=[{'role': 'user', 'content': 'Hello'}],
             max_completion_tokens=128,
         )
-        print(completion.choices[0].message.content)
         verified = await inference_client.verify_response(completion.id)
         print(verified.signature_kind)
+        print(completion.choices[0].message.content)
 ```
 
 The client always verifies Gateway attestation. It reads model metadata on a
@@ -55,7 +55,8 @@ When connecting through an aggregator that terminates TLS, use
 Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
 
 The client delivers decrypted content before response-signature verification.
-Call `verify_response()` after fully consuming a stream:
+Call `verify_response()` after fully consuming a stream. Any content displayed
+before it succeeds is not yet signature-verified:
 
 ```python
 stream = await inference_client.chat.completions.create(
@@ -145,8 +146,8 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
         model='z-ai/glm-5.3-flash',
         messages=[{'role': 'user', 'content': 'Hello'}],
     )
-    print(completion.choices[0].message.content)
     verified = await inference_client.verify_response(completion.id)
+    print(completion.choices[0].message.content)
 ```
 
 OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).

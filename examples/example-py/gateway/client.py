@@ -44,9 +44,9 @@ async def run_non_streaming_example(client: InferenceClient) -> None:
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
         max_completion_tokens=8,
     )
-    print(completion.choices[0].message.content or '')
     verified = await client.verify_response(completion.id)
     print(f'Verified {verified.signature_kind} response.')
+    print(completion.choices[0].message.content or '')
 
 
 async def run_streaming_example(client: InferenceClient) -> None:
@@ -57,6 +57,7 @@ async def run_streaming_example(client: InferenceClient) -> None:
         stream=True,
     )
     completion_id = None
+    # Streamed content is not signature-verified until verify_response succeeds.
     async for chunk in stream:
         completion_id = chunk.id
         if chunk.choices:
