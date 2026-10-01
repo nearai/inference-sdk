@@ -107,11 +107,14 @@ Only Chat Completions are supported by this transport, not the Responses API.
 ### Verify before the first Chat request
 
 Call `verify(model)` to check the deployment while your application prepares its
-first request:
+first request and obtain the verified evidence for display or inspection:
 
 ```python
 async with InferenceClient(api_key, e2ee=True) as inference_client:
-    await inference_client.verify('z-ai/glm-5.3-flash')
+    attestations = await inference_client.verify('z-ai/glm-5.3-flash')
+    print('Gateway TCB:', attestations.gateway.tcb_status)
+    for model_attestation in attestations.models:
+        print('Model TCB:', model_attestation.tcb_status)
 
     # Application code prepares the conversation after verification succeeds.
     completion = await inference_client.chat.completions.create(
@@ -123,10 +126,16 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
 
 `verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
 verification, including TLS, model policy, and optional OHTTP checks. It raises if
-any required check fails. With a cache TTL of zero, the later Chat verifies again.
-`DirectInferenceClient.verify(model)` provides the same model-only workflow for
-direct endpoints. System One keeps its own session cache; `verify(model)` warms
-the Chat path.
+any required check fails. The result contains the verified Gateway, every verified
+model report, and `verified_at` in Unix milliseconds. Incognito results have an
+empty `models` tuple. Cache hits preserve the original result and verification
+time. With a cache TTL of zero, the later Chat verifies again.
+
+`DirectInferenceClient.verify(model)` returns the complete verified direct report
+set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
+result. In both workflows, response signatures are still checked separately
+with `verify_response(id)` after Chat.
+System One keeps its own session cache; `verify(model)` warms the Chat path.
 
 ### Use OHTTP
 

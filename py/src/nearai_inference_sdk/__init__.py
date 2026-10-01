@@ -48,6 +48,7 @@ from .types.cloud_api import (
     ModelMetadata,
 )
 from .types.direct import (
+    DirectAttestationVerificationResult,
     DirectClientBinding,
     DirectModelAttestation,
     DirectTlsBinding,
@@ -58,6 +59,7 @@ from .types.direct import (
 )
 from .types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
 from .types.inference_client import (
+    AttestationVerificationResult,
     DeploymentPolicy,
     GatewayVerificationOptions,
     ModelVerificationOptions,
@@ -110,6 +112,7 @@ __all__ = [
     'AttestationEventLog',
     'AttestationEvidence',
     'AttestationPolicy',
+    'AttestationVerificationResult',
     'AttestationVerifiers',
     'CompletionSignature',
     'CompletionSignatureKind',
@@ -117,6 +120,7 @@ __all__ = [
     'DeploymentPolicy',
     'DeploymentVerifier',
     'DirectAttestationClient',
+    'DirectAttestationVerificationResult',
     'DirectClientBinding',
     'DirectInferenceClient',
     'DirectModelAttestation',
