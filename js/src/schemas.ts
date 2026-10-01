@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import type { ComposeManagerAction } from './types/compose-manager';
 
 /** Values accepted at external HTTP, adapter, and signed-byte boundaries. */
 const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
@@ -130,19 +131,30 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
-// Keep every signed action field. Compose Manager's canonical JSON contract
-// uses string values and arrays of strings, with alphabetically sorted keys.
-export const ComposeManagerActionSchema = v.objectWithRest(
-  {
-    action: v.string(),
-    timestamp: v.string(),
-    image: v.optional(v.string()),
-    commit: v.optional(v.string()),
-    file: v.optional(v.string()),
-    file_sha256: v.optional(v.string()),
-    services: v.optional(v.array(v.string())),
-  },
-  v.union([v.string(), v.array(v.string())]),
+export const ComposeManagerActionFieldsSchema = objectSchema({
+  action: v.string(),
+  timestamp: v.string(),
+  image: v.optional(v.string()),
+  commit: v.optional(v.string()),
+  file: v.optional(v.string()),
+  file_sha256: v.optional(v.string()),
+  services: v.optional(v.array(v.string())),
+});
+
+export const ComposeManagerActionValueSchema = v.union([
+  v.string(),
+  v.array(v.string()),
+]);
+const ComposeManagerActionValuesSchema = v.array(
+  ComposeManagerActionValueSchema,
+);
+
+// Validate without rebuilding the action: object/record schemas filter keys
+// such as __proto__, but every signed field must participate in its hash.
+export const ComposeManagerActionSchema = v.custom<ComposeManagerAction>(
+  (value) =>
+    v.is(ComposeManagerActionFieldsSchema, value) &&
+    v.is(ComposeManagerActionValuesSchema, Object.values(value)),
 );
 
 export const ComposeManagerAttestationSchema = objectSchema({

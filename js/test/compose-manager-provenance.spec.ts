@@ -224,28 +224,55 @@ describe('Compose Manager deployment image provenance', () => {
     });
   });
 
-  test('hashes numeric-looking action keys in lexical order', async () => {
-    const actionsJson =
-      '[{"10":"ten","2":"two","action":"compose_up","timestamp":"1"}]';
-    const report = {
-      ...managerReport(),
-      actions: [
-        { '2': 'two', '10': 'ten', action: 'compose_up', timestamp: '1' },
-      ],
-      actionsHash: sha256(actionsJson).toString('hex'),
-    };
-    const verified = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        composeManagerAttestation: report,
-      }),
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: (quote) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-      },
-    });
-    expect(verified.deployment.composeManager?.actions).toEqual(report.actions);
-  });
+  test.each([
+    [
+      'numeric-looking',
+      '[{"10":"ten","2":"two","action":"compose_up","timestamp":"1"}]',
+    ],
+    [
+      'reserved JavaScript',
+      '[{"__proto__":["value"],"action":"compose_up","constructor":"value","prototype":"value","timestamp":"1"}]',
+    ],
+  ])(
+    'retains and hashes %s action keys in lexical order',
+    async (_label, actionsJson) => {
+      const report = {
+        ...managerReport(),
+        actions: JSON.parse(actionsJson),
+        actionsHash: sha256(actionsJson).toString('hex'),
+      };
+      const [attestation] = decodeModelAttestationReport({
+        model_attestations: [
+          {
+            signing_algo: 'ecdsa',
+            signing_address: createModelAttestation().signer.signingAddress,
+            request_nonce: nonce,
+            intel_quote: 'aa',
+            event_log: createModelAttestation().eventLog,
+            info: { tcb_info: { app_compose: appCompose } },
+            compose_manager_attestation: {
+              actions: report.actions,
+              actions_hash: report.actionsHash,
+              nonce,
+              quote: report.intelQuote,
+              event_log: report.eventLog,
+            },
+          },
+        ],
+      });
+      const verified = await verifyModelAttestation({
+        attestation,
+        clientBinding: { nonce },
+        verifiers: {
+          tdxQuote: (quote) =>
+            quote === 'bb' ? managerQuote(report) : createModelQuote(),
+        },
+      });
+      expect(verified.deployment.composeManager?.actions).toEqual(
+        report.actions,
+      );
+    },
+  );
 
   test.each([
     [['other'], 'image_missing'],

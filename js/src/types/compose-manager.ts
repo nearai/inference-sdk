@@ -1,5 +1,8 @@
 import type * as v from 'valibot';
-import type { ComposeManagerActionSchema } from '../schemas';
+import type {
+  ComposeManagerActionFieldsSchema,
+  ComposeManagerActionValueSchema,
+} from '../schemas';
 import type { AttestationEventLog } from './attestation-common';
 import type {
   MeasuredDeployment,
@@ -10,8 +13,9 @@ import type { ImageProvenancePolicy } from './provenance';
 
 /** Signed action fields retain their wire names for canonical JSON hashing. */
 export type ComposeManagerAction = v.InferOutput<
-  typeof ComposeManagerActionSchema
->;
+  typeof ComposeManagerActionFieldsSchema
+> &
+  Record<string, v.InferOutput<typeof ComposeManagerActionValueSchema>>;
 
 /** Deployment-control evidence, separate from the model signer's quote. */
 export type ComposeManagerAttestation = {
