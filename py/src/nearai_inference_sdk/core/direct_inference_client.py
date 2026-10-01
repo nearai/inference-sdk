@@ -1,12 +1,14 @@
 """Experimental direct Chat client sharing encryption and capture with the Gateway client."""
 
 from collections.abc import Mapping, Sequence
+from time import time
 
 import httpx
 
 from ..types.attestation_common import SigningAlgo
 from ..types.chat import CompletionSignature
 from ..types.direct import (
+    DirectAttestationVerificationResult,
     DirectModelVerificationOptions,
     VerifiedDirectCompletionResult,
     VerifiedDirectModelAttestation,
@@ -48,7 +50,11 @@ class _DirectSessionAttestationClient(DirectAttestationClient):
         )
 
 
-class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionResult]):
+class DirectInferenceClient(
+    _VerifiedInferenceClient[
+        VerifiedDirectCompletionResult, DirectAttestationVerificationResult
+    ]
+):
     """Experimental direct provider client. E2EE defaults to enabled.
 
     Verifies all supplied reports before Chat and retains the selected signer
@@ -94,7 +100,9 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
 
     async def _create_session(
         self, model: str
-    ) -> _VerifiedSession[VerifiedDirectCompletionResult]:
+    ) -> _VerifiedSession[
+        VerifiedDirectCompletionResult, DirectAttestationVerificationResult
+    ]:
         fetched = await self._attestation_client.fetch_model_attestations(
             signing_algo=self._signing_algo
         )
@@ -171,12 +179,19 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
             )
 
         return _VerifiedSession(
-            E2eeModelKey(
+            model_key=E2eeModelKey(
                 signing_algo=self._signing_algo, public_key=selected.signing_public_key
             ),
-            self._completion_client(client, key_config),
-            api,
-            verify_response,
+            http_client=self._completion_client(client, key_config),
+            attestation_client=api,
+            verify_response=verify_response,
+            attestation_result=DirectAttestationVerificationResult(
+                serving_attestation=verified.serving_attestation,
+                attestations=verified.attestations,
+                tls_binding=verified.tls_binding,
+                spki_fingerprints=verified.spki_fingerprints,
+                verified_at=int(time() * 1000),
+            ),
         )
 
     def _create_direct_client(self, fingerprints: tuple[str, ...]) -> httpx.AsyncClient:

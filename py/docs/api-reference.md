@@ -28,7 +28,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
 | `inference_client.send` | `(request)` | `httpx.Response` | The same verified Chat path using HTTP messages directly. |
-| `inference_client.verify` | `(model)` | `None` | Verifies deployments without sending Chat, sharing its cache and in-flight work. |
+| `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending Chat, sharing its cache and in-flight work. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat signature over retained wire bytes. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -94,6 +94,17 @@ inference. The catalog decision shares the attestation cache's lifetime.
 | `ModelVerificationOptions` | `policy: ModelAttestationPolicy \| None` | `None` | Model TCB and GPU policy. |
 | | `verifiers: ModelAttestationVerifiers \| None` | `None` | Model quote, GPU, and deployment callbacks. |
 
+### Attestation results
+
+`verify(model)` returns `AttestationVerificationResult` after all required checks
+pass. Cache hits return the original result without changing `verified_at`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `gateway` | `VerifiedGatewayAttestation` | Verified Gateway deployment and TLS binding. |
+| `models` | `tuple[VerifiedModelAttestation, ...]` | Every verified model report; empty for Incognito models. |
+| `verified_at` | `int` | Unix time in milliseconds when verification completed, not a quote timestamp or cache expiry. |
+
 ### HTTP integration and receipt results
 
 `http_client` returns a new, non-owning `httpx.AsyncClient` adapter accepted by
@@ -122,7 +133,7 @@ same common options as `InferenceClient`, with the following differences:
 | `gateway_verification` | Not available; there is no Gateway workflow. |
 | `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`, plus optional `serving_deployment` for the serving report only. `ModelVerificationOptions` is also accepted for per-report checks. |
 | `deployment_policy` | Applied to every supplied direct model report. |
-| `verify(model)` | Verifies every supplied direct report without sending Chat; shares Chat's cache. |
+| `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
 
 `DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
@@ -149,6 +160,8 @@ also occur in `all_attestations`, compared by content.
 | `VerifiedDirectModelAttestations` | `serving_attestation`, `attestations` | Verified serving entry and every verified supplied report. |
 | | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
 | | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
+| `DirectAttestationVerificationResult` | Inherited `VerifiedDirectModelAttestations` fields | Complete verified report set, not just the signer group selected for Chat. |
+| | `verified_at: int` | Unix time in milliseconds when verification completed; unchanged on cache hits. |
 | `VerifiedDirectCompletionResult` | `id`, `signature_kind`, `signature` | Completion ID and verified `provider_tee` signature. |
 | | `attestations` | Tuple of verified reports sharing its signer; this does not identify one CVM. |
 
