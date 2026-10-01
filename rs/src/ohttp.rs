@@ -97,7 +97,7 @@ pub fn create_ohttp_client(
     if size == 0
         || !size.is_multiple_of(4)
         || config.len() != 37 + size
-        || !config[37..].chunks_exact(4).any(|v| v == [0, 1, 0, 1])
+        || !config[37..].as_chunks::<4>().0.contains(&[0, 1, 0, 1])
     {
         return Err(invalid().into());
     }
