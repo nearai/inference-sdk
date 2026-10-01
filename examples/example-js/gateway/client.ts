@@ -1,6 +1,7 @@
 import {
   InferenceClient,
   verifyDeploymentImageProvenance,
+  verifyComposeManagerDeploymentImageProvenance,
   type ImageProvenancePolicy,
 } from '@nearai/inference-sdk/node';
 
@@ -30,6 +31,17 @@ const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
   },
 };
 
+const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+  'nearaidev/compose-manager': {
+    repository: 'nearai/compose-manager',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
@@ -42,6 +54,15 @@ async function main(): Promise<void> {
     baseUrl: BASE_URL,
     signingAlgo: SIGNING_ALGO,
     e2ee: true,
+    modelVerification: {
+      verifiers: {
+        deployment: (deployment) =>
+          verifyComposeManagerDeploymentImageProvenance({
+            deployment,
+            imagePolicies: MODEL_IMAGE_POLICIES,
+          }),
+      },
+    },
     gatewayVerification: {
       verifiers: {
         deployment: ({ appCompose }) =>
@@ -53,8 +74,8 @@ async function main(): Promise<void> {
     },
   });
 
-  // Gateway/model attestations and all four Gateway image checks must pass
-  // before Chat is sent. These policies do not verify model runtime images.
+  // Attestations and required Gateway/model image builds must pass before Chat.
+  // Model image checks authenticate recorded deployment intent, not runtime state.
   // Optional: verify ahead of the first message, for example on model selection.
   await inferenceClient.verify(MODEL);
 

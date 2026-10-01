@@ -1,6 +1,8 @@
 import type {
   GpuEvidenceStatus,
   DeploymentVerifier,
+  AttestationPolicy,
+  TdxQuoteVerifier,
   GpuEvidenceVerifier,
   VerifiedModelAttestation,
   VerifyModelAttestationParams,
@@ -22,6 +24,7 @@ import {
   verifyDstackQuote,
 } from './dstack-attestation';
 import type { VerifiedDstackQuote } from './dstack-attestation';
+import { verifyComposeManagerAttestation } from './compose-manager-attestation';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
@@ -67,6 +70,9 @@ async function verifyModelCpuAttestation({
     attestation,
     verifiedQuote,
     deploymentVerifier: verifiers?.deployment,
+    nonce,
+    policy,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
   });
 }
 
@@ -74,6 +80,9 @@ type VerifyModelDeploymentParams = {
   attestation: ModelAttestation;
   verifiedQuote: VerifiedDstackQuote;
   deploymentVerifier?: DeploymentVerifier;
+  nonce: string;
+  policy?: AttestationPolicy;
+  tdxQuoteVerifier?: TdxQuoteVerifier;
 };
 
 /** Shared model checks after the endpoint-specific report-data binding passes. */
@@ -81,11 +90,25 @@ export async function verifyModelDeployment({
   attestation,
   verifiedQuote,
   deploymentVerifier,
+  nonce,
+  policy,
+  tdxQuoteVerifier,
 }: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
-  const evidence = await verifyDstackDeployment(
+  const composeManager =
+    attestation.composeManagerAttestation === undefined
+      ? undefined
+      : await verifyComposeManagerAttestation({
+          attestation: attestation.composeManagerAttestation,
+          appCompose: attestation.appCompose,
+          nonce,
+          policy,
+          tdxQuoteVerifier,
+        });
+  const evidence = await verifyDstackDeployment({
     verifiedQuote,
     deploymentVerifier,
-  );
+    composeManager,
+  });
 
   const signingPublicKey = verifySigningPublicKey({
     attestation,

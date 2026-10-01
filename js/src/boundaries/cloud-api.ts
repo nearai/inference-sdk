@@ -199,6 +199,19 @@ export function mapModelAttestation(
     ...(attestation.nvidia_payload === undefined
       ? {}
       : { nvidiaPayload: attestation.nvidia_payload }),
+    ...(attestation.compose_manager_attestation === undefined
+      ? {}
+      : {
+          composeManagerAttestation: {
+            actions: attestation.compose_manager_attestation.actions,
+            actionsHash: attestation.compose_manager_attestation.actions_hash,
+            nonce: attestation.compose_manager_attestation.nonce,
+            intelQuote: attestation.compose_manager_attestation.quote,
+            eventLog: attestation.compose_manager_attestation.event_log,
+            reportedQuoteData:
+              attestation.compose_manager_attestation.report_data,
+          },
+        }),
   };
 }
 

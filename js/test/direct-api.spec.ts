@@ -48,7 +48,13 @@ function reportFor(request: Request) {
       attestation(nonce, 'instance-a'),
       attestation(nonce, 'instance-b'),
     ],
-    compose_manager_attestation: { opaque: 'evidence' },
+    compose_manager_attestation: {
+      actions: [],
+      actions_hash: '00'.repeat(32),
+      nonce,
+      quote: 'bb',
+      event_log: [],
+    },
   };
 }
 
@@ -111,6 +117,8 @@ describe('DirectAttestationClient', () => {
       signature: ohttpWireAttestation.signature,
     });
     expect(result.servingAttestation).toBe(result.attestations[0]);
+    expect(result.servingAttestation.composeManagerAttestation).toBeDefined();
+    expect(result.attestations[1].composeManagerAttestation).toBeUndefined();
     for (const attestation of result.attestations) {
       expect(attestation).not.toHaveProperty('ohttpAttestation');
     }
@@ -179,6 +187,13 @@ describe('DirectAttestationClient', () => {
       'instance-b',
     ]);
     expect(servingAttestation).toEqual({
+      composeManagerAttestation: {
+        actions: [],
+        actionsHash: '00'.repeat(32),
+        nonce: clientBinding.nonce,
+        intelQuote: 'bb',
+        eventLog: [],
+      },
       nonce: clientBinding.nonce,
       signer: { signingAlgo: 'ed25519', signingAddress },
       intelQuote: 'aa',

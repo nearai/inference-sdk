@@ -37,13 +37,22 @@ export function decodeDirectModelAttestations(
   // The returned attestation set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
   const servingIndex = findDirectModelAttestationIndex(attestations, root);
-  const servingAttestation = attestations[servingIndex];
+  let servingAttestation = attestations[servingIndex];
   if (servingAttestation === undefined) {
     throw invalidCloudApiResponse({
       path: 'all_attestations',
       expected: 'array containing the top-level attestation',
       value: response.all_attestations,
     });
+  }
+  // The top-level control-plane report belongs to the serving entry. Never
+  // copy it to other CVMs merely because they share a model or signing key.
+  if (root.composeManagerAttestation !== undefined) {
+    servingAttestation = {
+      ...servingAttestation,
+      composeManagerAttestation: root.composeManagerAttestation,
+    };
+    attestations[servingIndex] = servingAttestation;
   }
   return {
     servingAttestation,

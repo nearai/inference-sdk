@@ -130,6 +130,34 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
+// Keep every signed action field. Compose Manager's canonical JSON contract
+// uses string values and arrays of strings, with alphabetically sorted keys.
+export const ComposeManagerActionSchema = v.objectWithRest(
+  {
+    action: v.string(),
+    timestamp: v.string(),
+    image: v.optional(v.string()),
+    commit: v.optional(v.string()),
+    file: v.optional(v.string()),
+    file_sha256: v.optional(v.string()),
+  },
+  v.union([v.string(), v.array(v.string())]),
+);
+
+export const ComposeManagerAttestationSchema = objectSchema({
+  actions: v.array(ComposeManagerActionSchema),
+  actions_hash: v.string(),
+  nonce: v.string(),
+  quote: v.string(),
+  event_log: AttestationEventLogSchema,
+  report_data: OptionalCloudApiStringSchema,
+});
+
+const OptionalComposeManagerAttestationSchema = v.pipe(
+  v.optional(v.nullable(ComposeManagerAttestationSchema)),
+  v.transform((value) => value ?? undefined),
+);
+
 export const OhttpAttestationSchema = objectSchema({
   signing_algo: v.literal('ed25519'),
   signing_key: v.string(),
@@ -157,6 +185,7 @@ const CloudApiModelAttestationEntries = {
   ...CloudApiAttestationEntries,
   nvidia_payload: OptionalCloudApiStringSchema,
   signing_public_key: OptionalCloudApiStringSchema,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
 };
 
 export const CloudApiModelAttestationSchema = objectSchema(
@@ -182,7 +211,6 @@ export const DirectApiAttestationReportSchema = objectSchema({
     v.array(DirectApiModelAttestationSchema),
     v.minLength(1),
   ),
-  compose_manager_attestation: v.optional(v.unknown()),
   ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 
