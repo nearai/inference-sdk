@@ -563,6 +563,11 @@ class InferenceClient(
         (gateway, key_config), models = await gather_cancel_on_error(
             self._verify_gateway(fetched), self._verify_models(model, attestations)
         )
+        # System One does not route to a selected key: any verified model may sign.
+        if systemone and any(
+            item.signer.signing_algo != self._signing_algo for item in models
+        ):
+            raise verification_failure('signature.signer_mismatch')
         selected = (
             None
             if systemone

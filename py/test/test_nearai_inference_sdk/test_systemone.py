@@ -165,6 +165,41 @@ class DecisionGateway(Gateway):
 
 
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+@pytest.mark.parametrize('mixed', [False, True])
+async def test_rejects_model_signer_algorithm_mismatch_before_decision(
+    monkeypatch, signing_algo, mixed
+):
+    gateway = DecisionGateway(signing_algo, 'provider_tee')
+    other = Gateway('ecdsa' if signing_algo == 'ed25519' else 'ed25519')
+    handle = gateway.handle
+
+    async def respond(request):
+        response = await handle(request)
+        if (
+            request.url.path == '/v1/attestation/report'
+            and 'model' in request.url.params
+        ):
+            body = response.json()
+            report = other.attestation(request.url.params['nonce'])
+            quote = other.quotes[report['intel_quote']]
+            report['intel_quote'] = 'ff'
+            gateway.quotes['ff'] = quote
+            body['model_attestations'] = (
+                [*body['model_attestations'], report] if mixed else [report]
+            )
+            return httpx.Response(200, json=body)
+        return response
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.systemone.create(REQUEST)
+    assert raised.value.failure.code == 'signature.signer_mismatch'
+    assert gateway.requests == []
+
+
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
 async def test_decisions_verify_exact_bytes_with_the_actual_serving_signer(
     monkeypatch, signing_algo, kind
