@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from .attestation_common import SigningIdentity, TcbStatus
+from .compose_manager import VerifiedComposeManagerAttestation
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -19,6 +20,7 @@ class RuntimeMeasurements:
 class MeasuredDeployment:
     app_compose: str
     runtime_measurements: RuntimeMeasurements
+    compose_manager: VerifiedComposeManagerAttestation | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

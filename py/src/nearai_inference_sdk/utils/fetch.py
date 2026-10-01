@@ -39,6 +39,7 @@ async def fetch(
     data: str | bytes | None = None,
     headers: Mapping[str, str] | None = None,
     _capture_peer_spki: bool = False,
+    allow_redirects: bool = True,
 ) -> FetchResponse:
     """Send one request, optionally retaining its TLS peer SPKI fingerprint.
 
@@ -55,7 +56,9 @@ async def fetch(
         aiohttp.ClientSession(
             response_class=response_class,
         ) as session,
-        session.request(method, url, data=data, headers=headers) as response,
+        session.request(
+            method, url, data=data, headers=headers, allow_redirects=allow_redirects
+        ) as response,
     ):
         return FetchResponse(
             status=response.status,

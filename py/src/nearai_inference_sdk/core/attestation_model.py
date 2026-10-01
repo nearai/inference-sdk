@@ -23,7 +23,12 @@ from ..utils.errors import (
 )
 from ..utils.nvidia import decode_nvidia_payload_nonce, verify_nvidia_nras
 from .attestation_common import verify_report_data_binding, verify_reported_nonce
-from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
+from .compose_manager_attestation import verify_compose_manager_attestation
+from .dstack_attestation import (
+    VerifiedDstackQuote,
+    verify_dstack_deployment,
+    verify_dstack_quote,
+)
 
 
 async def verify_model_attestation(
@@ -74,8 +79,29 @@ async def _verify_model_cpu(
         nonce=nonce,
         signer=verified_quote.signer,
     )
+    return await verify_model_deployment(
+        attestation, verified_quote, nonce, policy, verifiers
+    )
+
+
+async def verify_model_deployment(
+    attestation: ModelAttestation,
+    verified_quote: VerifiedDstackQuote,
+    nonce: str,
+    policy: ModelAttestationPolicy | None,
+    verifiers: ModelAttestationVerifiers | None,
+) -> VerifiedAttestationEvidence:
+    manager = None
+    if attestation.compose_manager_attestation is not None:
+        manager = await verify_compose_manager_attestation(
+            attestation.compose_manager_attestation,
+            attestation.app_compose,
+            nonce,
+            policy,
+            None if verifiers is None else verifiers.tdx_quote,
+        )
     return await verify_dstack_deployment(
-        verified_quote, None if verifiers is None else verifiers.deployment
+        verified_quote, None if verifiers is None else verifiers.deployment, manager
     )
 
 

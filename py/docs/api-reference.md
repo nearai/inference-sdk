@@ -33,7 +33,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
 | `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
-| `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
+| `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None, serving_deployment=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding, then runs the optional serving-only policy. |
 | `verify_direct_model_response` | `(request_body, response_body, signature, attestations)` | `tuple[VerifiedDirectModelAttestation, ...]` | Verifies exact bytes against all reports sharing the response signer. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
@@ -54,6 +54,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
+| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
 
 ## InferenceClient
 
@@ -130,7 +131,8 @@ same common options as `InferenceClient`, with the following differences:
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
 | `e2ee` | Defaults to `True`. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
-| `model_verification`, `deployment_policy` | Applied to every supplied direct model report. |
+| `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`. Optional `serving_deployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). `ModelVerificationOptions` is also accepted for per-report checks. |
+| `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
 
@@ -167,6 +169,9 @@ also occur in `all_attestations`, compared by content.
 the same policy/verifier options as `verify_model_attestation`.
 `verify_direct_model_attestations` accepts the fetched set and those options; a
 TLS-bound serving report requires an observed peer fingerprint.
+The optional `serving_deployment: DeploymentVerifier` runs after every report
+and the TLS binding pass. Use it for envelope-level Compose Manager evidence;
+only the serving result's `deployment_provenance` is marked verified by this check.
 `verify_direct_model_response` accepts exact request and response bytes, the
 signature, and a sequence of verified direct reports.
 
@@ -392,6 +397,38 @@ or `image_not_pinned`; `imageRepository` and `service` identify the selection wh
 applicable. GitHub request errors are wrapped as `provenance.image_request_failed`
 with `imageRepository`, `digest`, the original cause, and unchanged retryability.
 Image verification errors pass through unchanged.
+
+### `verify_compose_manager_deployment_image_provenance`
+
+Asynchronous. Use in a model deployment callback or after model verification.
+Selects the latest matching `compose_up`, verifies the recorded file's exact
+SHA-256, then checks the action's named `services` and the latest manager-start
+image. An omitted or empty service list selects all services in the file.
+Unknown service names fail with `provenance.deployment_images_invalid`
+(`reason='service_missing'`); images in unselected services cannot satisfy a policy.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Required | Verified deployment with authenticated `compose_manager` actions. |
+| `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Required | Nonempty required image repositories and build policies. |
+| `compose_repository` | `str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
+| `github_token` | `str \| None` | `None` | Optional GitHub token for file/proof retrieval. |
+
+Missing evidence, file/hash mismatches and image-policy failures raise
+`VerificationError`. This does not prove current runtime state or action success.
+
+`ModelAttestation.compose_manager_attestation` optionally retains the raw
+`ComposeManagerAttestation` (`actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`). When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `VerifiedComposeManagerAttestation`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `tuple[ComposeManagerAction, ...]` | Quote-authenticated wire-named action fields, including unknown string/string-array fields. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `tuple[str, ...]` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements from its verified event log. |
 
 ### `fetch_image_provenance`
 

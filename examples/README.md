@@ -124,8 +124,8 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 
 | File | Usage |
 | --- | --- |
-| `gateway/bare.py` | Verifies attestations and Gateway image provenance, prepares E2EE requests, and verifies encrypted response bytes. |
-| `gateway/client.py` | Configures Gateway image provenance and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
+| `gateway/bare.py` | Verifies attestations and required Gateway/model image builds, prepares E2EE requests, and verifies encrypted response bytes. |
+| `gateway/client.py` | Configures Gateway/model image policies and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
 | `gateway/client_openai_sdk.py` | Shares `inference_client.http_client` with one reusable `openai.AsyncOpenAI` client. |
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
@@ -136,7 +136,20 @@ Gateway Chat examples explicitly enable E2EE; the Gateway SDK defaults to
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
 client caches attestations for 60 minutes per model and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
-Gateway image policies listed above; they do not check model runtime images.
+Gateway image policies listed above. Their model deployment callbacks also call
+`verify_compose_manager_deployment_image_provenance` to require these image builds:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+The helper uses authenticated Compose Manager actions to retrieve the compose
+file at its recorded commit, checks its exact SHA-256, and verifies the required
+image builds. The manager's latest start action supplies its own image. This
+authenticates recorded deployment intent, not successful deployment or current
+runtime state. Other model images and weights remain outside these policies.
+Attestation and image-check failures block Chat requests.
 
 ```sh
 cd examples/example-py

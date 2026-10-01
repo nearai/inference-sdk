@@ -7,9 +7,11 @@ from nearai_inference_sdk import (
     ImageProvenancePolicy,
     InferenceClient,
     MeasuredDeployment,
+    ModelAttestationVerifiers,
+    ModelVerificationOptions,
+    verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
 )
-
 
 BASE_URL = 'https://cloud-api.near.ai/v1/'
 MODEL = 'z-ai/glm-5.3-flash'
@@ -29,6 +31,23 @@ GATEWAY_IMAGE_POLICIES = {
         repository='nearai/dstack-vpc-client', workflow='.github/workflows/build.yml'
     ),
 }
+
+
+MODEL_IMAGE_POLICIES = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
+    ),
+    'nearaidev/compose-manager': ImageProvenancePolicy(
+        repository='nearai/compose-manager', workflow='.github/workflows/build.yml'
+    ),
+}
+
+
+async def verify_model_images(deployment: MeasuredDeployment) -> None:
+    # Verify recorded deployment intent, not the currently running containers.
+    await verify_compose_manager_deployment_image_provenance(
+        deployment, MODEL_IMAGE_POLICIES
+    )
 
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
@@ -81,6 +100,9 @@ async def main() -> None:
         base_url=BASE_URL,
         signing_algo=SIGNING_ALGO,
         e2ee=True,
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(deployment=verify_model_images)
+        ),
         gateway_verification=GatewayVerificationOptions(
             verifiers=AttestationVerifiers(deployment=verify_gateway_images)
         ),

@@ -128,11 +128,36 @@ class CloudAttestationSchema(ApiSchema):
     tls_cert_fingerprint: StrictStr | None = None
 
 
+class ComposeManagerActionSchema(RootModel[dict[str, StrictStr | list[StrictStr]]]):
+    @model_validator(mode='after')
+    def validate_action_fields(self) -> ComposeManagerActionSchema:
+        for key in ('action', 'timestamp'):
+            if not isinstance(self.root.get(key), str):
+                # Pydantic converts ValueError (not TypeError) to ValidationError.
+                raise ValueError(f'{key} must be a string')  # noqa: TRY004
+        for key in ('commit', 'file', 'file_sha256', 'image'):
+            if key in self.root and not isinstance(self.root[key], str):
+                raise ValueError(f'{key} must be a string')
+        if 'services' in self.root and not isinstance(self.root['services'], list):
+            raise ValueError('services must be a list of strings')
+        return self
+
+
+class ComposeManagerAttestationSchema(ApiSchema):
+    actions: list[ComposeManagerActionSchema]
+    actions_hash: StrictStr
+    nonce: StrictStr
+    quote: StrictStr
+    event_log: StrictStr | list[Any]
+    report_data: StrictStr | None = None
+
+
 class CloudModelAttestationSchema(CloudAttestationSchema):
     info: CloudInfoSchema
     report_data: StrictStr | None = None
     nvidia_payload: StrictStr | None = None
     signing_public_key: StrictStr | None = None
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
@@ -182,6 +207,7 @@ class DirectInfoSchema(CloudInfoSchema):
 
 
 class DirectModelAttestationSchema(CloudAttestationSchema):
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
     model_name: StrictStr = Field(min_length=1)
     info: DirectInfoSchema
     report_data: StrictStr | None = None

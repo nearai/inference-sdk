@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 from nearai_inference_sdk import (
     DirectAttestationVerificationResult,
     DirectInferenceClient,
+    DirectModelVerificationOptions,
     ModelAttestationVerifiers,
     ModelVerificationOptions,
     VerificationError,
@@ -20,6 +21,10 @@ class DirectEndpoint(Gateway):
         super().__init__(signing_algo)
         self.ohttp_gateway = OhttpGateway(handler=self.handle_chat)
         self.bad_sibling = False
+        self.other_signer_first = False
+        self.wrong_signature_key = False
+        self.other = Gateway(seed=bytes([8]) * 32)
+        self.other.quotes = self.quotes
 
     async def handle_chat(self, request):
         return await super().handle(request)
@@ -41,6 +46,12 @@ class DirectEndpoint(Gateway):
                 'model_name': MODEL,
             }
             body = {**root, 'all_attestations': [root, sibling]}
+            if self.other_signer_first:
+                other = {
+                    **self.other.attestation(request.url.params['nonce']),
+                    'model_name': MODEL,
+                }
+                body['all_attestations'].insert(0, other)
             if self.signing_algo == 'ed25519':
                 config = self.ohttp_gateway.key_config
                 body['ohttp_attestation'] = {
@@ -54,6 +65,11 @@ class DirectEndpoint(Gateway):
         if request.url.path.startswith('/v1/signature/'):
             signature = response.json()
             signature.pop('signature_kind')
+            if self.wrong_signature_key:
+                signature['signing_address'] = self.other.address
+                signature['signature'] = self.other.key.sign(
+                    signature['text'].encode()
+                ).signature.hex()
             return httpx.Response(200, json=signature)
         return response
 
@@ -145,3 +161,79 @@ async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypat
             )
         assert raised.value.failure.code == 'policy.debug_enabled'
     assert endpoint.completion_requests == []
+
+
+async def test_serving_deployment_policy_blocks_chat(monkeypatch):
+    endpoint = DirectEndpoint()
+    endpoint.install(monkeypatch)
+    checked = []
+
+    def reject(deployment):
+        checked.append(deployment)
+        raise ValueError('Unapproved serving deployment')
+
+    async with DirectInferenceClient(
+        BASE_URL,
+        model_verification=DirectModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(tdx_quote=endpoint.quotes.__getitem__),
+            serving_deployment=reject,
+        ),
+    ) as client:
+        with pytest.raises(ValueError, match='Unapproved serving deployment'):
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert len(checked) == 1
+    assert endpoint.completion_requests == []
+
+
+@pytest.mark.parametrize('e2ee', [True, False])
+async def test_chat_uses_only_the_provenance_checked_serving_report(monkeypatch, e2ee):
+    endpoint = DirectEndpoint()
+    endpoint.other_signer_first = True
+    endpoint.install(monkeypatch)
+    checked = []
+    async with DirectInferenceClient(
+        BASE_URL,
+        e2ee=e2ee,
+        model_verification=DirectModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(tdx_quote=endpoint.quotes.__getitem__),
+            serving_deployment=checked.append,
+        ),
+    ) as client:
+        preflight = await client.verify(MODEL)
+        assert len(preflight.attestations) == 3
+        assert checked == [preflight.serving_attestation.deployment]
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        assert completion.choices[0].message.content == 'Hello back'
+        assert endpoint.plaintexts == ['Hello']
+        result = await client.verify_response(completion.id)
+        assert result.attestations == (preflight.serving_attestation,)
+        assert result.attestations[0].deployment_provenance == 'verified'
+
+
+async def test_serving_policy_rejects_a_response_signed_by_another_report(monkeypatch):
+    endpoint = DirectEndpoint()
+    endpoint.other_signer_first = True
+    endpoint.wrong_signature_key = True
+    endpoint.install(monkeypatch)
+    async with DirectInferenceClient(
+        BASE_URL,
+        e2ee=False,
+        model_verification=DirectModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(tdx_quote=endpoint.quotes.__getitem__),
+            serving_deployment=lambda _deployment: None,
+        ),
+    ) as client:
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        with pytest.raises(VerificationError) as raised:
+            await client.verify_response(completion.id)
+        assert raised.value.failure.code == 'signature.signer_mismatch'
