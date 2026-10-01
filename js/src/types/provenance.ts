@@ -49,6 +49,7 @@ export type DeploymentImagesFailureReason =
   | 'invalid_app_compose'
   | 'invalid_docker_compose'
   | 'unresolved_image'
+  | 'service_missing'
   | 'image_missing'
   | 'image_not_pinned';
 

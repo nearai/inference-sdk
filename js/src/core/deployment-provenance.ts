@@ -26,6 +26,8 @@ type VerifyComposeImageProvenanceParams = {
   imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
   githubToken?: string;
   additionalImages?: readonly ComposeImage[];
+  /** An explicit compose_up selection; omitted or empty selects the whole file. */
+  services?: readonly string[];
 };
 
 /**
@@ -64,11 +66,13 @@ export async function verifyComposeImageProvenance({
   imagePolicies,
   githubToken,
   additionalImages = [],
+  services,
 }: VerifyComposeImageProvenanceParams): Promise<void> {
   const requiredImages = selectRequiredImages({
     dockerCompose,
     imagePolicies,
     additionalImages,
+    services,
   });
   await Promise.all(
     requiredImages.map(async ({ repository, digest, policy }) => {
@@ -99,6 +103,7 @@ function selectRequiredImages({
   dockerCompose,
   imagePolicies,
   additionalImages = [],
+  services,
 }: VerifyComposeImageProvenanceParams): RequiredImage[] {
   const policies = Object.entries(imagePolicies);
   requireImagePolicies(imagePolicies);
@@ -120,8 +125,18 @@ function selectRequiredImages({
     );
   }
 
+  const composeServices = new Map(Object.entries(compose.services));
+  const selectedServices = services?.length ? services : composeServices.keys();
   const images: ComposeImage[] = [];
-  for (const [service, { image }] of Object.entries(compose.services)) {
+  for (const service of selectedServices) {
+    const config = composeServices.get(service);
+    if (config === undefined) {
+      throw new VerificationError({
+        code: 'provenance.deployment_images_invalid',
+        details: { reason: 'service_missing', service },
+      });
+    }
+    const { image } = config;
     if (image === undefined) continue;
     // A variable's default is not evidence of its resolved deployment value.
     if (image.includes('$')) {

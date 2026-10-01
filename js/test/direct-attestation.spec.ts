@@ -261,11 +261,13 @@ describe('direct model attestations verification', () => {
       intelQuote: 'bb',
     });
     const tampered = { ...second, appCompose: '{"tampered":true}' };
+    const servingDeployment = jest.fn();
 
     await expect(
       verifyDirectModelAttestations({
         servingAttestation: first,
         attestations: [first, tampered],
+        servingDeployment,
         clientBinding: { nonce },
         verifiers: {
           tdxQuote: (quote) =>
@@ -275,6 +277,7 @@ describe('direct model attestations verification', () => {
     ).rejects.toMatchObject({
       failure: { code: 'measurement.app_compose_mrconfigid_mismatch' },
     });
+    expect(servingDeployment).not.toHaveBeenCalled();
   });
 
   test.each([

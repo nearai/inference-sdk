@@ -60,6 +60,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       ...fetched,
       policy: this.directOptions.modelVerification?.policy,
       verifiers: this.getModelVerifiers(model),
+      servingDeployment:
+        this.directOptions.modelVerification?.servingDeployment,
     });
     const servingSigner = verifiedModelAttestations.servingAttestation.signer;
     const ohttpKeyConfig = this.getOhttpKeyConfig(

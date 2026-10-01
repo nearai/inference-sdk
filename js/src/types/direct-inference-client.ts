@@ -9,10 +9,14 @@ import type {
   InferenceEncryptionOptions,
   ModelVerificationOptions,
 } from './inference-client';
+import type { DeploymentVerifier } from './verification';
 
-export type DirectModelVerificationOptions = ModelVerificationOptions;
+export type DirectModelVerificationOptions = ModelVerificationOptions & {
+  /** Runs only for the serving report, after all reports and the TLS binding pass. */
+  readonly servingDeployment?: DeploymentVerifier;
+};
 
-export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
+export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 
 /**
  * Verified Chat requests to one direct model endpoint, without a Gateway.

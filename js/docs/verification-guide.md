@@ -732,7 +732,9 @@ authenticated actions in `deployment.composeManager`.
 
 The image helper selects the last `compose_up`, fetches its file from
 `nearai/cvm-compose-files` at the recorded commit, checks the exact file bytes
-against `file_sha256`, and verifies the required image builds. It also considers
+against `file_sha256`, and verifies the required image builds from the action's
+named `services`. An omitted or empty list selects the whole file; unknown service
+names are rejected. Images in unselected services cannot satisfy a policy. It also considers
 the image in the latest `compose_manager_started` action. Set `composeFile` to
 select a particular project's file, or `composeRepository` to use another
 trusted repository. A configured image that is absent or unpinned fails verification.
@@ -744,8 +746,27 @@ identity. The policies above cover the proxy and Compose Manager images, not
 model weights, every container or the boot launcher's build. Approve the boot
 configuration separately. A missing Compose Manager report is allowed by basic
 model verification but rejected when this provenance helper is used. For direct
-endpoints, envelope-level evidence applies only to the serving report, not every
-entry in `all_attestations`.
+endpoints, envelope-level evidence applies only to the serving report. Use
+`servingDeployment` for this policy, keeping per-report checks in `verifiers.deployment`:
+
+```ts
+import { verifyDirectModelAttestations } from '@nearai/inference-sdk/node';
+
+const verified = await verifyDirectModelAttestations({
+  ...fetchedDirect,
+  servingDeployment: deployment =>
+    verifyComposeManagerDeploymentImageProvenance({
+      deployment,
+      imagePolicies: modelImagePolicies,
+    }),
+});
+```
+
+For `DirectInferenceClient`, use `modelVerification.servingDeployment`. Every
+model report still undergoes its normal quote, GPU and deployment checks. This
+additional policy runs after the whole set and its TLS binding pass; it marks
+only the serving report's provenance as verified. Missing manager evidence in
+that report still fails the policy.
 
 ### Verify the response signature
 

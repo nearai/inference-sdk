@@ -283,6 +283,24 @@ describe('DirectInferenceClient', () => {
     jest.restoreAllMocks();
   });
 
+  test('blocks Chat when the serving deployment policy fails', async () => {
+    const provider = createDirectEndpoint();
+    const reject = new Error('Unapproved serving deployment');
+    const servingDeployment = jest.fn(() => {
+      throw reject;
+    });
+    const client = new DirectInferenceClient({
+      ...provider.options,
+      modelVerification: {
+        ...provider.options.modelVerification,
+        servingDeployment,
+      },
+    });
+    await expect(client.fetch(chatRequest())).rejects.toBe(reject);
+    expect(servingDeployment).toHaveBeenCalledTimes(1);
+    expect(provider.state.decryptedPrompts).toEqual([]);
+  });
+
   test.each([true, false])(
     'round-trips OHTTP JSON and SSE with byte-exact response verification and E2EE set to %s',
     async (e2ee) => {

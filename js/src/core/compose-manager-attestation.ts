@@ -55,15 +55,18 @@ export async function verifyComposeManagerAttestation({
 
   // Keep unknown string-valued action fields in the hash. The wire schema
   // preserves them; dropping them during domain mapping would change the log.
-  const actionsJson = JSON.stringify(
-    attestation.actions.map((action) =>
-      Object.fromEntries(
-        Object.entries(action).sort(([left], [right]) =>
-          left < right ? -1 : left > right ? 1 : 0,
-        ),
-      ),
-    ),
-  );
+  // Serialize sorted entries directly: JSON.stringify(object) would reorder
+  // integer-like keys numerically, unlike the server's lexical key order.
+  const actionsJson = `[${attestation.actions
+    .map((action) => {
+      const fields = Object.entries(action)
+        .sort(([left], [right]) => Buffer.compare(utf8(left), utf8(right)))
+        .map(
+          ([key, value]) => `${JSON.stringify(key)}:${JSON.stringify(value)}`,
+        );
+      return `{${fields.join(',')}}`;
+    })
+    .join(',')}]`;
   const actionsHash = await sha256(utf8(actionsJson));
   const reportedHash = requireByteLength({
     value: attestation.actionsHash,
@@ -91,3 +94,4 @@ export async function verifyComposeManagerAttestation({
     runtimeMeasurements,
   };
 }
+import { Buffer } from 'buffer';

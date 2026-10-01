@@ -74,6 +74,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     imagePolicies,
     githubToken,
     additionalImages,
+    services: action.services,
   });
 }
 

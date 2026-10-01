@@ -140,6 +140,7 @@ export const ComposeManagerActionSchema = v.objectWithRest(
     commit: v.optional(v.string()),
     file: v.optional(v.string()),
     file_sha256: v.optional(v.string()),
+    services: v.optional(v.array(v.string())),
   },
   v.union([v.string(), v.array(v.string())]),
 );
