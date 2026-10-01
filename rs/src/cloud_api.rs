@@ -27,7 +27,9 @@ pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 ///
 /// The client owns its API key, base URL, and HTTP clients. Reuse one instance
 /// for related evidence requests instead of passing the API key to each call.
+#[derive(Clone)]
 pub struct AttestationClient {
+    headers: HeaderMap,
     api_key: String,
     base_url: Url,
     client: Client,
@@ -53,16 +55,106 @@ impl AttestationClient {
         Self {
             api_key,
             base_url,
-            client: Client::new(),
+            headers: HeaderMap::new(),
+            client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("valid client"),
             // A Gateway TLS binding must observe the Gateway's own peer, not
             // a system-configured HTTPS proxy. Other Cloud API requests keep
             // reqwest's normal proxy behavior.
             gateway_client: Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
                 .no_proxy()
                 .tls_info(true)
                 .build()
                 .expect("the SDK's default HTTP client configuration is valid"),
         }
+    }
+
+    /// Use additional authentication or application headers on every evidence request.
+    pub fn with_headers(mut self, headers: HeaderMap) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    pub(crate) fn with_http_client(mut self, client: Client) -> Self {
+        self.client = client.clone();
+        self.gateway_client = client;
+        self
+    }
+
+    pub async fn fetch_model_metadata(
+        &self,
+        model: &str,
+    ) -> Result<crate::ModelMetadata, ApiError> {
+        if model.is_empty() || matches!(model, "." | "..") {
+            return Err(invalid_api_input("model", "invalid_model", None, None));
+        }
+        let mut url = self.endpoint("model/")?;
+        url.path_segments_mut()
+            .map_err(|_| invalid_base_url())?
+            .pop_if_empty()
+            .push(model);
+        let response =
+            get_cloud_api_response(self, url, ApiResource::ModelMetadata, None, false).await?;
+        #[derive(Deserialize)]
+        struct MetadataResponse {
+            metadata: crate::ModelMetadata,
+        }
+        let response: MetadataResponse =
+            decode_wire_response(&response.body, ApiResource::ModelMetadata, "model metadata")?;
+        Ok(response.metadata)
+    }
+
+    pub(crate) async fn fetch_value(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+        resource: ApiResource,
+    ) -> Result<serde_json::Value, ApiError> {
+        let mut url = self.endpoint(path)?;
+        url.query_pairs_mut()
+            .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
+        let response = get_cloud_api_response(self, url, resource, None, false).await?;
+        decode_wire_response(&response.body, resource, path)
+    }
+
+    pub(crate) async fn direct_signature(
+        &self,
+        id: &str,
+        algo: Option<SigningAlgo>,
+    ) -> Result<CompletionSignature, ApiError> {
+        let mut url = self.endpoint("signature")?;
+        url.path_segments_mut()
+            .map_err(|_| invalid_base_url())?
+            .push(id);
+        if let Some(algo) = algo {
+            url.query_pairs_mut()
+                .append_pair("signing_algo", &algo.to_string());
+        }
+        let response =
+            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None, false)
+                .await?;
+        let mut value: serde_json::Value = decode_wire_response(
+            &response.body,
+            ApiResource::CompletionSignature,
+            "signature",
+        )?;
+        if value.get("signature").is_some() && value.get("signature_kind").is_none() {
+            value
+                .as_object_mut()
+                .ok_or_else(|| invalid_api_input("signature", "expected object", None, None))?
+                .insert("signature_kind".into(), serde_json::json!("provider_tee"));
+        }
+        let wire = decode_wire_response(
+            &value.to_string(),
+            ApiResource::CompletionSignature,
+            "signature",
+        )?;
+        let signature = map_completion_signature(wire)?;
+        require_provider_signature(&signature)?;
+        Ok(signature)
     }
 
     fn endpoint(&self, path: &str) -> Result<Url, ApiError> {
@@ -198,6 +290,7 @@ impl AttestationClient {
             ApiResource::GatewayAttestation,
         )?;
         Ok(FetchedGatewayAttestation {
+            ohttp_attestation: response.ohttp_attestation,
             attestation,
             client_binding: GatewayClientBinding {
                 nonce,
@@ -316,7 +409,7 @@ fn build_cloud_api_headers(
     client: &AttestationClient,
     extra_header: Option<(&str, &str)>,
 ) -> Result<HeaderMap, ApiError> {
-    let mut headers = HeaderMap::new();
+    let mut headers = client.headers.clone();
     let authorization =
         HeaderValue::from_str(&format!("Bearer {}", client.api_key)).map_err(|_| {
             invalid_api_input(
@@ -326,7 +419,10 @@ fn build_cloud_api_headers(
                 None,
             )
         })?;
-    headers.insert(AUTHORIZATION, authorization);
+    if !client.api_key.is_empty() {
+        headers.insert(AUTHORIZATION, authorization);
+        headers.remove("api-key");
+    }
     if let Some((name, value)) = extra_header {
         let name = HeaderName::from_bytes(name.as_bytes())
             .expect("the SDK only supplies static valid header names");
@@ -356,9 +452,15 @@ struct CloudApiResponse {
     peer_spki_fingerprint: Option<String>,
 }
 
-fn parse_base_url(value: &str) -> Result<Url, ApiError> {
+pub(crate) fn parse_base_url(value: &str) -> Result<Url, ApiError> {
     let mut url = Url::parse(value).map_err(|_| invalid_base_url())?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
         return Err(invalid_base_url());
     }
     if !url.path().ends_with('/') {
@@ -397,7 +499,7 @@ fn validate_input_signer(signer: &SigningIdentity, field: &str) -> Result<Vec<u8
     )
 }
 
-fn validate_input_signing_address(
+pub(crate) fn validate_input_signing_address(
     signing_address: &str,
     signing_algo: Option<SigningAlgo>,
     field: &str,
@@ -519,7 +621,15 @@ fn map_model_attestation(
     path: &str,
 ) -> Result<ModelAttestation, ApiError> {
     let (evidence, reported_quote_data) = map_evidence(value.attestation, path)?;
+    if let Some(key) = &value.signing_public_key {
+        decode_hex(key).map_err(|_| ApiError::InvalidResponse {
+            path: format!("{path}.signing_public_key"),
+            expected: "a hexadecimal public key".into(),
+            actual: "invalid".into(),
+        })?;
+    }
     Ok(ModelAttestation {
+        signing_public_key: value.signing_public_key,
         evidence,
         reported_quote_data,
         nvidia_payload: value.nvidia_payload,
@@ -629,11 +739,13 @@ struct WireModelAttestationResponse {
 
 #[derive(Deserialize)]
 struct WireGatewayAttestationResponse {
+    ohttp_attestation: Option<crate::OhttpAttestation>,
     gateway_attestation: WireAttestation,
 }
 
 #[derive(Deserialize)]
 struct WireModelAttestation {
+    signing_public_key: Option<String>,
     #[serde(flatten)]
     attestation: WireAttestation,
     nvidia_payload: Option<String>,
@@ -794,6 +906,15 @@ fn require_signature_field<T>(
     }
 }
 
+pub(crate) fn decode_model_value(value: &serde_json::Value) -> Result<ModelAttestation, ApiError> {
+    let wire = decode_wire_response(
+        &value.to_string(),
+        ApiResource::ModelAttestation,
+        "attestation",
+    )?;
+    map_model_attestation(wire, "attestation")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,6 +939,20 @@ mod tests {
         T: serde::de::DeserializeOwned,
     {
         decode_wire_response(&value.to_string(), resource, root_path)
+    }
+
+    #[test]
+    fn malformed_model_public_key_is_a_response_error() {
+        let error = decode_model_value(&json!({
+            "request_nonce": "11".repeat(32), "signing_algo": "ed25519",
+            "signing_address": "22".repeat(32), "signing_public_key": "not hex",
+            "intel_quote": "aa", "event_log": [],
+            "info": {"tcb_info": {"app_compose": "{}"}},
+        }))
+        .unwrap_err();
+        assert!(
+            matches!(error, ApiError::InvalidResponse { path, .. } if path == "attestation.signing_public_key")
+        );
     }
 
     #[test]

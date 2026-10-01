@@ -159,7 +159,10 @@ Uses the `nearai-inference-sdk` crate, imported as `nearai_inference_sdk`.
 
 ```sh
 cd examples/example-rs
+# Manual attestation/signature workflow:
 cargo run
+# Integrated Gateway verification, E2EE, and response verification:
+cargo run --bin client
 ```
 
 The Python and Rust projects use the sibling SDK source through local path
