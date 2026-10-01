@@ -707,6 +707,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
         }).then((gatewayAttestation) => {
           signal.throwIfAborted();
+          if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
+            throw new VerificationError({ code: 'signature.signer_mismatch' });
+          }
           return {
             gatewayAttestation,
             ohttpKeyConfig: this.getOhttpKeyConfig(

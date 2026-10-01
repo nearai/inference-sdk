@@ -3704,25 +3704,28 @@ describe('System One decisions', () => {
     expect(fixture.signaturePaths).toHaveLength(2);
   });
 
-  test('rejects Ed25519 model reports before an ECDSA decision request', async () => {
-    const fixture = decisionGateway({
-      tee: true,
-    });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      signingAlgo: 'ecdsa',
-      ohttp: false,
-      e2ee: false,
-    });
-    await expect(
-      client.systemone.create(decisionRequest),
-    ).rejects.toMatchObject({
-      failure: { code: 'signature.signer_mismatch' },
-    });
-    expect(fixture.requests).toHaveLength(0);
-    expect(fixture.signaturePaths).toHaveLength(0);
-  });
+  test.each([false, true])(
+    'rejects an incompatible Gateway signer before a decision (provider TEE: %s)',
+    async (tee) => {
+      const fixture = decisionGateway({
+        tee,
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        signingAlgo: 'ecdsa',
+        ohttp: false,
+        e2ee: false,
+      });
+      await expect(
+        client.systemone.create(decisionRequest),
+      ).rejects.toMatchObject({
+        failure: { code: 'signature.signer_mismatch' },
+      });
+      expect(fixture.requests).toHaveLength(0);
+      expect(fixture.signaturePaths).toHaveLength(0);
+    },
+  );
 
   test.each([
     { missingId: true },
