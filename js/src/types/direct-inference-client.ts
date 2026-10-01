@@ -12,7 +12,7 @@ import type {
 import type { DeploymentVerifier } from './verification';
 
 export type DirectModelVerificationOptions = ModelVerificationOptions & {
-  /** Runs only for the serving report, after all reports and the TLS binding pass. */
+  /** Checks the serving report and restricts Chat to its signer and TLS pin. */
   readonly servingDeployment?: DeploymentVerifier;
 };
 
@@ -54,6 +54,6 @@ export type VerifiedDirectCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** All verified reports sharing this signer, not a claim identifying one CVM. */
+  /** Eligible verified reports sharing this signer, not a claim identifying one CVM. */
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };

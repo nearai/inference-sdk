@@ -766,7 +766,10 @@ For `DirectInferenceClient`, use `modelVerification.servingDeployment`. Every
 model report still undergoes its normal quote, GPU and deployment checks. This
 additional policy runs after the whole set and its TLS binding pass; it marks
 only the serving report's provenance as verified. Missing manager evidence in
-that report still fails the policy.
+that report still fails the policy. With this option, the client uses only the
+serving report for Chat's signer, TLS pins (when enabled), and response verification.
+When composing the bare functions yourself, pass `[verified.servingAttestation]`
+to `verifyDirectModelResponse` to apply the same restriction.
 
 ### Verify the response signature
 

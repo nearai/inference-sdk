@@ -159,7 +159,7 @@ There is no `gatewayVerification` option.
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Additional model-aware deployment check. No approval policy is supplied by default. |
-| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Per-report `policy` and `verifiers`, plus optional `servingDeployment` for the serving report only. |
+| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Per-report `policy` and `verifiers`. Optional `servingDeployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). |
 
 ### Methods and response result
 

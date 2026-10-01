@@ -56,13 +56,18 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     >
   > {
     const fetched = await this.fetchModelAttestations();
+    const servingDeployment =
+      this.directOptions.modelVerification?.servingDeployment;
     const verifiedModelAttestations = await verifyDirectModelAttestations({
       ...fetched,
       policy: this.directOptions.modelVerification?.policy,
       verifiers: this.getModelVerifiers(model),
-      servingDeployment:
-        this.directOptions.modelVerification?.servingDeployment,
+      servingDeployment,
     });
+    const eligibleAttestations =
+      servingDeployment === undefined
+        ? verifiedModelAttestations.attestations
+        : [verifiedModelAttestations.servingAttestation];
     const servingSigner = verifiedModelAttestations.servingAttestation.signer;
     const ohttpKeyConfig = this.getOhttpKeyConfig(
       fetched.ohttpAttestation,
@@ -70,13 +75,15 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     );
     // Every attestation is verified before choosing an encryption key. Entries
     // sharing a key may still have different deployment measurements.
-    // The top-level OHTTP key belongs to the serving signer. Its public key
+    // OHTTP and a serving-only policy restrict Chat to the serving signer. Its public key
     // may come from any verified report sharing that exact signing identity.
+    const requireServingSigner =
+      this.ohttpEnabled || servingDeployment !== undefined;
     const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         candidate.signingPublicKey !== undefined &&
-        (!this.ohttpEnabled ||
+        (!requireServingSigner ||
           (candidate.signer.signingAlgo === servingSigner.signingAlgo &&
             hexToBuffer(candidate.signer.signingAddress).equals(
               hexToBuffer(servingSigner.signingAddress),
@@ -87,8 +94,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     }
     const signingAddress = hexToBuffer(modelAttestation.signer.signingAddress);
     // Encryption, TLS pins and response verification use the same signer
-    // group, retaining every verified deployment that shares the selected key.
-    const attestations = verifiedModelAttestations.attestations.filter(
+    // group, limited to the serving report when only its provenance was checked.
+    const attestations = eligibleAttestations.filter(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         hexToBuffer(candidate.signer.signingAddress).equals(signingAddress),
