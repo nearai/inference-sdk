@@ -1,3 +1,4 @@
+import { Buffer } from 'buffer';
 import type {
   ComposeManagerAttestation,
   VerifiedComposeManagerAttestation,
@@ -94,4 +95,3 @@ export async function verifyComposeManagerAttestation({
     runtimeMeasurements,
   };
 }
-import { Buffer } from 'buffer';
