@@ -25,11 +25,12 @@ are asynchronous. Standalone response-signature verification is synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
-| `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption. |
+| `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
 | `inference_client.send` | `(request)` | `httpx.Response` | The same verified Chat path using HTTP messages directly. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending Chat, sharing its cache and in-flight work. |
-| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat signature over retained wire bytes. |
+| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
+| `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
 | `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
@@ -58,7 +59,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 ## InferenceClient
 
 Use in an `asyncio` event loop as an asynchronous context manager, or call `await client.aclose()` when
-finished. Chat Completions are supported. `chat.completions.create` does not
+finished. Chat Completions and System One are supported. `chat.completions.create` does not
 automatically verify the response signature; use `verify_response` afterwards.
 
 ### Constructor
@@ -71,7 +72,7 @@ automatically verify the response signature; use `verify_response` afterwards.
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
-| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model for this long; `0` verifies each request. |
+| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model and endpoint for this long; `0` verifies each request. Chat and System One share cache mechanics, not sessions. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
@@ -114,7 +115,7 @@ the owner open while sending requests and verifying responses.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
-| `id` | `str` | Completion ID supplied to `verify_response`. |
+| `id` | `str` | ID supplied to `verify_response`, from Chat's `completion.id` or System One's `result.decision_id`. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
@@ -129,7 +130,7 @@ same common options as `InferenceClient`, with the following differences:
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
 | `e2ee` | Defaults to `True`. |
-| `gateway_verification` | Not available; there is no Gateway workflow. |
+| `gateway_verification`, `systemone` | Not available; there is no Gateway workflow. |
 | `model_verification`, `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
@@ -169,6 +170,44 @@ the same policy/verifier options as `verify_model_attestation`.
 TLS-bound serving report requires an observed peer fingerprint.
 `verify_direct_model_response` accepts exact request and response bytes, the
 signature, and a sequence of verified direct reports.
+
+## System One
+
+`inference_client.systemone.create(request, *, headers=None)` is asynchronous.
+It rejects E2EE, OHTTP, and streaming, verifies the required deployments, and sends
+one `POST /v1/systemone`. Configured authentication also applies to this request.
+Attestation caching and concurrent preflight sharing apply, with separate entries
+from Chat. Inference is never automatically retried.
+
+| `SystemOneRequest` field | Type | Description |
+| --- | --- | --- |
+| `model` | `str` | Canonical decision-model ID. |
+| `state` | `str \| dict \| list` | Text or structured decision context. |
+| `questions` | `dict[str, SystemOneQuestion]` | Named questions; request business rules are checked by the server. |
+
+| Question `type` | Optional `instructions` | `criteria` |
+| --- | --- | --- |
+| `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
+| `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |
+| `score` | Text, object, or array | Required list of level descriptions. |
+
+| `SystemOneResult` member | Type | Description |
+| --- | --- | --- |
+| `data` | `SystemOneResponse` | Parsed output; unverified until `client.verify_response(result.decision_id)` succeeds. |
+| `decision_id` | `str` | `X-Generation-Id` header, independent of optional JSON `data['id']`. Pass to `verify_response(id)`. |
+
+| `SystemOneResponse` field | Type | Description |
+| --- | --- | --- |
+| `id` | Optional `str \| None` | Upstream ID; not used for receipt lookup. |
+| `model` | `str` | Reported model ID. |
+| `answers` | `dict[str, SystemOneAnswer]` | Named answers, preserving every dictionary key. |
+| `usage` | Object with `input_tokens`, `output_tokens` | Nonnegative integer counts. |
+
+| Answer `type` | Fields |
+| --- | --- |
+| `noul` | `noul`: probability in `[0, 1]`. |
+| `choice` | `choice`: string label; `confidence` and per-label `probabilities` in `[0, 1]`. |
+| `score` | `score`: finite number; `confidence` and per-level `probabilities` in `[0, 1]`; `legend`: descriptions keyed by level. |
 
 ## Standalone E2EE and pinned TLS
 

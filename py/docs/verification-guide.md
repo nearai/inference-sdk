@@ -40,7 +40,7 @@ E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 response signatures. ECDSA uses the legacy AES-GCM protocol and omits
 `X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
 
-Successful attestation checks are reused for 60 minutes per model.
+Successful attestation checks are reused for 60 minutes per model and endpoint.
 Set `attestation_cache_time_to_live_ms=0` to check every request.
 `response_cache_time_to_live_ms` separately controls how long exact response
 bytes remain available after completion; its default is also 60 minutes.
@@ -135,6 +135,7 @@ time. With a cache TTL of zero, the later Chat verifies again.
 set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
 result. In both workflows, response signatures are still checked separately
 with `verify_response(id)` after Chat.
+System One keeps its own session cache; `verify(model)` warms the Chat path.
 
 ### Use OHTTP
 
@@ -193,9 +194,12 @@ async with InferenceClient(
 ```
 
 Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. Preserve URL-encoded model and signature IDs, bodies,
-model-key routing, and encryption headers. The device verifies evidence and
-response signatures; the proxy can only forward the encrypted Chat fields.
+`/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+`X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
+bodies, model-key routing, and encryption headers. A browser-facing proxy must
+expose `X-Generation-Id` through CORS. The device verifies evidence and response
+signatures; the proxy can only forward the encrypted Chat fields. System One
+decision content is not encrypted by this SDK.
 
 ## Direct model endpoints
 
@@ -257,6 +261,47 @@ The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
 Known endpoint limitations are tracked in [cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087):
 reports may omit other serving CVMs, and signature lookup may return 404 when
 inference and lookup reach different instances. Use Gateway clients for production.
+
+## System One decisions
+
+`systemone.create()` sends one non-streaming decision request. Use an active
+decision model and an endpoint serving `/v1/systemone`. The client verifies the
+Gateway and all applicable model reports first; this path does not require an
+E2EE public key or send a model-key routing header.
+
+```python
+async with InferenceClient(api_key, base_url=base_url) as inference_client:
+    result = await inference_client.systemone.create(
+        {
+            'model': decision_model,
+            'state': {'message': 'Please explain this briefly.'},
+            'questions': {
+                'brief': {'type': 'noul', 'instructions': 'Should the answer be brief?'}
+            },
+        }
+    )
+    verified = await inference_client.verify_response(result.decision_id)
+    print(result.data['answers'])
+```
+
+`result.decision_id` comes from `X-Generation-Id`, independently of the optional
+JSON `id`. `verify_response()` checks the captured request and response bytes, so later
+changes to `result.data` do not change what is verified. A provider TEE receipt
+selects its signer from the preverified model reports; a hosted Gateway receipt
+proves the Gateway signature without claiming model TEE execution.
+
+System One rejects streaming, E2EE, and OHTTP before sending. Request business
+rules are checked by the server; the SDK validates the response at the JSON boundary.
+System One shares the configured attestation TTL and concurrent preflight work.
+Its cache entries are separate from Chat because decisions can be signed by any
+verified model in the returned set, while Chat routes to a selected model key.
+
+Responses use the same retention, expiry, and verification lifecycle as Chat.
+Repeated `verify_response(result.decision_id)` calls share in-flight work and reuse
+successful results or terminal failures. A transient lookup failure or an unavailable
+signature allows a later call to retry only the signature lookup. Inference is never
+automatically repeated. Cancel the calling asyncio task to stop waiting; cancelling
+one caller does not cancel preflight or receipt verification shared with others.
 
 ## Standalone workflow
 
