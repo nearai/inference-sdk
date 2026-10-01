@@ -53,6 +53,14 @@ class VerifiedDirectModelAttestations:
 
 
 @dataclass(frozen=True, kw_only=True)
+class DirectAttestationVerificationResult(VerifiedDirectModelAttestations):
+    """All verified direct reports shared by verify() and Chat."""
+
+    # Unix milliseconds when verification completed; unchanged on cache hits.
+    verified_at: int
+
+
+@dataclass(frozen=True, kw_only=True)
 class VerifiedDirectCompletionResult:
     id: str
     signature: CompletionSignature

@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 
 from nearai_inference_sdk import (
     ApiError,
+    AttestationVerificationResult,
     AttestationVerifiers,
     E2eeModelKey,
     GatewayVerificationOptions,
@@ -71,6 +72,7 @@ class Gateway:
         self.quotes = {}
         self.signatures = {}
         self.metadata = {'providerType': 'vllm', 'attestationSupported': True}
+        self.model_report_count = 1
         self.additional_model_is_invalid = False
         self.bad_quote = False
         self.tail_gate: asyncio.Event | None = None
@@ -137,7 +139,9 @@ class Gateway:
             nonce = request.url.params['nonce']
             if 'model' in request.url.params:
                 self.model_requests.append(request.url.params['model'])
-                attestations = [self.attestation(nonce)]
+                attestations = [
+                    self.attestation(nonce) for _ in range(self.model_report_count)
+                ]
                 if self.additional_model_is_invalid:
                     self.bad_quote = True
                     attestations.append(self.attestation(nonce))
@@ -439,12 +443,18 @@ async def test_expired_attestations_are_refreshed_before_sending_chat(
     gateway.install(monkeypatch)
     now = 0
     monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
+    monkeypatch.setattr(inference_client, 'time', lambda: 1_700_000_000 + now)
 
     async with gateway.client(attestation_cache_time_to_live_ms=1000) as client:
         await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        original = await client.verify(MODEL)
         now = 2
         await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        refreshed = await client.verify(MODEL)
 
+    assert refreshed is not original
+    assert original.verified_at == 1_700_000_000_000
+    assert refreshed.verified_at == 1_700_000_002_000
     assert gateway.model_requests == [MODEL, MODEL]
 
 
@@ -453,15 +463,52 @@ async def test_verify_checks_deployments_without_chat_and_obeys_cache_ttl(
     monkeypatch, gateway, ttl_ms
 ):
     gateway.install(monkeypatch)
+    now = 1_700_000_000
+    monkeypatch.setattr(inference_client, 'time', lambda: now)
     async with gateway.client(attestation_cache_time_to_live_ms=ttl_ms) as client:
-        await client.verify(MODEL)
+        first = await client.verify(MODEL)
+        assert isinstance(first, AttestationVerificationResult)
+        assert first.gateway.tcb_status == 'UpToDate'
+        assert len(first.models) == 1
+        assert first.models[0].signer.signing_address == gateway.address
+        now += 1
+        second = await client.verify(MODEL)
+        if ttl_ms == 0:
+            assert second is not first
+            assert second.verified_at == first.verified_at + 1000
+        else:
+            assert second is first
+            assert second.verified_at == 1_700_000_000_000
         assert gateway.completion_requests == []
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
-        await client.verify_response(completion.id)
-    assert gateway.gateway_requests == (2 if ttl_ms == 0 else 1)
+        receipt = await client.verify_response(completion.id)
+        if ttl_ms != 0:
+            assert receipt.attestation is first.models[0]
+    assert gateway.gateway_requests == (3 if ttl_ms == 0 else 1)
     assert len(gateway.model_requests) == gateway.gateway_requests
+
+
+@pytest.mark.parametrize('attestation_supported', [True, False])
+async def test_verify_returns_all_model_reports_or_gateway_only_results(
+    monkeypatch, attestation_supported
+):
+    gateway = Gateway()
+    gateway.model_report_count = 2
+    gateway.metadata['attestationSupported'] = attestation_supported
+    gateway.install(monkeypatch)
+
+    async with gateway.client(e2ee=False) as client:
+        first, second = await asyncio.gather(client.verify(MODEL), client.verify(MODEL))
+
+    assert second is first
+    assert first.gateway.signer.signing_address == gateway.address
+    assert len(first.models) == (2 if attestation_supported else 0)
+    assert all(item.tcb_status == 'UpToDate' for item in first.models)
+    assert gateway.gateway_requests == 1
+    assert gateway.model_requests == ([MODEL] if attestation_supported else [])
+    assert gateway.completion_requests == []
 
 
 async def test_failed_preverification_is_not_cached(monkeypatch):

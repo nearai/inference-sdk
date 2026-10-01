@@ -134,12 +134,17 @@ model for 60 minutes. To verify while a user selects a model, put this call
 before Chat in the quick start:
 
 ```python
-await client.verify('z-ai/glm-5.3-flash')
+attestations = await client.verify('z-ai/glm-5.3-flash')
+print('Gateway TCB:', attestations.gateway.tcb_status)
+for model in attestations.models:
+    print('Model TCB:', model.tcb_status)
 ```
 
-This sends no Chat request and returns `None` on success. It uses the same
-checks and cache as Chat, and concurrent calls for the same model share
-in-flight verification.
+This sends no Chat request. It returns the verified Gateway, model reports, and
+`verified_at` in Unix milliseconds. Incognito models have an empty `models` tuple.
+Cache hits preserve the result and its timestamp; concurrent calls for the same
+model share in-flight verification. Response signatures still require a separate
+`verify_response(id)` call after Chat.
 
 To change cache durations, construct the client as below inside `main()`.
 Use `async with client:` for the Chat calls:
@@ -435,6 +440,9 @@ uses the encrypted bytes, not decrypted or reserialized JSON.
 previously verified Gateway SPKI.
 
 ## Direct model endpoints
+
+`DirectInferenceClient.verify(model)` returns every verified direct report, the
+serving entry, TLS binding, and `verified_at`. It has no Gateway result.
 
 Direct clients are experimental and not recommended for production. They verify
 model evidence without Gateway attestation or catalog lookup.

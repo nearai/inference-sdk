@@ -48,7 +48,7 @@ For model support and response-signature guarantees, see
 | --- | --- | --- |
 | `chat.completions.create(...)` | OpenAI completion or async stream | Chat Completions parameters. Verifies deployments before sending, then decrypts if E2EE is enabled. |
 | `send(request: httpx.Request)` | `httpx.Response` | The same verified Chat path with an application-owned HTTP request. |
-| `verify(model: str)` | `None` | Verifies deployments without Chat. Shares Chat's cache and in-flight work. |
+| `verify(model: str)` | `AttestationVerificationResult` | Returns verified deployments without Chat. Shares Chat's cache and in-flight work. |
 | `verify_response(id: str)` | `VerifiedCompletionResult` | Verifies the signature using retained bytes and evidence. Unknown or expired IDs raise `api.completion_not_found`. |
 | `aclose()` | `None` | Closes owned HTTP connections and clears retained records. Called by the async context manager. |
 
@@ -64,6 +64,17 @@ Records remain until their TTL expires, including after verification.
 | | `verifiers: AttestationVerifiers \| None` | `None` | Gateway quote and deployment callbacks. |
 | `ModelVerificationOptions` | `policy: ModelAttestationPolicy \| None` | `None` | Model TCB and GPU policy. |
 | | `verifiers: ModelAttestationVerifiers \| None` | `None` | Model quote, GPU, and deployment callbacks. |
+
+### Attestation results
+
+`verify(model)` returns `AttestationVerificationResult`. Cache hits preserve the
+original result and `verified_at`.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `gateway` | `VerifiedGatewayAttestation` | Verified Gateway deployment and TLS binding. |
+| `models` | `tuple[VerifiedModelAttestation, ...]` | Every verified model report; empty for Incognito models. |
+| `verified_at` | `int` | Unix milliseconds when verification completed, not a quote timestamp or cache expiry. |
 
 ### HTTP integration and response results
 
@@ -471,7 +482,7 @@ same common options as `InferenceClient`, with the following differences:
 | `e2ee` | Defaults to `True`. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
 | `model_verification`, `deployment_policy` | Applied to every supplied direct model report. |
-| `verify(model)` | Verifies every supplied direct report without sending Chat; shares Chat's cache. |
+| `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
 
 `DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
@@ -498,6 +509,8 @@ also occur in `all_attestations`, compared by content.
 | `VerifiedDirectModelAttestations` | `serving_attestation`, `attestations` | Verified serving entry and every verified supplied report. |
 | | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
 | | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
+| `DirectAttestationVerificationResult` | Inherited `VerifiedDirectModelAttestations` fields | The full direct report set returned by `verify(model)`. |
+| | `verified_at: int` | Unix milliseconds when verification completed; unchanged on cache hits. |
 | `VerifiedDirectCompletionResult` | `id`, `signature_kind`, `signature` | Completion ID and verified `provider_tee` signature. |
 | | `attestations` | Tuple of verified reports sharing its signer; this does not identify one CVM. |
 
