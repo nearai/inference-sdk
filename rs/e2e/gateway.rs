@@ -1,4 +1,9 @@
-use std::{env, error::Error, io, time::Duration};
+use std::{
+    env,
+    error::Error,
+    io,
+    time::{Duration, SystemTime},
+};
 
 use nearai_inference_sdk::{
     find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
@@ -157,18 +162,42 @@ async fn send_chat_with_retry(request: RequestBuilder) -> Result<Response, reqwe
         if response.status() != StatusCode::TOO_MANY_REQUESTS {
             return Ok(response);
         }
-        let requested_delay = response
+        let wait = response
             .headers()
             .get(RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or_default();
-        let wait_seconds = backoff_seconds.max(requested_delay);
+            .and_then(|value| retry_after_delay(value, SystemTime::now()))
+            .unwrap_or_default()
+            .max(Duration::from_secs(backoff_seconds));
         drop(response);
-        eprintln!("Chat returned HTTP 429; retrying in {wait_seconds}s");
-        tokio::time::sleep(Duration::from_secs(wait_seconds)).await;
+        eprintln!("Chat returned HTTP 429; retrying in {wait:?}");
+        tokio::time::sleep(wait).await;
     }
     request.send().await
+}
+
+fn retry_after_delay(value: &str, now: SystemTime) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let retry_at = httpdate::parse_http_date(value).ok()?;
+    Some(retry_at.duration_since(now).unwrap_or_default())
+}
+
+#[test]
+fn retry_after_supports_seconds_and_http_dates() {
+    let date = "Wed, 21 Oct 2015 07:28:00 GMT";
+    let retry_at = httpdate::parse_http_date(date).unwrap();
+    let delay = Duration::from_secs(30);
+    let now = retry_at - delay;
+    assert_eq!(retry_after_delay("30", now), Some(delay));
+    assert_eq!(retry_after_delay(date, now), Some(delay));
+    assert_eq!(
+        retry_after_delay(date, retry_at + delay),
+        Some(Duration::ZERO)
+    );
+    assert_eq!(retry_after_delay("invalid", now), None);
 }
 
 async fn fetch_signature_with_retry(

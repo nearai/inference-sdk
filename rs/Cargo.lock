@@ -1566,6 +1566,7 @@ dependencies = [
  "dcap-qvl",
  "ed25519-dalek",
  "hex",
+ "httpdate",
  "jsonwebtoken",
  "k256",
  "rand 0.8.8",
