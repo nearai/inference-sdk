@@ -43,6 +43,7 @@ impl GpuEvidenceVerifier for FixtureGpuVerifier {
 pub fn model_attestation(nvidia_payload: Option<&str>) -> ModelAttestation {
     let report_data = hex::encode(model_quote(TcbStatus::UpToDate).report_data);
     ModelAttestation {
+        signing_public_key: None,
         evidence: AttestationEvidence {
             nonce: NONCE.to_owned(),
             signer: SigningIdentity {
@@ -160,6 +161,7 @@ pub fn signed_signature(
 
 pub fn verified_model_attestation(signer: SigningIdentity) -> VerifiedModelAttestation {
     VerifiedModelAttestation {
+        signing_public_key: None,
         evidence: verified_evidence(signer),
         gpu_evidence: GpuEvidenceStatus::NotProvided,
     }

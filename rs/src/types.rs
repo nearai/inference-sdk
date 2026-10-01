@@ -106,7 +106,7 @@ pub struct SigningIdentity {
 }
 
 /// dstack event-log data as returned by the attestation endpoint.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AttestationEventLog {
     Json(String),
@@ -114,7 +114,7 @@ pub enum AttestationEventLog {
 }
 
 /// Evidence shared by NEAR model and Gateway attestations.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AttestationEvidence {
     pub nonce: String,
     pub signer: SigningIdentity,
@@ -124,8 +124,10 @@ pub struct AttestationEvidence {
 }
 
 /// Raw model-serving TEE evidence returned through NEAR AI Cloud.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ModelAttestation {
+    /// Optional encryption key; authenticated against the signer during verification.
+    pub signing_public_key: Option<String>,
     pub evidence: AttestationEvidence,
     /// Optional server-declared copy of quote report data. An absent value
     /// becomes `None` at the Cloud API response boundary.
@@ -291,6 +293,7 @@ pub enum GpuEvidenceStatus {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedModelAttestation {
+    pub signing_public_key: Option<String>,
     pub evidence: VerifiedAttestationEvidence,
     pub gpu_evidence: GpuEvidenceStatus,
 }
@@ -363,6 +366,23 @@ impl Default for GatewayAttestationFetchOptions {
 /// Gateway evidence and the client values associated with its request.
 #[derive(Clone, Debug)]
 pub struct FetchedGatewayAttestation {
+    pub ohttp_attestation: Option<OhttpAttestation>,
     pub attestation: GatewayAttestation,
     pub client_binding: GatewayClientBinding,
+}
+
+/// Catalog capabilities are untrusted routing metadata, not attestation evidence.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelMetadata {
+    pub provider_type: String,
+    pub attestation_supported: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct OhttpAttestation {
+    pub signing_algo: SigningAlgo,
+    pub signing_key: String,
+    pub key_config: String,
+    pub signature: String,
 }

@@ -4,6 +4,76 @@ This page lists the public Rust request and verification APIs exported by
 `nearai_inference_sdk`. For workflows and complete examples, see the
 [verification guide](./verification-guide.md).
 
+## Integrated client
+
+`InferenceClient` is cheap to clone; clones share caches and in-flight verification.
+Construct it with `new(api_key: String)` or `with_options(InferenceClientOptions)`;
+both return `Result<InferenceClient, InferenceError>`.
+
+| Method | Result | Behavior |
+| --- | --- | --- |
+| `base_url()` | `&str` | Normalized configured base URL. |
+| `verify(model)` | `AttestationVerificationResult` | Verify deployments without Chat; contains `gateway`, `models`, and Unix-ms `verified_at`. |
+| `chat_request(serde_json::Value)` | `reqwest::Request` | Build a buffered request to the configured Chat endpoint. No network. |
+| `chat_completions(serde_json::Value)` | `serde_json::Value` | Send non-streaming verified Chat. Response signature still requires `verify_response`. |
+| `send(reqwest::Request)` | `InferenceResponse` | Verify, optionally encrypt, and stream Chat. Only buffered JSON POSTs to the configured endpoint are accepted. |
+| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. |
+
+`InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
+`body` to EOF or call `bytes()` / `json()`. Dropping an incomplete body prevents
+receipt registration. Non-2xx responses pass through `send`; `chat_completions`
+turns them into `ApiError::HttpStatus`.
+
+`VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
+`Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
+returns `CompletionSignatureKind`.
+
+| Option | Default |
+| --- | --- |
+| `api_key` / `headers` | No API key / empty headers; an API key overrides configured Authorization and removes `api-key`. |
+| `base_url` | `https://cloud-api.near.ai/v1` |
+| `signing_algo` | `Ed25519` |
+| `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
+| `attestation_cache_ttl` / `response_cache_ttl` | 60 minutes each. |
+| `gateway_verification` | TLS binding enabled; default TCB policy/verifiers. |
+| `model_verification` | Default TCB/GPU policy/verifiers. |
+| `deployment_policy` | No model-aware callback. |
+| `max_response_bytes` | 64 MiB per captured response. |
+| `max_cache_entries` | 1024 per completed cache and for pending preverification. |
+
+Verification options own optional verifiers through `Arc<dyn ...>`. The
+`DeploymentPolicy` async trait receives `(model: &str, deployment: &MeasuredDeployment)`.
+An explicit model policy or deployment callback rejects Gateway-only models.
+`InferenceError` wraps `ApiError` and `VerificationError` and exposes `code()` and
+`retryable()`. Retryable receipt-fetch failures can be retried without replaying Chat.
+
+## Standalone transport and experimental direct APIs
+
+- `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
+  `PreparedE2eeChatRequest { request, .. }` with private response-key state.
+  `decrypt_json(&bytes)` returns decrypted JSON; `decrypt_sse(ByteStream)` returns
+  a transformed stream. The caller authenticates the model key first.
+- `create_pinned_tls_client(&[String])` returns an HTTPS-only reqwest client that
+  requires one of the supplied SHA-256 SPKI fingerprints in addition to normal
+  certificate and hostname verification.
+- `verify_ohttp_key_config(&OhttpAttestation, &SigningIdentity)` authenticates raw
+  config bytes against a previously verified Ed25519 signer.
+- `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
+  `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
+  be authenticated, and the supplied HTTP client must disable redirects.
+- `DirectInferenceClient::new(base_url, api_key)` defaults E2EE on. `with_options`
+  accepts `DirectInferenceClientOptions`, which also defaults E2EE on. Chat/transport/receipt methods match
+  `InferenceClient`; `verify` returns `DirectAttestationVerificationResult`.
+- `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
+  and direct signatures. `with_headers` configures extra headers.
+- `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
+  `verify_direct_model_response` validate individual reports, complete report
+  sets, and exact completion bytes respectively. The response verifier returns
+  every verified report sharing the signature's signer.
+
+See the [guide](./verification-guide.md#experimental-direct-endpoints) for direct
+endpoint limitations and source migration notes for new optional evidence fields.
+
 ## Verification lifecycle
 
 The public APIs support three stages:
@@ -43,6 +113,7 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 
 | Method | Parameters after `&self` | Returns | Description |
 | --- | --- | --- | --- |
+| `fetch_model_metadata` | `model: &str` | `ModelMetadata` | Strict catalog capability decoding; metadata is not attestation evidence. |
 | `fetch_completion_signature` | `completion_id: &str`, `signing_algo: Option<SigningAlgo>` | `CompletionSignature` | Fetches the receipt for a completed inference. A valid 2xx unavailable envelope returns `ApiError::CompletionSignatureUnavailable { .. }`, preserving the service's code and message. |
 | `fetch_model_attestations` | `model: &str`, `signing_algo: Option<SigningAlgo>`, `signing_address: Option<&str>` | `FetchedModelAttestations` | Fetches every model deployment candidate returned for a canonical model ID, including an empty list. The filters only narrow the API response. |
 | `fetch_gateway_attestation` | `options: GatewayAttestationFetchOptions` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence. The options select the signing-algorithm filter and whether to request and capture SPKI fingerprint evidence. |
