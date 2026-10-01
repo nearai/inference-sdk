@@ -135,7 +135,9 @@ the quote, event log, and any NVIDIA payload. The sibling fields such as
 Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model share verification work and cached results.
+requests for the same model and endpoint share verification work and cached
+results. `verify(model)` and Chat share a session; System One uses a separate
+session because its model-routing rules differ.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -168,6 +170,44 @@ may still finish in the background.
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
+
+## System One decisions
+
+Use `systemone.create()` for Jev decision models. It verifies the required
+deployments before sending state, using the client's attestation cache and
+policies. System One supports neither streaming nor E2EE/OHTTP.
+
+```ts
+import { InferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new InferenceClient({ apiKey, baseUrl, e2ee: false, ohttp: false });
+const result = await client.systemone.create({
+  model: canonicalModelId,
+  state: { message: 'I was charged twice.' },
+  questions: {
+    billing: { type: 'noul', instructions: 'Is this about billing?' },
+  },
+});
+
+const verified = await client.verifyResponse(result.decisionId);
+console.log(verified.signatureKind, result.data.answers);
+```
+
+`result.decisionId` comes from `X-Generation-Id` and is available even when
+the provider omits `result.data.id`. Verification uses the captured request and
+response bytes, even if the parsed data is later edited. Wait for it before acting on
+answers. A `provider_tee` receipt matches a signer in the preverified model
+fleet; a `gateway` receipt proves Gateway signing, not model TEE execution.
+
+Response retention, concurrent verification, and receipt lookup retries use the
+same `verifyResponse` lifecycle as Chat. Inference is sent once. If the receipt
+is not available yet, retry `verifyResponse(result.decisionId)` without making
+another decision request.
+
+Pass `signal` in the second argument to cancel a caller's preflight wait or
+inference request. Cancelling one caller does not stop shared attestation work
+needed by another. Request business rules, including question limits, are
+validated by the server.
 
 ## Connect through an application proxy
 
@@ -208,10 +248,13 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, and `/v1/signature/{id}`. Preserve the URL-encoded model
-ID. It authenticates the user and supplies its upstream
-NEAR AI credential. Preserve the request and response bodies, model-key routing header,
-and encryption headers unchanged so decryption and signature verification work.
+`/v1/chat/completions`, and `/v1/signature/{id}`. For System One decisions,
+also forward `POST /v1/systemone`. Preserve the URL-encoded model and completion
+IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
+Preserve the request and response bodies, model-key routing header, and encryption
+headers unchanged so decryption and signature verification work. Forward the
+`X-Generation-Id` response header for System One and expose it through
+`Access-Control-Expose-Headers` when the proxy is cross-origin.
 
 The attestation-service routes are separate from the inference API proxy:
 
@@ -361,8 +404,9 @@ if (completionId !== undefined) {
 Each ID identifies its own request bytes, response bytes, and verified deployment
 evidence. Concurrent requests can finish in any order. Repeated verification of
 the same ID shares the in-flight operation and its result. After a retryable
-API failure, call `verifyResponse(id)` again to retry the signature lookup.
-Successful results and non-retryable failures remain cached.
+API failure or `api.completion_signature_unavailable`, call `verifyResponse(id)`
+again to retry the signature lookup. Successful results and other non-retryable
+failures remain cached.
 
 Response records retain complete bodies in memory. They expire
 `responseCacheTimeToLiveMs` after body completion (default: 60 minutes),

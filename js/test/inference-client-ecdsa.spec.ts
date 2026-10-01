@@ -163,6 +163,27 @@ function createEcdsaGateway({
       });
     }
 
+    if (url.pathname === '/v1/systemone') {
+      state.completionHeaders.push(request.headers);
+      const requestBody = new Uint8Array(await request.arrayBuffer());
+      const response = jsonResponse({
+        model,
+        answers: { billing: { type: 'noul', noul: 0.9 } },
+        usage: { input_tokens: 10, output_tokens: 2 },
+      });
+      response.headers.set('x-generation-id', 'decision-ecdsa');
+      const responseBody = new Uint8Array(await response.clone().arrayBuffer());
+      const text = `${signatureKind === 'provider_tee' ? `${model}:` : ''}${sha256(requestBody)}:${sha256(responseBody)}`;
+      const signer = signatureKind === 'provider_tee' ? modelKey : gatewayKey;
+      signatures.set('decision-ecdsa', {
+        text,
+        signature: await signer.signMessage(text),
+        kind: signatureKind,
+        signer,
+      });
+      return response;
+    }
+
     if (url.pathname !== '/v1/chat/completions') {
       throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
     }
@@ -266,7 +287,7 @@ describe('ECDSA inference client', () => {
     await expect(
       client.verifyResponse('chatcmpl-ecdsa'),
     ).resolves.toMatchObject({
-      completionId: 'chatcmpl-ecdsa',
+      id: 'chatcmpl-ecdsa',
       signatureKind: 'provider_tee',
     });
 
@@ -309,8 +330,44 @@ describe('ECDSA inference client', () => {
     await expect(
       client.verifyResponse('chatcmpl-ecdsa'),
     ).resolves.toMatchObject({
-      completionId: 'chatcmpl-ecdsa',
+      id: 'chatcmpl-ecdsa',
       signatureKind: 'gateway',
     });
   });
+
+  test.each(['gateway', 'provider_tee'] as const)(
+    'verifies System One %s receipts with ECDSA',
+    async (signatureKind) => {
+      const gateway = createEcdsaGateway({ signatureKind });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const client = new InferenceClient({
+        baseUrl,
+        apiKey: 'test-token',
+        signingAlgo: 'ecdsa',
+        e2ee: false,
+        gatewayVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+        modelVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+      });
+      const result = await client.systemone.create({
+        model,
+        state: 'Charged twice',
+        questions: { billing: { type: 'noul' } },
+      });
+      await expect(
+        client.verifyResponse(result.decisionId),
+      ).resolves.toMatchObject({ signatureKind });
+      expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
+      expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
+      expect(
+        gateway.state.completionHeaders[0].get('x-model-pub-key'),
+      ).toBeNull();
+      expect(
+        gateway.state.completionHeaders[0].get('x-signing-algo'),
+      ).toBeNull();
+    },
+  );
 });

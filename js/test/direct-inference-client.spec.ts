@@ -307,7 +307,7 @@ describe('DirectInferenceClient', () => {
       expect(completion.choices[0].message.content).toBe(answer);
       await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
         {
-          completionId: completion.id,
+          id: completion.id,
           signatureKind: 'provider_tee',
         },
       );
@@ -559,7 +559,7 @@ describe('DirectInferenceClient', () => {
     );
     expect(endpoint.state.requests[0].headers.has('authorization')).toBe(false);
     const result = await client.verifyResponse(id);
-    expect(result.completionId).toBe(id);
+    expect(result.id).toBe(id);
     expect(result.attestations).toHaveLength(2);
     expect(endpoint.state.signatureRequests).toBe(1);
   });
@@ -681,9 +681,9 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.completionRequests).toBe(2);
     const firstVerified = await client.verifyResponse(first.id);
     const secondVerified = await client.verifyResponse(second.id);
-    expect(firstVerified.completionId).toBe(first.id);
+    expect(firstVerified.id).toBe(first.id);
     expect(firstVerified.attestations).toHaveLength(2);
-    expect(secondVerified.completionId).toBe(second.id);
+    expect(secondVerified.id).toBe(second.id);
     const cached = await client.verify(model);
     expect(cached).toEqual(result);
     expect(endpoint.state.attestationRequests).toBe(1);

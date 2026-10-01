@@ -151,3 +151,11 @@ to configure it and verify responses.
   defaults, and result fields.
 - [Runnable examples](../examples/README.md): Gateway and direct-model clients,
   standalone verification, and OpenAI SDK integration.
+
+### Jev decisions
+
+Use `client.systemone.create({ model, state, questions })` with `e2ee: false`
+and `ohttp: false`, then call `client.verifyResponse(result.decisionId)` before
+using `result.data.answers`. System One uses `X-Generation-Id` receipt lookup and does
+not use Chat Completions. See the [runnable Node example](../examples/README.md#jev--system-one-typescript--nodejs)
+and [API reference](docs/api-reference.md#system-one-decisions-inferenceclientsystemone).
