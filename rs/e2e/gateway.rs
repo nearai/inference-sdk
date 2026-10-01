@@ -1,3 +1,5 @@
+mod integrated;
+
 use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
