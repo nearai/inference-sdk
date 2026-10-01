@@ -84,13 +84,14 @@ const CLIENT_CASES: readonly ClientCase[] = [
 for (const { name, options } of CLIENT_CASES) {
   test(`Node client verifies JSON and SSE with ${name}`, {
     timeout: 180_000,
-  }, async () => {
+  }, async (t) => {
     const inferenceClient = new InferenceClient(options);
     await inferenceClient.verify(MODEL);
     await verifyClientCompletions({
       inferenceClient,
       chat: inferenceClient.chat,
       signingAlgo: options.signingAlgo,
+      signal: t.signal,
     });
   });
 }
@@ -98,7 +99,7 @@ for (const { name, options } of CLIENT_CASES) {
 for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
   test(`Node client handles ${model.provider} Chat: ${model.id}`, {
     timeout: 180_000,
-  }, async () => {
+  }, async (t) => {
     const inferenceClient = new InferenceClient({
       apiKey: API_KEY,
       baseUrl: BASE_URL,
@@ -106,17 +107,20 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
     });
     await inferenceClient.verify(model.id);
     if (model.provider === 'chutes') {
-      const completion = await retryRateLimit(() =>
-        inferenceClient.chat.completions.create(
-          { ...CHAT_REQUEST, model: model.id },
-          { maxRetries: 0 },
-        ),
+      const completion = await retryRateLimit(
+        () =>
+          inferenceClient.chat.completions.create(
+            { ...CHAT_REQUEST, model: model.id },
+            { maxRetries: 0, signal: t.signal },
+          ),
+        t.signal,
       );
       assert.ok(completion.id);
       assert.equal(completion.choices[0]?.finish_reason, 'stop');
       assert.ok(completion.choices[0]?.message.content?.trim());
-      const verified = await retryReceipt(() =>
-        inferenceClient.verifyResponse(completion.id),
+      const verified = await retryReceipt(
+        () => inferenceClient.verifyResponse(completion.id),
+        t.signal,
       );
       assert.equal(verified.signature.kind, 'gateway');
     } else {
@@ -125,6 +129,7 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
         chat: inferenceClient.chat,
         model: model.id,
         expectedSignatureKind: 'gateway',
+        signal: t.signal,
       });
     }
   });
@@ -132,7 +137,7 @@ for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
 
 test('OpenAI SDK uses the verified fetch transport', {
   timeout: 180_000,
-}, async () => {
+}, async (t) => {
   const inferenceClient = new InferenceClient({
     apiKey: API_KEY,
     baseUrl: BASE_URL,
@@ -144,12 +149,16 @@ test('OpenAI SDK uses the verified fetch transport', {
     fetch: inferenceClient.fetch,
     maxRetries: 0,
   });
-  await verifyClientCompletions({ inferenceClient, chat: openai.chat });
+  await verifyClientCompletions({
+    inferenceClient,
+    chat: openai.chat,
+    signal: t.signal,
+  });
 });
 
 test('Generic entry verifies JSON and SSE without peer TLS binding', {
   timeout: 180_000,
-}, async () => {
+}, async (t) => {
   // Exercise the browser-compatible entry in Node, not browser networking/CORS.
   const inferenceClient = new GenericInferenceClient({
     apiKey: API_KEY,
@@ -159,12 +168,14 @@ test('Generic entry verifies JSON and SSE without peer TLS binding', {
   await verifyClientCompletions({
     inferenceClient,
     chat: inferenceClient.chat,
+    signal: t.signal,
   });
 });
 
 type VerifyClientCompletionsParams = {
   inferenceClient: Pick<InferenceClient, 'verifyResponse'>;
   chat: InferenceChat;
+  signal: AbortSignal;
   signingAlgo?: SigningAlgo;
   model?: string;
   expectedSignatureKind?: 'gateway';
@@ -173,27 +184,35 @@ type VerifyClientCompletionsParams = {
 async function verifyClientCompletions({
   inferenceClient,
   chat,
+  signal,
   signingAlgo = 'ed25519',
   model = CHAT_REQUEST.model,
   expectedSignatureKind,
 }: VerifyClientCompletionsParams): Promise<void> {
   const request = { ...CHAT_REQUEST, model };
-  const completion = await retryRateLimit(() =>
-    chat.completions.create(request, { maxRetries: 0 }),
+  const completion = await retryRateLimit(
+    () => chat.completions.create(request, { maxRetries: 0, signal }),
+    signal,
   );
   assert.ok(completion.id);
   assert.equal(completion.choices[0]?.finish_reason, 'stop');
   assert.ok(completion.choices[0]?.message.content?.trim());
-  const verified = await retryReceipt(() =>
-    inferenceClient.verifyResponse(completion.id),
+  const verified = await retryReceipt(
+    () => inferenceClient.verifyResponse(completion.id),
+    signal,
   );
   assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
   if (expectedSignatureKind) {
     assert.equal(verified.signature.kind, expectedSignatureKind);
   }
 
-  const stream = await retryRateLimit(() =>
-    chat.completions.create({ ...request, stream: true }, { maxRetries: 0 }),
+  const stream = await retryRateLimit(
+    () =>
+      chat.completions.create(
+        { ...request, stream: true },
+        { maxRetries: 0, signal },
+      ),
+    signal,
   );
   let completionId: string | undefined;
   let content = '';
@@ -209,8 +228,9 @@ async function verifyClientCompletions({
   assert.equal(finishReason, 'stop', 'SSE must complete without truncation');
   assert.ok(content.trim(), 'Expected non-empty Chat content');
   const streamedId = completionId;
-  const verifiedStream = await retryReceipt(() =>
-    inferenceClient.verifyResponse(streamedId),
+  const verifiedStream = await retryReceipt(
+    () => inferenceClient.verifyResponse(streamedId),
+    signal,
   );
   assert.equal(verifiedStream.signature.signer.signingAlgo, signingAlgo);
   if (expectedSignatureKind) {
@@ -221,7 +241,7 @@ async function verifyClientCompletions({
 for (const selectedModel of MODELS) {
   test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}`, {
     timeout: 180_000,
-  }, async () => {
+  }, async (t) => {
     const client = new AttestationClient({
       apiKey: API_KEY,
       baseUrl: BASE_URL,
@@ -270,23 +290,28 @@ for (const selectedModel of MODELS) {
       const requestBody = new TextEncoder().encode(
         JSON.stringify({ ...CHAT_REQUEST, model: selectedModel.id, stream }),
       );
-      const response = await retryRateLimit(() =>
-        pinnedTlsFetch(new URL('chat/completions', BASE_URL), {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${API_KEY}`,
-            'Content-Type': 'application/json',
-            'Accept-Encoding': 'identity',
-            'x-no-aliasing': 'true',
-          },
-          body: requestBody,
-        }),
+      const response = await retryRateLimit(
+        () =>
+          pinnedTlsFetch(new URL('chat/completions', BASE_URL), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${API_KEY}`,
+              'Content-Type': 'application/json',
+              'Accept-Encoding': 'identity',
+              'x-no-aliasing': 'true',
+            },
+            body: requestBody,
+            signal: t.signal,
+          }),
+        t.signal,
       );
       assert.equal(response.status, 200, 'Chat request must succeed');
       const responseBody = new Uint8Array(await response.arrayBuffer());
       const id = readCompletionId({ responseBody, stream });
-      const signature = await retryReceipt(() =>
-        client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+      const signature = await retryReceipt(
+        () =>
+          client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+        t.signal,
       );
       assert.equal(signature.signer.signingAlgo, signingAlgo);
       if (selectedModel.provider !== 'near') {
@@ -324,8 +349,12 @@ for (const selectedModel of MODELS) {
 
 // Allow receipt propagation after Chat, without repeating inference or masking
 // cryptographic verification failures. The enclosing test still has a deadline.
-async function retryReceipt<T>(lookup: () => Promise<T>): Promise<T> {
+async function retryReceipt<T>(
+  lookup: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
+    signal.throwIfAborted();
     try {
       return await lookup();
     } catch (error) {
@@ -336,8 +365,9 @@ async function retryReceipt<T>(lookup: () => Promise<T>): Promise<T> {
         throw error;
       }
     }
-    await delay(backoffMs);
+    await delay(backoffMs, undefined, { signal });
   }
+  signal.throwIfAborted();
   return lookup();
 }
 

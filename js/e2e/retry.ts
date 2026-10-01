@@ -1,10 +1,15 @@
+import timers from 'node:timers/promises';
 import { APIConnectionError, RateLimitError } from 'openai';
 import { isApiError as isGenericApiError } from '../dist/index.js';
 import { isApiError } from '../dist/node.js';
 
 // Retry only rejected Chat requests, before consuming any successful response.
-export async function retryRateLimit<T>(send: () => Promise<T>): Promise<T> {
+export async function retryRateLimit<T>(
+  send: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
   for (const backoffSeconds of [5, 10, 20]) {
+    signal.throwIfAborted();
     let retryAfter: string | null | undefined;
     try {
       const response = await send();
@@ -38,7 +43,8 @@ export async function retryRateLimit<T>(send: () => Promise<T>): Promise<T> {
       Number.isFinite(requestedDelay) ? requestedDelay : 0,
     );
     console.warn(`Chat returned HTTP 429; retrying in ${waitSeconds}s`);
-    await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1_000));
+    await timers.setTimeout(waitSeconds * 1_000, undefined, { signal });
   }
+  signal.throwIfAborted();
   return send();
 }

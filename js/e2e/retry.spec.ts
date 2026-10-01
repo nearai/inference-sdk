@@ -21,7 +21,7 @@ for (const [name, ErrorType] of [
       attempts++;
       if (attempts === 1) throw new APIConnectionError({ cause });
       return 'ok';
-    });
+    }, t.signal);
     await Promise.resolve();
     t.mock.timers.tick(11_999);
     assert.equal(attempts, 1);
@@ -31,7 +31,7 @@ for (const [name, ErrorType] of [
   });
 }
 
-test('does not retry an OHTTP server error', async () => {
+test('does not retry an OHTTP server error', async (t) => {
   const cause = new ApiError({
     code: 'api.http_status',
     details: { resource: 'ohttp', status: 503 },
@@ -43,8 +43,27 @@ test('does not retry an OHTTP server error', async () => {
     retryRateLimit(async () => {
       attempts++;
       throw error;
-    }),
+    }, t.signal),
     (thrown) => thrown === error,
   );
+  assert.equal(attempts, 1);
+});
+
+test('cancels a long Retry-After wait when the test deadline expires', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const controller = new AbortController();
+  let attempts = 0;
+  const result = retryRateLimit(async () => {
+    attempts++;
+    return new Response(null, {
+      status: 429,
+      headers: { 'Retry-After': '300' },
+    });
+  }, controller.signal);
+  await Promise.resolve();
+  await Promise.resolve();
+  controller.abort();
+  await assert.rejects(result, { name: 'AbortError' });
+  t.mock.timers.tick(300_000);
   assert.equal(attempts, 1);
 });
