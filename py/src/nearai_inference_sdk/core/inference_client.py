@@ -348,8 +348,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             headers.pop('api-key', None)
         # HTTPX stores headers without checking the syntax sent on the wire.
         for name, value in headers.raw:
-            if not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name) or re.search(
-                rb'[\x00-\x08\x0a-\x1f\x7f]', value
+            if (
+                not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or re.search(rb'[\x00-\x08\x0a-\x1f\x7f]', value)
+                or value != value.strip(b' \t')
             ):
                 raise api_failure(
                     'api.invalid_input',
@@ -473,6 +475,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     ) -> None:
         """Both endpoints share byte retention, expiry, and verification retries."""
 
+        if self._chat_client.is_closed:
+            raise RuntimeError('InferenceClient is closed')
         record = _ResponseRecord(request_body, response_body, session)
         previous = self._responses.get(id)
         if previous is not None and previous.expiry is not None:

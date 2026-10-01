@@ -377,7 +377,15 @@ async def test_invalid_decision_model_fails_before_preflight(monkeypatch, model_
 
 @pytest.mark.parametrize(
     'headers',
-    [{'x-tenant': 'invalid\nvalue'}, {'invalid name': 'value'}, {'x-tenant': '雪'}],
+    [
+        {'x-tenant': 'invalid\nvalue'},
+        {'invalid name': 'value'},
+        {'x-tenant': '雪'},
+        {'x-tenant': ' leading'},
+        {'x-tenant': 'trailing '},
+        {'x-tenant': '\tleading'},
+        {'x-tenant': 'trailing\t'},
+    ],
 )
 async def test_invalid_decision_headers_fail_before_preflight(monkeypatch, headers):
     gateway = DecisionGateway()
@@ -540,6 +548,39 @@ async def test_closing_after_a_decision_does_not_leave_response_expiry_running(
     await asyncio.sleep(0)
     assert client._responses == {}
     assert record.expiry is None or record.expiry.cancelled()
+
+
+async def test_a_decision_body_finishing_after_close_cannot_repopulate_the_cache(
+    monkeypatch,
+):
+    gateway = DecisionGateway()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    handle = gateway.handle
+
+    async def respond(request):
+        response = await handle(request)
+        if request.url.path != '/v1/systemone':
+            return response
+
+        class PendingBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                started.set()
+                await release.wait()
+                yield response.content
+
+        return httpx.Response(200, headers=response.headers, stream=PendingBody())
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    client = gateway.client(e2ee=False)
+    pending = asyncio.create_task(client.systemone.create(REQUEST))
+    await started.wait()
+    await client.aclose()
+    release.set()
+    with pytest.raises(RuntimeError, match='InferenceClient is closed'):
+        await pending
+    assert client._responses == {}
 
 
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
