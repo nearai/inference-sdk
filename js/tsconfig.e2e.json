@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
   "include": ["e2e/**/*.ts"],

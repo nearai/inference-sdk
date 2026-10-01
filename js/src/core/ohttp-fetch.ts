@@ -111,9 +111,14 @@ export function createOhttpFetch({
     }
     if (!response.ok) {
       void response.body?.cancel().catch(() => undefined);
+      const retryAfter = response.headers.get('retry-after');
       throw new ApiError({
         code: 'api.http_status',
-        details: { resource: 'ohttp', status: response.status },
+        details: {
+          resource: 'ohttp',
+          status: response.status,
+          ...(retryAfter === null ? {} : { retryAfter }),
+        },
         retryable: response.status === 429 || response.status >= 500,
       });
     }

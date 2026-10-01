@@ -121,7 +121,7 @@ jobs:
           NEARAI_BASE_URL: ${{ matrix.environment == 'STG' && env.STG_BASE_URL || env.PRD_BASE_URL }}
           NEARAI_API_KEY: ${{ secrets[format('NEARAI_{0}_API_KEY', matrix.environment)] }}
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
-        run: uv run --no-sync pytest e2e -v --tb=short
+        run: uv run --no-sync pytest e2e -v --tb=short --log-cli-level=WARNING
 
   rust:
     name: Rust (${{ matrix.environment }})

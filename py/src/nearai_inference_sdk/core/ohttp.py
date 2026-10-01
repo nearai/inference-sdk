@@ -191,9 +191,15 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
             ) from cause
         if not outer.is_success:
             await outer.aclose()
+            details: dict[str, object] = {
+                'resource': 'ohttp',
+                'status': outer.status_code,
+            }
+            if 'retry-after' in outer.headers:
+                details['retryAfter'] = outer.headers['retry-after']
             raise api_failure(
                 'api.http_status',
-                {'resource': 'ohttp', 'status': outer.status_code},
+                details,
                 retryable=outer.status_code == 429 or outer.status_code >= 500,
             )
 

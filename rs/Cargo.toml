@@ -40,5 +40,6 @@ thiserror = "2.0.17"
 sigstore-verify = { version = "0.11.0", default-features = false }
 
 [dev-dependencies]
+httpdate = "1.0.3"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread", "time", "net"] }
 wiremock = "0.6.5"

@@ -372,7 +372,10 @@ async def test_outer_http_status_is_structured(status: int, retryable: bool) -> 
 
     async def handle(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        return httpx.Response(status, headers={'location': 'https://elsewhere.example'})
+        headers = {'location': 'https://elsewhere.example'}
+        if status == 429:
+            headers['retry-after'] = '12'
+        return httpx.Response(status, headers=headers)
 
     async with (
         httpx.AsyncClient(
@@ -385,7 +388,10 @@ async def test_outer_http_status_is_structured(status: int, retryable: bool) -> 
         with pytest.raises(ApiError) as caught:
             await client.get('models')
     assert caught.value.failure.code == 'api.http_status'
-    assert caught.value.failure.details == {'resource': 'ohttp', 'status': status}
+    expected = {'resource': 'ohttp', 'status': status}
+    if status == 429:
+        expected['retryAfter'] = '12'
+    assert caught.value.failure.details == expected
     assert caught.value.retryable is retryable
     assert len(calls) == 1
 
