@@ -10,7 +10,7 @@ verification functions with your own HTTP code.
 ## Install
 
 ```sh
-pip install nearai-inference-sdk
+pip install nearai-inference-sdk==0.1.0
 ```
 
 Requires Python 3.12 or later.
