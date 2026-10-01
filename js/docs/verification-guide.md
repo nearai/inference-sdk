@@ -26,8 +26,11 @@ verification failure prevents the request from being sent.
 
 This Node.js example connects directly to the Gateway with a server-side API
 key. The Node client verifies the Gateway's TLS identity and pins subsequent
-requests to that identity. For browser applications, see
-[Connect through an application proxy](#connect-through-an-application-proxy).
+requests to that identity. For a runnable browser integration, see the
+[browser Private TEE chat example](../../examples/example-browser/README.md).
+It accepts a user-provided key and connects to a trusted CORS-enabled endpoint.
+For production applications that keep long-lived API credentials on a backend,
+see [Connect through an application proxy](#connect-through-an-application-proxy).
 
 ```ts
 import { InferenceClient } from '@nearai/inference-sdk/node';
