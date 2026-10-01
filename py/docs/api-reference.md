@@ -54,6 +54,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
+| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
 
 ## InferenceClient
 
@@ -379,6 +380,35 @@ or `image_not_pinned`; `imageRepository` and `service` identify the selection wh
 applicable. GitHub request errors are wrapped as `provenance.image_request_failed`
 with `imageRepository`, `digest`, the original cause, and unchanged retryability.
 Image verification errors pass through unchanged.
+
+### `verify_compose_manager_deployment_image_provenance`
+
+Asynchronous. Use in a model deployment callback or after model verification.
+Selects the latest matching `compose_up`, verifies the recorded file's exact
+SHA-256, then checks compose services and the latest manager-start image.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Required | Verified deployment with authenticated `compose_manager` actions. |
+| `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Required | Nonempty required image repositories and build policies. |
+| `compose_repository` | `str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
+| `github_token` | `str \| None` | `None` | Optional GitHub token for file/proof retrieval. |
+
+Missing evidence, file/hash mismatches and image-policy failures raise
+`VerificationError`. This does not prove current runtime state or action success.
+
+`ModelAttestation.compose_manager_attestation` optionally retains the raw
+`ComposeManagerAttestation` (`actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`). When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `VerifiedComposeManagerAttestation`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `tuple[ComposeManagerAction, ...]` | Quote-authenticated wire-named action fields, including unknown string/string-array fields. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `tuple[str, ...]` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements from its verified event log. |
 
 ### `fetch_image_provenance`
 

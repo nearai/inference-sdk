@@ -20,8 +20,12 @@ from .attestation_common import (
     verify_report_data_binding,
     verify_report_data_binding_with_tls_fingerprint,
 )
-from .attestation_model import _verify_gpu_evidence, _verify_signing_public_key
-from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
+from .attestation_model import (
+    _verify_gpu_evidence,
+    _verify_signing_public_key,
+    verify_model_deployment,
+)
+from .dstack_attestation import verify_dstack_quote
 
 
 async def verify_direct_model_attestation(
@@ -83,8 +87,8 @@ async def _verify_direct_cpu(
             signer=quote.signer,
             reported_spki_fingerprint=attestation.spki_fingerprint,
         )
-    evidence = await verify_dstack_deployment(
-        quote, None if verifiers is None else verifiers.deployment
+    evidence = await verify_model_deployment(
+        attestation, quote, client_binding.nonce, policy, verifiers
     )
     return evidence, fingerprint
 

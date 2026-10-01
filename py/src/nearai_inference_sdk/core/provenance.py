@@ -70,10 +70,24 @@ async def verify_deployment_image_provenance(
         app = DeploymentAppComposeSchema.model_validate_json(app_compose)
     except (ValidationError, TypeError):
         raise _deployment_images_failure('invalid_app_compose') from None
+    await verify_compose_image_provenance(
+        app.docker_compose_file, image_policies, github_token
+    )
+
+
+async def verify_compose_image_provenance(
+    docker_compose: str,
+    image_policies: Mapping[str, ImageProvenancePolicy],
+    github_token: str | None = None,
+    additional_images: Sequence[tuple[str, str]] = (),
+) -> None:
+    """Shared image selection for authenticated compose sources."""
+    if not image_policies:
+        raise _deployment_images_failure('empty_policy')
     try:
         yaml = YAML(typ='safe', pure=True)
         compose = DeploymentDockerComposeSchema.model_validate(
-            yaml.load(app.docker_compose_file)
+            yaml.load(docker_compose)
         )
     except (YAMLError, ValidationError, ValueError, TypeError, RecursionError):
         raise _deployment_images_failure('invalid_docker_compose') from None
@@ -85,6 +99,10 @@ async def verify_deployment_image_provenance(
         if '$' in config.image:
             raise _deployment_images_failure('unresolved_image', service=service)
         images.append((service, config.image.removeprefix('docker.io/')))
+    images.extend(
+        (service, image.removeprefix('docker.io/'))
+        for service, image in additional_images
+    )
 
     selected: list[tuple[str, str, ImageProvenancePolicy]] = []
     for configured_repository, policy in image_policies.items():

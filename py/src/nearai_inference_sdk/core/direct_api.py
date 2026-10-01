@@ -1,6 +1,7 @@
 """Experimental direct endpoint evidence retrieval, without Gateway routing."""
 
 from collections.abc import Mapping
+from dataclasses import replace
 
 from pydantic import ValidationError
 
@@ -76,11 +77,30 @@ class DirectAttestationClient(_ApiClient):
         )
         # Dataclass equality compares report contents, including opaque event logs.
         # A shared signing identity alone cannot identify the serving report.
-        if root not in attestations:
+        serving_index = next(
+            (
+                index
+                for index, item in enumerate(attestations)
+                if replace(item, compose_manager_attestation=None)
+                == replace(root, compose_manager_attestation=None)
+            ),
+            None,
+        )
+        if serving_index is None:
             raise _invalid_response(
                 'all_attestations',
                 'array containing the top-level attestation',
                 raw.all_attestations,
+            )
+        # The envelope's manager report belongs to the serving report only.
+        if root.compose_manager_attestation is not None:
+            attestations = tuple(
+                replace(
+                    item, compose_manager_attestation=root.compose_manager_attestation
+                )
+                if index == serving_index
+                else item
+                for index, item in enumerate(attestations)
             )
         for index, attestation in enumerate(attestations):
             _require_matching_api_nonce(attestation.nonce, nonce, 'model_attestation')
@@ -91,7 +111,7 @@ class DirectAttestationClient(_ApiClient):
                     attestation.spki_fingerprint,
                 )
         return FetchedDirectModelAttestations(
-            serving_attestation=attestations[attestations.index(root)],
+            serving_attestation=attestations[serving_index],
             attestations=attestations,
             client_binding=DirectClientBinding(nonce=nonce),
             ohttp_attestation=(
@@ -119,6 +139,7 @@ def _map_direct_attestation(
         reported_quote_data=model.reported_quote_data,
         nvidia_payload=model.nvidia_payload,
         signing_public_key=model.signing_public_key,
+        compose_manager_attestation=model.compose_manager_attestation,
         model_name=raw.model_name,
         instance_id=raw.info.instance_id,
         spki_fingerprint=raw.tls_cert_fingerprint,

@@ -439,8 +439,65 @@ Multiple bundles are tried until one satisfies all checks. An optional GitHub
 token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
 
 This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides, inspect compose-manager,
+rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `app_compose` can describe the launcher rather than containers
+deployed later. Use the Compose Manager helper for the recorded model deployment:
+
+```python
+from nearai_inference_sdk import (
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    ModelAttestationVerifiers,
+    verify_compose_manager_deployment_image_provenance,
+    verify_model_attestation,
+)
+
+model_image_policies = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy',
+        workflow='.github/workflows/build.yml',
+    ),
+    'nearaidev/compose-manager': ImageProvenancePolicy(
+        repository='nearai/compose-manager',
+        workflow='.github/workflows/build.yml',
+    ),
+}
+
+
+async def check_model_images(deployment: MeasuredDeployment) -> None:
+    await verify_compose_manager_deployment_image_provenance(
+        deployment, model_image_policies
+    )
+
+
+for attestation in fetched_models.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_models.client_binding,
+        verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+    )
+```
+
+Model verification authenticates supplied Compose Manager evidence: its TDX quote,
+TCB policy, nonce, action hash, event log and binding to the same measured
+`app_compose`. The callback receives `deployment.compose_manager`. The helper
+selects the last `compose_up`, downloads its file from `nearai/cvm-compose-files`
+at the recorded commit, verifies `file_sha256`, then checks the required image
+builds. Image selection also includes the latest `compose_manager_started` image.
+Use `compose_file` for a specific project's latest recorded file, and
+`compose_repository` for another trusted repository. In `InferenceClient`, use
+this callback through `model_verification.verifiers.deployment`.
+
+This proves recorded deployment intent, not action success or current runtime
+state. Matching boot configuration does not identify a unique CVM. The policies
+cover the proxy and manager builds, not every container, model weights or boot
+launcher provenance; approve the boot configuration separately. Missing manager
+evidence is allowed by basic model verification but rejected by this helper.
+On direct endpoints, envelope-level evidence applies only to the serving report.
 
 ## 2. Send the completion and retain exact bytes
 

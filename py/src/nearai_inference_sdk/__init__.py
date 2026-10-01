@@ -11,6 +11,9 @@ from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
 )
+from .core.compose_manager_provenance import (
+    verify_compose_manager_deployment_image_provenance,
+)
 from .core.direct_api import DirectAttestationClient
 from .core.direct_inference_client import (
     DirectInferenceClient,
@@ -46,6 +49,11 @@ from .types.cloud_api import (
     FetchedGatewayAttestation,
     FetchedModelAttestations,
     ModelMetadata,
+)
+from .types.compose_manager import (
+    ComposeManagerAction,
+    ComposeManagerAttestation,
+    VerifiedComposeManagerAttestation,
 )
 from .types.direct import (
     DirectClientBinding,
@@ -107,6 +115,8 @@ __all__ = [
     'CompletionSignature',
     'CompletionSignatureKind',
     'CompletionSignatureReference',
+    'ComposeManagerAction',
+    'ComposeManagerAttestation',
     'DeploymentPolicy',
     'DeploymentVerifier',
     'DirectAttestationClient',
@@ -144,6 +154,7 @@ __all__ = [
     'VerificationFailure',
     'VerifiedAttestationEvidence',
     'VerifiedCompletionResult',
+    'VerifiedComposeManagerAttestation',
     'VerifiedDirectCompletionResult',
     'VerifiedDirectModelAttestation',
     'VerifiedDirectModelAttestations',
@@ -159,6 +170,7 @@ __all__ = [
     'fetch_image_provenance',
     'find_model_attestation_for_signature',
     'prepare_e2ee_chat_request',
+    'verify_compose_manager_deployment_image_provenance',
     'verify_deployment_image_provenance',
     'verify_direct_model_attestation',
     'verify_direct_model_attestations',
