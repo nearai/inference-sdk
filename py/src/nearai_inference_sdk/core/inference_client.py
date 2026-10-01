@@ -7,7 +7,7 @@ import codecs
 import json
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
-from time import monotonic
+from time import monotonic, time
 from typing import Self
 
 import httpx
@@ -24,6 +24,7 @@ from ..types.cloud_api import (
 )
 from ..types.e2ee import E2eeModelKey
 from ..types.inference_client import (
+    AttestationVerificationResult,
     DeploymentPolicy,
     GatewayVerificationOptions,
     ModelVerificationOptions,
@@ -68,18 +69,19 @@ _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
 
 
 @dataclass(frozen=True)
-class _VerifiedSession[Result]:
+class _VerifiedSession[Result, AttestationResult]:
     model_key: E2eeModelKey | None
     http_client: httpx.AsyncClient
     attestation_client: _ApiClient
     verify_response: Callable[[str, bytes, bytes, CompletionSignature], Result]
+    attestation_result: AttestationResult
 
 
 @dataclass
-class _ResponseRecord[Result]:
+class _ResponseRecord[Result, AttestationResult]:
     request_body: bytes
     response_body: asyncio.Future[bytes]
-    session: _VerifiedSession[Result]
+    session: _VerifiedSession[Result, AttestationResult]
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
 
@@ -117,7 +119,7 @@ class _InferenceTransport(httpx.AsyncBaseTransport):
         return await self._client.send(request)
 
 
-class _VerifiedInferenceClient[Result]:
+class _VerifiedInferenceClient[Result, AttestationResult]:
     """Verify before sending Chat requests, then verify responses explicitly.
 
     ``chat.completions.create`` is the standard asynchronous OpenAI interface.
@@ -163,10 +165,14 @@ class _VerifiedInferenceClient[Result]:
         self._response_ttl = response_cache_time_to_live_ms / 1000
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
-        self._sessions: dict[str, tuple[float, _VerifiedSession[Result]]] = {}
-        self._pending: dict[str, asyncio.Task[_VerifiedSession[Result]]] = {}
+        self._sessions: dict[
+            str, tuple[float, _VerifiedSession[Result, AttestationResult]]
+        ] = {}
+        self._pending: dict[
+            str, asyncio.Task[_VerifiedSession[Result, AttestationResult]]
+        ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
-        self._responses: dict[str, _ResponseRecord[Result]] = {}
+        self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
         self._drains: set[asyncio.Task[None]] = set()
         self._chat_client = httpx.AsyncClient(
             transport=_InferenceTransport(self), timeout=None
@@ -220,11 +226,12 @@ class _VerifiedInferenceClient[Result]:
         self._sessions.clear()
         self._responses.clear()
 
-    async def verify(self, model: str) -> None:
-        """Verify the deployment without sending Chat.
+    async def verify(self, model: str) -> AttestationResult:
+        """Return verified deployment evidence without sending Chat.
 
-        Shares Chat's attestation cache and in-flight work. A later Chat verifies
-        again when the cache expires or its time to live is zero.
+        Shares Chat's attestation cache and in-flight work. Cache hits retain
+        the original result and verified_at time. A later Chat verifies again
+        when the cache expires or its time to live is zero.
         """
 
         if model == '':
@@ -236,7 +243,8 @@ class _VerifiedInferenceClient[Result]:
                     'expected': 'a non-empty model ID',
                 },
             )
-        await self._start_verification(model)
+        session = await self._start_verification(model)
+        return session.attestation_result
 
     async def send(self, request: httpx.Request) -> httpx.Response:
         """Send a Chat request; the returned body can be read or streamed.
@@ -339,7 +347,9 @@ class _VerifiedInferenceClient[Result]:
             record.verification.add_done_callback(_observe_exception)
         return await asyncio.shield(record.verification)
 
-    async def _verify_record(self, id: str, record: _ResponseRecord[Result]) -> Result:
+    async def _verify_record(
+        self, id: str, record: _ResponseRecord[Result, AttestationResult]
+    ) -> Result:
         try:
             body = await record.response_body
             signature = (
@@ -361,7 +371,9 @@ class _VerifiedInferenceClient[Result]:
                 record.verification = None
             raise
 
-    async def _start_verification(self, model: str) -> _VerifiedSession[Result]:
+    async def _start_verification(
+        self, model: str
+    ) -> _VerifiedSession[Result, AttestationResult]:
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
         now = monotonic()
@@ -375,7 +387,9 @@ class _VerifiedInferenceClient[Result]:
             task = asyncio.create_task(self._create_session(model))
             self._pending[model] = task
 
-            def finished(completed: asyncio.Task[_VerifiedSession[Result]]) -> None:
+            def finished(
+                completed: asyncio.Task[_VerifiedSession[Result, AttestationResult]],
+            ) -> None:
                 self._pending.pop(model, None)
                 if (
                     not completed.cancelled()
@@ -391,7 +405,9 @@ class _VerifiedInferenceClient[Result]:
         # Cancelling one caller must not cancel shared verification for others.
         return await asyncio.shield(task)
 
-    async def _create_session(self, model: str) -> _VerifiedSession[Result]:
+    async def _create_session(
+        self, model: str
+    ) -> _VerifiedSession[Result, AttestationResult]:
         raise NotImplementedError
 
     def _get_model_verifiers(self, model: str) -> ModelAttestationVerifiers | None:
@@ -429,7 +445,7 @@ class _VerifiedInferenceClient[Result]:
         id: str,
         request_body: bytes,
         response_body: asyncio.Future[bytes],
-        session: _VerifiedSession[Result],
+        session: _VerifiedSession[Result, AttestationResult],
     ) -> None:
         """Retain exact wire bytes for expiry and independent verification retries."""
 
@@ -451,7 +467,9 @@ class _VerifiedInferenceClient[Result]:
         record.response_body.add_done_callback(settled)
 
 
-class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
+class InferenceClient(
+    _VerifiedInferenceClient[VerifiedCompletionResult, AttestationVerificationResult]
+):
     """Gateway Chat with preflight and explicit response verification.
 
     E2EE is opt-in. NEAR TEE models require model evidence; Incognito models
@@ -492,7 +510,7 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
 
     async def _create_session(
         self, model: str
-    ) -> _VerifiedSession[VerifiedCompletionResult]:
+    ) -> _VerifiedSession[VerifiedCompletionResult, AttestationVerificationResult]:
         fetched = await self._attestation_client.fetch_gateway_attestation(
             signing_algo=self._signing_algo,
             include_spki_fingerprint=self._gateway_options.include_spki_fingerprint,
@@ -556,10 +574,13 @@ class InferenceClient(_VerifiedInferenceClient[VerifiedCompletionResult]):
             )
 
         return _VerifiedSession(
-            model_key,
-            self._completion_client(client, key_config),
-            attestations,
-            verify_response,
+            model_key=model_key,
+            http_client=self._completion_client(client, key_config),
+            attestation_client=attestations,
+            verify_response=verify_response,
+            attestation_result=AttestationVerificationResult(
+                gateway=gateway, models=models, verified_at=int(time() * 1000)
+            ),
         )
 
     async def _verify_gateway(

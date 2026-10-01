@@ -74,9 +74,9 @@ manager, call `await client.aclose()` when finished.
    See the [streaming example](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#verified-chat-client).
 
 Optionally call `await client.verify(model)` before the first Chat. It sends no
-Chat request and shares Chat's verification cache and in-flight work. In this
-version it returns `None` on success or raises on failure; it does not verify a
-particular reply.
+Chat request and shares Chat's verification cache and in-flight work. It returns
+verified Gateway and model evidence with the verification time, preserved on
+cache hits. It raises if verification fails and does not verify a particular reply.
 
 Successful deployment verification is cached for 60 minutes per model by default.
 Set `attestation_cache_time_to_live_ms=0` to verify before every request. Response
