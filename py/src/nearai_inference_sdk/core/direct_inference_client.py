@@ -7,6 +7,7 @@ import httpx
 from ..types.attestation_common import SigningAlgo
 from ..types.chat import CompletionSignature
 from ..types.direct import (
+    DirectModelVerificationOptions,
     VerifiedDirectCompletionResult,
     VerifiedDirectModelAttestation,
 )
@@ -65,7 +66,9 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
-        model_verification: ModelVerificationOptions | None = None,
+        model_verification: DirectModelVerificationOptions
+        | ModelVerificationOptions
+        | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
         super().__init__(
@@ -83,6 +86,11 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
         self._attestation_client = DirectAttestationClient(
             base_url, api_key=api_key, headers=self._headers
         )
+        self._serving_deployment = (
+            model_verification.serving_deployment
+            if isinstance(model_verification, DirectModelVerificationOptions)
+            else None
+        )
 
     async def _create_session(
         self, model: str
@@ -94,6 +102,7 @@ class DirectInferenceClient(_VerifiedInferenceClient[VerifiedDirectCompletionRes
             fetched,
             policy=self._model_options.policy,
             verifiers=self._get_model_verifiers(model),
+            serving_deployment=self._serving_deployment,
         )
         serving_signer = verified.serving_attestation.signer
         key_config = None

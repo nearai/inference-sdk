@@ -9,14 +9,19 @@ from sigstore.verify import Verifier
 
 from nearai_inference_sdk import (
     ComposeManagerAttestation,
+    DirectClientBinding,
+    DirectModelAttestation,
+    FetchedDirectModelAttestations,
     ImageProvenancePolicy,
     ModelAttestationVerifiers,
     VerificationError,
     verify_compose_manager_deployment_image_provenance,
+    verify_direct_model_attestations,
     verify_model_attestation,
 )
 from nearai_inference_sdk.core import compose_manager_provenance, provenance
 from nearai_inference_sdk.schemas import ComposeManagerAttestationSchema
+from nearai_inference_sdk.utils.common import sha256
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import (
@@ -62,8 +67,10 @@ def quote_verifier(quote: str):
     return create_model_quote()
 
 
-async def test_verifies_recorded_compose_and_real_image_proof_through_model_callback(
+@pytest.mark.parametrize('direct', [False, True])
+async def test_verifies_recorded_compose_and_real_image_proof_through_deployment_policy(
     monkeypatch,
+    direct,
 ):
     root = TrustedRoot.from_file(str(FIXTURES / 'provenance/trusted-root.json'))
     monkeypatch.setattr(Verifier, 'production', lambda: Verifier(trusted_root=root))
@@ -88,13 +95,37 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_model_call
     async def deployment_policy(deployment):
         await verify_compose_manager_deployment_image_provenance(deployment, POLICIES)
 
-    verified = await verify_model_attestation(
-        create_model_attestation(compose_manager_attestation=manager_report()),
-        MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(
-            tdx_quote=quote_verifier, deployment=deployment_policy
-        ),
-    )
+    attestation = create_model_attestation(compose_manager_attestation=manager_report())
+    if direct:
+        serving = DirectModelAttestation(**vars(attestation), model_name='glm-5.2')
+        sibling = replace(serving, intel_quote='cc', compose_manager_attestation=None)
+        checked = []
+
+        def verify_quote(quote):
+            checked.append(quote)
+            return quote_verifier(quote)
+
+        result = await verify_direct_model_attestations(
+            FetchedDirectModelAttestations(
+                serving_attestation=serving,
+                attestations=(sibling, serving),
+                client_binding=DirectClientBinding(nonce=NONCE),
+            ),
+            verifiers=ModelAttestationVerifiers(tdx_quote=verify_quote),
+            serving_deployment=deployment_policy,
+        )
+        assert sorted(checked) == ['aa', 'bb', 'cc']
+        assert result.attestations[0].deployment_provenance == 'not_checked'
+        assert result.serving_attestation is result.attestations[1]
+        verified = result.serving_attestation
+    else:
+        verified = await verify_model_attestation(
+            attestation,
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=quote_verifier, deployment=deployment_policy
+            ),
+        )
 
     assert verified.deployment_provenance == 'verified'
     assert verified.deployment.compose_manager.actions == manager_report().actions
@@ -102,6 +133,46 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_model_call
         'https://api.github.com/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref='
         + '12' * 20
     )
+
+
+@pytest.mark.parametrize(
+    'services,reason',
+    [(['other'], 'image_missing'), (['model', 'missing'], 'service_missing')],
+)
+async def test_service_selection_must_satisfy_the_image_policy(
+    monkeypatch, services, reason
+):
+    verified = await verify_model_attestation(
+        create_model_attestation(compose_manager_attestation=manager_report()),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
+    )
+    compose = FIXTURE['compose'] + '  other:\n    image: other/model:latest\n'
+    manager = verified.deployment.compose_manager
+    deployment = replace(
+        verified.deployment,
+        compose_manager=replace(
+            manager,
+            actions=(
+                {
+                    **manager.actions[0],
+                    'services': services,
+                    'file_sha256': sha256(compose.encode()).hex(),
+                },
+            ),
+        ),
+    )
+    compose_fetch = AsyncMock(
+        return_value=FetchResponse(status=200, body=compose.encode())
+    )
+    monkeypatch.setattr(compose_manager_provenance, 'fetch', compose_fetch)
+    image_fetch = AsyncMock()
+    monkeypatch.setattr(provenance, 'fetch_image_provenance', image_fetch)
+    with pytest.raises(VerificationError) as raised:
+        await verify_compose_manager_deployment_image_provenance(deployment, POLICIES)
+    assert raised.value.failure.code == 'provenance.deployment_images_invalid'
+    assert raised.value.failure.details['reason'] == reason
+    image_fetch.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

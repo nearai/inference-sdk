@@ -487,7 +487,9 @@ TCB policy, nonce, action hash, event log and binding to the same measured
 `app_compose`. The callback receives `deployment.compose_manager`. The helper
 selects the last `compose_up`, downloads its file from `nearai/cvm-compose-files`
 at the recorded commit, verifies `file_sha256`, then checks the required image
-builds. Image selection also includes the latest `compose_manager_started` image.
+builds from the action's named `services`. An omitted or empty list selects the
+whole file; unknown service names are rejected. Images in unselected services
+cannot satisfy a policy. Selection also includes the latest `compose_manager_started` image.
 Use `compose_file` for a specific project's latest recorded file, and
 `compose_repository` for another trusted repository. In `InferenceClient`, use
 this callback through `model_verification.verifiers.deployment`.
@@ -498,6 +500,25 @@ cover the proxy and manager builds, not every container, model weights or boot
 launcher provenance; approve the boot configuration separately. Missing manager
 evidence is allowed by basic model verification but rejected by this helper.
 On direct endpoints, envelope-level evidence applies only to the serving report.
+Use `serving_deployment` for this policy, keeping per-report checks in
+`verifiers.deployment`:
+
+```python
+from nearai_inference_sdk import verify_direct_model_attestations
+
+verified = await verify_direct_model_attestations(
+    fetched_direct,
+    serving_deployment=check_model_images,
+)
+```
+
+For `DirectInferenceClient`, pass
+`model_verification=DirectModelVerificationOptions(serving_deployment=check_model_images)`
+(import `DirectModelVerificationOptions` from the SDK). Every model report still
+undergoes its normal quote, GPU and deployment checks. This additional policy
+runs after the whole set and its TLS binding pass; it marks only the serving
+report's provenance as verified. Missing manager evidence in that report still
+fails the policy.
 
 ## 2. Send the completion and retain exact bytes
 

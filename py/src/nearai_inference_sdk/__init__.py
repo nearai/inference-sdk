@@ -58,6 +58,7 @@ from .types.compose_manager import (
 from .types.direct import (
     DirectClientBinding,
     DirectModelAttestation,
+    DirectModelVerificationOptions,
     DirectTlsBinding,
     FetchedDirectModelAttestations,
     VerifiedDirectCompletionResult,
@@ -123,6 +124,7 @@ __all__ = [
     'DirectClientBinding',
     'DirectInferenceClient',
     'DirectModelAttestation',
+    'DirectModelVerificationOptions',
     'DirectTlsBinding',
     'E2eeModelKey',
     'FetchedDirectModelAttestations',

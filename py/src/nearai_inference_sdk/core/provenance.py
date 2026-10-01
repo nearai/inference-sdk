@@ -80,6 +80,8 @@ async def verify_compose_image_provenance(
     image_policies: Mapping[str, ImageProvenancePolicy],
     github_token: str | None = None,
     additional_images: Sequence[tuple[str, str]] = (),
+    *,
+    services: Sequence[str] = (),
 ) -> None:
     """Shared image selection for authenticated compose sources."""
     if not image_policies:
@@ -93,7 +95,10 @@ async def verify_compose_image_provenance(
         raise _deployment_images_failure('invalid_docker_compose') from None
 
     images: list[tuple[str, str]] = []
-    for service, config in compose.services.items():
+    for service in services or compose.services.keys():
+        config = compose.services.get(service)
+        if config is None:
+            raise _deployment_images_failure('service_missing', service=service)
         if config.image is None:
             continue
         if '$' in config.image:

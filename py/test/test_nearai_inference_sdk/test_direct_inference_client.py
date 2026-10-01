@@ -4,6 +4,7 @@ from openai import AsyncOpenAI
 
 from nearai_inference_sdk import (
     DirectInferenceClient,
+    DirectModelVerificationOptions,
     ModelAttestationVerifiers,
     ModelVerificationOptions,
     VerificationError,
@@ -131,4 +132,32 @@ async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypat
                 )
             )
         assert raised.value.failure.code == 'policy.debug_enabled'
+    assert endpoint.completion_requests == []
+
+
+async def test_serving_deployment_policy_blocks_chat(monkeypatch):
+    endpoint = DirectEndpoint()
+    endpoint.install(monkeypatch)
+    checked = []
+
+    def reject(deployment):
+        checked.append(deployment)
+        raise ValueError('Unapproved serving deployment')
+
+    async with DirectInferenceClient(
+        BASE_URL,
+        model_verification=DirectModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(tdx_quote=endpoint.quotes.__getitem__),
+            serving_deployment=reject,
+        ),
+    ) as client:
+        with pytest.raises(ValueError, match='Unapproved serving deployment'):
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert len(checked) == 1
     assert endpoint.completion_requests == []

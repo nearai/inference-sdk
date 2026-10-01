@@ -138,6 +138,8 @@ class ComposeManagerActionSchema(RootModel[dict[str, StrictStr | list[StrictStr]
         for key in ('commit', 'file', 'file_sha256', 'image'):
             if key in self.root and not isinstance(self.root[key], str):
                 raise ValueError(f'{key} must be a string')
+        if 'services' in self.root and not isinstance(self.root['services'], list):
+            raise ValueError('services must be a list of strings')
         return self
 
 

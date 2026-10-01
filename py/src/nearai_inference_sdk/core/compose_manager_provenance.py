@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Mapping
+from typing import cast
 from urllib.parse import quote
 
 from ..types.provenance import ImageProvenancePolicy
@@ -107,7 +108,12 @@ async def verify_compose_manager_deployment_image_provenance(
     image = None if started is None else started.get('image')
     additional_images = [('compose-manager', image)] if isinstance(image, str) else []
     await verify_compose_image_provenance(
-        docker_compose, image_policies, github_token, additional_images
+        docker_compose,
+        image_policies,
+        github_token,
+        additional_images,
+        # The action boundary validates services separately from string fields.
+        services=cast(list[str], action.get('services', [])),
     )
 
 
