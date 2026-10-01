@@ -470,6 +470,10 @@ class _VerifiedInferenceClient[Result]:
         self._responses[id] = record
 
         def settled(_future: asyncio.Future[bytes]) -> None:
+            # A completed future's callback may run after close or replacement.
+            if self._chat_client.is_closed or self._responses.get(id) is not record:
+                return
+
             def expire() -> None:
                 if self._responses.get(id) is record:
                     del self._responses[id]

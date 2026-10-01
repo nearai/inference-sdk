@@ -322,7 +322,8 @@ async def test_unsupported_decision_modes_fail_before_preflight(
 
 
 @pytest.mark.parametrize(
-    'model_fields', [{}, {'model': ''}, {'model': None}, {'model': 1}]
+    'model_fields',
+    [{}, {'model': ''}, {'model': None}, {'model': 1}, {'model': '.'}, {'model': '..'}],
 )
 async def test_invalid_decision_model_fails_before_preflight(monkeypatch, model_fields):
     gateway = DecisionGateway()
@@ -356,9 +357,19 @@ async def test_invalid_decision_headers_fail_before_preflight(monkeypatch, heade
     assert gateway.requests == []
 
 
-async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(monkeypatch):
+@pytest.mark.parametrize(
+    'decision_id,encoded_id',
+    [
+        ('jev/run:1?variant=2#decision', 'jev%2Frun%3A1%3Fvariant%3D2%23decision'),
+        ('.', '%2E'),
+        ('..', '%2E%2E'),
+    ],
+)
+async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(
+    monkeypatch, decision_id, encoded_id
+):
     gateway = DecisionGateway()
-    gateway.decision_id = 'jev/run:1?variant=2#decision'
+    gateway.decision_id = decision_id
     gateway.body_id = 'provider-body-id'
     gateway.install(monkeypatch)
 
@@ -370,7 +381,7 @@ async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(monkeyp
         assert verified.id == result.decision_id
 
     assert gateway.signature_urls[0].raw_path == (
-        b'/v1/signature/jev%2Frun%3A1%3Fvariant%3D2%23decision?signing_algo=ed25519'
+        f'/v1/signature/{encoded_id}?signing_algo=ed25519'.encode()
     )
 
 
@@ -479,6 +490,21 @@ async def test_decision_response_expires_without_repeating_inference(monkeypatch
         assert raised.value.failure.code == 'api.completion_not_found'
     assert len(gateway.requests) == 1
     assert gateway.signature_requests == 0
+
+
+async def test_closing_after_a_decision_does_not_leave_response_expiry_running(
+    monkeypatch,
+):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    client = gateway.client(e2ee=False)
+    result = await client.systemone.create(REQUEST)
+    record = client._responses[result.decision_id]
+    await client.aclose()
+    # Future completion callbacks queued by create() must not retain closed data.
+    await asyncio.sleep(0)
+    assert client._responses == {}
+    assert record.expiry is None or record.expiry.cancelled()
 
 
 async def test_decision_preflight_requires_the_configured_signing_algorithm(

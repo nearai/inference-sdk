@@ -94,10 +94,12 @@ class _ApiClient:
         query: dict[str, str] = {}
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
+        # urllib leaves dots unescaped; HTTPX normalizes bare '.' and '..'.
+        signature_id = quote(completion_id, safe='').replace('.', '%2E')
         response = await self._get_json(
             _endpoint(
                 self._base_url,
-                f'signature/{quote(completion_id, safe="")}',
+                f'signature/{signature_id}',
                 query,
             ),
             'completion_signature',

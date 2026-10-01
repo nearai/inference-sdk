@@ -209,6 +209,13 @@ class CompletionRequestModelSchema(ApiSchema):
 
     model: StrictStr = Field(min_length=1)
 
+    @field_validator('model')
+    @classmethod
+    def reject_dot_segments(cls, value: str) -> str:
+        if value in ('.', '..'):
+            raise ValueError('Model ID cannot be a dot path segment')
+        return value
+
 
 class ChatCompletionRequestSchema(CompletionRequestModelSchema):
     """Only identify the model; leave Chat field validation to the server."""
