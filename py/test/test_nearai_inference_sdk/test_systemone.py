@@ -542,10 +542,12 @@ async def test_closing_after_a_decision_does_not_leave_response_expiry_running(
     assert record.expiry is None or record.expiry.cancelled()
 
 
-async def test_decision_preflight_requires_the_configured_signing_algorithm(
+@pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
+async def test_decision_preflight_rejects_an_incompatible_gateway_signer(
     monkeypatch,
+    kind,
 ):
-    gateway = DecisionGateway(kind='provider_tee')
+    gateway = DecisionGateway(kind=kind)
     gateway.install(monkeypatch)
     # The endpoint ignores the requested algorithm; stop before sending a decision.
     async with gateway.client(e2ee=False, signing_algo='ecdsa') as client:
