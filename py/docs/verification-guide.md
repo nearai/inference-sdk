@@ -527,7 +527,10 @@ For `DirectInferenceClient`, pass
 undergoes its normal quote, GPU and deployment checks. This additional policy
 runs after the whole set and its TLS binding pass; it marks only the serving
 report's provenance as verified. Missing manager evidence in that report still
-fails the policy.
+fails the policy. With this option, the client uses only the serving report for
+Chat's signer, TLS pins (when enabled), and response verification. When composing
+the bare functions yourself, pass `(verified.serving_attestation,)` to
+`verify_direct_model_response` to apply the same restriction.
 
 ## 2. Send the completion and retain exact bytes
 

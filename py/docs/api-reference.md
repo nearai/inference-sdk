@@ -131,7 +131,7 @@ same common options as `InferenceClient`, with the following differences:
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
 | `e2ee` | Defaults to `True`. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
-| `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`, plus optional `serving_deployment` for the serving report only. `ModelVerificationOptions` is also accepted for per-report checks. |
+| `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`. Optional `serving_deployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). `ModelVerificationOptions` is also accepted for per-report checks. |
 | `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |

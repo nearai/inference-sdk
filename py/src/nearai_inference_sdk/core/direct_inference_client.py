@@ -112,6 +112,11 @@ class DirectInferenceClient(
             verifiers=self._get_model_verifiers(model),
             serving_deployment=self._serving_deployment,
         )
+        eligible_attestations = (
+            verified.attestations
+            if self._serving_deployment is None
+            else (verified.serving_attestation,)
+        )
         serving_signer = verified.serving_attestation.signer
         key_config = None
         if self._ohttp:
@@ -120,6 +125,9 @@ class DirectInferenceClient(
             key_config = verify_ohttp_key_config(
                 fetched.ohttp_attestation, serving_signer
             )
+        # OHTTP and a serving-only policy require the serving signer. Another
+        # verified report with that same identity may supply its public key.
+        require_serving_signer = self._ohttp or self._serving_deployment is not None
         selected = next(
             (
                 item
@@ -127,7 +135,7 @@ class DirectInferenceClient(
                 if item.signer.signing_algo == self._signing_algo
                 and item.signing_public_key is not None
                 and (
-                    not self._ohttp
+                    not require_serving_signer
                     or (
                         item.signer.signing_algo == serving_signer.signing_algo
                         and hex_to_bytes(item.signer.signing_address)
@@ -141,7 +149,7 @@ class DirectInferenceClient(
             raise verification_failure('e2ee.model_public_key_required')
         attestations = tuple(
             item
-            for item in verified.attestations
+            for item in eligible_attestations
             if item.signer.signing_algo == self._signing_algo
             and hex_to_bytes(item.signer.signing_address)
             == hex_to_bytes(selected.signer.signing_address)

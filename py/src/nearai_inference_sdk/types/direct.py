@@ -17,7 +17,7 @@ from .verification import (
 
 @dataclass(frozen=True, kw_only=True)
 class DirectModelVerificationOptions(ModelVerificationOptions):
-    """Per-report checks plus an optional serving-only deployment policy."""
+    """Per-report checks; a serving-only policy restricts Chat to that report."""
 
     serving_deployment: DeploymentVerifier | None = None
 
