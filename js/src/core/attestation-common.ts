@@ -2,7 +2,11 @@ import { Buffer } from 'buffer';
 import { hexToBuffer, requireByteLength, sha256, utf8 } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 
-type NonceSource = 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
+type NonceSource =
+  | 'attestationNonce'
+  | 'quoteReportData'
+  | 'nvidiaPayload'
+  | 'composeManagerAttestation';
 
 type VerifyReportedNonceParams = {
   reportedNonce: string;
@@ -42,7 +46,11 @@ export function verifyReportedNonce({
     value: reportedNonce,
     byteLength: 32,
     label:
-      source === 'nvidiaPayload' ? 'nvidiaPayload.nonce' : 'attestation.nonce',
+      source === 'nvidiaPayload'
+        ? 'nvidiaPayload.nonce'
+        : source === 'composeManagerAttestation'
+          ? 'composeManagerAttestation.nonce'
+          : 'attestation.nonce',
   });
 
   if (!reported.equals(expected)) {
@@ -149,7 +157,7 @@ type VerifyQuoteReportDataNonceParams = {
   nonce: string;
 };
 
-function verifyQuoteReportDataNonce({
+export function verifyQuoteReportDataNonce({
   reportData: rawReportData,
   nonce,
 }: VerifyQuoteReportDataNonceParams): Buffer {

@@ -1,0 +1,15 @@
+{
+  "compose": "x-model: &model\n  image: nearaidev/compose-manager-launcher@sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56\nservices:\n  model:\n    <<: *model\n",
+  "actions": [
+    {
+      "action": "compose_up",
+      "commit": "1212121212121212121212121212121212121212",
+      "file": "prod/model.yaml",
+      "file_sha256": "bea85770f0919ace09a0dbcdb485c1f8eca1b856d0d6b9dfad61689dda72e53f",
+      "services": ["model"],
+      "tag": "release-模型",
+      "timestamp": "2026-10-01T00:00:00Z"
+    }
+  ],
+  "actions_hash": "0b7fa6edbf8cd616fc4047e52058175ee707c560c764dde1c76532cc7a7146fd"
+}

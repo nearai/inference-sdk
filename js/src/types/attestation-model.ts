@@ -1,4 +1,5 @@
 import type { AttestationEvidence } from './attestation-common';
+import type { ComposeManagerAttestation } from './compose-manager';
 
 /** Raw model-serving TEE evidence returned by NEAR AI Cloud. */
 export type ModelAttestation = AttestationEvidence & {
@@ -6,4 +7,5 @@ export type ModelAttestation = AttestationEvidence & {
   signingPublicKey?: string;
   nvidiaPayload?: string;
   reportedQuoteData?: string;
+  composeManagerAttestation?: ComposeManagerAttestation;
 };

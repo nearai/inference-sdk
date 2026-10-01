@@ -17,8 +17,8 @@ project configuration. Each entry point includes non-streaming and streaming cal
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
-| `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `gateway/bare.ts` | Verifies attestations and required Gateway/model image builds, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `gateway/client.ts` | Configures Gateway/model image policies, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct/client.ts` | Experimental: connects using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Experimental: passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
@@ -107,14 +107,27 @@ and unresolved `${VARIABLE:-default}` expressions are not.
 The policies belong to these examples, not an SDK default allowlist. Add `commit`
 to each policy to require a reviewed source commit.
 
+Both examples also use `verifyComposeManagerDeploymentImageProvenance` to require
+these images from the model's authenticated deployment-control evidence:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+The model callback checks the compose file at the recorded commit against its
+signed file hash before checking image builds. The manager's latest start action
+supplies its own image. This authenticates recorded deployment intent, not the
+success or current state of running containers. Other model images and weights
+remain outside these policies.
+
 Gateway/model attestation and image-check failures block both Chat modes.
 `client.ts` reuses successful checks through its 60-minute attestation cache;
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
 
 These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image, or model-weight
-provenance.
+approve all boot software or prove current runtime state.
 
 ## Python
 

@@ -686,6 +686,91 @@ failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
 The optional `githubToken` is a GitHub token, not a Gateway API key.
 
+#### Model images deployed by Compose Manager
+
+A model's measured `appCompose` can describe its launcher rather than the
+model-serving containers deployed later. Use
+`verifyComposeManagerDeploymentImageProvenance` for those images:
+
+```ts
+import {
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyModelAttestation,
+  type ImageProvenancePolicy,
+} from '@nearai/inference-sdk';
+
+const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+  'nearaidev/compose-manager': {
+    repository: 'nearai/compose-manager',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+for (const attestation of fetchedModels.attestations) {
+  await verifyModelAttestation({
+    attestation,
+    clientBinding: fetchedModels.clientBinding,
+    verifiers: {
+      deployment: deployment =>
+        verifyComposeManagerDeploymentImageProvenance({
+          deployment,
+          imagePolicies: modelImagePolicies,
+        }),
+    },
+  });
+}
+```
+
+When a model report includes Compose Manager evidence, model verification also
+checks its TDX quote, TCB policy, client nonce, action-log hash, event log and
+binding to the same measured `appCompose`. The callback receives these
+authenticated actions in `deployment.composeManager`.
+
+The image helper selects the last `compose_up`, fetches its file from
+`nearai/cvm-compose-files` at the recorded commit, checks the exact file bytes
+against `file_sha256`, and verifies the required image builds from the action's
+named `services`. An omitted or empty list selects the whole file; unknown service
+names are rejected. Images in unselected services cannot satisfy a policy. It also considers
+the image in the latest `compose_manager_started` action. Set `composeFile` to
+select a particular project's file, or `composeRepository` to use another
+trusted repository. A configured image that is absent or unpinned fails verification.
+For `InferenceClient`, use this callback as `modelVerification.verifiers.deployment`.
+
+This authenticates **recorded deployment intent**, not successful execution or
+the currently running containers. Matching `appCompose` is not a unique CVM
+identity. The policies above cover the proxy and Compose Manager images, not
+model weights, every container or the boot launcher's build. Approve the boot
+configuration separately. A missing Compose Manager report is allowed by basic
+model verification but rejected when this provenance helper is used. For direct
+endpoints, envelope-level evidence applies only to the serving report. Use
+`servingDeployment` for this policy, keeping per-report checks in `verifiers.deployment`:
+
+```ts
+import { verifyDirectModelAttestations } from '@nearai/inference-sdk/node';
+
+const verified = await verifyDirectModelAttestations({
+  ...fetchedDirect,
+  servingDeployment: deployment =>
+    verifyComposeManagerDeploymentImageProvenance({
+      deployment,
+      imagePolicies: modelImagePolicies,
+    }),
+});
+```
+
+For `DirectInferenceClient`, use `modelVerification.servingDeployment`. Every
+model report still undergoes its normal quote, GPU and deployment checks. This
+additional policy runs after the whole set and its TLS binding pass; it marks
+only the serving report's provenance as verified. Missing manager evidence in
+that report still fails the policy. With this option, the client uses only the
+serving report for Chat's signer, TLS pins (when enabled), and response verification.
+When composing the bare functions yourself, pass `[verified.servingAttestation]`
+to `verifyDirectModelResponse` to apply the same restriction.
+
 ### Verify the response signature
 
 `signature.kind` identifies the signer and therefore the proof made by a

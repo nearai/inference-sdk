@@ -3,6 +3,7 @@ import {
   createPinnedTlsFetch,
   prepareE2eeChatRequest,
   verifyDeploymentImageProvenance,
+  verifyComposeManagerDeploymentImageProvenance,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
@@ -39,6 +40,17 @@ const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
   },
   'nearaidev/dstack-vpc-client': {
     repository: 'nearai/dstack-vpc-client',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+  'nearaidev/compose-manager': {
+    repository: 'nearai/compose-manager',
     workflow: '.github/workflows/build.yml',
   },
 };
@@ -170,6 +182,14 @@ async function fetchAndVerifyModelAttestations(
       verifyModelAttestation({
         attestation,
         clientBinding: fetched.clientBinding,
+        // Authenticate the recorded deployment file and required image builds.
+        verifiers: {
+          deployment: (deployment) =>
+            verifyComposeManagerDeploymentImageProvenance({
+              deployment,
+              imagePolicies: MODEL_IMAGE_POLICIES,
+            }),
+        },
       }),
     ),
   );

@@ -19,6 +19,17 @@ type RequiredImage = {
   policy: ImageProvenancePolicy;
 };
 
+type ComposeImage = { service: string; image: string };
+
+type VerifyComposeImageProvenanceParams = {
+  dockerCompose: string;
+  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
+  githubToken?: string;
+  additionalImages?: readonly ComposeImage[];
+  /** An explicit compose_up selection; omitted or empty selects the whole file. */
+  services?: readonly string[];
+};
+
 /**
  * Check the build provenance of every configured image repository in appCompose.
  * Use in a deployment verifier, after attestation verification has authenticated
@@ -29,7 +40,40 @@ export async function verifyDeploymentImageProvenance({
   imagePolicies,
   githubToken,
 }: VerifyDeploymentImageProvenanceParams): Promise<void> {
-  const requiredImages = selectRequiredImages(appCompose, imagePolicies);
+  requireImagePolicies(imagePolicies);
+  let configuration: DeploymentAppCompose;
+  try {
+    configuration = v.parse(DeploymentAppComposeSchema, JSON.parse(appCompose));
+  } catch (cause) {
+    throw new VerificationError(
+      {
+        code: 'provenance.deployment_images_invalid',
+        details: { reason: 'invalid_app_compose' },
+      },
+      { cause },
+    );
+  }
+  await verifyComposeImageProvenance({
+    dockerCompose: configuration.docker_compose_file,
+    imagePolicies,
+    githubToken,
+  });
+}
+
+/** Shared image selection and Sigstore checks for authenticated compose sources. */
+export async function verifyComposeImageProvenance({
+  dockerCompose,
+  imagePolicies,
+  githubToken,
+  additionalImages = [],
+  services,
+}: VerifyComposeImageProvenanceParams): Promise<void> {
+  const requiredImages = selectRequiredImages({
+    dockerCompose,
+    imagePolicies,
+    additionalImages,
+    services,
+  });
   await Promise.all(
     requiredImages.map(async ({ repository, digest, policy }) => {
       let bundles: readonly string[];
@@ -55,34 +99,18 @@ export async function verifyDeploymentImageProvenance({
   );
 }
 
-function selectRequiredImages(
-  appCompose: string,
-  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>,
-): RequiredImage[] {
+function selectRequiredImages({
+  dockerCompose,
+  imagePolicies,
+  additionalImages = [],
+  services,
+}: VerifyComposeImageProvenanceParams): RequiredImage[] {
   const policies = Object.entries(imagePolicies);
-  if (policies.length === 0) {
-    throw new VerificationError({
-      code: 'provenance.deployment_images_invalid',
-      details: { reason: 'empty_policy' },
-    });
-  }
-
-  let configuration: DeploymentAppCompose;
-  try {
-    configuration = v.parse(DeploymentAppComposeSchema, JSON.parse(appCompose));
-  } catch (cause) {
-    throw new VerificationError(
-      {
-        code: 'provenance.deployment_images_invalid',
-        details: { reason: 'invalid_app_compose' },
-      },
-      { cause },
-    );
-  }
+  requireImagePolicies(imagePolicies);
 
   let compose: DeploymentDockerCompose;
   try {
-    const raw: unknown = parse(configuration.docker_compose_file, {
+    const raw: unknown = parse(dockerCompose, {
       merge: true,
       logLevel: 'error',
     });
@@ -97,8 +125,18 @@ function selectRequiredImages(
     );
   }
 
-  const images: { service: string; image: string }[] = [];
-  for (const [service, { image }] of Object.entries(compose.services)) {
+  const composeServices = new Map(Object.entries(compose.services));
+  const selectedServices = services?.length ? services : composeServices.keys();
+  const images: ComposeImage[] = [];
+  for (const service of selectedServices) {
+    const config = composeServices.get(service);
+    if (config === undefined) {
+      throw new VerificationError({
+        code: 'provenance.deployment_images_invalid',
+        details: { reason: 'service_missing', service },
+      });
+    }
+    const { image } = config;
     if (image === undefined) continue;
     // A variable's default is not evidence of its resolved deployment value.
     if (image.includes('$')) {
@@ -109,6 +147,12 @@ function selectRequiredImages(
     }
     images.push({ service, image: image.replace(/^docker\.io\//, '') });
   }
+  images.push(
+    ...additionalImages.map(({ service, image }) => ({
+      service,
+      image: image.replace(/^docker\.io\//, ''),
+    })),
+  );
 
   // Finish selection before making any requests, including checking repeated
   // references so a pinned service cannot hide an unpinned one.
@@ -146,4 +190,15 @@ function selectRequiredImages(
     }
   }
   return requiredImages;
+}
+
+function requireImagePolicies(
+  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>,
+): void {
+  if (Object.keys(imagePolicies).length === 0) {
+    throw new VerificationError({
+      code: 'provenance.deployment_images_invalid',
+      details: { reason: 'empty_policy' },
+    });
+  }
 }
