@@ -722,6 +722,15 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         controller.abort(cause);
         throw cause;
       });
+    // System One does not route to a selected key: any verified model may sign.
+    if (
+      systemone &&
+      modelAttestations.some(
+        (attestation) => attestation.signer.signingAlgo !== this.signingAlgo,
+      )
+    ) {
+      throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
     const modelAttestation = systemone
       ? undefined
       : modelAttestations.find(

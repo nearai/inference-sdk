@@ -3383,7 +3383,6 @@ describe('System One decisions', () => {
     status?: number;
     failSignatureOnce?: boolean;
     unavailableSignatureOnce?: boolean;
-    requestedSigningAlgo?: string;
     omitBodyId?: boolean;
     unknownSigner?: boolean;
     includeModelPublicKey?: boolean;
@@ -3400,7 +3399,6 @@ describe('System One decisions', () => {
     status = 200,
     failSignatureOnce = false,
     unavailableSignatureOnce = false,
-    requestedSigningAlgo = 'ed25519',
     omitBodyId = false,
     unknownSigner = false,
     includeModelPublicKey = false,
@@ -3457,7 +3455,7 @@ describe('System One decisions', () => {
       }
       if (url.pathname === `/v1/signature/${encodeURIComponent(decisionId)}`) {
         gateway.expectRequestHeader(request);
-        expect(url.searchParams.get('signing_algo')).toBe(requestedSigningAlgo);
+        expect(url.searchParams.get('signing_algo')).toBe('ed25519');
         signaturePaths.push(url.pathname);
         if (failSignatureOnce && signaturePaths.length === 1)
           return new Response('', { status: 404 });
@@ -3541,6 +3539,62 @@ describe('System One decisions', () => {
       expect(fixture.requests[0].headers.get('x-no-aliasing')).toBe('true');
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(unpinned).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([false, true])(
+    'rejects incompatible model signer algorithms before a decision (mixed set: %s)',
+    async (mixed) => {
+      const fixture = decisionGateway({ tee: true });
+      const quotes = new Map<string, TdxQuoteVerificationResult>();
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const response = await fixture.fetch(input, init);
+          const url = new URL(new Request(input, init).url);
+          if (
+            url.pathname !== '/v1/attestation/report' ||
+            !url.searchParams.has('model')
+          ) {
+            return response;
+          }
+          const body = await response.json();
+          const original = body.model_attestations[0];
+          const quote = fixture.gateway.tdxQuoteVerifier(original.intel_quote);
+          const reportData = Buffer.concat([
+            Buffer.from('22'.repeat(20), 'hex'),
+            Buffer.alloc(12),
+            quote.reportData.subarray(32),
+          ]);
+          quotes.set('ff', { ...quote, reportData });
+          const report = {
+            ...original,
+            signing_algo: 'ecdsa',
+            signing_address: `0x${'22'.repeat(20)}`,
+            intel_quote: 'ff',
+            report_data: reportData.toString('hex'),
+          };
+          body.model_attestations = mixed
+            ? [...body.model_attestations, report]
+            : [report];
+          return jsonResponse(body);
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+        modelVerification: {
+          verifiers: {
+            tdxQuote: (quote) =>
+              quotes.get(quote) ?? fixture.gateway.tdxQuoteVerifier(quote),
+          },
+        },
+      });
+      await expect(
+        client.systemone.create(decisionRequest),
+      ).rejects.toMatchObject({
+        failure: { code: 'signature.signer_mismatch' },
+      });
+      expect(fixture.requests).toHaveLength(0);
     },
   );
 
@@ -3650,10 +3704,9 @@ describe('System One decisions', () => {
     expect(fixture.signaturePaths).toHaveLength(2);
   });
 
-  test('rejects a valid fleet receipt using an unrequested algorithm', async () => {
+  test('rejects Ed25519 model reports before an ECDSA decision request', async () => {
     const fixture = decisionGateway({
       tee: true,
-      requestedSigningAlgo: 'ecdsa',
     });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
@@ -3662,19 +3715,13 @@ describe('System One decisions', () => {
       ohttp: false,
       e2ee: false,
     });
-    const result = await client.systemone.create(decisionRequest);
     await expect(
-      client.verifyResponse(result.decisionId),
+      client.systemone.create(decisionRequest),
     ).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
-    await expect(
-      client.verifyResponse(result.decisionId),
-    ).rejects.toMatchObject({
-      failure: { code: 'signature.signer_mismatch' },
-    });
-    expect(fixture.requests).toHaveLength(1);
-    expect(fixture.signaturePaths).toHaveLength(1);
+    expect(fixture.requests).toHaveLength(0);
+    expect(fixture.signaturePaths).toHaveLength(0);
   });
 
   test.each([
