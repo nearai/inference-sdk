@@ -165,3 +165,19 @@ cargo run
 The Python and Rust projects use the sibling SDK source through local path
 dependencies. Replace those dependencies with released package versions when
 using these examples outside this repository.
+
+## Go
+
+[example-go](./example-go/main.go) uses the official OpenAI Go SDK with the NEAR AI
+verified HTTP transport, E2EE, and explicit response verification. Follow the
+[Go native build setup](../go/README.md#build-and-install), then run:
+
+```sh
+cd examples/example-go
+export NEARAI_API_KEY='your-api-key'
+go run .
+```
+
+`NEAR_AI_API_KEY` is also accepted for Open Code Review configurations. Optional
+`NEARAI_MODEL` selects a different model that supports NEAR model attestation.
+The example has a local Go module replacement for this checkout.

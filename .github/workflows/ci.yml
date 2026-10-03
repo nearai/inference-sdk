@@ -71,3 +71,33 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
       - run: make check
+
+  go:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'go'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: |
+            go/go.sum
+            examples/example-go/go.sum
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/nearai-dcap-qvl
+          key: go-dcap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go/scripts/build-dcap.sh') }}
+      - name: Build pinned DCAP library
+        run: |
+          DCAP_LIBRARY_DIR="$(go/scripts/build-dcap.sh)"
+          echo "CGO_LDFLAGS=-L$DCAP_LIBRARY_DIR" >> "$GITHUB_ENV"
+      - run: make -C go check
+      - name: Check Go OpenAI integration example
+        working-directory: examples/example-go
+        run: go test -race ./...
