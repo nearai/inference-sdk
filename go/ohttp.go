@@ -281,8 +281,25 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			break
 		}
 	}
-	responseBody := &bhttpBody{reader: decrypted, source: res.Body, known: known, first: true, expected: expected}
-	return &http.Response{StatusCode: int(status), Status: fmt.Sprintf("%d %s", status, http.StatusText(int(status))), Header: headers, Body: responseBody, ContentLength: expected, Request: req, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}, nil
+	size, e := readVarint(decrypted, true)
+	if e != nil {
+		return fail(e)
+	}
+	if size > 1<<30 || (expected == 0 && size != 0) {
+		return fail(fmt.Errorf("unexpected content size"))
+	}
+	responseBody := &bhttpBody{reader: decrypted, source: res.Body, known: known, remaining: size, expected: expected}
+	var responseReader io.ReadCloser = responseBody
+	if size == 0 {
+		// Callers need not read empty bodies, so authenticate the final frame now.
+		if _, e = responseBody.finish(); e != io.EOF {
+			return fail(e)
+		}
+		res.Body.Close()
+		responseReader = http.NoBody
+		expected = 0
+	}
+	return &http.Response{StatusCode: int(status), Status: fmt.Sprintf("%d %s", status, http.StatusText(int(status))), Header: headers, Body: responseReader, ContentLength: expected, Request: req, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}, nil
 }
 
 type ohttpDecryptReader struct {
