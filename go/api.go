@@ -95,7 +95,7 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, "", &Error{Code: "api.http_status", Details: map[string]any{"status": res.StatusCode}, Retryable: res.StatusCode == 408 || res.StatusCode == 429 || res.StatusCode >= 500}
+		return nil, "", &Error{Code: "api.http_status", Details: map[string]any{"status": res.StatusCode}, Retryable: res.StatusCode == 408 || res.StatusCode == 425 || res.StatusCode == 429 || res.StatusCode >= 500}
 	}
 	b, e := readBounded(res.Body, 16<<20)
 	if e != nil {
@@ -265,6 +265,10 @@ func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id str
 	}
 	b, _, e := c.get(ctx, "signature/"+url.PathEscape(id), q)
 	if e != nil {
+		var sdk *Error
+		if errors.As(e, &sdk) && sdk.Code == "api.http_status" && sdk.Details["status"] == http.StatusNotFound {
+			sdk.Retryable = true
+		}
 		return sig, e
 	}
 	var raw struct {

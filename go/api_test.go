@@ -32,3 +32,27 @@ func TestSignatureAPIErrorBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPStatusRetryabilityDependsOnResource(t *testing.T) {
+	for _, status := range []int{400, 401, 404, 408, 425, 429, 500} {
+		t.Run(itoa(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+			defer server.Close()
+			c, err := NewAttestationClient(ClientOptions{BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _, err = c.get(context.Background(), "model/test", nil)
+			requireCode(t, err, "api.http_status")
+			want := status == 408 || status == 425 || status == 429 || status >= 500
+			if err.(*Error).Retryable != want {
+				t.Fatalf("model status %d: %v", status, err)
+			}
+			_, err = c.FetchCompletionSignature(context.Background(), "test", Ed25519)
+			requireCode(t, err, "api.http_status")
+			if err.(*Error).Retryable != (want || status == 404) {
+				t.Fatalf("signature status %d: %v", status, err)
+			}
+		})
+	}
+}

@@ -18,22 +18,24 @@ import (
 )
 
 type fakeCloud struct {
-	encrypt      bool
-	streamBody   string
-	t            *testing.T
-	a            Attestation
-	q            QuoteVerificationResult
-	priv         ed25519.PrivateKey
-	mu           sync.Mutex
-	signatures   map[string]CompletionSignature
-	next         int
-	attestations atomic.Int32
-	chats        atomic.Int32
-	tee          bool
-	stream       bool
-	tamper       bool
-	badModel     bool
-	slow         <-chan struct{}
+	encrypt         bool
+	streamBody      string
+	t               *testing.T
+	a               Attestation
+	q               QuoteVerificationResult
+	priv            ed25519.PrivateKey
+	mu              sync.Mutex
+	signatureStatus atomic.Int32
+	signatureCalls  atomic.Int32
+	signatures      map[string]CompletionSignature
+	next            int
+	attestations    atomic.Int32
+	chats           atomic.Int32
+	tee             bool
+	stream          bool
+	tamper          bool
+	badModel        bool
+	slow            <-chan struct{}
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
@@ -84,6 +86,13 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 		f.chats.Add(1)
+		if f.encrypt {
+			if r.Header.Get("X-Signing-Algo") != "ed25519" {
+				f.t.Error("missing E2EE signing algorithm")
+			}
+		} else if r.Header.Get("X-Signing-Algo") != "" || r.Header.Get("X-Client-Pub-Key") != "" {
+			f.t.Error("E2EE headers on plaintext request")
+		}
 		body, _ := io.ReadAll(r.Body)
 		if r.Header.Get(NoAliasingHeader) != "true" {
 			f.t.Error("missing no-aliasing")
@@ -137,6 +146,11 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		io.WriteString(w, reply)
 	case strings.Contains(r.URL.Path, "/signature/"):
+		f.signatureCalls.Add(1)
+		if status := f.signatureStatus.Load(); status != 0 {
+			w.WriteHeader(int(status))
+			return
+		}
 		id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
 		f.mu.Lock()
 		sig := f.signatures[id]
@@ -190,6 +204,8 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				body, _ := json.Marshal(chatRequest())
 				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
 				req.Header.Set("Authorization", "Bearer wrong")
+				req.Header.Set("X-Signing-Algo", "ecdsa")
+				req.Header.Set("X-Client-Pub-Key", "stale")
 				res, e := c.HTTPClient().Do(req)
 				if e != nil {
 					t.Fatal(e)
@@ -390,5 +406,30 @@ func TestFailedStreamsAreNotRegistered(t *testing.T) {
 		}
 		_, e = c.VerifyResponse(context.Background(), "chat-1")
 		requireCode(t, e, "api.completion_not_found")
+	}
+}
+
+func TestVerificationRetriesTransientSignatureStatus(t *testing.T) {
+	for _, status := range []int{404, 425} {
+		t.Run(itoa(status), func(t *testing.T) {
+			f := newFakeCloud(t)
+			c, _ := fakeClient(t, f, nil)
+			if _, err := c.CreateChatCompletion(context.Background(), chatRequest()); err != nil {
+				t.Fatal(err)
+			}
+			f.signatureStatus.Store(int32(status))
+			_, err := c.VerifyResponse(context.Background(), "chat-1")
+			requireCode(t, err, "api.http_status")
+			if sdk, ok := err.(*Error); !ok || !sdk.Retryable {
+				t.Fatalf("expected retryable error: %v", err)
+			}
+			f.signatureStatus.Store(0)
+			if _, err := c.VerifyResponse(context.Background(), "chat-1"); err != nil {
+				t.Fatal(err)
+			}
+			if f.signatureCalls.Load() != 2 {
+				t.Fatal("signature was not fetched again")
+			}
+		})
 	}
 }

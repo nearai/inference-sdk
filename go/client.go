@@ -410,7 +410,6 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	removeBodyHeaders(r.Header)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set(NoAliasingHeader, "true")
-	r.Header.Set("X-Signing-Algo", string(c.options.SigningAlgo))
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.TransferEncoding = nil
