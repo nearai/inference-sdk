@@ -295,6 +295,8 @@ pub struct DirectInferenceClientOptions {
     pub max_response_bytes: usize,
     /// Bound both completed session and receipt caches. Oldest entries are evicted.
     pub max_cache_entries: usize,
+    /// Total request and response bytes retained in the receipt cache.
+    pub max_receipt_cache_bytes: usize,
 }
 impl Default for DirectInferenceClientOptions {
     fn default() -> Self {
@@ -320,6 +322,7 @@ impl From<InferenceClientOptions> for DirectInferenceClientOptions {
             deployment_policy: options.deployment_policy,
             max_response_bytes: options.max_response_bytes,
             max_cache_entries: options.max_cache_entries,
+            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
         }
     }
 }
@@ -338,6 +341,7 @@ impl From<DirectInferenceClientOptions> for InferenceClientOptions {
             deployment_policy: options.deployment_policy,
             max_response_bytes: options.max_response_bytes,
             max_cache_entries: options.max_cache_entries,
+            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
             gateway_verification: GatewayVerificationOptions::default(),
         }
     }
@@ -437,14 +441,14 @@ pub(crate) async fn create_session(
         .find(|a| {
             a.evidence.signer.signing_algo == options.signing_algo
                 && a.signing_public_key.is_some()
-                && (!options.ohttp || &a.evidence.signer == serving)
+                && (!options.ohttp || same_signer(&a.evidence.signer, serving))
         })
         .cloned()
         .ok_or_else(|| protocol("e2ee.model_public_key_required", "no matching model key"))?;
     let pins: Vec<_> = verified
         .attestations
         .iter()
-        .filter(|a| a.attestation.evidence.signer == selected.evidence.signer)
+        .filter(|a| same_signer(&a.attestation.evidence.signer, &selected.evidence.signer))
         .filter_map(|a| a.spki_fingerprint.clone())
         .collect();
     let client = if matches!(verified.tls_binding, GatewayTlsBinding::Attested { .. }) {
@@ -483,4 +487,13 @@ pub(crate) async fn create_session(
         api: EvidenceApi::Direct(api.with_http_client(client)),
         ohttp,
     }))
+}
+
+// Reports may spell the same validated hexadecimal address differently.
+pub(crate) fn same_signer(left: &SigningIdentity, right: &SigningIdentity) -> bool {
+    left.signing_algo == right.signing_algo
+        && matches!(
+            (decode_hex(&left.signing_address), decode_hex(&right.signing_address)),
+            (Ok(left), Ok(right)) if left == right
+        )
 }

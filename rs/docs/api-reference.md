@@ -39,6 +39,7 @@ returns `CompletionSignatureKind`.
 | `model_verification` | Default TCB/GPU policy/verifiers. |
 | `deployment_policy` | No model-aware callback. |
 | `max_response_bytes` | 64 MiB per captured response. |
+| `max_receipt_cache_bytes` | 64 MiB total retained request/response bytes; oldest receipts are evicted to fit. |
 | `max_cache_entries` | 1024 per completed cache and for pending preverification. |
 
 Verification options own optional verifiers through `Arc<dyn ...>`. The

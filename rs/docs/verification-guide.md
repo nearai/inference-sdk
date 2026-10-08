@@ -78,7 +78,13 @@ and new records prune expired entries; dropping all client clones and responses
 releases state. `max_cache_entries` defaults to 1024 for each completed cache
 and also bounds concurrent preverification. At capacity, completed caches evict
 the oldest entry. `max_response_bytes` defaults to 64 MiB; exceeding it fails
-closed. Set suitable limits for your workload. A missing, expired, evicted, or
+closed. `max_receipt_cache_bytes` defaults to 64 MiB total for retained request
+and response bytes, for both Gateway and direct clients. Oldest receipts are
+evicted until a new receipt fits; a single receipt exceeding this budget fails
+body consumption. Verification shares these byte buffers rather than copying them.
+This budget covers cached payloads, not in-flight requests/responses, active
+verification holding an evicted receipt, or evidence/metadata overhead.
+Set suitable limits for your workload. A missing, expired, evicted, or
 incomplete completion yields `api.completion_not_found`. A duplicate retained
 completion ID is rejected instead of replacing its original bytes.
 

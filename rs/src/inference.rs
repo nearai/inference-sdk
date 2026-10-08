@@ -89,6 +89,8 @@ pub struct InferenceClientOptions {
     pub max_response_bytes: usize,
     /// Bound both completed session and receipt caches. Oldest entries are evicted.
     pub max_cache_entries: usize,
+    /// Total request and response bytes retained in the receipt cache.
+    pub max_receipt_cache_bytes: usize,
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
@@ -106,6 +108,7 @@ impl Default for InferenceClientOptions {
             deployment_policy: None,
             max_response_bytes: 64 * 1024 * 1024,
             max_cache_entries: 1024,
+            max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -172,8 +175,8 @@ impl Session {
 type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, InferenceError>>>;
 type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
 struct Record {
-    request: Vec<u8>,
-    response: Vec<u8>,
+    request: Arc<[u8]>,
+    response: Arc<[u8]>,
     session: Arc<Session>,
     finished: Instant,
     verification: Mutex<Option<ReceiptFuture>>,
@@ -211,7 +214,10 @@ impl InferenceClient {
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
         }
-        if options.max_cache_entries == 0 || options.max_response_bytes == 0 {
+        if options.max_cache_entries == 0
+            || options.max_response_bytes == 0
+            || options.max_receipt_cache_bytes == 0
+        {
             return Err(input("cache_limits", "must be positive").into());
         }
         if let Some(key) = &options.api_key {
@@ -522,21 +528,37 @@ impl InferenceClient {
         if state.responses.contains_key(&id) {
             return Err(input("response.id", "duplicate completion ID").into());
         }
-        if state.responses.len() >= options.max_cache_entries {
+        let size = request
+            .len()
+            .checked_add(response.len())
+            .ok_or_else(|| input("response", "receipt exceeds configured cache byte limit"))?;
+        if size > options.max_receipt_cache_bytes {
+            return Err(input("response", "receipt exceeds configured cache byte limit").into());
+        }
+        let mut retained: usize = state
+            .responses
+            .values()
+            .map(|r| r.request.len() + r.response.len())
+            .sum();
+        while state.responses.len() >= options.max_cache_entries
+            || retained > options.max_receipt_cache_bytes - size
+        {
             if let Some(key) = state
                 .responses
                 .iter()
                 .min_by_key(|(_, r)| r.finished)
                 .map(|(k, _)| k.clone())
             {
-                state.responses.remove(&key);
+                if let Some(record) = state.responses.remove(&key) {
+                    retained -= record.request.len() + record.response.len();
+                }
             }
         }
         state.responses.insert(
             id,
             Arc::new(Record {
-                request,
-                response,
+                request: request.into(),
+                response: response.into(),
                 session,
                 finished: Instant::now(),
                 verification: Mutex::new(None),
@@ -598,7 +620,10 @@ impl InferenceClient {
                                         .attestations
                                         .iter()
                                         .filter(|a| {
-                                            a.attestation.evidence.signer == model.evidence.signer
+                                            crate::direct::same_signer(
+                                                &a.attestation.evidence.signer,
+                                                &model.evidence.signer,
+                                            )
                                         })
                                         .cloned()
                                         .collect();

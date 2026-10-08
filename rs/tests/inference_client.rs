@@ -46,6 +46,7 @@ struct Fixture {
     ecdsa: bool,
     ohttp: Option<ohttp::KeyConfig>,
     wrong_ohttp_signer: bool,
+    alternate_direct_signer: bool,
 }
 fn key(seed: u8) -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
@@ -105,9 +106,18 @@ impl Respond for Fixture {
                 assert_eq!(q["include_tls_fingerprint"], "false");
                 if self.direct {
                     self.model.fetch_add(1, Ordering::SeqCst);
-                    let root = self.report(nonce, 7);
+                    let mut root = self.report(nonce, 7);
+                    if self.alternate_direct_signer {
+                        root.as_object_mut().unwrap().remove("signing_public_key");
+                    }
                     let mut value = root.clone();
                     let mut other = self.report(nonce, 7);
+                    if self.alternate_direct_signer {
+                        other["signing_address"] = json!(format!(
+                            "0X{}",
+                            other["signing_address"].as_str().unwrap().to_uppercase()
+                        ));
+                    }
                     if self.bad_model {
                         other["report_data"] = json!("ff".repeat(64));
                     }
@@ -697,7 +707,7 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
 #[tokio::test]
 async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
     for direct in [false, true] {
-        for case in ["valid", "missing", "wrong_signer"] {
+        for case in ["valid", "alternate_spelling", "missing", "wrong_signer"] {
             let (_server, f, mut options) = setup(Fixture {
                 direct,
                 ohttp: if case == "missing" {
@@ -706,6 +716,7 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     Some(ohttp_config())
                 },
                 wrong_ohttp_signer: case == "wrong_signer",
+                alternate_direct_signer: direct && case == "alternate_spelling",
                 ..Default::default()
             })
             .await;
@@ -749,11 +760,19 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     };
                     (result, receipt)
                 };
-                if case == "valid" {
+                if case == "valid" || case == "alternate_spelling" {
                     assert!(String::from_utf8(result.unwrap())
                         .unwrap()
                         .contains("Hello"));
-                    receipt.unwrap().unwrap();
+                    let receipt = receipt.unwrap().unwrap();
+                    if direct {
+                        match receipt.attestation {
+                            VerifiedCompletionAttestation::Direct(reports) => {
+                                assert_eq!(reports.len(), 2)
+                            }
+                            _ => panic!("expected direct reports"),
+                        }
+                    }
                 } else {
                     assert!(result.is_err());
                     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
@@ -761,4 +780,42 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn receipt_cache_bounds_combined_request_and_response_bytes() {
+    let (_server, f, mut options) = setup(Fixture::default()).await;
+    // Measure an actual receipt so the budget fits exactly one completion.
+    let probe = InferenceClient::with_options(options.clone()).unwrap();
+    probe.chat_completions(body()).await.unwrap();
+    let size = {
+        let receipts = f.receipts.lock().unwrap();
+        let (request, response, _) = &receipts["chat-0"];
+        request.len() + response.len()
+    };
+    options.max_receipt_cache_bytes = size;
+    let client = InferenceClient::with_options(options.clone()).unwrap();
+    client.chat_completions(body()).await.unwrap();
+    client.verify_response("chat-1").await.unwrap();
+    client.chat_completions(body()).await.unwrap();
+    assert_eq!(
+        client.verify_response("chat-1").await.unwrap_err().code(),
+        "api.completion_not_found"
+    );
+    client.verify_response("chat-2").await.unwrap();
+    // An oversized request must count, even when its response is small.
+    let mut large = body();
+    large["extra"] = json!("x".repeat(size));
+    assert!(client.chat_completions(large).await.is_err());
+    client.verify_response("chat-2").await.unwrap();
+    assert_eq!(
+        client.verify_response("chat-3").await.unwrap_err().code(),
+        "api.completion_not_found"
+    );
+    options.max_receipt_cache_bytes = size - 1;
+    let client = InferenceClient::with_options(options.clone()).unwrap();
+    assert!(client.chat_completions(body()).await.is_err());
+    options.max_receipt_cache_bytes = 0;
+    assert!(InferenceClient::with_options(options.clone()).is_err());
+    assert!(DirectInferenceClient::with_options(options.into()).is_err());
 }
