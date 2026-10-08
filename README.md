@@ -2,6 +2,8 @@
 
 Language-specific implementations and verification guides:
 
+- [Go SDK](./go/README.md) — [API and verification notes](./go/docs/api-reference.md)
+
 - [TypeScript SDK](./js/README.md) — [guide](./js/docs/verification-guide.md)
   and [API reference](./js/docs/api-reference.md)
 - [Rust SDK](./rs/README.md) — [guide](./rs/docs/verification-guide.md)
