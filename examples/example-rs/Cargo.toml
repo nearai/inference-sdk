@@ -3,6 +3,7 @@ name = "example-rs"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "example-rs"
 
 [dependencies]
 reqwest = { version = "0.12.26", features = ["json"] }

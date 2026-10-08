@@ -1,9 +1,170 @@
 # Rust verification guide
 
 Use this SDK to verify NEAR AI Cloud deployments before requesting inference,
-then verify the receipt returned for a particular completion. The SDK does not
-send inference requests itself: your application keeps the exact request and
-response bytes and supplies them to the response verifier.
+then verify the receipt returned for a particular completion. Use `InferenceClient`
+for integrated verified Chat, or retain exact bytes yourself when using the
+standalone verification functions.
+
+## Integrated Chat client
+
+The [README quickstart](../README.md#quickstart) sends encrypted Chat and verifies
+its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
+`InferenceClientOptions` for a custom base URL, headers, encryption, policies,
+and cache settings. Only Chat Completions are accepted by `send`.
+The client owns authentication and forces `Accept-Encoding: identity` so captured
+bytes match the completion receipt, including when adapting an existing request.
+
+`verify(model)` and Chat share a per-model cache and in-flight work. Gateway and
+model checks run concurrently after obtaining Gateway TLS evidence. Every returned
+model candidate must pass; an empty set for an attestation-capable model is an
+error. The model key must match the quote-authenticated signer before it is used
+for encryption or routing. Receipt verification requires the selected model
+signer or the verified Gateway signer, as indicated by the receipt kind.
+
+The Rust client follows the current JavaScript and Python catalog boundary:
+`providerType="vllm"` with `attestationSupported=true` requires model evidence;
+other valid catalog entries use Gateway-only verification. E2EE, an explicit
+model policy, or a model deployment callback requires model evidence.
+
+### Streaming
+
+Create a streaming Chat request and consume `InferenceResponse.body` to EOF:
+
+```rust,no_run
+# async fn example(client: nearai_inference_sdk::InferenceClient) -> Result<(), Box<dyn std::error::Error>> {
+use futures_util::StreamExt;
+use serde_json::json;
+let request = client.chat_request(json!({
+    "model": "z-ai/glm-5.3-flash",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "stream": true
+}))?;
+let mut response = client.send(request).await?;
+if !response.status.is_success() {
+    return Err(format!("Chat failed: {}", response.status).into());
+}
+let mut sse = Vec::new();
+while let Some(chunk) = response.body.next().await {
+    sse.extend_from_slice(&chunk?);
+}
+// Parse the completion ID from an SSE data event using your application's SSE parser.
+// Then call client.verify_response(&completion_id).await? before displaying buffered content.
+# Ok(())
+# }
+```
+
+Add `futures-util = "0.3"` to use `StreamExt`. Raw body chunks are SSE bytes,
+not necessarily individual UTF-8 strings or Chat objects. The E2EE transform
+preserves SSE control lines and record boundaries, including split CRLF and UTF-8.
+Each SSE record is limited to 1 MiB, including in the standalone decryptor.
+
+Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP final
+chunk authentication are part of verification. Dropping a partial stream leaves
+no verifiable receipt. Content delivered before `verify_response` succeeds is
+not yet signature-verified. `bytes()` and `json()` fully consume the body; use
+`json()` only for non-streaming Chat. Unlike an OpenAI SDK transport adapter,
+`send(reqwest::Request)` is a Rust transport API; it does not implement a trait
+from a third-party OpenAI crate.
+
+### Cache lifetime and limits
+
+Both caches default to 60 minutes. `attestation_cache_ttl = Duration::ZERO`
+disables reuse of completed deployment checks. `verify()` results contain Unix
+milliseconds in `verified_at`; cache hits preserve that time. Completion records
+retain their original evidence even if the deployment cache expires or refreshes.
+
+The response TTL begins after successful full-body consumption. Receipt lookups
+and new records prune expired entries; dropping all client clones and responses
+releases state. `max_cache_entries` defaults to 1024 for each completed cache
+and also bounds concurrent preverification. At capacity, completed caches evict
+the oldest entry. `max_response_bytes` defaults to 64 MiB; exceeding it fails
+closed. `max_receipt_cache_bytes` defaults to 64 MiB total for retained request
+and response bytes, for both Gateway and direct clients. Oldest receipts are
+evicted until a new receipt fits; a single receipt exceeding this budget fails
+body consumption. Verification shares these byte buffers rather than copying them.
+This budget covers cached payloads, not in-flight requests/responses, active
+verification holding an evicted receipt, or evidence/metadata overhead.
+Set suitable limits for your workload. A missing, expired, evicted, or
+incomplete completion yields `api.completion_not_found`. A duplicate retained
+completion ID is rejected instead of replacing its original bytes.
+
+### Verification policies and TLS
+
+`GatewayVerificationOptions` and `ModelVerificationOptions` accept TCB policies
+and `Arc`-owned quote, GPU, and deployment verifiers. `DeploymentPolicy` adds a
+model-aware async callback; it runs after the optional model deployment verifier.
+Pass the existing image-provenance helpers through a deployment verifier to
+require approved builds. The SDK has no built-in approved-deployment allowlist.
+
+Gateway TLS binding is enabled by default. The client observes the certificate
+on the Gateway attestation request and pins subsequent metadata, model evidence,
+Chat, and signature requests before any HTTP bytes are written. Normal certificate
+chain and hostname validation remain enabled. Redirects are disabled.
+
+For a proxy that terminates TLS, set
+`gateway_verification.include_spki_fingerprint = false`. This verifies the
+signer-and-nonce report layout without claiming the proxy TLS key is attested.
+`create_pinned_tls_client(&fingerprints)` is also available independently for
+caller-authenticated pins; it accepts HTTPS only.
+
+### Encryption and OHTTP
+
+Set `e2ee: true` for supported Chat fields. Ed25519 uses X25519, HKDF-SHA256,
+and XChaCha20-Poly1305; `SigningAlgo::Ecdsa` selects the legacy secp256k1,
+HKDF-SHA256, AES-256-GCM protocol. Every request gets a fresh response key.
+Model keys are authenticated against the verified signing identity, including
+the Ethereum address derivation for ECDSA. Supported fields match the JavaScript
+and Python SDKs: message content and content-part arrays, reasoning, names,
+refusals, audio data, tool calls/definitions, function calls, and tool choice.
+Response decryption also handles tool results and logprob token/byte fields.
+Routing metadata, roles, token counts, and unknown fields remain visible.
+
+`prepare_e2ee_chat_request(request, &verified_model_key)` is the standalone
+helper. It returns the encrypted `request` and `decrypt_json` / `decrypt_sse`
+methods. It performs no network, attestation, or signature verification. Retain
+encrypted wire bytes separately if using standalone receipt verification.
+
+Set `ohttp: true` to encrypt the Chat HTTP exchange to the Gateway. This requires
+Ed25519 and a valid Gateway-signed OHTTP key configuration. E2EE is independent.
+The implementation uses chunked OHTTP and known/indeterminate-length BHTTP
+responses, authenticates the final chunk, and rejects truncated or inconsistent
+framing. Evidence and signature requests remain ordinary HTTPS. Authorization
+and configured custom headers are forwarded on the outer `/ohttp` request;
+content and field-encryption headers remain inside it.
+
+`verify_ohttp_key_config` authenticates raw configuration bytes against a verified
+signer. `create_ohttp_client` wraps a caller-supplied reqwest client and an
+already-authenticated configuration. The wrapper limits requests to its configured
+origin; supply a client with redirects disabled (or a pinned client).
+
+### Experimental direct endpoints
+
+`DirectInferenceClient::new(base_url, api_key)` enables E2EE by default. Its
+`verify(model)` returns the complete verified report set, serving report, TLS
+binding, and verification timestamp. `with_options` accepts
+`DirectInferenceClientOptions`, which also defaults E2EE on. Set `e2ee: false`
+explicitly to disable encryption.
+
+Direct clients verify every supplied instance, require the serving report to be
+in that set, and retain the selected signer group for receipt verification.
+OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalone
+`verify_direct_model_attestation(s)` / `verify_direct_model_response` functions
+support manual flows. Model names and instance IDs are endpoint metadata, not
+quote-authenticated model identity claims.
+
+Direct TLS fingerprint fetching remains disabled pending complete fleet coverage
+([cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087)). Normal HTTPS
+validation still applies. Independently routed direct requests may reach different
+instances; use Gateway clients for production.
+
+### Existing Rust callers
+
+Existing fetch and standalone verification methods remain available. Struct
+literals for `ModelAttestation` and `VerifiedModelAttestation` now need
+`signing_public_key: None` if no key was supplied. `FetchedGatewayAttestation`
+adds `ohttp_attestation: None` for responses without OHTTP evidence. These are
+source changes for callers constructing those types directly. New error/resource
+enum variants also require updates to exhaustive matches.
 
 ## Recommended flow
 

@@ -29,7 +29,7 @@ selector uses Chat capabilities, prefers non-reasoning models and lower token
 prices, and fails if a category is missing. It does not silently fall back to a
 hardcoded model.
 
-The first NEAR model also runs the JavaScript and Python E2EE/OHTTP cases.
+The first NEAR model also runs the JavaScript, Python, and Rust E2EE/OHTTP cases.
 These capabilities are not listed separately in the catalog; missing support
 fails the relevant case. The Gateway URL must expose its own TLS certificate,
 not an aggregator's certificate.
@@ -48,11 +48,14 @@ credentials, request bodies, or full attestation reports.
 | All three, external models | Gateway receipt verification; no NEAR model attestation or E2EE claims |
 | All three, Chutes | Gateway receipt verification for JSON responses; no Chutes model attestation or E2EE claims |
 | All three, signed responses | An altered response is rejected using the real receipt, without sending another request |
-| JavaScript and Python | `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
+| All three | `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
 | JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
 | Python | External `AsyncOpenAI` using `InferenceClient.http_client`; explicit preflight and automatic preflight on the first Chat |
 | Python and Rust | Standalone verification with both Ed25519 and ECDSA |
 | JavaScript and Python | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
+
+Rust also covers explicit and automatic preflight, cached evidence timestamps,
+repeated receipt verification, and consuming streams through HTTP EOF.
 
 The JavaScript tests import the built package entry points. Its generic entry
 is exercised in Node; this is not a browser or CORS test. This suite targets
@@ -60,8 +63,8 @@ Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
 default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
 deployment allowlist.
 
-A complete three-language run without retries sends 63 small Chat requests per
-environment (126 total), each capped at 1,024 completion tokens to leave room for
+A complete three-language run without retries sends 76 small Chat requests per
+environment (152 total), each capped at 1,024 completion tokens to leave room for
 reasoning and a visible answer.
 Responses must have non-empty answer content and finish with `stop`; empty or
 token-truncated responses fail. The test does not require the model to return a
