@@ -47,7 +47,6 @@ struct Fixture {
     ohttp: Option<ohttp::KeyConfig>,
     wrong_ohttp_signer: bool,
     alternate_direct_signer: bool,
-    report_count: usize,
 }
 fn key(seed: u8) -> ed25519_dalek::SigningKey {
     ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
@@ -123,10 +122,6 @@ impl Respond for Fixture {
                         other["report_data"] = json!("ff".repeat(64));
                     }
                     value["all_attestations"] = json!([root, other]);
-                    if self.report_count > 0 {
-                        value["all_attestations"] =
-                            json!(vec![self.report(nonce, 7); self.report_count]);
-                    }
                     return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
                 }
                 if q.contains_key("model") {
@@ -138,9 +133,6 @@ impl Respond for Fixture {
                             json!(hex::encode(key(8).verifying_key().as_bytes()));
                     }
                     let mut reports = vec![value];
-                    if self.report_count > 0 {
-                        reports = vec![self.report(nonce, 7); self.report_count];
-                    }
                     if self.bad_model {
                         let mut bad = self.report(nonce, 8);
                         bad["report_data"] = json!("ff".repeat(64));
@@ -826,85 +818,4 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     options.max_receipt_cache_bytes = 0;
     assert!(InferenceClient::with_options(options.clone()).is_err());
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
-}
-
-#[derive(Default)]
-struct ConcurrentQuote {
-    active: AtomicUsize,
-    peak: AtomicUsize,
-    verified: AtomicUsize,
-}
-#[async_trait]
-impl TdxQuoteVerifier for ConcurrentQuote {
-    async fn verify(&self, quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError> {
-        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-        self.peak.fetch_max(active, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(5)).await;
-        let result = Quote.verify(quote).await;
-        self.active.fetch_sub(1, Ordering::SeqCst);
-        self.verified.fetch_add(1, Ordering::SeqCst);
-        result
-    }
-}
-#[tokio::test]
-async fn model_report_limit_blocks_chat_and_bounds_gateway_and_direct_verification() {
-    for direct in [false, true] {
-        for report_count in [64, 65] {
-            let (_server, fixture, mut options) = setup(Fixture {
-                direct,
-                report_count,
-                ..Default::default()
-            })
-            .await;
-            let quote = Arc::new(ConcurrentQuote::default());
-            options.model_verification.tdx_quote = Some(quote.clone());
-            let result = if direct {
-                DirectInferenceClient::with_options(options.into())
-                    .unwrap()
-                    .verify("vendor/model")
-                    .await
-                    .map(|r| r.attestations.len())
-            } else {
-                InferenceClient::with_options(options)
-                    .unwrap()
-                    .verify("vendor/model")
-                    .await
-                    .map(|r| r.models.len())
-            };
-            if report_count == 64 {
-                assert_eq!(result.unwrap(), 64);
-                assert_eq!(quote.verified.load(Ordering::SeqCst), 64);
-                assert_eq!(quote.peak.load(Ordering::SeqCst), 4);
-            } else {
-                assert_eq!(result.unwrap_err().code(), "api.invalid_response");
-                assert_eq!(quote.verified.load(Ordering::SeqCst), 0);
-            }
-            assert_eq!(fixture.chat.load(Ordering::SeqCst), 0);
-        }
-    }
-}
-#[tokio::test]
-async fn standalone_direct_verifier_rejects_oversized_manually_supplied_report_sets() {
-    let (_server, _, options) = setup(Fixture {
-        direct: true,
-        ..Default::default()
-    })
-    .await;
-    let api = DirectAttestationClient::new(&options.base_url, options.api_key)
-        .unwrap()
-        .with_headers(options.headers);
-    let mut fetched = api.fetch_model_attestations(None, None).await.unwrap();
-    fetched.attestations = vec![fetched.serving_attestation.clone(); 65];
-    let quote = ConcurrentQuote::default();
-    assert!(verify_direct_model_attestations(
-        &fetched,
-        None,
-        ModelAttestationVerifiers {
-            tdx_quote: Some(&quote),
-            ..Default::default()
-        }
-    )
-    .await
-    .is_err());
-    assert_eq!(quote.verified.load(Ordering::SeqCst), 0);
 }

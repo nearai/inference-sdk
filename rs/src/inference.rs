@@ -5,8 +5,8 @@ use crate::{
     errors::protocol,
 };
 use futures_util::{
-    future::{BoxFuture, Shared, WeakShared},
-    FutureExt, Stream, StreamExt, TryStreamExt,
+    future::{try_join_all, BoxFuture, Shared, WeakShared},
+    FutureExt, Stream, StreamExt,
 };
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -801,26 +801,19 @@ async fn create_session(
         } else {
             None
         };
-        let checks: Vec<_> = fetched
-            .attestations
-            .iter()
-            .map(|report: &ModelAttestation| {
-                verify_model_attestation(
-                    report,
-                    &fetched.client_binding,
-                    o.policy.as_ref(),
-                    ModelAttestationVerifiers {
-                        tdx_quote: o.tdx_quote.as_deref(),
-                        gpu_evidence: o.gpu_evidence.as_deref(),
-                        deployment,
-                    },
-                )
-            })
-            .collect();
-        let results = futures_util::stream::iter(checks)
-            .buffered(crate::limits::REPORT_VERIFICATION_CONCURRENCY)
-            .try_collect::<Vec<_>>()
-            .await?;
+        let results = try_join_all(fetched.attestations.iter().map(|report| {
+            verify_model_attestation(
+                report,
+                &fetched.client_binding,
+                o.policy.as_ref(),
+                ModelAttestationVerifiers {
+                    tdx_quote: o.tdx_quote.as_deref(),
+                    gpu_evidence: o.gpu_evidence.as_deref(),
+                    deployment,
+                },
+            )
+        }))
+        .await?;
         Ok::<_, InferenceError>(results)
     };
     let ((gateway, ohttp), models) = futures_util::try_join!(gateway, models)?;
