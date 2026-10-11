@@ -13,6 +13,7 @@ mod deployment_provenance;
 mod errors;
 mod event_log;
 mod gateway;
+mod limits;
 mod model;
 mod nvidia;
 mod provenance;

@@ -203,6 +203,10 @@ impl AttestationClient {
             ApiResource::ModelAttestation,
             "model_attestations",
         )?;
+        crate::limits::require_report_count(
+            response.model_attestations.len(),
+            "model_attestations",
+        )?;
         let attestations = response
             .model_attestations
             .into_iter()
@@ -379,7 +383,7 @@ async fn get_cloud_api_response(
     } else {
         &client.client
     };
-    let response = http_client
+    let mut response = http_client
         .get(url)
         .headers(headers)
         .send()
@@ -392,13 +396,34 @@ async fn get_cloud_api_response(
     let peer_spki_fingerprint = capture_peer_spki_fingerprint
         .then(|| peer_spki_fingerprint(&response))
         .flatten();
-    let body = response.text().await.map_err(|_| ApiError::Transport {
-        resource,
-        reason: ApiTransportReason::ResponseBody,
-    })?;
     if !(200..300).contains(&status) {
         return Err(ApiError::HttpStatus { resource, status });
     }
+    let oversized = || ApiError::InvalidResponse {
+        path: "response.body".into(),
+        expected: format!(
+            "at most {} bytes",
+            crate::limits::MAX_EVIDENCE_RESPONSE_BYTES
+        ),
+        actual: "evidence response exceeds byte limit".into(),
+    };
+    if response
+        .content_length()
+        .is_some_and(|size| size > crate::limits::MAX_EVIDENCE_RESPONSE_BYTES as u64)
+    {
+        return Err(oversized());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+        resource,
+        reason: ApiTransportReason::ResponseBody,
+    })? {
+        if chunk.len() > crate::limits::MAX_EVIDENCE_RESPONSE_BYTES - bytes.len() {
+            return Err(oversized());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let body = String::from_utf8_lossy(&bytes).into_owned();
     Ok(CloudApiResponse {
         body,
         peer_spki_fingerprint,

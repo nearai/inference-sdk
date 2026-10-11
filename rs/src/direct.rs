@@ -5,6 +5,7 @@ use crate::{
     inference::{input, ordinary_client, verified_at, EvidenceApi, PolicyVerifier, Session},
     util::{decode_hex, generate_nonce, require_hex_length},
 };
+use futures_util::{StreamExt, TryStreamExt};
 use reqwest::header::HeaderMap;
 use std::{sync::Arc, time::Duration};
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +89,7 @@ impl DirectAttestationClient {
             .and_then(serde_json::Value::as_array)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| invalid("all_attestations"))?;
+        crate::limits::require_report_count(reports.len(), "all_attestations")?;
         let attestations = reports.iter().map(decode).collect::<Result<Vec<_>, _>>()?;
         if !attestations.contains(&serving) {
             return Err(invalid("serving_attestation"));
@@ -192,6 +194,8 @@ pub async fn verify_direct_model_attestations(
     policy: Option<&ModelAttestationPolicy>,
     verifiers: ModelAttestationVerifiers<'_>,
 ) -> Result<DirectAttestationVerificationResult, VerificationError> {
+    crate::limits::require_report_count(fetched.attestations.len(), "attestations")
+        .map_err(|_| protocol("input.invalid", "model report count exceeds limit"))?;
     if fetched.attestations.is_empty() {
         return Err(protocol(
             "policy.model_attestation_required",
@@ -206,8 +210,10 @@ pub async fn verify_direct_model_attestations(
     let binding = ModelClientBinding {
         nonce: fetched.client_binding.nonce.clone(),
     };
-    let attestations =
-        futures_util::future::try_join_all(fetched.attestations.iter().map(|report| {
+    let checks: Vec<_> = fetched
+        .attestations
+        .iter()
+        .map(|report: &DirectModelAttestation| {
             verify_direct_model_attestation(
                 report,
                 &binding,
@@ -218,7 +224,11 @@ pub async fn verify_direct_model_attestations(
                     gpu_evidence: verifiers.gpu_evidence,
                 },
             )
-        }))
+        })
+        .collect();
+    let attestations = futures_util::stream::iter(checks)
+        .buffered(crate::limits::REPORT_VERIFICATION_CONCURRENCY)
+        .try_collect::<Vec<_>>()
         .await?;
     let serving = attestations[index].clone();
     let tls_binding = if let Some(pin) = &serving.spki_fingerprint {

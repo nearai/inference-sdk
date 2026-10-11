@@ -684,3 +684,63 @@ async fn client_applies_a_completion_signature_algorithm_filter() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn evidence_response_byte_limit_accepts_boundary_and_rejects_oversized_body() {
+    const LIMIT: usize = 16 * 1024 * 1024;
+    for size in [LIMIT, LIMIT + 1] {
+        let server = MockServer::start().await;
+        let mut body =
+            br#"{"metadata":{"providerType":"vllm","attestationSupported":true}}"#.to_vec();
+        body.resize(size, b' ');
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .mount(&server)
+            .await;
+        let api = AttestationClient::with_base_url("fixture".into(), &server.uri()).unwrap();
+        let result = api.fetch_model_metadata("vendor/model").await;
+        if size == LIMIT {
+            result.unwrap();
+        } else {
+            assert!(
+                matches!(result.unwrap_err(), ApiError::InvalidResponse { path, .. } if path == "response.body")
+            );
+        }
+    }
+}
+#[tokio::test]
+async fn evidence_response_byte_limit_applies_without_content_length() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        assert!(socket.read(&mut request).await.unwrap() > 0);
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let chunk = vec![b' '; 64 * 1024];
+        for _ in 0..257 {
+            if socket.write_all(b"10000\r\n").await.is_err() {
+                return;
+            }
+            if socket.write_all(&chunk).await.is_err() {
+                return;
+            }
+            if socket.write_all(b"\r\n").await.is_err() {
+                return;
+            }
+        }
+        let _ = socket.write_all(b"0\r\n\r\n").await;
+    });
+    let api =
+        AttestationClient::with_base_url("fixture".into(), &format!("http://{address}")).unwrap();
+    assert!(
+        matches!(api.fetch_model_metadata("vendor/model").await.unwrap_err(), ApiError::InvalidResponse { path, .. } if path == "response.body")
+    );
+    task.await.unwrap();
+}

@@ -21,6 +21,14 @@ error. The model key must match the quote-authenticated signer before it is used
 for encryption or routing. Receipt verification requires the selected model
 signer or the verified Gateway signer, as indicated by the receipt kind.
 
+Evidence API responses (including metadata and receipts) are limited to 16 MiB,
+checked while reading even when Content-Length is absent. Gateway and direct
+model report sets are limited to 64 entries. Preflight verifies at most four
+reports concurrently and requires every report to pass; report order is preserved.
+The standalone direct report-set verifier enforces the same count and concurrency
+limits, including for manually supplied evidence. These limits are independent
+of the session and Chat receipt-cache limits.
+
 Catalog entries with `providerType="vllm"` and `attestationSupported=true` require model evidence;
 other valid catalog entries use Gateway-only verification. E2EE, an explicit
 model policy, or a model deployment callback requires model evidence.
