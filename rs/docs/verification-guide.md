@@ -21,8 +21,7 @@ error. The model key must match the quote-authenticated signer before it is used
 for encryption or routing. Receipt verification requires the selected model
 signer or the verified Gateway signer, as indicated by the receipt kind.
 
-The Rust client follows the current JavaScript and Python catalog boundary:
-`providerType="vllm"` with `attestationSupported=true` requires model evidence;
+Catalog entries with `providerType="vllm"` and `attestationSupported=true` require model evidence;
 other valid catalog entries use Gateway-only verification. E2EE, an explicit
 model policy, or a model deployment callback requires model evidence.
 
