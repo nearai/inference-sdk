@@ -3,10 +3,10 @@ mod integrated;
 use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, verify_gateway_attestation, verify_gateway_response,
-    verify_model_attestation, verify_model_response, ApiError, AttestationClient,
-    CompletionSignature, CompletionSignatureKind, GatewayAttestationFetchOptions,
-    GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
+    create_pinned_tls_client, find_model_attestation_for_signature, verify_gateway_attestation,
+    verify_gateway_response, verify_model_attestation, verify_model_response, ApiError,
+    AttestationClient, CompletionSignature, CompletionSignatureKind,
+    GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 use serde::Deserialize;
@@ -85,7 +85,15 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         }
     }
 
-    let http = reqwest::Client::new();
+    // Bind standalone Chat to the same quote-authenticated Gateway TLS identity
+    // as the JavaScript and Python live cases, before any HTTP bytes are sent.
+    let pin = match &gateway.tls_binding {
+        GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
+        GatewayTlsBinding::None => {
+            return Err(io::Error::other("Missing Gateway TLS binding").into())
+        }
+    };
+    let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     for stream in [false, true] {
         // Chutes returns a Gateway receipt. Streaming is separately provider-gated,

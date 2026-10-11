@@ -52,10 +52,14 @@ credentials, request bodies, or full attestation reports.
 | JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
 | Python | External `AsyncOpenAI` using `InferenceClient.http_client`; explicit preflight and automatic preflight on the first Chat |
 | Python and Rust | Standalone verification with both Ed25519 and ECDSA |
-| JavaScript and Python | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
+| All three | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
 
 Rust also covers explicit and automatic preflight, cached evidence timestamps,
 repeated receipt verification, and consuming streams through HTTP EOF.
+The shared Gateway feature matrix is covered in Rust; JavaScript's generic entry
+and the JavaScript/Python OpenAI transport adapters are language-specific checks
+with no Rust adapter equivalent. None of the live suites covers experimental
+direct endpoints or the example-specific Gateway image-provenance allowlist.
 
 The JavaScript tests import the built package entry points. Its generic entry
 is exercised in Node; this is not a browser or CORS test. This suite targets
