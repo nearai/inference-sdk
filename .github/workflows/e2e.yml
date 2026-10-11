@@ -1,6 +1,9 @@
 name: Live E2E
 
 on:
+  # Temporary Rust validation for PR #83; remove after both environments pass.
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
   schedule:
@@ -31,7 +34,11 @@ concurrency:
 
 jobs:
   configuration:
-    if: github.repository == 'nearai/inference-sdk' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'nearai/inference-sdk' &&
+      (github.ref == 'refs/heads/main' ||
+       (github.event_name == 'pull_request' && github.event.pull_request.number == 83 &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     outputs:
       stg-models: ${{ steps.stg.outputs.models }}
@@ -67,7 +74,7 @@ jobs:
 
   javascript:
     name: JavaScript (${{ matrix.environment }})
-    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript'
+    if: github.event_name != 'pull_request' && (inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript')
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -98,7 +105,7 @@ jobs:
 
   python:
     name: Python (${{ matrix.environment }})
-    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'python'
+    if: github.event_name != 'pull_request' && (inputs.language == '' || inputs.language == 'all' || inputs.language == 'python')
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
