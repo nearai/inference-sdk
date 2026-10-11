@@ -20,6 +20,9 @@ use std::{
 };
 const LIMIT: usize = 1 << 30;
 const FIELDS_LIMIT: usize = 1 << 20;
+// Each informational field section is independently bounded by FIELDS_LIMIT.
+// Bound their count as well, before the final response/body budget starts.
+const MAX_INFORMATIONAL_RESPONSES: usize = 32;
 const CHUNK: usize = 16384;
 const HOP: &[&str] = &[
     "connection",
@@ -292,10 +295,17 @@ impl OhttpClient {
             return Err(error("expected BHTTP response framing").into());
         }
         let known = framing == 1;
+        let mut informational = 0;
         let (status, headers) = loop {
             let code = reader.integer(false).await?;
             if !(100..=599).contains(&code) {
                 return Err(error("invalid BHTTP status").into());
+            }
+            if code < 200 {
+                if informational == MAX_INFORMATIONAL_RESPONSES {
+                    return Err(error("too many informational responses").into());
+                }
+                informational += 1;
             }
             let headers = reader.fields(known).await?;
             if code >= 200 {
@@ -545,7 +555,7 @@ mod tests {
                 let mut plaintext = Vec::new();
                 message
                     .write_bhttp(
-                        if self.case == "indeterminate" {
+                        if self.case.ends_with("indeterminate") {
                             bhttp::Mode::IndeterminateLength
                         } else {
                             bhttp::Mode::KnownLength
@@ -553,6 +563,18 @@ mod tests {
                         &mut plaintext,
                     )
                     .unwrap();
+                if self.case.starts_with("informational") {
+                    let count =
+                        MAX_INFORMATIONAL_RESPONSES + usize::from(self.case.contains("excess"));
+                    let mut prefix = vec![plaintext[0]];
+                    for _ in 0..count {
+                        varint(103, &mut prefix);
+                        // Empty field section in both BHTTP framing modes.
+                        prefix.push(0);
+                    }
+                    prefix.extend_from_slice(&plaintext[1..]);
+                    plaintext = prefix;
+                }
                 if self.case == "bad_padding" {
                     plaintext.extend_from_slice(b"not-padding");
                 } else {
@@ -592,6 +614,10 @@ mod tests {
             "tampered",
             "bad_padding",
             "bad_length",
+            "informational_boundary",
+            "informational_boundary_indeterminate",
+            "informational_excess",
+            "informational_excess_indeterminate",
         ] {
             let server = MockServer::start().await;
             let config = config();
@@ -624,7 +650,10 @@ mod tests {
                 Ok(r) => r.bytes().await,
                 Err(e) => Err(e),
             };
-            if case == "valid" || case == "indeterminate" {
+            if case == "valid"
+                || case == "indeterminate"
+                || case.starts_with("informational_boundary")
+            {
                 assert!(result.unwrap().starts_with(b"data: [DONE]\n\n"));
             } else {
                 assert_eq!(

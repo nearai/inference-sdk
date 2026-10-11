@@ -127,7 +127,9 @@ Set `ohttp: true` to encrypt the Chat HTTP exchange to the Gateway. This require
 Ed25519 and a valid Gateway-signed OHTTP key configuration. E2EE is independent.
 The implementation uses chunked OHTTP and known/indeterminate-length BHTTP
 responses, authenticates the final chunk, and rejects truncated or inconsistent
-framing. Evidence and signature requests remain ordinary HTTPS. Authorization
+framing. Responses allow at most 32 informational (1xx) messages, each with
+at most 1 MiB of fields; body content and trailing padding share a 1 GiB limit.
+Evidence and signature requests remain ordinary HTTPS. Authorization
 and configured custom headers are forwarded on the outer `/ohttp` request;
 content and field-encryption headers remain inside it.
 
