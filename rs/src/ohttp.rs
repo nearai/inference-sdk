@@ -342,20 +342,7 @@ impl OhttpClient {
             }
             reader.fields(known).await?;
             // Drain and authenticate the final chunk, including after SSE [DONE].
-            let mut buf = [0; CHUNK];
-            loop {
-                let size = reader
-                    .input
-                    .read(&mut buf)
-                    .await
-                    .map_err(|_| error("invalid final OHTTP chunk"))?;
-                if size == 0 {
-                    break;
-                }
-                if buf[..size].iter().any(|v| *v != 0) {
-                    Err(error("invalid BHTTP padding"))?;
-                }
-            }
+            reader.drain_padding(total).await?;
         });
         Ok(InferenceResponse {
             status,
@@ -387,6 +374,26 @@ struct Reader {
     input: Pin<Box<dyn AsyncRead + Send>>,
 }
 impl Reader {
+    async fn drain_padding(&mut self, mut total: usize) -> Result<(), VerificationError> {
+        let mut buf = [0; CHUNK];
+        loop {
+            let size = self
+                .input
+                .read(&mut buf)
+                .await
+                .map_err(|_| error("invalid final OHTTP chunk"))?;
+            if size == 0 {
+                return Ok(());
+            }
+            if size > LIMIT.saturating_sub(total) {
+                return Err(error("padding exceeds message limit"));
+            }
+            total += size;
+            if buf[..size].iter().any(|v| *v != 0) {
+                return Err(error("invalid BHTTP padding"));
+            }
+        }
+    }
     async fn exact(&mut self, size: usize) -> Result<Vec<u8>, VerificationError> {
         if size > LIMIT {
             return Err(error("message too large"));
@@ -627,6 +634,27 @@ mod tests {
                 );
             }
         }
+    }
+    #[tokio::test]
+    async fn padding_counts_toward_message_limit_across_reads() {
+        // Start near the real limit to exercise boundary accounting without
+        // allocating or decrypting a gigabyte of fixture data.
+        let allowance = CHUNK + 10;
+        for padding in [0, allowance, allowance + 1] {
+            let mut reader = Reader {
+                input: Box::pin(futures_util::io::Cursor::new(vec![0; padding])),
+            };
+            let result = reader.drain_padding(LIMIT - allowance).await;
+            if padding <= allowance {
+                result.unwrap();
+            } else {
+                assert_eq!(result.unwrap_err().code(), "ohttp.decryption_failed");
+            }
+        }
+        let mut reader = Reader {
+            input: Box::pin(futures_util::io::Cursor::new(vec![0])),
+        };
+        assert!(reader.drain_padding(LIMIT).await.is_err());
     }
     #[test]
     fn excess_header_count_returns_error_without_panicking() {
