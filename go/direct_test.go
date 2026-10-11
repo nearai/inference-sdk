@@ -1,6 +1,7 @@
 package nearai
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/hex"
@@ -39,6 +40,12 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 		for k, v := range serving {
 			root[k] = v
 		}
+		// Reformat the nested event log only in the top-level serving report.
+		var log bytes.Buffer
+		if err := json.Indent(&log, b.EventLog, "", "  "); err != nil {
+			t.Error(err)
+		}
+		root["event_log"] = json.RawMessage(log.Bytes())
 		root["all_attestations"] = []any{first, serving}
 		root["ohttp_attestation"] = OHTTPAttestation{Ed25519, b.Signer.SigningAddress, hex.EncodeToString(config), hex.EncodeToString(ed25519.Sign(priv, config))}
 		json.NewEncoder(w).Encode(root)

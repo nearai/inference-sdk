@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -85,11 +84,17 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	if o.ResponseTTL != nil {
 		rt = *o.ResponseTTL
 	}
-	if at < 0 || rt < 0 || o.MaxBodyBytes < 0 {
+	if at < 0 || rt < 0 || o.MaxBodyBytes < 0 || o.MaxCacheEntries < 0 || o.MaxReceiptCacheBytes < 0 {
 		return nil, failure("api.invalid_input", nil)
 	}
 	if o.MaxBodyBytes == 0 {
 		o.MaxBodyBytes = 64 << 20
+	}
+	if o.MaxCacheEntries == 0 {
+		o.MaxCacheEntries = 128
+	}
+	if o.MaxReceiptCacheBytes == 0 {
+		o.MaxReceiptCacheBytes = 64 << 20
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &InferenceClient{options: o, api: a, ctx: ctx, cancel: cancel, sessions: map[string]*session{}, pending: map[string]*pendingSession{}, responses: map[string]*responseRecord{}, transports: map[string]*http.Transport{}, attestationTTL: at, responseTTL: rt, maxBody: o.MaxBodyBytes}
@@ -201,6 +206,17 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 			p.value, p.err = s, e
 			delete(c.pending, model)
 			if e == nil && !c.closed && c.attestationTTL > 0 {
+				c.prune(time.Now())
+				for len(c.sessions) >= c.options.MaxCacheEntries {
+					var oldest string
+					var expires time.Time
+					for key, cached := range c.sessions {
+						if expires.IsZero() || cached.expires.Before(expires) {
+							oldest, expires = key, cached.expires
+						}
+					}
+					delete(c.sessions, oldest)
+				}
 				s.expires = time.Now().Add(c.attestationTTL)
 				c.sessions[model] = s
 			}
@@ -326,7 +342,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, e
 		}
 		s.result.Models = append(s.result.Models, verified)
-		if c.api.direct && models.ServingAttestation != nil && reflect.DeepEqual(report, *models.ServingAttestation) {
+		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
 			ohttpSigner = verified.Signer
 		}
 		if s.selected == nil && verified.Signer.SigningAlgo == o.SigningAlgo && verified.SigningPublicKey != "" && (!c.api.direct || !o.OHTTP || (models.ServingAttestation != nil && verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo && sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
@@ -394,6 +410,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(req.Context())
 	stop := context.AfterFunc(c.ctx, cancel)
 	r := req.Clone(ctx)
+	r.Host = ""
 	r.Header = c.api.headers.Clone()
 	for k, v := range req.Header {
 		r.Header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)
@@ -534,6 +551,29 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	}
 	if existing := c.responses[id]; existing != nil && time.Now().Before(existing.expires) {
 		return failure("api.duplicate_completion_id", nil)
+	}
+	// Reject oversized receipts before pruning/evicting otherwise useful records.
+	budget := c.options.MaxReceiptCacheBytes
+	if int64(len(request)) > budget || int64(len(response)) > budget-int64(len(request)) {
+		return failure("api.body_too_large", nil)
+	}
+	c.prune(time.Now())
+	size := int64(len(request)) + int64(len(response))
+	var retained int64
+	for _, record := range c.responses {
+		retained += int64(len(record.request)) + int64(len(record.response))
+	}
+	for len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size {
+		var oldest string
+		var expires time.Time
+		for key, record := range c.responses {
+			if expires.IsZero() || record.expires.Before(expires) {
+				oldest, expires = key, record.expires
+			}
+		}
+		record := c.responses[oldest]
+		retained -= int64(len(record.request)) + int64(len(record.response))
+		delete(c.responses, oldest)
 	}
 	c.responses[id] = &responseRecord{request: append([]byte(nil), request...), response: append([]byte(nil), response...), session: s, expires: time.Now().Add(c.responseTTL)}
 	return nil

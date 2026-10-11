@@ -98,6 +98,12 @@ jobs:
           DCAP_LIBRARY_DIR="$(go/scripts/build-dcap.sh)"
           echo "CGO_LDFLAGS=-L$DCAP_LIBRARY_DIR" >> "$GITHUB_ENV"
       - run: make -C go check
+      - name: Compile live Go tests without credentials
+        working-directory: go
+        run: go test -tags=e2e ./e2e -run '^$'
       - name: Check Go OpenAI integration example
         working-directory: examples/example-go
-        run: go test -race ./...
+        run: |
+          go vet ./...
+          go test -race ./...
+          go test -tags=e2e -run '^$' .

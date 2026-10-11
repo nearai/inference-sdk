@@ -143,6 +143,10 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
 	MaxBodyBytes int64
+	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
+	MaxCacheEntries int
+	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
+	MaxReceiptCacheBytes int64
 }
 
 // DirectInferenceOptions defaults E2EE to true, matching the other SDKs.

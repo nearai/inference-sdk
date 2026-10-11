@@ -264,10 +264,17 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var status uint64
 	var headers http.Header
 	var expected int64
+	informational := 0
 	for {
 		status, e = readVarint(decrypted, false)
 		if e != nil || status < 100 || status > 599 {
 			return fail(e)
+		}
+		if status < 200 {
+			informational++
+			if informational > 32 {
+				return fail(fmt.Errorf("too many informational responses"))
+			}
 		}
 		headers, e = readBHTTPFields(decrypted, known)
 		if e != nil {

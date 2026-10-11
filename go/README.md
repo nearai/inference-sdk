@@ -63,9 +63,12 @@ fmt.Println(string(body))
 ```
 
 Import as `nearai "github.com/nearai/inference-sdk/go"`. The
-[runnable example](../examples/example-go/main.go) uses the official OpenAI Go
+[OpenAI example](../examples/example-go/main.go) uses the official OpenAI Go
 SDK and accepts either `NEARAI_API_KEY` or OCR's `NEAR_AI_API_KEY` environment
-variable. The library itself takes credentials explicitly.
+variable. It covers JSON and streaming calls. See the [four Gateway/direct
+examples](../examples/example-go/README.md) for standalone and integrated clients,
+Gateway image provenance, and exact ciphertext receipt verification. The library
+itself takes credentials explicitly.
 
 ## Use an existing OpenAI Go client
 
@@ -113,6 +116,10 @@ Go uses contexts, `net/http`, structured errors, and standard streams rather
 than the asynchronous object APIs of JavaScript/Python. It has the same protocol
 features; it does not expose a browser transport. See [API and verification
 notes](./docs/api-reference.md) for trust boundaries and integration details.
+
+The [live suite](../e2e/README.md) covers staging and production Gateway APIs,
+including both signing algorithms, JSON/SSE, E2EE, OHTTP, and the official OpenAI
+client. Live tests require the `e2e` build tag and credentials.
 
 No authenticated live inference is required by the unit tests. They use local
 servers, shared encryption vectors, signed Sigstore fixtures, and an offline

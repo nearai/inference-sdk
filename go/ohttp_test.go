@@ -60,12 +60,15 @@ func serverReadVector(t *testing.T, r *bytes.Reader) []byte {
 func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 	for _, framing := range []byte{1, 3} {
 		for _, scenario := range []struct {
-			name, method string
-			status       int
-			length       string
-			empty        bool
+			name, method  string
+			status        int
+			length        string
+			empty         bool
+			informational int
 		}{
 			{name: "stream", method: "POST", status: 200},
+			{name: "32 informational", method: "POST", status: 200, informational: 32},
+			{name: "33 informational", method: "POST", status: 200, informational: 33},
 			{name: "head", method: "HEAD", status: 200, length: "999", empty: true},
 			{name: "204", method: "GET", status: 204, empty: true},
 			{name: "205", method: "GET", status: 205, empty: true},
@@ -74,6 +77,9 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 			{name: "empty-without-content-length", method: "GET", status: 200, empty: true},
 		} {
 			for _, variant := range []string{"ok", "corrupt final", "omit final", "truncate", "wrong length", "bad padding"} {
+				if scenario.informational > 0 && variant != "ok" {
+					continue
+				}
 				if scenario.empty && variant == "wrong length" {
 					continue
 				}
@@ -178,7 +184,12 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 							fields = append(fields, serverVector([]byte("content-length"))...)
 							fields = append(fields, serverVector([]byte("999"))...)
 						}
-						plaintext := append([]byte{framing}, serverInt(scenario.status)...)
+						plaintext := []byte{framing}
+						for i := 0; i < scenario.informational; i++ {
+							plaintext = append(plaintext, serverInt(103)...)
+							plaintext = append(plaintext, 0)
+						}
+						plaintext = append(plaintext, serverInt(scenario.status)...)
 						if framing == 1 {
 							plaintext = append(plaintext, serverVector(fields)...)
 						} else {
@@ -221,13 +232,16 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					req.Header.Set("X-Client-Pub-Key", "private-header")
 					response, e := transport.RoundTrip(req)
 					if e != nil {
-						if variant == "ok" {
+						if variant == "ok" && scenario.informational <= 32 {
 							t.Fatal(e)
 						}
 						requireCode(t, e, "ohttp.decryption_failed")
 						return
 					}
 					defer response.Body.Close()
+					if scenario.informational > 32 {
+						t.Fatal("excess informational responses accepted")
+					}
 					if scenario.empty {
 						if variant != "ok" {
 							t.Fatal("unauthenticated empty response returned successfully")

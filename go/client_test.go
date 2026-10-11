@@ -18,6 +18,7 @@ import (
 )
 
 type fakeCloud struct {
+	expectedHost    string
 	encrypt         bool
 	streamBody      string
 	t               *testing.T
@@ -43,6 +44,9 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 	return &fakeCloud{t: t, a: a, q: q, priv: key, signatures: map[string]CompletionSignature{}}
 }
 func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if f.expectedHost != "" && r.Host != f.expectedHost {
+		f.t.Errorf("unexpected authority %q", r.Host)
+	}
 	if r.Header.Get("Authorization") != "Bearer test" {
 		http.Error(w, "bad auth", 401)
 		return
@@ -431,5 +435,69 @@ func TestVerificationRetriesTransientSignatureStatus(t *testing.T) {
 				t.Fatal("signature was not fetched again")
 			}
 		})
+	}
+}
+
+func TestReceiptCacheBudgetAndEviction(t *testing.T) {
+	c, err := NewInferenceClient(InferenceOptions{MaxCacheEntries: 2, MaxReceiptCacheBytes: 12})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	request, response := []byte("req"), []byte("res")
+	if err = c.register("first", request, response, nil); err != nil {
+		t.Fatal(err)
+	}
+	request[0], response[0] = 'X', 'X'
+	if string(c.responses["first"].request) != "req" || string(c.responses["first"].response) != "res" {
+		t.Fatal("caller mutated retained receipt")
+	}
+	if err = c.register("second", []byte("req"), []byte("res"), nil); err != nil {
+		t.Fatal(err)
+	}
+	// An oversized new receipt must not evict either retained receipt.
+	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil), "api.body_too_large")
+	if len(c.responses) != 2 {
+		t.Fatal("oversized receipt evicted records")
+	}
+	if err = c.register("third", []byte("req"), []byte("res"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.responses["first"] != nil || len(c.responses) != 2 {
+		t.Fatal("oldest receipt was not evicted")
+	}
+	// Count alone is insufficient: this receipt fills the entire byte budget.
+	if err = c.register("full", []byte("123456"), []byte("123456"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.responses) != 1 || c.responses["full"] == nil {
+		t.Fatal("combined byte budget exceeded")
+	}
+	c.responses["full"].expires = time.Now().Add(-time.Second)
+	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(c.responses) != 1 {
+		t.Fatal("expired receipt retained")
+	}
+}
+
+func TestRequestAuthorityUsesConfiguredEndpoint(t *testing.T) {
+	f := newFakeCloud(t)
+	c, server := fakeClient(t, f, nil)
+	defer server.Close()
+	defer c.Close()
+	r, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", strings.NewReader(`{"model":"canonical/model","messages":[]}`))
+	f.expectedHost = strings.TrimPrefix(server.URL, "http://")
+	r.Host = "other.example"
+	// The handler observes the configured authority even when a caller overrides Host.
+	original := f.chats.Load()
+	res, err := c.HTTPClient().Do(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if f.chats.Load() != original+1 {
+		t.Fatal("request not served")
 	}
 }

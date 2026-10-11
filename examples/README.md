@@ -181,3 +181,8 @@ go run .
 `NEAR_AI_API_KEY` is also accepted for Open Code Review configurations. Optional
 `NEARAI_MODEL` selects a different model that supports NEAR model attestation.
 The example has a local Go module replacement for this checkout.
+
+## Go
+
+See [the Go examples](./example-go/README.md) for Gateway/direct standalone and
+integrated JSON/SSE, Gateway image provenance, and the official OpenAI Go client.

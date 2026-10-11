@@ -1,9 +1,6 @@
 package nearai
 
-import (
-	"context"
-	"reflect"
-)
+import "context"
 
 // VerifyDirectModelAttestations checks every instance, even with shared signers.
 // When reports contain TLS fingerprints, the serving report must match the peer.
@@ -15,7 +12,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	serving := -1
 	fingerprints := map[string]bool{}
 	for i, report := range fetched.Attestations {
-		if reflect.DeepEqual(report, *fetched.ServingAttestation) {
+		if sameAttestation(report, *fetched.ServingAttestation) {
 			serving = i
 		}
 		verified, e := VerifyDirectModelAttestation(ctx, report, fetched.ClientBinding, o)

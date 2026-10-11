@@ -28,6 +28,12 @@ without replaying the completion.
 
 `MaxBodyBytes` defaults to 64 MiB for each buffered Chat request/response. Streaming
 is incremental, but signature verification requires retaining the wire body.
+`MaxReceiptCacheBytes` defaults to 64 MiB for the combined request and response
+bytes across retained receipts. `MaxCacheEntries` defaults to 128 for both
+completed preflight sessions and receipts. Oldest entries are evicted to admit
+new ones; evicted receipt IDs cannot be verified later. A single receipt exceeding
+the byte budget fails with `api.body_too_large` before any existing receipt is evicted.
+These cache limits do not bound concurrent requests or records held by active callers.
 Select shorter retention and smaller limits for memory-constrained services.
 Successful verification does not automatically discard its retained record.
 
@@ -112,7 +118,9 @@ visible to that endpoint; content and E2EE headers are inside the encrypted
 exchange. It is independent of field E2EE and works with Gateway-only models.
 `NewOHTTPTransport` requires an already authenticated key configuration.
 OHTTP/BHTTP responses authenticate the final encrypted frame, including trailing
-padding after SSE `[DONE]`; missing, truncated or corrupt frames fail.
+padding after SSE `[DONE]`; missing, truncated or corrupt frames fail. All decrypted
+bytes, including headers and padding, count toward 1 GiB. Header sections are
+bounded to 1 MiB and at most 32 informational responses precede the final response.
 
 ## Deployment and image policies
 

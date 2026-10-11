@@ -1,6 +1,7 @@
 package nearai
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -120,7 +121,12 @@ func optionsQuery(o FetchOptions) (url.Values, error) {
 		q.Set("signing_algo", string(o.SigningAlgo))
 	}
 	if o.SigningAddress != "" {
-		if _, e := signingBytes(SigningIdentity{o.SigningAlgo, o.SigningAddress}); e != nil {
+		if o.SigningAlgo == "" {
+			address, e := unhex(o.SigningAddress)
+			if e != nil || (len(address) != 20 && len(address) != 32) {
+				return nil, failure("api.invalid_input", e)
+			}
+		} else if _, e := signingBytes(SigningIdentity{o.SigningAlgo, o.SigningAddress}); e != nil {
 			return nil, e
 		}
 		q.Set("signing_address", o.SigningAddress)
@@ -236,7 +242,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 		found := false
 		for i := range out.Attestations {
-			if reflect.DeepEqual(a, out.Attestations[i]) {
+			if sameAttestation(a, out.Attestations[i]) {
 				out.ServingAttestation = &out.Attestations[i]
 				found = true
 				break
@@ -407,4 +413,20 @@ func FindModelAttestationForSignature(items []VerifiedAttestation, sig Completio
 		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", count)
 	}
 	return found, nil
+}
+
+// Compare parsed event logs so JSON whitespace/key ordering cannot affect routing.
+// UseNumber preserves large integer values, and arrays remain ordered.
+func sameAttestation(a, b Attestation) bool {
+	parse := func(raw json.RawMessage) (any, error) {
+		d := json.NewDecoder(bytes.NewReader(raw))
+		d.UseNumber()
+		var value any
+		err := d.Decode(&value)
+		return value, err
+	}
+	x, ex := parse(a.EventLog)
+	y, ey := parse(b.EventLog)
+	a.EventLog, b.EventLog = nil, nil
+	return ex == nil && ey == nil && reflect.DeepEqual(a, b) && reflect.DeepEqual(x, y)
 }

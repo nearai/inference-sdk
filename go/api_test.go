@@ -2,9 +2,11 @@ package nearai
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +56,39 @@ func TestHTTPStatusRetryabilityDependsOnResource(t *testing.T) {
 				t.Fatalf("signature status %d: %v", status, err)
 			}
 		})
+	}
+}
+
+func TestAddressOnlyAttestationFilter(t *testing.T) {
+	for _, length := range []int{20, 32} {
+		address := strings.Repeat("ab", length)
+		q, err := optionsQuery(FetchOptions{SigningAddress: address})
+		if err != nil || q.Get("signing_address") != address || q.Get("signing_algo") != "" {
+			t.Fatalf("%v %v", q, err)
+		}
+	}
+	if _, err := optionsQuery(FetchOptions{SigningAddress: "ab"}); err == nil {
+		t.Fatal("invalid address accepted")
+	}
+	if _, err := optionsQuery(FetchOptions{SigningAlgo: Ed25519, SigningAddress: strings.Repeat("ab", 20)}); err == nil {
+		t.Fatal("algorithm length mismatch accepted")
+	}
+}
+
+func TestStructuralAttestationComparison(t *testing.T) {
+	a := Attestation{EventLog: json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740993}}]`)}
+	b := a
+	b.EventLog = json.RawMessage(`[ {"nested": {"a":9007199254740993,"b":2}, "imr":3} ]`)
+	if !sameAttestation(a, b) {
+		t.Fatal("JSON serialization changed report identity")
+	}
+	b.EventLog = json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740992}}]`)
+	if sameAttestation(a, b) {
+		t.Fatal("different integer values matched")
+	}
+	a.EventLog = json.RawMessage(`[1,2]`)
+	b.EventLog = json.RawMessage(`[2,1]`)
+	if sameAttestation(a, b) {
+		t.Fatal("array order ignored")
 	}
 }
