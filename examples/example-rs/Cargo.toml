@@ -3,9 +3,28 @@ name = "example-rs"
 version = "0.1.0"
 edition = "2021"
 publish = false
+default-run = "example-rs"
 
 [dependencies]
-reqwest = { version = "0.12.26", features = ["json"] }
+async-trait = "0.1"
+futures-util = "0.3"
+reqwest = { version = "0.12.26", features = ["json", "stream"] }
 serde_json = "1.0.145"
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
 nearai-inference-sdk = { path = "../../rs" }
+
+[[bin]]
+name = "gateway-bare"
+path = "src/gateway/bare.rs"
+
+[[bin]]
+name = "gateway-client"
+path = "src/gateway/client.rs"
+
+[[bin]]
+name = "direct-bare"
+path = "src/direct/bare.rs"
+
+[[bin]]
+name = "direct-client"
+path = "src/direct/client.rs"

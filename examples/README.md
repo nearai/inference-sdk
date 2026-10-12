@@ -170,10 +170,45 @@ For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
 
 Uses the `nearai-inference-sdk` crate, imported as `nearai_inference_sdk`.
 
+Gateway and direct examples both cover JSON and SSE, with explicit receipt
+verification after consuming the full HTTP response. Set `ALGO` in
+`src/lib.rs` to `SigningAlgo::Ecdsa` to use ECDSA throughout.
+
+| File | Usage | E2EE |
+| --- | --- | --- |
+| `src/gateway/bare.rs` | Standalone Gateway/model verification, Gateway image provenance, pinned Chat TLS, encrypted JSON/SSE, and exact ciphertext receipt verification. | Enabled |
+| `src/gateway/client.rs` | Integrated Gateway client with the same four Gateway image policies, default TLS pinning, JSON/SSE, and `verify_response(id)`. | Enabled |
+| `src/direct/bare.rs` | Experimental standalone verification of every supplied direct model report and exact response bytes. | Plaintext over HTTPS |
+| `src/direct/client.rs` | Experimental integrated direct verification, encrypted JSON/SSE, and receipts from the selected model signer. | Enabled |
+
 ```sh
 cd examples/example-rs
-cargo run
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo run --bin gateway-bare
+cargo run --bin gateway-client
+cargo run --bin direct-bare
+cargo run --bin direct-client
 ```
+
+`cargo run` and `cargo run --bin client` remain aliases for the Gateway bare and
+client examples. Gateway examples use the four image policies listed above;
+these are example policies, not SDK defaults, and do not check model runtime images.
+Both integrated clients cache attestations and completed response records for
+60 minutes by default. Add `ohttp: true` to an integrated client's options and
+retain Ed25519 to enable signed-config OHTTP alongside E2EE.
+
+Rust's `send(reqwest::Request)` exposes response bytes rather than typed OpenAI
+chunks. These examples buffer responses through EOF, parse completion IDs, verify
+receipts, and then display the decrypted content/SSE. A partial stream has no
+verifiable receipt. The standalone Gateway example retains ciphertext separately
+from decrypted output for signature verification.
+
+Direct examples have the same experimental limitations as JavaScript and Python:
+use an endpoint-accepted credential, and use Gateway clients for production.
+Direct TLS fingerprint fetching is disabled; normal HTTPS validation applies.
+There is no official OpenAI Rust SDK transport example: the Rust client exposes
+its own reqwest transport API rather than an OpenAI adapter.
 
 The Python and Rust projects use the sibling SDK source through local path
 dependencies. Replace those dependencies with released package versions when

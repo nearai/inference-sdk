@@ -8,6 +8,9 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApiResource {
     ModelAttestation,
+    ModelMetadata,
+    Completion,
+    Ohttp,
     GatewayAttestation,
     CompletionSignature,
     ImageProvenance,
@@ -32,6 +35,9 @@ impl std::fmt::Display for ApiTransportReason {
 impl std::fmt::Display for ApiResource {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
+            Self::ModelMetadata => "model metadata",
+            Self::Completion => "completion",
+            Self::Ohttp => "OHTTP",
             Self::ModelAttestation => "model attestation",
             Self::GatewayAttestation => "gateway attestation",
             Self::CompletionSignature => "completion signature",
@@ -42,8 +48,10 @@ impl std::fmt::Display for ApiResource {
 }
 
 /// Failures while retrieving or selecting external evidence.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum ApiError {
+    #[error("completion not retained; consume the entire response before verification")]
+    CompletionNotFound,
     #[error("invalid API input {field}: {reason}")]
     InvalidInput {
         field: String,
@@ -98,6 +106,7 @@ impl ApiError {
     /// Stable machine-readable error code shared with the TypeScript SDK.
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::CompletionNotFound => "api.completion_not_found",
             Self::InvalidInput { .. } => "api.invalid_input",
             Self::Transport { .. } => "api.transport_failed",
             Self::HttpStatus { .. } => "api.http_status",
@@ -131,8 +140,10 @@ impl ApiError {
 /// Local attestation, policy, measurement, or response-signature failure.
 ///
 /// Consumers should branch on [`Self::code`] rather than the display message.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum VerificationError {
+    #[error("{code}: {reason}")]
+    Protocol { code: &'static str, reason: String },
     #[error("invalid input {field}: {reason}")]
     InvalidInput { field: String, reason: String },
 
@@ -264,6 +275,7 @@ impl VerificationError {
     /// Stable machine-readable error code shared with the TypeScript SDK.
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Protocol { code, .. } => code,
             Self::InvalidInput { .. } => "input.invalid",
             Self::QuoteCollateralUnavailable => "quote.collateral_unavailable",
             Self::QuoteVerificationFailed { .. } => "quote.verification_failed",
@@ -310,5 +322,34 @@ impl VerificationError {
             Self::ImageProvenanceRequestFailed { source, .. } => source.retryable(),
             _ => false,
         }
+    }
+}
+
+/// Integrated operations can fail at either the retrieval or verification stage.
+#[derive(Clone, Debug, Error)]
+pub enum InferenceError {
+    #[error(transparent)]
+    Api(#[from] ApiError),
+    #[error(transparent)]
+    Verification(#[from] VerificationError),
+}
+impl InferenceError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Api(e) => e.code(),
+            Self::Verification(e) => e.code(),
+        }
+    }
+    pub fn retryable(&self) -> bool {
+        match self {
+            Self::Api(e) => e.retryable(),
+            Self::Verification(e) => e.retryable(),
+        }
+    }
+}
+pub(crate) fn protocol(code: &'static str, reason: impl Into<String>) -> VerificationError {
+    VerificationError::Protocol {
+        code,
+        reason: reason.into(),
     }
 }
