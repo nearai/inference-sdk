@@ -56,6 +56,8 @@ async def verify_deployment_image_provenance(
     app_compose: str,
     image_policies: Mapping[str, ImageProvenancePolicy],
     github_token: str | None = None,
+    *,
+    github_proxy_url: str | None = None,
 ) -> None:
     """Verify digest-pinned images selected from measured app-compose JSON.
 
@@ -71,7 +73,10 @@ async def verify_deployment_image_provenance(
     except (ValidationError, TypeError):
         raise _deployment_images_failure('invalid_app_compose') from None
     await verify_compose_image_provenance(
-        app.docker_compose_file, image_policies, github_token
+        app.docker_compose_file,
+        image_policies,
+        github_token,
+        github_proxy_url=github_proxy_url,
     )
 
 
@@ -82,6 +87,7 @@ async def verify_compose_image_provenance(
     additional_images: Sequence[tuple[str, str]] = (),
     *,
     services: Sequence[str] = (),
+    github_proxy_url: str | None = None,
 ) -> None:
     """Shared image selection for authenticated compose sources."""
     if not image_policies:
@@ -137,7 +143,10 @@ async def verify_compose_image_provenance(
     for repository, digest, policy in selected:
         try:
             bundles = await fetch_image_provenance(
-                policy.repository, digest, github_token
+                policy.repository,
+                digest,
+                github_token,
+                github_proxy_url=github_proxy_url,
             )
         except ApiError as error:
             raise verification_failure(
@@ -164,12 +173,17 @@ def _deployment_images_failure(
 
 
 async def fetch_image_provenance(
-    repository: str, digest: str, github_token: str | None = None
+    repository: str,
+    digest: str,
+    github_token: str | None = None,
+    *,
+    github_proxy_url: str | None = None,
 ) -> list[str]:
     """Fetch inline Sigstore bundles for an image digest from a GitHub repository.
 
-    ``github_token`` is an optional GitHub token, not a Gateway API key. Only
-    api.github.com is requested; returned bundle URLs are never followed.
+    ``github_token`` is a GitHub token, not a Gateway API key. With
+    ``github_proxy_url``, requests use that absolute HTTP(S) base URL instead
+    and the token is omitted. Redirects and returned bundle URLs are not followed.
     """
 
     if not _REPOSITORY_PATTERN.fullmatch(repository) or any(
@@ -196,11 +210,14 @@ async def fetch_image_provenance(
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if github_token is not None:
+    if github_proxy_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
 
+    api_url = (
+        'https://api.github.com' if github_proxy_url is None else github_proxy_url
+    ).rstrip('/')
     base_url = (
-        f'https://api.github.com/repos/{repository}/attestations/'
+        f'{api_url}/repos/{repository}/attestations/'
         f'{quote(digest.lower(), safe=":")}?per_page=100'
     )
     url = base_url
@@ -208,7 +225,7 @@ async def fetch_image_provenance(
     bundles: list[str] = []
     while True:
         try:
-            response = await fetch(url, headers=headers)
+            response = await fetch(url, headers=headers, allow_redirects=False)
         except Exception as error:
             raise api_failure(
                 'api.transport_failed',

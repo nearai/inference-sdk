@@ -51,10 +51,10 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
 | `create_tdx_quote_verifier` | `(pccs_url=...)` | `TdxQuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
 | `create_gpu_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
-| `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
+| `fetch_image_provenance` | `(repository, digest, github_token=None, *, github_proxy_url=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
-| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
-| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
+| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None, *, github_proxy_url=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
+| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None, github_proxy_url=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
 
 ## InferenceClient
 
@@ -381,7 +381,8 @@ and every matching service image passes provenance verification. It parses
 | --- | --- | --- | --- |
 | `app_compose` | `str` | Yes | Measured app-compose JSON. |
 | `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Yes | Nonempty mapping from image repository to trusted GitHub build policy. |
-| `github_token` | `str \| None` | No | Optional GitHub authentication token. |
+| `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_proxy_url` is set. |
+| `github_proxy_url` | `str \| None` | No | Absolute HTTP(S) GitHub proxy base URL. Omit to access GitHub directly. |
 
 Images must use `repository@sha256:<64 hex>` or
 `repository:tag@sha256:<64 hex>`. A leading `docker.io/` is normalized in policy
@@ -413,7 +414,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Required | Nonempty required image repositories and build policies. |
 | `compose_repository` | `str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
 | `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
-| `github_token` | `str \| None` | `None` | Optional GitHub token for file/proof retrieval. |
+| `github_token` | `str \| None` | `None` | GitHub token for direct requests; ignored when `github_proxy_url` is set. |
+| `github_proxy_url` | `str \| None` | `None` | Absolute HTTP(S) GitHub proxy base URL for compose files and image proofs. |
 
 Missing evidence, file/hash mismatches and image-policy failures raise
 `VerificationError`. This does not prove current runtime state or action success.
@@ -438,7 +440,13 @@ Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
 | --- | --- | --- | --- |
 | `repository` | `str` | Yes | GitHub repository in `owner/repo` form. |
 | `digest` | `str` | Yes | Image digest in `sha256:<64 hex characters>` form. |
-| `github_token` | `str \| None` | No | GitHub authentication token; defaults to no token. |
+| `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_proxy_url` is set. |
+| `github_proxy_url` | `str \| None` | No | Absolute HTTP(S) GitHub proxy base URL. Repository API paths are appended to this prefix. |
+
+Proxy responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub authentication and proxies](verification-guide.md#github-authentication-and-proxies)
+for the proxy contract.
 
 ### `verify_image_provenance`
 

@@ -20,6 +20,7 @@ async def verify_compose_manager_deployment_image_provenance(
     compose_repository: str = 'nearai/cvm-compose-files',
     compose_file: str | None = None,
     github_token: str | None = None,
+    github_proxy_url: str | None = None,
 ) -> None:
     """Check the recorded compose file's hash, then its required image builds.
 
@@ -65,12 +66,15 @@ async def verify_compose_manager_deployment_image_provenance(
         quote(part, safe='') for part in compose_repository.split('/')
     )
     file_path = '/'.join(quote(part, safe='') for part in file.split('/'))
-    url = f'https://api.github.com/repos/{repository_path}/contents/{file_path}?ref={commit}'
+    api_url = (
+        'https://api.github.com' if github_proxy_url is None else github_proxy_url
+    ).rstrip('/')
+    url = f'{api_url}/repos/{repository_path}/contents/{file_path}?ref={commit}'
     headers = {
         'Accept': 'application/vnd.github.raw+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if github_token is not None:
+    if github_proxy_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
     try:
         response = await fetch(url, headers=headers, allow_redirects=False)
@@ -114,6 +118,7 @@ async def verify_compose_manager_deployment_image_provenance(
         additional_images,
         # The action boundary validates services separately from string fields.
         services=cast(list[str], action.get('services', [])),
+        github_proxy_url=github_proxy_url,
     )
 
 

@@ -444,12 +444,56 @@ build provenance.
 The helpers are asynchronous. The deployment helper reports selection, request,
 and verification failures as `VerificationError`; wrapped request failures retain
 their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks. An optional GitHub
-token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
+Multiple bundles are tried until one satisfies all checks.
 
 This proves the selected digest's build provenance. It does not approve the code,
 rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
+
+#### GitHub authentication and proxies
+
+Server-side applications can pass `github_token` to use GitHub's authenticated
+API quota. This is a GitHub token, not a Gateway API key. Keep it on the backend,
+never in browser code.
+
+To retrieve evidence through a backend proxy instead:
+
+```python
+await verify_deployment_image_provenance(
+    deployment.app_compose,
+    image_policies,
+    github_proxy_url='https://app.example/verification/github',
+)
+```
+
+`fetch_image_provenance` and `verify_compose_manager_deployment_image_provenance`
+accept the same keyword-only option. The latter uses it for both compose files
+and image proofs. Without it, requests go directly to GitHub. With it,
+`github_token` is ignored; the proxy supplies its own token on the server.
+
+The SDK appends GitHub API paths to the proxy base URL, preserving its path
+prefix. The proxy must support these read-only requests:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Forward pagination cursors and preserve HTTP status codes. All pages stay on
+the proxy even when `Link` contains absolute GitHub URLs. Return content
+directly, not a redirect. Use an absolute HTTP(S) base URL without credentials,
+query parameters or a fragment; a trailing slash is optional.
+
+Keep GitHub credentials on the backend, restrict allowed repositories and
+read-only routes, and cache bundles by repository and digest with a refresh
+policy for newly published proofs. Authentication alone does not eliminate
+limits on the proxy's shared GitHub quota. If the same proxy also serves a
+browser SDK, prefer same-origin access or configure CORS to allow `Accept` and
+`X-GitHub-Api-Version` and expose `Link`.
+
+The proxy returns evidence, not a verification verdict. The SDK still verifies
+the original bundle and caller policy, and checks compose-file hashes locally.
+This option does not change Sigstore trust-root retrieval.
 
 #### Model images deployed by Compose Manager
 

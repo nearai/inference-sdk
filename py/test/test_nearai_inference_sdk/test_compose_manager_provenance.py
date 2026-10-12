@@ -68,9 +68,13 @@ def quote_verifier(quote: str):
 
 
 @pytest.mark.parametrize('direct', [False, True])
+@pytest.mark.parametrize(
+    'github_proxy_url', [None, 'https://app.example/verification/github/']
+)
 async def test_verifies_recorded_compose_and_real_image_proof_through_deployment_policy(
     monkeypatch,
     direct,
+    github_proxy_url,
 ):
     root = TrustedRoot.from_file(str(FIXTURES / 'provenance/trusted-root.json'))
     monkeypatch.setattr(Verifier, 'production', lambda: Verifier(trusted_root=root))
@@ -81,19 +85,21 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
     bundle = json.loads(
         (FIXTURES / 'provenance/compose-manager-launcher.bundle.json').read_text()
     )
-    monkeypatch.setattr(
-        provenance,
-        'fetch',
-        AsyncMock(
-            return_value=FetchResponse(
-                status=200,
-                body=json.dumps({'attestations': [{'bundle': bundle}]}).encode(),
-            )
-        ),
+    image_fetch = AsyncMock(
+        return_value=FetchResponse(
+            status=200,
+            body=json.dumps({'attestations': [{'bundle': bundle}]}).encode(),
+        )
     )
+    monkeypatch.setattr(provenance, 'fetch', image_fetch)
 
     async def deployment_policy(deployment):
-        await verify_compose_manager_deployment_image_provenance(deployment, POLICIES)
+        await verify_compose_manager_deployment_image_provenance(
+            deployment,
+            POLICIES,
+            github_token='test-token',
+            github_proxy_url=github_proxy_url,
+        )
 
     attestation = create_model_attestation(compose_manager_attestation=manager_report())
     if direct:
@@ -129,10 +135,20 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
 
     assert verified.deployment_provenance == 'verified'
     assert verified.deployment.compose_manager.actions == manager_report().actions
+    api_url = (
+        'https://api.github.com/' if github_proxy_url is None else github_proxy_url
+    )
     assert compose_fetch.await_args.args[0] == (
-        'https://api.github.com/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref='
+        f'{api_url}repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref='
         + '12' * 20
     )
+    assert image_fetch.await_args.args[0].startswith(
+        f'{api_url}repos/nearai/compose-manager/attestations/'
+    )
+    for request in (compose_fetch, image_fetch):
+        assert request.await_args.kwargs['headers'].get('Authorization') == (
+            'Bearer test-token' if github_proxy_url is None else None
+        )
 
 
 @pytest.mark.parametrize(
@@ -217,7 +233,9 @@ async def test_rejects_changed_compose_before_image_proof_retrieval(monkeypatch)
     monkeypatch.setattr(provenance, 'fetch_image_provenance', image_fetch)
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            verified.deployment, POLICIES
+            verified.deployment,
+            POLICIES,
+            github_proxy_url='https://app.example/verification/github',
         )
     assert raised.value.failure.code == 'provenance.compose_file_hash_mismatch'
     image_fetch.assert_not_awaited()
