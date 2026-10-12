@@ -25,6 +25,7 @@ type VerifyComposeImageProvenanceParams = {
   dockerCompose: string;
   imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
   githubToken?: string;
+  githubProxyUrl?: string;
   additionalImages?: readonly ComposeImage[];
   /** An explicit compose_up selection; omitted or empty selects the whole file. */
   services?: readonly string[];
@@ -39,6 +40,7 @@ export async function verifyDeploymentImageProvenance({
   appCompose,
   imagePolicies,
   githubToken,
+  githubProxyUrl,
 }: VerifyDeploymentImageProvenanceParams): Promise<void> {
   requireImagePolicies(imagePolicies);
   let configuration: DeploymentAppCompose;
@@ -57,6 +59,7 @@ export async function verifyDeploymentImageProvenance({
     dockerCompose: configuration.docker_compose_file,
     imagePolicies,
     githubToken,
+    githubProxyUrl,
   });
 }
 
@@ -65,6 +68,7 @@ export async function verifyComposeImageProvenance({
   dockerCompose,
   imagePolicies,
   githubToken,
+  githubProxyUrl,
   additionalImages = [],
   services,
 }: VerifyComposeImageProvenanceParams): Promise<void> {
@@ -82,6 +86,7 @@ export async function verifyComposeImageProvenance({
           repository: policy.repository,
           digest,
           githubToken,
+          githubProxyUrl,
         });
       } catch (cause) {
         if (!(cause instanceof ApiError)) throw cause;

@@ -7,11 +7,13 @@ import { sha256 } from '../utils/common';
 import { VerificationError } from '../utils/errors';
 import { verifyComposeImageProvenance } from './deployment-provenance';
 
-type ComposeFileReference = {
+type FetchComposeFileParams = {
   repository: string;
   commit: string;
   file: string;
   sha256: string;
+  githubToken?: string;
+  githubProxyUrl?: string;
 };
 
 /**
@@ -25,6 +27,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
   composeRepository = 'nearai/cvm-compose-files',
   composeFile,
   githubToken,
+  githubProxyUrl,
 }: VerifyComposeManagerDeploymentImageProvenanceParams): Promise<void> {
   const manager = deployment.composeManager;
   if (manager === undefined) throw invalidDeployment('attestation_missing');
@@ -50,15 +53,14 @@ export async function verifyComposeManagerDeploymentImageProvenance({
   ) {
     throw invalidDeployment('invalid_file_reference');
   }
-  const dockerCompose = await fetchComposeFile(
-    {
-      repository: composeRepository,
-      commit,
-      file,
-      sha256: digest,
-    },
+  const dockerCompose = await fetchComposeFile({
+    repository: composeRepository,
+    commit,
+    file,
+    sha256: digest,
     githubToken,
-  );
+    githubProxyUrl,
+  });
 
   // A manager self-update is not reflected in the serving model compose.
   // Include the latest started image when the caller's policy requires it.
@@ -73,27 +75,35 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     dockerCompose,
     imagePolicies,
     githubToken,
+    githubProxyUrl,
     additionalImages,
     services: action.services,
   });
 }
 
-async function fetchComposeFile(
-  reference: ComposeFileReference,
-  githubToken: string | undefined,
-): Promise<string> {
-  const { repository, commit, file } = reference;
+async function fetchComposeFile({
+  repository,
+  commit,
+  file,
+  sha256: expectedDigest,
+  githubToken,
+  githubProxyUrl,
+}: FetchComposeFileParams): Promise<string> {
   const repositoryPath = repository
     .split('/')
     .map(encodeURIComponent)
     .join('/');
   const filePath = file.split('/').map(encodeURIComponent).join('/');
-  const url = `https://api.github.com/repos/${repositoryPath}/contents/${filePath}?ref=${commit}`;
+  const apiUrl = (githubProxyUrl ?? 'https://api.github.com').replace(
+    /\/+$/,
+    '',
+  );
+  const url = `${apiUrl}/repos/${repositoryPath}/contents/${filePath}?ref=${commit}`;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.raw+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-  if (githubToken !== undefined)
+  if (githubProxyUrl === undefined && githubToken !== undefined)
     headers.Authorization = `Bearer ${githubToken}`;
   let response: Response;
   try {
@@ -129,7 +139,7 @@ async function fetchComposeFile(
     );
   }
   const digest = await sha256(bytes);
-  if (!digest.equals(Buffer.from(reference.sha256, 'hex'))) {
+  if (!digest.equals(Buffer.from(expectedDigest, 'hex'))) {
     throw new VerificationError({
       code: 'provenance.compose_file_hash_mismatch',
       details: { repository, commit, file },

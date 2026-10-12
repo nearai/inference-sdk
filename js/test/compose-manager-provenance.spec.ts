@@ -61,64 +61,84 @@ function managerQuote(report: ComposeManagerAttestation): VerifiedTdxQuote {
 describe('Compose Manager deployment image provenance', () => {
   afterEach(() => jest.restoreAllMocks());
 
-  test('verifies the signed log, recorded compose bytes and image build through the model callback', async () => {
-    const report = managerReport();
-    // Wire key order is not part of the canonical action hash.
-    const [action] = report.actions;
-    const [attestation] = decodeModelAttestationReport({
-      model_attestations: [
-        {
-          signing_algo: 'ecdsa',
-          signing_address: createModelAttestation().signer.signingAddress,
-          request_nonce: nonce,
-          intel_quote: 'aa',
-          event_log: createModelAttestation().eventLog,
-          info: { tcb_info: { app_compose: appCompose } },
-          compose_manager_attestation: {
-            actions: [{ ...action, timestamp: action.timestamp }].map((entry) =>
-              Object.fromEntries(Object.entries(entry).reverse()),
-            ),
-            actions_hash: report.actionsHash,
-            nonce,
-            quote: report.intelQuote,
-            event_log: report.eventLog,
+  test.each([undefined, 'https://app.example/verification/github'])(
+    'verifies the signed log, compose bytes and image build with proxy %s',
+    async (githubProxyUrl) => {
+      const report = managerReport();
+      // Wire key order is not part of the canonical action hash.
+      const [action] = report.actions;
+      const [attestation] = decodeModelAttestationReport({
+        model_attestations: [
+          {
+            signing_algo: 'ecdsa',
+            signing_address: createModelAttestation().signer.signingAddress,
+            request_nonce: nonce,
+            intel_quote: 'aa',
+            event_log: createModelAttestation().eventLog,
+            info: { tcb_info: { app_compose: appCompose } },
+            compose_manager_attestation: {
+              actions: [{ ...action, timestamp: action.timestamp }].map(
+                (entry) => Object.fromEntries(Object.entries(entry).reverse()),
+              ),
+              actions_hash: report.actionsHash,
+              nonce,
+              quote: report.intelQuote,
+              event_log: report.eventLog,
+            },
           },
+        ],
+      });
+      jest
+        .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+        .mockResolvedValue(TRUSTED_ROOT);
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(COMPOSE))
+        .mockResolvedValueOnce(
+          Response.json({ attestations: [{ bundle: BUNDLE }] }),
+        );
+
+      const verified = await verifyModelAttestation({
+        attestation,
+        clientBinding: { nonce },
+        verifiers: {
+          tdxQuote: async (quote) =>
+            quote === 'bb' ? managerQuote(report) : createModelQuote(),
+          deployment: (deployment) =>
+            verifyComposeManagerDeploymentImageProvenance({
+              deployment,
+              imagePolicies: IMAGE_POLICIES,
+              githubToken: 'test-github-token',
+              githubProxyUrl,
+            }),
         },
-      ],
-    });
-    jest
-      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
-      .mockResolvedValue(TRUSTED_ROOT);
-    const fetch = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(COMPOSE))
-      .mockResolvedValueOnce(
-        Response.json({ attestations: [{ bundle: BUNDLE }] }),
+      });
+
+      expect(verified.deploymentProvenance).toBe('verified');
+      expect(verified.deployment.composeManager?.actions).toEqual(
+        report.actions,
       );
-
-    const verified = await verifyModelAttestation({
-      attestation,
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: async (quote) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-        deployment: (deployment) =>
-          verifyComposeManagerDeploymentImageProvenance({
-            deployment,
-            imagePolicies: IMAGE_POLICIES,
-          }),
-      },
-    });
-
-    expect(verified.deploymentProvenance).toBe('verified');
-    expect(verified.deployment.composeManager?.actions).toEqual(report.actions);
-    expect(fetch).toHaveBeenNthCalledWith(
-      1,
-      `https://api.github.com/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref=${COMMIT}`,
-      expect.any(Object),
-    );
-    expect(fetch).toHaveBeenCalledTimes(2);
-  });
+      expect(fetch).toHaveBeenNthCalledWith(
+        1,
+        `${githubProxyUrl ?? 'https://api.github.com'}/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref=${COMMIT}`,
+        expect.any(Object),
+      );
+      expect(fetch).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining(
+          `${githubProxyUrl ?? 'https://api.github.com'}/repos/${POLICY.repository}/attestations/`,
+        ),
+        expect.any(Object),
+      );
+      for (const [, options] of fetch.mock.calls) {
+        const headers = new Headers(options?.headers);
+        expect(headers.get('Authorization')).toBe(
+          githubProxyUrl === undefined ? 'Bearer test-github-token' : null,
+        );
+      }
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
 
   test.each([
     [

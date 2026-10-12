@@ -684,7 +684,51 @@ build attestations; legacy Rekor `intoto` entries are not supported.
 configuration, failed proof retrieval, or failed proof verification. A retrieval
 failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
-The optional `githubToken` is a GitHub token, not a Gateway API key.
+
+#### GitHub authentication and proxies
+
+Server-side applications can pass `githubToken` to use GitHub's authenticated
+API quota. This is a GitHub token, not a Gateway API key. Do not embed a shared
+token in browser code.
+
+For browser applications, configure a backend proxy instead:
+
+```ts
+await verifyDeploymentImageProvenance({
+  appCompose: deployment.appCompose,
+  imagePolicies,
+  githubProxyUrl: 'https://app.example/verification/github',
+});
+```
+
+`fetchImageProvenance` and `verifyComposeManagerDeploymentImageProvenance`
+accept the same option. The latter uses it for both compose files and image
+proofs. Without it, requests go directly to GitHub. With it, `githubToken` is
+ignored; the proxy supplies its own token on the server.
+
+The SDK appends GitHub API paths to the proxy base URL, preserving its path
+prefix. The proxy must support these read-only requests:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Forward pagination cursors and preserve HTTP status codes. The SDK keeps all
+pages on the proxy even when `Link` contains absolute GitHub URLs. Return the
+content directly, not a redirect. Use an absolute HTTP(S) base URL without
+credentials, query parameters or a fragment; a trailing slash is optional.
+
+Prefer a same-origin proxy. A cross-origin proxy must allow the SDK's `Accept`
+and `X-GitHub-Api-Version` request headers and expose `Link` through CORS.
+Keep GitHub credentials on the backend, restrict allowed repositories and
+read-only routes, and cache bundles by repository and digest with a refresh
+policy for newly published proofs. A proxy concentrates requests onto its own
+GitHub quota, so authentication alone is not a substitute for caching.
+
+The proxy returns evidence, not a verification verdict. The SDK still verifies
+the original bundle and caller policy, and checks compose-file hashes locally.
+This option does not change Sigstore trust-root retrieval.
 
 #### Model images deployed by Compose Manager
 

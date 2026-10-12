@@ -455,7 +455,8 @@ against a quote itself.
 | --- | --- | --- | --- |
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
-| `githubToken` | `string` | No | GitHub authentication for fetching proofs. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
+| `githubProxyUrl` | `string` | No | Absolute HTTP(S) GitHub proxy base URL. Omit to access GitHub directly. |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -482,7 +483,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
 | `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
 | `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
-| `githubToken` | `string` | No | — | GitHub token for compose-file and image-proof retrieval. |
+| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
+| `githubProxyUrl` | `string` | No | — | Absolute HTTP(S) GitHub proxy base URL for compose-file and image-proof retrieval. |
 
 Fails with `VerificationError` if manager evidence or a matching action is missing,
 the file cannot be retrieved, its hash differs, or an image policy fails. No claim
@@ -513,7 +515,13 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | --- | --- | --- | --- |
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
-| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
+| `githubProxyUrl` | `string` | No | Absolute HTTP(S) GitHub proxy base URL. Repository API paths are appended to this prefix. |
+
+Proxy responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub authentication and proxies](verification-guide.md#github-authentication-and-proxies)
+for the proxy contract.
 
 ### `verifyImageProvenance`
 
