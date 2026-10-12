@@ -1,4 +1,4 @@
-"""Inference settings and successful response-verification results."""
+"""Inference settings and successful attestation and response-verification results."""
 
 from __future__ import annotations
 
@@ -31,6 +31,16 @@ class GatewayVerificationOptions:
 class ModelVerificationOptions:
     policy: ModelAttestationPolicy | None = None
     verifiers: ModelAttestationVerifiers | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AttestationVerificationResult:
+    """Gateway and model results shared by verify() and Chat for this model."""
+
+    gateway: VerifiedGatewayAttestation
+    models: tuple[VerifiedModelAttestation, ...]
+    # Unix milliseconds when verification completed; unchanged on cache hits.
+    verified_at: int
 
 
 @dataclass(frozen=True, kw_only=True)

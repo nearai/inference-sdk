@@ -19,6 +19,16 @@ pub async fn verify_model_attestation(
     policy: Option<&ModelAttestationPolicy>,
     verifiers: ModelAttestationVerifiers<'_>,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
+    verify_model_with_tls(attestation, client_binding, policy, verifiers, None).await
+}
+
+pub(crate) async fn verify_model_with_tls(
+    attestation: &ModelAttestation,
+    client_binding: &ModelClientBinding,
+    policy: Option<&ModelAttestationPolicy>,
+    verifiers: ModelAttestationVerifiers<'_>,
+    fingerprint: Option<&str>,
+) -> Result<VerifiedModelAttestation, VerificationError> {
     let common_policy = policy.map(|policy| AttestationPolicy {
         accepted_tcb_statuses: policy.accepted_tcb_statuses.clone(),
     });
@@ -30,11 +40,21 @@ pub async fn verify_model_attestation(
         attestation.reported_quote_data.as_deref(),
     )
     .await?;
-    verify_report_data_binding(
-        &verified_quote.quote.report_data,
-        &client_binding.nonce,
-        &verified_quote.signer.signing_address,
-    )?;
+    if let Some(fingerprint) = fingerprint {
+        crate::bindings::verify_report_data_binding_with_tls_fingerprint(
+            &verified_quote.quote.report_data,
+            &client_binding.nonce,
+            &verified_quote.signer.signing_address,
+            fingerprint,
+            fingerprint,
+        )?;
+    } else {
+        verify_report_data_binding(
+            &verified_quote.quote.report_data,
+            &client_binding.nonce,
+            &verified_quote.signer.signing_address,
+        )?;
+    }
     let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
     let gpu_evidence = verify_gpu_evidence(
         attestation.nvidia_payload.as_deref(),
@@ -46,6 +66,7 @@ pub async fn verify_model_attestation(
     )
     .await?;
     Ok(VerifiedModelAttestation {
+        signing_public_key: verify_signing_public_key(attestation)?,
         evidence,
         gpu_evidence,
     })
@@ -80,4 +101,40 @@ async fn verify_gpu_evidence(
     let verifier = verifier.unwrap_or(&default_verifier);
     verifier.verify(payload).await?;
     Ok(GpuEvidenceStatus::Verified)
+}
+
+fn verify_signing_public_key(
+    attestation: &ModelAttestation,
+) -> Result<Option<String>, VerificationError> {
+    use crate::{errors::protocol, util::decode_hex, SigningAlgo};
+    use sha3::Digest;
+    let Some(key) = &attestation.signing_public_key else {
+        return Ok(None);
+    };
+    let invalid = || {
+        protocol(
+            "binding.model_public_key_mismatch",
+            "model key does not match the attested signer",
+        )
+    };
+    let mut key = decode_hex(key).map_err(|_| invalid())?;
+    let signer = &attestation.evidence.signer;
+    let address = decode_hex(&signer.signing_address).map_err(|_| invalid())?;
+    let matches = match signer.signing_algo {
+        SigningAlgo::Ed25519 => key.len() == 32 && key == address,
+        SigningAlgo::Ecdsa => {
+            if key.len() == 65 && key[0] == 4 {
+                key.remove(0);
+            }
+            let mut encoded = vec![4];
+            encoded.extend_from_slice(&key);
+            key.len() == 64
+                && k256::PublicKey::from_sec1_bytes(&encoded).is_ok()
+                && sha3::Keccak256::digest(&key)[12..] == address
+        }
+    };
+    if !matches {
+        return Err(invalid());
+    }
+    Ok(Some(hex::encode(key)))
 }
