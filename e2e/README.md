@@ -55,13 +55,22 @@ credentials, request bodies, or full attestation reports.
 | Python, Rust, and Go | Standalone verification with both Ed25519 and ECDSA |
 | All four | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
 
+Rust and Go also cover explicit and automatic preflight, cached evidence
+timestamps, repeated receipt verification, and consuming streams through HTTP
+EOF. The shared Gateway feature matrix is covered in all four SDKs;
+JavaScript's generic entry and the JavaScript/Python/Go OpenAI transport adapters
+are language-specific checks with no Rust adapter equivalent. None of the live
+suites covers experimental direct endpoints or the example-specific Gateway
+image-provenance allowlist.
+
 The JavaScript tests import the built package entry points. Its generic entry
 is exercised in Node; this is not a browser or CORS test. This suite targets
 Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
 default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
 deployment allowlist.
 
-Each SDK sends small Chat requests, each capped at 1,024 completion tokens to leave room for
+A complete four-language run without retries sends 105 small Chat requests per
+environment (210 total), each capped at 1,024 completion tokens to leave room for
 reasoning and a visible answer.
 Responses must have non-empty answer content and finish with `stop`; empty or
 token-truncated responses fail. The test does not require the model to return a
