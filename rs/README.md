@@ -9,7 +9,7 @@ retains the exact wire bytes used for completion signatures.
 
 ```toml
 [dependencies]
-nearai-inference-sdk = "0.1"
+nearai-inference-sdk = "=0.1.0-rc1"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
@@ -99,11 +99,13 @@ the evidence currently proves.
 - [API reference](./docs/api-reference.md) lists the client, verification
   functions, return values, policies, and callback traits.
 
+This is the first release candidate. Pin the prerelease explicitly while evaluating it.
+
 ## Install
 
 ```toml
 [dependencies]
-nearai-inference-sdk = "0.1"
+nearai-inference-sdk = "=0.1.0-rc1"
 ```
 
 When using standalone verification, retain the exact bytes sent to and received
