@@ -115,3 +115,6 @@ __pycache__
 
 # Target
 target
+
+# Local code-review artifacts
+.review/
