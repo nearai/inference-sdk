@@ -3,11 +3,13 @@ import pytest
 from openai import AsyncOpenAI
 
 from nearai_inference_sdk import (
+    DirectAttestationVerificationResult,
     DirectInferenceClient,
     ModelAttestationVerifiers,
     ModelVerificationOptions,
     VerificationError,
 )
+from nearai_inference_sdk.core import direct_inference_client
 
 from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MESSAGES, MODEL, Gateway
@@ -90,8 +92,19 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
 ):
     endpoint = DirectEndpoint(signing_algo)
     endpoint.install(monkeypatch)
+    now = 1_700_000_000
+    monkeypatch.setattr(direct_inference_client, 'time', lambda: now)
     async with endpoint.client(e2ee=e2ee, ohttp=ohttp) as client:
-        await client.verify(MODEL)
+        attestations = await client.verify(MODEL)
+        assert isinstance(attestations, DirectAttestationVerificationResult)
+        assert len(attestations.attestations) == 2
+        assert attestations.serving_attestation is attestations.attestations[0]
+        assert attestations.tls_binding.kind == 'none'
+        assert attestations.spki_fingerprints == ()
+        now += 1
+        cached = await client.verify(MODEL)
+        assert cached is attestations
+        assert cached.verified_at == 1_700_000_000_000
         assert endpoint.completion_requests == []
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
@@ -100,7 +113,7 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
         result = await client.verify_response(completion.id)
         assert result.id == completion.id
         assert result.signature_kind == 'provider_tee'
-        assert len(result.attestations) == 2
+        assert result.attestations == attestations.attestations
 
         openai = AsyncOpenAI(
             api_key='unused', base_url=BASE_URL, http_client=client.http_client

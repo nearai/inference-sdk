@@ -22,9 +22,9 @@ async def chat(api_key: str) -> None:
             messages=[{'role': 'user', 'content': 'Hello'}],
             max_completion_tokens=128,
         )
-        print(completion.choices[0].message.content)
         verified = await inference_client.verify_response(completion.id)
         print(verified.signature_kind)
+        print(completion.choices[0].message.content)
 ```
 
 The client always verifies Gateway attestation. It reads model metadata on a
@@ -55,7 +55,8 @@ When connecting through an aggregator that terminates TLS, use
 Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
 
 The client delivers decrypted content before response-signature verification.
-Call `verify_response()` after fully consuming a stream:
+Call `verify_response()` after fully consuming a stream. Any content displayed
+before it succeeds is not yet signature-verified:
 
 ```python
 stream = await inference_client.chat.completions.create(
@@ -106,11 +107,14 @@ Only Chat Completions are supported by this transport, not the Responses API.
 ### Verify before the first Chat request
 
 Call `verify(model)` to check the deployment while your application prepares its
-first request:
+first request and obtain the verified evidence for display or inspection:
 
 ```python
 async with InferenceClient(api_key, e2ee=True) as inference_client:
-    await inference_client.verify('z-ai/glm-5.3-flash')
+    attestations = await inference_client.verify('z-ai/glm-5.3-flash')
+    print('Gateway TCB:', attestations.gateway.tcb_status)
+    for model_attestation in attestations.models:
+        print('Model TCB:', model_attestation.tcb_status)
 
     # Application code prepares the conversation after verification succeeds.
     completion = await inference_client.chat.completions.create(
@@ -122,9 +126,15 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
 
 `verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
 verification, including TLS, model policy, and optional OHTTP checks. It raises if
-any required check fails. With a cache TTL of zero, the later Chat verifies again.
-`DirectInferenceClient.verify(model)` provides the same model-only workflow for
-direct endpoints.
+any required check fails. The result contains the verified Gateway, every verified
+model report, and `verified_at` in Unix milliseconds. Incognito results have an
+empty `models` tuple. Cache hits preserve the original result and verification
+time. With a cache TTL of zero, the later Chat verifies again.
+
+`DirectInferenceClient.verify(model)` returns the complete verified direct report
+set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
+result. In both workflows, response signatures are still checked separately
+with `verify_response(id)` after Chat.
 
 ### Use OHTTP
 
@@ -136,8 +146,8 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
         model='z-ai/glm-5.3-flash',
         messages=[{'role': 'user', 'content': 'Hello'}],
     )
-    print(completion.choices[0].message.content)
     verified = await inference_client.verify_response(completion.id)
+    print(completion.choices[0].message.content)
 ```
 
 OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
