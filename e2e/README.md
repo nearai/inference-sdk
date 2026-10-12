@@ -1,6 +1,6 @@
 # Live E2E tests
 
-These tests send real Chat requests and verify real attestation evidence and
+These tests send real inference requests and verify real attestation evidence and
 response signatures. They run after pushes to `main` (including merged PRs)
 and daily at 03:00 UTC, after the daily production deployment. GitHub may delay scheduled runs.
 The **Live E2E** workflow can also be started manually from `main`.
@@ -85,6 +85,28 @@ verification APIs. Its streaming support is separately gated by the provider,
 so this suite tests Chutes with JSON only and verifies the Gateway signature over
 the client-facing response. A missing signature fails every receipt test.
 
+## Jev / System One
+
+SDKs with System One support also test a hosted Jev model selected from each
+environment's public catalog. Discovery uses the `decisions` output capability
+and TypeSafe ownership, preferring lower prices; a missing model fails the run.
+Rust-only releases do not require a System One model.
+
+Client cases use Ed25519 and ECDSA with automatic preflight and response
+verification. Each request contains `noul`, `choice`, and `score` questions.
+Tests verify real Gateway quotes and receipts indexed by `X-Generation-Id`.
+Standalone cases additionally reject altered request and response bytes using
+the same real receipt. Native clients keep peer TLS binding enabled.
+
+Hosted Jev uses Gateway receipts; these tests do not claim model TEE execution
+or GPU verification. System One does not support streaming, E2EE, or OHTTP.
+Tests check typed answers, not a particular probabilistic decision. Inference
+is sent once; only retryable receipt lookups are retried.
+
+System One cases use the same environment credentials and language test commands
+as Chat. The workflow discovers the model automatically and passes it through
+`NEARAI_E2E_SYSTEMONE_MODEL`.
+
 ## Local use
 
 Select one environment by setting `NEARAI_BASE_URL` to its URL above and
@@ -96,6 +118,8 @@ Discover models once from the repository root (Node.js 24; no API key used):
 ```sh
 NEARAI_E2E_MODELS=$(node e2e/select-models.mjs)
 export NEARAI_E2E_MODELS
+NEARAI_E2E_SYSTEMONE_MODEL=$(node e2e/select-models.mjs systemone)
+export NEARAI_E2E_SYSTEMONE_MODEL
 ```
 
 Then run the relevant command from the repository root:
