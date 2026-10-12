@@ -11,7 +11,7 @@ Use Rust stable and Cargo. The crate is imported as `nearai_inference_sdk`:
 
 ```toml
 [dependencies]
-nearai-inference-sdk = "0.1.0"
+nearai-inference-sdk = "0.1"
 ```
 
 ## Send and verify a Chat completion
@@ -20,7 +20,7 @@ Add these dependencies to your application's `Cargo.toml`:
 
 ```toml
 [dependencies]
-nearai-inference-sdk = "0.1.0"
+nearai-inference-sdk = "0.1"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
