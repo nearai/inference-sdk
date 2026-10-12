@@ -262,7 +262,7 @@ async function verifyBundle({
   let ref = '';
   let certificateSourceCommit: string | undefined;
   const verified = await verifier.verifyDsse(parsed.output, {
-    verify(cert) {
+    async verify(cert) {
       const identity = cert.extSubjectAltName?.uri ?? '';
       const candidateRef = identity.slice(identityPrefix.length);
       const signerMatches =
@@ -277,9 +277,10 @@ async function verifyBundle({
         );
       }
       new Identity({ identity }).verify(cert);
-      new AnyOf([new OIDCIssuer(issuer), new OIDCIssuerV2(issuer)]).verify(
-        cert,
-      );
+      await new AnyOf([
+        new OIDCIssuer(issuer),
+        new OIDCIssuerV2(issuer),
+      ]).verify(cert);
       let sourceRepository: string | undefined;
       let sourceRef: string | undefined;
       try {
