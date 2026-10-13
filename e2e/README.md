@@ -126,9 +126,8 @@ cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
 ```sh
-# Go 1.25.8+, CGO, C compiler, Rust to build the native library
-DCAP_LIBRARY_DIR="$(go/scripts/build-dcap.sh)"
-export CGO_LDFLAGS="-L$DCAP_LIBRARY_DIR"
+# Go 1.25.8+; the verifier is embedded
+export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
 go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
 ```

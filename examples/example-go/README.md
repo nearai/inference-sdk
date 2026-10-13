@@ -1,7 +1,7 @@
 # Go examples
 
-Build the pinned native DCAP library as described in [the Go SDK README](../../go/README.md)
-and keep `CGO_LDFLAGS` set. Set `NEARAI_API_KEY` through your secret manager or shell.
+Use Go 1.25.8+ as described in [the Go SDK README](../../go/README.md).
+The DCAP verifier is embedded; no Rust, native library, or linker setup is required. Set `NEARAI_API_KEY` through your secret manager or shell.
 `NEAR_AI_API_KEY` is also accepted for Open Code Review integrations.
 
 Run from this directory:

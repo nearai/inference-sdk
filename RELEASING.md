@@ -155,8 +155,8 @@ released package in a fresh project and verify its public imports.
 ## Go module
 
 The Go module is `github.com/nearai/inference-sdk/go`. No Go version has been
-released yet. Validate its pinned native library build, `make -C go check`, and
+released yet. Validate its embedded verifier reproduction, `make -C go check`, and
 the Go example before release. Tag the reviewed commit with `go/vX.Y.Z` for
 Go's subdirectory module versioning. Do not reuse the root Rust/Python or npm
-tags. Consumers must supply the native DCAP library when compiling; include
-that requirement and the pinned native-core revision in release notes.
+tags. Consumers need only Go; the module embeds the DCAP WASM artifact. Include
+the pinned core revision in release notes and verify fresh `CGO_ENABLED=0` builds.

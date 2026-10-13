@@ -151,7 +151,7 @@ Use `errors.As(err, &sdkError)` for `*nearai.Error`. Branch on `Code`, inspect
 indicates a failed external operation may succeed on another attempt; it never
 authorizes automatic replay of inference. The SDK does not retry completions.
 
-From `go/`, after setting `CGO_LDFLAGS`:
+From `go/` (no native library setup required):
 
 ```sh
 gofmt -w *.go internal/dcap/*.go
@@ -160,6 +160,6 @@ go test -race -cover ./...
 ```
 
 The test suite includes cross-language E2EE vectors, signed provenance fixtures,
-native DCAP verification, admission and exact signatures, shared cancellation,
+embedded DCAP verification, admission and exact signatures, shared cancellation,
 stream failures, TLS rejection, and chunked OHTTP authentication. It does not
 make paid inference calls.

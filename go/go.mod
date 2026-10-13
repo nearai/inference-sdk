@@ -8,6 +8,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/sigstore/sigstore-go v1.2.2
+	github.com/tetratelabs/wazero v1.12.0
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.53.0
 )

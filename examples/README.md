@@ -205,7 +205,7 @@ using these examples outside this repository.
 
 [example-go](./example-go/main.go) uses the official OpenAI Go SDK with the NEAR AI
 verified HTTP transport, E2EE, and explicit response verification. Follow the
-[Go native build setup](../go/README.md#build-and-install), then run:
+[Go setup](../go/README.md#build-and-install), then run:
 
 ```sh
 cd examples/example-go

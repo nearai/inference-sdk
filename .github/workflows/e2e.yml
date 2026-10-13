@@ -155,6 +155,8 @@ jobs:
         run: '"$E2E_TEST_BINARY" --ignored --nocapture --test-threads=1'
 
   go:
+    env:
+      CGO_ENABLED: "0"
     name: Go (${{ matrix.environment }})
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'go'
     needs: configuration
@@ -172,15 +174,6 @@ jobs:
           cache-dependency-path: |
             go/go.sum
             examples/example-go/go.sum
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cache/nearai-dcap-qvl
-          key: go-dcap-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go/scripts/build-dcap.sh') }}
-      - name: Build pinned DCAP library
-        run: |
-          DCAP_LIBRARY_DIR="$(go/scripts/build-dcap.sh)"
-          echo "CGO_LDFLAGS=-L$DCAP_LIBRARY_DIR" >> "$GITHUB_ENV"
       - name: Compile live tests without credentials
         run: |
           go -C go test -tags=e2e -c ./e2e -o "$RUNNER_TEMP/e2e-go.test"

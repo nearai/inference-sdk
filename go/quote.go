@@ -21,7 +21,7 @@ func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 		if e != nil {
 			return result, failure("quote.verification_failed", e)
 		}
-		if _, e = dcap.ParseQuote(raw); e != nil {
+		if _, e = dcap.ParseQuoteContext(ctx, raw); e != nil {
 			return result, failure("quote.verification_failed", e)
 		}
 		collateral, e := dcap.GetCollateral(ctx, pccsURL, raw)
@@ -31,7 +31,7 @@ func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 		if e = ctx.Err(); e != nil {
 			return result, e
 		}
-		verified, e := dcap.Verify(raw, collateral, uint64(time.Now().Unix()))
+		verified, e := dcap.VerifyContext(ctx, raw, collateral, uint64(time.Now().Unix()))
 		if e != nil {
 			return result, failure("quote.verification_failed", e)
 		}

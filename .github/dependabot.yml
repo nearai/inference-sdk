@@ -41,6 +41,7 @@ updates:
     directories:
       - "/rs"
       - "/examples/example-rs"
+      - "/go/internal/dcap/wasm-src"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

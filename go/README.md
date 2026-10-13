@@ -8,25 +8,22 @@ signature verification.
 
 ## Build and install
 
-Requires Go **1.25.8+**, CGO, a C compiler, and the native DCAP QVL static library.
-There is no Node.js or Python runtime dependency. The supported native build
-platforms are Linux and macOS on amd64/arm64. Cross-compilation requires a native
-library and C toolchain for the target; `CGO_ENABLED=0` is not supported.
+Requires Go **1.25.8+**. The module includes the pinned DCAP verifier as an
+embedded WebAssembly artifact, executed locally with wazero. Users do not need
+Rust, CGO, a C compiler, a native library, or linker environment variables.
+There is no Node.js or Python runtime dependency. `CGO_ENABLED=0` and ordinary
+Go cross-compilation are supported; CI tests Linux and macOS.
 
-From a checkout of this repository, install a current stable Rust toolchain and
-build the pinned DCAP QVL source once:
+From a checkout, run the SDK tests with:
 
 ```sh
 cd go
-DCAP_LIBRARY_DIR="$(./scripts/build-dcap.sh)"
-export CGO_LDFLAGS="-L$DCAP_LIBRARY_DIR"
-go test -race ./...
+CGO_ENABLED=0 go test ./...
 ```
 
-Keep `CGO_LDFLAGS` set when building programs using the SDK. Rust is needed to
-build the library, not to run a compiled Go program. The script uses an external
-cache and checks the source revision; no binary is downloaded or committed.
-See [the adapter notes](./internal/dcap/README.md) for provenance and local fixes.
+Race tests use `go test -race ./...` and require CGO for Go's race detector only;
+the SDK itself does not require CGO. See [the verifier notes](./internal/dcap/README.md)
+for provenance, resource limits, and the maintainer-only artifact rebuild.
 
 This module has no Go release tag yet. For local integration, use a replacement:
 
