@@ -24,6 +24,16 @@ import (
 // Exercise the official SDK's JSON and SSE consumption, including its early
 // [DONE] handling, against the real verified transport and signed wire bytes.
 func TestOpenAIClientIntegration(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		name := "gateway"
+		if direct {
+			name = "direct"
+		}
+		t.Run(name, func(t *testing.T) { testOpenAIClientIntegration(t, direct) })
+	}
+}
+
+func testOpenAIClientIntegration(t *testing.T, direct bool) {
 	pub, priv, e := ed25519.GenerateKey(rand.Reader)
 	if e != nil {
 		t.Fatal(e)
@@ -47,17 +57,30 @@ func TestOpenAIClientIntegration(t *testing.T) {
 			nb, _ := hex.DecodeString(n)
 			data := append(append([]byte(nil), pub...), nb...)
 			quote, _ := json.Marshal(nearai.QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: data, MRConfigID: mr, RTMR3: rtmr[:]})
-			json.NewEncoder(w).Encode(map[string]any{
-				"gateway_attestation": map[string]any{
-					"request_nonce":   n,
-					"signing_algo":    "ed25519",
-					"signing_address": address,
-					"intel_quote":     string(quote),
-					"report_data":     hex.EncodeToString(data),
-					"event_log":       []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}},
-					"info":            map[string]any{"tcb_info": map[string]any{"app_compose": compose}},
-				},
-			})
+			report := map[string]any{
+				"request_nonce":   n,
+				"signing_algo":    "ed25519",
+				"signing_address": address,
+				"intel_quote":     string(quote),
+				"report_data":     hex.EncodeToString(data),
+				"event_log":       []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}},
+				"info":            map[string]any{"tcb_info": map[string]any{"app_compose": compose}},
+			}
+			if direct {
+				if r.URL.Query().Get("include_tls_fingerprint") != "false" {
+					t.Error("direct TLS attestation must remain disabled")
+				}
+				report["model_name"] = "model"
+				report["signing_public_key"] = address
+				response := map[string]any{}
+				for key, value := range report {
+					response[key] = value
+				}
+				response["all_attestations"] = []any{report}
+				json.NewEncoder(w).Encode(response)
+			} else {
+				json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": report})
+			}
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			body, _ := io.ReadAll(r.Body)
 			var parsed struct {
@@ -74,8 +97,13 @@ func TestOpenAIClientIntegration(t *testing.T) {
 			}
 			reqHash, resHash := sha256.Sum256(body), sha256.Sum256([]byte(reply))
 			text := fmt.Sprintf("%x:%x", reqHash, resHash)
+			kind := "gateway"
+			if direct {
+				kind = "provider_tee"
+				text = "model:" + text
+			}
 			sig := map[string]any{
-				"signature_kind":  "gateway",
+				"signature_kind":  kind,
 				"signing_algo":    "ed25519",
 				"signing_address": address,
 				"signature":       hex.EncodeToString(ed25519.Sign(priv, []byte(text))),
@@ -96,15 +124,27 @@ func TestOpenAIClientIntegration(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	c, e := nearai.NewInferenceClient(nearai.InferenceOptions{
-		ClientOptions:     nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"},
-		DisableTLSBinding: true,
-		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
-			var q nearai.QuoteVerificationResult
-			e := json.Unmarshal([]byte(raw), &q)
-			return q, e
-		}},
-	})
+	quoteVerifier := func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
+		var q nearai.QuoteVerificationResult
+		err := json.Unmarshal([]byte(raw), &q)
+		return q, err
+	}
+	opts := nearai.InferenceOptions{
+		ClientOptions:       nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"},
+		DisableTLSBinding:   true,
+		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
+		ModelVerification:   nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
+	}
+	var c *nearai.InferenceClient
+	if direct {
+		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
+		c, e = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
+			InferenceOptions: opts,
+			DisableE2EE:      true,
+		})
+	} else {
+		c, e = nearai.NewInferenceClient(opts)
+	}
 	if e != nil {
 		t.Fatal(e)
 	}

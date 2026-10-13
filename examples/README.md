@@ -213,6 +213,7 @@ needed. See [Go setup](../go/README.md#build-and-install).
 | `go run ./gateway/openai` | Official OpenAI Go SDK with verified HTTP transport, E2EE, JSON/SSE, and explicit receipts. |
 | `go run ./gateway/client` | Integrated Gateway verification, image provenance, encrypted JSON/SSE, and receipts. |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, ciphertext capture, and receipts. |
+| `go run ./direct/openai` | Experimental official OpenAI Go client through the direct verified transport, E2EE, JSON/SSE, and receipts. |
 | `go run ./direct/client` | Experimental integrated direct client with E2EE and JSON/SSE receipts. |
 | `go run ./direct/bare` | Experimental standalone direct verification and matching receipt signers. |
 

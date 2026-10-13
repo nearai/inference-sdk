@@ -366,14 +366,31 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 	return nil
 }
 
-// RunOpenAI preserves the original example entry point and covers the official
-// OpenAI SDK's JSON and streaming calls through the verified transport.
+// RunOpenAI covers the official OpenAI SDK through the verified Gateway transport.
 func RunOpenAI(ctx context.Context, c Config) error {
-	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
+	return runOpenAI(ctx, c, false)
+}
+
+// RunDirectOpenAI is experimental and does not authenticate direct TLS with attestation.
+func RunDirectOpenAI(ctx context.Context, c Config) error {
+	return runOpenAI(ctx, c, true)
+}
+
+func runOpenAI(ctx context.Context, c Config, direct bool) error {
+	opts := nearai.InferenceOptions{
 		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
 		SigningAlgo:   c.Algo,
 		E2EE:          true,
-	})
+	}
+	var client *nearai.InferenceClient
+	var err error
+	if direct {
+		client, err = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
+			InferenceOptions: opts,
+		})
+	} else {
+		client, err = nearai.NewInferenceClient(opts)
+	}
 	if err != nil {
 		return err
 	}

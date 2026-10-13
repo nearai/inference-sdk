@@ -10,6 +10,7 @@ Run from this directory:
 | `go run ./gateway/openai` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
 | `go run ./gateway/client` | Integrated Gateway preflight, E2EE, JSON/SSE, image provenance and receipts |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, E2EE, ciphertext capture/decryption and receipts |
+| `go run ./direct/openai` | Experimental official OpenAI Go client through the direct verified transport, E2EE, JSON/SSE, and receipts. |
 | `go run ./direct/client` | Experimental integrated direct inference, JSON/SSE, E2EE and receipts |
 | `go run ./direct/bare` | Standalone direct report verification, E2EE, ciphertext capture/decryption and all matching receipt signers |
 
@@ -25,7 +26,18 @@ The example sends JSON and streaming Chat with E2EE. It consumes streams through
 EOF and calls `client.VerifyResponse(ctx, completionID)` before displaying the
 answer. Only Chat Completions are supported; this transport does not support the
 Responses API. Local integration tests and the live `TestLiveOpenAI` case cover
-both JSON and streaming through this shared implementation.
+both JSON and streaming through the Gateway implementation. Local adapter tests
+also exercise direct JSON/SSE with signed provider receipts; the live suite does
+not test experimental direct endpoints.
+
+For an experimental direct endpoint, use [direct/openai/main.go](./direct/openai/main.go)
+with `go run ./direct/openai`. It calls `RunDirectOpenAI`, selects
+`NewDirectInferenceClient`, and uses the same JSON/SSE and receipt-verification
+workflow as the Gateway example. E2EE is enabled. Set `NEARAI_BASE_URL`,
+`NEARAI_MODEL`, and an endpoint-accepted `NEARAI_API_KEY` for your direct deployment.
+It verifies model reports and provider receipts without Gateway verification;
+direct TLS fingerprint binding remains disabled, while normal HTTPS validation
+still applies. Use the Gateway example for production.
 
 `NEARAI_BASE_URL` and `NEARAI_MODEL` override the Gateway/direct defaults.
 `NEARAI_SIGNING_ALGO` accepts `ed25519` (default) or `ecdsa` and selects the same
@@ -33,7 +45,7 @@ algorithm for evidence, encryption, and receipt lookup. Use a NEAR TEE model for
 Run direct examples separately with the matching direct URL and model; direct
 endpoints remain experimental and do not authenticate TLS with attestation.
 
-The four examples each consume both JSON and SSE through HTTP EOF and verify
+The examples each consume both JSON and SSE through HTTP EOF and verify
 receipts before displaying plaintext. Standalone examples capture ciphertext
 below decryption; they never verify a signature over reserialized plaintext.
 Direct verification returns every report sharing the response signer, rather
