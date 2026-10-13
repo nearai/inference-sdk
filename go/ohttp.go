@@ -144,9 +144,6 @@ func encodeBHTTPRequest(req *http.Request, body []byte) ([]byte, error) {
 		}
 	}
 	authority := req.URL.Host
-	if req.Host != "" {
-		authority = req.Host
-	}
 	encoded := []byte{0}
 	for _, v := range []string{req.Method, req.URL.Scheme, authority, req.URL.RequestURI()} {
 		encoded = append(encoded, vector([]byte(v))...)
@@ -491,6 +488,12 @@ func (b *bhttpBody) Read(p []byte) (int, error) {
 	}
 	if e != nil {
 		return n, failure("ohttp.decryption_failed", e)
+	}
+	if b.known && b.remaining == 0 {
+		if _, err := b.finish(); err != io.EOF {
+			// Do not report the final bytes as successfully read before authentication.
+			return 0, err
+		}
 	}
 	return n, nil
 }

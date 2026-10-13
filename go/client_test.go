@@ -44,6 +44,9 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 	return &fakeCloud{t: t, a: a, q: q, priv: key, signatures: map[string]CompletionSignature{}}
 }
 func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/v1/chat/completions" && r.Header.Get("Accept-Encoding") != "identity" {
+		f.t.Errorf("Chat did not force identity encoding")
+	}
 	if f.expectedHost != "" && r.Host != f.expectedHost {
 		f.t.Errorf("unexpected authority %q", r.Host)
 	}
@@ -309,7 +312,7 @@ func TestSharedVerificationCancellation(t *testing.T) {
 func TestZeroTTLAndResponseExpiry(t *testing.T) {
 	f := newFakeCloud(t)
 	zero := time.Duration(0)
-	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero })
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero; o.MaxReceiptCacheBytes = 1 })
 	for i := 0; i < 2; i++ {
 		if _, e := c.Verify(context.Background(), "canonical/model"); e != nil {
 			t.Fatal(e)
@@ -320,6 +323,9 @@ func TestZeroTTLAndResponseExpiry(t *testing.T) {
 	}
 	if _, e := c.CreateChatCompletion(context.Background(), chatRequest()); e != nil {
 		t.Fatal(e)
+	}
+	if len(c.responses) != 0 {
+		t.Fatal("zero response TTL retained receipt bytes")
 	}
 	_, e := c.VerifyResponse(context.Background(), "chat-1")
 	requireCode(t, e, "api.completion_not_found")
@@ -490,6 +496,7 @@ func TestRequestAuthorityUsesConfiguredEndpoint(t *testing.T) {
 	r, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", strings.NewReader(`{"model":"canonical/model","messages":[]}`))
 	f.expectedHost = strings.TrimPrefix(server.URL, "http://")
 	r.Host = "other.example"
+	r.Header.Set("Accept-Encoding", "gzip")
 	// The handler observes the configured authority even when a caller overrides Host.
 	original := f.chats.Load()
 	res, err := c.HTTPClient().Do(r)

@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -147,13 +148,17 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	}
 	q, e := verifier(ctx, a.IntelQuote)
 	if e != nil {
+		var sdk *Error
+		if errors.As(e, &sdk) {
+			return v, e
+		}
 		return v, failure("quote.verification_failed", e)
 	}
 	if len(q.ReportData) != 64 || len(q.MRConfigID) != 48 || len(q.RTMR3) != 48 {
 		return v, failure("quote.invalid_result", nil)
 	}
 	validStatus := false
-	for _, status := range []string{"UpToDate", "OutOfDate", "Revoked", "ConfigurationNeeded", "SWHardeningNeeded", "ConfigurationAndSWHardeningNeeded", "OutOfDateConfigurationNeeded"} {
+	for _, status := range []string{"Unknown", "UpToDate", "OutOfDate", "Revoked", "ConfigurationNeeded", "SWHardeningNeeded", "ConfigurationAndSWHardeningNeeded", "OutOfDateConfigurationNeeded"} {
 		if q.TCBStatus == status {
 			validStatus = true
 		}

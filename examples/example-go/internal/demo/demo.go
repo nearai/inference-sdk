@@ -239,6 +239,11 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		}
 		defer pinned.CloseIdleConnections()
 		transport = pinned
+		opts.HTTPClient = &http.Client{Transport: pinned}
+		api, err = nearai.NewAttestationClient(opts)
+		if err != nil {
+			return err
+		}
 	}
 	fetched, err := api.FetchModelAttestations(ctx, c.Model, nearai.FetchOptions{SigningAlgo: c.Algo})
 	if err != nil {

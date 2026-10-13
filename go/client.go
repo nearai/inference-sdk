@@ -425,6 +425,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	removeE2EEHeaders(r.Header)
 	removeBodyHeaders(r.Header)
+	r.Header.Set("Accept-Encoding", "identity")
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set(NoAliasingHeader, "true")
 	r.Body = io.NopCloser(bytes.NewReader(body))
@@ -548,6 +549,9 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	defer c.mu.Unlock()
 	if c.closed {
 		return failure("api.client_closed", nil)
+	}
+	if c.responseTTL == 0 {
+		return nil
 	}
 	if existing := c.responses[id]; existing != nil && time.Now().Before(existing.expires) {
 		return failure("api.duplicate_completion_id", nil)

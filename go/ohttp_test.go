@@ -67,6 +67,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 			informational int
 		}{
 			{name: "stream", method: "POST", status: 200},
+			{name: "fixed-length", method: "POST", status: 200, length: "48"},
 			{name: "32 informational", method: "POST", status: 200, informational: 32},
 			{name: "33 informational", method: "POST", status: 200, informational: 33},
 			{name: "head", method: "HEAD", status: 200, length: "999", empty: true},
@@ -228,6 +229,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 						t.Fatal(e)
 					}
 					req, _ := http.NewRequest(scenario.method, server.URL+"/v1/chat/completions", strings.NewReader("sensitive"))
+					req.Host = "other.example"
 					req.Header.Set("Authorization", "Bearer relay")
 					req.Header.Set("X-Client-Pub-Key", "private-header")
 					response, e := transport.RoundTrip(req)
@@ -252,7 +254,13 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 						// Callers may inspect status and close without reading a body.
 						return
 					}
-					body, e := io.ReadAll(response.Body)
+					var body []byte
+					if scenario.name == "fixed-length" && framing == 1 {
+						body = make([]byte, len(reply))
+						_, e = io.ReadFull(response.Body, body)
+					} else {
+						body, e = io.ReadAll(response.Body)
+					}
 					if variant == "ok" {
 						if e != nil || !bytes.Equal(body, reply) {
 							t.Fatalf("%s %v", body, e)

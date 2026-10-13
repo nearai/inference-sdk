@@ -228,3 +228,31 @@ func TestDefaultQuoteVerifierRejectsMalformedQuote(t *testing.T) {
 	_, e := CreateTDXQuoteVerifier("")(context.Background(), "ff")
 	requireCode(t, e, "quote.verification_failed")
 }
+
+func TestUnknownTCBRequiresExplicitAcceptance(t *testing.T) {
+	a, q, _ := attestationFixture(t, Ed25519)
+	q.TCBStatus = "Unknown"
+	options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
+	binding := ClientBinding{Nonce: a.Nonce}
+
+	_, err := VerifyModelAttestation(context.Background(), a, binding, options)
+	requireCode(t, err, "policy.tcb_status_not_allowed")
+
+	options.Policy.AcceptedTCBStatuses = []string{"Unknown"}
+	if _, err := VerifyModelAttestation(context.Background(), a, binding, options); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQuoteVerifierPreservesSDKError(t *testing.T) {
+	a, _, _ := attestationFixture(t, Ed25519)
+	original := &Error{Code: "quote.collateral_unavailable", Retryable: true}
+	options := VerificationOptions{QuoteVerifier: func(context.Context, string) (QuoteVerificationResult, error) {
+		return QuoteVerificationResult{}, original
+	}}
+
+	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
+	if err != original {
+		t.Fatalf("quote error changed: %v", err)
+	}
+}
