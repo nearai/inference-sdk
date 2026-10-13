@@ -24,7 +24,7 @@ process; it is not a remote verification service.
 Consumers never need this step. To update the committed artifact:
 
 ```sh
-rustup toolchain install 1.99.0 --profile minimal --target wasm32-wasip1
+rustup toolchain install 1.99.0 --profile minimal --component rustfmt --target wasm32-wasip1
 RUSTUP_TOOLCHAIN=1.99.0 ./go/scripts/build-dcap-wasm.sh
 cargo fmt --manifest-path go/internal/dcap/wasm-src/Cargo.toml --check
 CGO_ENABLED=0 go -C go test ./...

@@ -2,7 +2,7 @@ name: Live E2E
 
 on:
   push:
-    branches: [main, feat/go-sdk]
+    branches: [main]
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   configuration:
-    if: github.repository == 'nearai/inference-sdk' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/go-sdk')
+    if: github.repository == 'nearai/inference-sdk' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
       stg-models: ${{ steps.stg.outputs.models }}
@@ -67,7 +67,7 @@ jobs:
 
   javascript:
     name: JavaScript (${{ matrix.environment }})
-    if: github.ref != 'refs/heads/feat/go-sdk' && (inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript')
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'javascript'
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -98,7 +98,7 @@ jobs:
 
   python:
     name: Python (${{ matrix.environment }})
-    if: github.ref != 'refs/heads/feat/go-sdk' && (inputs.language == '' || inputs.language == 'all' || inputs.language == 'python')
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'python'
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -125,7 +125,7 @@ jobs:
 
   rust:
     name: Rust (${{ matrix.environment }})
-    if: github.ref != 'refs/heads/feat/go-sdk' && (inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust')
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
     needs: configuration
     runs-on: ubuntu-latest
     timeout-minutes: 15
