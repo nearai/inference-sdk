@@ -200,3 +200,31 @@ its own reqwest transport API rather than an OpenAI adapter.
 The Python and Rust projects use the sibling SDK source through local path
 dependencies. Replace those dependencies with released package versions when
 using these examples outside this repository.
+
+## Go
+
+The [Go examples](./example-go/README.md) cover Gateway/direct standalone and
+integrated JSON/SSE, Gateway image provenance, and the official OpenAI Go client.
+Requires Go 1.25.8+; the DCAP verifier is embedded, so no native-library build is
+needed. See [Go setup](../go/README.md#build-and-install).
+
+| Command | Usage |
+| --- | --- |
+| `go run ./gateway/openai` | Official OpenAI Go SDK with verified HTTP transport, E2EE, JSON/SSE, and explicit receipts. |
+| `go run ./gateway/client` | Integrated Gateway verification, image provenance, encrypted JSON/SSE, and receipts. |
+| `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, ciphertext capture, and receipts. |
+| `go run ./direct/openai` | Experimental official OpenAI Go client through the direct verified transport, E2EE, JSON/SSE, and receipts. |
+| `go run ./direct/client` | Experimental integrated direct client with E2EE and JSON/SSE receipts. |
+| `go run ./direct/bare` | Experimental standalone direct verification and matching receipt signers. |
+
+```sh
+cd examples/example-go
+export NEARAI_API_KEY='your-api-key'
+go run ./gateway/openai
+```
+
+`go run .` remains an alias for the OpenAI Gateway example. Optional
+`NEARAI_MODEL` selects a different model that supports NEAR model attestation.
+The example module uses a local SDK replacement for this checkout; use the
+released module version when copying it outside this repository. Direct examples
+require a matching direct URL/model and retain the documented experimental limits.
