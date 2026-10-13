@@ -135,7 +135,7 @@ func encodeBHTTPRequest(req *http.Request, body []byte) ([]byte, error) {
 	fields := []byte{}
 	skip := hopHeaders(req.Header)
 	for k, values := range req.Header {
-		if skip[strings.ToLower(k)] {
+		if strings.EqualFold(k, "Host") || skip[strings.ToLower(k)] {
 			continue
 		}
 		for _, v := range values {

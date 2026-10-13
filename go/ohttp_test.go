@@ -154,6 +154,9 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 						found := false
 						for headers.Len() > 0 {
 							name, value := string(serverReadVector(t, headers)), string(serverReadVector(t, headers))
+							if strings.EqualFold(name, "Host") {
+								t.Error("conflicting Host field encoded")
+							}
 							if name == "x-client-pub-key" && value == "private-header" {
 								found = true
 							}
@@ -230,6 +233,8 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					}
 					req, _ := http.NewRequest(scenario.method, server.URL+"/v1/chat/completions", strings.NewReader("sensitive"))
 					req.Host = "other.example"
+					req.Header["Host"] = []string{"other.example"}
+					req.Header["hOsT"] = []string{"another.example"}
 					req.Header.Set("Authorization", "Bearer relay")
 					req.Header.Set("X-Client-Pub-Key", "private-header")
 					response, e := transport.RoundTrip(req)

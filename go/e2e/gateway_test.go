@@ -209,6 +209,21 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 			if gateway.SPKIFingerprint == "" {
 				t.Fatal("missing attested Gateway TLS binding")
 			}
+			transport, err := nearai.NewPinnedTransport(nil, gateway.SPKIFingerprint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer transport.CloseIdleConnections()
+			client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			api, err = nearai.NewAttestationClient(nearai.ClientOptions{
+				APIKey:     key,
+				BaseURL:    base,
+				HTTPClient: client,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			var reports []nearai.VerifiedAttestation
 			if m.Provider == "near" {
 				fetched, err := api.FetchModelAttestations(ctx, m.ID, nearai.FetchOptions{SigningAlgo: algo})
@@ -224,12 +239,6 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				}
 			}
 			assertEvidence(t, m, reports)
-			transport, err := nearai.NewPinnedTransport(nil, gateway.SPKIFingerprint)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer transport.CloseIdleConnections()
-			client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			for _, stream := range []bool{false, true} {
 				if stream && m.Provider == "chutes" {
 					continue
