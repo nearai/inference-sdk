@@ -1,7 +1,6 @@
 # NEAR AI Inference SDK for Go
 
-Verified OpenAI-compatible Chat Completions for Go services and tools such as
-[Open Code Review](https://github.com/think-in-universe/open-code-review/pull/1).
+Verified OpenAI-compatible Chat Completions for Go applications.
 The client verifies Gateway and model deployments before sending prompts,
 optionally encrypts requests, and retains exact bytes for explicit response
 signature verification.
@@ -61,8 +60,7 @@ fmt.Println(string(body))
 
 Import as `nearai "github.com/nearai/inference-sdk/go"`. The
 [OpenAI example](../examples/example-go/main.go) uses the official OpenAI Go
-SDK and accepts either `NEARAI_API_KEY` or OCR's `NEAR_AI_API_KEY` environment
-variable. It covers JSON and streaming calls. See the [four Gateway/direct
+SDK and reads `NEARAI_API_KEY` from the environment. It covers JSON and streaming calls. See the [four Gateway/direct
 examples](../examples/example-go/README.md) for standalone and integrated clients,
 Gateway image provenance, and exact ciphertext receipt verification. The library
 itself takes credentials explicitly.
