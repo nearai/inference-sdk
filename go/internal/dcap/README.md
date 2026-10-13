@@ -5,6 +5,13 @@ The default backend executes DCAP QVL locally as embedded WebAssembly using
 `go get` includes the artifact, and `CGO_ENABLED=0` builds work without Rust,
 a C compiler, native libraries, linker flags, or runtime downloads.
 
+This package adapts the Go bindings, collateral helpers, and data types from
+[Phala Network's DCAP QVL Go implementation](https://github.com/Phala-Network/dcap-qvl/tree/master/golang-bindings).
+The original binding source is pinned to
+[revision 364f78c2715167680be7e4a9ec6a482b8577027f](https://github.com/Phala-Network/dcap-qvl/tree/364f78c2715167680be7e4a9ec6a482b8577027f/golang-bindings).
+Our default backend replaces the upstream native-library integration with
+embedded WASM; the upstream MIT license is retained in [LICENSE](./LICENSE).
+
 The artifact uses [DCAP QVL 0.6.5, revision
 884e22ce767f31fd5d5a6672511519fc7975cde0](https://github.com/Phala-Network/dcap-qvl/tree/884e22ce767f31fd5d5a6672511519fc7975cde0)
 with the RustCrypto backend and Intel production root. The wrapper and flattened
