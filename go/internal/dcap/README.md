@@ -21,7 +21,8 @@ process; it is not a remote verification service.
 
 ## Maintainer rebuild
 
-Consumers never need this step. To update the committed artifact:
+Consumers never need this step. The canonical artifact builder is macOS arm64
+with Rust 1.99.0; use that environment to update the committed artifact:
 
 ```sh
 rustup toolchain install 1.99.0 --profile minimal --component rustfmt --target wasm32-wasip1
@@ -31,7 +32,9 @@ CGO_ENABLED=0 go -C go test ./...
 ```
 
 The source revision, wrapper dependencies, Rust toolchain, and release settings
-are pinned. CI rebuilds and compares the artifact byte for byte. Review all
+are pinned. CI rebuilds on the canonical macOS arm64 host and compares the
+artifact byte for byte. Builds on other host toolchains can differ in bytes;
+Linux and macOS consumer tests verify the same committed artifact. Review all
 source and lockfile changes when upgrading; include signed-quote, tampering,
 expired-collateral, cancellation, and live E2E checks.
 
