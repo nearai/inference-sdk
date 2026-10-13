@@ -5,10 +5,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"example.com/nearai-inference-example/internal/demo"
 	"os"
 	"testing"
 	"time"
+
+	"example.com/nearai-inference-example/internal/demo"
 )
 
 func TestLiveOpenAI(t *testing.T) {

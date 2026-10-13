@@ -2,9 +2,10 @@ package main
 
 import (
 	"context"
-	"example.com/nearai-inference-example/internal/demo"
 	"log"
 	"time"
+
+	"example.com/nearai-inference-example/internal/demo"
 )
 
 func main() {

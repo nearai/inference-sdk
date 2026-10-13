@@ -53,5 +53,10 @@ func VerifyDirectModelResponse(id string, request, response []byte, sig Completi
 	if e := VerifyModelResponse(request, response, sig, matches[0]); e != nil {
 		return VerifiedCompletionResult{}, e
 	}
-	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestations: cloneResult(AttestationVerificationResult{Models: matches}).Models}, nil
+	return VerifiedCompletionResult{
+		CompletionID:  id,
+		SignatureKind: sig.Kind,
+		Signature:     sig,
+		Attestations:  cloneResult(AttestationVerificationResult{Models: matches}).Models,
+	}, nil
 }

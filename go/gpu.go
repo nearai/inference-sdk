@@ -7,11 +7,12 @@ import (
 	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
-	jwt "github.com/golang-jwt/jwt/v5"
 	"math"
 	"math/big"
 	"net/http"
 	"time"
+
+	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 type GPUVerifierOptions struct {
@@ -57,7 +58,11 @@ func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier {
 			}
 			defer res.Body.Close()
 			if res.StatusCode < 200 || res.StatusCode >= 300 {
-				return nil, &Error{Code: "gpu.nras_request_failed", Retryable: res.StatusCode == 429 || res.StatusCode >= 500, Details: map[string]any{"status": res.StatusCode}}
+				return nil, &Error{
+					Code:      "gpu.nras_request_failed",
+					Retryable: res.StatusCode == 429 || res.StatusCode >= 500,
+					Details:   map[string]any{"status": res.StatusCode},
+				}
 			}
 			return readBounded(res.Body, 8<<20)
 		}

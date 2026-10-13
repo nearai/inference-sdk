@@ -208,7 +208,15 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	for name, values := range req.Header {
 		n := strings.ToLower(name)
-		if t.forwarded[n] && !strings.HasPrefix(n, "content-") && !hopHeaders(req.Header)[n] && n != "host" && n != "x-signing-algo" && n != "x-client-pub-key" && n != "x-model-pub-key" && n != "x-encryption-version" && n != "x-encrypt-all-fields" {
+		if t.forwarded[n] &&
+			!strings.HasPrefix(n, "content-") &&
+			!hopHeaders(req.Header)[n] &&
+			n != "host" &&
+			n != "x-signing-algo" &&
+			n != "x-client-pub-key" &&
+			n != "x-model-pub-key" &&
+			n != "x-encryption-version" &&
+			n != "x-encrypt-all-fields" {
 			outer.Header[name] = append([]string(nil), values...)
 		}
 	}
@@ -224,7 +232,11 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		res.Body.Close()
-		return nil, &Error{Code: "api.http_status", Details: map[string]any{"status": res.StatusCode}, Retryable: res.StatusCode == 429 || res.StatusCode >= 500}
+		return nil, &Error{
+			Code:      "api.http_status",
+			Details:   map[string]any{"status": res.StatusCode},
+			Retryable: res.StatusCode == 429 || res.StatusCode >= 500,
+		}
 	}
 	if strings.ToLower(strings.TrimSpace(strings.Split(res.Header.Get("Content-Type"), ";")[0])) != "message/ohttp-chunked-res" {
 		return fail(fmt.Errorf("invalid content type"))
@@ -303,7 +315,17 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		responseReader = http.NoBody
 		expected = 0
 	}
-	return &http.Response{StatusCode: int(status), Status: fmt.Sprintf("%d %s", status, http.StatusText(int(status))), Header: headers, Body: responseReader, ContentLength: expected, Request: req, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}, nil
+	return &http.Response{
+		StatusCode:    int(status),
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(int(status))),
+		Header:        headers,
+		Body:          responseReader,
+		ContentLength: expected,
+		Request:       req,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+	}, nil
 }
 
 type ohttpDecryptReader struct {

@@ -24,7 +24,12 @@ type Config struct {
 }
 
 func Configuration(direct bool) (Config, error) {
-	c := Config{Key: os.Getenv("NEARAI_API_KEY"), BaseURL: os.Getenv("NEARAI_BASE_URL"), Model: os.Getenv("NEARAI_MODEL"), Algo: nearai.SigningAlgo(os.Getenv("NEARAI_SIGNING_ALGO"))}
+	c := Config{
+		Key:     os.Getenv("NEARAI_API_KEY"),
+		BaseURL: os.Getenv("NEARAI_BASE_URL"),
+		Model:   os.Getenv("NEARAI_MODEL"),
+		Algo:    nearai.SigningAlgo(os.Getenv("NEARAI_SIGNING_ALGO")),
+	}
 	if c.Key == "" {
 		c.Key = os.Getenv("NEAR_AI_API_KEY")
 	}
@@ -54,13 +59,23 @@ func Configuration(direct bool) (Config, error) {
 // It does not approve model images/weights. Add commit pins for stricter policies.
 func GatewayImages(ctx context.Context, deployment nearai.MeasuredDeployment) error {
 	policies := map[string]nearai.ImageProvenancePolicy{}
-	for name, workflow := range map[string]string{"cloud-api": "build.yml", "cvm-ingress": "build-push.yml", "dstack-vpc": "build.yml", "dstack-vpc-client": "build.yml"} {
+	for name, workflow := range map[string]string{
+		"cloud-api":         "build.yml",
+		"cvm-ingress":       "build-push.yml",
+		"dstack-vpc":        "build.yml",
+		"dstack-vpc-client": "build.yml",
+	} {
 		policies["nearaidev/"+name] = nearai.ImageProvenancePolicy{Repository: "nearai/" + name, Workflow: ".github/workflows/" + workflow}
 	}
 	return nearai.VerifyDeploymentImageProvenance(ctx, deployment.AppCompose, policies, nearai.ProvenanceOptions{GitHubToken: os.Getenv("GITHUB_TOKEN")})
 }
 func body(model string, stream bool) []byte {
-	b, _ := json.Marshal(map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": "Reply with the word OK."}}, "max_completion_tokens": 1024, "stream": stream})
+	b, _ := json.Marshal(map[string]any{
+		"model":                 model,
+		"messages":              []map[string]string{{"role": "user", "content": "Reply with the word OK."}},
+		"max_completion_tokens": 1024,
+		"stream":                stream,
+	})
 	return b
 }
 func request(ctx context.Context, c Config, stream bool) (*http.Request, error) {
@@ -156,7 +171,11 @@ func Retry(ctx context.Context, check func() error) error {
 // RunIntegrated uses the verified transport for both JSON and SSE. Gateway mode
 // applies image provenance policy; direct mode remains experimental without TLS binding.
 func RunIntegrated(ctx context.Context, c Config, direct bool) error {
-	opts := nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}, SigningAlgo: c.Algo, E2EE: true}
+	opts := nearai.InferenceOptions{
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		SigningAlgo:   c.Algo,
+		E2EE:          true,
+	}
 	if !direct {
 		opts.GatewayVerification.DeploymentVerifier = GatewayImages
 	}
@@ -275,7 +294,10 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 	if recipient == nil {
 		return fmt.Errorf("no verified model public key")
 	}
-	httpClient := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	httpClient := &http.Client{
+		Transport:     transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	for _, stream := range []bool{false, true} {
 		r, err := request(ctx, c, stream)
 		if err != nil {
@@ -347,13 +369,26 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 // RunOpenAI preserves the original example entry point and covers the official
 // OpenAI SDK's JSON and streaming calls through the verified transport.
 func RunOpenAI(ctx context.Context, c Config) error {
-	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}, SigningAlgo: c.Algo, E2EE: true})
+	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		SigningAlgo:   c.Algo,
+		E2EE:          true,
+	})
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	ai := openai.NewClient(option.WithAPIKey(c.Key), option.WithBaseURL(client.BaseURL()), option.WithHTTPClient(client.HTTPClient()), option.WithMaxRetries(0))
-	params := openai.ChatCompletionNewParams{Model: c.Model, Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("Reply with the word OK.")}, MaxCompletionTokens: openai.Int(1024)}
+	ai := openai.NewClient(
+		option.WithAPIKey(c.Key),
+		option.WithBaseURL(client.BaseURL()),
+		option.WithHTTPClient(client.HTTPClient()),
+		option.WithMaxRetries(0),
+	)
+	params := openai.ChatCompletionNewParams{
+		Model:               c.Model,
+		Messages:            []openai.ChatCompletionMessageParamUnion{openai.UserMessage("Reply with the word OK.")},
+		MaxCompletionTokens: openai.Int(1024),
+	}
 	completion, err := ai.Chat.Completions.New(ctx, params)
 	if err != nil {
 		return err

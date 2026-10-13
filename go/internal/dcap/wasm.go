@@ -103,7 +103,13 @@ func VerifyWithRootCA(raw []byte, collateral *QuoteCollateralV3, root []byte, no
 		return nil, fmt.Errorf("dcap: empty root CA input")
 	}
 	var result VerifiedReport
-	err := wasmCall(context.Background(), wasmRequest{Operation: "verify", Input: hex.EncodeToString(raw), Collateral: collateral, Now: now, Root: hex.EncodeToString(root)}, &result)
+	err := wasmCall(context.Background(), wasmRequest{
+		Operation:  "verify",
+		Input:      hex.EncodeToString(raw),
+		Collateral: collateral,
+		Now:        now,
+		Root:       hex.EncodeToString(root),
+	}, &result)
 	return &result, err
 }
 

@@ -7,7 +7,7 @@ Run from this directory:
 
 | Command | Demonstrates |
 | --- | --- |
-| `go run .` | Official OpenAI Go SDK, JSON and streaming, E2EE, verified transport and receipts |
+| `go run .` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
 | `go run ./gateway/client` | Integrated Gateway preflight, E2EE, JSON/SSE, image provenance and receipts |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, E2EE, ciphertext capture/decryption and receipts |
 | `go run ./direct/client` | Experimental integrated direct inference, JSON/SSE, E2EE and receipts |

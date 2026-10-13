@@ -53,7 +53,12 @@ func models(t *testing.T, encryption bool) []liveModel {
 	return all
 }
 func chatRequest(ctx context.Context, base, key string, m liveModel, stream bool) (*http.Request, []byte, error) {
-	body, err := json.Marshal(map[string]any{"model": m.ID, "messages": []map[string]string{{"role": "user", "content": "Reply with the single word OK."}}, "max_completion_tokens": 1024, "stream": stream})
+	body, err := json.Marshal(map[string]any{
+		"model":                 m.ID,
+		"messages":              []map[string]string{{"role": "user", "content": "Reply with the single word OK."}},
+		"max_completion_tokens": 1024,
+		"stream":                stream,
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -214,7 +219,10 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				t.Fatal(err)
 			}
 			defer transport.CloseIdleConnections()
-			client := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			client := &http.Client{
+				Transport:     transport,
+				CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+			}
 			api, err = nearai.NewAttestationClient(nearai.ClientOptions{
 				APIKey:     key,
 				BaseURL:    base,
@@ -294,7 +302,12 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 		t.Run(m.Provider+"/"+m.ID, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 			defer cancel()
-			client, err := nearai.NewInferenceClient(nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: key, BaseURL: base}, SigningAlgo: algo, E2EE: e2ee, OHTTP: ohttp})
+			client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
+				ClientOptions: nearai.ClientOptions{APIKey: key, BaseURL: base},
+				SigningAlgo:   algo,
+				E2EE:          e2ee,
+				OHTTP:         ohttp,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}

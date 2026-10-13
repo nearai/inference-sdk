@@ -340,7 +340,18 @@ func removeE2EEHeaders(h http.Header) {
 	}
 }
 func removeBodyHeaders(h http.Header) {
-	for _, name := range []string{"Content-Length", "Transfer-Encoding", "Trailer", "Content-MD5", "Digest", "Content-Digest", "Repr-Digest", "Content-Encoding", "ETag", "Last-Modified"} {
+	for _, name := range []string{
+		"Content-Length",
+		"Transfer-Encoding",
+		"Trailer",
+		"Content-MD5",
+		"Digest",
+		"Content-Digest",
+		"Repr-Digest",
+		"Content-Encoding",
+		"ETag",
+		"Last-Modified",
+	} {
 		h.Del(name)
 	}
 }

@@ -15,8 +15,14 @@ func TestSignatureAPIErrorBoundaries(t *testing.T) {
 		{`{"error_code":"pending","message":"Try later"}`, "api.completion_signature_unavailable"},
 		{`{"error_code":"pending","message":"Try later","text":"abc"}`, "api.invalid_response"},
 		{`{}`, "api.invalid_response"},
-		{`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"gateway"}`, "api.invalid_response"},
-		{`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"unknown"}`, "api.invalid_response"},
+		{
+			`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"gateway"}`,
+			"api.invalid_response",
+		},
+		{
+			`{"text":"abc","signature":"ff","signing_algo":"ed25519","signing_address":"ff","signature_kind":"unknown"}`,
+			"api.invalid_response",
+		},
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, tt.body) }))
 		c, e := NewAttestationClient(ClientOptions{BaseURL: server.URL})

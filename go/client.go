@@ -97,7 +97,19 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 		o.MaxReceiptCacheBytes = 64 << 20
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &InferenceClient{options: o, api: a, ctx: ctx, cancel: cancel, sessions: map[string]*session{}, pending: map[string]*pendingSession{}, responses: map[string]*responseRecord{}, transports: map[string]*http.Transport{}, attestationTTL: at, responseTTL: rt, maxBody: o.MaxBodyBytes}
+	c := &InferenceClient{
+		options:        o,
+		api:            a,
+		ctx:            ctx,
+		cancel:         cancel,
+		sessions:       map[string]*session{},
+		pending:        map[string]*pendingSession{},
+		responses:      map[string]*responseRecord{},
+		transports:     map[string]*http.Transport{},
+		attestationTTL: at,
+		responseTTL:    rt,
+		maxBody:        o.MaxBodyBytes,
+	}
 	// Expiry also runs while idle so sensitive retained bodies do not linger.
 	c.wg.Add(1)
 	go func() {
@@ -345,7 +357,13 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
 			ohttpSigner = verified.Signer
 		}
-		if s.selected == nil && verified.Signer.SigningAlgo == o.SigningAlgo && verified.SigningPublicKey != "" && (!c.api.direct || !o.OHTTP || (models.ServingAttestation != nil && verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo && sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
+		if s.selected == nil &&
+			verified.Signer.SigningAlgo == o.SigningAlgo &&
+			verified.SigningPublicKey != "" &&
+			(!c.api.direct || !o.OHTTP ||
+				(models.ServingAttestation != nil &&
+					verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo &&
+					sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
 			copy := verified
 			s.selected = &copy
 		}
@@ -579,7 +597,12 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 		retained -= int64(len(record.request)) + int64(len(record.response))
 		delete(c.responses, oldest)
 	}
-	c.responses[id] = &responseRecord{request: append([]byte(nil), request...), response: append([]byte(nil), response...), session: s, expires: time.Now().Add(c.responseTTL)}
+	c.responses[id] = &responseRecord{
+		request:  append([]byte(nil), request...),
+		response: append([]byte(nil), response...),
+		session:  s,
+		expires:  time.Now().Add(c.responseTTL),
+	}
 	return nil
 }
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
@@ -603,7 +626,10 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 			defer c.mu.Unlock()
 			p.value, p.err = value, e
 			var sdk *Error
-			if e != nil && (errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded) || (errors.As(e, &sdk) && (sdk.Retryable || sdk.Code == "api.completion_signature_unavailable"))) {
+			if e != nil &&
+				(errors.Is(e, context.Canceled) ||
+					errors.Is(e, context.DeadlineExceeded) ||
+					(errors.As(e, &sdk) && (sdk.Retryable || sdk.Code == "api.completion_signature_unavailable"))) {
 				record.verifying = nil
 			}
 			close(p.done)

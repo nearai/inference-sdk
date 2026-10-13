@@ -158,7 +158,16 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		return v, failure("quote.invalid_result", nil)
 	}
 	validStatus := false
-	for _, status := range []string{"Unknown", "UpToDate", "OutOfDate", "Revoked", "ConfigurationNeeded", "SWHardeningNeeded", "ConfigurationAndSWHardeningNeeded", "OutOfDateConfigurationNeeded"} {
+	for _, status := range []string{
+		"Unknown",
+		"UpToDate",
+		"OutOfDate",
+		"Revoked",
+		"ConfigurationNeeded",
+		"SWHardeningNeeded",
+		"ConfigurationAndSWHardeningNeeded",
+		"OutOfDateConfigurationNeeded",
+	} {
 		if q.TCBStatus == status {
 			validStatus = true
 		}
@@ -212,7 +221,16 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if e != nil {
 		return v, e
 	}
-	v = VerifiedAttestation{Signer: a.Signer, TCBStatus: q.TCBStatus, AdvisoryIDs: append([]string(nil), q.AdvisoryIDs...), Deployment: MeasuredDeployment{a.AppCompose, measurements}, DeploymentProvenance: "not_checked", SPKIFingerprint: a.SPKIFingerprint, ModelName: a.ModelName, InstanceID: a.InstanceID}
+	v = VerifiedAttestation{
+		Signer:               a.Signer,
+		TCBStatus:            q.TCBStatus,
+		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
+		Deployment:           MeasuredDeployment{a.AppCompose, measurements},
+		DeploymentProvenance: "not_checked",
+		SPKIFingerprint:      a.SPKIFingerprint,
+		ModelName:            a.ModelName,
+		InstanceID:           a.InstanceID,
+	}
 	if o.DeploymentVerifier != nil {
 		if e = o.DeploymentVerifier(ctx, v.Deployment); e != nil {
 			return VerifiedAttestation{}, failure("provenance.verification_failed", e)

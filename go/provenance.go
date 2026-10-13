@@ -79,7 +79,11 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		raw, e := readBounded(res.Body, 16<<20)
 		res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
-			return nil, &Error{Code: "api.http_status", Details: map[string]any{"status": res.StatusCode}, Retryable: res.StatusCode == 429 || res.StatusCode >= 500}
+			return nil, &Error{
+				Code:      "api.http_status",
+				Details:   map[string]any{"status": res.StatusCode},
+				Retryable: res.StatusCode == 429 || res.StatusCode >= 500,
+			}
 		}
 		if e != nil {
 			return nil, e
@@ -313,7 +317,16 @@ func checkImageStatement(result *verify.VerificationResult, cert *x509.Certifica
 	if !commitPattern.MatchString(sourceCommit) || !strings.EqualFold(sourceCommit, commit) {
 		return bad()
 	}
-	return VerifiedImageProvenance{digest, p.Repository, p.Workflow, ref, strings.ToLower(commit), identity, p.Issuer, statement.PredicateType}, nil
+	return VerifiedImageProvenance{
+		digest,
+		p.Repository,
+		p.Workflow,
+		ref,
+		strings.ToLower(commit),
+		identity,
+		p.Issuer,
+		statement.PredicateType,
+	}, nil
 }
 
 // VerifyDeploymentImageProvenance selects all configured repositories from the

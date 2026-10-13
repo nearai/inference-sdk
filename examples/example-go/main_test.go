@@ -47,7 +47,17 @@ func TestOpenAIClientIntegration(t *testing.T) {
 			nb, _ := hex.DecodeString(n)
 			data := append(append([]byte(nil), pub...), nb...)
 			quote, _ := json.Marshal(nearai.QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: data, MRConfigID: mr, RTMR3: rtmr[:]})
-			json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": map[string]any{"request_nonce": n, "signing_algo": "ed25519", "signing_address": address, "intel_quote": string(quote), "report_data": hex.EncodeToString(data), "event_log": []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}}, "info": map[string]any{"tcb_info": map[string]any{"app_compose": compose}}}})
+			json.NewEncoder(w).Encode(map[string]any{
+				"gateway_attestation": map[string]any{
+					"request_nonce":   n,
+					"signing_algo":    "ed25519",
+					"signing_address": address,
+					"intel_quote":     string(quote),
+					"report_data":     hex.EncodeToString(data),
+					"event_log":       []any{map[string]any{"imr": 3, "digest": hex.EncodeToString(digest[:])}},
+					"info":            map[string]any{"tcb_info": map[string]any{"app_compose": compose}},
+				},
+			})
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			body, _ := io.ReadAll(r.Body)
 			var parsed struct {
@@ -64,7 +74,13 @@ func TestOpenAIClientIntegration(t *testing.T) {
 			}
 			reqHash, resHash := sha256.Sum256(body), sha256.Sum256([]byte(reply))
 			text := fmt.Sprintf("%x:%x", reqHash, resHash)
-			sig := map[string]any{"signature_kind": "gateway", "signing_algo": "ed25519", "signing_address": address, "signature": hex.EncodeToString(ed25519.Sign(priv, []byte(text))), "text": text}
+			sig := map[string]any{
+				"signature_kind":  "gateway",
+				"signing_algo":    "ed25519",
+				"signing_address": address,
+				"signature":       hex.EncodeToString(ed25519.Sign(priv, []byte(text))),
+				"text":            text,
+			}
 			mu.Lock()
 			signatures[id] = sig
 			mu.Unlock()
@@ -80,17 +96,24 @@ func TestOpenAIClientIntegration(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	c, e := nearai.NewInferenceClient(nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"}, DisableTLSBinding: true, GatewayVerification: nearai.VerificationOptions{QuoteVerifier: func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
-		var q nearai.QuoteVerificationResult
-		e := json.Unmarshal([]byte(raw), &q)
-		return q, e
-	}}})
+	c, e := nearai.NewInferenceClient(nearai.InferenceOptions{
+		ClientOptions:     nearai.ClientOptions{APIKey: "key", BaseURL: server.URL + "/v1"},
+		DisableTLSBinding: true,
+		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: func(_ context.Context, raw string) (nearai.QuoteVerificationResult, error) {
+			var q nearai.QuoteVerificationResult
+			e := json.Unmarshal([]byte(raw), &q)
+			return q, e
+		}},
+	})
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer c.Close()
 	ai := openai.NewClient(option.WithAPIKey("key"), option.WithBaseURL(c.BaseURL()), option.WithHTTPClient(c.HTTPClient()), option.WithMaxRetries(0))
-	params := openai.ChatCompletionNewParams{Model: "model", Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("Hello")}}
+	params := openai.ChatCompletionNewParams{
+		Model:    "model",
+		Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("Hello")},
+	}
 	completion, e := ai.Chat.Completions.New(context.Background(), params)
 	if e != nil {
 		t.Fatal(e)

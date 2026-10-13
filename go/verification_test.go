@@ -48,7 +48,14 @@ func attestationFixture(t *testing.T, algo SigningAlgo) (Attestation, QuoteVerif
 	digest := sha512.Sum384([]byte("measured event"))
 	rtmr := sha512.Sum384(append(make([]byte, 48), digest[:]...))
 	events, _ := json.Marshal([]map[string]any{{"imr": 3, "digest": hex.EncodeToString(digest[:])}})
-	a := Attestation{Nonce: n, Signer: SigningIdentity{algo, signer}, IntelQuote: "ff", EventLog: events, AppCompose: compose, SigningPublicKey: hex.EncodeToString(pub)}
+	a := Attestation{
+		Nonce:            n,
+		Signer:           SigningIdentity{algo, signer},
+		IntelQuote:       "ff",
+		EventLog:         events,
+		AppCompose:       compose,
+		SigningPublicKey: hex.EncodeToString(pub),
+	}
 	return a, QuoteVerificationResult{TCBStatus: "UpToDate", ReportData: report, MRConfigID: mr, RTMR3: rtmr[:]}, priv
 }
 func fixedQuote(q QuoteVerificationResult) QuoteVerifier {
@@ -59,39 +66,83 @@ func TestAttestationRejectsTampering(t *testing.T) {
 		name, code string
 		mutate     func(*Attestation, *QuoteVerificationResult, *ClientBinding, *VerificationOptions)
 	}{
-		{"nonce", "binding.nonce_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			b.Nonce = strings.Repeat("cd", 32)
-		}},
-		{"quote nonce", "binding.nonce_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			q.ReportData[63] ^= 1
-		}},
-		{"signer", "binding.report_data_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			q.ReportData[0] ^= 1
-		}},
-		{"debug", "policy.debug_enabled", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			q.DebugEnabled = true
-		}},
-		{"tcb", "policy.tcb_status_not_allowed", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			q.TCBStatus = "Revoked"
-		}},
-		{"compose", "measurement.app_compose_mrconfigid_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			a.AppCompose += " "
-		}},
-		{"rtmr", "measurement.rtmr3_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			q.RTMR3[0] ^= 1
-		}},
-		{"event", "measurement.event_log_invalid", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			a.EventLog = []byte(`[{"imr":3}]`)
-		}},
-		{"key", "binding.model_public_key_mismatch", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			a.SigningPublicKey = strings.Repeat("11", 32)
-		}},
-		{"gpu required", "policy.gpu_evidence_required", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			o.Policy.RequireGPUEvidence = true
-		}},
-		{"deployment", "provenance.verification_failed", func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
-			o.DeploymentVerifier = func(context.Context, MeasuredDeployment) error { return errors.New("denied") }
-		}},
+		{
+			"nonce",
+			"binding.nonce_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				b.Nonce = strings.Repeat("cd", 32)
+			},
+		},
+		{
+			"quote nonce",
+			"binding.nonce_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				q.ReportData[63] ^= 1
+			},
+		},
+		{
+			"signer",
+			"binding.report_data_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				q.ReportData[0] ^= 1
+			},
+		},
+		{
+			"debug",
+			"policy.debug_enabled",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				q.DebugEnabled = true
+			},
+		},
+		{
+			"tcb",
+			"policy.tcb_status_not_allowed",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				q.TCBStatus = "Revoked"
+			},
+		},
+		{
+			"compose",
+			"measurement.app_compose_mrconfigid_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				a.AppCompose += " "
+			},
+		},
+		{
+			"rtmr",
+			"measurement.rtmr3_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				q.RTMR3[0] ^= 1
+			},
+		},
+		{
+			"event",
+			"measurement.event_log_invalid",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				a.EventLog = []byte(`[{"imr":3}]`)
+			},
+		},
+		{
+			"key",
+			"binding.model_public_key_mismatch",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				a.SigningPublicKey = strings.Repeat("11", 32)
+			},
+		},
+		{
+			"gpu required",
+			"policy.gpu_evidence_required",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				o.Policy.RequireGPUEvidence = true
+			},
+		},
+		{
+			"deployment",
+			"provenance.verification_failed",
+			func(a *Attestation, q *QuoteVerificationResult, b *ClientBinding, o *VerificationOptions) {
+				o.DeploymentVerifier = func(context.Context, MeasuredDeployment) error { return errors.New("denied") }
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -185,8 +236,16 @@ func TestE2EEProtocolVectorsAndRoundtrip(t *testing.T) {
 		key              e2eeKey
 		ciphertext, want string
 	}{
-		{e2eeKey{algo: Ed25519, secret: secret}, "07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7ca0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b743d22a6968fbbdf88cd066c79b3dacd53a6991f06ce8c564e03b7eb60e2376", "fixed v2 vector"},
-		{e2eeKey{algo: ECDSA, secret: ecdsaSecret}, "04c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee51ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a000102030405060708090a0bb70c17944e668fbe04a547595e40927c708a34b9e7c4cb5b9917a6fb2240653b2a142b86", "near-ai ecdsa vector"},
+		{
+			e2eeKey{algo: Ed25519, secret: secret},
+			"07a37cbc142093c8b755dc1b10e86cb426374ad16aa853ed0bdfc0b2b86d1c7ca0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b743d22a6968fbbdf88cd066c79b3dacd53a6991f06ce8c564e03b7eb60e2376",
+			"fixed v2 vector",
+		},
+		{
+			e2eeKey{algo: ECDSA, secret: ecdsaSecret},
+			"04c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee51ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a000102030405060708090a0bb70c17944e668fbe04a547595e40927c708a34b9e7c4cb5b9917a6fb2240653b2a142b86",
+			"near-ai ecdsa vector",
+		},
 	} {
 		got, e := decryptText(v.ciphertext, v.key)
 		if e != nil || got != v.want {
@@ -216,7 +275,12 @@ func TestE2EEProtocolVectorsAndRoundtrip(t *testing.T) {
 func TestOHTTPAttestation(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	config := []byte("config")
-	a := OHTTPAttestation{Ed25519, hex.EncodeToString(pub), hex.EncodeToString(config), hex.EncodeToString(ed25519.Sign(priv, config))}
+	a := OHTTPAttestation{
+		Ed25519,
+		hex.EncodeToString(pub),
+		hex.EncodeToString(config),
+		hex.EncodeToString(ed25519.Sign(priv, config)),
+	}
 	if _, e := VerifyOHTTPKeyConfig(a, SigningIdentity{Ed25519, a.SigningKey}); e != nil {
 		t.Fatal(e)
 	}

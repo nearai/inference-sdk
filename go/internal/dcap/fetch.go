@@ -23,7 +23,11 @@ func GetCollateral(ctx context.Context, pccsURL string, rawQuote []byte) (*Quote
 		return nil, fmt.Errorf("dcap: failed to parse quote: %w", err)
 	}
 
-	client := &http.Client{Timeout: httpTimeout, Transport: contextTransport{ctx}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{
+		Timeout:       httpTimeout,
+		Transport:     contextTransport{ctx},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 
 	// Get PCK certificate chain
 	var pckChain string

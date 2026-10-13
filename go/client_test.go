@@ -76,7 +76,16 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		q := f.q
 		q.ReportData = report
 		quote, _ := json.Marshal(q)
-		a := map[string]any{"request_nonce": n, "signing_algo": "ed25519", "signing_address": f.a.Signer.SigningAddress, "signing_public_key": f.a.SigningPublicKey, "intel_quote": string(quote), "event_log": f.a.EventLog, "report_data": hex.EncodeToString(report), "info": map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}}}
+		a := map[string]any{
+			"request_nonce":      n,
+			"signing_algo":       "ed25519",
+			"signing_address":    f.a.Signer.SigningAddress,
+			"signing_public_key": f.a.SigningPublicKey,
+			"intel_quote":        string(quote),
+			"event_log":          f.a.EventLog,
+			"report_data":        hex.EncodeToString(report),
+			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
+		}
 		if r.URL.Query().Get("model") != "" {
 			items := []any{a}
 			if f.badModel {
@@ -162,7 +171,13 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		sig := f.signatures[id]
 		f.mu.Unlock()
-		json.NewEncoder(w).Encode(map[string]any{"signature_kind": sig.Kind, "text": sig.SignedText, "signature": sig.Signature, "signing_algo": sig.Signer.SigningAlgo, "signing_address": sig.Signer.SigningAddress})
+		json.NewEncoder(w).Encode(map[string]any{
+			"signature_kind":  sig.Kind,
+			"text":            sig.SignedText,
+			"signature":       sig.Signature,
+			"signing_algo":    sig.Signer.SigningAlgo,
+			"signing_address": sig.Signer.SigningAddress,
+		})
 	default:
 		http.NotFound(w, r)
 	}
@@ -175,7 +190,12 @@ func fakeQuote(ctx context.Context, raw string) (QuoteVerificationResult, error)
 func fakeClient(t *testing.T, f *fakeCloud, modify func(*InferenceOptions)) (*InferenceClient, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(f)
-	o := InferenceOptions{ClientOptions: ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"}, DisableTLSBinding: true, GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote}, ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote}}
+	o := InferenceOptions{
+		ClientOptions:       ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+		DisableTLSBinding:   true,
+		GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+		ModelVerification:   VerificationOptions{QuoteVerifier: fakeQuote},
+	}
 	if modify != nil {
 		modify(&o)
 	}

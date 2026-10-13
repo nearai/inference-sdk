@@ -33,7 +33,16 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 			nonce, _ := unhex(n)
 			copy(q.ReportData[32:], nonce)
 			encoded, _ := json.Marshal(q)
-			return map[string]any{"model_name": "canonical/model", "request_nonce": n, "signing_algo": "ed25519", "signing_address": a.Signer.SigningAddress, "signing_public_key": a.SigningPublicKey, "intel_quote": string(encoded), "event_log": a.EventLog, "info": map[string]any{"tcb_info": map[string]any{"app_compose": a.AppCompose}}}
+			return map[string]any{
+				"model_name":         "canonical/model",
+				"request_nonce":      n,
+				"signing_algo":       "ed25519",
+				"signing_address":    a.Signer.SigningAddress,
+				"signing_public_key": a.SigningPublicKey,
+				"intel_quote":        string(encoded),
+				"event_log":          a.EventLog,
+				"info":               map[string]any{"tcb_info": map[string]any{"app_compose": a.AppCompose}},
+			}
 		}
 		first, serving := makeReport(a, qa), makeReport(b, qb)
 		root := map[string]any{}
@@ -47,11 +56,22 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 		}
 		root["event_log"] = json.RawMessage(log.Bytes())
 		root["all_attestations"] = []any{first, serving}
-		root["ohttp_attestation"] = OHTTPAttestation{Ed25519, b.Signer.SigningAddress, hex.EncodeToString(config), hex.EncodeToString(ed25519.Sign(priv, config))}
+		root["ohttp_attestation"] = OHTTPAttestation{
+			Ed25519,
+			b.Signer.SigningAddress,
+			hex.EncodeToString(config),
+			hex.EncodeToString(ed25519.Sign(priv, config)),
+		}
 		json.NewEncoder(w).Encode(root)
 	}))
 	defer server.Close()
-	client, e := NewDirectInferenceClient(DirectInferenceOptions{InferenceOptions: InferenceOptions{ClientOptions: ClientOptions{BaseURL: server.URL + "/v1"}, OHTTP: true, ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote}}})
+	client, e := NewDirectInferenceClient(DirectInferenceOptions{
+		InferenceOptions: InferenceOptions{
+			ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
+			OHTTP:             true,
+			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+		},
+	})
 	if e != nil {
 		t.Fatal(e)
 	}

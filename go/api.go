@@ -96,7 +96,11 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, "", &Error{Code: "api.http_status", Details: map[string]any{"status": res.StatusCode}, Retryable: res.StatusCode == 408 || res.StatusCode == 425 || res.StatusCode == 429 || res.StatusCode >= 500}
+		return nil, "", &Error{
+			Code:      "api.http_status",
+			Details:   map[string]any{"status": res.StatusCode},
+			Retryable: res.StatusCode == 408 || res.StatusCode == 425 || res.StatusCode == 429 || res.StatusCode >= 500,
+		}
 	}
 	b, e := readBounded(res.Body, 16<<20)
 	if e != nil {
@@ -293,7 +297,10 @@ func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id str
 		if raw.Text != nil || raw.Signature != nil || raw.Algo != "" || raw.Address != "" || raw.Kind != "" {
 			return sig, failure("api.invalid_response", nil)
 		}
-		return sig, &Error{Code: "api.completion_signature_unavailable", Details: map[string]any{"providerErrorCode": raw.ErrorCode, "providerMessage": raw.Message}}
+		return sig, &Error{
+			Code:    "api.completion_signature_unavailable",
+			Details: map[string]any{"providerErrorCode": raw.ErrorCode, "providerMessage": raw.Message},
+		}
 	}
 	if c.direct {
 		if raw.Kind != "" && raw.Kind != "provider_tee" {
@@ -341,7 +348,19 @@ func decodeAttestation(data []byte) (Attestation, error) {
 	if e := json.Unmarshal(raw.Info.TCB, &tcb); e != nil || tcb.Compose == nil || raw.Quote == "" || len(raw.EventLog) == 0 {
 		return a, failure("api.invalid_response", e)
 	}
-	a = Attestation{Nonce: raw.Nonce, Signer: SigningIdentity{raw.Algo, raw.Address}, IntelQuote: raw.Quote, EventLog: raw.EventLog, AppCompose: *tcb.Compose, ReportedQuoteData: raw.Report, SigningPublicKey: raw.PublicKey, NvidiaPayload: raw.GPU, SPKIFingerprint: raw.FP, ModelName: raw.Model, InstanceID: raw.Info.InstanceID}
+	a = Attestation{
+		Nonce:             raw.Nonce,
+		Signer:            SigningIdentity{raw.Algo, raw.Address},
+		IntelQuote:        raw.Quote,
+		EventLog:          raw.EventLog,
+		AppCompose:        *tcb.Compose,
+		ReportedQuoteData: raw.Report,
+		SigningPublicKey:  raw.PublicKey,
+		NvidiaPayload:     raw.GPU,
+		SPKIFingerprint:   raw.FP,
+		ModelName:         raw.Model,
+		InstanceID:        raw.Info.InstanceID,
+	}
 	if _, e := hexSize(a.Nonce, 32); e != nil {
 		return a, failure("api.invalid_response", e)
 	}
