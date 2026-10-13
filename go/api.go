@@ -28,9 +28,11 @@ type AttestationClient struct {
 }
 
 func NewAttestationClient(o ClientOptions) (*AttestationClient, error) { return newAPIClient(o, false) }
+
 func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error) {
 	return newAPIClient(o, true)
 }
+
 func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
 	if o.BaseURL == "" {
 		if direct {
@@ -58,6 +60,7 @@ func newAPIClient(o ClientOptions, direct bool) (*AttestationClient, error) {
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &AttestationClient{base: u, headers: h, http: client, direct: direct}, nil
 }
+
 func (c *AttestationClient) endpoint(path string, q url.Values) string {
 	u := *c.base
 	unescaped, _ := url.PathUnescape(path)
@@ -66,6 +69,7 @@ func (c *AttestationClient) endpoint(path string, q url.Values) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
+
 func nonce() string {
 	b := make([]byte, 32)
 	if _, e := rand.Read(b); e != nil {
@@ -73,6 +77,7 @@ func nonce() string {
 	}
 	return hex.EncodeToString(b)
 }
+
 func readBounded(r io.Reader, limit int64) ([]byte, error) {
 	readLimit := limit
 	if limit < math.MaxInt64 {
@@ -84,6 +89,7 @@ func readBounded(r io.Reader, limit int64) ([]byte, error) {
 	}
 	return b, e
 }
+
 func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
@@ -121,6 +127,7 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 	}
 	return b, fp, nil
 }
+
 func optionsQuery(o FetchOptions) (url.Values, error) {
 	q := url.Values{}
 	if o.SigningAlgo != "" {
@@ -142,6 +149,7 @@ func optionsQuery(o FetchOptions) (url.Values, error) {
 	}
 	return q, nil
 }
+
 func (c *AttestationClient) FetchModelMetadata(ctx context.Context, model string) (ModelMetadata, error) {
 	var m ModelMetadata
 	if model == "" {
@@ -168,6 +176,7 @@ func (c *AttestationClient) FetchModelMetadata(ctx context.Context, model string
 	m.AttestationSupported = *raw.Metadata.Supported
 	return m, nil
 }
+
 func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o FetchOptions) (FetchedGatewayAttestation, error) {
 	var out FetchedGatewayAttestation
 	q, e := optionsQuery(o)
@@ -200,6 +209,7 @@ func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o Fetch
 	}
 	return FetchedGatewayAttestation{a, ClientBinding{n, fp}, raw.OHTTP}, nil
 }
+
 func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error) {
 	var out FetchedModelAttestations
 	q, e := optionsQuery(o)
@@ -269,6 +279,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 	out.ClientBinding = ClientBinding{Nonce: n}
 	return out, nil
 }
+
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
 	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
@@ -322,6 +333,7 @@ func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id str
 	}
 	return sig, nil
 }
+
 func decodeAttestation(data []byte) (Attestation, error) {
 	var a Attestation
 	var raw struct {

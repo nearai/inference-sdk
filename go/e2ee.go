@@ -60,11 +60,13 @@ func newE2EEKey(algo SigningAlgo) (e2eeKey, error) {
 	secret[31] |= 64
 	return e2eeKey{algo, hex.EncodeToString(pub), secret}, nil
 }
+
 func deriveKey(shared []byte, algo SigningAlgo) ([]byte, error) {
 	key := make([]byte, 32)
 	_, e := io.ReadFull(hkdf.New(sha256.New, shared, nil, []byte(string(algo)+"_encryption")), key)
 	return key, e
 }
+
 func encryptText(text string, key E2EEModelKey) (string, error) {
 	pub, e := unhex(key.PublicKey)
 	if e != nil {
@@ -136,6 +138,7 @@ func encryptText(text string, key E2EEModelKey) (string, error) {
 	out = aead.Seal(out, n, []byte(text), nil)
 	return hex.EncodeToString(out), nil
 }
+
 func decryptText(text string, key e2eeKey) (string, error) {
 	if text == "" {
 		return "", nil
@@ -202,6 +205,7 @@ func decryptText(text string, key e2eeKey) (string, error) {
 	}
 	return string(plaintext), nil
 }
+
 func objects(v any) []map[string]any {
 	var out []map[string]any
 	if list, ok := v.([]any); ok {
@@ -213,7 +217,9 @@ func objects(v any) []map[string]any {
 	}
 	return out
 }
+
 func object(v any) map[string]any { o, _ := v.(map[string]any); return o }
+
 func transformFields(target map[string]any, transform func(string) (string, error), fields ...string) error {
 	for _, field := range fields {
 		if text, ok := target[field].(string); ok {
@@ -226,6 +232,7 @@ func transformFields(target map[string]any, transform func(string) (string, erro
 	}
 	return nil
 }
+
 func encryptChat(body map[string]any, key E2EEModelKey) error {
 	f := func(s string) (string, error) { return encryptText(s, key) }
 	for _, m := range objects(body["messages"]) {
@@ -272,6 +279,7 @@ func encryptChat(body map[string]any, key E2EEModelKey) error {
 	}
 	return transformFields(object(body["function_call"]), f, "name")
 }
+
 func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 	f := func(s string) (string, error) { return decryptText(s, key) }
 	field := "message"
@@ -312,6 +320,7 @@ func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 	}
 	return nil
 }
+
 func decryptLogprobs(value any, f func(string) (string, error)) error {
 	for _, entry := range objects(value) {
 		if e := transformFields(entry, f, "token"); e != nil {
@@ -334,11 +343,13 @@ func decryptLogprobs(value any, f func(string) (string, error)) error {
 	}
 	return nil
 }
+
 func removeE2EEHeaders(h http.Header) {
 	for _, name := range []string{"X-Signing-Algo", "X-Client-Pub-Key", "X-Model-Pub-Key", "X-Encryption-Version", "X-Encrypt-All-Fields"} {
 		h.Del(name)
 	}
 }
+
 func removeBodyHeaders(h http.Header) {
 	for _, name := range []string{
 		"Content-Length",
@@ -355,6 +366,7 @@ func removeBodyHeaders(h http.Header) {
 		h.Del(name)
 	}
 }
+
 func decodeObject(b []byte) (map[string]any, error) {
 	var v map[string]any
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -364,6 +376,7 @@ func decodeObject(b []byte) (map[string]any, error) {
 	}
 	return v, nil
 }
+
 func PrepareE2EEChatRequest(req *http.Request, key E2EEModelKey) (*PreparedE2EEChatRequest, error) {
 	return prepareE2EEChatRequest(req, key, 64<<20)
 }
@@ -417,6 +430,7 @@ func prepareE2EEChatRequest(req *http.Request, key E2EEModelKey, limit int64) (*
 	}
 	return &PreparedE2EEChatRequest{r, clientKey}, nil
 }
+
 func (p *PreparedE2EEChatRequest) DecryptJSON(wire []byte) ([]byte, error) {
 	body, e := decodeObject(wire)
 	if e != nil {

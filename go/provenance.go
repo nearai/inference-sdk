@@ -45,6 +45,7 @@ func validRepository(s string) bool {
 	}
 	return true
 }
+
 func FetchImageProvenance(ctx context.Context, repository, digest string, o ProvenanceOptions) ([]json.RawMessage, error) {
 	if !validRepository(repository) || !digestPattern.MatchString(digest) {
 		return nil, failure("api.invalid_input", nil)
@@ -149,6 +150,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		target = next
 	}
 }
+
 func VerifyImageProvenance(ctx context.Context, bundles []json.RawMessage, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) (VerifiedImageProvenance, error) {
 	var out VerifiedImageProvenance
 	if !digestPattern.MatchString(digest) || !validRepository(policy.Repository) || policy.Workflow == "" || (policy.Commit != "" && !commitPattern.MatchString(policy.Commit)) {
@@ -226,6 +228,7 @@ func VerifyImageProvenance(ctx context.Context, bundles []json.RawMessage, diges
 	}
 	return out, failure("provenance.verification_failed", last)
 }
+
 func certClaim(cert *x509.Certificate, modern, legacy int, legacyPrefix string) (string, error) {
 	for _, id := range []int{modern, legacy} {
 		oid := asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 57264, 1, id}
@@ -246,6 +249,7 @@ func certClaim(cert *x509.Certificate, modern, legacy int, legacyPrefix string) 
 	}
 	return "", fmt.Errorf("missing source extension")
 }
+
 func checkImageStatement(result *verify.VerificationResult, cert *x509.Certificate, identity, digest string, p ImageProvenancePolicy) (VerifiedImageProvenance, error) {
 	var out VerifiedImageProvenance
 	bad := func() (VerifiedImageProvenance, error) { return out, fmt.Errorf("provenance source mismatch") }

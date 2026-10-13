@@ -27,6 +27,7 @@ func unhex(s string) ([]byte, error) {
 	}
 	return hex.DecodeString(s)
 }
+
 func hexSize(s string, n int) ([]byte, error) {
 	b, e := unhex(s)
 	if e != nil || len(b) != n {
@@ -34,11 +35,13 @@ func hexSize(s string, n int) ([]byte, error) {
 	}
 	return b, nil
 }
+
 func sameHex(a, b string) bool {
 	x, e := unhex(a)
 	y, f := unhex(b)
 	return e == nil && f == nil && bytes.Equal(x, y)
 }
+
 func signingBytes(s SigningIdentity) ([]byte, error) {
 	switch s.SigningAlgo {
 	case Ed25519:
@@ -49,7 +52,9 @@ func signingBytes(s SigningIdentity) ([]byte, error) {
 		return nil, failure("input.invalid", nil)
 	}
 }
-func keccak(b []byte) []byte   { h := sha3.NewLegacyKeccak256(); h.Write(b); return h.Sum(nil) }
+
+func keccak(b []byte) []byte { h := sha3.NewLegacyKeccak256(); h.Write(b); return h.Sum(nil) }
+
 func hashText(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error {
@@ -61,9 +66,11 @@ func VerifyModelResponse(request, response []byte, signature CompletionSignature
 	}
 	return verifyResponse(signature, "provider_tee", body.Model+":"+hashText(request)+":"+hashText(response), attestation.Signer)
 }
+
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error {
 	return verifyResponse(signature, "gateway", hashText(request)+":"+hashText(response), attestation.Signer)
 }
+
 func verifyResponse(sig CompletionSignature, kind, text string, signer SigningIdentity) error {
 	if sig.Kind != kind {
 		return failure("signature.kind_mismatch", nil)
@@ -117,6 +124,7 @@ func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBindin
 	}
 	return v, nil
 }
+
 func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
 	if a.SPKIFingerprint != "" {
 		return VerifiedAttestation{}, failure("input.invalid", nil)
@@ -129,6 +137,7 @@ func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding,
 func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error) {
 	return verifyAttestation(ctx, a, b, o, false)
 }
+
 func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, gateway bool) (VerifiedAttestation, error) {
 	var v VerifiedAttestation
 	nonce, e := hexSize(b.Nonce, 32)
@@ -284,6 +293,7 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	}
 	return v, ctx.Err()
 }
+
 func replayEvents(raw json.RawMessage, expected []byte) (RuntimeMeasurements, error) {
 	var result RuntimeMeasurements
 	var encoded string
@@ -350,6 +360,7 @@ func replayEvents(raw json.RawMessage, expected []byte) (RuntimeMeasurements, er
 	}
 	return result, nil
 }
+
 func VerifyOHTTPKeyConfig(a OHTTPAttestation, signer SigningIdentity) ([]byte, error) {
 	if a.SigningAlgo != Ed25519 || signer.SigningAlgo != Ed25519 || !sameHex(a.SigningKey, signer.SigningAddress) {
 		return nil, failure("ohttp.signer_mismatch", nil)

@@ -80,6 +80,7 @@ func newOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, fo
 	}
 	return &ohttpTransport{append([]byte{config[0]}, 0, 32, 0, 1, 0, 1), pub, u, base, names, maxBody}, nil
 }
+
 func varint(v uint64) []byte {
 	switch {
 	case v < 1<<6:
@@ -98,7 +99,9 @@ func varint(v uint64) []byte {
 		return b
 	}
 }
+
 func vector(b []byte) []byte { return append(varint(uint64(len(b))), b...) }
+
 func readVarint(r *bufio.Reader, eofZero bool) (uint64, error) {
 	b, e := r.ReadByte()
 	if e == io.EOF && eofZero {
@@ -118,6 +121,7 @@ func readVarint(r *bufio.Reader, eofZero bool) (uint64, error) {
 	}
 	return v, nil
 }
+
 func exact(r io.Reader, n uint64, limit uint64) ([]byte, error) {
 	if n > limit {
 		return nil, failure("ohttp.decryption_failed", nil)
@@ -126,6 +130,7 @@ func exact(r io.Reader, n uint64, limit uint64) ([]byte, error) {
 	_, e := io.ReadFull(r, b)
 	return b, e
 }
+
 func hopHeaders(h http.Header) map[string]bool {
 	skip := map[string]bool{}
 	for _, s := range []string{"connection", "proxy-connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer"} {
@@ -143,6 +148,7 @@ func hopHeaders(h http.Header) map[string]bool {
 	}
 	return skip
 }
+
 func encodeBHTTPRequest(req *http.Request, body []byte) ([]byte, error) {
 	fields := []byte{}
 	skip := hopHeaders(req.Header)
@@ -170,6 +176,7 @@ func encodeBHTTPRequest(req *http.Request, body []byte) ([]byte, error) {
 	}
 	return encoded, nil
 }
+
 func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != t.relay.Scheme || req.URL.Host != t.relay.Host {
 		return nil, failure("api.invalid_input", nil)
@@ -397,6 +404,7 @@ func (d *ohttpDecryptReader) Read(p []byte) (int, error) {
 	d.pending = d.pending[n:]
 	return n, nil
 }
+
 func readBHTTPFields(r *bufio.Reader, known bool) (http.Header, error) {
 	headers := http.Header{}
 	var section *bytes.Reader
@@ -454,6 +462,7 @@ func readBHTTPFields(r *bufio.Reader, known bool) (http.Header, error) {
 		headers.Add(string(name), string(value))
 	}
 }
+
 func contentLength(headers http.Header, method string, status int) (int64, error) {
 	length := int64(-1)
 	for _, value := range headers.Values("Content-Length") {
@@ -540,6 +549,7 @@ func (b *bhttpBody) Read(p []byte) (int, error) {
 	}
 	return n, nil
 }
+
 func (b *bhttpBody) finish() (int, error) {
 	b.done = true
 	if b.expected >= 0 && b.received != b.expected {
@@ -558,4 +568,5 @@ func (b *bhttpBody) finish() (int, error) {
 		}
 	}
 }
+
 func (b *bhttpBody) Close() error { return b.source.Close() }

@@ -53,6 +53,7 @@ func (s *sseReader) record() ([]byte, error) {
 		}
 	}
 }
+
 func sseData(record []byte) (string, string) {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(record), "\r\n", "\n"), "\r", "\n")
 	var data []string
@@ -68,6 +69,7 @@ func sseData(record []byte) (string, string) {
 	}
 	return strings.Join(data, "\n"), event
 }
+
 func (s *sseReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -110,11 +112,13 @@ func (s *sseReader) Read(p []byte) (int, error) {
 	s.pending = s.pending[n:]
 	return n, nil
 }
+
 func (s *sseReader) Close() error {
 	var e error
 	s.closeOnce.Do(func() { e = s.source.Close() })
 	return e
 }
+
 func (p *PreparedE2EEChatRequest) transformSSE(record []byte) ([]byte, error) {
 	data, event := sseData(record)
 	if data == "" || data == "[DONE]" || event == "error" {

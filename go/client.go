@@ -66,6 +66,7 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error
 	o.InferenceOptions.E2EE = !o.DisableE2EE
 	return newInferenceClient(o.InferenceOptions, true)
 }
+
 func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, error) {
 	if o.SigningAlgo == "" {
 		o.SigningAlgo = Ed25519
@@ -129,6 +130,7 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	}()
 	return c, nil
 }
+
 func (c *InferenceClient) prune(now time.Time) {
 	for k, v := range c.sessions {
 		if !now.Before(v.expires) {
@@ -146,7 +148,9 @@ func (c *InferenceClient) prune(now time.Time) {
 func (c *InferenceClient) HTTPClient() *http.Client {
 	return &http.Client{Transport: c, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
+
 func (c *InferenceClient) BaseURL() string { return c.api.base.String() }
+
 func (c *InferenceClient) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -165,6 +169,7 @@ func (c *InferenceClient) Close() error {
 	c.wg.Wait()
 	return nil
 }
+
 func cloneResult(r AttestationVerificationResult) AttestationVerificationResult {
 	clone := func(a VerifiedAttestation) VerifiedAttestation {
 		a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
@@ -180,6 +185,7 @@ func cloneResult(r AttestationVerificationResult) AttestationVerificationResult 
 	}
 	return r
 }
+
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error) {
 	s, e := c.getSession(ctx, model)
 	if e != nil {
@@ -187,6 +193,7 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 	}
 	return cloneResult(s.result), nil
 }
+
 func (c *InferenceClient) getSession(ctx context.Context, model string) (*session, error) {
 	if model == "" {
 		return nil, failure("api.invalid_input", nil)
@@ -245,6 +252,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 		return p.value, p.err
 	}
 }
+
 func (c *InferenceClient) createSession(ctx context.Context, model string) (*session, error) {
 	o := c.options
 	s := &session{api: c.api}
@@ -390,6 +398,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	s.result.VerifiedAt = time.Now()
 	return s, nil
 }
+
 func headerNames(h http.Header) []string {
 	out := make([]string, 0, len(h))
 	for k := range h {
@@ -562,6 +571,7 @@ type cancelBody struct {
 }
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
+
 func (c *InferenceClient) register(id string, request, response []byte, s *session) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -605,6 +615,7 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	}
 	return nil
 }
+
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
 	c.mu.Lock()
 	record := c.responses[id]
@@ -652,6 +663,7 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 		return result, p.err
 	}
 }
+
 func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *responseRecord) (VerifiedCompletionResult, error) {
 	sig, e := r.session.api.FetchCompletionSignature(ctx, id, c.options.SigningAlgo)
 	if e != nil {
