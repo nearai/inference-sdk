@@ -7,11 +7,25 @@ Run from this directory:
 
 | Command | Demonstrates |
 | --- | --- |
-| `go run .` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
+| `go run ./gateway/openai` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
 | `go run ./gateway/client` | Integrated Gateway preflight, E2EE, JSON/SSE, image provenance and receipts |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, E2EE, ciphertext capture/decryption and receipts |
 | `go run ./direct/client` | Experimental integrated direct inference, JSON/SSE, E2EE and receipts |
 | `go run ./direct/bare` | Standalone direct report verification, E2EE, ciphertext capture/decryption and all matching receipt signers |
+
+## Official OpenAI Go client
+
+The named entry point is [gateway/openai/main.go](./gateway/openai/main.go).
+`go run .` remains an alias for the same example. Both call
+[`RunOpenAI`](./internal/demo/demo.go), which configures the official client with
+`option.WithHTTPClient(client.HTTPClient())` and disables automatic completion
+retries with `option.WithMaxRetries(0)`.
+
+The example sends JSON and streaming Chat with E2EE. It consumes streams through
+EOF and calls `client.VerifyResponse(ctx, completionID)` before displaying the
+answer. Only Chat Completions are supported; this transport does not support the
+Responses API. Local integration tests and the live `TestLiveOpenAI` case cover
+both JSON and streaming through this shared implementation.
 
 `NEARAI_BASE_URL` and `NEARAI_MODEL` override the Gateway/direct defaults.
 `NEARAI_SIGNING_ALGO` accepts `ed25519` (default) or `ecdsa` and selects the same
