@@ -2,6 +2,11 @@
 
 ## Clients and lifecycle
 
+Go constructors use the conventional `New` prefix: `InferenceClient` is the
+exported type, while `NewInferenceClient` validates options and initializes its
+transport and caches. Construct clients through these functions; a struct
+literal does not initialize a working client.
+
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
 `NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL
 and defaults E2EE to true; set `DisableE2EE: true` to opt out. Direct clients are

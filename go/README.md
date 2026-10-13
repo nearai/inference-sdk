@@ -38,28 +38,71 @@ a pseudo-version. A future module release uses a `go/vX.Y.Z` tag.
 ## Send and verify a completion
 
 ```go
-client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
-    ClientOptions: nearai.ClientOptions{APIKey: os.Getenv("NEARAI_API_KEY")},
-    E2EE: true,
-})
-if err != nil { return err }
-defer client.Close()
+package main
 
-body, err := client.CreateChatCompletion(ctx, map[string]any{
-    "model": "z-ai/glm-5.3-flash",
-    "messages": []map[string]string{{"role": "user", "content": "Hello!"}},
-})
-if err != nil { return err }
-var completion struct { ID string `json:"id"` }
-if err := json.Unmarshal(body, &completion); err != nil { return err }
-verified, err := client.VerifyResponse(ctx, completion.ID)
-if err != nil { return err }
-fmt.Println(verified.SignatureKind)
-fmt.Println(string(body))
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "time"
+
+    nearai "github.com/nearai/inference-sdk/go"
+)
+
+func main() {
+    if err := run(); err != nil {
+        log.Fatal(err)
+    }
+}
+
+func run() error {
+    apiKey := os.Getenv("NEARAI_API_KEY")
+    if apiKey == "" {
+        return fmt.Errorf("set NEARAI_API_KEY")
+    }
+    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+    defer cancel()
+
+    client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
+        ClientOptions: nearai.ClientOptions{APIKey: apiKey},
+        E2EE: true,
+    })
+    if err != nil {
+        return err
+    }
+    defer client.Close()
+
+    body, err := client.CreateChatCompletion(ctx, map[string]any{
+        "model": "z-ai/glm-5.3-flash",
+        "messages": []map[string]string{{"role": "user", "content": "Hello!"}},
+    })
+    if err != nil {
+        return err
+    }
+    var completion struct {
+        ID string `json:"id"`
+    }
+    if err := json.Unmarshal(body, &completion); err != nil {
+        return err
+    }
+    if completion.ID == "" {
+        return fmt.Errorf("completion has no ID")
+    }
+
+    verified, err := client.VerifyResponse(ctx, completion.ID)
+    if err != nil {
+        return err
+    }
+    fmt.Println(verified.SignatureKind)
+    fmt.Println(string(body))
+    return nil
+}
 ```
 
 Import as `nearai "github.com/nearai/inference-sdk/go"`. The
-[OpenAI example](../examples/example-go/main.go) uses the official OpenAI Go
+[OpenAI example](../examples/example-go/gateway/openai/main.go) uses the official OpenAI Go
 SDK and reads `NEARAI_API_KEY` from the environment. It covers JSON and streaming calls. See the [Gateway/direct
 examples](../examples/example-go/README.md) for standalone and integrated clients,
 Gateway image provenance, and exact ciphertext receipt verification. The library
@@ -125,3 +168,65 @@ client. Live tests require the `e2e` build tag and credentials.
 No authenticated live inference is required by the unit tests. They use local
 servers, shared encryption vectors, signed Sigstore fixtures, and an offline
 Intel-signed quote with its collateral.
+
+## Verification and privacy
+
+Deployment verification runs before Chat requests. Response signatures require
+an explicit `VerifyResponse` call after fully consuming the body. For streaming,
+content displayed before that call succeeds has not yet been signature-verified.
+All returned model reports must pass verification; failed verification does not
+silently downgrade to an unverified request.
+
+`E2EE` encrypts protocol fields to the attested model key. `OHTTP` independently
+protects the inner request to the Gateway and requires Ed25519. Gateway-only
+`Incognito` also requires E2EE and supported model metadata. See the
+[encryption notes](./docs/api-reference.md#encryption) for the exact guarantees.
+
+A `provider_tee` receipt binds exact request/response bytes to the model signer;
+a Gateway receipt binds its own bytes to the Gateway signer. These receipts do
+not prove an end-to-end cryptographic chain through every intermediary
+transformation. Deployment verification also does not apply an application
+image allowlist unless you configure a policy. See
+[verification guarantees](./docs/api-reference.md#verification-guarantees) and
+[deployment policies](./docs/api-reference.md#deployment-and-image-policies).
+
+## Retention and errors
+
+Attestation and response caches default to one hour. Response retention starts
+when the body is fully consumed. Set a TTL to a pointer to `time.Duration(0)`
+to disable reuse or retention. `MaxCacheEntries` defaults to 128,
+`MaxReceiptCacheBytes` to 64 MiB, and `MaxBodyBytes` to 64 MiB. Buffered protected
+requests honor the configured body limit. Evicted or expired response records
+cannot be verified later; choose limits appropriate to your application's memory
+budget. See [client lifecycle](./docs/api-reference.md#clients-and-lifecycle).
+
+Errors support `errors.As` into `*nearai.Error`, exposing `Code` and `Retryable`.
+Retryable receipt retrieval can be attempted again without replaying Chat.
+The SDK does not automatically replay completions.
+
+## Advanced APIs and documentation
+
+Use `NewAttestationClient` to fetch evidence and standalone verification
+functions to validate it. Fetching evidence alone does not verify it.
+`PrepareE2EEChatRequest` supports manual encryption after authenticating the
+model key; standalone encryption and OHTTP helpers use a 64 MiB body limit.
+Keep exact wire bytes when verifying receipts manually.
+
+- [API and verification notes](./docs/api-reference.md)
+- [Gateway, direct, and OpenAI examples](../examples/example-go/README.md)
+- [Live E2E coverage](../e2e/README.md)
+- [Release process](../RELEASING.md)
+
+## Development
+
+From the repository root:
+
+```sh
+make -C go check
+cd examples/example-go
+go test -race ./...
+```
+
+`make -C go check` checks formatting, runs vet, and executes race tests. Race
+instrumentation requires CGO; ordinary SDK builds and tests support
+`CGO_ENABLED=0`.

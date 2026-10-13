@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,7 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 		t.Fatal(e)
 	}
 	n := strings.Repeat("11", 32)
-	for _, variant := range []string{"ok", "wrong nonce", "rejected", "expired", "wrong issuer", "missing nbf"} {
+	for _, variant := range []string{"ok", "wrong nonce", "rejected", "expired", "wrong issuer", "missing nbf", "verdict timeout", "jwks timeout"} {
 		t.Run(variant, func(t *testing.T) {
 			claims := jwt.MapClaims{
 				"iss":                         "https://nras.attestation.nvidia.com",
@@ -51,6 +52,10 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 				t.Fatal(e)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if (variant == "verdict timeout" && r.Method == "POST") || (variant == "jwks timeout" && r.Method == "GET") {
+					w.WriteHeader(http.StatusRequestTimeout)
+					return
+				}
 				if r.Method == "POST" {
 					json.NewEncoder(w).Encode([]any{[]any{"JWT", signed}, map[string]any{}})
 				} else {
@@ -70,6 +75,12 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 			}))
 			defer server.Close()
 			e = CreateGPUEvidenceVerifier(GPUVerifierOptions{NRASURL: server.URL, JWKSURL: server.URL})(context.Background(), `{"nonce":"`+n+`"}`)
+			if strings.HasSuffix(variant, "timeout") {
+				var sdkErr *Error
+				if !errors.As(e, &sdkErr) || !sdkErr.Retryable {
+					t.Fatalf("timeout is not retryable: %v", e)
+				}
+			}
 			if variant == "ok" && e != nil {
 				t.Fatal(e)
 			}

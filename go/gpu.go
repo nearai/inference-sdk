@@ -60,7 +60,7 @@ func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier {
 			if res.StatusCode < 200 || res.StatusCode >= 300 {
 				return nil, &Error{
 					Code:      "gpu.nras_request_failed",
-					Retryable: res.StatusCode == 429 || res.StatusCode >= 500,
+					Retryable: res.StatusCode == 408 || res.StatusCode == 429 || res.StatusCode >= 500,
 					Details:   map[string]any{"status": res.StatusCode},
 				}
 			}

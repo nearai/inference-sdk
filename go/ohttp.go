@@ -32,12 +32,17 @@ type ohttpTransport struct {
 	relay     *url.URL
 	base      http.RoundTripper
 	forwarded map[string]bool
+	maxBody   int64
 }
 
 // NewOHTTPTransport encapsulates same-origin requests using an authenticated
 // key configuration. Authorization and explicitly forwarded headers remain
 // visible to the relay. Body and encryption headers stay inside OHTTP.
 func NewOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, forwarded []string) (http.RoundTripper, error) {
+	return newOHTTPTransport(config, baseURL, base, forwarded, 64<<20)
+}
+
+func newOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, forwarded []string, maxBody int64) (http.RoundTripper, error) {
 	if len(config) < 41 || config[1] != 0 || config[2] != 32 {
 		return nil, failure("ohttp.key_config_invalid", nil)
 	}
@@ -73,7 +78,7 @@ func NewOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, fo
 	for _, n := range forwarded {
 		names[strings.ToLower(n)] = true
 	}
-	return &ohttpTransport{append([]byte{config[0]}, 0, 32, 0, 1, 0, 1), pub, u, base, names}, nil
+	return &ohttpTransport{append([]byte{config[0]}, 0, 32, 0, 1, 0, 1), pub, u, base, names, maxBody}, nil
 }
 func varint(v uint64) []byte {
 	switch {
@@ -126,8 +131,15 @@ func hopHeaders(h http.Header) map[string]bool {
 	for _, s := range []string{"connection", "proxy-connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer"} {
 		skip[s] = true
 	}
-	for _, s := range strings.Split(h.Get("Connection"), ",") {
-		skip[strings.ToLower(strings.TrimSpace(s))] = true
+	for name, values := range h {
+		if !strings.EqualFold(name, "Connection") {
+			continue
+		}
+		for _, value := range values {
+			for _, token := range strings.Split(value, ",") {
+				skip[strings.ToLower(strings.TrimSpace(token))] = true
+			}
+		}
 	}
 	return skip
 }
@@ -165,7 +177,7 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var body []byte
 	var e error
 	if req.Body != nil {
-		body, e = readBounded(req.Body, 64<<20)
+		body, e = readBounded(req.Body, t.maxBody)
 		req.Body.Close()
 		if e != nil {
 			return nil, e
@@ -511,7 +523,16 @@ func (b *bhttpBody) Read(p []byte) (int, error) {
 	if e != nil {
 		return n, failure("ohttp.decryption_failed", e)
 	}
-	if b.known && b.remaining == 0 {
+	if (b.known && b.remaining == 0) || (b.expected >= 0 && b.received == b.expected) {
+		if !b.known {
+			if b.remaining != 0 {
+				return 0, failure("ohttp.decryption_failed", nil)
+			}
+			size, err := readVarint(b.reader, false)
+			if err != nil || size != 0 {
+				return 0, failure("ohttp.decryption_failed", err)
+			}
+		}
 		if _, err := b.finish(); err != io.EOF {
 			// Do not report the final bytes as successfully read before authentication.
 			return 0, err

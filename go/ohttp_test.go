@@ -260,7 +260,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 						return
 					}
 					var body []byte
-					if scenario.name == "fixed-length" && framing == 1 {
+					if scenario.name == "fixed-length" {
 						body = make([]byte, len(reply))
 						_, e = io.ReadFull(response.Body, body)
 					} else {
@@ -284,5 +284,25 @@ func TestVarintBoundaries(t *testing.T) {
 		if e != nil || v != n {
 			t.Fatalf("%d %d %v", n, v, e)
 		}
+	}
+}
+
+func TestBHTTPMultipleConnectionFields(t *testing.T) {
+	req, err := http.NewRequest("POST", "https://example.com/chat/completions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header = http.Header{
+		"Connection":   {"Foo", "Bar"},
+		"Foo":          {"first-hop-secret"},
+		"Bar":          {"second-hop-secret"},
+		"X-End-To-End": {"retained"},
+	}
+	encoded, err := encodeBHTTPRequest(req, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("hop-secret")) || !bytes.Contains(encoded, []byte("retained")) {
+		t.Fatalf("incorrect connection header filtering: %q", encoded)
 	}
 }

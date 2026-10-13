@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,5 +97,12 @@ func TestStructuralAttestationComparison(t *testing.T) {
 	b.EventLog = json.RawMessage(`[2,1]`)
 	if sameAttestation(a, b) {
 		t.Fatal("array order ignored")
+	}
+}
+
+func TestReadBoundedMaximumLimit(t *testing.T) {
+	body, err := readBounded(strings.NewReader("completion"), math.MaxInt64)
+	if err != nil || string(body) != "completion" {
+		t.Fatalf("maximum limit discarded body: %q, %v", body, err)
 	}
 }

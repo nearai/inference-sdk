@@ -382,7 +382,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		if e != nil {
 			return nil, e
 		}
-		s.transport, e = NewOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers))
+		s.transport, e = newOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers), c.maxBody)
 		if e != nil {
 			return nil, e
 		}
@@ -457,7 +457,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			cancel()
 			return nil, failure("policy.model_attestation_required", nil)
 		}
-		prepared, e = PrepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey})
+		prepared, e = prepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey}, c.maxBody)
 		if e != nil {
 			stop()
 			cancel()

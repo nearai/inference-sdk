@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -73,7 +74,11 @@ func nonce() string {
 	return hex.EncodeToString(b)
 }
 func readBounded(r io.Reader, limit int64) ([]byte, error) {
-	b, e := io.ReadAll(io.LimitReader(r, limit+1))
+	readLimit := limit
+	if limit < math.MaxInt64 {
+		readLimit++
+	}
+	b, e := io.ReadAll(io.LimitReader(r, readLimit))
 	if e == nil && int64(len(b)) > limit {
 		return nil, failure("api.body_too_large", nil)
 	}
