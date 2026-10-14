@@ -3,10 +3,10 @@
 ## Clients and lifecycle
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
-`NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL
-and defaults E2EE to true; set `DisableE2EE: true` to opt out. Direct clients are
-experimental: they do not verify a Gateway, and direct TLS attestation binding
-is disabled, matching JavaScript/Python's current direct-endpoint limitation.
+`NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL.
+Both clients leave E2EE disabled unless `InferenceOptions.E2EE` is set to `true`.
+Direct clients are experimental: they do not verify a Gateway, and direct TLS
+attestation binding is disabled, matching JavaScript/Python's current direct-endpoint limitation.
 Normal HTTPS verification still applies.
 
 Always close the client and each HTTP response body. `Close` cancels shared

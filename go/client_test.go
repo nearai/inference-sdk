@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,7 @@ type fakeCloud struct {
 	attestations    atomic.Int32
 	chats           atomic.Int32
 	tee             bool
+	direct          bool
 	stream          bool
 	tamper          bool
 	badModel        bool
@@ -86,7 +88,12 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
 		}
-		if r.URL.Query().Get("model") != "" {
+		if f.direct {
+			a["model_name"] = "canonical/model"
+			root := maps.Clone(a)
+			root["all_attestations"] = []any{a}
+			json.NewEncoder(w).Encode(root)
+		} else if r.URL.Query().Get("model") != "" {
 			items := []any{a}
 			if f.badModel {
 				bad := map[string]any{}
@@ -412,6 +419,44 @@ func TestSuccessfulE2EEInference(t *testing.T) {
 		})
 	}
 }
+
+func TestDirectClientE2EEIsOptIn(t *testing.T) {
+	for _, e2ee := range []bool{false, true} {
+		name := "default plaintext"
+		if e2ee {
+			name = "explicit E2EE"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee, f.direct, f.encrypt = true, true, e2ee
+			server := httptest.NewServer(f)
+			defer server.Close()
+			opts := DirectInferenceOptions{InferenceOptions: InferenceOptions{
+				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+			}}
+			if e2ee {
+				opts.E2EE = true
+			}
+			client, err := NewDirectInferenceClient(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			body, err := client.CreateChatCompletion(context.Background(), chatRequest())
+			if err != nil || !bytes.Contains(body, []byte("answer")) {
+				t.Fatalf("response=%s err=%v", body, err)
+			}
+			if _, err := client.VerifyResponse(context.Background(), "chat-1"); err != nil {
+				t.Fatal(err)
+			}
+			if f.attestations.Load() != 1 {
+				t.Fatal("expected model preflight")
+			}
+		})
+	}
+}
+
 func TestFailedStreamsAreNotRegistered(t *testing.T) {
 	for _, body := range []string{
 		"event: error\ndata: {\"error\":\"failed\"}\n\ndata: [DONE]\n\n",
