@@ -128,7 +128,6 @@ transport. Add these imports to your application:
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	nearai "github.com/nearai/inference-sdk/go"
 	"github.com/openai/openai-go/v3"
@@ -171,8 +170,8 @@ Completions only; use `AttestationClient` for evidence and metadata.
 
 ## Streaming
 
-Using the same imports, consume every chunk, check the stream error, close the
-stream, and then verify its completion ID. This example buffers display text
+Add `"strings"` to the imports above for the streaming example. Consume every
+chunk, check the stream error, close the stream, and then verify its completion ID. This example buffers display text
 until signature verification succeeds:
 
 ```go

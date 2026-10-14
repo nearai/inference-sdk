@@ -67,7 +67,9 @@ func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id str
 ```
 
 `FetchOptions` selects the signing algorithm, optionally a signing address, and
-whether to disable TLS binding. Retrieval generates fresh nonces. Model metadata
+whether to disable TLS binding. `FetchGatewayAttestation` and
+`FetchModelAttestations` generate fresh nonces; metadata and completion-signature
+retrieval do not. Model metadata
 reports the canonical model ID, provider type, and whether model attestation is
 supported. Direct clients retrieve model evidence without a Gateway.
 
@@ -417,7 +419,8 @@ cryptographic chain from model execution through Gateway rewriting.
 Manual workflow APIs:
 
 - `NewAttestationClient` / `NewDirectAttestationClient` retrieve metadata,
-  Gateway/model reports, and completion signatures with fresh random nonces.
+  Gateway/model reports, and completion signatures. Only attestation-report
+  fetches generate fresh random nonces.
 - `VerifyGatewayAttestation`, `VerifyModelAttestation`,
   `VerifyDirectModelAttestation`, and `VerifyDirectModelAttestations` authenticate
   those reports. The plural direct helper checks serving-report membership and
