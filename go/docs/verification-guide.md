@@ -273,7 +273,25 @@ policies keyed by image repository, specifying the trusted GitHub repository,
 workflow, and source constraints. Use `Commit` to pin reviewed source. See the
 [image provenance API](./api-reference.md#image-provenance-api) and the
 [runnable examples](../../examples/example-go/README.md) for policy configuration.
-Gateway image policies belong in `GatewayVerification.DeploymentVerifier`.
+The `imagePolicy` helper applies only to `options.DeploymentPolicy`, which runs
+for model deployments. Gateway verification uses a callback without a model
+argument. Use a separate helper for `options.GatewayVerification.DeploymentVerifier`:
+
+```go
+func gatewayImagePolicy(
+	policies map[string]nearai.ImageProvenancePolicy,
+	provenance nearai.ProvenanceOptions,
+) nearai.DeploymentVerifier {
+	return func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
+		return nearai.VerifyDeploymentImageProvenance(
+			ctx, deployment.AppCompose, policies, provenance,
+		)
+	}
+}
+```
+
+Configure the two callbacks with separate model and Gateway image policies.
+`DeploymentPolicy` is not applied to Gateway evidence.
 
 Custom quote, GPU, and deployment verifiers are trusted application code. They
 must authenticate evidence, rather than merely parse it.
@@ -327,13 +345,73 @@ For applications that own HTTP requests, use the standalone APIs in this order:
 1. Create an `AttestationClient` and fetch Gateway evidence with a fresh binding.
 2. Authenticate the report with `VerifyGatewayAttestation`.
 3. Build a pinned transport with `NewPinnedTransport` using the verified Gateway
-   fingerprint, then use it for model evidence, Chat, and receipt retrieval.
+   fingerprint. Rebuild the attestation client with that transport before fetching
+   model evidence or signatures; creating a pinned transport does not modify the
+   original client. Use the pinned HTTP client for Chat as well.
 4. Fetch model evidence and verify every returned report with
    `VerifyModelAttestation`, applying your deployment policy.
 5. If encrypting manually, pass a verified model key to `PrepareE2EEChatRequest`.
    Retain the exact encrypted request and response bytes before decrypting.
 6. Fetch the completion signature and verify its kind with `VerifyModelResponse`
    or `VerifyGatewayResponse` against the corresponding authenticated evidence.
+
+For example, this Gateway preflight rebuilds the evidence client after pinning.
+Add `"net/http"` to your imports:
+
+```go
+func manualPreflight(ctx context.Context, opts nearai.ClientOptions, model string) error {
+	api, err := nearai.NewAttestationClient(opts)
+	if err != nil {
+		return err
+	}
+	fetch := nearai.FetchOptions{SigningAlgo: nearai.Ed25519}
+	fetched, err := api.FetchGatewayAttestation(ctx, fetch)
+	if err != nil {
+		return err
+	}
+	gateway, err := nearai.VerifyGatewayAttestation(
+		ctx, fetched.Attestation, fetched.ClientBinding, nearai.VerificationOptions{},
+	)
+	if err != nil {
+		return err
+	}
+
+	pinned, err := nearai.NewPinnedTransport(nil, gateway.SPKIFingerprint)
+	if err != nil {
+		return err
+	}
+	defer pinned.CloseIdleConnections()
+
+	opts.HTTPClient = &http.Client{
+		Transport: pinned,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	api, err = nearai.NewAttestationClient(opts)
+	if err != nil {
+		return err
+	}
+	models, err := api.FetchModelAttestations(ctx, model, fetch)
+	if err != nil {
+		return err
+	}
+	for _, report := range models.Attestations {
+		if _, err := nearai.VerifyModelAttestation(
+			ctx, report, models.ClientBinding, nearai.VerificationOptions{},
+		); err != nil {
+			return err
+		}
+	}
+
+	// Continue here using opts.HTTPClient for Chat and the rebuilt api for
+	// FetchCompletionSignature. Keep the verified evidence and exact wire bytes.
+	return nil
+}
+```
+
+This preflight demonstrates transport setup; the bare examples include Chat,
+encryption, response signatures, and application deployment policies.
 
 Fetching evidence and decrypting output alone do not verify a receipt. Do not
 reserialize JSON for signature checking. For direct endpoints, use the direct
