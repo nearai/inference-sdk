@@ -139,10 +139,9 @@ including after successful or failed verification. TTL starts at body completion
 > **Experimental — not recommended for production.** Use the Gateway
 > `InferenceClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
 
-Uses the same Chat, Fetch, E2EE, and cache options as `InferenceClient`, but
-keeps E2EE enabled by default and verifies direct model attestations instead of
-Gateway metadata and evidence. Every returned attestation must pass verification
-before Chat is sent.
+Uses the same Chat, Fetch, E2EE, and cache options as `InferenceClient`, with E2EE
+disabled by default. Instead of Gateway metadata and evidence, it verifies every
+returned model attestation before sending Chat.
 There is no `gatewayVerification` option.
 
 ### Constructor options
@@ -153,7 +152,7 @@ There is no `gatewayVerification` option.
 | `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
 | `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. With `ohttp: true`, only `'ed25519'` is accepted. |
-| `e2ee?` | `boolean` | No | `true` | Encrypts supported Chat fields. `false` preserves model verification and sends plaintext over the selected transport. |
+| `e2ee?` | `boolean` | No | `false` | Encrypts supported Chat fields when enabled. `false` preserves model verification and sends plaintext over the selected transport. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat through the direct endpoint's `/ohttp`. Authenticates its configuration with the serving attestation's Ed25519 signer, also selected for model-key routing and response verification. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |

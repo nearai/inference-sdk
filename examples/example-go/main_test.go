@@ -140,7 +140,6 @@ func testOpenAIClientIntegration(t *testing.T, direct bool) {
 		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
 		c, e = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
 			InferenceOptions: opts,
-			DisableE2EE:      true,
 		})
 	} else {
 		c, e = nearai.NewInferenceClient(opts)

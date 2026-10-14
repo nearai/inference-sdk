@@ -61,9 +61,11 @@ func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
 }
 
 // NewDirectInferenceClient is experimental: no Gateway or direct TLS attestation
-// binding. E2EE defaults to true; DisableE2EE explicitly opts out.
+// binding. E2EE is opt-in, as with NewInferenceClient.
 func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error) {
-	o.InferenceOptions.E2EE = !o.DisableE2EE
+	if o.DisableE2EE {
+		o.E2EE = false
+	}
 	return newInferenceClient(o.InferenceOptions, true)
 }
 

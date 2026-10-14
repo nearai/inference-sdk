@@ -300,11 +300,7 @@ pub struct DirectInferenceClientOptions {
 }
 impl Default for DirectInferenceClientOptions {
     fn default() -> Self {
-        InferenceClientOptions {
-            e2ee: true,
-            ..Default::default()
-        }
-        .into()
+        InferenceClientOptions::default().into()
     }
 }
 impl From<InferenceClientOptions> for DirectInferenceClientOptions {
@@ -355,7 +351,6 @@ impl DirectInferenceClient {
         Self::with_options(DirectInferenceClientOptions {
             base_url,
             api_key,
-            e2ee: true,
             ..Default::default()
         })
     }

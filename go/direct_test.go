@@ -68,6 +68,7 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
 		InferenceOptions: InferenceOptions{
 			ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
+			E2EE:              true,
 			OHTTP:             true,
 			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
 		},

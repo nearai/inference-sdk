@@ -146,7 +146,7 @@ are preserved; the SDK encrypts only the documented protocol fields.
 | Exact response signatures | `VerifyResponse`, `VerifyModelResponse`, `VerifyGatewayResponse` | Explicit call |
 | JSON and streaming Chat | `CreateChatCompletion`, `HTTPClient` | Both supported |
 | Ed25519 and ECDSA | `SigningAlgo` | Ed25519 |
-| Field E2EE | `E2EE`, `PrepareE2EEChatRequest` | Off for Gateway; on for direct clients |
+| Field E2EE | `E2EE`, `PrepareE2EEChatRequest` | Off; set `E2EE: true` to enable |
 | Chunked OHTTP / BHTTP | `OHTTP`, `NewOHTTPTransport`, `VerifyOHTTPKeyConfig` | Off; requires Ed25519 |
 | Deployment preflight/cache | `Verify`, `AttestationTTL` | One hour; shared in-flight verification |
 | Retained response records | `ResponseTTL` | One hour from full body consumption |
