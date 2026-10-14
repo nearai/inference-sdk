@@ -156,8 +156,9 @@ are preserved; the SDK encrypts only the documented protocol fields.
 
 Go uses contexts, `net/http`, structured errors, and standard streams rather
 than the asynchronous object APIs of JavaScript/Python. It has the same protocol
-features; it does not expose a browser transport. See [API and verification
-notes](./docs/api-reference.md) for trust boundaries and integration details.
+features; it does not expose a browser transport. See the
+[verification guide](./docs/verification-guide.md) and
+[API reference](./docs/api-reference.md) for trust boundaries and integration details.
 
 The [live suite](../e2e/README.md) covers staging and production Gateway APIs,
 including both signing algorithms, JSON/SSE, E2EE, OHTTP, and the official OpenAI
@@ -210,7 +211,8 @@ functions to validate it. Fetching evidence alone does not verify it.
 model key; standalone encryption and OHTTP helpers use a 64 MiB body limit.
 Keep exact wire bytes when verifying receipts manually.
 
-- [API and verification notes](./docs/api-reference.md)
+- [Verification guide](./docs/verification-guide.md)
+- [API reference](./docs/api-reference.md)
 - [Gateway, direct, and OpenAI examples](../examples/example-go/README.md)
 - [Live E2E coverage](../e2e/README.md)
 - [Release process](../RELEASING.md)

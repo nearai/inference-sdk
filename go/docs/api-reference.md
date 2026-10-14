@@ -1,4 +1,335 @@
-# Go API and verification notes
+# Go API reference
+
+Import `nearai "github.com/nearai/inference-sdk/go"`. For walkthroughs, see the
+[verification guide](./verification-guide.md); for runnable applications, see
+[the examples](../../examples/example-go/README.md).
+
+## Inference client
+
+```go
+func NewInferenceClient(o InferenceOptions) (*InferenceClient, error)
+func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error)
+
+func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
+func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
+func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
+func (c *InferenceClient) HTTPClient() *http.Client
+func (c *InferenceClient) BaseURL() string
+func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
+func (c *InferenceClient) Close() error
+```
+
+`CreateChatCompletion` marshals a request to JSON and consumes the response. Use
+it for non-streaming Chat; use `HTTPClient` for streaming or the official OpenAI
+Go SDK. `RoundTrip` accepts POST requests only at the configured Chat Completions
+endpoint. It verifies deployments before transmission and retains the exact wire
+bytes after complete body consumption. It does not automatically verify receipts.
+
+`HTTPClient` uses the inference client as its transport. `BaseURL` supplies the
+matching API URL for OpenAI client configuration. Close response bodies and the
+inference client when finished.
+
+### Options and defaults
+
+| Option | Default and behavior |
+| --- | --- |
+| `ClientOptions.APIKey` | Explicit application credential; the library does not read environment variables. |
+| `ClientOptions.BaseURL` | `DefaultBaseURL` (`https://cloud-api.near.ai/v1`) for Gateway; required for direct. |
+| `ClientOptions.Headers` | Additional request headers. |
+| `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
+| `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
+| `E2EE` | `false` for Gateway. Direct clients use `DisableE2EE` instead, defaulting to encryption enabled. |
+| `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
+| `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
+| `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
+| `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
+| `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
+| `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
+| `MaxCacheEntries` | Zero selects 128 entries for each cache. |
+| `MaxReceiptCacheBytes` | Zero selects 64 MiB combined retained request/response bytes. |
+
+Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
+for eviction, cancellation, and retention behavior.
+
+## Evidence retrieval
+
+Fetching reports does not verify them. Keep the returned `ClientBinding` with
+its reports and pass both to the verification functions.
+
+```go
+func NewAttestationClient(o ClientOptions) (*AttestationClient, error)
+func NewDirectAttestationClient(o ClientOptions) (*AttestationClient, error)
+
+func (c *AttestationClient) FetchModelMetadata(ctx context.Context, model string) (ModelMetadata, error)
+func (c *AttestationClient) FetchGatewayAttestation(ctx context.Context, o FetchOptions) (FetchedGatewayAttestation, error)
+func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model string, o FetchOptions) (FetchedModelAttestations, error)
+func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error)
+```
+
+`FetchOptions` selects the signing algorithm, optionally a signing address, and
+whether to disable TLS binding. Retrieval generates fresh nonces. Model metadata
+reports the canonical model ID, provider type, and whether model attestation is
+supported. Direct clients retrieve model evidence without a Gateway.
+
+## Standalone verification
+
+```go
+func VerifyGatewayAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
+func VerifyModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
+func VerifyDirectModelAttestation(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions) (VerifiedAttestation, error)
+func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAttestations, o VerificationOptions) (VerifiedDirectModelAttestations, error)
+
+func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
+func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
+func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error)
+func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
+
+func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
+func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
+func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
+```
+
+Response verification takes exact transmitted bytes, including ciphertext when
+E2EE is enabled. Do not reserialize parsed JSON. Authenticate the attestation
+before passing it to a response helper. The direct plural helpers preserve all
+matching instances; a shared signer does not uniquely identify an instance.
+
+`NewPinnedTransport` clones a standard HTTP transport and checks the attested
+SPKI fingerprint in addition to normal TLS validation. Close its idle connections
+when finished. `CreateTDXQuoteVerifier("")` uses the default PCCS service.
+`GPUVerifierOptions` has `NRASURL`, `JWKSURL`, and `HTTPClient` fields; empty URLs
+select NVIDIA's NRAS and JWKS endpoints.
+
+## Encryption helpers
+
+```go
+type E2EEModelKey struct {
+    SigningAlgo SigningAlgo
+    PublicKey   string
+}
+
+func PrepareE2EEChatRequest(req *http.Request, key E2EEModelKey) (*PreparedE2EEChatRequest, error)
+func (p *PreparedE2EEChatRequest) DecryptJSON(wire []byte) ([]byte, error)
+func (p *PreparedE2EEChatRequest) DecryptSSE(source io.ReadCloser) io.ReadCloser
+
+func VerifyOHTTPKeyConfig(a OHTTPAttestation, signer SigningIdentity) ([]byte, error)
+func NewOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, forwarded []string) (http.RoundTripper, error)
+```
+
+`PreparedE2EEChatRequest.Request` is the encrypted HTTP request. Preparation
+consumes the original body. Authenticate `E2EEModelKey` against verified evidence
+first. `DecryptSSE` wraps a streaming body; consume it completely and close it.
+These helpers decrypt content but do not verify response signatures.
+
+Authenticate OHTTP configuration with `VerifyOHTTPKeyConfig` and an already
+verified signer before constructing a transport. A nil base transport uses
+`http.DefaultTransport`; `forwarded` names additional outer application headers.
+See [encryption](#encryption) for field coverage and limits.
+
+## Image provenance API
+
+```go
+type ImageProvenancePolicy struct {
+    Repository, Workflow, Ref, Commit, SignerIdentity, Issuer string
+}
+
+type VerifiedImageProvenance struct {
+    Digest, Repository, Workflow, Ref, Commit string
+    CertificateIdentity, Issuer, PredicateType string
+}
+
+func FetchImageProvenance(ctx context.Context, repository, digest string, o ProvenanceOptions) ([]json.RawMessage, error)
+func VerifyImageProvenance(ctx context.Context, bundles []json.RawMessage, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) (VerifiedImageProvenance, error)
+func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, policies map[string]ImageProvenancePolicy, o ProvenanceOptions) error
+```
+
+`Repository` is the GitHub `owner/repository`; `Workflow` identifies the build
+workflow. `Ref` constrains its source ref and `Commit` optionally pins a source
+commit. `SignerIdentity` permits an explicitly trusted reusable workflow identity.
+An empty `Issuer` uses `https://token.actions.githubusercontent.com`.
+
+`ProvenanceOptions` contains `TrustedRoot` (Sigstore `root.TrustedMaterial`),
+`HTTPClient` (`*http.Client`), and `GitHubToken` (`string`). Nil trusted material
+uses the production Sigstore trust root. The deployment helper maps image
+repository names to policies and verifies every selected service image.
+
+## Public data types
+
+These structures describe options, fetched evidence, verified results, and
+verification callbacks. A fetched `Attestation` is untrusted until verified.
+`VerifiedAttestation.Deployment` contains measured app-compose text and runtime
+hashes; applications decide whether those measurements are acceptable.
+
+```go
+const DefaultBaseURL = "https://cloud-api.near.ai/v1"
+const NoAliasingHeader = "X-No-Aliasing"
+
+type SigningAlgo string
+
+const (
+	Ed25519 SigningAlgo = "ed25519"
+	ECDSA   SigningAlgo = "ecdsa"
+)
+
+type SigningIdentity struct {
+	SigningAlgo    SigningAlgo `json:"signingAlgo"`
+	SigningAddress string      `json:"signingAddress"`
+}
+
+type Attestation struct {
+	Nonce             string
+	Signer            SigningIdentity
+	IntelQuote        string
+	EventLog          json.RawMessage
+	AppCompose        string
+	ReportedQuoteData string
+	SigningPublicKey  string
+	NvidiaPayload     *string
+	SPKIFingerprint   string
+	ModelName         string
+	InstanceID        string
+}
+
+type ClientBinding struct{ Nonce, SPKIFingerprint string }
+
+type OHTTPAttestation struct {
+	SigningAlgo SigningAlgo `json:"signing_algo"`
+	SigningKey  string      `json:"signing_key"`
+	KeyConfig   string      `json:"key_config"`
+	Signature   string      `json:"signature"`
+}
+
+type FetchedGatewayAttestation struct {
+	Attestation      Attestation
+	ClientBinding    ClientBinding
+	OHTTPAttestation *OHTTPAttestation
+}
+
+type FetchedModelAttestations struct {
+	Attestations       []Attestation
+	ClientBinding      ClientBinding
+	ServingAttestation *Attestation
+	OHTTPAttestation   *OHTTPAttestation
+}
+
+type ModelMetadata struct {
+	ModelID              string `json:"model_id"`
+	ProviderType         string `json:"provider_type"`
+	AttestationSupported bool   `json:"attestation_supported"`
+}
+
+type CompletionSignature struct {
+	Kind       string          `json:"kind"`
+	SignedText string          `json:"signedText"`
+	Signature  string          `json:"signature"`
+	Signer     SigningIdentity `json:"signer"`
+}
+
+type QuoteVerificationResult struct {
+	TCBStatus                     string
+	AdvisoryIDs                   []string
+	DebugEnabled                  bool
+	ReportData, MRConfigID, RTMR3 []byte
+}
+
+type RuntimeMeasurements struct{ OSImageHash, ComposeHash string }
+
+type MeasuredDeployment struct {
+	AppCompose          string
+	RuntimeMeasurements RuntimeMeasurements
+}
+
+type AttestationPolicy struct {
+	AcceptedTCBStatuses []string
+	RequireGPUEvidence  bool
+}
+
+type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
+type GPUEvidenceVerifier func(context.Context, string) error
+type DeploymentVerifier func(context.Context, MeasuredDeployment) error
+type VerificationOptions struct {
+	Policy             AttestationPolicy
+	QuoteVerifier      QuoteVerifier
+	GPUVerifier        GPUEvidenceVerifier
+	DeploymentVerifier DeploymentVerifier
+}
+
+type VerifiedAttestation struct {
+	Signer                SigningIdentity
+	TCBStatus             string
+	AdvisoryIDs           []string
+	Deployment            MeasuredDeployment
+	DeploymentProvenance  string
+	GPUEvidence           string
+	SigningPublicKey      string
+	SPKIFingerprint       string
+	ModelName, InstanceID string
+}
+
+type AttestationVerificationResult struct {
+	Gateway    *VerifiedAttestation
+	Models     []VerifiedAttestation
+	VerifiedAt time.Time
+}
+
+type VerifiedCompletionResult struct {
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestation   *VerifiedAttestation
+	// Attestations contains every matching direct deployment; a shared key does not identify one CVM.
+	Attestations []VerifiedAttestation
+}
+
+// ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
+// A custom transport is part of the trust boundary and must perform normal TLS verification.
+type ClientOptions struct {
+	APIKey     string
+	BaseURL    string
+	Headers    http.Header
+	HTTPClient *http.Client
+}
+
+type FetchOptions struct {
+	SigningAlgo       SigningAlgo
+	SigningAddress    string
+	DisableTLSBinding bool
+}
+
+// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// default to one hour; a pointer to zero disables the corresponding cache.
+type InferenceOptions struct {
+	ClientOptions
+	SigningAlgo         SigningAlgo
+	E2EE                bool
+	OHTTP               bool
+	DisableTLSBinding   bool
+	AttestationTTL      *time.Duration
+	ResponseTTL         *time.Duration
+	GatewayVerification VerificationOptions
+	ModelVerification   VerificationOptions
+	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
+	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
+	MaxBodyBytes int64
+	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
+	MaxCacheEntries int
+	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
+	MaxReceiptCacheBytes int64
+}
+
+// DirectInferenceOptions defaults E2EE to true, matching the other SDKs.
+// Direct TLS identity binding is experimental and disabled in all clients.
+type DirectInferenceOptions struct {
+	InferenceOptions
+	DisableE2EE bool
+}
+
+type VerifiedDirectModelAttestations struct {
+	ServingAttestation VerifiedAttestation
+	Attestations       []VerifiedAttestation
+	SPKIFingerprints   []string
+}
+```
 
 ## Clients and lifecycle
 
@@ -145,6 +476,18 @@ material. Trust-root refresh uses the upstream synchronous API; cancellation is
 checked before and after it, not during its network operation.
 
 ## Errors and development
+
+```go
+type Error struct {
+    Code      string
+    Details   map[string]any
+    Retryable bool
+    Cause     error
+}
+
+func (e *Error) Error() string
+func (e *Error) Unwrap() error
+```
 
 Use `errors.As(err, &sdkError)` for `*nearai.Error`. Branch on `Code`, inspect
 `Details`, and use `errors.Is` for wrapped context cancellation. `Retryable`
