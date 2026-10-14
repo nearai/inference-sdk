@@ -122,6 +122,13 @@ Browser Fetch does not expose the TLS peer certificate, so the browser client
 cannot perform the attested TLS identity check provided by the Node entry point.
 Standard HTTPS certificate validation still applies.
 
+See the runnable [browser Private TEE chat example](../examples/example-browser/README.md)
+for deployment preverification, E2EE streaming, hardware-evidence details, and
+per-response signature verification. The example sends a user-provided key
+directly to a trusted CORS-enabled endpoint. For production applications that
+must keep long-lived API credentials off user devices, use an
+[application proxy](./docs/verification-guide.md#connect-through-an-application-proxy).
+
 ## Use the OpenAI SDK
 
 `InferenceClient` provides a reusable `fetch` transport for the official OpenAI
@@ -149,5 +156,5 @@ to configure it and verify responses.
   proxies, deployment policies, response verification, and error handling.
 - [API reference](./docs/api-reference.md): public functions, parameters,
   defaults, and result fields.
-- [Runnable examples](../examples/README.md): Gateway and direct-model clients,
-  standalone verification, and OpenAI SDK integration.
+- [Runnable examples](../examples/README.md): browser Private TEE chat, Gateway
+  and direct-model clients, standalone verification, and OpenAI SDK integration.
