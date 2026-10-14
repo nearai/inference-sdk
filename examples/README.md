@@ -131,7 +131,7 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
 
-Gateway Chat examples explicitly enable E2EE; the Gateway SDK defaults to
+Gateway and direct Chat client examples explicitly enable E2EE; both clients default to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
 client caches attestations for 60 minutes per model and retains response records for
