@@ -24,16 +24,14 @@ Race tests use `go test -race ./...` and require CGO for Go's race detector only
 the SDK itself does not require CGO. See [the verifier notes](./internal/dcap/README.md)
 for provenance, resource limits, and the maintainer-only artifact rebuild.
 
-This module has no Go release tag yet. For local integration, use a replacement:
+Install the released SDK in your Go project:
 
 ```sh
-go mod edit -require=github.com/nearai/inference-sdk/go@v0.0.0
-go mod edit -replace=github.com/nearai/inference-sdk/go=/absolute/path/to/inference-sdk/go
-go mod tidy
+go get github.com/nearai/inference-sdk/go@v0.1.0
 ```
 
-After this PR merges, `go get github.com/nearai/inference-sdk/go@main` can resolve
-a pseudo-version. A future module release uses a `go/vX.Y.Z` tag.
+Go module releases use `go/vX.Y.Z` repository tags. See the
+[release process](../RELEASING.md#go-module) for maintainer instructions.
 
 ## Send and verify a completion
 

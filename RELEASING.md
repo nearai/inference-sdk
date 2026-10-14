@@ -154,9 +154,22 @@ released package in a fresh project and verify its public imports.
 
 ## Go module
 
-The Go module is `github.com/nearai/inference-sdk/go`. No Go version has been
-released yet. Validate its embedded verifier reproduction, `make -C go check`, and
+The Go module is `github.com/nearai/inference-sdk/go`. Version `v0.1.0` is
+published under tag `go/v0.1.0`. Validate its embedded verifier reproduction, `make -C go check`, and
 the Go example before release. Tag the reviewed commit with `go/vX.Y.Z` for
 Go's subdirectory module versioning. Do not reuse the root Rust/Python or npm
 tags. Consumers need only Go; the module embeds the DCAP WASM artifact. Include
 the pinned core revision in release notes and verify fresh `CGO_ENABLED=0` builds.
+
+Go publishes through Git tags and the public module proxy; the Publish package
+workflow currently handles JavaScript, Python, and Rust. After pushing the Go
+tag, verify proxy availability and installation without a local replacement:
+
+```sh
+GOPROXY=https://proxy.golang.org go list -m github.com/nearai/inference-sdk/go@vX.Y.Z
+go get github.com/nearai/inference-sdk/go@vX.Y.Z
+```
+
+Create a GitHub release for the existing tag. For release candidates, use a tag
+such as `go/v0.2.0-rc1` and mark the GitHub release as a pre-release. Keep published
+tags immutable. Package documentation is indexed automatically by pkg.go.dev.
