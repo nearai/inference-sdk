@@ -8,7 +8,6 @@ from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
 from e2e.helpers import required_env, retry_receipt
-from e2e.retry import retry_rate_limit
 from nearai_inference_sdk import (
     AttestationClient,
     InferenceClient,
@@ -120,6 +119,8 @@ async def verify_client_chat(
     signing_algo: SigningAlgo,
     stream: bool,
 ) -> VerifiedCompletionResult:
+    from e2e.retry import retry_rate_limit
+
     response = await retry_rate_limit(
         lambda: chat.completions.create(
             model=model,
@@ -186,6 +187,8 @@ async def test_gateway_chat_receipt(
 async def verify_chat(
     model: str, provider: str, signing_algo: SigningAlgo, stream: bool
 ) -> None:
+    from e2e.retry import retry_rate_limit
+
     base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
     api_key = required_env('NEARAI_API_KEY')
     client = AttestationClient(api_key, base_url=base_url)
