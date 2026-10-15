@@ -1,5 +1,7 @@
 """Direct model verification, including the report set and observed TLS peer."""
 
+from dataclasses import replace
+
 from ..types.direct import (
     DirectModelAttestation,
     DirectTlsBinding,
@@ -8,20 +10,25 @@ from ..types.direct import (
     VerifiedDirectModelAttestations,
 )
 from ..types.verification import (
+    DeploymentVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
     VerifiedAttestationEvidence,
 )
-from ..utils.common import gather_cancel_on_error
+from ..utils.common import gather_cancel_on_error, maybe_await
 from ..utils.errors import verification_failure
 from .attestation_common import (
     verify_peer_spki_fingerprint,
     verify_report_data_binding,
     verify_report_data_binding_with_tls_fingerprint,
 )
-from .attestation_model import _verify_gpu_evidence, _verify_signing_public_key
-from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
+from .attestation_model import (
+    _verify_gpu_evidence,
+    _verify_signing_public_key,
+    verify_model_deployment,
+)
+from .dstack_attestation import verify_dstack_quote
 
 
 async def verify_direct_model_attestation(
@@ -83,8 +90,8 @@ async def _verify_direct_cpu(
             signer=quote.signer,
             reported_spki_fingerprint=attestation.spki_fingerprint,
         )
-    evidence = await verify_dstack_deployment(
-        quote, None if verifiers is None else verifiers.deployment
+    evidence = await verify_model_deployment(
+        attestation, quote, client_binding.nonce, policy, verifiers
     )
     return evidence, fingerprint
 
@@ -94,6 +101,7 @@ async def verify_direct_model_attestations(
     *,
     policy: ModelAttestationPolicy | None = None,
     verifiers: ModelAttestationVerifiers | None = None,
+    serving_deployment: DeploymentVerifier | None = None,
 ) -> VerifiedDirectModelAttestations:
     """Verify every report and bind the serving report to the observed TLS peer."""
 
@@ -130,6 +138,10 @@ async def verify_direct_model_attestations(
         tls_binding = DirectTlsBinding(
             kind='attested', spki_fingerprint=serving.spki_fingerprint
         )
+    if serving_deployment is not None:
+        await maybe_await(serving_deployment(serving.deployment))
+        serving = replace(serving, deployment_provenance='verified')
+        attestations = (*attestations[:index], serving, *attestations[index + 1 :])
     return VerifiedDirectModelAttestations(
         serving_attestation=serving,
         attestations=attestations,

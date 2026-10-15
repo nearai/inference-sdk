@@ -7,20 +7,22 @@ import httpx
 from nearai_inference_sdk import (
     AttestationClient,
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     E2eeModelKey,
     ImageProvenancePolicy,
     MeasuredDeployment,
+    ModelAttestationVerifiers,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
     create_pinned_tls_client,
     prepare_e2ee_chat_request,
+    verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
     verify_model_response,
 )
-
 
 BASE_URL = 'https://cloud-api.near.ai/v1/'
 MODEL = 'z-ai/glm-5.3-flash'
@@ -39,6 +41,26 @@ GATEWAY_IMAGE_POLICIES = {
         repository='nearai/dstack-vpc-client', workflow='.github/workflows/build.yml'
     ),
 }
+
+
+MODEL_IMAGE_POLICIES = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
+    ),
+}
+
+
+async def verify_model_images(deployment: MeasuredDeployment) -> None:
+    # Verify recorded deployment intent, not the currently running containers.
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        MODEL_IMAGE_POLICIES,
+        manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
 
 
 @dataclass
@@ -102,7 +124,11 @@ async def fetch_and_verify_models(
     # connections. Verify every report before choosing an encryption recipient.
     models = []
     for attestation in fetched.attestations:
-        verified = await verify_model_attestation(attestation, fetched.client_binding)
+        verified = await verify_model_attestation(
+            attestation,
+            fetched.client_binding,
+            verifiers=ModelAttestationVerifiers(deployment=verify_model_images),
+        )
         models.append(verified)
     print(f'Model deployments: verified {len(models)}.')
     return models

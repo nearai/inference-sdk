@@ -284,20 +284,31 @@ def test_rejects_missing_or_malformed_certificate_source(
 
 
 @pytest.mark.parametrize('cursor', ['before', 'after'])
+@pytest.mark.parametrize(
+    'github_proxy_url', [None, 'https://app.example/verification/github/']
+)
 async def test_fetches_github_cursor_pages_without_following_returned_urls(
     monkeypatch: pytest.MonkeyPatch,
     cursor: str,
+    github_proxy_url: str | None,
 ) -> None:
     entry = {'bundle': json.loads(BUNDLE), 'bundle_url': 'https://example.com/ignored'}
     requested: list[str] = []
+    api_url = (
+        'https://api.github.com/' if github_proxy_url is None else github_proxy_url
+    )
     base_url = (
-        f'https://api.github.com/repos/nearai/compose-manager/attestations/{DIGEST}'
-        '?per_page=100'
+        f'{api_url}repos/nearai/compose-manager/attestations/{DIGEST}?per_page=100'
     )
 
-    async def github_response(url: str, *, headers: Mapping[str, str]) -> FetchResponse:
+    async def github_response(
+        url: str, *, headers: Mapping[str, str], allow_redirects: bool
+    ) -> FetchResponse:
         requested.append(url)
-        assert headers['Authorization'] == 'Bearer test-token'
+        assert allow_redirects is False
+        assert headers.get('Authorization') == (
+            'Bearer test-token' if github_proxy_url is None else None
+        )
         assert len(requested) <= 2
         entries = [entry] if len(requested) == 1 else [entry] * 100
         return FetchResponse(
@@ -313,7 +324,9 @@ async def test_fetches_github_cursor_pages_without_following_returned_urls(
         )
 
     monkeypatch.setattr(provenance, 'fetch', github_response)
-    bundles = await fetch_image_provenance(POLICY.repository, DIGEST, 'test-token')
+    bundles = await fetch_image_provenance(
+        POLICY.repository, DIGEST, 'test-token', github_proxy_url=github_proxy_url
+    )
 
     assert bundles == [json.dumps(entry['bundle'])] * 101
     assert requested == [base_url, f'{base_url}&{cursor}=cursor%2B%2F%3D']

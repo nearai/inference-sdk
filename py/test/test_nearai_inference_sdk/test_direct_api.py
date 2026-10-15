@@ -35,7 +35,20 @@ async def test_direct_fetch_validates_every_report_and_requires_serving_evidence
         if fault == 'empty':
             reports = []
         return FetchResponse(
-            status=200, body=json.dumps({**root, 'all_attestations': reports}).encode()
+            status=200,
+            body=json.dumps(
+                {
+                    **root,
+                    'all_attestations': reports,
+                    'compose_manager_attestation': {
+                        'actions': [],
+                        'actions_hash': '00' * 32,
+                        'nonce': query['nonce'][0],
+                        'quote': 'cc',
+                        'event_log': [],
+                    },
+                }
+            ).encode(),
         )
 
     monkeypatch.setattr(cloud_api, 'default_fetch', fetch)
@@ -44,6 +57,8 @@ async def test_direct_fetch_validates_every_report_and_requires_serving_evidence
         fetched = await client.fetch_model_attestations(signing_algo='ecdsa')
         assert len(fetched.attestations) == 2
         assert fetched.serving_attestation == fetched.attestations[0]
+        assert fetched.serving_attestation.compose_manager_attestation is not None
+        assert fetched.attestations[1].compose_manager_attestation is None
         assert all(
             item.nonce == fetched.client_binding.nonce for item in fetched.attestations
         )

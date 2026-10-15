@@ -398,6 +398,7 @@ trusted image repositories and build policies:
 ```python
 from nearai_inference_sdk import (
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     ImageProvenancePolicy,
     MeasuredDeployment,
     verify_deployment_image_provenance,
@@ -446,12 +447,140 @@ build provenance.
 The helpers are asynchronous. The deployment helper reports selection, request,
 and verification failures as `VerificationError`; wrapped request failures retain
 their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks. An optional GitHub
-token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
+Multiple bundles are tried until one satisfies all checks.
 
 This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides, inspect compose-manager,
+rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
+
+#### GitHub authentication and proxies
+
+Server-side applications can pass `github_token` to use GitHub's authenticated
+API quota. This is a GitHub token, not a Gateway API key. Keep it on the backend,
+never in browser code.
+
+To retrieve evidence through a backend proxy instead:
+
+```python
+await verify_deployment_image_provenance(
+    deployment.app_compose,
+    image_policies,
+    github_proxy_url='https://app.example/verification/github',
+)
+```
+
+`fetch_image_provenance` and `verify_compose_manager_deployment_image_provenance`
+accept the same keyword-only option. The latter uses it for both compose files
+and image proofs. Without it, requests go directly to GitHub. With it,
+`github_token` is ignored; the proxy supplies its own token on the server.
+
+The SDK appends GitHub API paths to the proxy base URL, preserving its path
+prefix. The proxy must support these read-only requests:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Forward pagination cursors and preserve HTTP status codes. All pages stay on
+the proxy even when `Link` contains absolute GitHub URLs. Return content
+directly, not a redirect. Use an absolute HTTP(S) base URL without credentials,
+query parameters or a fragment; a trailing slash is optional.
+
+Keep GitHub credentials on the backend, restrict allowed repositories and
+read-only routes, and cache bundles by repository and digest with a refresh
+policy for newly published proofs. Authentication alone does not eliminate
+limits on the proxy's shared GitHub quota. If the same proxy also serves a
+browser SDK, prefer same-origin access or configure CORS to allow `Accept` and
+`X-GitHub-Api-Version` and expose `Link`.
+
+The proxy returns evidence, not a verification verdict. The SDK still verifies
+the original bundle and caller policy, and checks compose-file hashes locally.
+This option does not change Sigstore trust-root retrieval.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `app_compose` can describe the launcher rather than containers
+deployed later. Use the Compose Manager helper for the recorded model deployment:
+
+```python
+from nearai_inference_sdk import (
+    ComposeManagerImagePolicy,
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    ModelAttestationVerifiers,
+    verify_compose_manager_deployment_image_provenance,
+    verify_model_attestation,
+)
+
+model_image_policies = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy',
+        workflow='.github/workflows/build.yml',
+    ),
+}
+
+
+async def check_model_images(deployment: MeasuredDeployment) -> None:
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        model_image_policies,
+        manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
+
+
+for attestation in fetched_models.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_models.client_binding,
+        verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+    )
+```
+
+Model verification authenticates supplied Compose Manager evidence: its TDX quote,
+TCB policy, nonce, action hash, event log and binding to the same measured
+`app_compose`. The callback receives `deployment.compose_manager`. The helper
+selects the last `compose_up`, downloads its file from `nearai/cvm-compose-files`
+at the recorded commit, verifies `file_sha256`, then checks the required image
+builds from the action's named `services`. An omitted or empty list selects the
+whole file; unknown service names are rejected. Images in unselected services
+cannot satisfy a policy. The required `manager_image_policy` separately verifies the latest `compose_manager_started` image. Missing startup evidence, a different image repository, an unpinned image, or a rejected build fails verification; an older compose reference cannot satisfy this policy.
+Use `compose_file` for a specific project's latest recorded file, and
+`compose_repository` for another trusted repository. In `InferenceClient`, use
+this callback through `model_verification.verifiers.deployment`.
+
+This proves recorded deployment intent, not action success or current runtime
+state. Matching boot configuration does not identify a unique CVM. The policies
+cover the proxy and manager builds, not every container, model weights or boot
+launcher provenance; approve the boot configuration separately. Missing manager
+evidence is allowed by basic model verification but rejected by this helper.
+On direct endpoints, envelope-level evidence applies only to the serving report.
+Use `serving_deployment` for this policy, keeping per-report checks in
+`verifiers.deployment`:
+
+```python
+from nearai_inference_sdk import verify_direct_model_attestations
+
+verified = await verify_direct_model_attestations(
+    fetched_direct,
+    serving_deployment=check_model_images,
+)
+```
+
+For `DirectInferenceClient`, pass
+`model_verification=DirectModelVerificationOptions(serving_deployment=check_model_images)`
+(import `DirectModelVerificationOptions` from the SDK). Every model report still
+undergoes its normal quote, GPU and deployment checks. This additional policy
+runs after the whole set and its TLS binding pass; it marks only the serving
+report's provenance as verified. Missing manager evidence in that report still
+fails the policy. With this option, the client uses only the serving report for
+Chat's signer, TLS pins (when enabled), and response verification. When composing
+the bare functions yourself, pass `(verified.serving_attestation,)` to
+`verify_direct_model_response` to apply the same restriction.
 
 ## 2. Send the completion and retain exact bytes
 

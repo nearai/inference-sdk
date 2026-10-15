@@ -5,12 +5,21 @@ from typing import Literal
 
 from .attestation_model import ModelAttestation
 from .chat import CompletionSignature
+from .inference_client import ModelVerificationOptions
 from .ohttp import OhttpAttestation
 from .verification import (
+    DeploymentVerifier,
     GatewayTlsBinding,
     ModelClientBinding,
     VerifiedModelAttestation,
 )
+
+
+@dataclass(frozen=True, kw_only=True)
+class DirectModelVerificationOptions(ModelVerificationOptions):
+    """Per-report checks; a serving-only policy restricts Chat to that report."""
+
+    serving_deployment: DeploymentVerifier | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

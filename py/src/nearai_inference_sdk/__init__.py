@@ -11,6 +11,9 @@ from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
 )
+from .core.compose_manager_provenance import (
+    verify_compose_manager_deployment_image_provenance,
+)
 from .core.direct_api import DirectAttestationClient
 from .core.direct_inference_client import (
     DirectInferenceClient,
@@ -47,10 +50,17 @@ from .types.cloud_api import (
     FetchedModelAttestations,
     ModelMetadata,
 )
+from .types.compose_manager import (
+    ComposeManagerAction,
+    ComposeManagerAttestation,
+    ComposeManagerImagePolicy,
+    VerifiedComposeManagerAttestation,
+)
 from .types.direct import (
     DirectAttestationVerificationResult,
     DirectClientBinding,
     DirectModelAttestation,
+    DirectModelVerificationOptions,
     DirectTlsBinding,
     FetchedDirectModelAttestations,
     VerifiedDirectCompletionResult,
@@ -110,6 +120,9 @@ __all__ = [
     'CompletionSignature',
     'CompletionSignatureKind',
     'CompletionSignatureReference',
+    'ComposeManagerAction',
+    'ComposeManagerAttestation',
+    'ComposeManagerImagePolicy',
     'DeploymentPolicy',
     'DeploymentVerifier',
     'DirectAttestationClient',
@@ -117,6 +130,7 @@ __all__ = [
     'DirectClientBinding',
     'DirectInferenceClient',
     'DirectModelAttestation',
+    'DirectModelVerificationOptions',
     'DirectTlsBinding',
     'E2eeModelKey',
     'FetchedDirectModelAttestations',
@@ -148,6 +162,7 @@ __all__ = [
     'VerificationFailure',
     'VerifiedAttestationEvidence',
     'VerifiedCompletionResult',
+    'VerifiedComposeManagerAttestation',
     'VerifiedDirectCompletionResult',
     'VerifiedDirectModelAttestation',
     'VerifiedDirectModelAttestations',
@@ -163,6 +178,7 @@ __all__ = [
     'fetch_image_provenance',
     'find_model_attestation_for_signature',
     'prepare_e2ee_chat_request',
+    'verify_compose_manager_deployment_image_provenance',
     'verify_deployment_image_provenance',
     'verify_direct_model_attestation',
     'verify_direct_model_attestations',

@@ -265,6 +265,14 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             return f'[{code}] Deployment provenance verification failed'
         case 'provenance.deployment_images_invalid':
             return f'[{code}] Deployment image selection failed: {_detail(details, "reason")}'
+        case 'binding.compose_manager_actions_mismatch':
+            return f'[{code}] Compose Manager actions do not match the quote-authenticated hash'
+        case 'provenance.compose_manager_deployment_invalid':
+            return f'[{code}] Compose Manager deployment cannot be verified: {_detail(details, "reason")}'
+        case 'provenance.compose_file_request_failed':
+            return f'[{code}] Recorded compose file could not be retrieved'
+        case 'provenance.compose_file_hash_mismatch':
+            return f'[{code}] Compose file does not match its recorded hash'
         case 'provenance.image_request_failed':
             return (
                 f'[{code}] Image provenance request failed for '

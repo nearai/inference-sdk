@@ -10,6 +10,7 @@ from ..types.attestation_common import (
     SigningIdentity,
     TcbStatus,
 )
+from ..types.compose_manager import VerifiedComposeManagerAttestation
 from ..types.verification import (
     AttestationPolicy,
     DeploymentVerifier,
@@ -57,13 +58,21 @@ async def verify_dstack_quote(
         'attestation.signer.signing_address',
     )
 
+    quote = await verify_tdx_quote(attestation.intel_quote, policy, tdx_quote_verifier)
+    verify_advertised_report_data(advertised_report_data, quote.report_data)
+    return VerifiedDstackQuote(attestation=attestation, quote=quote, signer=signer)
+
+
+async def verify_tdx_quote(
+    intel_quote: str,
+    policy: AttestationPolicy | None,
+    tdx_quote_verifier: TdxQuoteVerifier | None,
+) -> TdxQuoteVerificationResult:
     verifier: TdxQuoteVerifier = (
         verify_dcap_quote if tdx_quote_verifier is None else tdx_quote_verifier
     )
     try:
-        quote: TdxQuoteVerificationResult = await maybe_await(
-            verifier(attestation.intel_quote)
-        )
+        quote: TdxQuoteVerificationResult = await maybe_await(verifier(intel_quote))
     except VerificationError:
         raise
     except Exception as error:
@@ -74,7 +83,6 @@ async def verify_dstack_quote(
         ) from error
     _validate_quote_result(quote)
 
-    verify_advertised_report_data(advertised_report_data, quote.report_data)
     if quote.debug_enabled:
         raise verification_failure('policy.debug_enabled')
 
@@ -88,12 +96,13 @@ async def verify_dstack_quote(
                 'advisoryIds': list(quote.advisory_ids),
             },
         )
-    return VerifiedDstackQuote(attestation=attestation, quote=quote, signer=signer)
+    return quote
 
 
 async def verify_dstack_deployment(
     verified_quote: VerifiedDstackQuote,
     deployment_verifier: DeploymentVerifier | None,
+    compose_manager: VerifiedComposeManagerAttestation | None = None,
 ) -> VerifiedAttestationEvidence:
     runtime_measurements = verify_and_replay_rtmr3(
         verified_quote.attestation.event_log, verified_quote.quote.rt_mr3
@@ -104,6 +113,7 @@ async def verify_dstack_deployment(
     deployment = MeasuredDeployment(
         app_compose=verified_quote.attestation.app_compose,
         runtime_measurements=runtime_measurements,
+        compose_manager=compose_manager,
     )
 
     provenance = 'not_checked'

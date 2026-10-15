@@ -37,6 +37,7 @@ from ..types.cloud_api import (
     FetchedModelAttestations,
     ModelMetadata,
 )
+from ..types.compose_manager import ComposeManagerAttestation
 from ..types.ohttp import OhttpAttestation
 from ..types.verification import (
     GatewayClientBinding,
@@ -375,6 +376,20 @@ def _map_model_attestation(
         reported_quote_data=raw.report_data,
         nvidia_payload=raw.nvidia_payload,
         signing_public_key=raw.signing_public_key,
+        compose_manager_attestation=(
+            None
+            if raw.compose_manager_attestation is None
+            else ComposeManagerAttestation(
+                actions=tuple(
+                    action.root for action in raw.compose_manager_attestation.actions
+                ),
+                actions_hash=raw.compose_manager_attestation.actions_hash,
+                nonce=raw.compose_manager_attestation.nonce,
+                intel_quote=raw.compose_manager_attestation.quote,
+                event_log=raw.compose_manager_attestation.event_log,
+                reported_quote_data=raw.compose_manager_attestation.report_data,
+            )
+        ),
     )
 
 

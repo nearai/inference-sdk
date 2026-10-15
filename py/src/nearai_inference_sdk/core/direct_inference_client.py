@@ -9,6 +9,7 @@ from ..types.attestation_common import SigningAlgo
 from ..types.chat import CompletionSignature
 from ..types.direct import (
     DirectAttestationVerificationResult,
+    DirectModelVerificationOptions,
     VerifiedDirectCompletionResult,
     VerifiedDirectModelAttestation,
 )
@@ -71,7 +72,9 @@ class DirectInferenceClient(
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
-        model_verification: ModelVerificationOptions | None = None,
+        model_verification: DirectModelVerificationOptions
+        | ModelVerificationOptions
+        | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
         super().__init__(
@@ -89,6 +92,11 @@ class DirectInferenceClient(
         self._attestation_client = DirectAttestationClient(
             base_url, api_key=api_key, headers=self._headers
         )
+        self._serving_deployment = (
+            model_verification.serving_deployment
+            if isinstance(model_verification, DirectModelVerificationOptions)
+            else None
+        )
 
     async def _create_session(
         self, model: str
@@ -102,6 +110,12 @@ class DirectInferenceClient(
             fetched,
             policy=self._model_options.policy,
             verifiers=self._get_model_verifiers(model),
+            serving_deployment=self._serving_deployment,
+        )
+        eligible_attestations = (
+            verified.attestations
+            if self._serving_deployment is None
+            else (verified.serving_attestation,)
         )
         serving_signer = verified.serving_attestation.signer
         key_config = None
@@ -111,6 +125,9 @@ class DirectInferenceClient(
             key_config = verify_ohttp_key_config(
                 fetched.ohttp_attestation, serving_signer
             )
+        # OHTTP and a serving-only policy require the serving signer. Another
+        # verified report with that same identity may supply its public key.
+        require_serving_signer = self._ohttp or self._serving_deployment is not None
         selected = next(
             (
                 item
@@ -118,7 +135,7 @@ class DirectInferenceClient(
                 if item.signer.signing_algo == self._signing_algo
                 and item.signing_public_key is not None
                 and (
-                    not self._ohttp
+                    not require_serving_signer
                     or (
                         item.signer.signing_algo == serving_signer.signing_algo
                         and hex_to_bytes(item.signer.signing_address)
@@ -132,7 +149,7 @@ class DirectInferenceClient(
             raise verification_failure('e2ee.model_public_key_required')
         attestations = tuple(
             item
-            for item in verified.attestations
+            for item in eligible_attestations
             if item.signer.signing_algo == self._signing_algo
             and hex_to_bytes(item.signer.signing_address)
             == hex_to_bytes(selected.signer.signing_address)
