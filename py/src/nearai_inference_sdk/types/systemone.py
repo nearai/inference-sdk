@@ -15,19 +15,19 @@ class SystemOneNoulCriteria(TypedDict, total=False):
 
 class SystemOneNoulQuestion(TypedDict):
     type: Literal['noul']
-    instructions: NotRequired[SystemOneContent]
+    instructions: SystemOneContent
     criteria: NotRequired[SystemOneNoulCriteria]
 
 
 class SystemOneChoiceQuestion(TypedDict):
     type: Literal['choice']
-    instructions: NotRequired[SystemOneContent]
+    instructions: SystemOneContent
     criteria: dict[str, SystemOneContent | None]
 
 
 class SystemOneScoreQuestion(TypedDict):
     type: Literal['score']
-    instructions: NotRequired[SystemOneContent]
+    instructions: SystemOneContent
     criteria: list[SystemOneContent]
 
 
