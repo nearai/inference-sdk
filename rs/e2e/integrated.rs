@@ -1,5 +1,9 @@
 //! Real Gateway coverage for the integrated transport; never use mock verifiers.
-use super::{read_completion_id, required_env, LiveModel};
+use super::{
+    read_completion_id, required_env,
+    retry::{error_delay, rate_limit_delay, retry_rate_limit},
+    LiveModel,
+};
 use nearai_inference_sdk::{
     CompletionSignatureKind, GatewayTlsBinding, GpuEvidenceStatus, InferenceClient,
     InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
@@ -92,19 +96,27 @@ async fn verify_chat(
             "max_completion_tokens": 1024,
             "stream": stream,
         });
-        let response = if stream {
-            let response = client.send(client.chat_request(body)?).await?;
-            assert!(
-                response.status.is_success(),
-                "Chat returned HTTP {}",
-                response.status
-            );
-            // Consume HTTP EOF, including any bytes after SSE [DONE] and OHTTP's
-            // authenticated final chunk, before looking up the retained receipt.
-            response.bytes().await?
-        } else {
-            serde_json::to_vec(&client.chat_completions(body).await?)?
-        };
+        let response = retry_rate_limit(
+            || async { client.send(client.chat_request(body.clone())?).await },
+            |result| match result {
+                Ok(response) => rate_limit_delay(
+                    response.status.as_u16(),
+                    response
+                        .headers
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
+                ),
+                Err(error) => error_delay(error),
+            },
+        )
+        .await?;
+        assert!(
+            response.status.is_success(),
+            "Chat returned HTTP {}",
+            response.status
+        );
+        // Read successful JSON/SSE once, through EOF including OHTTP authentication.
+        let response = response.bytes().await?;
         let id = read_completion_id(&response, stream)?;
         let receipt = verify_receipt_with_retry(&client, &id).await?;
         assert_eq!(receipt.signature.signer.signing_algo, signing_algo);
@@ -157,7 +169,9 @@ async fn verify_receipt_with_retry(
     // cryptographic check; the integrated client classifies those as permanent.
     for backoff_ms in [500, 1_000, 2_000, 4_000] {
         match client.verify_response(id).await {
-            Err(error) if error.retryable() => {
+            Err(error)
+                if error.retryable() || error.code() == "api.completion_signature_unavailable" =>
+            {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             result => return result,

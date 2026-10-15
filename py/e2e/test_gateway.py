@@ -2,15 +2,13 @@
 
 import asyncio
 import json
-import os
-from collections.abc import Awaitable, Callable
 
 import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
+from e2e.helpers import required_env, retry_receipt
 from nearai_inference_sdk import (
-    ApiError,
     AttestationClient,
     InferenceClient,
     ModelAttestationPolicy,
@@ -121,11 +119,15 @@ async def verify_client_chat(
     signing_algo: SigningAlgo,
     stream: bool,
 ) -> VerifiedCompletionResult:
-    response = await chat.completions.create(
-        model=model,
-        messages=[{'role': 'user', 'content': 'Reply with the single word OK.'}],
-        max_completion_tokens=1024,
-        stream=stream,
+    from e2e.retry import retry_rate_limit
+
+    response = await retry_rate_limit(
+        lambda: chat.completions.create(
+            model=model,
+            messages=[{'role': 'user', 'content': 'Reply with the single word OK.'}],
+            max_completion_tokens=1024,
+            stream=stream,
+        )
     )
     if stream:
         completion_id = None
@@ -185,6 +187,8 @@ async def test_gateway_chat_receipt(
 async def verify_chat(
     model: str, provider: str, signing_algo: SigningAlgo, stream: bool
 ) -> None:
+    from e2e.retry import retry_rate_limit
+
     base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
     api_key = required_env('NEARAI_API_KEY')
     client = AttestationClient(api_key, base_url=base_url)
@@ -234,8 +238,10 @@ async def verify_chat(
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
-        response = await pinned_tls_client.post(
-            base_url + 'chat/completions', content=request_body, headers=headers
+        response = await retry_rate_limit(
+            lambda: pinned_tls_client.post(
+                base_url + 'chat/completions', content=request_body, headers=headers
+            )
         )
         assert response.status_code == 200, f'Chat returned HTTP {response.status_code}'
         response_body = response.content
@@ -260,18 +266,6 @@ async def verify_chat(
         verify_gateway_response(request_body, response_body, signature, gateway)
         with pytest.raises(VerificationError):
             verify_gateway_response(request_body, altered, signature, gateway)
-
-
-async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
-    # Retry receipt propagation only. Never repeat Chat or cryptographic checks.
-    for delay in (0.5, 1, 2, 4):
-        try:
-            return await lookup()
-        except ApiError as error:
-            if not error.retryable:
-                raise
-        await asyncio.sleep(delay)
-    return await lookup()
 
 
 def read_completion_id(response_body: bytes, stream: bool) -> str:
@@ -310,13 +304,6 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     )
     assert content.strip(), 'Expected non-empty Chat content'
     return completion_id
-
-
-def required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f'{name} is required for live E2E tests')
-    return value
 
 
 def selected_models(provider: str) -> list[str]:

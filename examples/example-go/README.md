@@ -61,3 +61,7 @@ An optional `GITHUB_TOKEN` increases GitHub API rate limits for provenance looku
 OpenAI transport with local signed fixtures. Live OpenAI JSON/SSE coverage is
 opt-in: `go test -tags=e2e -run '^TestLiveOpenAI$' -v .`, with the shared live
 configuration from [the E2E guide](../../e2e/README.md).
+The live case calls `RunLiveOpenAI`, which retries only HTTP 429 request starts
+for both JSON and streaming Chat: at most four sends with 5/10/20 second backoffs,
+honoring a longer `Retry-After` within the case deadline. Successful responses and
+failed streams are never replayed. The ordinary examples keep retries disabled.

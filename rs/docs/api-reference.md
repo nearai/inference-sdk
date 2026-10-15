@@ -405,3 +405,6 @@ each error variant.
 `fetch_completion_signature` maps a valid 2xx unavailable response to
 `ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
 service's code and message.
+
+`ApiError::HttpStatus` preserves the optional server `retry_after` header. The SDK
+does not automatically replay inference; callers own their retry budget.

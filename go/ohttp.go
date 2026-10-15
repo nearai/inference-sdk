@@ -253,7 +253,7 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		res.Body.Close()
 		return nil, &Error{
 			Code:      "api.http_status",
-			Details:   map[string]any{"status": res.StatusCode},
+			Details:   map[string]any{"resource": "ohttp", "status": res.StatusCode, "retryAfter": res.Header.Get("Retry-After")},
 			Retryable: res.StatusCode == 429 || res.StatusCode >= 500,
 		}
 	}

@@ -57,6 +57,8 @@ are asynchronous. Standalone response-signature verification is synchronous.
 
 ## InferenceClient
 
+The built-in Chat client sends each request once (`max_retries=0`). External OpenAI clients retain their own retry configuration; set `max_retries=0` when an outer retry loop owns the budget.
+
 Use in an `asyncio` event loop as an asynchronous context manager, or call `await client.aclose()` when
 finished. Chat Completions are supported. `chat.completions.create` does not
 automatically verify the response signature; use `verify_response` afterwards.

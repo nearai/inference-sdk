@@ -833,6 +833,7 @@ function createOpenAiClient({
     apiKey: requestConfiguration.apiKey ?? OPENAI_WRAPPER_API_KEY,
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
+    maxRetries: 0,
     defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
   });

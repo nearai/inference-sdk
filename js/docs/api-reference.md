@@ -1,5 +1,7 @@
 # TypeScript SDK API reference
 
+The built-in Chat client sends each request once (`maxRetries: 0`). Callers may explicitly opt into OpenAI retries per request. External OpenAI clients retain their own retry configuration; disable it when an outer retry loop owns the budget.
+
 This page describes the attestation, E2EE, and response verification APIs in
 `@nearai/inference-sdk`. For integration steps and examples, see the
 [verification guide](./verification-guide.md).

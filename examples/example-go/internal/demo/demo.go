@@ -368,15 +368,24 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 
 // RunOpenAI covers the official OpenAI SDK through the verified Gateway transport.
 func RunOpenAI(ctx context.Context, c Config) error {
-	return runOpenAI(ctx, c, false)
+	return runOpenAI(ctx, c, openAIRunOptions{})
+}
+
+// RunLiveOpenAI adds the live suite's bounded retry policy for rejected Chat requests.
+func RunLiveOpenAI(ctx context.Context, c Config) error {
+	return runOpenAI(ctx, c, openAIRunOptions{retryRateLimits: true})
 }
 
 // RunDirectOpenAI is experimental and does not authenticate direct TLS with attestation.
 func RunDirectOpenAI(ctx context.Context, c Config) error {
-	return runOpenAI(ctx, c, true)
+	return runOpenAI(ctx, c, openAIRunOptions{direct: true})
 }
 
-func runOpenAI(ctx context.Context, c Config, direct bool) error {
+type openAIRunOptions struct {
+	direct, retryRateLimits bool
+}
+
+func runOpenAI(ctx context.Context, c Config, runOptions openAIRunOptions) error {
 	opts := nearai.InferenceOptions{
 		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
 		SigningAlgo:   c.Algo,
@@ -384,7 +393,7 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	}
 	var client *nearai.InferenceClient
 	var err error
-	if direct {
+	if runOptions.direct {
 		client, err = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
 			InferenceOptions: opts,
 		})
@@ -395,10 +404,14 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 		return err
 	}
 	defer client.Close()
+	httpClient := client.HTTPClient()
+	if runOptions.retryRateLimits {
+		httpClient.Transport = &rateLimitTransport{base: httpClient.Transport, sleep: sleepRateLimit}
+	}
 	ai := openai.NewClient(
 		option.WithAPIKey(c.Key),
 		option.WithBaseURL(client.BaseURL()),
-		option.WithHTTPClient(client.HTTPClient()),
+		option.WithHTTPClient(httpClient),
 		option.WithMaxRetries(0),
 	)
 	params := openai.ChatCompletionNewParams{

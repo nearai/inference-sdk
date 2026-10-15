@@ -245,16 +245,20 @@ test('rejects a malformed key config before making requests', () => {
   expect(transport).not.toHaveBeenCalled();
 });
 
-test('wraps an outer HTTP failure with OHTTP resource metadata', async () => {
+test('preserves an outer rate limit and its retry delay', async () => {
   const ohttp = createOhttpFetch({
     keyConfig: config,
     baseUrl: BASE_URL,
-    fetch: async () => new Response(null, { status: 503 }),
+    fetch: async () =>
+      new Response(null, {
+        status: 429,
+        headers: { 'retry-after': '12' },
+      }),
   });
   await expect(ohttp(URL)).rejects.toMatchObject({
     failure: {
       code: 'api.http_status',
-      details: { resource: 'ohttp', status: 503 },
+      details: { resource: 'ohttp', status: 429, retryAfter: '12' },
     },
     retryable: true,
   });

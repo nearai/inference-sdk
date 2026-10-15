@@ -183,6 +183,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
             http_client=self._chat_client,
+            max_retries=0,
         )
         self.chat = self._openai.chat
 
