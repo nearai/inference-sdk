@@ -33,6 +33,8 @@ type fakeCloud struct {
 	next            int
 	attestations    atomic.Int32
 	chats           atomic.Int32
+	extraModel      bool
+	missingModelKey bool
 	tee             bool
 	direct          bool
 	stream          bool
@@ -80,13 +82,16 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		quote, _ := json.Marshal(q)
 		a := map[string]any{
 			"request_nonce":      n,
-			"signing_algo":       "ed25519",
+			"signing_algo":       f.a.Signer.SigningAlgo,
 			"signing_address":    f.a.Signer.SigningAddress,
 			"signing_public_key": f.a.SigningPublicKey,
 			"intel_quote":        string(quote),
 			"event_log":          f.a.EventLog,
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
+		}
+		if f.missingModelKey && r.URL.Query().Get("model") != "" {
+			delete(a, "signing_public_key")
 		}
 		if f.direct {
 			a["model_name"] = "canonical/model"
@@ -95,6 +100,21 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(root)
 		} else if r.URL.Query().Get("model") != "" {
 			items := []any{a}
+			if f.extraModel {
+				other := maps.Clone(a)
+				other["signing_address"] = strings.Repeat("22", 32)
+				report := append([]byte(nil), q.ReportData...)
+				for i := 0; i < 32; i++ {
+					report[i] = 0x22
+				}
+				otherQuote := q
+				otherQuote.ReportData = report
+				encoded, _ := json.Marshal(otherQuote)
+				other["intel_quote"] = string(encoded)
+				other["report_data"] = hex.EncodeToString(report)
+				items = append([]any{other}, items...)
+			}
+
 			if f.badModel {
 				bad := map[string]any{}
 				for k, v := range a {

@@ -142,3 +142,10 @@ Normal unit-test commands do not contact the live service. Jest selects only
 `test/**/*.spec.ts`, pytest defaults to `test/`, and Rust's live tests are
 explicitly ignored until the E2E command opts into them. PR CI still lints and
 typechecks/compiles the live test code without using secrets.
+
+Rust and Go also exercise System One via `NEARAI_E2E_SYSTEMONE_MODEL`, selected
+from the public decision-model catalog. Both algorithms run with production
+quote verification, Gateway TLS pinning, explicit receipt verification, and all
+three answer variants. No System One inference request is retried; unavailable
+receipts use bounded backoff. These tests require live credentials and remain
+opt-in locally.
