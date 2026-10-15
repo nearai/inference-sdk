@@ -11,19 +11,23 @@ export function requiredEnv(name: string): string {
 
 // Allow receipt propagation without repeating inference or retrying
 // cryptographic failures. Each live test still has an overall deadline.
-export async function retryReceipt<T>(lookup: () => Promise<T>): Promise<T> {
+export async function retryReceipt<T>(
+  lookup: () => Promise<T>,
+  wait: (milliseconds: number) => Promise<unknown> = delay,
+): Promise<T> {
   for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
     try {
       return await lookup();
     } catch (error) {
       if (
         !(isApiError(error) || isGenericApiError(error)) ||
-        !error.retryable
+        (!error.retryable &&
+          error.failure.code !== 'api.completion_signature_unavailable')
       ) {
         throw error;
       }
     }
-    await delay(backoffMs);
+    await wait(backoffMs);
   }
   return lookup();
 }

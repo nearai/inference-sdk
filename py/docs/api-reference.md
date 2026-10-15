@@ -128,11 +128,12 @@ same common options as `InferenceClient`, with the following differences:
 | --- | --- |
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
-| `e2ee` | Defaults to `True`. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
 | `model_verification`, `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
+
+E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
 
 `DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
 

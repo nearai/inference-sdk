@@ -2,20 +2,23 @@
 
 Language-specific implementations and verification guides:
 
-- [TypeScript SDK](./js/README.md) — [guide](./js/docs/verification-guide.md)
+- [JavaScript SDK](./js/README.md) — [guide](./js/docs/verification-guide.md)
   and [API reference](./js/docs/api-reference.md)
-- [Rust SDK](./rs/README.md) — [guide](./rs/docs/verification-guide.md)
-  and [API reference](./rs/docs/api-reference.md)
 - [Python SDK](./py/README.md) — [guide](./py/docs/verification-guide.md)
   and [API reference](./py/docs/api-reference.md)
+- [Rust SDK](./rs/README.md) — [guide](./rs/docs/verification-guide.md)
+  and [API reference](./rs/docs/api-reference.md)
+- [Go SDK](./go/README.md) — [guide](./go/docs/verification-guide.md)
+  and [API reference](./go/docs/api-reference.md)
 
 For small end-to-end projects that send a completion and verify its returned
 signature, see the [examples](./examples/README.md).
 
 See [live E2E tests](./e2e/README.md) for real-service coverage and CI setup.
 
-The [Rust](./rs/docs/verification-guide.md#experimental-direct-endpoints), [TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint) and
-[Python](./py/docs/verification-guide.md#direct-model-endpoints) direct-endpoint
+The [Rust](./rs/docs/verification-guide.md#experimental-direct-endpoints), [TypeScript](./js/docs/verification-guide.md#use-a-direct-model-endpoint),
+[Python](./py/docs/verification-guide.md#direct-model-endpoints), and
+[Go](./go/docs/verification-guide.md#experimental-direct-endpoints) direct-endpoint
 clients are experimental and not recommended for production. Use Gateway clients for
 production integrations.
 

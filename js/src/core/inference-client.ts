@@ -259,7 +259,7 @@ export abstract class VerifiedInferenceClientBase<
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
     this.attestationCacheTimeToLiveMs =
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
-    this.e2eeEnabled = options.e2ee !== false;
+    this.e2eeEnabled = options.e2ee ?? false;
     this.signingAlgo = options.signingAlgo ?? 'ed25519';
     this.ohttpEnabled = options.ohttp ?? false;
     this.options = options;
@@ -660,7 +660,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   };
 
   protected constructor(options: NodeInferenceClientOptions) {
-    super({ ...options, e2ee: options.e2ee ?? false });
+    super(options);
     this.gatewayOptions = options;
   }
 
