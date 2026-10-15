@@ -136,7 +136,7 @@ same common options as `InferenceClient`, with the following differences:
 
 E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
 
-System One is available only on Gateway inference clients.
+System One is available only on Gateway inference clients. Provider TEE results retain every matching verified report in `attestations`; `attestation` is the first matching report. A shared signing key does not identify a unique CVM. Chat retains its selected routing report.
 
 `DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
 
