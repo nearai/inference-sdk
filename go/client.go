@@ -387,6 +387,12 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			s.selected = &copy
 		}
 	}
+	if len(s.result.Models) > 0 && s.selected == nil {
+		return nil, failure("e2ee.model_public_key_required", nil)
+	}
+	if c.api.direct && len(s.result.Models) == 0 {
+		return nil, failure("policy.model_attestation_required", nil)
+	}
 	if c.api.direct && opts.ServingDeployment != nil {
 		if servingIndex < 0 {
 			return nil, failure("api.invalid_response", nil)
@@ -398,12 +404,6 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		serving.DeploymentProvenance = "verified"
 		s.result.Models[servingIndex] = serving
 		s.receiptModels = []VerifiedAttestation{serving}
-	}
-	if len(s.result.Models) > 0 && s.selected == nil {
-		return nil, failure("e2ee.model_public_key_required", nil)
-	}
-	if c.api.direct && len(s.result.Models) == 0 {
-		return nil, failure("policy.model_attestation_required", nil)
 	}
 	if s.receiptModels == nil {
 		s.receiptModels = s.result.Models
