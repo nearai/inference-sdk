@@ -701,3 +701,32 @@ async def test_decision_body_uses_configured_receipt_byte_limit(monkeypatch):
         with pytest.raises(ApiError, match='api.body_too_large'):
             await client.systemone.create(REQUEST)
         assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_retains_all_reports_sharing_a_decision_signer(monkeypatch, signing_algo):
+    gateway = DecisionGateway(signing_algo, 'provider_tee')
+    original = gateway.handle
+
+    async def shared(request):
+        response = await original(request)
+        if (
+            request.url.path == '/v1/attestation/report'
+            and 'model' in request.url.params
+        ):
+            body = response.json()
+            body['model_attestations'].append(dict(body['model_attestations'][-1]))
+            return httpx.Response(200, json=body)
+        return response
+
+    monkeypatch.setattr(gateway, 'handle', shared)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        result = await client.systemone.create(REQUEST)
+        verified = await client.verify_response(result.decision_id)
+        assert len(verified.attestations) == 2
+        assert all(
+            item.signer == verified.signature.signer for item in verified.attestations
+        )
+        assert verified.attestation is verified.attestations[0]
+    assert len(gateway.requests) == 1

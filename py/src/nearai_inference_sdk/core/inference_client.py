@@ -39,7 +39,7 @@ from ..types.verification import (
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 )
-from ..utils.common import gather_cancel_on_error, maybe_await
+from ..utils.common import gather_cancel_on_error, hex_to_bytes, maybe_await
 from ..utils.errors import (
     ApiError,
     VerificationError,
@@ -56,7 +56,6 @@ from .cloud_api import (
     AttestationClient,
     _ApiClient,
     _validate_base_url,
-    find_model_attestation_for_signature,
 )
 from .e2ee_request import (
     decode_chat_request,
@@ -693,12 +692,21 @@ class InferenceClient(
             signature: CompletionSignature,
         ) -> VerifiedCompletionResult:
             if signature.kind == 'provider_tee':
-                serving = (
-                    find_model_attestation_for_signature(models, signature)
+                matching = (
+                    tuple(
+                        item
+                        for item in models
+                        if item.signer.signing_algo == signature.signer.signing_algo
+                        and hex_to_bytes(item.signer.signing_address)
+                        == hex_to_bytes(signature.signer.signing_address)
+                    )
                     if systemone
-                    else selected
+                    else ((selected,) if selected is not None else ())
                 )
+                serving = matching[0] if matching else None
                 if serving is None:
+                    if systemone:
+                        raise api_failure('api.model_attestation_signer_not_found')
                     raise verification_failure(
                         'signature.kind_mismatch',
                         {'expected': 'gateway', 'actual': signature.kind},
@@ -708,6 +716,7 @@ class InferenceClient(
                     id=id,
                     signature=signature,
                     attestation=serving,
+                    attestations=matching,
                 )
             verify_gateway_response(request_body, response_body, signature, gateway)
             return VerifiedGatewayCompletionResult(

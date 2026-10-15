@@ -47,7 +47,9 @@ class AttestationVerificationResult:
 class VerifiedModelCompletionResult:
     id: str
     signature: CompletionSignature
+    # Representative report; a shared key does not identify a unique CVM.
     attestation: VerifiedModelAttestation
+    attestations: tuple[VerifiedModelAttestation, ...]
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 
 
