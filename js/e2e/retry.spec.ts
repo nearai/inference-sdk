@@ -84,3 +84,45 @@ test('persistent 429 stops after four requests and a successful response is neve
     assert.deepEqual(waits, [5000, 10000, 20000].slice(0, statuses.length - 1));
   }
 });
+
+test('waits in bounded chunks for Retry-After seconds and HTTP dates', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  for (const header of ['2592000', new Date(2_592_000_000).toUTCString()]) {
+    const waits: number[] = [];
+    let calls = 0;
+    await retryRateLimit(
+      async () =>
+        new Response(null, {
+          status: ++calls === 1 ? 429 : 200,
+          headers: { 'Retry-After': header },
+        }),
+      t.signal,
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    assert.deepEqual(waits, [2_147_483_647, 444_516_353]);
+    assert.equal(calls, 2);
+  }
+});
+
+test('a deadline interrupts an overflowing Retry-After before replay', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const controller = new AbortController();
+  let calls = 0;
+  const pending = retryRateLimit(async () => {
+    calls++;
+    return new Response(null, {
+      status: 429,
+      headers: { 'Retry-After': '2592000' },
+    });
+  }, controller.signal);
+  await Promise.resolve();
+  await Promise.resolve();
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(calls, 1);
+});
