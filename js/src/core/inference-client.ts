@@ -648,7 +648,7 @@ export abstract class VerifiedInferenceClientBase<
     const original = createRequest(input, init);
     this.requireSupportedEndpoint(original);
     const bytes = await readBoundedBody(
-      original.clone().body,
+      original.body,
       this.responseCacheTimeToLiveMs === 0
         ? this.maxBodyBytes
         : Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes),
