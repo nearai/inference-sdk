@@ -13,9 +13,12 @@ export function requiredEnv(name: string): string {
 // cryptographic failures. Each live test still has an overall deadline.
 export async function retryReceipt<T>(
   lookup: () => Promise<T>,
-  wait: (milliseconds: number) => Promise<unknown> = delay,
+  waitOrSignal: ((milliseconds: number) => Promise<unknown>) | AbortSignal = delay,
 ): Promise<T> {
+  const signal = typeof waitOrSignal === 'function' ? undefined : waitOrSignal;
+  const wait = typeof waitOrSignal === 'function' ? waitOrSignal : (ms: number) => delay(ms, undefined, { signal });
   for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
+    signal?.throwIfAborted();
     try {
       return await lookup();
     } catch (error) {
@@ -29,5 +32,6 @@ export async function retryReceipt<T>(
     }
     await wait(backoffMs);
   }
+  signal?.throwIfAborted();
   return lookup();
 }

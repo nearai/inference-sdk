@@ -65,3 +65,18 @@ test('verification failures are not retried', async () => {
   );
   assert.equal(lookups, 1);
 });
+
+
+test('a test deadline prevents receipt lookup and cancels propagation backoff', async () => {
+  const reason = new Error('deadline');
+  let calls = 0;
+  await assert.rejects(retryReceipt(async () => { calls++; return 'unused'; }, AbortSignal.abort(reason)), (error) => error === reason);
+  assert.equal(calls, 0);
+  const controller = new AbortController();
+  await assert.rejects(retryReceipt(async () => {
+    calls++;
+    queueMicrotask(() => controller.abort(reason));
+    throw unavailable();
+  }, controller.signal), { name: 'AbortError' });
+  assert.equal(calls, 1);
+});
