@@ -2,16 +2,14 @@
 
 import asyncio
 import json
-import os
-from collections.abc import Awaitable, Callable
 
 import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
+from e2e.helpers import required_env, retry_receipt
 from e2e.retry import retry_rate_limit
 from nearai_inference_sdk import (
-    ApiError,
     AttestationClient,
     InferenceClient,
     ModelAttestationPolicy,
@@ -267,18 +265,6 @@ async def verify_chat(
             verify_gateway_response(request_body, altered, signature, gateway)
 
 
-async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
-    # Retry receipt propagation only. Never repeat Chat or cryptographic checks.
-    for delay in (0.5, 1, 2, 4):
-        try:
-            return await lookup()
-        except ApiError as error:
-            if not error.retryable:
-                raise
-        await asyncio.sleep(delay)
-    return await lookup()
-
-
 def read_completion_id(response_body: bytes, stream: bool) -> str:
     if not stream:
         completion = json.loads(response_body)
@@ -315,13 +301,6 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     )
     assert content.strip(), 'Expected non-empty Chat content'
     return completion_id
-
-
-def required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f'{name} is required for live E2E tests')
-    return value
 
 
 def selected_models(provider: str) -> list[str]:

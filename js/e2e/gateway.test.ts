@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { setTimeout as delay } from 'node:timers/promises';
 import OpenAI from 'openai';
-import {
-  InferenceClient as GenericInferenceClient,
-  isApiError as isGenericApiError,
-} from '../dist/index.js';
+import { InferenceClient as GenericInferenceClient } from '../dist/index.js';
 import type {
   InferenceChat,
   InferenceClientOptions,
@@ -16,13 +12,13 @@ import {
   createPinnedTlsFetch,
   findModelAttestationForSignature,
   InferenceClient,
-  isApiError,
   VerificationError,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
   verifyModelResponse,
 } from '../dist/node.js';
+import { requiredEnv, retryReceipt } from './helpers.ts';
 import { retryRateLimit } from './retry.ts';
 
 type LiveModel = {
@@ -347,30 +343,6 @@ for (const selectedModel of MODELS) {
   });
 }
 
-// Allow receipt propagation after Chat, without repeating inference or masking
-// cryptographic verification failures. The enclosing test still has a deadline.
-async function retryReceipt<T>(
-  lookup: () => Promise<T>,
-  signal: AbortSignal,
-): Promise<T> {
-  for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
-    signal.throwIfAborted();
-    try {
-      return await lookup();
-    } catch (error) {
-      if (
-        !(isApiError(error) || isGenericApiError(error)) ||
-        !error.retryable
-      ) {
-        throw error;
-      }
-    }
-    await delay(backoffMs, undefined, { signal });
-  }
-  signal.throwIfAborted();
-  return lookup();
-}
-
 type ReadCompletionIdParams = {
   responseBody: Uint8Array;
   stream: boolean;
@@ -414,10 +386,4 @@ function readCompletionId({
   assert.equal(finishReason, 'stop', 'SSE must complete without truncation');
   assert.ok(content.trim(), 'Expected non-empty Chat content');
   return id;
-}
-
-function requiredEnv(name: string): string {
-  const value = process.env[name];
-  assert.ok(value, `${name} is required for live E2E tests`);
-  return value;
 }

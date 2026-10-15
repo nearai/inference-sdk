@@ -1,1 +1,1 @@
-"""Live Gateway tests and their request helpers."""
+"""Live integration helpers with offline regression coverage."""
