@@ -74,12 +74,14 @@ environment (210 total), each capped at 1,024 completion tokens to leave room fo
 reasoning and a visible answer.
 Responses must have non-empty answer content and finish with `stop`; empty or
 token-truncated responses fail. The test does not require the model to return a
-particular word. JavaScript and the external Python OpenAI client disable OpenAI
-request retries. Python's built-in Chat interface retains its SDK retry defaults. Go sends Chat once
-and disables OpenAI retries.
+particular word. Chat requests that return HTTP 429 are retried up to three times
+with 5, 10, and 20 second backoffs. A longer valid `Retry-After` is respected.
+All four language suites disable additional OpenAI retries so this helper owns
+the entire retry budget. Successful requests and failed streams are never replayed.
 Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
-2, and 4 second backoffs, within each model case's 180 second deadline. It never
-resends Chat or retries a cryptographic verification failure.
+2, and 4 second backoffs. All retries remain within each model case's 180 second
+deadline. Successful Chat requests are not resent, and interrupted streams,
+invalid responses, and cryptographic verification failures are not retried.
 Test failures and timeouts fail CI; they are not converted into skipped or
 successful tests.
 

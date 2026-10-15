@@ -52,6 +52,8 @@ export type ApiFailure =
       details: {
         resource: ApiResource;
         status: number;
+        /** Raw Retry-After header when the transport supplies it. */
+        retryAfter?: string;
       };
       retryable: boolean;
     }

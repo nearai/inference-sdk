@@ -433,3 +433,6 @@ headers. Both return `SystemOneResult { data: SystemOneResponse, decision_id }`.
 Pass `decision_id` to `verify_response`. The content, question, answer, response,
 and usage types are re-exported at the crate root. Dropping the request future
 cancels the operation, as with ordinary asynchronous requests.
+
+`ApiError::HttpStatus` preserves the optional server `retry_after` header. The SDK
+does not automatically replay inference; callers own their retry budget.

@@ -53,6 +53,8 @@ the attestation socket to be reused.
 
 ## `InferenceClient`
 
+The built-in Chat client sends each request once (`maxRetries: 0`). Callers may explicitly opt into OpenAI retries per request. External OpenAI clients retain their own retry configuration; disable it when an outer retry loop owns the budget.
+
 Provides `chat.completions.create()`, a reusable `fetch` adapter, and
 `verifyResponse(id)`. Supports streaming and non-streaming Chat Completions.
 On a cache miss, the client fetches Gateway evidence, then verifies it and any

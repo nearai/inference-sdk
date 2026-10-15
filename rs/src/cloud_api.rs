@@ -389,6 +389,11 @@ async fn get_cloud_api_response(
             reason: ApiTransportReason::Request,
         })?;
     let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let peer_spki_fingerprint = capture_peer_spki_fingerprint
         .then(|| peer_spki_fingerprint(&response))
         .flatten();
@@ -397,7 +402,11 @@ async fn get_cloud_api_response(
         reason: ApiTransportReason::ResponseBody,
     })?;
     if !(200..300).contains(&status) {
-        return Err(ApiError::HttpStatus { resource, status });
+        return Err(ApiError::HttpStatus {
+            resource,
+            status,
+            retry_after,
+        });
     }
     Ok(CloudApiResponse {
         body,
