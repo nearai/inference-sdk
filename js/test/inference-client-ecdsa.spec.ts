@@ -355,7 +355,9 @@ describe('ECDSA inference client', () => {
       const result = await client.systemone.create({
         model,
         state: 'Charged twice',
-        questions: { billing: { type: 'noul' } },
+        questions: {
+          billing: { type: 'noul', instructions: 'Is this about billing?' },
+        },
       });
       await expect(
         client.verifyResponse(result.decisionId),
