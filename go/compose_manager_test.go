@@ -177,3 +177,32 @@ func TestDirectManagerEvidenceOnlyComesFromEnvelope(t *testing.T) {
 		t.Fatal("nested evidence was promoted")
 	}
 }
+
+func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
+	for _, chunked := range []bool{false, true} {
+		t.Run(itoa(boolInt(chunked)), func(t *testing.T) {
+			fixture := loadManagerFixture(t)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if chunked {
+					w.(http.Flusher).Flush()
+				} else {
+					w.Header().Set("Content-Length", itoa(maxComposeFileBytes+1))
+				}
+				_, _ = w.Write(bytes.Repeat([]byte("x"), maxComposeFileBytes+1))
+			}))
+			defer server.Close()
+			policy := ImageProvenancePolicy{Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml"}
+			options := ComposeManagerDeploymentImageProvenanceOptions{ProvenanceOptions: ProvenanceOptions{GitHubProxyURL: server.URL}, ManagerImagePolicy: ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager-launcher", Build: policy}}
+			err := VerifyComposeManagerDeploymentImageProvenance(context.Background(), MeasuredDeployment{ComposeManager: &VerifiedComposeManagerAttestation{Actions: fixture.Actions}}, map[string]ImageProvenancePolicy{"nearaidev/compose-manager-launcher": policy}, options)
+			requireCode(t, err, "provenance.compose_manager_deployment_invalid")
+			if err.(*Error).Details["reason"] != "compose_file_too_large" {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatalf("image proof fetched after oversized file: %d", calls)
+			}
+		})
+	}
+}

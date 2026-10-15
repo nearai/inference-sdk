@@ -215,7 +215,9 @@ the same signer. Select it from the verified preflight results with
 
 ### Compose Manager deployment images
 
-`verify_compose_manager_deployment_image_provenance(deployment, image_policies, options)`
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
+`verify_compose_manager_deployment_image_provenance(deployment, image_policies, manager_image_policy, options)`
 returns `Result<(), VerificationError>`. Use in a model deployment callback or
 after verification. It requires authenticated manager evidence, selects the latest
 matching `compose_up`, verifies the recorded file's exact hash, and checks the

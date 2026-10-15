@@ -334,3 +334,39 @@ async fn direct_decoder_never_promotes_nested_manager_evidence() {
         .compose_manager_attestation
         .is_none());
 }
+
+#[tokio::test]
+async fn rejects_oversized_compose_before_hashing_or_image_proofs() {
+    use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
+    for chunked in [false, true] {
+        let server = MockServer::start().await;
+        let mut response =
+            ResponseTemplate::new(200).set_body_bytes(vec![b'x'; 8 * 1024 * 1024 + 1]);
+        if chunked {
+            response = response.insert_header("Transfer-Encoding", "chunked");
+        }
+        Mock::given(method("GET"))
+            .respond_with(response)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let proxy = server.uri();
+        let error = verify_compose_manager_deployment_image_provenance(
+            &deployment(),
+            &BTreeMap::from([("nearaidev/compose-manager-launcher".into(), image_policy())]),
+            &manager_image_policy(),
+            nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
+                github_proxy_url: Some(&proxy),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::ComposeManagerDeploymentInvalid {
+                reason: "compose_file_too_large"
+            }
+        ));
+    }
+}

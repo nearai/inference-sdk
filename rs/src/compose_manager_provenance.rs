@@ -1,3 +1,5 @@
+const MAX_COMPOSE_FILE_BYTES: usize = 8 * 1024 * 1024;
+
 use crate::deployment_provenance::verify_compose_image_provenance;
 use crate::{ImageProvenancePolicy, MeasuredDeployment, VerificationError};
 use std::collections::BTreeMap;
@@ -144,11 +146,23 @@ pub async fn verify_compose_manager_deployment_image_provenance(
             request = request.bearer_auth(token);
         }
     }
-    let response = request.send().await.map_err(|_| request_error(None))?;
+    let mut response = request.send().await.map_err(|_| request_error(None))?;
     if !response.status().is_success() {
         return Err(request_error(Some(response.status().as_u16())));
     }
-    let bytes = response.bytes().await.map_err(|_| request_error(None))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_COMPOSE_FILE_BYTES as u64)
+    {
+        return Err(invalid("compose_file_too_large"));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| request_error(None))? {
+        if chunk.len() > MAX_COMPOSE_FILE_BYTES - bytes.len() {
+            return Err(invalid("compose_file_too_large"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     let expected_hash = hex::decode(digest).map_err(|_| invalid("invalid_file_reference"))?;
     if crate::util::sha256(&bytes) != expected_hash {
         return Err(VerificationError::ComposeFileHashMismatch {

@@ -480,6 +480,8 @@ checked before and after it, not during its network operation.
 
 ## Compose Manager deployment provenance
 
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
 `Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
 When present in a model report, verification checks its quote/TCB, nonce, canonical
 action hash, event log, and binding to the model's measured app-compose. The

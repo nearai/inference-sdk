@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 )
 
+const maxComposeFileBytes = 8 * 1024 * 1024
+
 // ComposeManagerImagePolicy applies only to the latest manager-start action.
 type ComposeManagerImagePolicy struct {
 	ImageRepository string
@@ -99,9 +101,15 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &Error{Code: "provenance.compose_file_request_failed", Details: map[string]any{"status": response.StatusCode}, Retryable: response.StatusCode == 429 || response.StatusCode >= 500}
 	}
-	body, err := io.ReadAll(response.Body)
+	if response.ContentLength > maxComposeFileBytes {
+		return invalid("compose_file_too_large")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxComposeFileBytes+1))
 	if err != nil {
 		return &Error{Code: "provenance.compose_file_request_failed", Retryable: true, Cause: err}
+	}
+	if len(body) > maxComposeFileBytes {
+		return invalid("compose_file_too_large")
 	}
 	if !strings.EqualFold(hashText(body), digest) {
 		return failure("provenance.compose_file_hash_mismatch", nil)
