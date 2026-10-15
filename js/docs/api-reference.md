@@ -729,3 +729,25 @@ can retry a transient or unavailable receipt lookup without repeating inference.
 
 See the [guide](./verification-guide.md#system-one-decisions) for a complete call
 and the [runnable Jev example](../../examples/README.md#jev--system-one-typescript--nodejs).
+
+## Inference body and cache limits
+
+Gateway and Direct clients accept `maxBodyBytes` (64 MiB), `maxCacheEntries`
+(128), and `maxReceiptCacheBytes` (64 MiB). Values must be positive safe integers.
+These settings apply to Chat and System One. They bound each request/response,
+completed attestation sessions and receipts, concurrent distinct preflights, and
+the combined request/response bytes retained by completed receipts.
+
+Completed records are evicted in completion order. Cache hits do not refresh TTL
+or ordering. Same-model in-flight verification remains shared; new distinct
+preflights at capacity fail locally. Active response streams are bounded per body
+and are accounted in the receipt budget at EOF, including signed SSE tails after
+`[DONE]`. Capacity limits are independent of TTL; a zero response TTL disables
+retention. Oversized requests fail before inference; oversized responses fail with
+`api.body_too_large` and do not evict existing useful receipts. External OpenAI
+wrappers may wrap transport errors; `client.fetch` exposes the SDK error directly.
+
+Rust's default entry capacity is also 128 (previously 1024), matching Go and these
+new JavaScript controls. Go now also bounds distinct pending preflights by its
+existing `MaxCacheEntries` option. Connection pools and caller-held parsed output
+are outside the receipt-byte budget.

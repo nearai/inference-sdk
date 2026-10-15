@@ -22,6 +22,7 @@ type ApiResource =
  */
 export type ApiFailure =
   | { code: 'api.completion_not_found' }
+  | { code: 'api.body_too_large' }
   | {
       /** A value supplied to a Cloud API helper is not usable for that call. */
       code: 'api.invalid_input';
@@ -474,6 +475,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] OHTTP request could not be encrypted`;
     case 'ohttp.decryption_failed':
       return `[${failure.code}] OHTTP response could not be authenticated and decoded`;
+    case 'api.body_too_large':
+      return 'Inference body exceeds its configured byte limit';
     case 'api.completion_not_found':
       return 'Completion was not captured by this client or its retention period has expired';
     case 'api.invalid_input':
