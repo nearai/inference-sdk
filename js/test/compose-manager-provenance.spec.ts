@@ -228,6 +228,51 @@ describe('Compose Manager deployment image provenance', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  test('cancels an oversized streamed compose file before image proof retrieval', async () => {
+    const report = managerReport();
+    const verified = await verifyModelAttestation({
+      attestation: {
+        ...createModelAttestation(),
+        composeManagerAttestation: report,
+      },
+      clientBinding: { nonce },
+      verifiers: {
+        tdxQuote: (quote) =>
+          quote === 'bb' ? managerQuote(report) : createModelQuote(),
+      },
+    });
+    let chunks = 0;
+    let cancelled = false;
+    const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            chunks++;
+            controller.enqueue(new Uint8Array(1024 * 1024));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      ),
+    );
+    await expect(
+      verifyComposeManagerDeploymentImageProvenance({
+        deployment: verified.deployment,
+        imagePolicies: IMAGE_POLICIES,
+        managerImagePolicy: MANAGER_POLICY,
+      }),
+    ).rejects.toMatchObject({
+      failure: {
+        code: 'provenance.compose_manager_deployment_invalid',
+        details: { reason: 'compose_file_too_large' },
+      },
+    });
+    expect(cancelled).toBe(true);
+    expect(chunks).toBeLessThanOrEqual(10);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   test('requires Compose Manager evidence when this policy is selected', async () => {
     await expect(
       verifyModelAttestation({

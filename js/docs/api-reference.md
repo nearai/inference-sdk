@@ -469,6 +469,8 @@ preserve the `ApiError` cause and retryability.
 
 ### `verifyComposeManagerDeploymentImageProvenance`
 
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
 Use after model verification or in its deployment callback. Returns `Promise<void>`.
 The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
 Image selection uses the action's named `services`. Independently, the latest

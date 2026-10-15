@@ -148,8 +148,28 @@ async function fetchComposeFile({
   }
   let bytes: Buffer;
   try {
-    bytes = Buffer.from(await response.arrayBuffer());
+    const reader = response.body?.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    if (reader !== undefined) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value.byteLength > 8 * 1024 * 1024 - length) {
+            void reader.cancel().catch(() => {});
+            throw invalidDeployment('compose_file_too_large');
+          }
+          chunks.push(value);
+          length += value.byteLength;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    bytes = Buffer.concat(chunks, length);
   } catch (cause) {
+    if (cause instanceof VerificationError) throw cause;
     throw new VerificationError(
       {
         code: 'provenance.compose_file_request_failed',

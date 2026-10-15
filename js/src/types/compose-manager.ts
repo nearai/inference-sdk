@@ -62,4 +62,5 @@ export type ComposeManagerDeploymentFailureReason =
   | 'compose_up_missing'
   | 'manager_image_missing'
   | 'manager_image_mismatch'
-  | 'invalid_file_reference';
+  | 'invalid_file_reference'
+  | 'compose_file_too_large';
