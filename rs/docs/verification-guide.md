@@ -495,6 +495,62 @@ literal images are ignored; any unresolved `$` image reference is rejected,
 including defaults. This checks only images in the measured Compose, not model
 runtime images loaded later by a launcher or another service.
 
+### Model images deployed by Compose Manager
+
+When a model report includes Compose Manager evidence, model verification also
+checks its quote, TCB policy, nonce, canonical action hash, event log and binding
+to the model's measured `app_compose`. A deployment callback receives the verified
+actions in `MeasuredDeployment.compose_manager`.
+
+```rust,no_run
+use std::collections::BTreeMap;
+use async_trait::async_trait;
+use nearai_inference_sdk::{
+    verify_compose_manager_deployment_image_provenance, DeploymentVerifier,
+    ComposeManagerImagePolicy, ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
+
+struct ModelImages {
+    images: BTreeMap<String, ImageProvenancePolicy>,
+    manager: ComposeManagerImagePolicy,
+}
+
+#[async_trait]
+impl DeploymentVerifier for ModelImages {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        verify_compose_manager_deployment_image_provenance(
+            deployment, &self.images, &self.manager, Default::default(),
+        ).await
+    }
+}
+```
+
+For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
+`nearaidev/compose-manager` from `nearai/compose-manager`, both using
+`.github/workflows/build.yml`. Pass the verifier as
+`ModelAttestationVerifiers.deployment`. Keep the manager repository and build
+identity in `ComposeManagerImagePolicy`, separate from the compose image map.
+
+For Direct clients, set `model_verification.serving_deployment` to this verifier.
+All reports and the serving TLS binding are checked first; only the serving
+report receives envelope-level manager evidence and a verified provenance status.
+The client then limits routing, TLS pins and receipt attribution to that report's
+signer. The standalone equivalent is
+`verify_direct_model_attestations_with_serving_deployment`.
+
+The helper selects the latest `compose_up`, fetches its file from
+`nearai/cvm-compose-files` at the recorded commit and checks its exact SHA-256
+before verifying image builds in the action’s selected services. The latest
+`compose_manager_started` image is required and verified independently against
+`ComposeManagerImagePolicy`; a stale manager image in Compose cannot satisfy it. Use options to select a specific `compose_file`
+or another trusted `compose_repository`.
+
+This proves recorded deployment intent, not successful execution or current
+runtime state. Matching boot configuration is not a unique CVM identity. Only
+configured images are covered, not model weights or boot launcher provenance;
+approve the boot configuration separately. Missing manager evidence is allowed
+by basic model verification but rejected by this helper.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.

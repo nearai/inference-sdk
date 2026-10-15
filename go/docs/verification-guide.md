@@ -455,3 +455,35 @@ Retryable signature retrieval failures can be retried by calling `VerifyResponse
 again while its receipt remains retained. Use bounded retries and a context
 deadline. Do not replay Chat just because a receipt fetch failed. Verification
 failures remain failures; the SDK never silently falls back to unverified Chat.
+
+## Images deployed by Compose Manager
+
+Use a model deployment callback to require authenticated deployment actions and
+published-image provenance. The compose file and manager have independent policies:
+
+```go
+modelImages := map[string]nearai.ImageProvenancePolicy{
+    "nearaidev/vllm-proxy-rs": {
+        Repository: "nearai/inference-proxy", Workflow: ".github/workflows/build.yml",
+    },
+}
+check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
+    return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, modelImages,
+        nearai.ComposeManagerDeploymentImageProvenanceOptions{
+            ManagerImagePolicy: nearai.ComposeManagerImagePolicy{
+                ImageRepository: "nearaidev/compose-manager",
+                Build: nearai.ImageProvenancePolicy{
+                    Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml",
+                },
+            },
+        })
+}
+// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
+// Direct:  ModelVerification: nearai.VerificationOptions{ServingDeployment: check}
+```
+
+Pin optional source commits/refs according to your policy. This approves the
+recorded compose bytes and listed builds; it does not prove deployment succeeded
+or identify currently running containers. Approve the boot configuration and
+model weights separately. The direct callback applies only to the root serving
+envelope after all reports have been verified.

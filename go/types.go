@@ -24,17 +24,18 @@ type SigningIdentity struct {
 	SigningAddress string      `json:"signingAddress"`
 }
 type Attestation struct {
-	Nonce             string
-	Signer            SigningIdentity
-	IntelQuote        string
-	EventLog          json.RawMessage
-	AppCompose        string
-	ReportedQuoteData string
-	SigningPublicKey  string
-	NvidiaPayload     *string
-	SPKIFingerprint   string
-	ModelName         string
-	InstanceID        string
+	ComposeManagerAttestation *ComposeManagerAttestation
+	Nonce                     string
+	Signer                    SigningIdentity
+	IntelQuote                string
+	EventLog                  json.RawMessage
+	AppCompose                string
+	ReportedQuoteData         string
+	SigningPublicKey          string
+	NvidiaPayload             *string
+	SPKIFingerprint           string
+	ModelName                 string
+	InstanceID                string
 }
 type ClientBinding struct{ Nonce, SPKIFingerprint string }
 type OHTTPAttestation struct {
@@ -73,6 +74,7 @@ type QuoteVerificationResult struct {
 }
 type RuntimeMeasurements struct{ OSImageHash, ComposeHash string }
 type MeasuredDeployment struct {
+	ComposeManager      *VerifiedComposeManagerAttestation
 	AppCompose          string
 	RuntimeMeasurements RuntimeMeasurements
 }
@@ -84,6 +86,8 @@ type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error
 type GPUEvidenceVerifier func(context.Context, string) error
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
+	// ServingDeployment runs after all direct reports and TLS binding pass.
+	ServingDeployment  DeploymentVerifier
 	Policy             AttestationPolicy
 	QuoteVerifier      QuoteVerifier
 	GPUVerifier        GPUEvidenceVerifier

@@ -14,11 +14,12 @@ import (
 )
 
 type session struct {
-	result    AttestationVerificationResult
-	selected  *VerifiedAttestation
-	api       *AttestationClient
-	transport http.RoundTripper
-	expires   time.Time
+	receiptModels []VerifiedAttestation
+	result        AttestationVerificationResult
+	selected      *VerifiedAttestation
+	api           *AttestationClient
+	transport     http.RoundTripper
+	expires       time.Time
 }
 type pendingSession struct {
 	done  chan struct{}
@@ -175,6 +176,12 @@ func (c *InferenceClient) Close() error {
 func cloneResult(r AttestationVerificationResult) AttestationVerificationResult {
 	clone := func(a VerifiedAttestation) VerifiedAttestation {
 		a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
+		if a.Deployment.ComposeManager != nil {
+			data, _ := json.Marshal(a.Deployment.ComposeManager)
+			var manager VerifiedComposeManagerAttestation
+			_ = json.Unmarshal(data, &manager)
+			a.Deployment.ComposeManager = &manager
+		}
 		return a
 	}
 	if r.Gateway != nil {
@@ -352,6 +359,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, failure("policy.model_attestation_required", nil)
 		}
 	}
+	servingIndex := -1
 	for _, report := range models.Attestations {
 		var verified VerifiedAttestation
 		var e error
@@ -366,11 +374,12 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		s.result.Models = append(s.result.Models, verified)
 		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
 			ohttpSigner = verified.Signer
+			servingIndex = len(s.result.Models) - 1
 		}
 		if s.selected == nil &&
 			verified.Signer.SigningAlgo == o.SigningAlgo &&
 			verified.SigningPublicKey != "" &&
-			(!c.api.direct || !o.OHTTP ||
+			(!c.api.direct || (!o.OHTTP && opts.ServingDeployment == nil) ||
 				(models.ServingAttestation != nil &&
 					verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo &&
 					sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
@@ -378,11 +387,26 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			s.selected = &copy
 		}
 	}
+	if c.api.direct && opts.ServingDeployment != nil {
+		if servingIndex < 0 {
+			return nil, failure("api.invalid_response", nil)
+		}
+		serving := s.result.Models[servingIndex]
+		if err := opts.ServingDeployment(ctx, serving.Deployment); err != nil {
+			return nil, failure("provenance.verification_failed", err)
+		}
+		serving.DeploymentProvenance = "verified"
+		s.result.Models[servingIndex] = serving
+		s.receiptModels = []VerifiedAttestation{serving}
+	}
 	if len(s.result.Models) > 0 && s.selected == nil {
 		return nil, failure("e2ee.model_public_key_required", nil)
 	}
 	if c.api.direct && len(s.result.Models) == 0 {
 		return nil, failure("policy.model_attestation_required", nil)
+	}
+	if s.receiptModels == nil {
+		s.receiptModels = s.result.Models
 	}
 	if o.OHTTP {
 		if ohttp == nil {
@@ -693,7 +717,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifiedCompletionResult{}, e
 	}
 	if c.api.direct {
-		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
+		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.receiptModels)
 	}
 	copy := *a
 	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil

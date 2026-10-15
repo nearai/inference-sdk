@@ -55,7 +55,21 @@ pub(crate) async fn verify_model_with_tls(
             &verified_quote.signer.signing_address,
         )?;
     }
-    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
+    let manager = if let Some(manager) = &attestation.compose_manager_attestation {
+        Some(
+            crate::compose_manager::verify_compose_manager_attestation(
+                manager,
+                &attestation.evidence.app_compose,
+                &client_binding.nonce,
+                common_policy.as_ref(),
+                verifiers.tdx_quote,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment, manager).await?;
     let gpu_evidence = verify_gpu_evidence(
         attestation.nvidia_payload.as_deref(),
         &client_binding.nonce,

@@ -151,54 +151,9 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if e != nil {
 		return v, e
 	}
-	verifier := o.QuoteVerifier
-	if verifier == nil {
-		verifier = CreateTDXQuoteVerifier("")
-	}
-	q, e := verifier(ctx, a.IntelQuote)
+	q, e := verifyQuote(ctx, a.IntelQuote, o)
 	if e != nil {
-		var sdk *Error
-		if errors.As(e, &sdk) {
-			return v, e
-		}
-		return v, failure("quote.verification_failed", e)
-	}
-	if len(q.ReportData) != 64 || len(q.MRConfigID) != 48 || len(q.RTMR3) != 48 {
-		return v, failure("quote.invalid_result", nil)
-	}
-	validStatus := false
-	for _, status := range []string{
-		"Unknown",
-		"UpToDate",
-		"OutOfDate",
-		"Revoked",
-		"ConfigurationNeeded",
-		"SWHardeningNeeded",
-		"ConfigurationAndSWHardeningNeeded",
-		"OutOfDateConfigurationNeeded",
-	} {
-		if q.TCBStatus == status {
-			validStatus = true
-		}
-	}
-	if !validStatus {
-		return v, failure("quote.invalid_result", nil)
-	}
-	if q.DebugEnabled {
-		return v, failure("policy.debug_enabled", nil)
-	}
-	statuses := o.Policy.AcceptedTCBStatuses
-	if statuses == nil {
-		statuses = []string{"UpToDate", "OutOfDate"}
-	}
-	allowed := false
-	for _, s := range statuses {
-		if s == q.TCBStatus {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return v, detail("policy.tcb_status_not_allowed", "actual", q.TCBStatus)
+		return v, e
 	}
 	if !bytes.Equal(nonce, q.ReportData[32:]) {
 		return v, failure("binding.nonce_mismatch", nil)
@@ -234,11 +189,18 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		Signer:               a.Signer,
 		TCBStatus:            q.TCBStatus,
 		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
-		Deployment:           MeasuredDeployment{a.AppCompose, measurements},
+		Deployment:           MeasuredDeployment{AppCompose: a.AppCompose, RuntimeMeasurements: measurements},
 		DeploymentProvenance: "not_checked",
 		SPKIFingerprint:      a.SPKIFingerprint,
 		ModelName:            a.ModelName,
 		InstanceID:           a.InstanceID,
+	}
+	if !gateway && a.ComposeManagerAttestation != nil {
+		manager, err := verifyComposeManager(ctx, *a.ComposeManagerAttestation, a.AppCompose, b.Nonce, o)
+		if err != nil {
+			return VerifiedAttestation{}, err
+		}
+		v.Deployment.ComposeManager = manager
 	}
 	if o.DeploymentVerifier != nil {
 		if e = o.DeploymentVerifier(ctx, v.Deployment); e != nil {
@@ -378,4 +340,58 @@ func VerifyOHTTPKeyConfig(a OHTTPAttestation, signer SigningIdentity) ([]byte, e
 		return nil, failure("ohttp.signature_invalid", e)
 	}
 	return config, nil
+}
+
+func verifyQuote(ctx context.Context, intelQuote string, o VerificationOptions) (QuoteVerificationResult, error) {
+	verifier := o.QuoteVerifier
+	if verifier == nil {
+		verifier = CreateTDXQuoteVerifier("")
+	}
+	q, e := verifier(ctx, intelQuote)
+	if e != nil {
+		var sdk *Error
+		if errors.As(e, &sdk) {
+			return QuoteVerificationResult{}, e
+		}
+		return QuoteVerificationResult{}, failure("quote.verification_failed", e)
+	}
+	if len(q.ReportData) != 64 || len(q.MRConfigID) != 48 || len(q.RTMR3) != 48 {
+		return QuoteVerificationResult{}, failure("quote.invalid_result", nil)
+	}
+	validStatus := false
+	for _, status := range []string{
+		"Unknown",
+		"UpToDate",
+		"OutOfDate",
+		"Revoked",
+		"ConfigurationNeeded",
+		"SWHardeningNeeded",
+		"ConfigurationAndSWHardeningNeeded",
+		"OutOfDateConfigurationNeeded",
+	} {
+		if q.TCBStatus == status {
+			validStatus = true
+		}
+	}
+	if !validStatus {
+		return QuoteVerificationResult{}, failure("quote.invalid_result", nil)
+	}
+	if q.DebugEnabled {
+		return QuoteVerificationResult{}, failure("policy.debug_enabled", nil)
+	}
+	statuses := o.Policy.AcceptedTCBStatuses
+	if statuses == nil {
+		statuses = []string{"UpToDate", "OutOfDate"}
+	}
+	allowed := false
+	for _, s := range statuses {
+		if s == q.TCBStatus {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return QuoteVerificationResult{}, detail("policy.tcb_status_not_allowed", "actual", q.TCBStatus)
+	}
+
+	return q, nil
 }

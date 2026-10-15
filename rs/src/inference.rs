@@ -59,6 +59,8 @@ impl Default for GatewayVerificationOptions {
 }
 #[derive(Clone, Default)]
 pub struct ModelVerificationOptions {
+    /// Direct endpoints only: run after every report and TLS binding pass.
+    pub serving_deployment: Option<Arc<dyn DeploymentVerifier>>,
     pub policy: Option<ModelAttestationPolicy>,
     pub tdx_quote: Option<Arc<dyn TdxQuoteVerifier>>,
     pub gpu_evidence: Option<Arc<dyn GpuEvidenceVerifier>>,
@@ -590,6 +592,13 @@ impl InferenceClient {
                 let session = record.session.clone();
                 let id = id.to_owned();
                 let algo = self.inner.options.signing_algo;
+                let serving_only = self.inner.direct
+                    && self
+                        .inner
+                        .options
+                        .model_verification
+                        .serving_deployment
+                        .is_some();
                 *pending = Some(
                     async move {
                         let signature = session.api.signature(&id, algo).await?;
@@ -616,8 +625,12 @@ impl InferenceClient {
                                 )?;
                                 verify_model_response(&request, &response, &signature, model)?;
                                 if let Some(direct) = &session.direct {
-                                    let matching = direct
-                                        .attestations
+                                    let candidates = if serving_only {
+                                        std::slice::from_ref(&direct.serving_attestation)
+                                    } else {
+                                        &direct.attestations
+                                    };
+                                    let matching = candidates
                                         .iter()
                                         .filter(|a| {
                                             crate::direct::same_signer(

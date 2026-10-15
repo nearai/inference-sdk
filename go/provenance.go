@@ -25,9 +25,11 @@ type VerifiedImageProvenance struct{ Digest, Repository, Workflow, Ref, Commit, 
 // ProvenanceOptions permits an offline, caller-trusted Sigstore root. Nil selects
 // the production root through Sigstore's authenticated TUF update mechanism.
 type ProvenanceOptions struct {
-	TrustedRoot root.TrustedMaterial
-	HTTPClient  *http.Client
-	GitHubToken string
+	// GitHubProxyURL is an absolute GitHub-compatible API base; GitHubToken is not forwarded.
+	GitHubProxyURL string
+	TrustedRoot    root.TrustedMaterial
+	HTTPClient     *http.Client
+	GitHubToken    string
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
@@ -55,7 +57,11 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	base := "https://api.github.com/repos/" + repository + "/attestations/" + strings.ToLower(digest) + "?per_page=100"
+	apiBase, err := provenanceAPIBase(o.GitHubProxyURL)
+	if err != nil {
+		return nil, err
+	}
+	base := apiBase + "/repos/" + repository + "/attestations/" + strings.ToLower(digest) + "?per_page=100"
 	target := base
 	visited := map[string]bool{}
 	var bundles []json.RawMessage
@@ -70,7 +76,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if o.GitHubToken != "" {
+		if o.GitHubToken != "" && o.GitHubProxyURL == "" {
 			req.Header.Set("Authorization", "Bearer "+o.GitHubToken)
 		}
 		res, e := client.Do(req)
@@ -346,21 +352,54 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 	if e := json.Unmarshal([]byte(appCompose), &app); e != nil || app.Compose == "" {
 		return failure("provenance.deployment_images_invalid", e)
 	}
-	var compose struct {
-		Services map[string]struct {
-			Image string `yaml:"image"`
-		} `yaml:"services"`
+	return verifyComposeImages(ctx, app.Compose, policies, o, nil, nil)
+}
+
+func verifyComposeImages(ctx context.Context, content string, policies map[string]ImageProvenancePolicy, o ProvenanceOptions, services []string, additional map[string]string) error {
+	if len(policies) == 0 {
+		return detail("provenance.deployment_images_invalid", "reason", "empty_policy")
 	}
-	if e := yaml.Unmarshal([]byte(app.Compose), &compose); e != nil || compose.Services == nil {
-		return failure("provenance.deployment_images_invalid", e)
+	var compose struct {
+		Services map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil || compose.Services == nil {
+		return failure("provenance.deployment_images_invalid", err)
+	}
+	wanted := map[string]bool{}
+	for _, name := range services {
+		if _, ok := compose.Services[name]; !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "service_missing")
+		}
+		wanted[name] = true
+	}
+	images := map[string]string{}
+	for name, value := range compose.Services {
+		if len(wanted) > 0 && !wanted[name] {
+			continue
+		}
+		config, ok := value.(map[string]any)
+		if !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "invalid_docker_compose")
+		}
+		if config["image"] == nil {
+			continue
+		}
+		image, ok := config["image"].(string)
+		if !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "invalid_docker_compose")
+		}
+		images[name] = image
+	}
+	for name, image := range additional {
+		images[name] = image
 	}
 	type selection struct {
 		digest string
 		policy ImageProvenancePolicy
 	}
 	var selected []selection
-	for _, service := range compose.Services {
-		if strings.Contains(service.Image, "$") {
+	for _, image := range images {
+		if strings.Contains(image, "$") {
 			return failure("provenance.deployment_images_invalid", nil)
 		}
 	}
@@ -371,8 +410,8 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 		}
 		pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(repo) + `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$`)
 		found := false
-		for _, service := range compose.Services {
-			image := strings.TrimPrefix(service.Image, "docker.io/")
+		for _, reference := range images {
+			image := strings.TrimPrefix(reference, "docker.io/")
 			if image == repo || strings.HasPrefix(image, repo+"@") || strings.HasPrefix(image, repo+":") {
 				found = true
 				match := pattern.FindStringSubmatch(image)
@@ -396,4 +435,15 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 		}
 	}
 	return nil
+}
+
+func provenanceAPIBase(proxy string) (string, error) {
+	if proxy == "" {
+		return "https://api.github.com", nil
+	}
+	value, err := url.Parse(proxy)
+	if err != nil || (value.Scheme != "http" && value.Scheme != "https") || value.Host == "" || value.User != nil || value.RawQuery != "" || value.Fragment != "" {
+		return "", detail("api.invalid_input", "field", "github_proxy_url")
+	}
+	return strings.TrimRight(value.String(), "/"), nil
 }

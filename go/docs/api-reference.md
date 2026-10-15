@@ -509,3 +509,40 @@ The test suite includes cross-language E2EE vectors, signed provenance fixtures,
 embedded DCAP verification, admission and exact signatures, shared cancellation,
 stream failures, TLS rejection, and chunked OHTTP authentication. It does not
 make paid inference calls.
+
+## Compose Manager deployment provenance
+
+`Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
+When present in a model report, verification checks its quote/TCB, nonce, canonical
+action hash, event log, and binding to the model's measured app-compose. The
+callback receives `MeasuredDeployment.ComposeManager`, including authenticated
+actions, TCB status, advisory IDs and runtime measurements.
+
+`VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, imagePolicies, options)`
+requires manager evidence, selects the latest matching `compose_up`, fetches its
+recorded file at its commit, verifies exact SHA-256 and UTF-8, and verifies images
+in the action's named `services`. An absent/empty service list selects the entire
+file; unknown services fail. Unselected images cannot satisfy a required policy.
+
+| Option | Meaning |
+| --- | --- |
+| `ComposeRepository` | Trusted `owner/repo`; defaults to `nearai/cvm-compose-files`. |
+| `ComposeFile` | Exact file path, or the latest `compose_up` across all files. |
+| `ManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
+| `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubProxyURL`. |
+
+The manager image is checked independently; an old compose image cannot satisfy
+this policy. Missing/unlisted startup images fail. Empty image policies fail
+before any network access. These checks authenticate recorded deployment intent,
+not successful execution, current containers, model weights, or a unique CVM.
+
+`GitHubProxyURL` is an optional absolute HTTP(S) GitHub-compatible API base for
+compose files and image proofs. Tokens are omitted when a proxy is configured;
+redirects and pagination outside the requested artifact are rejected.
+
+For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
+`VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
+It runs after every report and TLS binding pass, marks only the serving report's
+provenance, and constrains routing/receipt attribution to it. Only root-envelope
+manager evidence is attached to the serving report; nested manager fields are
+discarded. Direct network TLS binding remains experimental and disabled as before.

@@ -39,6 +39,29 @@ pub async fn fetch_image_provenance(
     digest: &str,
     github_token: Option<&str>,
 ) -> Result<Vec<String>, ApiError> {
+    fetch_image_provenance_with_options(
+        repository,
+        digest,
+        ImageProvenanceFetchOptions {
+            github_token,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct ImageProvenanceFetchOptions<'a> {
+    pub github_token: Option<&'a str>,
+    /// Absolute GitHub-compatible API base. Tokens are never forwarded to a proxy.
+    pub github_proxy_url: Option<&'a str>,
+}
+
+pub async fn fetch_image_provenance_with_options(
+    repository: &str,
+    digest: &str,
+    options: ImageProvenanceFetchOptions<'_>,
+) -> Result<Vec<String>, ApiError> {
     if !valid_repository(repository) {
         return Err(api_input("repository", "expected owner/repo"));
     }
@@ -48,11 +71,26 @@ pub async fn fetch_image_provenance(
             "expected sha256: followed by 64 hexadecimal digits",
         )
     })?;
+    let base = github_api_base(options.github_proxy_url)?;
     let url = Url::parse(&format!(
-        "https://api.github.com/repos/{repository}/attestations/sha256:{hash}?per_page=100"
+        "{}/repos/{repository}/attestations/sha256:{hash}?per_page=100",
+        base.as_str().trim_end_matches('/')
     ))
-    .expect("validated repository and digest form a valid GitHub URL");
-    fetch_image_provenance_pages(&Client::new(), url, github_token).await
+    .map_err(|_| api_input("github_proxy_url", "invalid URL"))?;
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| api_input("http_client", "could not build client"))?;
+    fetch_image_provenance_pages(
+        &client,
+        url,
+        if options.github_proxy_url.is_none() {
+            options.github_token
+        } else {
+            None
+        },
+    )
+    .await
 }
 
 async fn fetch_image_provenance_pages(
@@ -633,6 +671,24 @@ struct Material {
 struct SourceDigest {
     git_commit: Option<String>,
     sha1: Option<String>,
+}
+
+pub(crate) fn github_api_base(proxy: Option<&str>) -> Result<Url, ApiError> {
+    let url = Url::parse(proxy.unwrap_or("https://api.github.com"))
+        .map_err(|_| api_input("github_proxy_url", "expected absolute HTTP(S) URL"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(api_input(
+            "github_proxy_url",
+            "expected HTTP(S) URL without credentials, query or fragment",
+        ));
+    }
+    Ok(url)
 }
 
 #[cfg(test)]

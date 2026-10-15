@@ -228,6 +228,28 @@ pub enum VerificationError {
     #[error("deployment provenance verifier rejected the measured deployment")]
     DeploymentProvenanceRejected,
 
+    #[error("Compose Manager actions do not match the quote-authenticated hash")]
+    ComposeManagerActionsMismatch,
+
+    #[error("Compose Manager deployment cannot be verified: {reason}")]
+    ComposeManagerDeploymentInvalid { reason: &'static str },
+
+    #[error("compose file retrieval failed for {repository}@{commit}/{file} (HTTP {status:?})")]
+    ComposeFileRequestFailed {
+        repository: String,
+        commit: String,
+        file: String,
+        status: Option<u16>,
+        retryable: bool,
+    },
+
+    #[error("compose file does not match its recorded hash: {repository}@{commit}/{file}")]
+    ComposeFileHashMismatch {
+        repository: String,
+        commit: String,
+        file: String,
+    },
+
     #[error("no trusted image provenance for {digest}: {reasons:?}")]
     ImageProvenanceVerificationFailed {
         digest: String,
@@ -300,6 +322,12 @@ impl VerificationError {
             Self::NvidiaJwtVerificationFailed { .. } => "gpu.jwt_verification_failed",
             Self::GpuAttestationRejected { .. } => "gpu.attestation_rejected",
             Self::DeploymentProvenanceRejected => "provenance.verification_failed",
+            Self::ComposeManagerActionsMismatch => "binding.compose_manager_actions_mismatch",
+            Self::ComposeManagerDeploymentInvalid { .. } => {
+                "provenance.compose_manager_deployment_invalid"
+            }
+            Self::ComposeFileRequestFailed { .. } => "provenance.compose_file_request_failed",
+            Self::ComposeFileHashMismatch { .. } => "provenance.compose_file_hash_mismatch",
             Self::ImageProvenanceVerificationFailed { .. } => {
                 "provenance.image_verification_failed"
             }
@@ -317,6 +345,7 @@ impl VerificationError {
     pub const fn retryable(&self) -> bool {
         match self {
             Self::QuoteCollateralUnavailable => true,
+            Self::ComposeFileRequestFailed { retryable, .. } => *retryable,
             Self::NrasRequestFailed { retryable, .. } => *retryable,
             Self::NvidiaJwksRequestFailed { retryable, .. } => *retryable,
             Self::ImageProvenanceRequestFailed { source, .. } => source.retryable(),

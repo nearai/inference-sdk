@@ -13,7 +13,11 @@ import (
 	"github.com/cloudflare/circl/hpke"
 )
 
-func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
+func TestDirectOHTTPSelectsServingSigner(t *testing.T) { testDirectServingRoute(t, true, false) }
+func TestDirectServingPolicySelectsServingSigner(t *testing.T) {
+	testDirectServingRoute(t, false, true)
+}
+func testDirectServingRoute(t *testing.T, ohttp, servingPolicy bool) {
 	a, qa, _ := attestationFixture(t, Ed25519)
 	b, qb, priv := attestationFixture(t, Ed25519)
 	pub, _, e := hpke.KEM_X25519_HKDF_SHA256.Scheme().GenerateKeyPair()
@@ -65,12 +69,17 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 		json.NewEncoder(w).Encode(root)
 	}))
 	defer server.Close()
+	calls := 0
+	var serving DeploymentVerifier
+	if servingPolicy {
+		serving = func(context.Context, MeasuredDeployment) error { calls++; return nil }
+	}
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
 		InferenceOptions: InferenceOptions{
 			ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
 			E2EE:              true,
-			OHTTP:             true,
-			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+			OHTTP:             ohttp,
+			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, ServingDeployment: serving},
 		},
 	})
 	if e != nil {
@@ -80,6 +89,9 @@ func TestDirectOHTTPSelectsServingSigner(t *testing.T) {
 	session, e := client.getSession(context.Background(), "canonical/model")
 	if e != nil {
 		t.Fatal(e)
+	}
+	if servingPolicy && (calls != 1 || len(session.receiptModels) != 1 || session.receiptModels[0].Signer != b.Signer || session.result.Models[0].DeploymentProvenance != "not_checked" || session.result.Models[1].DeploymentProvenance != "verified") {
+		t.Fatal("serving policy did not constrain receipts")
 	}
 	if len(session.result.Models) != 2 || session.selected.Signer != b.Signer || !client.options.E2EE {
 		t.Fatal("wrong routing or defaults")
