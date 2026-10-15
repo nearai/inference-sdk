@@ -22,7 +22,7 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
-from .body_limit import read_bounded_body
+from .body_limit import read_bounded_body, require_identity_encoding
 from .e2ee_request import remove_e2ee_headers
 
 if TYPE_CHECKING:
@@ -107,6 +107,7 @@ class InferenceSystemOne:
                     'api.http_status',
                     {'resource': 'completion', 'status': response.status_code},
                 )
+            require_identity_encoding(response)
             try:
                 decision_id = CompletionResponseIdSchema.model_validate(
                     {'id': response.headers.get('x-generation-id')}

@@ -605,6 +605,11 @@ are bounded per body, then accounted at EOF, including signed SSE tails after
 `[DONE]`. A zero response TTL disables retention. Limits do not cover caller-held
 parsed data or connection pools.
 
+Inference requests advertise `Accept-Encoding: identity`. Compressed responses
+are closed with `api.invalid_response` before their bodies are read, including
+Chat error responses. This prevents HTTP decompression from allocating beyond
+the body budget and preserves the signed response representation.
+
 Oversized requests fail before inference. Oversized responses fail with
 `api.body_too_large` and do not evict existing useful receipts. The low-level
 `send` method exposes SDK errors directly; an external OpenAI wrapper can wrap
