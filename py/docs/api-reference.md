@@ -54,7 +54,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `fetch_image_provenance` | `(repository, digest, github_token=None, *, github_proxy_url=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None, *, github_proxy_url=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
-| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None, github_proxy_url=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
+| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, manager_image_policy, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None, github_proxy_url=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
 
 ## InferenceClient
 
@@ -419,6 +419,7 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | --- | --- | --- | --- |
 | `deployment` | `MeasuredDeployment` | Required | Verified deployment with authenticated `compose_manager` actions. |
 | `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Required | Nonempty required image repositories and build policies. |
+| `manager_image_policy` | `ComposeManagerImagePolicy` | Required | Independent repository and build identity policy for the latest manager-start image. |
 | `compose_repository` | `str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
 | `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
 | `github_token` | `str \| None` | `None` | GitHub token for direct requests; ignored when `github_proxy_url` is set. |
