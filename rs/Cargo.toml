@@ -2,7 +2,7 @@
 name = "nearai-inference-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "Verification SDK for NEAR AI Cloud attestations"
+description = "Rust SDK for NEAR AI inference with attestation verification and end-to-end encryption"
 license = "MIT"
 repository = "https://github.com/nearai/inference-sdk"
 readme = "README.md"
