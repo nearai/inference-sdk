@@ -51,10 +51,10 @@ export async function verifyGatewayAttestation({
     });
     tlsBinding = { kind: 'none' };
   }
-  const evidence = await verifyDstackDeployment(
+  const evidence = await verifyDstackDeployment({
     verifiedQuote,
-    verifiers?.deployment,
-  );
+    deploymentVerifier: verifiers?.deployment,
+  });
 
   return { ...evidence, tlsBinding, report: attestation };
 }

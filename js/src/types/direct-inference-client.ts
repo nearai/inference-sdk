@@ -9,10 +9,14 @@ import type {
   InferenceEncryptionOptions,
   ModelVerificationOptions,
 } from './inference-client';
+import type { DeploymentVerifier } from './verification';
 
-export type DirectModelVerificationOptions = ModelVerificationOptions;
+export type DirectModelVerificationOptions = ModelVerificationOptions & {
+  /** Checks the serving report and restricts Chat to its signer and TLS pin. */
+  readonly servingDeployment?: DeploymentVerifier;
+};
 
-export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
+export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 
 /**
  * Verified Chat requests to one direct model endpoint, without a Gateway.
@@ -50,6 +54,6 @@ export type VerifiedDirectCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** All verified reports sharing this signer, not a claim identifying one CVM. */
+  /** Eligible verified reports sharing this signer, not a claim identifying one CVM. */
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };

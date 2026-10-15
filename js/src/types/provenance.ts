@@ -24,8 +24,10 @@ export type FetchImageProvenanceParams = {
   readonly repository: string;
   /** Image manifest digest, including the `sha256:` prefix. */
   readonly digest: string;
-  /** Optional GitHub token. Never use a gateway API key here. */
+  /** Optional GitHub token for direct requests; ignored when using a proxy. */
   readonly githubToken?: string;
+  /** Absolute HTTP(S) proxy base URL. Omit to access GitHub directly. */
+  readonly githubProxyUrl?: string;
 };
 
 export type VerifyImageProvenanceParams = {
@@ -40,8 +42,10 @@ export type VerifyDeploymentImageProvenanceParams = {
   readonly appCompose: string;
   /** Required container image repositories mapped to trusted GitHub builds. */
   readonly imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
-  /** Optional GitHub token, not a gateway API key. */
+  /** Optional GitHub token for direct requests; ignored when using a proxy. */
   readonly githubToken?: string;
+  /** Absolute HTTP(S) proxy base URL for GitHub API requests. */
+  readonly githubProxyUrl?: string;
 };
 
 export type DeploymentImagesFailureReason =
@@ -49,6 +53,7 @@ export type DeploymentImagesFailureReason =
   | 'invalid_app_compose'
   | 'invalid_docker_compose'
   | 'unresolved_image'
+  | 'service_missing'
   | 'image_missing'
   | 'image_not_pinned';
 

@@ -1,4 +1,5 @@
 import type { AttestationEvidence } from '../types/attestation-common';
+import type { VerifiedComposeManagerAttestation } from '../types/compose-manager';
 import type {
   AttestationPolicy,
   DeploymentProvenanceStatus,
@@ -52,8 +53,6 @@ export async function verifyDstackQuote({
   tdxQuoteVerifier,
   advertisedReportData,
 }: VerifyDstackQuoteParams): Promise<VerifiedDstackQuote> {
-  const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
-
   verifyReportedNonce({
     reportedNonce: attestation.nonce,
     nonce,
@@ -63,8 +62,29 @@ export async function verifyDstackQuote({
     attestation.signer.signingAddress,
   );
 
-  const quote = await verifyQuote(tdxQuoteVerifier, attestation.intelQuote);
+  const quote = await verifyTdxQuote({
+    intelQuote: attestation.intelQuote,
+    policy,
+    verifier: tdxQuoteVerifier,
+  });
   verifyAdvertisedReportData(advertisedReportData, quote.reportData);
+  return { attestation, quote, signer };
+}
+
+type VerifyTdxQuoteParams = {
+  intelQuote: string;
+  policy?: AttestationPolicy;
+  verifier?: TdxQuoteVerifier;
+};
+
+/** Shared CPU trust and TCB policy, independent of the report-data layout. */
+export async function verifyTdxQuote({
+  intelQuote,
+  policy,
+  verifier,
+}: VerifyTdxQuoteParams): Promise<VerifiedTdxQuote> {
+  const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
+  const quote = await verifyQuote(verifier, intelQuote);
   if (quote.debugEnabled) {
     throw new VerificationError({
       code: 'policy.debug_enabled',
@@ -81,18 +101,25 @@ export async function verifyDstackQuote({
     });
   }
 
-  return { attestation, quote, signer };
+  return quote;
 }
+
+type VerifyDstackDeploymentParams = {
+  verifiedQuote: VerifiedDstackQuote;
+  deploymentVerifier?: DeploymentVerifier;
+  composeManager?: VerifiedComposeManagerAttestation;
+};
 
 /**
  * Replay measurements and optionally apply caller-owned deployment policy.
  * A supplied verifier is required to resolve successfully; there is no second
  * boolean that can silently change that requirement.
  */
-export async function verifyDstackDeployment(
-  verifiedQuote: VerifiedDstackQuote,
-  deploymentVerifier?: DeploymentVerifier,
-): Promise<VerifiedAttestationEvidence> {
+export async function verifyDstackDeployment({
+  verifiedQuote,
+  deploymentVerifier,
+  composeManager,
+}: VerifyDstackDeploymentParams): Promise<VerifiedAttestationEvidence> {
   const { attestation, quote, signer } = verifiedQuote;
   const runtimeMeasurements = await verifyAndReplayRtmr3(
     attestation.eventLog,
@@ -103,6 +130,7 @@ export async function verifyDstackDeployment(
   const deployment: MeasuredDeployment = {
     appCompose,
     runtimeMeasurements,
+    ...(composeManager === undefined ? {} : { composeManager }),
   };
 
   let deploymentProvenance: DeploymentProvenanceStatus = 'not_checked';

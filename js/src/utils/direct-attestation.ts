@@ -14,7 +14,10 @@ export function findDirectModelAttestationIndex(
 
 // Object key order is not evidence. Preserve array order and string contents.
 function serializeAttestation(attestation: DirectModelAttestation): string {
-  return JSON.stringify(attestation, (_key, value: unknown) => {
+  // Compose Manager is envelope metadata added to the serving model report;
+  // it is not part of the individual report in all_attestations.
+  const { composeManagerAttestation: _manager, ...modelReport } = attestation;
+  return JSON.stringify(modelReport, (_key, value: unknown) => {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
       return value;
     }

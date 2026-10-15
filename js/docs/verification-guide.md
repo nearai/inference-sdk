@@ -686,7 +686,136 @@ build attestations; legacy Rekor `intoto` entries are not supported.
 configuration, failed proof retrieval, or failed proof verification. A retrieval
 failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
-The optional `githubToken` is a GitHub token, not a Gateway API key.
+
+#### GitHub authentication and proxies
+
+Server-side applications can pass `githubToken` to use GitHub's authenticated
+API quota. This is a GitHub token, not a Gateway API key. Do not embed a shared
+token in browser code.
+
+For browser applications, configure a backend proxy instead:
+
+```ts
+await verifyDeploymentImageProvenance({
+  appCompose: deployment.appCompose,
+  imagePolicies,
+  githubProxyUrl: 'https://app.example/verification/github',
+});
+```
+
+`fetchImageProvenance` and `verifyComposeManagerDeploymentImageProvenance`
+accept the same option. The latter uses it for both compose files and image
+proofs. Without it, requests go directly to GitHub. With it, `githubToken` is
+ignored; the proxy supplies its own token on the server.
+
+The SDK appends GitHub API paths to the proxy base URL, preserving its path
+prefix. The proxy must support these read-only requests:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Forward pagination cursors and preserve HTTP status codes. The SDK keeps all
+pages on the proxy even when `Link` contains absolute GitHub URLs. Return the
+content directly, not a redirect. Use an absolute HTTP(S) base URL without
+credentials, query parameters or a fragment; a trailing slash is optional.
+
+Prefer a same-origin proxy. A cross-origin proxy must allow the SDK's `Accept`
+and `X-GitHub-Api-Version` request headers and expose `Link` through CORS.
+Keep GitHub credentials on the backend, restrict allowed repositories and
+read-only routes, and cache bundles by repository and digest with a refresh
+policy for newly published proofs. A proxy concentrates requests onto its own
+GitHub quota, so authentication alone is not a substitute for caching.
+
+The proxy returns evidence, not a verification verdict. The SDK still verifies
+the original bundle and caller policy, and checks compose-file hashes locally.
+This option does not change Sigstore trust-root retrieval.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `appCompose` can describe its launcher rather than the
+model-serving containers deployed later. Use
+`verifyComposeManagerDeploymentImageProvenance` for those images:
+
+```ts
+import {
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyModelAttestation,
+  type ImageProvenancePolicy,
+} from '@nearai/inference-sdk';
+
+const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+for (const attestation of fetchedModels.attestations) {
+  await verifyModelAttestation({
+    attestation,
+    clientBinding: fetchedModels.clientBinding,
+    verifiers: {
+      deployment: deployment =>
+        verifyComposeManagerDeploymentImageProvenance({
+          deployment,
+          imagePolicies: modelImagePolicies,
+      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
+        }),
+    },
+  });
+}
+```
+
+When a model report includes Compose Manager evidence, model verification also
+checks its TDX quote, TCB policy, client nonce, action-log hash, event log and
+binding to the same measured `appCompose`. The callback receives these
+authenticated actions in `deployment.composeManager`.
+
+The image helper selects the last `compose_up`, fetches its file from
+`nearai/cvm-compose-files` at the recorded commit, checks the exact file bytes
+against `file_sha256`, and verifies the required image builds from the action's
+named `services`. An omitted or empty list selects the whole file; unknown service
+names are rejected. Images in unselected services cannot satisfy a policy. The
+latest `compose_manager_started` must name a digest-pinned image matching the
+separate `managerImagePolicy`; a compose-file image cannot satisfy that policy.
+Missing startup evidence fails verification. Set `composeFile` to
+select a particular project's file, or `composeRepository` to use another
+trusted repository. A configured image that is absent or unpinned fails verification.
+For `InferenceClient`, use this callback as `modelVerification.verifiers.deployment`.
+
+This authenticates **recorded deployment intent**, not successful execution or
+the currently running containers. Matching `appCompose` is not a unique CVM
+identity. The policies above cover the proxy and Compose Manager images, not
+model weights, every container or the boot launcher's build. Approve the boot
+configuration separately. A missing Compose Manager report is allowed by basic
+model verification but rejected when this provenance helper is used. For direct
+endpoints, envelope-level evidence applies only to the serving report. Use
+`servingDeployment` for this policy, keeping per-report checks in `verifiers.deployment`:
+
+```ts
+import { verifyDirectModelAttestations } from '@nearai/inference-sdk/node';
+
+const verified = await verifyDirectModelAttestations({
+  ...fetchedDirect,
+  servingDeployment: deployment =>
+    verifyComposeManagerDeploymentImageProvenance({
+      deployment,
+      imagePolicies: modelImagePolicies,
+      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
+    }),
+});
+```
+
+For `DirectInferenceClient`, use `modelVerification.servingDeployment`. Every
+model report still undergoes its normal quote, GPU and deployment checks. This
+additional policy runs after the whole set and its TLS binding pass; it marks
+only the serving report's provenance as verified. Missing manager evidence in
+that report still fails the policy. With this option, the client uses only the
+serving report for Chat's signer, TLS pins (when enabled), and response verification.
+When composing the bare functions yourself, pass `[verified.servingAttestation]`
+to `verifyDirectModelResponse` to apply the same restriction.
 
 ### Verify the response signature
 

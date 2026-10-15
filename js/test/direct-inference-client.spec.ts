@@ -283,6 +283,80 @@ describe('DirectInferenceClient', () => {
     jest.restoreAllMocks();
   });
 
+  test('blocks Chat when the serving deployment policy fails', async () => {
+    const provider = createDirectEndpoint();
+    const reject = new Error('Unapproved serving deployment');
+    const servingDeployment = jest.fn(() => {
+      throw reject;
+    });
+    const client = new DirectInferenceClient({
+      ...provider.options,
+      modelVerification: {
+        ...provider.options.modelVerification,
+        servingDeployment,
+      },
+    });
+    await expect(client.fetch(chatRequest())).rejects.toBe(reject);
+    expect(servingDeployment).toHaveBeenCalledTimes(1);
+    expect(provider.state.decryptedPrompts).toEqual([]);
+  });
+
+  test.each([true, false])(
+    'uses only the provenance-checked serving report with E2EE set to %s',
+    async (e2ee) => {
+      const provider = createDirectEndpoint({
+        otherSignerFirst: true,
+        omitPublicKeyFor: [0],
+      });
+      const servingDeployment = jest.fn();
+      const client = new DirectInferenceClient({
+        ...provider.options,
+        e2ee,
+        modelVerification: {
+          ...provider.options.modelVerification,
+          servingDeployment,
+        },
+      });
+
+      const preflight = await client.verify(model);
+      expect(preflight.attestations).toHaveLength(3);
+      expect(servingDeployment).toHaveBeenCalledWith(
+        preflight.servingAttestation.deployment,
+      );
+      const completion = await client.chat.completions.create({
+        model,
+        messages,
+      });
+      expect(completion.choices[0].message.content).toBe(answer);
+      expect(provider.state.decryptedPrompts).toEqual([prompt]);
+      const result = await client.verifyResponse(completion.id);
+      expect(result.attestations).toEqual([preflight.servingAttestation]);
+      expect(result.attestations[0].deploymentProvenance).toBe('verified');
+    },
+  );
+
+  test('rejects a response from a different signer when only the serving deployment is approved', async () => {
+    const provider = createDirectEndpoint({
+      otherSignerFirst: true,
+      wrongSignatureKey: true,
+    });
+    const client = new DirectInferenceClient({
+      ...provider.options,
+      e2ee: false,
+      modelVerification: {
+        ...provider.options.modelVerification,
+        servingDeployment: () => {},
+      },
+    });
+    const completion = await client.chat.completions.create({
+      model,
+      messages,
+    });
+    await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
+      failure: { code: 'signature.signer_mismatch' },
+    });
+  });
+
   test.each([true, false])(
     'round-trips OHTTP JSON and SSE with byte-exact response verification and E2EE set to %s',
     async (e2ee) => {

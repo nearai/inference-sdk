@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import type { ComposeManagerAction } from './types/compose-manager';
 
 /** Values accepted at external HTTP, adapter, and signed-byte boundaries. */
 const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
@@ -130,6 +131,46 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
+export const ComposeManagerActionFieldsSchema = objectSchema({
+  action: v.string(),
+  timestamp: v.string(),
+  image: v.optional(v.string()),
+  commit: v.optional(v.string()),
+  file: v.optional(v.string()),
+  file_sha256: v.optional(v.string()),
+  services: v.optional(v.array(v.string())),
+});
+
+export const ComposeManagerActionValueSchema = v.union([
+  v.string(),
+  v.array(v.string()),
+]);
+const ComposeManagerActionValuesSchema = v.array(
+  ComposeManagerActionValueSchema,
+);
+
+// Validate without rebuilding the action: object/record schemas filter keys
+// such as __proto__, but every signed field must participate in its hash.
+export const ComposeManagerActionSchema = v.custom<ComposeManagerAction>(
+  (value) =>
+    v.is(ComposeManagerActionFieldsSchema, value) &&
+    v.is(ComposeManagerActionValuesSchema, Object.values(value)),
+);
+
+export const ComposeManagerAttestationSchema = objectSchema({
+  actions: v.array(ComposeManagerActionSchema),
+  actions_hash: v.string(),
+  nonce: v.string(),
+  quote: v.string(),
+  event_log: AttestationEventLogSchema,
+  report_data: OptionalCloudApiStringSchema,
+});
+
+const OptionalComposeManagerAttestationSchema = v.pipe(
+  v.optional(v.nullable(ComposeManagerAttestationSchema)),
+  v.transform((value) => value ?? undefined),
+);
+
 export const OhttpAttestationSchema = objectSchema({
   signing_algo: v.literal('ed25519'),
   signing_key: v.string(),
@@ -157,6 +198,7 @@ const CloudApiModelAttestationEntries = {
   ...CloudApiAttestationEntries,
   nvidia_payload: OptionalCloudApiStringSchema,
   signing_public_key: OptionalCloudApiStringSchema,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
 };
 
 export const CloudApiModelAttestationSchema = objectSchema(
@@ -182,7 +224,6 @@ export const DirectApiAttestationReportSchema = objectSchema({
     v.array(DirectApiModelAttestationSchema),
     v.minLength(1),
   ),
-  compose_manager_attestation: v.optional(v.unknown()),
   ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 

@@ -69,6 +69,9 @@ async function verifyDirectModelCpuAttestation({
     attestation,
     verifiedQuote,
     deploymentVerifier: verifiers?.deployment,
+    nonce,
+    policy,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
   });
   return {
     ...verified,
@@ -92,6 +95,7 @@ export async function verifyDirectModelAttestations({
   clientBinding,
   policy,
   verifiers,
+  servingDeployment,
 }: VerifyDirectModelAttestationsParams): Promise<VerifiedDirectModelAttestations> {
   if (suppliedAttestations.length === 0) {
     throw new VerificationError({ code: 'policy.model_attestation_required' });
@@ -119,7 +123,7 @@ export async function verifyDirectModelAttestations({
       }),
     ),
   );
-  const verifiedServingAttestation = attestations[servingIndex];
+  let verifiedServingAttestation = attestations[servingIndex];
 
   let tlsBinding: VerifiedDirectModelAttestations['tlsBinding'];
   if (verifiedServingAttestation.spkiFingerprint !== undefined) {
@@ -139,6 +143,14 @@ export async function verifyDirectModelAttestations({
     };
   } else {
     tlsBinding = { kind: 'none' };
+  }
+  if (servingDeployment !== undefined) {
+    await servingDeployment(verifiedServingAttestation.deployment);
+    verifiedServingAttestation = {
+      ...verifiedServingAttestation,
+      deploymentProvenance: 'verified',
+    };
+    attestations[servingIndex] = verifiedServingAttestation;
   }
   return {
     servingAttestation: verifiedServingAttestation,
