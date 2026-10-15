@@ -265,3 +265,36 @@ async def test_requires_manager_evidence_when_its_provenance_policy_is_used():
         )
     assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
     assert raised.value.failure.details == {'reason': 'attestation_missing'}
+
+
+async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch():
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    requests = []
+
+    async def oversized(request):
+        requests.append(request.path)
+        response = web.StreamResponse()
+        await response.prepare(request)
+        await response.write(b'x' * (8 * 1024 * 1024 + 1))
+        return response
+
+    app = web.Application()
+    app.router.add_get('/{path:.*}', oversized)
+    verified = await verify_model_attestation(
+        create_model_attestation(compose_manager_attestation=manager_report()),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
+    )
+    async with TestServer(app) as server:
+        with pytest.raises(VerificationError) as raised:
+            await verify_compose_manager_deployment_image_provenance(
+                verified.deployment,
+                POLICIES,
+                manager_image_policy=MANAGER_POLICY,
+                github_proxy_url=str(server.make_url('/')),
+            )
+    assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
+    assert raised.value.failure.details['reason'] == 'compose_file_too_large'
+    assert len(requests) == 1

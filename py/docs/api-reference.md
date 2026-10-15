@@ -402,6 +402,8 @@ Image verification errors pass through unchanged.
 
 ### `verify_compose_manager_deployment_image_provenance`
 
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
 The required keyword `manager_image_policy: ComposeManagerImagePolicy` supplies
 `image_repository` plus the ordinary image build policy fields. It applies only
 to the latest `compose_manager_started` image, independently of `image_policies`

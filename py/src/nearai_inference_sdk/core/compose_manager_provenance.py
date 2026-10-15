@@ -10,7 +10,7 @@ from ..types.provenance import ImageProvenancePolicy
 from ..types.verification import MeasuredDeployment
 from ..utils.common import sha256
 from ..utils.errors import VerificationError, verification_failure
-from ..utils.fetch import fetch
+from ..utils.fetch import ResponseBodyTooLarge, fetch
 from .provenance import verify_compose_image_provenance
 
 
@@ -98,7 +98,11 @@ async def verify_compose_manager_deployment_image_provenance(
     if github_proxy_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
     try:
-        response = await fetch(url, headers=headers, allow_redirects=False)
+        response = await fetch(
+            url, headers=headers, allow_redirects=False, max_body_bytes=8 * 1024 * 1024
+        )
+    except ResponseBodyTooLarge as error:
+        raise _invalid_deployment('compose_file_too_large') from error
     except Exception as error:
         raise verification_failure(
             'provenance.compose_file_request_failed',

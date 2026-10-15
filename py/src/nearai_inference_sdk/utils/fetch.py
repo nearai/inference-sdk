@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from aiohttp.connector import Connection
 
 
+class ResponseBodyTooLarge(ValueError):
+    """A bounded response exceeded the requested byte budget."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class FetchResponse:
     status: int
@@ -40,6 +44,7 @@ async def fetch(
     headers: Mapping[str, str] | None = None,
     _capture_peer_spki: bool = False,
     allow_redirects: bool = True,
+    max_body_bytes: int | None = None,
 ) -> FetchResponse:
     """Send one request, optionally retaining its TLS peer SPKI fingerprint.
 
@@ -60,9 +65,17 @@ async def fetch(
             method, url, data=data, headers=headers, allow_redirects=allow_redirects
         ) as response,
     ):
+        if max_body_bytes is None:
+            body = await response.read()
+        else:
+            body = bytearray()
+            async for chunk in response.content.iter_chunked(65536):
+                if len(chunk) > max_body_bytes - len(body):
+                    raise ResponseBodyTooLarge('response exceeds configured byte limit')
+                body.extend(chunk)
         return FetchResponse(
             status=response.status,
-            body=await response.read(),
+            body=bytes(body),
             headers=response.headers,
             peer_spki_fingerprint=(
                 response.peer_spki_fingerprint
