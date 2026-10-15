@@ -687,7 +687,7 @@ OpenAI-compatible `fetch`/`chat` surface remain Chat-only.
 | `state` | Text, object, or array | Decision context forwarded as JSON. |
 | `questions` | `Readonly<Record<string, SystemOneQuestion>>` | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
 
-| Question `type` | Optional `instructions` | `criteria` |
+| Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |

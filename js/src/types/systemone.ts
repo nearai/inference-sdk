@@ -7,7 +7,7 @@ export type SystemOneContent = string | object;
 export type SystemOneQuestion =
   | {
       readonly type: 'noul';
-      readonly instructions?: SystemOneContent;
+      readonly instructions: SystemOneContent;
       readonly criteria?: {
         readonly true?: SystemOneContent;
         readonly false?: SystemOneContent;
@@ -15,12 +15,12 @@ export type SystemOneQuestion =
     }
   | {
       readonly type: 'choice';
-      readonly instructions?: SystemOneContent;
+      readonly instructions: SystemOneContent;
       readonly criteria: Readonly<Record<string, SystemOneContent | null>>;
     }
   | {
       readonly type: 'score';
-      readonly instructions?: SystemOneContent;
+      readonly instructions: SystemOneContent;
       readonly criteria: readonly SystemOneContent[];
     };
 

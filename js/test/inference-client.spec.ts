@@ -3345,9 +3345,14 @@ describe('System One decisions', () => {
       },
       team: {
         type: 'choice' as const,
+        instructions: { task: 'Choose the team that should handle this.' },
         criteria: { billing: null, support: 'Other issues' },
       },
-      urgency: { type: 'score' as const, criteria: ['Low', 'High'] },
+      urgency: {
+        type: 'score' as const,
+        instructions: ['Rate the urgency.', { context: 'Customer support' }],
+        criteria: ['Low', 'High'],
+      },
     },
   };
   const decisionResponse = {
@@ -3991,6 +3996,7 @@ describe('System One decisions', () => {
           [name]: { type: 'noul', instructions: { [name]: 'description' } },
           action: {
             type: 'choice',
+            instructions: 'Choose an action.',
             criteria: { [name]: null, ok: 'Continue' },
           },
         },
