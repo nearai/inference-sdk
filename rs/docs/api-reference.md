@@ -421,6 +421,7 @@ receipts retain every verified report matching the actual signer; plaintext
 decisions do not require an encryption public key. Every returned model report
 is still verified. Gateway-only providers produce Gateway receipts.
 
+Every question requires `instructions` as text, an object, or an array.
 Request state and business criteria are passed through to the server. Typed
 responses support `noul`, `choice`, and `score`, preserve unknown fields and
 arbitrary dictionary keys, and reject malformed output. Response bytes, receipt

@@ -23,8 +23,8 @@ func TestSystemOne(t *testing.T) {
 				Model: required(t, "NEARAI_E2E_SYSTEMONE_MODEL"), State: map[string]string{"message": "I was charged twice for my subscription. Please help."},
 				Questions: map[string]nearai.SystemOneQuestion{
 					"billing": {Type: "noul", Instructions: "Is this about billing?"},
-					"team":    {Type: "choice", Criteria: map[string]string{"billing": "Payments", "support": "Technical help"}},
-					"urgency": {Type: "score", Criteria: []string{"Routine", "Prompt attention", "Critical"}},
+					"team":    {Type: "choice", Instructions: "Which team should handle this?", Criteria: map[string]string{"billing": "Payments", "support": "Technical help"}},
+					"urgency": {Type: "score", Instructions: "How urgent is this request?", Criteria: []string{"Routine", "Prompt attention", "Critical"}},
 				},
 			})
 			if err != nil {

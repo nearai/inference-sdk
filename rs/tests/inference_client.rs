@@ -891,7 +891,7 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
 }
 
 fn systemone_request() -> Value {
-    json!({"model":"vendor/model","state":{"text":"hello"},"questions":{"q":{"type":"noul"}}})
+    json!({"model":"vendor/model","state":{"text":"hello"},"questions":{"q":{"type":"noul","instructions":"Is this a greeting?"}}})
 }
 #[tokio::test]
 async fn systemone_exact_bytes_and_receipts_without_encryption_public_key() {

@@ -20,8 +20,8 @@ async fn verified_systemone_decisions() -> Result<(), Box<dyn Error>> {
                 "state": {"message":"I was charged twice for my subscription. Please help."},
                 "questions": {
                     "billing":{"type":"noul","instructions":"Is this about billing?"},
-                    "team":{"type":"choice","criteria":{"billing":"Payments","support":"Technical help"}},
-                    "urgency":{"type":"score","criteria":["Routine","Prompt attention","Critical"]}
+                    "team":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments","support":"Technical help"}},
+                    "urgency":{"type":"score","instructions":"How urgent is this request?","criteria":["Routine","Prompt attention","Critical"]}
                 }
             });
             let result = client.systemone_create(&request).await?;

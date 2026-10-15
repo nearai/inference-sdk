@@ -154,7 +154,7 @@ func systemOneClient(t *testing.T, tee bool, algo SigningAlgo, modify func(*syst
 	return c, f
 }
 func systemOneRequest() any {
-	return map[string]any{"model": "canonical/model", "state": map[string]string{"text": "hello"}, "questions": map[string]any{"q": map[string]string{"type": "noul"}}}
+	return map[string]any{"model": "canonical/model", "state": map[string]string{"text": "hello"}, "questions": map[string]any{"q": map[string]string{"type": "noul", "instructions": "Is this a greeting?"}}}
 }
 
 func TestSystemOneExactBytesAndReceiptWithoutEncryptionKey(t *testing.T) {

@@ -15,19 +15,16 @@ pub enum SystemOneContent {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum SystemOneQuestion {
     Noul {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        instructions: Option<SystemOneContent>,
+        instructions: SystemOneContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         criteria: Option<BTreeMap<String, SystemOneContent>>,
     },
     Choice {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        instructions: Option<SystemOneContent>,
+        instructions: SystemOneContent,
         criteria: BTreeMap<String, Option<SystemOneContent>>,
     },
     Score {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        instructions: Option<SystemOneContent>,
+        instructions: SystemOneContent,
         criteria: Vec<SystemOneContent>,
     },
 }
@@ -125,6 +122,32 @@ pub(crate) fn decode_response(bytes: &[u8]) -> Result<SystemOneResponse, ApiErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn question_instructions_are_required() {
+        for mut question in [
+            serde_json::json!({"type":"noul"}),
+            serde_json::json!({"type":"choice","criteria":{"billing":null,"other":null}}),
+            serde_json::json!({"type":"score","criteria":["low","high"]}),
+        ] {
+            assert!(serde_json::from_value::<SystemOneQuestion>(question.clone()).is_err());
+            question["instructions"] = Value::Null;
+            assert!(serde_json::from_value::<SystemOneQuestion>(question.clone()).is_err());
+            for instructions in [
+                serde_json::json!("Evaluate this request."),
+                serde_json::json!({"task":"Evaluate this request."}),
+                serde_json::json!(["Evaluate this request."]),
+            ] {
+                question["instructions"] = instructions.clone();
+                let parsed: SystemOneQuestion = serde_json::from_value(question.clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(parsed).unwrap()["instructions"],
+                    instructions
+                );
+            }
+        }
+    }
+
     #[test]
     fn shared_response_vectors() {
         let fixture: Value =

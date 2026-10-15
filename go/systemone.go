@@ -14,7 +14,7 @@ import (
 type SystemOneContent = any
 type SystemOneQuestion struct {
 	Type         string           `json:"type"`
-	Instructions SystemOneContent `json:"instructions,omitempty"`
+	Instructions SystemOneContent `json:"instructions"` // Required text, object, or array.
 	Criteria     any              `json:"criteria,omitempty"`
 }
 type SystemOneRequest struct {
