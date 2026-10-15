@@ -435,27 +435,6 @@ verification. Expired or evicted receipts cannot be verified. Check the
 [cache limits](./api-reference.md#clients-and-lifecycle) when sizing services that
 retain large or streaming completions.
 
-## Handle errors
-
-Use Go's `errors.As` and `errors.Is`; add `"errors"` to your imports:
-
-```go
-func inspectError(err error) {
-	var sdkError *nearai.Error
-	if errors.As(err, &sdkError) {
-		fmt.Println(sdkError.Code, sdkError.Retryable, sdkError.Details)
-	}
-	if errors.Is(err, context.Canceled) {
-		fmt.Println("request canceled")
-	}
-}
-```
-
-Retryable signature retrieval failures can be retried by calling `VerifyResponse`
-again while its receipt remains retained. Use bounded retries and a context
-deadline. Do not replay Chat just because a receipt fetch failed. Verification
-failures remain failures; the SDK never silently falls back to unverified Chat.
-
 ## Images deployed by Compose Manager
 
 Use a model deployment callback to require authenticated deployment actions and
@@ -487,3 +466,24 @@ recorded compose bytes and listed builds; it does not prove deployment succeeded
 or identify currently running containers. Approve the boot configuration and
 model weights separately. The direct callback applies only to the root serving
 envelope after all reports have been verified.
+
+## Handle errors
+
+Use Go's `errors.As` and `errors.Is`; add `"errors"` to your imports:
+
+```go
+func inspectError(err error) {
+	var sdkError *nearai.Error
+	if errors.As(err, &sdkError) {
+		fmt.Println(sdkError.Code, sdkError.Retryable, sdkError.Details)
+	}
+	if errors.Is(err, context.Canceled) {
+		fmt.Println("request canceled")
+	}
+}
+```
+
+Retryable signature retrieval failures can be retried by calling `VerifyResponse`
+again while its receipt remains retained. Use bounded retries and a context
+deadline. Do not replay Chat just because a receipt fetch failed. Verification
+failures remain failures; the SDK never silently falls back to unverified Chat.

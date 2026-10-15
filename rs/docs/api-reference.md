@@ -250,6 +250,21 @@ prove action success, current runtime state or a unique CVM identity.
 | `advisory_ids` | `Vec<String>` | Manager quote advisory IDs. |
 | `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
 
+`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
+also supports `github_token` and `github_proxy_url`.
+`verify_deployment_image_provenance_with_options` accepts
+`DeploymentImageProvenanceOptions` with those fields and optional
+`image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
+same API origin and artifact path. Redirects are rejected.
+
+For direct evidence, nested `all_attestations` manager fields are discarded.
+`verify_direct_model_attestations_with_serving_deployment` accepts the same first
+three arguments as `verify_direct_model_attestations`, followed by an optional
+`&dyn DeploymentVerifier`. The integrated equivalent is
+`ModelVerificationOptions.serving_deployment`. It runs after all reports and the
+serving TLS binding pass, marks only the serving report's provenance, and restricts
+routing, TLS pins and receipt attribution to that report.
+
 ### Measured compose and individual image helpers
 
 These functions are asynchronous. The low-level functions separate retrieval
@@ -444,18 +459,3 @@ each error variant.
 `fetch_completion_signature` maps a valid 2xx unavailable response to
 `ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
 service's code and message.
-
-`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
-also supports `github_token` and `github_proxy_url`.
-`verify_deployment_image_provenance_with_options` accepts
-`DeploymentImageProvenanceOptions` with those fields and optional
-`image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
-same API origin and artifact path. Redirects are rejected.
-
-For direct evidence, nested `all_attestations` manager fields are discarded.
-`verify_direct_model_attestations_with_serving_deployment` accepts the same first
-three arguments as `verify_direct_model_attestations`, followed by an optional
-`&dyn DeploymentVerifier`. The integrated equivalent is
-`ModelVerificationOptions.serving_deployment`. It runs after all reports and the
-serving TLS binding pass, marks only the serving report's provenance, and restricts
-routing, TLS pins and receipt attribution to that report.

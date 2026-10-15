@@ -329,6 +329,60 @@ async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, InferenceClientOp
 fn body() -> Value {
     json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
 }
+struct ServingPolicy(Arc<AtomicUsize>);
+#[async_trait]
+impl DeploymentVerifier for ServingPolicy {
+    async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn serving_policy_runs_after_every_report_and_limits_receipt_attribution() {
+    for bad_model in [false, true] {
+        let (_server, f, mut options) = setup(Fixture {
+            direct: true,
+            bad_model,
+            ..Default::default()
+        })
+        .await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        options.model_verification.serving_deployment =
+            Some(Arc::new(ServingPolicy(calls.clone())));
+        let client = DirectInferenceClient::with_options(options.into()).unwrap();
+        let verified = client.verify("vendor/model").await;
+        if bad_model {
+            assert!(verified.is_err());
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            assert_eq!(f.chat.load(Ordering::SeqCst), 0);
+            continue;
+        }
+        let verified = verified.unwrap();
+        assert_eq!(verified.attestations.len(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            verified
+                .attestations
+                .iter()
+                .filter(|a| a.attestation.evidence.deployment_provenance
+                    == DeploymentProvenanceStatus::Verified)
+                .count(),
+            1
+        );
+        client.chat_completions(body()).await.unwrap();
+        match client.verify_response("chat-0").await.unwrap().attestation {
+            VerifiedCompletionAttestation::Direct(reports) => {
+                assert_eq!(reports.len(), 1);
+                assert_eq!(
+                    reports[0].attestation.evidence.deployment_provenance,
+                    DeploymentProvenanceStatus::Verified
+                )
+            }
+            _ => panic!("expected direct receipt"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
     let (_server, f, options) = setup(Fixture::default()).await;
@@ -820,58 +874,4 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     options.max_receipt_cache_bytes = 0;
     assert!(InferenceClient::with_options(options.clone()).is_err());
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
-}
-
-struct ServingPolicy(Arc<AtomicUsize>);
-#[async_trait]
-impl DeploymentVerifier for ServingPolicy {
-    async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
-#[tokio::test]
-async fn serving_policy_runs_after_every_report_and_limits_receipt_attribution() {
-    for bad_model in [false, true] {
-        let (_server, f, mut options) = setup(Fixture {
-            direct: true,
-            bad_model,
-            ..Default::default()
-        })
-        .await;
-        let calls = Arc::new(AtomicUsize::new(0));
-        options.model_verification.serving_deployment =
-            Some(Arc::new(ServingPolicy(calls.clone())));
-        let client = DirectInferenceClient::with_options(options.into()).unwrap();
-        let verified = client.verify("vendor/model").await;
-        if bad_model {
-            assert!(verified.is_err());
-            assert_eq!(calls.load(Ordering::SeqCst), 0);
-            assert_eq!(f.chat.load(Ordering::SeqCst), 0);
-            continue;
-        }
-        let verified = verified.unwrap();
-        assert_eq!(verified.attestations.len(), 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            verified
-                .attestations
-                .iter()
-                .filter(|a| a.attestation.evidence.deployment_provenance
-                    == DeploymentProvenanceStatus::Verified)
-                .count(),
-            1
-        );
-        client.chat_completions(body()).await.unwrap();
-        match client.verify_response("chat-0").await.unwrap().attestation {
-            VerifiedCompletionAttestation::Direct(reports) => {
-                assert_eq!(reports.len(), 1);
-                assert_eq!(
-                    reports[0].attestation.evidence.deployment_provenance,
-                    DeploymentProvenanceStatus::Verified
-                )
-            }
-            _ => panic!("expected direct receipt"),
-        }
-    }
 }

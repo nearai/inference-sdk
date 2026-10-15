@@ -478,38 +478,6 @@ uses authenticated production TUF updates; `TrustedRoot` supports offline truste
 material. Trust-root refresh uses the upstream synchronous API; cancellation is
 checked before and after it, not during its network operation.
 
-## Errors and development
-
-```go
-type Error struct {
-    Code      string
-    Details   map[string]any
-    Retryable bool
-    Cause     error
-}
-
-func (e *Error) Error() string
-func (e *Error) Unwrap() error
-```
-
-Use `errors.As(err, &sdkError)` for `*nearai.Error`. Branch on `Code`, inspect
-`Details`, and use `errors.Is` for wrapped context cancellation. `Retryable`
-indicates a failed external operation may succeed on another attempt; it never
-authorizes automatic replay of inference. The SDK does not retry completions.
-
-From `go/` (no native library setup required):
-
-```sh
-gofmt -w *.go internal/dcap/*.go
-go vet ./...
-go test -race -cover ./...
-```
-
-The test suite includes cross-language E2EE vectors, signed provenance fixtures,
-embedded DCAP verification, admission and exact signatures, shared cancellation,
-stream failures, TLS rejection, and chunked OHTTP authentication. It does not
-make paid inference calls.
-
 ## Compose Manager deployment provenance
 
 `Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
@@ -546,3 +514,35 @@ It runs after every report and TLS binding pass, marks only the serving report's
 provenance, and constrains routing/receipt attribution to it. Only root-envelope
 manager evidence is attached to the serving report; nested manager fields are
 discarded. Direct network TLS binding remains experimental and disabled as before.
+
+## Errors and development
+
+```go
+type Error struct {
+    Code      string
+    Details   map[string]any
+    Retryable bool
+    Cause     error
+}
+
+func (e *Error) Error() string
+func (e *Error) Unwrap() error
+```
+
+Use `errors.As(err, &sdkError)` for `*nearai.Error`. Branch on `Code`, inspect
+`Details`, and use `errors.Is` for wrapped context cancellation. `Retryable`
+indicates a failed external operation may succeed on another attempt; it never
+authorizes automatic replay of inference. The SDK does not retry completions.
+
+From `go/` (no native library setup required):
+
+```sh
+gofmt -w *.go internal/dcap/*.go
+go vet ./...
+go test -race -cover ./...
+```
+
+The test suite includes cross-language E2EE vectors, signed provenance fixtures,
+embedded DCAP verification, admission and exact signatures, shared cancellation,
+stream failures, TLS rejection, and chunked OHTTP authentication. It does not
+make paid inference calls.
