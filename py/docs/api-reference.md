@@ -188,7 +188,7 @@ from Chat. Inference is never automatically retried.
 | `state` | `str \| dict \| list` | Text or structured decision context. |
 | `questions` | `dict[str, SystemOneQuestion]` | Named questions; request business rules are checked by the server. |
 
-| Question `type` | Optional `instructions` | `criteria` |
+| Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |

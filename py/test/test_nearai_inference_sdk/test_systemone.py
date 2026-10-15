@@ -27,9 +27,17 @@ REQUEST = {
     'model': MODEL,
     'state': {'question': 'Is this a useful answer?'},
     'questions': {
-        'useful': {'type': 'noul'},
-        'action': {'type': 'choice', 'criteria': {'keep': 'Use it', 'skip': None}},
-        'quality': {'type': 'score', 'criteria': ['low', 'high']},
+        'useful': {'type': 'noul', 'instructions': 'Is this a useful answer?'},
+        'action': {
+            'type': 'choice',
+            'instructions': {'task': 'Decide whether to keep this answer.'},
+            'criteria': {'keep': 'Use it', 'skip': None},
+        },
+        'quality': {
+            'type': 'score',
+            'instructions': ['Rate the answer.', {'context': 'Customer support'}],
+            'criteria': ['low', 'high'],
+        },
     },
 }
 
@@ -248,6 +256,7 @@ async def test_decisions_verify_exact_bytes_with_the_actual_serving_signer(
     assert 'x-model-pub-key' not in gateway.requests[0].headers
     assert gateway.signature_requests == 1
     sent = gateway.requests[0]
+    assert json.loads(sent.content) == REQUEST
     assert sent.headers['content-length'] == str(len(sent.content))
     for name in (
         'content-encoding',
@@ -472,9 +481,10 @@ async def test_question_names_and_choice_labels_are_preserved(monkeypatch):
                 'questions': {
                     'constructor': {
                         'type': 'choice',
+                        'instructions': 'Choose an option.',
                         'criteria': {'prototype': 'First', '__proto__': 'Second'},
                     },
-                    '__proto__': {'type': 'noul'},
+                    '__proto__': {'type': 'noul', 'instructions': 'Is this useful?'},
                 },
             }
         )
