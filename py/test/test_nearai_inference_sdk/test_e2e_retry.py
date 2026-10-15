@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from openai import APIConnectionError
+from openai import APIConnectionError, RateLimitError
 
 from e2e.retry import retry_rate_limit
 from nearai_inference_sdk.utils.errors import api_failure
@@ -80,3 +80,47 @@ async def test_success_and_other_errors_are_not_replayed(monkeypatch, statuses):
     response = await retry_rate_limit(send)
     assert response is responses[-1]
     assert send.await_count == len(statuses)
+
+
+@pytest.mark.parametrize(
+    'retry_after',
+    ['9' * 400, '9' * 5000, 'inf', 'invalid'],
+    ids=['float-overflow', 'integer-limit', 'infinity', 'invalid'],
+)
+@pytest.mark.parametrize('interface', ['httpx', 'openai', 'ohttp'])
+async def test_oversized_retry_after_falls_back_to_bounded_retry_budget(
+    monkeypatch, retry_after, interface
+):
+    responses = [
+        httpx.Response(
+            429,
+            headers={'Retry-After': retry_after},
+            request=httpx.Request('POST', 'https://test.invalid'),
+        )
+        for _ in range(3)
+    ]
+    if interface == 'openai':
+        failures = [
+            RateLimitError('limited', response=response, body=None)
+            for response in responses
+        ]
+    elif interface == 'ohttp':
+        failures = [
+            api_failure(
+                'api.http_status',
+                {'resource': 'ohttp', 'status': 429, 'retryAfter': retry_after},
+                retryable=True,
+            )
+            for _ in responses
+        ]
+    else:
+        failures = responses
+    send = AsyncMock(side_effect=[*failures, 'ok'])
+    sleep = AsyncMock()
+    monkeypatch.setattr('e2e.retry.sleep', sleep)
+
+    assert await retry_rate_limit(send) == 'ok'
+    assert send.await_count == 4
+    assert [call.args[0] for call in sleep.await_args_list] == [5, 10, 20]
+    if interface == 'httpx':
+        assert all(response.is_closed for response in responses)

@@ -37,12 +37,12 @@ async def retry_rate_limit[T](send: Callable[[], Awaitable[T]]) -> T:
                 raise
         try:
             requested_delay = float(int(retry_after))
-        except ValueError:
+        except (ValueError, TypeError, OverflowError):
             try:
                 requested_delay = (
                     parsedate_to_datetime(retry_after) - datetime.now(UTC)
                 ).total_seconds()
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 requested_delay = 0
         wait_seconds = max(backoff_seconds, requested_delay)
         logger.warning('Chat returned HTTP 429; retrying in %ss', wait_seconds)
