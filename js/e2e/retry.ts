@@ -47,7 +47,15 @@ export async function retryRateLimit<T>(
       Number.isFinite(requestedDelay) ? requestedDelay : 0,
     );
     console.warn(`Chat returned HTTP 429; retrying in ${waitSeconds}s`);
-    await wait(waitSeconds * 1_000, signal);
+    // Node turns a timeout above the signed 32-bit limit into a 1 ms timer.
+    // Long Retry-After values must remain abortable without overflowing it.
+    let remainingMs = Math.min(waitSeconds * 1_000, Number.MAX_SAFE_INTEGER);
+    while (remainingMs > 0) {
+      signal.throwIfAborted();
+      const chunkMs = Math.min(remainingMs, 2_147_483_647);
+      await wait(chunkMs, signal);
+      remainingMs -= chunkMs;
+    }
   }
   signal.throwIfAborted();
   return send();
