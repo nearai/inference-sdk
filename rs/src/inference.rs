@@ -122,6 +122,8 @@ pub struct AttestationVerificationResult {
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
     Model(VerifiedModelAttestation),
+    /// Every matching verified report when a System One signing key is shared.
+    ModelGroup(Vec<VerifiedModelAttestation>),
     Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
 #[derive(Clone, Debug)]
@@ -730,13 +732,23 @@ impl InferenceClient {
                                 VerifiedCompletionAttestation::Gateway(gateway.clone())
                             }
                             CompletionSignatureKind::ProviderTee => {
-                                let model = match session.selected.as_ref() {
-                                    Some(model) => model,
-                                    None => find_model_attestation_for_signature(
-                                        &session.models,
-                                        &signature,
-                                    )?,
+                                let matching: Vec<_> = match session.selected.as_ref() {
+                                    Some(model) => vec![model.clone()],
+                                    None => session
+                                        .models
+                                        .iter()
+                                        .filter(|model| {
+                                            crate::direct::same_signer(
+                                                &model.evidence.signer,
+                                                &signature.signer,
+                                            )
+                                        })
+                                        .cloned()
+                                        .collect(),
                                 };
+                                let model = matching
+                                    .first()
+                                    .ok_or(ApiError::ModelAttestationSignerNotFound)?;
                                 verify_model_response(&request, &response, &signature, model)?;
                                 if let Some(direct) = &session.direct {
                                     let matching = direct
@@ -751,6 +763,8 @@ impl InferenceClient {
                                         .cloned()
                                         .collect();
                                     VerifiedCompletionAttestation::Direct(matching)
+                                } else if matching.len() > 1 {
+                                    VerifiedCompletionAttestation::ModelGroup(matching)
                                 } else {
                                     VerifiedCompletionAttestation::Model(model.clone())
                                 }

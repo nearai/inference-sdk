@@ -686,6 +686,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
 	}
 	var a *VerifiedAttestation
+	var matching []VerifiedAttestation
 	if sig.Kind == "gateway" {
 		a = r.session.result.Gateway
 		if a != nil {
@@ -694,11 +695,15 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 	} else {
 		a = r.session.selected
 		if a == nil && len(r.session.result.Models) > 0 {
-			found, err := FindModelAttestationForSignature(r.session.result.Models, sig)
-			if err != nil {
-				return VerifiedCompletionResult{}, err
+			for _, model := range r.session.result.Models {
+				if model.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(model.Signer.SigningAddress, sig.Signer.SigningAddress) {
+					matching = append(matching, model)
+				}
 			}
-			a = &found
+			if len(matching) == 0 {
+				return VerifiedCompletionResult{}, failure("api.model_attestation_signer_not_found", nil)
+			}
+			a = &matching[0]
 		}
 		if a != nil {
 			e = VerifyModelResponse(r.request, r.response, sig, *a)
@@ -714,7 +719,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
 	copy := *a
-	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
+	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy, Attestations: matching}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

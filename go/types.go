@@ -110,7 +110,8 @@ type VerifiedCompletionResult struct {
 	SignatureKind string
 	Signature     CompletionSignature
 	Attestation   *VerifiedAttestation
-	// Attestations contains every matching direct deployment; a shared key does not identify one CVM.
+	// Attestations contains every matching direct or System One deployment.
+	// Attestation is a representative for System One; a shared key does not identify one CVM.
 	Attestations []VerifiedAttestation
 }
 

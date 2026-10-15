@@ -38,6 +38,7 @@ struct Fixture {
     systemone_status: Option<u16>,
     missing_model_key: bool,
     extra_model: bool,
+    shared_model: bool,
     systemone_tamper: bool,
 
     signatures: AtomicUsize,
@@ -144,6 +145,9 @@ impl Respond for Fixture {
                             json!(hex::encode(key(8).verifying_key().as_bytes()));
                     }
                     let mut reports = vec![value];
+                    if self.shared_model {
+                        reports.push(self.report(nonce, 7));
+                    }
                     if self.extra_model {
                         reports.insert(0, self.report(nonce, 8));
                     }
@@ -1041,4 +1045,36 @@ async fn systemone_retained_receipts_follow_size_and_count_limits() {
     options.max_receipt_cache_bytes = 10;
     let client = InferenceClient::with_options(options).unwrap();
     assert!(client.systemone_create(&systemone_request()).await.is_err());
+}
+
+#[tokio::test]
+async fn systemone_retains_all_reports_sharing_the_receipt_signer() {
+    for ecdsa in [false, true] {
+        let (_server, fixture, mut options) = setup(Fixture {
+            shared_model: true,
+            extra_model: !ecdsa,
+            ecdsa,
+            missing_model_key: true,
+            ..Default::default()
+        })
+        .await;
+        options.signing_algo = if ecdsa {
+            SigningAlgo::Ecdsa
+        } else {
+            SigningAlgo::Ed25519
+        };
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client.systemone_create(&systemone_request()).await.unwrap();
+        let verified = client.verify_response(&result.decision_id).await.unwrap();
+        match verified.attestation {
+            VerifiedCompletionAttestation::ModelGroup(reports) => {
+                assert_eq!(reports.len(), 2);
+                for report in reports {
+                    assert_eq!(report.evidence.signer, verified.signature.signer);
+                }
+            }
+            _ => panic!("expected full matching signer group"),
+        }
+        assert_eq!(fixture.systemone.load(Ordering::SeqCst), 1);
+    }
 }

@@ -512,6 +512,8 @@ make paid inference calls.
 
 ## System One decisions
 
+System One provider TEE results retain every matching verified report in `Attestations`; `Attestation` is the first matching report. A shared key does not identify a unique CVM.
+
 `CreateSystemOne` sends one plaintext, nonstreaming request to `POST /systemone` after
 Gateway attestation and TLS pinning. It is available on Gateway clients with E2EE
 and OHTTP disabled. The `DecisionID` comes from `X-Generation-Id`, independently
@@ -519,7 +521,7 @@ of an optional body `id`. Output remains unverified until receipt verification
 succeeds; the client retains the exact request and response bytes.
 
 System One uses a separate attestation-session cache from Chat. Provider-TEE
-receipts select the unique verified report matching the actual signer; plaintext
+receipts retain every verified report matching the actual signer; plaintext
 decisions do not require an encryption public key. Every returned model report
 is still verified. Gateway-only providers produce Gateway receipts.
 

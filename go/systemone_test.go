@@ -56,6 +56,7 @@ type systemOneCloud struct {
 	body, id            string
 	status              int
 	tamper, wrongSigner bool
+	sharedSigner        bool
 	key                 *secp.PrivateKey
 	calls               atomic.Int32
 }
@@ -67,6 +68,19 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sig := f.f.signatures[strings.TrimPrefix(r.URL.Path, "/v1/signature/")]
 		f.f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"signature_kind": sig.Kind, "text": sig.SignedText, "signature": sig.Signature, "signing_algo": sig.Signer.SigningAlgo, "signing_address": sig.Signer.SigningAddress})
+		return
+	}
+	if f.sharedSigner && r.URL.Path == "/v1/attestation/report" && r.URL.Query().Get("model") != "" {
+		recorder := httptest.NewRecorder()
+		f.f.ServeHTTP(recorder, r)
+		var body map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			f.f.t.Fatal(err)
+		}
+		reports := body["model_attestations"].([]any)
+		// fakeCloud appends the actual receipt signer after an unrelated report.
+		body["model_attestations"] = append(reports, reports[len(reports)-1])
+		_ = json.NewEncoder(w).Encode(body)
 		return
 	}
 	if r.URL.Path != "/v1/systemone" {
@@ -243,4 +257,31 @@ func TestSystemOneUsesResponseCacheBoundsAndCancellation(t *testing.T) {
 	defer cancel()
 	_, err = c.CreateSystemOne(ctx, systemOneRequest())
 	requireCode(t, err, "api.client_closed")
+}
+
+func TestSystemOneRetainsEveryReportSharingReceiptSigner(t *testing.T) {
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		t.Run(string(algo), func(t *testing.T) {
+			client, fixture := systemOneClient(t, true, algo, func(f *systemOneCloud, _ *InferenceOptions) { f.sharedSigner = true })
+			decision, err := client.CreateSystemOne(context.Background(), systemOneRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			verified, err := client.VerifyResponse(context.Background(), decision.DecisionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(verified.Attestations) != 2 {
+				t.Fatalf("expected two matching reports, got %d", len(verified.Attestations))
+			}
+			for _, report := range verified.Attestations {
+				if report.Signer != verified.Signature.Signer {
+					t.Fatal("retained unrelated signer")
+				}
+			}
+			if fixture.calls.Load() != 1 {
+				t.Fatal("replayed decision")
+			}
+		})
+	}
 }
