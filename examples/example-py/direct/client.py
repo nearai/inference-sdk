@@ -5,7 +5,6 @@ import os
 
 from nearai_inference_sdk import DirectInferenceClient
 
-
 BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/'
 MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ed25519'
@@ -42,12 +41,13 @@ async def run_streaming_example(client: DirectInferenceClient) -> None:
 
 
 async def main() -> None:
-    # E2EE defaults to True for direct clients. A credential must be accepted by
+    # Enable E2EE explicitly. A credential must be accepted by
     # this endpoint; a Gateway API key is not necessarily valid here.
     async with DirectInferenceClient(
         BASE_URL,
         api_key=os.environ.get('NEARAI_API_KEY'),
         signing_algo=SIGNING_ALGO,
+        e2ee=True,
     ) as direct_client:
         await run_non_streaming_example(direct_client)
         await run_streaming_example(direct_client)

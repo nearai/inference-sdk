@@ -80,9 +80,9 @@ Gateway signer, or the serving model signer for a direct endpoint. Missing or
 invalid OHTTP evidence prevents Chat from being sent. The authenticated
 configuration is cached with the deployment verification result.
 
-`e2ee` is independent: it defaults to `false` for `InferenceClient` and `true`
-for `DirectInferenceClient`. Through the Gateway, OHTTP protects the HTTP
-exchange to the Gateway, while E2EE encrypts supported Chat fields to the model.
+`e2ee` is independent and defaults to `false` for both clients.
+Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
+encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
@@ -426,7 +426,8 @@ Known endpoint limitations affect the direct flow:
 or model-metadata lookup.
 It fetches and verifies every returned model attestation before
 sending Chat.
-E2EE defaults to enabled with Ed25519. Both cache defaults are 60 minutes.
+E2EE is opt-in, as with the Gateway client. The example enables it explicitly.
+The signing algorithm defaults to Ed25519. Both cache defaults are 60 minutes.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -434,6 +435,7 @@ import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 const client = new DirectInferenceClient({
   baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
   apiKey: process.env.NEARAI_API_KEY,
+  e2ee: true,
 });
 ```
 
@@ -748,10 +750,6 @@ const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
     repository: 'nearai/inference-proxy',
     workflow: '.github/workflows/build.yml',
   },
-  'nearaidev/compose-manager': {
-    repository: 'nearai/compose-manager',
-    workflow: '.github/workflows/build.yml',
-  },
 };
 
 for (const attestation of fetchedModels.attestations) {
@@ -763,6 +761,7 @@ for (const attestation of fetchedModels.attestations) {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: modelImagePolicies,
+      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
         }),
     },
   });
@@ -778,8 +777,10 @@ The image helper selects the last `compose_up`, fetches its file from
 `nearai/cvm-compose-files` at the recorded commit, checks the exact file bytes
 against `file_sha256`, and verifies the required image builds from the action's
 named `services`. An omitted or empty list selects the whole file; unknown service
-names are rejected. Images in unselected services cannot satisfy a policy. It also considers
-the image in the latest `compose_manager_started` action. Set `composeFile` to
+names are rejected. Images in unselected services cannot satisfy a policy. The
+latest `compose_manager_started` must name a digest-pinned image matching the
+separate `managerImagePolicy`; a compose-file image cannot satisfy that policy.
+Missing startup evidence fails verification. Set `composeFile` to
 select a particular project's file, or `composeRepository` to use another
 trusted repository. A configured image that is absent or unpinned fails verification.
 For `InferenceClient`, use this callback as `modelVerification.verifiers.deployment`.
@@ -802,6 +803,7 @@ const verified = await verifyDirectModelAttestations({
     verifyComposeManagerDeploymentImageProvenance({
       deployment,
       imagePolicies: modelImagePolicies,
+      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
     }),
 });
 ```

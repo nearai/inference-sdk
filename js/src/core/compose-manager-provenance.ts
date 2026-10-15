@@ -24,11 +24,18 @@ type FetchComposeFileParams = {
 export async function verifyComposeManagerDeploymentImageProvenance({
   deployment,
   imagePolicies,
+  managerImagePolicy,
   composeRepository = 'nearai/cvm-compose-files',
   composeFile,
   githubToken,
   githubProxyUrl,
 }: VerifyComposeManagerDeploymentImageProvenanceParams): Promise<void> {
+  if (Object.keys(imagePolicies).length === 0) {
+    throw new VerificationError({
+      code: 'provenance.deployment_images_invalid',
+      details: { reason: 'empty_policy' },
+    });
+  }
   const manager = deployment.composeManager;
   if (manager === undefined) throw invalidDeployment('attestation_missing');
   const newestActions = [...manager.actions].reverse();
@@ -38,6 +45,22 @@ export async function verifyComposeManagerDeploymentImageProvenance({
       (composeFile === undefined || entry.file === composeFile),
   );
   if (action === undefined) throw invalidDeployment('compose_up_missing');
+  const started = newestActions.find(
+    (entry) => entry.action === 'compose_manager_started',
+  );
+  if (started?.image === undefined)
+    throw invalidDeployment('manager_image_missing');
+  const managerRepository = managerImagePolicy.imageRepository.replace(
+    /^docker\.io\//,
+    '',
+  );
+  const managerImage = started.image.replace(/^docker\.io\//, '');
+  if (
+    managerRepository === '' ||
+    (!managerImage.startsWith(`${managerRepository}@`) &&
+      !managerImage.startsWith(`${managerRepository}:`))
+  )
+    throw invalidDeployment('manager_image_mismatch');
   const { commit, file, file_sha256: digest } = action;
   if (
     commit === undefined ||
@@ -62,22 +85,20 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     githubProxyUrl,
   });
 
-  // A manager self-update is not reflected in the serving model compose.
-  // Include the latest started image when the caller's policy requires it.
-  const started = newestActions.find(
-    (entry) => entry.action === 'compose_manager_started',
-  );
-  const additionalImages =
-    started?.image === undefined
-      ? []
-      : [{ service: 'compose-manager', image: started.image }];
   await verifyComposeImageProvenance({
     dockerCompose,
     imagePolicies,
     githubToken,
     githubProxyUrl,
-    additionalImages,
     services: action.services,
+  });
+  // A stale compose reference cannot satisfy the current manager's policy.
+  await verifyComposeImageProvenance({
+    dockerCompose: 'services: {}',
+    imagePolicies: { [managerRepository]: managerImagePolicy },
+    githubToken,
+    githubProxyUrl,
+    additionalImages: [{ service: 'compose-manager', image: managerImage }],
   });
 }
 

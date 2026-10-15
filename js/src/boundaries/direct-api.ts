@@ -31,7 +31,10 @@ export function decodeDirectModelAttestations(
   const response = parsed.output;
   const root = mapDirectAttestation(response, 'attestation');
   const attestations = response.all_attestations.map((attestation, index) =>
-    mapDirectAttestation(attestation, `all_attestations[${index}]`),
+    mapDirectAttestation(
+      { ...attestation, compose_manager_attestation: undefined },
+      `all_attestations[${index}]`,
+    ),
   );
   // The top-level report identifies the endpoint that answered this request.
   // The returned attestation set must contain that same evidence; do not infer it

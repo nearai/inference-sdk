@@ -567,11 +567,12 @@ describe('DirectInferenceClient', () => {
     expect(createClientWithoutBaseUrl).toThrow('[api.invalid_input]');
   });
 
-  test('encrypts by default after checking every deployment and retains both same-signer reports', async () => {
+  test('encrypts when enabled after checking every deployment and retains both same-signer reports', async () => {
     const endpoint = createDirectEndpoint();
     const checked: string[] = [];
     const client = new DirectInferenceClient({
       ...endpoint.options,
+      e2ee: true,
       deploymentPolicy: async ({ model: requestedModel, deployment }) => {
         expect(requestedModel).toBe(model);
         expect(endpoint.state.completionRequests).toBe(0);
@@ -609,7 +610,10 @@ describe('DirectInferenceClient', () => {
 
   test('supports OpenAI fetch injection, encrypted streaming and byte-exact verification', async () => {
     const endpoint = createDirectEndpoint();
-    const client = new DirectInferenceClient(endpoint.options);
+    const client = new DirectInferenceClient({
+      ...endpoint.options,
+      e2ee: true,
+    });
     const openai = new OpenAI({
       baseURL: client.getBaseUrl(),
       apiKey: 'test-only',
@@ -653,6 +657,10 @@ describe('DirectInferenceClient', () => {
     const response = await client.chat.completions.create({ model, messages });
     expect(endpoint.state.verifiedQuotes).toHaveLength(3);
     expect(endpoint.state.decryptedPrompts).toEqual([prompt]);
+    expect(endpoint.state.requests[0].body.messages[0].content).toBe(prompt);
+    expect(endpoint.state.requests[0].headers.has('x-client-pub-key')).toBe(
+      false,
+    );
     const attestationRequest = requestHttps.mock.calls[0][0];
     expect(attestationRequest.capturePeerSpkiFingerprint).toBe(false);
     expect(
@@ -690,12 +698,9 @@ describe('DirectInferenceClient', () => {
     },
   );
 
-  test('allows plaintext fetch without skipping preflight or response verification', async () => {
+  test('defaults to plaintext without skipping preflight or response verification', async () => {
     const endpoint = createDirectEndpoint();
-    const client = new DirectInferenceClient({
-      ...endpoint.options,
-      e2ee: false,
-    });
+    const client = new DirectInferenceClient(endpoint.options);
     const response = await client.fetch(chatRequest());
     const completion = await response.json();
     expect(completion.choices[0].message.content).toBe(answer);

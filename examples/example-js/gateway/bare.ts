@@ -49,10 +49,6 @@ const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
     repository: 'nearai/inference-proxy',
     workflow: '.github/workflows/build.yml',
   },
-  'nearaidev/compose-manager': {
-    repository: 'nearai/compose-manager',
-    workflow: '.github/workflows/build.yml',
-  },
 };
 
 await main();
@@ -188,6 +184,7 @@ async function fetchAndVerifyModelAttestations(
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: MODEL_IMAGE_POLICIES,
+      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
             }),
         },
       }),

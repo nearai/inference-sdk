@@ -38,6 +38,10 @@ const POLICY = {
 };
 const IMAGE_POLICIES = { 'nearaidev/compose-manager-launcher': POLICY };
 const COMPOSE = FIXTURE.compose;
+const MANAGER_POLICY = {
+  ...POLICY,
+  imageRepository: 'nearaidev/compose-manager-launcher',
+};
 
 function managerReport(): ComposeManagerAttestation {
   return {
@@ -66,7 +70,7 @@ describe('Compose Manager deployment image provenance', () => {
     async (githubProxyUrl) => {
       const report = managerReport();
       // Wire key order is not part of the canonical action hash.
-      const [action] = report.actions;
+      const actions = report.actions;
       const [attestation] = decodeModelAttestationReport({
         model_attestations: [
           {
@@ -77,8 +81,8 @@ describe('Compose Manager deployment image provenance', () => {
             event_log: createModelAttestation().eventLog,
             info: { tcb_info: { app_compose: appCompose } },
             compose_manager_attestation: {
-              actions: [{ ...action, timestamp: action.timestamp }].map(
-                (entry) => Object.fromEntries(Object.entries(entry).reverse()),
+              actions: actions.map((entry) =>
+                Object.fromEntries(Object.entries(entry).reverse()),
               ),
               actions_hash: report.actionsHash,
               nonce,
@@ -94,7 +98,7 @@ describe('Compose Manager deployment image provenance', () => {
       const fetch = jest
         .spyOn(globalThis, 'fetch')
         .mockResolvedValueOnce(new Response(COMPOSE))
-        .mockResolvedValueOnce(
+        .mockImplementation(async () =>
           Response.json({ attestations: [{ bundle: BUNDLE }] }),
         );
 
@@ -108,6 +112,7 @@ describe('Compose Manager deployment image provenance', () => {
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: IMAGE_POLICIES,
+              managerImagePolicy: MANAGER_POLICY,
               githubToken: 'test-github-token',
               githubProxyUrl,
             }),
@@ -136,7 +141,7 @@ describe('Compose Manager deployment image provenance', () => {
           githubProxyUrl === undefined ? 'Bearer test-github-token' : null,
         );
       }
-      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(fetch).toHaveBeenCalledTimes(3);
     },
   );
 
@@ -215,6 +220,7 @@ describe('Compose Manager deployment image provenance', () => {
       verifyComposeManagerDeploymentImageProvenance({
         deployment: verified.deployment,
         imagePolicies: IMAGE_POLICIES,
+        managerImagePolicy: MANAGER_POLICY,
       }),
     ).rejects.toMatchObject({
       failure: { code: 'provenance.compose_file_hash_mismatch' },
@@ -233,6 +239,7 @@ describe('Compose Manager deployment image provenance', () => {
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: IMAGE_POLICIES,
+              managerImagePolicy: MANAGER_POLICY,
             }),
         },
       }),
@@ -325,6 +332,7 @@ describe('Compose Manager deployment image provenance', () => {
               services,
               file_sha256: sha256(compose).toString('hex'),
             },
+            ...manager.actions.slice(1),
           ],
         },
       };
@@ -335,6 +343,7 @@ describe('Compose Manager deployment image provenance', () => {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: IMAGE_POLICIES,
+          managerImagePolicy: MANAGER_POLICY,
         }),
       ).rejects.toMatchObject({
         failure: {
@@ -363,7 +372,7 @@ describe('Compose Manager deployment image provenance', () => {
     jest
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(COMPOSE))
-      .mockResolvedValueOnce(
+      .mockImplementation(async () =>
         Response.json({ attestations: [{ bundle: BUNDLE }] }),
       );
 
@@ -381,6 +390,7 @@ describe('Compose Manager deployment image provenance', () => {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: IMAGE_POLICIES,
+          managerImagePolicy: MANAGER_POLICY,
         }),
     });
 
@@ -440,7 +450,11 @@ describe('Compose Manager deployment image provenance', () => {
     await verifyComposeManagerDeploymentImageProvenance({
       deployment,
       composeFile: 'prod/model.yaml',
-      imagePolicies: { ...IMAGE_POLICIES, 'nearaidev/compose-manager': POLICY },
+      imagePolicies: IMAGE_POLICIES,
+      managerImagePolicy: {
+        ...POLICY,
+        imageRepository: 'nearaidev/compose-manager',
+      },
     });
     expect(fetch.mock.calls[0][0]).toContain('/contents/prod/model.yaml?');
     expect(fetch).toHaveBeenCalledTimes(3);

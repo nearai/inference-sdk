@@ -41,8 +41,12 @@ export type VerifiedComposeManagerAttestation = {
 export type VerifyComposeManagerDeploymentImageProvenanceParams = {
   /** Deployment returned by model verification, or supplied to its callback. */
   readonly deployment: MeasuredDeployment;
-  /** Required repositories in the deployment file or latest manager-start action. */
+  /** Required repositories in the selected services of the deployment file. */
   readonly imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
+  /** Policy for the latest manager-start image, checked independently of compose images. */
+  readonly managerImagePolicy: ImageProvenancePolicy & {
+    readonly imageRepository: string;
+  };
   /** Defaults to nearai/cvm-compose-files. */
   readonly composeRepository?: string;
   /** Select the latest compose_up for this path; otherwise use the latest compose_up. */
@@ -56,4 +60,6 @@ export type VerifyComposeManagerDeploymentImageProvenanceParams = {
 export type ComposeManagerDeploymentFailureReason =
   | 'attestation_missing'
   | 'compose_up_missing'
+  | 'manager_image_missing'
+  | 'manager_image_mismatch'
   | 'invalid_file_reference';
