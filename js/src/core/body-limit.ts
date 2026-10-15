@@ -4,6 +4,45 @@ export function requireBodySize(size: number, limit: number): void {
   if (size > limit) throw new ApiError({ code: 'api.body_too_large' });
 }
 
+/** Coalesce fragments so retained memory does not grow with the chunk count. */
+export class BoundedBodyBuffer {
+  private buffer: Uint8Array<ArrayBuffer> = new Uint8Array();
+  private size = 0;
+
+  constructor(private readonly limit: number) {}
+
+  append(chunk: Uint8Array): void {
+    const required = this.size + chunk.byteLength;
+    requireBodySize(required, this.limit);
+    if (required > this.buffer.byteLength) {
+      const capacity = Math.min(
+        this.limit,
+        Math.max(required, this.buffer.byteLength * 2, 1024),
+      );
+      const next = new Uint8Array(capacity);
+      next.set(this.view());
+      this.buffer = next;
+    }
+    this.buffer.set(chunk, this.size);
+    this.size = required;
+  }
+
+  view(): Uint8Array<ArrayBuffer> {
+    return this.buffer.subarray(0, this.size);
+  }
+
+  take(): Uint8Array<ArrayBuffer> {
+    const bytes = this.buffer.slice(0, this.size);
+    this.clear();
+    return bytes;
+  }
+
+  clear(): void {
+    this.buffer = new Uint8Array();
+    this.size = 0;
+  }
+}
+
 /** Read with a bound even when Content-Length is absent or misleading. */
 export async function readBoundedBody(
   body: ReadableStream<Uint8Array> | null,
@@ -17,16 +56,13 @@ export async function readBoundedBody(
     void reader.cancel(signal?.reason).catch(() => undefined);
   };
   signal?.addEventListener('abort', abort, { once: true });
-  const chunks: Uint8Array[] = [];
-  let size = 0;
+  const buffer = new BoundedBodyBuffer(limit);
   try {
     while (true) {
       const next = await reader.read();
       signal?.throwIfAborted();
       if (next.done) break;
-      requireBodySize(size + next.value.byteLength, limit);
-      size += next.value.byteLength;
-      chunks.push(next.value);
+      buffer.append(next.value);
     }
   } catch (cause) {
     void reader.cancel(cause).catch(() => undefined);
@@ -35,11 +71,5 @@ export async function readBoundedBody(
     signal?.removeEventListener('abort', abort);
     reader.releaseLock();
   }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return buffer.take();
 }

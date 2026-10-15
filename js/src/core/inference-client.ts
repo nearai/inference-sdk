@@ -1,4 +1,8 @@
-import { readBoundedBody, requireBodySize } from './body-limit';
+import {
+  BoundedBodyBuffer,
+  readBoundedBody,
+  requireBodySize,
+} from './body-limit';
 import OpenAI from 'openai';
 import { createSystemOne } from './systemone';
 import type { InferenceSystemOne } from '../types/systemone';
@@ -508,7 +512,10 @@ export abstract class VerifiedInferenceClientBase<
       request: prepared.request,
       transport: session.transport,
     });
-    const capturedResponse = captureResponseEntityBody(response, responseLimit);
+    const capturedResponse = captureResponseEntityBody(
+      response,
+      response.ok ? responseLimit : this.maxBodyBytes,
+    );
     return {
       response: capturedResponse.response,
       session,
@@ -642,7 +649,9 @@ export abstract class VerifiedInferenceClientBase<
     this.requireSupportedEndpoint(original);
     const bytes = await readBoundedBody(
       original.clone().body,
-      this.maxBodyBytes,
+      this.responseCacheTimeToLiveMs === 0
+        ? this.maxBodyBytes
+        : Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes),
       original.signal,
     );
     const request = new Request(original, { body: bytes });
@@ -1149,20 +1158,16 @@ function captureResponseEntityBody(
   void responseBody.catch(() => undefined);
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
+  const buffer = new BoundedBodyBuffer(limit);
   const append = (chunk: Uint8Array): void => {
-    requireBodySize(size + chunk.byteLength, limit);
-    size += chunk.byteLength;
-    chunks.push(chunk.slice());
+    buffer.append(chunk);
   };
   let settled = false;
   const resolve = (): void => {
     if (settled) return;
     try {
-      const body = concatChunks(chunks);
+      const body = buffer.take();
       settled = true;
-      chunks.length = 0;
       resolveBody(body);
     } catch (cause) {
       reject(cause);
@@ -1171,7 +1176,7 @@ function captureResponseEntityBody(
   const reject = (cause: unknown): void => {
     if (settled) return;
     settled = true;
-    chunks.length = 0;
+    buffer.clear();
     rejectBody(cause);
     void reader.cancel(cause).catch(() => undefined);
   };
@@ -1195,7 +1200,7 @@ function captureResponseEntityBody(
     async cancel(reason) {
       if (
         hasSseCompletionSentinel({
-          chunks,
+          body: buffer.view(),
           contentType: response.headers.get('content-type'),
         })
       ) {
@@ -1215,17 +1220,6 @@ function captureResponseEntityBody(
     }),
     responseBody,
   };
-}
-
-function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-  const body = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 function getSseCompletionId(text: string): string {
@@ -1248,21 +1242,19 @@ function getSseCompletionId(text: string): string {
 }
 
 type HasSseCompletionSentinelParams = {
-  readonly chunks: readonly Uint8Array[];
+  readonly body: Uint8Array;
   readonly contentType: string | null;
 };
 
 function hasSseCompletionSentinel({
-  chunks,
+  body,
   contentType,
 }: HasSseCompletionSentinelParams): boolean {
   if (!isServerSentEventContentType(contentType)) {
     return false;
   }
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(
-      concatChunks(chunks),
-    );
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
     return getSseDataRecords(text).some((data) => data === '[DONE]');
   } catch {
     return false;

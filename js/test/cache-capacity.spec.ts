@@ -109,6 +109,41 @@ describe('inference cache capacity', () => {
     expect(cancelled).toBe(true);
   });
 
+  test('rejects an unretainable request before any preflight', async () => {
+    const client = new Client({ maxBodyBytes: 1024, maxReceiptCacheBytes: 10 });
+    await expect(client.send()).rejects.toMatchObject({
+      failure: { code: 'api.body_too_large' },
+    });
+    expect(client.verified).toEqual([]);
+  });
+
+  test('disabled receipt retention does not limit a plaintext request', async () => {
+    const client = new Client({
+      maxReceiptCacheBytes: 1,
+      responseCacheTimeToLiveMs: 0,
+    });
+    expect((await client.send()).ok).toBe(true);
+    expect(client.verified).toEqual(['m']);
+  });
+
+  test.each([400, 429, 500])(
+    'bounds HTTP %i error bodies independently of the receipt budget',
+    async (status) => {
+      const client = new Client({
+        maxBodyBytes: 100,
+        maxReceiptCacheBytes: 30,
+      });
+      client.response = () => new Response('e'.repeat(80), { status });
+      const response = await client.send();
+      expect(response.status).toBe(status);
+      expect(await response.text()).toBe('e'.repeat(80));
+      client.response = () => new Response('e'.repeat(101), { status });
+      await expect((await client.send()).text()).rejects.toMatchObject({
+        failure: { code: 'api.body_too_large' },
+      });
+    },
+  );
+
   test('bounds signed SSE tail draining after the consumer stops at DONE', async () => {
     const client = new Client({ maxBodyBytes: 90 });
     let tail: (() => void) | undefined;
