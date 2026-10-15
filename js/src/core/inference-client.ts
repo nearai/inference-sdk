@@ -39,9 +39,9 @@ import {
   VerificationError,
 } from '../utils/errors';
 import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
+import { hexToBuffer } from '../utils/common';
 import {
   AttestationClient,
-  findModelAttestationForSignature,
   CloudApiClient,
   createCloudApiRequestConfiguration,
   mergeCloudApiRequestHeaders,
@@ -768,13 +768,24 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
-          const servingAttestation = systemone
-            ? findModelAttestationForSignature({
-                attestations: modelAttestations,
-                signature,
-              })
-            : modelAttestation;
+          const matchingAttestations = systemone
+            ? modelAttestations.filter(
+                ({ signer }) =>
+                  signer.signingAlgo === signature.signer.signingAlgo &&
+                  hexToBuffer(signer.signingAddress).equals(
+                    hexToBuffer(signature.signer.signingAddress),
+                  ),
+              )
+            : modelAttestation
+              ? [modelAttestation]
+              : [];
+          const servingAttestation = matchingAttestations[0];
           if (servingAttestation === undefined) {
+            if (systemone) {
+              throw new ApiError({
+                code: 'api.model_attestation_signer_not_found',
+              });
+            }
             throw new VerificationError({
               code: 'signature.kind_mismatch',
               details: { expected: 'gateway', actual: signature.kind },
@@ -791,6 +802,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             signatureKind: 'provider_tee',
             signature,
             attestation: servingAttestation,
+            attestations: matchingAttestations,
           };
         }
         verifyGatewayResponse({

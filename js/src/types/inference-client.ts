@@ -142,7 +142,10 @@ export type VerifiedModelCompletionResult = {
   readonly id: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
+  /** Representative matching report; a shared signing key does not identify one CVM. */
   readonly attestation: VerifiedModelAttestation;
+  /** Every verified report matching the receipt signer, or the selected Chat report. */
+  readonly attestations: readonly VerifiedModelAttestation[];
 };
 
 /** A response signature verified against the Gateway evidence used for the request. */

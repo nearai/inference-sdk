@@ -84,6 +84,7 @@ export async function createSystemOne({
   try {
     response = await session.transport.fetch(httpRequest);
   } catch (cause) {
+    options?.signal?.throwIfAborted();
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
@@ -115,6 +116,7 @@ export async function createSystemOne({
   try {
     responseBody = new Uint8Array(await response.arrayBuffer());
   } catch (cause) {
+    options?.signal?.throwIfAborted();
     throw new ApiError(
       {
         code: 'api.transport_failed',
