@@ -7,6 +7,10 @@ import { isApiError } from '../dist/node.js';
 export async function retryRateLimit<T>(
   send: () => Promise<T>,
   signal: AbortSignal,
+  wait: (milliseconds: number, signal: AbortSignal) => Promise<unknown> = (
+    milliseconds,
+    signal,
+  ) => timers.setTimeout(milliseconds, undefined, { signal }),
 ): Promise<T> {
   for (const backoffSeconds of [5, 10, 20]) {
     signal.throwIfAborted();
@@ -43,7 +47,7 @@ export async function retryRateLimit<T>(
       Number.isFinite(requestedDelay) ? requestedDelay : 0,
     );
     console.warn(`Chat returned HTTP 429; retrying in ${waitSeconds}s`);
-    await timers.setTimeout(waitSeconds * 1_000, undefined, { signal });
+    await wait(waitSeconds * 1_000, signal);
   }
   signal.throwIfAborted();
   return send();

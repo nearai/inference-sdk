@@ -134,7 +134,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         *,
         base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
         headers: Mapping[str, str] | None = None,
-        e2ee: bool = True,
+        e2ee: bool = False,
         ohttp: bool = False,
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
@@ -183,6 +183,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
             http_client=self._chat_client,
+            max_retries=0,
         )
         self.chat = self._openai.chat
 

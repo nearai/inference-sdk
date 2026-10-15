@@ -386,6 +386,7 @@ mod tests {
             source: Box::new(ApiError::HttpStatus {
                 resource: ApiResource::ImageProvenance,
                 status: 503,
+                retry_after: None,
             }),
         };
         assert!(retryable.retryable());

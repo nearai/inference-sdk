@@ -23,7 +23,7 @@ async def test_retries_ohttp_rate_limits_after_retry_after(monkeypatch, wrapped)
         error.__cause__ = cause
     send = AsyncMock(side_effect=[error, 'ok'])
     sleep = AsyncMock()
-    monkeypatch.setattr('e2e.retry.asyncio.sleep', sleep)
+    monkeypatch.setattr('e2e.retry.sleep', sleep)
 
     result = await retry_rate_limit(send)
 
@@ -41,3 +41,42 @@ async def test_does_not_retry_an_ohttp_server_error():
         await retry_rate_limit(send)
     assert raised.value is error
     assert send.await_count == 1
+
+
+async def test_builtin_chat_has_one_shared_four_post_retry_budget(monkeypatch):
+    from openai import RateLimitError
+
+    from .test_inference_client import MESSAGES, MODEL, Gateway
+
+    gateway = Gateway()
+    handle = gateway.handle
+    posts = 0
+
+    async def respond(request):
+        nonlocal posts
+        if request.url.path == '/v1/chat/completions':
+            posts += 1
+            return httpx.Response(429, headers={'Retry-After': '12'})
+        return await handle(request)
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    sleep = AsyncMock()
+    monkeypatch.setattr('e2e.retry.sleep', sleep)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(RateLimitError):
+            await retry_rate_limit(
+                lambda: client.chat.completions.create(model=MODEL, messages=MESSAGES)
+            )
+    assert posts == 4
+    assert [call.args[0] for call in sleep.await_args_list] == [12, 12, 20]
+
+
+@pytest.mark.parametrize('statuses', [(429, 200), (503,), (200,)])
+async def test_success_and_other_errors_are_not_replayed(monkeypatch, statuses):
+    responses = [httpx.Response(status) for status in statuses]
+    send = AsyncMock(side_effect=responses)
+    monkeypatch.setattr('e2e.retry.sleep', AsyncMock())
+    response = await retry_rate_limit(send)
+    assert response is responses[-1]
+    assert send.await_count == len(statuses)

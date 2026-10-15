@@ -264,6 +264,11 @@ impl OhttpClient {
             return Err(ApiError::HttpStatus {
                 resource: ApiResource::Ohttp,
                 status: response.status().as_u16(),
+                retry_after: response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
             }
             .into());
         }

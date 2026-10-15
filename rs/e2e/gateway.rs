@@ -1,11 +1,7 @@
 mod integrated;
+mod retry;
 
-use std::{
-    env,
-    error::Error,
-    io,
-    time::{Duration, SystemTime},
-};
+use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
     create_pinned_tls_client, find_model_attestation_for_signature, verify_gateway_attestation,
@@ -13,8 +9,9 @@ use nearai_inference_sdk::{
     AttestationClient, CompletionSignature, CompletionSignatureKind,
     GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
-use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE, RETRY_AFTER};
-use reqwest::{RequestBuilder, Response, StatusCode};
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
+use reqwest::{RequestBuilder, Response};
+use retry::{rate_limit_delay, retry_rate_limit};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -163,51 +160,26 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
 }
 
 async fn send_chat_with_retry(request: RequestBuilder) -> Result<Response, reqwest::Error> {
-    for backoff_seconds in [5, 10, 20] {
-        let response = request
-            .try_clone()
-            .expect("Chat request uses replayable bytes")
-            .send()
-            .await?;
-        if response.status() != StatusCode::TOO_MANY_REQUESTS {
-            return Ok(response);
-        }
-        let wait = response
-            .headers()
-            .get(RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| retry_after_delay(value, SystemTime::now()))
-            .unwrap_or_default()
-            .max(Duration::from_secs(backoff_seconds));
-        drop(response);
-        eprintln!("Chat returned HTTP 429; retrying in {wait:?}");
-        tokio::time::sleep(wait).await;
-    }
-    request.send().await
-}
-
-fn retry_after_delay(value: &str, now: SystemTime) -> Option<Duration> {
-    let value = value.trim();
-    if let Ok(seconds) = value.parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
-    }
-    let retry_at = httpdate::parse_http_date(value).ok()?;
-    Some(retry_at.duration_since(now).unwrap_or_default())
-}
-
-#[test]
-fn retry_after_supports_seconds_and_http_dates() {
-    let date = "Wed, 21 Oct 2015 07:28:00 GMT";
-    let retry_at = httpdate::parse_http_date(date).unwrap();
-    let delay = Duration::from_secs(30);
-    let now = retry_at - delay;
-    assert_eq!(retry_after_delay("30", now), Some(delay));
-    assert_eq!(retry_after_delay(date, now), Some(delay));
-    assert_eq!(
-        retry_after_delay(date, retry_at + delay),
-        Some(Duration::ZERO)
-    );
-    assert_eq!(retry_after_delay("invalid", now), None);
+    retry_rate_limit(
+        || {
+            request
+                .try_clone()
+                .expect("Chat uses replayable bytes")
+                .send()
+        },
+        |result| {
+            result.as_ref().ok().and_then(|response| {
+                rate_limit_delay(
+                    response.status().as_u16(),
+                    response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
+                )
+            })
+        },
+    )
+    .await
 }
 
 async fn fetch_signature_with_retry(
@@ -221,7 +193,10 @@ async fn fetch_signature_with_retry(
             .fetch_completion_signature(id, Some(signing_algo))
             .await
         {
-            Err(error) if error.retryable() => {
+            Err(error)
+                if error.retryable()
+                    || matches!(error, ApiError::CompletionSignatureUnavailable { .. }) =>
+            {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             result => return result,

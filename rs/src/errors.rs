@@ -67,7 +67,12 @@ pub enum ApiError {
     },
 
     #[error("API {resource} returned HTTP {status}")]
-    HttpStatus { resource: ApiResource, status: u16 },
+    HttpStatus {
+        resource: ApiResource,
+        status: u16,
+        /// Unparsed server retry hint, when present.
+        retry_after: Option<String>,
+    },
 
     #[error("API {resource} returned invalid JSON")]
     InvalidJson { resource: ApiResource },
@@ -125,7 +130,9 @@ impl ApiError {
     pub const fn retryable(&self) -> bool {
         match self {
             Self::Transport { .. } => true,
-            Self::HttpStatus { resource, status } => {
+            Self::HttpStatus {
+                resource, status, ..
+            } => {
                 (matches!(resource, ApiResource::CompletionSignature) && *status == 404)
                     || *status == 408
                     || *status == 425

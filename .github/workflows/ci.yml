@@ -33,7 +33,7 @@ jobs:
       - name: Check live tests without contacting the service
         run: |
           pnpm typecheck:e2e
-          node --test e2e/retry.spec.ts
+          node --test e2e/*.spec.ts
           node --check ../e2e/select-models.mjs
       - name: Check JavaScript example
         working-directory: examples/example-js
@@ -77,3 +77,53 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
+
+  go:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'go'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: |
+            go/go.sum
+            examples/example-go/go.sum
+      - run: make -C go check
+      - name: Verify consumer builds without CGO
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go -C go test ./...
+          go -C examples/example-go test ./...
+          go -C examples/example-go build ./...
+      - name: Compile live Go tests without credentials
+        working-directory: go
+        run: go test -tags=e2e ./e2e -run '^$'
+      - name: Check Go OpenAI integration example
+        working-directory: examples/example-go
+        run: |
+          go vet ./...
+          go test -race ./...
+          go test -tags=e2e -run '^$' .
+
+  go-verifier-artifact:
+    if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'go'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: 1.99.0
+          components: rustfmt
+          targets: wasm32-wasip1
+      - name: Check wrapper formatting and reproduce embedded verifier
+        run: |
+          cargo fmt --manifest-path go/internal/dcap/wasm-src/Cargo.toml --check
+          go/scripts/build-dcap-wasm.sh
+          git diff --exit-code -- go/internal/dcap/dcap.wasm

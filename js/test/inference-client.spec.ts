@@ -876,6 +876,26 @@ function isChatCompletionRequest(input: RequestInfo | URL): boolean {
 }
 
 describe('inference client', () => {
+  test('the built-in Chat client does not silently replay HTTP 429', async () => {
+    const gateway = createTestGateway();
+    let posts = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (isChatCompletionRequest(input)) {
+        posts++;
+        return Promise.resolve(new Response('rate limited', { status: 429 }));
+      }
+      return gateway.fetch(input, init);
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    await expect(
+      client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(posts).toBe(1);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();

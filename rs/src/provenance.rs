@@ -83,6 +83,11 @@ async fn fetch_image_provenance_pages(
             return Err(ApiError::HttpStatus {
                 resource: RESOURCE,
                 status: response.status().as_u16(),
+                retry_after: response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
             });
         }
         let next = next_attestation_page(&original_url, response.headers())?;

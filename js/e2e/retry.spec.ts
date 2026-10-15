@@ -67,3 +67,20 @@ test('cancels a long Retry-After wait when the test deadline expires', async (t)
   t.mock.timers.tick(300_000);
   assert.equal(attempts, 1);
 });
+
+test('persistent 429 stops after four requests and a successful response is never replayed', async (t) => {
+  for (const statuses of [[429, 429, 429, 429], [429, 200], [503], [200]]) {
+    let calls = 0;
+    const waits: number[] = [];
+    const result = await retryRateLimit(
+      async () => new Response(null, { status: statuses[calls++] }),
+      t.signal,
+      async (ms) => {
+        waits.push(ms);
+      },
+    );
+    assert.equal(calls, statuses.length);
+    assert.equal(result.status, statuses.at(-1));
+    assert.deepEqual(waits, [5000, 10000, 20000].slice(0, statuses.length - 1));
+  }
+});

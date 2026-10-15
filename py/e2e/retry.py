@@ -1,7 +1,7 @@
 """Bounded HTTP 429 retries for live Chat requests, not verification."""
 
-import asyncio
 import logging
+from asyncio import sleep
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -46,5 +46,5 @@ async def retry_rate_limit[T](send: Callable[[], Awaitable[T]]) -> T:
                 requested_delay = 0
         wait_seconds = max(backoff_seconds, requested_delay)
         logger.warning('Chat returned HTTP 429; retrying in %ss', wait_seconds)
-        await asyncio.sleep(wait_seconds)
+        await sleep(wait_seconds)
     return await send()
