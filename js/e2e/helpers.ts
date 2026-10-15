@@ -13,10 +13,15 @@ export function requiredEnv(name: string): string {
 // cryptographic failures. Each live test still has an overall deadline.
 export async function retryReceipt<T>(
   lookup: () => Promise<T>,
-  waitOrSignal: ((milliseconds: number) => Promise<unknown>) | AbortSignal = delay,
+  waitOrSignal:
+    | ((milliseconds: number) => Promise<unknown>)
+    | AbortSignal = delay,
 ): Promise<T> {
   const signal = typeof waitOrSignal === 'function' ? undefined : waitOrSignal;
-  const wait = typeof waitOrSignal === 'function' ? waitOrSignal : (ms: number) => delay(ms, undefined, { signal });
+  const wait =
+    typeof waitOrSignal === 'function'
+      ? waitOrSignal
+      : (ms: number) => delay(ms, undefined, { signal });
   for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
     signal?.throwIfAborted();
     try {

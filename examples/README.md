@@ -1,16 +1,16 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. The Chat examples use
-`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
-
-```sh
-export NEARAI_API_KEY=sk-your-api-key
-```
+then verify the response signature.
 
 ## JavaScript (Node.js)
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
+They use `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`:
+
+```sh
+export NEARAI_API_KEY=sk-your-api-key
+```
 
 Gateway and direct examples are grouped in separate folders and share the same
 project configuration. Each entry point includes non-streaming and streaming calls:
