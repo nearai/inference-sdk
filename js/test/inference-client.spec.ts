@@ -3471,6 +3471,117 @@ describe('System One decisions', () => {
     return { gateway, fetch, requests, signaturePaths };
   }
 
+  test('accepts interface-typed state, instructions and criteria', async () => {
+    interface Content {
+      message: string;
+    }
+    const content: Content = { message: 'typed application data' };
+    const fixture = decisionGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    await client.systemone.create({
+      ...decisionRequest,
+      state: content,
+      questions: {
+        typed: {
+          type: 'noul',
+          instructions: content,
+          criteria: { true: content },
+        },
+      },
+    });
+    expect(JSON.parse(await fixture.requests[0].text()).state).toEqual(content);
+  });
+
+  test('retains every verified report sharing the decision receipt signer', async () => {
+    const fixture = decisionGateway({ tee: true, secondSigner: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await fixture.fetch(request);
+      const url = new URL(request.url);
+      if (
+        url.pathname === '/v1/attestation/report' &&
+        url.searchParams.has('model')
+      ) {
+        const body = await response.json();
+        body.model_attestations.push({ ...body.model_attestations.at(-1) });
+        return jsonResponse(body);
+      }
+      return response;
+    });
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const result = await client.systemone.create(decisionRequest);
+    const verified = await client.verifyResponse(result.decisionId);
+    if (verified.signatureKind !== 'provider_tee')
+      throw new Error('wrong signature kind');
+    expect(verified.attestations).toHaveLength(2);
+    for (const report of verified.attestations) {
+      expect(report.signer.signingAddress).toBe(keyHex(keyPair(3).publicKey));
+    }
+    expect(verified.attestation).toBe(verified.attestations[0]);
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  test.each(['fetch', 'body'])(
+    'preserves a caller abort reason during decision %s',
+    async (phase) => {
+      const fixture = decisionGateway();
+      const controller = new AbortController();
+      const reason = new Error('caller cancelled decision');
+      let ready!: () => void;
+      const started = new Promise<void>((resolve) => {
+        ready = resolve;
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname !== '/v1/systemone')
+            return fixture.fetch(request);
+          if (phase === 'fetch')
+            return new Promise<Response>((_, reject) => {
+              request.signal.addEventListener(
+                'abort',
+                () => reject(request.signal.reason),
+                { once: true },
+              );
+              ready();
+            });
+          return new Response(
+            new ReadableStream({
+              start(stream) {
+                request.signal.addEventListener(
+                  'abort',
+                  () => stream.error(request.signal.reason),
+                  { once: true },
+                );
+                ready();
+              },
+            }),
+            { headers: { 'x-generation-id': 'cancelled' } },
+          );
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const pending = client.systemone.create(decisionRequest, {
+        signal: controller.signal,
+      });
+      const rejected = expect(pending).rejects.toBe(reason);
+      await started;
+      controller.abort(reason);
+      await rejected;
+      expect(fixture.signaturePaths).toHaveLength(0);
+    },
+  );
+
   test.each([false, true])(
     'verifies exact response bytes (provider TEE: %s) through pinned Node transport',
     async (tee) => {

@@ -669,6 +669,10 @@ trust roots or another verification service.
 
 ## System One decisions (`InferenceClient.systemone`)
 
+For a provider TEE receipt, `attestations` retains every verified report sharing
+its signing identity. `attestation` is the first matching report; a shared key
+does not identify a unique CVM. Chat retains its selected routing report.
+
 Available on the generic and Node Gateway clients. Direct clients and the
 OpenAI-compatible `fetch`/`chat` surface remain Chat-only.
 

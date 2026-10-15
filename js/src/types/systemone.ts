@@ -2,10 +2,7 @@ import type * as v from 'valibot';
 import type { SystemOneResponseSchema } from '../schemas';
 
 /** Text or structured JSON passed through to the decision model. */
-export type SystemOneContent =
-  | string
-  | Record<string, unknown>
-  | readonly unknown[];
+export type SystemOneContent = string | object;
 
 export type SystemOneQuestion =
   | {

@@ -88,6 +88,7 @@ export async function createSystemOne({
   try {
     response = await session.transport.fetch(httpRequest);
   } catch (cause) {
+    options?.signal?.throwIfAborted();
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
@@ -123,6 +124,7 @@ export async function createSystemOne({
       options?.signal,
     );
   } catch (cause) {
+    options?.signal?.throwIfAborted();
     if (isApiError(cause)) throw cause;
     throw new ApiError(
       {
