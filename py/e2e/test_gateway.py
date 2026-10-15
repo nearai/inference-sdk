@@ -4,10 +4,10 @@ import asyncio
 import json
 
 import pytest
-from helpers import required_env, retry_receipt
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
+from e2e.helpers import required_env, retry_receipt
 from nearai_inference_sdk import (
     AttestationClient,
     InferenceClient,
