@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from nacl.signing import SigningKey
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI, BadRequestError
 
 from nearai_inference_sdk import (
     ApiError,
@@ -899,9 +899,12 @@ async def test_byte_budget_evicts_old_receipts_and_preserves_them_on_oversize(
         await client.verify_response(second)
 
 
-async def test_large_request_fails_before_preflight(monkeypatch, gateway):
+@pytest.mark.parametrize(
+    'limits', [{'max_body_bytes': 10}, {'max_receipt_cache_bytes': 10}]
+)
+async def test_large_request_fails_before_preflight(monkeypatch, gateway, limits):
     gateway.install(monkeypatch)
-    async with gateway.client(max_body_bytes=10) as client:
+    async with gateway.client(e2ee=False, **limits) as client:
         with pytest.raises(ApiError, match='api.body_too_large'):
             await client.send(
                 httpx.Request(
@@ -912,6 +915,114 @@ async def test_large_request_fails_before_preflight(monkeypatch, gateway):
             )
     assert gateway.gateway_requests == 0
     assert not gateway.completion_requests
+
+
+async def test_sync_request_stream_stops_at_body_limit(monkeypatch, gateway):
+    gateway.install(monkeypatch)
+    consumed = 0
+
+    def chunks():
+        nonlocal consumed
+        for _ in range(10):
+            consumed += 1
+            yield b'x' * 512
+
+    async with gateway.client(max_body_bytes=1024) as client:
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.send(
+                httpx.Request('POST', BASE_URL + 'chat/completions', content=chunks())
+            )
+    assert consumed == 3
+    assert gateway.gateway_requests == 0
+
+
+async def test_sync_request_stream_with_disabled_receipt_retention(
+    monkeypatch, gateway
+):
+    gateway.install(monkeypatch)
+    body = json.dumps({'model': MODEL, 'messages': MESSAGES}).encode()
+    async with gateway.client(
+        e2ee=False, response_cache_time_to_live_ms=0, max_receipt_cache_bytes=1
+    ) as client:
+        response = await client.send(
+            httpx.Request(
+                'POST',
+                BASE_URL + 'chat/completions',
+                content=iter([body[:10], body[10:]]),
+            )
+        )
+        assert json.loads(await response.aread())['id']
+        assert not client._responses
+    assert gateway.plaintexts == ['Hello']
+
+
+@pytest.mark.parametrize('oversized', [False, True])
+@pytest.mark.parametrize('interface', ['send', 'openai'])
+async def test_error_response_uses_body_limit_without_receipt_retention(
+    monkeypatch, oversized, interface
+):
+    gateway = Gateway()
+    original = gateway.handle
+    closed = asyncio.Event()
+    consumed = 0
+
+    class ErrorStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal consumed
+            for _ in range(5 if oversized else 1):
+                consumed += 1
+                yield b'x' * 512
+
+        async def aclose(self):
+            closed.set()
+
+    async def respond(request):
+        if request.url.path == '/v1/chat/completions':
+            return httpx.Response(400, stream=ErrorStream())
+        return await original(request)
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    async with gateway.client(
+        e2ee=False, max_body_bytes=1024, max_receipt_cache_bytes=128
+    ) as client:
+        if interface == 'send':
+            response = await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+            if oversized:
+                with pytest.raises(ApiError, match='api.body_too_large'):
+                    await response.aread()
+            else:
+                assert await response.aread() == b'x' * 512
+        else:
+            # OpenAI wraps transport/body errors; inspect its original cause.
+            async with AsyncOpenAI(
+                api_key='test-key',
+                base_url=BASE_URL,
+                http_client=client.http_client,
+                max_retries=0,
+            ) as openai:
+                if oversized:
+                    with pytest.raises(APIConnectionError) as failure:
+                        await openai.chat.completions.create(
+                            model=MODEL, messages=MESSAGES
+                        )
+                    assert isinstance(failure.value.__cause__, ApiError)
+                    assert failure.value.__cause__.failure.code == 'api.body_too_large'
+                else:
+                    with pytest.raises(BadRequestError) as failure:
+                        await openai.chat.completions.create(
+                            model=MODEL, messages=MESSAGES
+                        )
+                    assert failure.value.response.content == b'x' * 512
+        assert consumed == (3 if oversized else 1)
+        assert not client._responses
+    assert closed.is_set()
 
 
 async def test_signed_sse_tail_is_body_bounded(monkeypatch):

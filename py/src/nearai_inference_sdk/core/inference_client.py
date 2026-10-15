@@ -50,7 +50,11 @@ from ..utils.fetch import FetchResponse
 from ..utils.sse import get_sse_data_records, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
-from .body_limit import read_bounded_body, require_body_size
+from .body_limit import (
+    read_bounded_body,
+    read_bounded_sync_body,
+    require_body_size,
+)
 from .chat import verify_gateway_response, verify_model_response
 from .cloud_api import (
     AttestationClient,
@@ -291,11 +295,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     'expected': 'a POST to the configured Chat Completions endpoint',
                 },
             )
+        request_limit = self._max_body_bytes
+        if self._response_ttl != 0:
+            request_limit = min(request_limit, self._max_receipt_cache_bytes)
         if isinstance(request.stream, httpx.AsyncByteStream):
-            body = await read_bounded_body(aiter(request.stream), self._max_body_bytes)
+            body = await read_bounded_body(aiter(request.stream), request_limit)
         else:
-            body = request.read()
-            require_body_size(len(body), self._max_body_bytes)
+            body = read_bounded_sync_body(iter(request.stream), request_limit)
         request = httpx.Request(
             request.method,
             request.url,
@@ -344,7 +350,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 cause=error,
             ) from error
         if not response.is_success:
-            return response
+            return httpx.Response(
+                response.status_code,
+                headers=_decoded_headers(response.headers),
+                stream=_BoundedErrorStream(response, self._max_body_bytes),
+                extensions=response.extensions,
+                request=prepared_request,
+            )
         response_body = asyncio.get_running_loop().create_future()
         response_body.add_done_callback(_observe_exception)
         request_body = await prepared_request.aread()
@@ -797,6 +809,27 @@ class InferenceClient(
         return httpx.AsyncClient(timeout=None)
 
 
+class _BoundedErrorStream(httpx.AsyncByteStream):
+    """Bound decoded error bodies without retaining them as receipts."""
+
+    def __init__(self, response: httpx.Response, limit: int) -> None:
+        self._response = response
+        self._limit = limit
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        size = 0
+        try:
+            async for chunk in self._response.aiter_bytes():
+                require_body_size(size + len(chunk), self._limit)
+                size += len(chunk)
+                yield chunk
+        finally:
+            await self.aclose()
+
+    async def aclose(self) -> None:
+        await self._response.aclose()
+
+
 class _CapturedResponseStream(httpx.AsyncByteStream):
     """Capture wire bytes under consumer backpressure, before E2EE decryption."""
 
@@ -811,8 +844,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         self._response_body = response_body
         self._register = register
         self._client = client
-        self._chunks: list[bytes] = []
-        self._size = 0
+        self._body = bytearray()
         self._limit = client._response_byte_limit(len(response.request.content))
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
@@ -846,9 +878,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             raise
 
     def _capture(self, chunk: bytes) -> None:
-        require_body_size(self._size + len(chunk), self._limit)
-        self._size += len(chunk)
-        self._chunks.append(chunk)
+        require_body_size(len(self._body) + len(chunk), self._limit)
+        self._body.extend(chunk)
         if not self._streaming:
             return
         self._pending += self._decoder.decode(chunk)
@@ -871,7 +902,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
     def _complete(self) -> None:
         if self._response_body.done():
             return
-        body = b''.join(self._chunks)
+        body = bytes(self._body)
         if not self._registered:
             self._register(_completion_id(body, self._content_type))
             self._registered = True
@@ -881,7 +912,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         for record in tuple(self._client._responses.values()):
             if record.response_body.done() and record.settle is not None:
                 record.settle()
-        self._chunks.clear()
+        self._body.clear()
 
     def _fail(self, cause: BaseException) -> None:
         if not self._response_body.done():
@@ -895,7 +926,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
                     cause=cause,
                 )
             )
-            self._chunks.clear()
+            self._body.clear()
 
     async def aclose(self) -> None:
         if self._drain_task is not None:
