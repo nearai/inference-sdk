@@ -17,6 +17,8 @@ use x509_cert::{
 };
 
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
+// Match the Go provenance page bound, including GitHub-compatible proxies.
+const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
 const SOURCE_REPOSITORY_URI: ObjectIdentifier =
@@ -124,11 +126,8 @@ async fn fetch_image_provenance_pages(
             });
         }
         let next = next_attestation_page(&original_url, response.headers())?;
-        let text = response.text().await.map_err(|_| ApiError::Transport {
-            resource: RESOURCE,
-            reason: ApiTransportReason::ResponseBody,
-        })?;
-        let response: GitHubAttestations = serde_json::from_str(&text).map_err(|error| {
+        let bytes = read_provenance_body(response).await?;
+        let response: GitHubAttestations = serde_json::from_slice(&bytes).map_err(|error| {
             if error.is_syntax() || error.is_eof() {
                 ApiError::InvalidJson { resource: RESOURCE }
             } else {
@@ -150,6 +149,26 @@ async fn fetch_image_provenance_pages(
         };
         url = next;
     }
+}
+
+async fn read_provenance_body(mut response: reqwest::Response) -> Result<Vec<u8>, ApiError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PROVENANCE_PAGE_BYTES as u64)
+    {
+        return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+        resource: RESOURCE,
+        reason: ApiTransportReason::ResponseBody,
+    })? {
+        if chunk.len() > MAX_PROVENANCE_PAGE_BYTES - bytes.len() {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, ApiError> {
@@ -885,6 +904,61 @@ mod tests {
                 Err(Reason::SourceMismatch)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_proxy_pages_before_json_parsing() {
+        for chunked in [false, true] {
+            let server = MockServer::start().await;
+            let mut response =
+                ResponseTemplate::new(200)
+                    .set_body_bytes(vec![b'x'; MAX_PROVENANCE_PAGE_BYTES + 1]);
+            if chunked {
+                response = response.insert_header("Transfer-Encoding", "chunked");
+            }
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let proxy = server.uri();
+            let error = fetch_image_provenance_with_options(
+                "nearai/compose-manager",
+                &format!("sha256:{}", "ab".repeat(32)),
+                ImageProvenanceFetchOptions {
+                    github_proxy_url: Some(&proxy),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                ApiError::BodyTooLarge {
+                    resource: ApiResource::ImageProvenance
+                }
+            ));
+            assert_eq!(error.code(), "api.body_too_large");
+            assert!(!error.retryable());
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_provenance_page_at_the_exact_byte_limit() {
+        let server = MockServer::start().await;
+        let mut body = br#"{"attestations":[{"bundle":{"at_limit":true}}]}"#.to_vec();
+        body.resize(MAX_PROVENANCE_PAGE_BYTES, b' ');
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::builder().no_proxy().build().unwrap();
+        let bundles =
+            fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                .await
+                .unwrap();
+        assert_eq!(bundles, vec![r#"{"at_limit":true}"#]);
     }
 
     #[tokio::test]

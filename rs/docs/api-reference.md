@@ -254,6 +254,9 @@ prove action success, current runtime state or a unique CVM identity.
 
 `fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
 also supports `github_token` and `github_proxy_url`.
+Each GitHub or proxy response page is limited to 16 MiB before JSON decoding,
+including responses without `Content-Length`. Oversized pages fail with
+non-retryable `api.body_too_large`.
 `verify_deployment_image_provenance_with_options` accepts
 `DeploymentImageProvenanceOptions` with those fields and optional
 `image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the

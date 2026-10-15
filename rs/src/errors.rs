@@ -72,6 +72,9 @@ pub enum ApiError {
     #[error("API {resource} returned invalid JSON")]
     InvalidJson { resource: ApiResource },
 
+    #[error("API {resource} response exceeds its byte limit")]
+    BodyTooLarge { resource: ApiResource },
+
     #[error("API response has an invalid {path}: expected {expected}, received {actual}")]
     InvalidResponse {
         path: String,
@@ -111,6 +114,7 @@ impl ApiError {
             Self::Transport { .. } => "api.transport_failed",
             Self::HttpStatus { .. } => "api.http_status",
             Self::InvalidJson { .. } => "api.invalid_json",
+            Self::BodyTooLarge { .. } => "api.body_too_large",
             Self::InvalidResponse { .. } => "api.invalid_response",
             Self::NonceMismatch { .. } => "api.nonce_mismatch",
             Self::ModelAttestationSignerNotFound => "api.model_attestation_signer_not_found",
