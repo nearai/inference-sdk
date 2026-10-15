@@ -8,7 +8,8 @@ async fn main() -> Result<()> {
         api_key: Some(api_key()?),
         base_url: DIRECT.into(),
         signing_algo: ALGO,
-        // E2EE defaults on. Optional OHTTP requires Ed25519 and signed configuration.
+        e2ee: true,
+        // Optional OHTTP requires Ed25519 and signed configuration.
         ..Default::default()
     })?;
     let verified = client.verify(MODEL).await?;

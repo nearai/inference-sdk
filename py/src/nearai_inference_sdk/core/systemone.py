@@ -77,6 +77,8 @@ class InferenceSystemOne:
                 NO_ALIASING_HEADER: 'true',
                 'content-type': 'application/json',
                 'accept': 'application/json',
+                # Capture the signed response representation without decompression.
+                'accept-encoding': 'identity',
             }
         )
         http_request = httpx.Request(

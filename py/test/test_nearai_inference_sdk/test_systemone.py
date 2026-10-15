@@ -1,6 +1,7 @@
 """Decision requests preserve the public protocol and verify exact signed bytes."""
 
 import asyncio
+import gzip
 import hashlib
 import json
 from dataclasses import replace
@@ -42,6 +43,7 @@ class DecisionGateway(Gateway):
         }
         self.requests = []
         self.response_fault = None
+        self.negotiate_compression = False
         self.decision_id = None
         self.body_id = None
         self.answers = None
@@ -122,6 +124,12 @@ class DecisionGateway(Gateway):
         response_body = json.dumps(body).encode()
         if self.response_fault == 'json':
             response_body = b'not JSON'
+        compressed = (
+            self.negotiate_compression
+            and request.headers.get('accept-encoding') != 'identity'
+        )
+        if compressed:
+            response_body = gzip.compress(response_body)
         signed_text = (
             hashlib.sha256(request.content).hexdigest()
             + ':'
@@ -157,6 +165,7 @@ class DecisionGateway(Gateway):
             200,
             content=response_body,
             headers={
+                **({'content-encoding': 'gzip'} if compressed else {}),
                 'x-signature-id'
                 if self.response_fault == 'id'
                 else 'x-generation-id': decision_id,
@@ -250,6 +259,20 @@ async def test_decisions_verify_exact_bytes_with_the_actual_serving_signer(
         'repr-digest',
     ):
         assert name not in sent.headers
+
+
+async def test_forces_identity_encoding_to_preserve_signed_response_bytes(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.negotiate_compression = True
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        result = await client.systemone.create(
+            REQUEST, headers={'Accept-Encoding': 'gzip'}
+        )
+        receipt = await client.verify_response(result.decision_id)
+        assert receipt.id == result.decision_id
+    assert gateway.requests[0].headers['accept-encoding'] == 'identity'
+    assert len(gateway.requests) == 1
 
 
 async def test_receipt_can_retry_without_repeating_inference(monkeypatch):

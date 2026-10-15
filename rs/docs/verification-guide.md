@@ -140,11 +140,10 @@ origin; supply a client with redirects disabled (or a pinned client).
 
 ### Experimental direct endpoints
 
-`DirectInferenceClient::new(base_url, api_key)` enables E2EE by default. Its
-`verify(model)` returns the complete verified report set, serving report, TLS
-binding, and verification timestamp. `with_options` accepts
-`DirectInferenceClientOptions`, which also defaults E2EE on. Set `e2ee: false`
-explicitly to disable encryption.
+`DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
+Gateway client. Its `verify(model)` returns the complete verified report set,
+serving report, TLS binding, and verification timestamp. `with_options` accepts
+`DirectInferenceClientOptions`. Set `e2ee: true` to enable encryption.
 
 Direct clients verify every supplied instance, require the serving report to be
 in that set, and retain the selected signer group for receipt verification.

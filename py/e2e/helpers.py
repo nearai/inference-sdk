@@ -20,7 +20,10 @@ async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
         try:
             return await lookup()
         except ApiError as error:
-            if not error.retryable:
+            if (
+                not error.retryable
+                and error.failure.code != 'api.completion_signature_unavailable'
+            ):
                 raise
         await asyncio.sleep(delay)
     return await lookup()

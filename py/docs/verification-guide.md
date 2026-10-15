@@ -156,9 +156,9 @@ The client verifies the advertised OHTTP configuration against the attested
 Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
 The authenticated configuration is reused with the attestation cache.
 
-`e2ee` is independent: it defaults to `False` for `InferenceClient` and `True`
-for `DirectInferenceClient`. OHTTP protects the HTTP exchange to the Gateway,
-while `e2ee=True` encrypts supported Chat fields to the model. Gateway OHTTP
+`e2ee` is independent and defaults to `False` for both clients.
+OHTTP protects the HTTP exchange to the Gateway, while `e2ee=True` encrypts
+supported Chat fields to the model. Gateway OHTTP
 also works with Incognito models, without providing model encryption.
 
 JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
@@ -212,6 +212,7 @@ from nearai_inference_sdk import DirectInferenceClient
 async with DirectInferenceClient(
     'https://glm-5-3-flash.completions.near.ai/v1/',
     api_key=direct_api_key,
+    e2ee=True,
 ) as direct_client:
     completion = await direct_client.chat.completions.create(
         model='z-ai/glm-5.3-flash',
@@ -220,9 +221,10 @@ async with DirectInferenceClient(
     verified = await direct_client.verify_response(completion.id)
 ```
 
-Every supplied report is verified before selecting a model key. E2EE defaults to
-`True`; Ed25519/ECDSA, streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the
-same interfaces as Gateway Chat. Response verification returns every verified
+Every supplied report is verified before selecting a model key. E2EE is opt-in,
+as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
+streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
+Gateway Chat. Response verification returns every verified
 report sharing the selected signer, without identifying one particular CVM.
 
 For a manual workflow:
