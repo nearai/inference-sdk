@@ -1,3 +1,4 @@
+import { retryRateLimit } from './retry.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import OpenAI from 'openai';
@@ -19,7 +20,6 @@ import {
   verifyModelResponse,
 } from '../dist/node.js';
 import { requiredEnv, retryReceipt } from './helpers.ts';
-import { retryRateLimit } from './retry.ts';
 
 type LiveModel = {
   id: string;
