@@ -62,8 +62,9 @@ An explicit model policy or deployment callback rejects Gateway-only models.
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
   `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
   be authenticated, and the supplied HTTP client must disable redirects.
-- `DirectInferenceClient::new(base_url, api_key)` defaults E2EE on. `with_options`
-  accepts `DirectInferenceClientOptions`, which also defaults E2EE on. Chat/transport/receipt methods match
+- `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
+  Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
+  to enable it. Chat/transport/receipt methods match
   `InferenceClient`; `verify` returns `DirectAttestationVerificationResult`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.

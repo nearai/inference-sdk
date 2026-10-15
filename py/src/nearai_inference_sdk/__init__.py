@@ -53,6 +53,7 @@ from .types.cloud_api import (
 from .types.compose_manager import (
     ComposeManagerAction,
     ComposeManagerAttestation,
+    ComposeManagerImagePolicy,
     VerifiedComposeManagerAttestation,
 )
 from .types.direct import (
@@ -121,6 +122,7 @@ __all__ = [
     'CompletionSignatureReference',
     'ComposeManagerAction',
     'ComposeManagerAttestation',
+    'ComposeManagerImagePolicy',
     'DeploymentPolicy',
     'DeploymentVerifier',
     'DirectAttestationClient',

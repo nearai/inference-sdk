@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import cast
 from urllib.parse import quote
 
+from ..types.compose_manager import ComposeManagerImagePolicy
 from ..types.provenance import ImageProvenancePolicy
 from ..types.verification import MeasuredDeployment
 from ..utils.common import sha256
@@ -17,6 +18,7 @@ async def verify_compose_manager_deployment_image_provenance(
     deployment: MeasuredDeployment,
     image_policies: Mapping[str, ImageProvenancePolicy],
     *,
+    manager_image_policy: ComposeManagerImagePolicy,
     compose_repository: str = 'nearai/cvm-compose-files',
     compose_file: str | None = None,
     github_token: str | None = None,
@@ -27,6 +29,10 @@ async def verify_compose_manager_deployment_image_provenance(
     Select the latest compose_up, optionally restricted to compose_file. This
     authenticates recorded deployment intent, not successful/current execution.
     """
+    if not image_policies:
+        raise verification_failure(
+            'provenance.deployment_images_invalid', {'reason': 'empty_policy'}
+        )
     manager = deployment.compose_manager
     if manager is None:
         raise _invalid_deployment('attestation_missing')
@@ -41,6 +47,21 @@ async def verify_compose_manager_deployment_image_provenance(
     )
     if action is None:
         raise _invalid_deployment('compose_up_missing')
+    started = next(
+        (
+            entry
+            for entry in reversed(manager.actions)
+            if entry['action'] == 'compose_manager_started'
+        ),
+        None,
+    )
+    image = None if started is None else started.get('image')
+    if not isinstance(image, str):
+        raise _invalid_deployment('manager_image_missing')
+    repository = manager_image_policy.image_repository.removeprefix('docker.io/')
+    image = image.removeprefix('docker.io/')
+    if not repository or not image.startswith((f'{repository}@', f'{repository}:')):
+        raise _invalid_deployment('manager_image_mismatch')
     commit, file, digest = (
         action.get('commit'),
         action.get('file'),
@@ -101,23 +122,20 @@ async def verify_compose_manager_deployment_image_provenance(
             {'reason': 'invalid_docker_compose'},
             cause=error,
         ) from error
-    started = next(
-        (
-            entry
-            for entry in reversed(manager.actions)
-            if entry['action'] == 'compose_manager_started'
-        ),
-        None,
-    )
-    image = None if started is None else started.get('image')
-    additional_images = [('compose-manager', image)] if isinstance(image, str) else []
     await verify_compose_image_provenance(
         docker_compose,
         image_policies,
         github_token,
-        additional_images,
         # The action boundary validates services separately from string fields.
         services=cast(list[str], action.get('services', [])),
+        github_proxy_url=github_proxy_url,
+    )
+    # A stale compose reference cannot satisfy the current manager's policy.
+    await verify_compose_image_provenance(
+        'services: {}',
+        {repository: manager_image_policy},
+        github_token,
+        [('compose-manager', image)],
         github_proxy_url=github_proxy_url,
     )
 

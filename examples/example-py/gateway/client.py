@@ -3,6 +3,7 @@ import os
 
 from nearai_inference_sdk import (
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     GatewayVerificationOptions,
     ImageProvenancePolicy,
     InferenceClient,
@@ -37,16 +38,19 @@ MODEL_IMAGE_POLICIES = {
     'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
         repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
     ),
-    'nearaidev/compose-manager': ImageProvenancePolicy(
-        repository='nearai/compose-manager', workflow='.github/workflows/build.yml'
-    ),
 }
 
 
 async def verify_model_images(deployment: MeasuredDeployment) -> None:
     # Verify recorded deployment intent, not the currently running containers.
     await verify_compose_manager_deployment_image_provenance(
-        deployment, MODEL_IMAGE_POLICIES
+        deployment,
+        MODEL_IMAGE_POLICIES,
+        manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
     )
 
 

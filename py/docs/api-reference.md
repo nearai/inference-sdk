@@ -129,12 +129,13 @@ same common options as `InferenceClient`, with the following differences:
 | --- | --- |
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
-| `e2ee` | Defaults to `True`. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
 | `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`. Optional `serving_deployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). `ModelVerificationOptions` is also accepted for per-report checks. |
 | `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
+
+E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
 
 `DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
 
@@ -400,6 +401,12 @@ with `imageRepository`, `digest`, the original cause, and unchanged retryability
 Image verification errors pass through unchanged.
 
 ### `verify_compose_manager_deployment_image_provenance`
+
+The required keyword `manager_image_policy: ComposeManagerImagePolicy` supplies
+`image_repository` plus the ordinary image build policy fields. It applies only
+to the latest `compose_manager_started` image, independently of `image_policies`
+for selected compose services. Missing startup evidence and mismatched repositories
+fail closed; stale compose references cannot satisfy the manager policy.
 
 Asynchronous. Use in a model deployment callback or after model verification.
 Selects the latest matching `compose_up`, verifies the recorded file's exact

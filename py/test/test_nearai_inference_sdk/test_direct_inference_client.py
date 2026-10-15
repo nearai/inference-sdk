@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from openai import AsyncOpenAI
@@ -144,6 +146,24 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
     assert endpoint.gateway_requests == 0
     assert endpoint.model_requests == ['direct']
     assert endpoint.plaintexts == ['Hello', 'Hello']
+
+
+async def test_direct_defaults_to_plaintext_with_preflight_and_response_verification(
+    monkeypatch,
+):
+    endpoint = DirectEndpoint()
+    endpoint.install(monkeypatch)
+    async with endpoint.client() as client:
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        assert completion.choices[0].message.content == 'Hello back'
+        result = await client.verify_response(completion.id)
+        assert len(result.attestations) == 2
+    request = endpoint.completion_requests[0]
+    assert 'x-client-pub-key' not in request.headers
+    assert json.loads(request.content)['messages'] == MESSAGES
+    assert endpoint.model_requests == ['direct']
 
 
 async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypatch):

@@ -80,9 +80,9 @@ Gateway signer, or the serving model signer for a direct endpoint. Missing or
 invalid OHTTP evidence prevents Chat from being sent. The authenticated
 configuration is cached with the deployment verification result.
 
-`e2ee` is independent: it defaults to `false` for `InferenceClient` and `true`
-for `DirectInferenceClient`. Through the Gateway, OHTTP protects the HTTP
-exchange to the Gateway, while E2EE encrypts supported Chat fields to the model.
+`e2ee` is independent and defaults to `false` for both clients.
+Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
+encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
@@ -426,7 +426,8 @@ Known endpoint limitations affect the direct flow:
 or model-metadata lookup.
 It fetches and verifies every returned model attestation before
 sending Chat.
-E2EE defaults to enabled with Ed25519. Both cache defaults are 60 minutes.
+E2EE is opt-in, as with the Gateway client. The example enables it explicitly.
+The signing algorithm defaults to Ed25519. Both cache defaults are 60 minutes.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -434,6 +435,7 @@ import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 const client = new DirectInferenceClient({
   baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
   apiKey: process.env.NEARAI_API_KEY,
+  e2ee: true,
 });
 ```
 

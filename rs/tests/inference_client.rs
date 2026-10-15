@@ -558,7 +558,14 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
         ..Default::default()
     })
     .await;
-    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
+        api_key: options.api_key,
+        base_url: options.base_url,
+        headers: options.headers,
+        model_verification: options.model_verification,
+        ..Default::default()
+    })
+    .unwrap();
     let verified = client.verify("vendor/model").await.unwrap();
     assert_eq!(verified.attestations.len(), 2);
     assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
@@ -569,6 +576,9 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
         _ => panic!("expected direct reports"),
     };
     assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
+    let receipts = f.receipts.lock().unwrap();
+    let request: Value = serde_json::from_slice(&receipts["chat-0"].0).unwrap();
+    assert_eq!(request["messages"][0]["content"], "Hello");
 }
 
 #[tokio::test]
@@ -617,14 +627,6 @@ async fn header_credentials_override_adapted_requests_and_disable_compression() 
 }
 #[tokio::test]
 async fn direct_rejects_invalid_nonserving_report_before_chat() {
-    assert!(DirectInferenceClientOptions::default().e2ee);
-    assert!(
-        !DirectInferenceClientOptions {
-            e2ee: false,
-            ..Default::default()
-        }
-        .e2ee
-    );
     let (_server, f, options) = setup(Fixture {
         direct: true,
         bad_model: true,

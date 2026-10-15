@@ -9,6 +9,7 @@ from sigstore.verify import Verifier
 
 from nearai_inference_sdk import (
     ComposeManagerAttestation,
+    ComposeManagerImagePolicy,
     DirectClientBinding,
     DirectModelAttestation,
     FetchedDirectModelAttestations,
@@ -38,6 +39,12 @@ POLICIES = {
         repository='nearai/compose-manager', workflow='.github/workflows/build.yml'
     )
 }
+
+MANAGER_POLICY = ComposeManagerImagePolicy(
+    image_repository='nearaidev/compose-manager-launcher',
+    repository='nearai/compose-manager',
+    workflow='.github/workflows/build.yml',
+)
 
 
 def manager_report() -> ComposeManagerAttestation:
@@ -97,6 +104,7 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
         await verify_compose_manager_deployment_image_provenance(
             deployment,
             POLICIES,
+            manager_image_policy=MANAGER_POLICY,
             github_token='test-token',
             github_proxy_url=github_proxy_url,
         )
@@ -175,6 +183,7 @@ async def test_service_selection_must_satisfy_the_image_policy(
                     'services': services,
                     'file_sha256': sha256(compose.encode()).hex(),
                 },
+                *manager.actions[1:],
             ),
         ),
     )
@@ -185,7 +194,9 @@ async def test_service_selection_must_satisfy_the_image_policy(
     image_fetch = AsyncMock()
     monkeypatch.setattr(provenance, 'fetch_image_provenance', image_fetch)
     with pytest.raises(VerificationError) as raised:
-        await verify_compose_manager_deployment_image_provenance(deployment, POLICIES)
+        await verify_compose_manager_deployment_image_provenance(
+            deployment, POLICIES, manager_image_policy=MANAGER_POLICY
+        )
     assert raised.value.failure.code == 'provenance.deployment_images_invalid'
     assert raised.value.failure.details['reason'] == reason
     image_fetch.assert_not_awaited()
@@ -235,6 +246,7 @@ async def test_rejects_changed_compose_before_image_proof_retrieval(monkeypatch)
         await verify_compose_manager_deployment_image_provenance(
             verified.deployment,
             POLICIES,
+            manager_image_policy=MANAGER_POLICY,
             github_proxy_url='https://app.example/verification/github',
         )
     assert raised.value.failure.code == 'provenance.compose_file_hash_mismatch'
@@ -249,7 +261,7 @@ async def test_requires_manager_evidence_when_its_provenance_policy_is_used():
     )
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            verified.deployment, POLICIES
+            verified.deployment, POLICIES, manager_image_policy=MANAGER_POLICY
         )
     assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
     assert raised.value.failure.details == {'reason': 'attestation_missing'}

@@ -72,7 +72,10 @@ class DirectAttestationClient(_ApiClient):
             _raise_invalid_wire_response(error, root='direct attestation report')
         root = _map_direct_attestation(raw, 'attestation')
         attestations = tuple(
-            _map_direct_attestation(item, f'all_attestations[{index}]')
+            replace(
+                _map_direct_attestation(item, f'all_attestations[{index}]'),
+                compose_manager_attestation=None,
+            )
             for index, item in enumerate(raw.all_attestations)
         )
         # Dataclass equality compares report contents, including opaque event logs.

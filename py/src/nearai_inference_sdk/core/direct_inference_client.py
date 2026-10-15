@@ -55,7 +55,7 @@ class DirectInferenceClient(
         VerifiedDirectCompletionResult, DirectAttestationVerificationResult
     ]
 ):
-    """Experimental direct provider client. E2EE defaults to enabled.
+    """Experimental direct provider client. E2EE is opt-in, as with the Gateway.
 
     Verifies all supplied reports before Chat and retains the selected signer
     group for response verification. Direct clients are not recommended for production.
@@ -67,7 +67,7 @@ class DirectInferenceClient(
         *,
         api_key: str | None = None,
         headers: Mapping[str, str] | None = None,
-        e2ee: bool = True,
+        e2ee: bool = False,
         ohttp: bool = False,
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,

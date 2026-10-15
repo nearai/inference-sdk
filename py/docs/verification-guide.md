@@ -155,9 +155,9 @@ The client verifies the advertised OHTTP configuration against the attested
 Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
 The authenticated configuration is reused with the attestation cache.
 
-`e2ee` is independent: it defaults to `False` for `InferenceClient` and `True`
-for `DirectInferenceClient`. OHTTP protects the HTTP exchange to the Gateway,
-while `e2ee=True` encrypts supported Chat fields to the model. Gateway OHTTP
+`e2ee` is independent and defaults to `False` for both clients.
+OHTTP protects the HTTP exchange to the Gateway, while `e2ee=True` encrypts
+supported Chat fields to the model. Gateway OHTTP
 also works with Incognito models, without providing model encryption.
 
 JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
@@ -208,6 +208,7 @@ from nearai_inference_sdk import DirectInferenceClient
 async with DirectInferenceClient(
     'https://glm-5-3-flash.completions.near.ai/v1/',
     api_key=direct_api_key,
+    e2ee=True,
 ) as direct_client:
     completion = await direct_client.chat.completions.create(
         model='z-ai/glm-5.3-flash',
@@ -216,9 +217,10 @@ async with DirectInferenceClient(
     verified = await direct_client.verify_response(completion.id)
 ```
 
-Every supplied report is verified before selecting a model key. E2EE defaults to
-`True`; Ed25519/ECDSA, streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the
-same interfaces as Gateway Chat. Response verification returns every verified
+Every supplied report is verified before selecting a model key. E2EE is opt-in,
+as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
+streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
+Gateway Chat. Response verification returns every verified
 report sharing the selected signer, without identifying one particular CVM.
 
 For a manual workflow:
@@ -396,6 +398,7 @@ trusted image repositories and build policies:
 ```python
 from nearai_inference_sdk import (
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     ImageProvenancePolicy,
     MeasuredDeployment,
     verify_deployment_image_provenance,
@@ -502,6 +505,7 @@ deployed later. Use the Compose Manager helper for the recorded model deployment
 
 ```python
 from nearai_inference_sdk import (
+    ComposeManagerImagePolicy,
     ImageProvenancePolicy,
     MeasuredDeployment,
     ModelAttestationVerifiers,
@@ -514,16 +518,13 @@ model_image_policies = {
         repository='nearai/inference-proxy',
         workflow='.github/workflows/build.yml',
     ),
-    'nearaidev/compose-manager': ImageProvenancePolicy(
-        repository='nearai/compose-manager',
-        workflow='.github/workflows/build.yml',
-    ),
 }
 
 
 async def check_model_images(deployment: MeasuredDeployment) -> None:
     await verify_compose_manager_deployment_image_provenance(
-        deployment, model_image_policies
+        deployment, model_image_policies,
+        manager_image_policy=ComposeManagerImagePolicy(image_repository='nearaidev/compose-manager', repository='nearai/compose-manager', workflow='.github/workflows/build.yml'),
     )
 
 
@@ -542,7 +543,7 @@ selects the last `compose_up`, downloads its file from `nearai/cvm-compose-files
 at the recorded commit, verifies `file_sha256`, then checks the required image
 builds from the action's named `services`. An omitted or empty list selects the
 whole file; unknown service names are rejected. Images in unselected services
-cannot satisfy a policy. Selection also includes the latest `compose_manager_started` image.
+cannot satisfy a policy. The required `manager_image_policy` separately verifies the latest `compose_manager_started` image. Missing startup evidence, a different image repository, an unpinned image, or a rejected build fails verification; an older compose reference cannot satisfy this policy.
 Use `compose_file` for a specific project's latest recorded file, and
 `compose_repository` for another trusted repository. In `InferenceClient`, use
 this callback through `model_verification.verifiers.deployment`.

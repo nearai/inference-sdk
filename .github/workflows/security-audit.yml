@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        directory: [rs, examples/example-rs]
+        directory: [rs, examples/example-rs, go/internal/dcap/wasm-src]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Audit locked dependencies against RustSec
@@ -111,3 +111,35 @@ jobs:
           AUDIT_OUTCOME: ${{ steps.audit.outcome }}
         run: |
           echo "cargo deny: $AUDIT_OUTCOME (report-only; see the audit step for findings or errors)." >> "$GITHUB_STEP_SUMMARY"
+
+  go:
+    name: Go (SDK and example)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            go/go.sum
+            examples/example-go/go.sum
+      - name: Install Go vulnerability checker
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Audit Go SDK
+        id: sdk-audit
+        continue-on-error: true
+        working-directory: go
+        run: govulncheck ./...
+      - name: Audit Go example
+        id: example-audit
+        continue-on-error: true
+        working-directory: examples/example-go
+        run: govulncheck ./...
+      - name: Summarize audit outcomes
+        if: always()
+        env:
+          SDK_OUTCOME: ${{ steps.sdk-audit.outcome }}
+          EXAMPLE_OUTCOME: ${{ steps.example-audit.outcome }}
+        run: |
+          echo "Go SDK: $SDK_OUTCOME; Go example: $EXAMPLE_OUTCOME (report-only; see audit steps)." >> "$GITHUB_STEP_SUMMARY"

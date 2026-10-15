@@ -6,11 +6,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .attestation_common import AttestationEventLog, TcbStatus
+from .provenance import ImageProvenancePolicy
 
 if TYPE_CHECKING:
     from .verification import RuntimeMeasurements
 
 type ComposeManagerAction = dict[str, str | list[str]]
+
+
+@dataclass(frozen=True, kw_only=True)
+class ComposeManagerImagePolicy(ImageProvenancePolicy):
+    """Build policy for the latest manager-start image, independent of compose."""
+
+    image_repository: str
 
 
 @dataclass(frozen=True, kw_only=True)
