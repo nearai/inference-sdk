@@ -1,11 +1,21 @@
 # Dependency updates and audits
 
-Dependabot checks the TypeScript, Python, and Rust SDKs and their example
-projects weekly. Minor and patch version updates are grouped by ecosystem,
-with a seven-day cooldown and at most five open version-update PRs per
-ecosystem. Major version updates require manual maintenance. These version
-update rules do not delay or suppress Dependabot security updates. GitHub
-Actions receive the same update policy.
+Dependabot is configured to open PRs only for security updates across the
+TypeScript, Python, Rust, and Go SDKs, their example projects, the Go DCAP
+WebAssembly crate, and GitHub Actions. Routine major, minor, and patch version
+updates require manual maintenance.
+
+Every ecosystem sets `open-pull-requests-limit: 0` to disable version-update
+PRs. Security-update PRs use a separate limit and remain eligible. The weekly
+`schedule` is retained because Dependabot requires it in the configuration;
+it does not delay security updates. See GitHub's
+[configuration for security updates only](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/customizing-dependabot-security-prs#example-1-configuration-for-security-updates-only).
+
+Automatic security PRs require the repository's dependency graph, Dependabot
+alerts, and Dependabot security updates to be enabled in GitHub settings.
+The YAML file does not enable these repository settings. A repository
+administrator must verify them when applying this policy; see
+[configuring Dependabot security updates](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-security-updates).
 
 Python uses Dependabot's native `uv` ecosystem so updates include `uv.lock`.
 TypeScript uses the `npm` ecosystem for pnpm. GitHub's supported-version table
