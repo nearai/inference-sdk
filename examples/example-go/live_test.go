@@ -38,7 +38,7 @@ func TestLiveOpenAI(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	if err = demo.RunOpenAI(ctx, c); err != nil {
+	if err = demo.RunLiveOpenAI(ctx, c); err != nil {
 		t.Fatal(err)
 	}
 }

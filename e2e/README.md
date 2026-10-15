@@ -101,6 +101,8 @@ Discover models once from the repository root (Node.js 24; no API key used):
 ```sh
 NEARAI_E2E_MODELS=$(node e2e/select-models.mjs)
 export NEARAI_E2E_MODELS
+NEARAI_E2E_SYSTEMONE_MODEL=$(node e2e/select-models.mjs systemone)
+export NEARAI_E2E_SYSTEMONE_MODEL
 ```
 
 Then run the relevant command from the repository root:
