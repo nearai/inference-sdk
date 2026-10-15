@@ -50,6 +50,7 @@ from ..utils.fetch import FetchResponse
 from ..utils.sse import get_sse_data_records, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
+from .body_limit import read_bounded_body, require_body_size
 from .chat import verify_gateway_response, verify_model_response
 from .cloud_api import (
     AttestationClient,
@@ -88,6 +89,8 @@ class _ResponseRecord[Result, AttestationResult]:
     session: _VerifiedSession[Result, AttestationResult]
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
+    retained_bytes: int | None = None
+    settle: Callable[[], None] | None = None
 
 
 class _SessionAttestationClient(AttestationClient):
@@ -143,6 +146,9 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
+        max_body_bytes: int = 64 * 1024 * 1024,
+        max_cache_entries: int = 128,
+        max_receipt_cache_bytes: int = 64 * 1024 * 1024,
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
@@ -167,6 +173,23 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._ohttp = ohttp
         self._attestation_ttl = attestation_cache_time_to_live_ms / 1000
         self._response_ttl = response_cache_time_to_live_ms / 1000
+        for field, value in {
+            'max_body_bytes': max_body_bytes,
+            'max_cache_entries': max_cache_entries,
+            'max_receipt_cache_bytes': max_receipt_cache_bytes,
+        }.items():
+            if type(value) is not int or value <= 0:
+                raise api_failure(
+                    'api.invalid_input',
+                    {
+                        'field': field,
+                        'reason': 'unsupported_value',
+                        'expected': 'a positive integer',
+                    },
+                )
+        self._max_body_bytes = max_body_bytes
+        self._max_cache_entries = max_cache_entries
+        self._max_receipt_cache_bytes = max_receipt_cache_bytes
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
         self._sessions: dict[
@@ -269,8 +292,19 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     'expected': 'a POST to the configured Chat Completions endpoint',
                 },
             )
+        if isinstance(request.stream, httpx.AsyncByteStream):
+            body = await read_bounded_body(aiter(request.stream), self._max_body_bytes)
+        else:
+            body = request.read()
+            require_body_size(len(body), self._max_body_bytes)
+        request = httpx.Request(
+            request.method,
+            request.url,
+            headers=request.headers,
+            content=body,
+            extensions=request.extensions,
+        )
         parsed = await decode_chat_request(request)
-        body = request.content
         headers = self._request_headers(request.headers)
         session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
@@ -298,6 +332,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 prepared_request.headers['x-model-pub-key'] = (
                     session.model_key.public_key
                 )
+        self._response_byte_limit(len(prepared_request.content))
         try:
             response = await session.http_client.send(prepared_request, stream=True)
         except (ApiError, VerificationError):
@@ -410,6 +445,15 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             return self._sessions[cache_key][1]
         task = self._pending.get(cache_key)
         if task is None:
+            if len(self._pending) >= self._max_cache_entries:
+                raise api_failure(
+                    'api.invalid_input',
+                    {
+                        'field': 'model',
+                        'reason': 'unsupported_value',
+                        'expected': 'fewer concurrent preflights',
+                    },
+                )
             task = asyncio.create_task(self._create_session(model, endpoint=endpoint))
             self._pending[cache_key] = task
 
@@ -422,6 +466,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     and completed.exception() is None
                     and self._attestation_ttl != 0
                 ):
+                    while len(self._sessions) >= self._max_cache_entries:
+                        del self._sessions[next(iter(self._sessions))]
                     self._sessions[cache_key] = (
                         monotonic() + self._attestation_ttl,
                         completed.result(),
@@ -466,6 +512,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             forwarded_headers=tuple(self._headers),
         )
 
+    def _response_byte_limit(self, request_size: int) -> int:
+        require_body_size(request_size, self._max_body_bytes)
+        if self._response_ttl == 0:
+            return self._max_body_bytes
+        require_body_size(request_size, self._max_receipt_cache_bytes)
+        return min(self._max_body_bytes, self._max_receipt_cache_bytes - request_size)
+
     def _register_response(
         self,
         id: str,
@@ -473,20 +526,49 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result, AttestationResult],
     ) -> None:
-        """Both endpoints share byte retention, expiry, and verification retries."""
-
+        """Retain completed wire bytes under FIFO count/byte limits and expiry."""
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
+        if self._response_ttl == 0:
+            return
         record = _ResponseRecord(request_body, response_body, session)
         previous = self._responses.get(id)
         if previous is not None and previous.expiry is not None:
             previous.expiry.cancel()
         self._responses[id] = record
 
-        def settled(_future: asyncio.Future[bytes]) -> None:
-            # A completed future's callback may run after close or replacement.
-            if self._chat_client.is_closed or self._responses.get(id) is not record:
+        def settled(future: asyncio.Future[bytes]) -> None:
+            record.settle = None
+            if (
+                self._responses.get(id) is not record
+                or record.retained_bytes is not None
+            ):
                 return
+            if future.cancelled() or future.exception() is not None:
+                del self._responses[id]
+                return
+            size = len(request_body) + len(future.result())
+            if size > self._max_receipt_cache_bytes:
+                del self._responses[id]
+                return
+            completed = [
+                (key, entry)
+                for key, entry in self._responses.items()
+                if entry.retained_bytes is not None
+            ]
+            retained = sum(entry.retained_bytes or 0 for _, entry in completed)
+            while (
+                len(completed) >= self._max_cache_entries
+                or retained + size > self._max_receipt_cache_bytes
+            ):
+                key, entry = completed.pop(0)
+                retained -= entry.retained_bytes or 0
+                if entry.expiry is not None:
+                    entry.expiry.cancel()
+                del self._responses[key]
+            record.retained_bytes = size
+            del self._responses[id]
+            self._responses[id] = record
 
             def expire() -> None:
                 if self._responses.get(id) is record:
@@ -496,7 +578,12 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 self._response_ttl, expire
             )
 
-        record.response_body.add_done_callback(settled)
+        record.settle = lambda: settled(response_body)
+        # System One already has a completed body; apply eviction before returning.
+        if response_body.done():
+            settled(response_body)
+        else:
+            response_body.add_done_callback(settled)
 
 
 class InferenceClient(
@@ -519,6 +606,9 @@ class InferenceClient(
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
+        max_body_bytes: int = 64 * 1024 * 1024,
+        max_cache_entries: int = 128,
+        max_receipt_cache_bytes: int = 64 * 1024 * 1024,
         gateway_verification: GatewayVerificationOptions | None = None,
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
@@ -532,6 +622,9 @@ class InferenceClient(
             signing_algo=signing_algo,
             attestation_cache_time_to_live_ms=attestation_cache_time_to_live_ms,
             response_cache_time_to_live_ms=response_cache_time_to_live_ms,
+            max_body_bytes=max_body_bytes,
+            max_cache_entries=max_cache_entries,
+            max_receipt_cache_bytes=max_receipt_cache_bytes,
             model_verification=model_verification,
             deployment_policy=deployment_policy,
         )
@@ -710,6 +803,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         self._register = register
         self._client = client
         self._chunks: list[bytes] = []
+        self._size = 0
+        self._limit = client._response_byte_limit(len(response.request.content))
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
         self._streaming = self._content_type.lower().startswith('text/event-stream')
@@ -742,6 +837,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             raise
 
     def _capture(self, chunk: bytes) -> None:
+        require_body_size(self._size + len(chunk), self._limit)
+        self._size += len(chunk)
         self._chunks.append(chunk)
         if not self._streaming:
             return
@@ -770,6 +867,11 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             self._register(_completion_id(body, self._content_type))
             self._registered = True
         self._response_body.set_result(body)
+        # Apply completion limits before exposing EOF to the caller. Future done
+        # callbacks otherwise run a loop turn after OpenAI returns parsed JSON.
+        for record in tuple(self._client._responses.values()):
+            if record.response_body.done() and record.settle is not None:
+                record.settle()
         self._chunks.clear()
 
     def _fail(self, cause: BaseException) -> None:

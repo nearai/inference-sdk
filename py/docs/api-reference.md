@@ -588,3 +588,23 @@ nonce. Nonces accept an optional `0x`/`0X` prefix and compare as bytes.
 
 `GatewayTlsBinding` is either `GatewayTlsBinding(kind='none')` or
 `GatewayTlsBinding(kind='attested', spki_fingerprint=...)`.
+
+## Inference body and cache limits
+
+Gateway and Direct clients accept `max_body_bytes` (64 MiB),
+`max_cache_entries` (128), and `max_receipt_cache_bytes` (64 MiB). Values must be
+positive integers. The controls apply to Chat and System One: each request and
+response is bounded, completed sessions/receipts are evicted in completion order,
+and the byte budget covers request plus response bytes in completed receipts.
+
+Same-model pending preflights remain shared. New distinct preflights at the entry
+limit fail locally. Cache hits do not refresh expiry or FIFO order. Active streams
+are bounded per body, then accounted at EOF, including signed SSE tails after
+`[DONE]`. A zero response TTL disables retention. Limits do not cover caller-held
+parsed data or connection pools.
+
+Oversized requests fail before inference. Oversized responses fail with
+`api.body_too_large` and do not evict existing useful receipts. The low-level
+`send` method exposes SDK errors directly; an external OpenAI wrapper can wrap
+transport failures. Client close clears caches; late responses cannot repopulate
+them. Limits use the same defaults as the JS/Rust/Go parity work.

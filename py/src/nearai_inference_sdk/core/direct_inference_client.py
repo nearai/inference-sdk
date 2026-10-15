@@ -72,6 +72,9 @@ class DirectInferenceClient(
         signing_algo: SigningAlgo = 'ed25519',
         attestation_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
         response_cache_time_to_live_ms: float = DEFAULT_CACHE_TIME_TO_LIVE_MS,
+        max_body_bytes: int = 64 * 1024 * 1024,
+        max_cache_entries: int = 128,
+        max_receipt_cache_bytes: int = 64 * 1024 * 1024,
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
@@ -84,6 +87,9 @@ class DirectInferenceClient(
             signing_algo=signing_algo,
             attestation_cache_time_to_live_ms=attestation_cache_time_to_live_ms,
             response_cache_time_to_live_ms=response_cache_time_to_live_ms,
+            max_body_bytes=max_body_bytes,
+            max_cache_entries=max_cache_entries,
+            max_receipt_cache_bytes=max_receipt_cache_bytes,
             model_verification=model_verification,
             deployment_policy=deployment_policy,
         )
