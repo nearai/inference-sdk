@@ -685,13 +685,18 @@ OpenAI-compatible `fetch`/`chat` surface remain Chat-only.
 | --- | --- | --- |
 | `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
 | `state` | Text, object, or array | Decision context forwarded as JSON. |
-| `questions` | `Readonly<Record<string, SystemOneQuestion>>` | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
 | `score` | Text, object, or array | Ordered array of level descriptions. |
+
+The create method infers interface-typed question and choice maps without requiring
+a string index signature. Use `SystemOneRequest<MyQuestions>` or
+`SystemOneQuestion<MyChoices>` when annotating an application DTO; invalid question
+types, missing instructions and non-content criterion values remain type errors.
 
 | `SystemOneRequestOptions` field | Type | Description |
 | --- | --- | --- |

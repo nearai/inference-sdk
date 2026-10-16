@@ -1,25 +1,25 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import ed2curve from 'ed2curve';
-import nacl from 'tweetnacl';
 import OpenAI from 'openai';
+import nacl from 'tweetnacl';
 import {
+  type AttestationVerificationResult,
   InferenceClient,
-  VerificationError,
-  type TdxQuoteVerificationResult,
   type InferenceClientOptions,
   type SystemOneRequest,
-  type AttestationVerificationResult,
+  type TdxQuoteVerificationResult,
+  VerificationError,
 } from '../src';
-import {
-  AttestationClient as NodeAttestationClient,
-  InferenceClient as NodeInferenceClient,
-} from '../src/node';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
   decryptE2eeText as decryptE2eeValue,
   encryptE2eeText as encryptE2eeValue,
 } from '../src/core/e2ee';
+import {
+  AttestationClient as NodeAttestationClient,
+  InferenceClient as NodeInferenceClient,
+} from '../src/node';
 import {
   appCompose,
   createGatewayTlsQuote,
@@ -3476,29 +3476,41 @@ describe('System One decisions', () => {
     return { gateway, fetch, requests, signaturePaths };
   }
 
-  test('accepts interface-typed state, instructions and criteria', async () => {
+  test('accepts interface-typed question and choice maps', async () => {
     interface Content {
       message: string;
     }
+    interface Choices {
+      first: Content;
+      second: null;
+    }
+    interface Questions {
+      typed: {
+        type: 'noul';
+        instructions: Content;
+        criteria: { true: Content };
+      };
+      choice: { type: 'choice'; instructions: Content; criteria: Choices };
+    }
     const content: Content = { message: 'typed application data' };
+    const choices: Choices = { first: content, second: null };
+    const questions: Questions = {
+      typed: {
+        type: 'noul',
+        instructions: content,
+        criteria: { true: content },
+      },
+      choice: { type: 'choice', instructions: content, criteria: choices },
+    };
     const fixture = decisionGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
       e2ee: false,
     });
-    await client.systemone.create({
-      ...decisionRequest,
-      state: content,
-      questions: {
-        typed: {
-          type: 'noul',
-          instructions: content,
-          criteria: { true: content },
-        },
-      },
-    });
-    expect(JSON.parse(await fixture.requests[0].text()).state).toEqual(content);
+    const request = { ...decisionRequest, state: content, questions };
+    await client.systemone.create(request);
+    expect(JSON.parse(await fixture.requests[0].text())).toEqual(request);
   });
 
   test('retains every verified report sharing the decision receipt signer', async () => {
