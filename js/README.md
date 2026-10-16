@@ -143,6 +143,14 @@ to configure it and verify responses.
   direct TLS fingerprint binding is currently disabled. Use Gateway clients
   for production and review the [direct-endpoint limitations](./docs/verification-guide.md#use-a-direct-model-endpoint).
 
+## Jev decisions
+
+Use `client.systemone.create({ model, state, questions })` with `e2ee: false`
+and `ohttp: false`, then call `client.verifyResponse(result.decisionId)` before
+using `result.data.answers`. System One uses `X-Generation-Id` receipt lookup and does
+not use Chat Completions. See the [runnable Node example](../examples/README.md#jev--system-one-typescript--nodejs)
+and [API reference](docs/api-reference.md#system-one-decisions-inferenceclientsystemone).
+
 ## Documentation
 
 - [Verification guide](./docs/verification-guide.md): encryption, streaming,

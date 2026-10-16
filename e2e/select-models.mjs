@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 
 // Shared by all SDK suites. Discovery uses only the public catalog, not API keys.
 async function main() {
+  const endpoint = process.argv[2] ?? 'chat';
+  assert.ok(['chat', 'systemone'].includes(endpoint), 'Expected chat or systemone');
   assert.ok(process.env.NEARAI_BASE_URL, 'NEARAI_BASE_URL is required');
   const baseUrl = `${process.env.NEARAI_BASE_URL.replace(/\/+$/, '')}/`;
   const models = [];
@@ -18,6 +20,26 @@ async function main() {
     offset += page.models.length;
     if (offset >= page.total) break;
     assert.ok(page.models.length > 0, 'Model catalog pagination made no progress');
+  }
+
+  const price = (model) =>
+    model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
+    model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
+
+  if (endpoint === 'systemone') {
+    // Hosted Jev provides Gateway receipts, not NEAR model-TEE evidence.
+    const decisions = models.filter(({ metadata }) =>
+      metadata.ownedBy === 'typesafe' &&
+      metadata.providerType === 'external' &&
+      !metadata.attestationSupported &&
+      metadata.architecture?.outputModalities?.includes('decisions'),
+    );
+    decisions.sort(
+      (a, b) => price(a) - price(b) || a.modelId.localeCompare(b.modelId),
+    );
+    assert.ok(decisions.length > 0, 'Expected a hosted Jev decision model');
+    console.log(decisions[0].modelId);
+    return;
   }
 
   const chatModels = models.filter(({ metadata }) => {
@@ -38,9 +60,6 @@ async function main() {
   // representatives. Canonical IDs break ties without depending on catalog order.
   const reasoning = (model) =>
     Number(model.metadata.supportedFeatures?.includes('reasoning') ?? false);
-  const price = (model) =>
-    model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
-    model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
   chatModels.sort(
     (a, b) =>
       reasoning(a) - reasoning(b) || price(a) - price(b) ||
