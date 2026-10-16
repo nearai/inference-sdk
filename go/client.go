@@ -197,6 +197,14 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 }
 
 func (c *InferenceClient) getSession(ctx context.Context, model string) (*session, error) {
+	return c.getSessionFor(ctx, model, false)
+}
+func (c *InferenceClient) getSessionFor(ctx context.Context, model string, systemone bool) (*session, error) {
+	key := "chat:" + model
+	if systemone {
+		key = "systemone:" + model
+	}
+
 	if model == "" {
 		return nil, failure("api.invalid_input", nil)
 	}
@@ -208,24 +216,24 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 		c.mu.Unlock()
 		return nil, failure("api.client_closed", nil)
 	}
-	if s := c.sessions[model]; s != nil && time.Now().Before(s.expires) {
+	if s := c.sessions[key]; s != nil && time.Now().Before(s.expires) {
 		c.mu.Unlock()
 		return s, nil
 	}
-	p := c.pending[model]
+	p := c.pending[key]
 	if p == nil {
 		p = &pendingSession{done: make(chan struct{})}
-		c.pending[model] = p
+		c.pending[key] = p
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
 			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
 			defer cancel()
-			s, e := c.createSession(ctx, model)
+			s, e := c.createSession(ctx, model, systemone)
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			p.value, p.err = s, e
-			delete(c.pending, model)
+			delete(c.pending, key)
 			if e == nil && !c.closed && c.attestationTTL > 0 {
 				c.prune(time.Now())
 				for len(c.sessions) >= c.options.MaxCacheEntries {
@@ -239,7 +247,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 					delete(c.sessions, oldest)
 				}
 				s.expires = time.Now().Add(c.attestationTTL)
-				c.sessions[model] = s
+				c.sessions[key] = s
 			}
 			close(p.done)
 		}()
@@ -255,7 +263,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 	}
 }
 
-func (c *InferenceClient) createSession(ctx context.Context, model string) (*session, error) {
+func (c *InferenceClient) createSession(ctx context.Context, model string, systemone bool) (*session, error) {
 	o := c.options
 	s := &session{api: c.api}
 	transport := c.api.http.Transport
@@ -367,7 +375,10 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
 			ohttpSigner = verified.Signer
 		}
-		if s.selected == nil &&
+		if systemone && verified.Signer.SigningAlgo != o.SigningAlgo {
+			return nil, failure("signature.signer_mismatch", nil)
+		}
+		if !systemone && s.selected == nil &&
 			verified.Signer.SigningAlgo == o.SigningAlgo &&
 			verified.SigningPublicKey != "" &&
 			(!c.api.direct || !o.OHTTP ||
@@ -378,7 +389,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			s.selected = &copy
 		}
 	}
-	if len(s.result.Models) > 0 && s.selected == nil {
+	if !systemone && len(s.result.Models) > 0 && s.selected == nil {
 		return nil, failure("e2ee.model_public_key_required", nil)
 	}
 	if c.api.direct && len(s.result.Models) == 0 {
@@ -675,6 +686,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
 	}
 	var a *VerifiedAttestation
+	var matching []VerifiedAttestation
 	if sig.Kind == "gateway" {
 		a = r.session.result.Gateway
 		if a != nil {
@@ -682,6 +694,17 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		}
 	} else {
 		a = r.session.selected
+		if a == nil && len(r.session.result.Models) > 0 {
+			for _, model := range r.session.result.Models {
+				if model.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(model.Signer.SigningAddress, sig.Signer.SigningAddress) {
+					matching = append(matching, model)
+				}
+			}
+			if len(matching) == 0 {
+				return VerifiedCompletionResult{}, failure("api.model_attestation_signer_not_found", nil)
+			}
+			a = &matching[0]
+		}
 		if a != nil {
 			e = VerifyModelResponse(r.request, r.response, sig, *a)
 		}
@@ -696,7 +719,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
 	copy := *a
-	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
+	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy, Attestations: matching}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

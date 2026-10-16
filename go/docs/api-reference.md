@@ -509,3 +509,39 @@ The test suite includes cross-language E2EE vectors, signed provenance fixtures,
 embedded DCAP verification, admission and exact signatures, shared cancellation,
 stream failures, TLS rejection, and chunked OHTTP authentication. It does not
 make paid inference calls.
+
+## System One decisions
+
+System One provider TEE results retain every matching verified report in `Attestations`; `Attestation` is the first matching report. A shared key does not identify a unique CVM.
+
+`CreateSystemOne` sends one plaintext, nonstreaming request to `POST /systemone` after
+Gateway attestation and TLS pinning. It is available on Gateway clients with E2EE
+and OHTTP disabled. The `DecisionID` comes from `X-Generation-Id`, independently
+of an optional body `id`. Output remains unverified until receipt verification
+succeeds; the client retains the exact request and response bytes.
+
+System One uses a separate attestation-session cache from Chat. Provider-TEE
+receipts retain every verified report matching the actual signer; plaintext
+decisions do not require an encryption public key. Every returned model report
+is still verified. Gateway-only providers produce Gateway receipts.
+
+Every question requires `Instructions` as text, an object, or an array; do not pass `nil`.
+Request state and business criteria are passed through to the server. Typed
+responses support `noul`, `choice`, and `score`, preserve unknown fields and
+arbitrary dictionary keys, and reject malformed output. Response bytes, receipt
+count/bytes, TTL, duplicate IDs, and memoization use the ordinary client limits.
+Numbers nested in structured score legends are `json.Number`, preserving large
+integers, decimal precision and exponents. Typed score/probability fields remain
+`float64`; receipt verification always uses the original response bytes.
+Caller headers cannot replace client authentication or negotiate compression.
+The SDK disables automatic transport replay for System One, including when
+client or per-call headers contain `Idempotency-Key` or `X-Idempotency-Key`.
+It does not retry inference requests. Retry only transient/unavailable
+receipt retrieval, with bounded backoff; never retry a signature failure.
+
+`CreateSystemOne(ctx, request)` accepts `SystemOneRequest` or a JSON-serializable
+value. `CreateSystemOneWithHeaders(ctx, request, headers)` adds per-call headers.
+Both return `SystemOneResult{Data, DecisionID}`. Pass `DecisionID` to
+`VerifyResponse`. Typed answers expose variant fields and an `Extra` map for
+unknown response/answer/usage fields. Cancellation uses the supplied context;
+`Close` cancels outstanding operations.

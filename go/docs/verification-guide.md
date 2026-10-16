@@ -455,3 +455,21 @@ Retryable signature retrieval failures can be retried by calling `VerifyResponse
 again while its receipt remains retained. Use bounded retries and a context
 deadline. Do not replay Chat just because a receipt fetch failed. Verification
 failures remain failures; the SDK never silently falls back to unverified Chat.
+
+## Verify System One decisions
+
+Use the Gateway client with E2EE and OHTTP disabled. Call
+`CreateSystemOne`, then verify the returned
+generation ID before using its decision data. Verification covers the original
+wire bytes even if the returned parsed data is later modified. For hosted Jev,
+the receipt is Gateway-signed and does not claim a provider-TEE signature.
+
+The example in `examples/example-go` runs with
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_SYSTEMONE_MODEL`:
+
+```sh
+go run ./gateway/systemone
+```
+
+Only receipt lookup is retried with bounded backoff. The inference request is
+sent once, and the receipt must pass before any answer is printed.

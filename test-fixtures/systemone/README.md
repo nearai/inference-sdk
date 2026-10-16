@@ -1,0 +1,1 @@
+Rust and Go consume the shared response vectors in `rs/test-fixtures/systemone-responses.json`. The fixture lives inside the Rust crate so published crate tests can also read it. Vectors cover all answer variants, optional body IDs, opaque dictionary keys, unknown fields, and malformed fields. Receipt identity comes exclusively from X-Generation-Id, not a body ID.

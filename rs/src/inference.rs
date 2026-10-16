@@ -122,6 +122,8 @@ pub struct AttestationVerificationResult {
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
     Model(VerifiedModelAttestation),
+    /// Every matching verified report when a System One signing key is shared.
+    ModelGroup(Vec<VerifiedModelAttestation>),
     Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
 #[derive(Clone, Debug)]
@@ -255,6 +257,14 @@ impl InferenceClient {
         })
     }
     pub(crate) async fn session(&self, model: &str) -> Result<Arc<Session>, InferenceError> {
+        self.session_for(model, false).await
+    }
+    pub(crate) async fn session_for(
+        &self,
+        model: &str,
+        systemone: bool,
+    ) -> Result<Arc<Session>, InferenceError> {
+        let cache_key = format!("{}:{model}", if systemone { "systemone" } else { "chat" });
         if model.is_empty() || matches!(model, "." | "..") {
             return Err(input("model", "expected a canonical model ID").into());
         }
@@ -264,11 +274,11 @@ impl InferenceClient {
             state
                 .sessions
                 .retain(|_, (time, _)| time.elapsed() < options.attestation_cache_ttl);
-            if let Some((_, session)) = state.sessions.get(model) {
+            if let Some((_, session)) = state.sessions.get(&cache_key) {
                 return Ok(session.clone());
             }
             state.pending.retain(|_, f| f.upgrade().is_some());
-            if let Some(future) = state.pending.get(model).and_then(|f| f.upgrade()) {
+            if let Some(future) = state.pending.get(&cache_key).and_then(|f| f.upgrade()) {
                 future
             } else {
                 if state.pending.len() >= options.max_cache_entries {
@@ -283,14 +293,14 @@ impl InferenceClient {
                     if direct {
                         crate::direct::create_session(&owned, options).await
                     } else {
-                        create_session(&owned, options).await
+                        create_session(&owned, options, systemone).await
                     }
                 }
                 .boxed()
                 .shared();
                 state
                     .pending
-                    .insert(model.to_owned(), future.downgrade().expect("live future"));
+                    .insert(cache_key.clone(), future.downgrade().expect("live future"));
                 future
             }
         };
@@ -298,11 +308,11 @@ impl InferenceClient {
         let mut state = self.inner.state.lock().await;
         if state
             .pending
-            .get(model)
+            .get(&cache_key)
             .and_then(|f| f.upgrade())
             .is_some_and(|f| f.ptr_eq(&future))
         {
-            state.pending.remove(model);
+            state.pending.remove(&cache_key);
             if let Ok(session) = &result {
                 if !options.attestation_cache_ttl.is_zero() {
                     if state.sessions.len() >= options.max_cache_entries {
@@ -317,11 +327,120 @@ impl InferenceClient {
                     }
                     state
                         .sessions
-                        .insert(model.to_owned(), (Instant::now(), session.clone()));
+                        .insert(cache_key.clone(), (Instant::now(), session.clone()));
                 }
             }
         }
         result
+    }
+    /// Send one plaintext System One decision and retain exact bytes for verify_response.
+    pub async fn systemone_create<T: serde::Serialize>(
+        &self,
+        request: &T,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        self.systemone_create_with_headers(request, HeaderMap::new())
+            .await
+    }
+    pub async fn systemone_create_with_headers<T: serde::Serialize>(
+        &self,
+        request: &T,
+        headers: HeaderMap,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        let options = &self.inner.options;
+        if self.inner.direct || options.e2ee || options.ohttp {
+            return Err(input("systemone", "requires a plaintext Gateway client").into());
+        }
+        let body =
+            serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
+        if body.len() > options.max_response_bytes {
+            return Err(input("body", "request exceeds configured byte limit").into());
+        }
+        let value: Value = serde_json::from_slice(&body)
+            .map_err(|_| input("systemone", "expected JSON object"))?;
+        if !value.is_object() || value.get("stream").is_some() {
+            return Err(input("systemone", "streaming is unsupported").into());
+        }
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| input("model", "missing model"))?;
+        let mut owned = options.headers.clone();
+        owned.extend(headers);
+        for name in ["authorization", "api-key"] {
+            owned.remove(name);
+            if let Some(value) = options.headers.get(name) {
+                owned.insert(name, value.clone());
+            }
+        }
+        remove_e2ee_headers(&mut owned);
+        for name in [
+            "host",
+            "content-length",
+            "content-encoding",
+            "transfer-encoding",
+            "trailer",
+            "content-md5",
+            "digest",
+            "content-digest",
+            "repr-digest",
+        ] {
+            owned.remove(name);
+        }
+        owned.insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
+        owned.insert("content-type", HeaderValue::from_static("application/json"));
+        owned.insert("accept", HeaderValue::from_static("application/json"));
+        owned.insert("accept-encoding", HeaderValue::from_static("identity"));
+        let session = self.session_for(model, true).await?;
+        let url = crate::cloud_api::parse_base_url(self.base_url())?
+            .join("systemone")
+            .map_err(|_| input("base_url", "invalid URL"))?;
+        let mut response = session
+            .client
+            .post(url)
+            .headers(owned)
+            .body(body.clone())
+            .send()
+            .await
+            .map_err(|_| transport(ApiTransportReason::Request))?;
+        if !response.status().is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status().as_u16(),
+                retry_after: response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
+            }
+            .into());
+        }
+        let decision_id = response
+            .headers()
+            .get("x-generation-id")
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ApiError::InvalidResponse {
+                path: "systemone.x-generation-id".into(),
+                expected: "nonempty receipt ID".into(),
+                actual: "missing or invalid".into(),
+            })?
+            .to_owned();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| transport(ApiTransportReason::ResponseBody))?
+        {
+            if chunk.len() > options.max_response_bytes.saturating_sub(bytes.len()) {
+                return Err(input("response", "body exceeds configured byte limit").into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let data = crate::systemone::decode_response(&bytes)?;
+        self.register(decision_id.clone(), body, bytes, session)
+            .await?;
+        Ok(crate::SystemOneResult { data, decision_id })
     }
     /// OpenAI-compatible JSON Chat request. Use `send` for a byte-stream response.
     pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
@@ -517,7 +636,7 @@ impl InferenceClient {
             body: Box::pin(stream),
         })
     }
-    async fn register(
+    pub(crate) async fn register(
         &self,
         id: String,
         request: Vec<u8>,
@@ -613,12 +732,23 @@ impl InferenceClient {
                                 VerifiedCompletionAttestation::Gateway(gateway.clone())
                             }
                             CompletionSignatureKind::ProviderTee => {
-                                let model = session.selected.as_ref().ok_or(
-                                    VerificationError::SignatureKindMismatch {
-                                        expected: CompletionSignatureKind::Gateway,
-                                        actual: signature.kind,
-                                    },
-                                )?;
+                                let matching: Vec<_> = match session.selected.as_ref() {
+                                    Some(model) => vec![model.clone()],
+                                    None => session
+                                        .models
+                                        .iter()
+                                        .filter(|model| {
+                                            crate::direct::same_signer(
+                                                &model.evidence.signer,
+                                                &signature.signer,
+                                            )
+                                        })
+                                        .cloned()
+                                        .collect(),
+                                };
+                                let model = matching
+                                    .first()
+                                    .ok_or(ApiError::ModelAttestationSignerNotFound)?;
                                 verify_model_response(&request, &response, &signature, model)?;
                                 if let Some(direct) = &session.direct {
                                     let matching = direct
@@ -633,6 +763,8 @@ impl InferenceClient {
                                         .cloned()
                                         .collect();
                                     VerifiedCompletionAttestation::Direct(matching)
+                                } else if matching.len() > 1 {
+                                    VerifiedCompletionAttestation::ModelGroup(matching)
                                 } else {
                                     VerifiedCompletionAttestation::Model(model.clone())
                                 }
@@ -710,6 +842,7 @@ impl DeploymentVerifier for PolicyVerifier<'_> {
 async fn create_session(
     model: &str,
     options: InferenceClientOptions,
+    systemone: bool,
 ) -> Result<Arc<Session>, InferenceError> {
     let api = AttestationClient::with_base_url(
         options.api_key.clone().unwrap_or_default(),
@@ -822,13 +955,22 @@ async fn create_session(
         Ok::<_, InferenceError>(results)
     };
     let ((gateway, ohttp), models) = futures_util::try_join!(gateway, models)?;
+    if systemone
+        && models
+            .iter()
+            .any(|m| m.evidence.signer.signing_algo != options.signing_algo)
+    {
+        return Err(VerificationError::SignatureSignerMismatch.into());
+    }
     let selected = models
         .iter()
         .find(|m| {
-            m.evidence.signer.signing_algo == options.signing_algo && m.signing_public_key.is_some()
+            !systemone
+                && m.evidence.signer.signing_algo == options.signing_algo
+                && m.signing_public_key.is_some()
         })
         .cloned();
-    if !models.is_empty() && selected.is_none() {
+    if !systemone && !models.is_empty() && selected.is_none() {
         return Err(protocol(
             "e2ee.model_public_key_required",
             "no matching verified model public key",

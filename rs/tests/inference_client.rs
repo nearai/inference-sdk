@@ -32,6 +32,15 @@ struct Fixture {
     gateway: AtomicUsize,
     model: AtomicUsize,
     chat: AtomicUsize,
+    systemone: AtomicUsize,
+    systemone_body: Option<String>,
+    systemone_id: Option<String>,
+    systemone_status: Option<u16>,
+    missing_model_key: bool,
+    extra_model: bool,
+    shared_model: bool,
+    systemone_tamper: bool,
+
     signatures: AtomicUsize,
     receipts: Mutex<std::collections::HashMap<String, ReceiptBytes>>,
     metadata: Mutex<Option<Value>>,
@@ -67,6 +76,9 @@ impl Fixture {
             value["signing_public_key"] = json!(public);
             value["report_data"] = json!(data);
             value["intel_quote"] = json!(data);
+        }
+        if self.missing_model_key && seed != 9 {
+            value.as_object_mut().unwrap().remove("signing_public_key");
         }
         value
     }
@@ -133,6 +145,12 @@ impl Respond for Fixture {
                             json!(hex::encode(key(8).verifying_key().as_bytes()));
                     }
                     let mut reports = vec![value];
+                    if self.shared_model {
+                        reports.push(self.report(nonce, 7));
+                    }
+                    if self.extra_model {
+                        reports.insert(0, self.report(nonce, 8));
+                    }
                     if self.bad_model {
                         let mut bad = self.report(nonce, 8);
                         bad["report_data"] = json!("ff".repeat(64));
@@ -149,6 +167,56 @@ impl Respond for Fixture {
                         )
                         .set_delay(Duration::from_millis(20))
                 }
+            }
+            "/v1/systemone" => {
+                let n = self.systemone.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
+                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
+                for name in [
+                    "x-model-pub-key",
+                    "x-client-pub-key",
+                    "x-signing-algo",
+                    "digest",
+                    "content-encoding",
+                ] {
+                    assert!(r.headers.get(name).is_none(), "unexpected {name}");
+                }
+                if let Some(status) = self.systemone_status {
+                    return ResponseTemplate::new(status);
+                }
+                let id = self
+                    .systemone_id
+                    .clone()
+                    .unwrap_or_else(|| format!("decision-{n}"));
+                let response = self
+                    .systemone_body
+                    .clone()
+                    .unwrap_or_else(|| {
+                        let v: Value = serde_json::from_str(include_str!(
+                            "../test-fixtures/systemone-responses.json"
+                        ))
+                        .unwrap();
+                        format!(" \n{} \n", v["valid"][0])
+                    })
+                    .into_bytes();
+                let kind = if self.metadata.lock().unwrap().is_some() {
+                    "gateway"
+                } else {
+                    "provider_tee"
+                };
+                let mut encoded = reqwest::Url::parse("http://localhost/").unwrap();
+                encoded.path_segments_mut().unwrap().push(&id);
+                self.receipts.lock().unwrap().insert(
+                    encoded.path()[1..].into(),
+                    (r.body.clone(), response.clone(), kind.into()),
+                );
+                let mut wire = response;
+                if self.systemone_tamper {
+                    wire.push(b' ');
+                }
+                ResponseTemplate::new(200)
+                    .insert_header("x-generation-id", id)
+                    .set_body_bytes(wire)
             }
             "/v1/chat/completions" => {
                 let n = self.chat.fetch_add(1, Ordering::SeqCst);
@@ -820,4 +888,193 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     options.max_receipt_cache_bytes = 0;
     assert!(InferenceClient::with_options(options.clone()).is_err());
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
+}
+
+fn systemone_request() -> Value {
+    json!({"model":"vendor/model","state":{"text":"hello"},"questions":{"q":{"type":"noul","instructions":"Is this a greeting?"}}})
+}
+#[tokio::test]
+async fn systemone_exact_bytes_and_receipts_without_encryption_public_key() {
+    for gateway_only in [false, true] {
+        for ecdsa in [false, true] {
+            let fixture = Fixture {
+                ecdsa,
+                missing_model_key: true,
+                extra_model: true,
+                systemone_id: Some("decision/with % space".into()),
+                ..Default::default()
+            };
+            if gateway_only {
+                *fixture.metadata.lock().unwrap() =
+                    Some(json!({"metadata":{"providerType":"proxy","attestationSupported":false}}));
+            }
+            let (_server, f, mut options) = setup(fixture).await;
+            if ecdsa {
+                options.signing_algo = SigningAlgo::Ecdsa;
+            }
+            let client = InferenceClient::with_options(options).unwrap();
+            let mut headers = reqwest::header::HeaderMap::new();
+            for (k, v) in [
+                ("authorization", "Bearer bad"),
+                ("api-key", "bad"),
+                ("accept-encoding", "gzip"),
+                ("content-encoding", "gzip"),
+                ("x-model-pub-key", "bad"),
+                ("digest", "bad"),
+            ] {
+                headers.insert(k, v.parse().unwrap());
+            }
+            let mut result = client
+                .systemone_create_with_headers(&systemone_request(), headers)
+                .await
+                .unwrap();
+            assert_eq!(result.decision_id, "decision/with % space");
+            assert!(result.data.id.is_none());
+            result.data.model = "mutated".into();
+            let receipt = client.verify_response(&result.decision_id).await.unwrap();
+            assert_eq!(
+                receipt.signature_kind(),
+                if gateway_only {
+                    CompletionSignatureKind::Gateway
+                } else {
+                    CompletionSignatureKind::ProviderTee
+                }
+            );
+            client.verify_response(&result.decision_id).await.unwrap();
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+            if !gateway_only {
+                assert!(client.chat_completions(body()).await.is_err());
+                assert_eq!(f.chat.load(Ordering::SeqCst), 0);
+            }
+            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+#[tokio::test]
+async fn systemone_rejects_bad_evidence_unsupported_modes_and_stream_before_send() {
+    for mode in 0..4 {
+        let (_server, f, mut options) = setup(Fixture {
+            bad_model: mode == 3,
+            ..Default::default()
+        })
+        .await;
+        options.e2ee = mode == 0;
+        options.ohttp = mode == 1;
+        let client = InferenceClient::with_options(options).unwrap();
+        let mut request = systemone_request();
+        if mode == 2 {
+            request["stream"] = json!(false);
+        }
+        assert!(client.systemone_create(&request).await.is_err());
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
+        if mode < 3 {
+            assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
+        }
+    }
+}
+#[tokio::test]
+async fn systemone_errors_do_not_retry_or_cache_unusable_responses() {
+    for fixture in [
+        Fixture {
+            systemone_status: Some(429),
+            ..Default::default()
+        },
+        Fixture {
+            systemone_body: Some("{}".into()),
+            ..Default::default()
+        },
+        Fixture {
+            systemone_id: Some(String::new()),
+            ..Default::default()
+        },
+    ] {
+        let (_server, f, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        assert!(client.systemone_create(&systemone_request()).await.is_err());
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            client
+                .verify_response("decision-0")
+                .await
+                .unwrap_err()
+                .code(),
+            "api.completion_not_found"
+        );
+    }
+}
+#[tokio::test]
+async fn systemone_rejects_wire_tampering_and_wrong_signers() {
+    for fixture in [
+        Fixture {
+            systemone_tamper: true,
+            ..Default::default()
+        },
+        Fixture {
+            wrong_signer: true,
+            ..Default::default()
+        },
+        Fixture {
+            wrong_algo: true,
+            ..Default::default()
+        },
+    ] {
+        let (_server, _, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client.systemone_create(&systemone_request()).await.unwrap();
+        assert!(client.verify_response(&result.decision_id).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn systemone_retained_receipts_follow_size_and_count_limits() {
+    let (_server, _, mut options) = setup(Fixture::default()).await;
+    options.max_cache_entries = 1;
+    let client = InferenceClient::with_options(options).unwrap();
+    let first = client.systemone_create(&systemone_request()).await.unwrap();
+    let second = client.systemone_create(&systemone_request()).await.unwrap();
+    assert_eq!(
+        client
+            .verify_response(&first.decision_id)
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
+    client.verify_response(&second.decision_id).await.unwrap();
+    let (_server, _, mut options) = setup(Fixture::default()).await;
+    options.max_receipt_cache_bytes = 10;
+    let client = InferenceClient::with_options(options).unwrap();
+    assert!(client.systemone_create(&systemone_request()).await.is_err());
+}
+
+#[tokio::test]
+async fn systemone_retains_all_reports_sharing_the_receipt_signer() {
+    for ecdsa in [false, true] {
+        let (_server, fixture, mut options) = setup(Fixture {
+            shared_model: true,
+            extra_model: !ecdsa,
+            ecdsa,
+            missing_model_key: true,
+            ..Default::default()
+        })
+        .await;
+        options.signing_algo = if ecdsa {
+            SigningAlgo::Ecdsa
+        } else {
+            SigningAlgo::Ed25519
+        };
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client.systemone_create(&systemone_request()).await.unwrap();
+        let verified = client.verify_response(&result.decision_id).await.unwrap();
+        match verified.attestation {
+            VerifiedCompletionAttestation::ModelGroup(reports) => {
+                assert_eq!(reports.len(), 2);
+                for report in reports {
+                    assert_eq!(report.evidence.signer, verified.signature.signer);
+                }
+            }
+            _ => panic!("expected full matching signer group"),
+        }
+        assert_eq!(fixture.systemone.load(Ordering::SeqCst), 1);
+    }
 }

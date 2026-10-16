@@ -550,3 +550,21 @@ unknown completion ID, so retry only when the application knows that the
 completion may still be finishing. A valid 2xx unavailable envelope is not
 retryable: it reports that the Gateway cannot provide a usable signature for that
 completion.
+
+## Verify System One decisions
+
+Use the Gateway client with E2EE and OHTTP disabled. Call
+`systemone_create`, then verify the returned
+generation ID before using its decision data. Verification covers the original
+wire bytes even if the returned parsed data is later modified. For hosted Jev,
+the receipt is Gateway-signed and does not claim a provider-TEE signature.
+
+The example in `examples/example-rs` runs with
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_SYSTEMONE_MODEL`:
+
+```sh
+cargo run --locked --bin systemone
+```
+
+Only receipt lookup is retried with bounded backoff. The inference request is
+sent once, and the receipt must pass before any answer is printed.

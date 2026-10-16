@@ -406,5 +406,36 @@ each error variant.
 `ApiError::CompletionSignatureUnavailable { .. }`. The error preserves the
 service's code and message.
 
+## System One decisions
+
+Shared System One receipt signers return `VerifiedCompletionAttestation::ModelGroup` with every matching verified report. A unique matching report uses `Model`. A shared key does not identify a unique CVM.
+
+`systemone_create` sends one plaintext, nonstreaming request to `POST /systemone` after
+Gateway attestation and TLS pinning. It is available on Gateway clients with E2EE
+and OHTTP disabled. The `decision_id` comes from `X-Generation-Id`, independently
+of an optional body `id`. Output remains unverified until receipt verification
+succeeds; the client retains the exact request and response bytes.
+
+System One uses a separate attestation-session cache from Chat. Provider-TEE
+receipts retain every verified report matching the actual signer; plaintext
+decisions do not require an encryption public key. Every returned model report
+is still verified. Gateway-only providers produce Gateway receipts.
+
+Every question requires `instructions` as text, an object, or an array.
+Request state and business criteria are passed through to the server. Typed
+responses support `noul`, `choice`, and `score`, preserve unknown fields and
+arbitrary dictionary keys, and reject malformed output. Response bytes, receipt
+count/bytes, TTL, duplicate IDs, and memoization use the ordinary client limits.
+Caller headers cannot replace client authentication or negotiate compression.
+The SDK does not retry inference requests. Retry only transient/unavailable
+receipt retrieval, with bounded backoff; never retry a signature failure.
+
+`systemone_create(&request)` accepts `SystemOneRequest` or any serializable JSON
+request. `systemone_create_with_headers(&request, HeaderMap)` adds per-call
+headers. Both return `SystemOneResult { data: SystemOneResponse, decision_id }`.
+Pass `decision_id` to `verify_response`. The content, question, answer, response,
+and usage types are re-exported at the crate root. Dropping the request future
+cancels the operation, as with ordinary asynchronous requests.
+
 `ApiError::HttpStatus` preserves the optional server `retry_after` header. The SDK
 does not automatically replay inference; callers own their retry budget.
