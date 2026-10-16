@@ -468,6 +468,10 @@ occur, and every matching service must pin a digest. Unresolved image variables
 and malformed Compose are rejected before fetching evidence.
 
 `FetchImageProvenance` retrieves inline GitHub bundles, including pagination.
+Each page is limited to 16 MiB; a complete fetch is limited to 32 pages and
+64 MiB of cumulative response bytes, including responses without Content-Length.
+Byte overflow fails with `api.body_too_large`; the page cap fails with
+`api.invalid_response`. Both are non-retryable and return no partial bundles.
 Pagination contributes only a cursor; supplied origins/paths and bundle URLs are
 never followed. `ProvenanceOptions.GitHubToken` is separate from the Gateway key.
 `VerifyImageProvenance` checks Sigstore signatures, certificate transparency,

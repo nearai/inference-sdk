@@ -19,6 +19,8 @@ use x509_cert::{
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 // Match the Go provenance page bound, including GitHub-compatible proxies.
 const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROVENANCE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROVENANCE_PAGES: usize = 32;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
 const SOURCE_REPOSITORY_URI: ObjectIdentifier =
@@ -103,7 +105,14 @@ async fn fetch_image_provenance_pages(
     let mut bundles = Vec::new();
     let mut url = original_url.clone();
     let mut visited = HashSet::new();
+    let mut total_bytes = 0;
     loop {
+        if visited.len() >= MAX_PROVENANCE_PAGES {
+            return Err(pagination_error("provenance page limit exceeded"));
+        }
+        if total_bytes >= MAX_PROVENANCE_TOTAL_BYTES {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
         if !visited.insert(url.clone()) {
             return Err(pagination_error("repeated pagination cursor"));
         }
@@ -126,7 +135,9 @@ async fn fetch_image_provenance_pages(
             });
         }
         let next = next_attestation_page(&original_url, response.headers())?;
-        let bytes = read_provenance_body(response).await?;
+        let limit = MAX_PROVENANCE_PAGE_BYTES.min(MAX_PROVENANCE_TOTAL_BYTES - total_bytes);
+        let bytes = read_provenance_body(response, limit).await?;
+        total_bytes += bytes.len();
         let response: GitHubAttestations = serde_json::from_slice(&bytes).map_err(|error| {
             if error.is_syntax() || error.is_eof() {
                 ApiError::InvalidJson { resource: RESOURCE }
@@ -151,10 +162,13 @@ async fn fetch_image_provenance_pages(
     }
 }
 
-async fn read_provenance_body(mut response: reqwest::Response) -> Result<Vec<u8>, ApiError> {
+async fn read_provenance_body(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, ApiError> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_PROVENANCE_PAGE_BYTES as u64)
+        .is_some_and(|length| length > limit as u64)
     {
         return Err(ApiError::BodyTooLarge { resource: RESOURCE });
     }
@@ -163,7 +177,7 @@ async fn read_provenance_body(mut response: reqwest::Response) -> Result<Vec<u8>
         resource: RESOURCE,
         reason: ApiTransportReason::ResponseBody,
     })? {
-        if chunk.len() > MAX_PROVENANCE_PAGE_BYTES - bytes.len() {
+        if chunk.len() > limit - bytes.len() {
             return Err(ApiError::BodyTooLarge { resource: RESOURCE });
         }
         bytes.extend_from_slice(&chunk);
@@ -959,6 +973,62 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(bundles, vec![r#"{"at_limit":true}"#]);
+    }
+
+    #[tokio::test]
+    async fn bounds_entire_provenance_pagination() {
+        // Finite servers ensure the regression also terminates without limits.
+        for (pages, page_bytes, expected_calls, error_code) in [
+            (32, 128, 32, None),
+            (33, 128, 32, Some("api.invalid_response")),
+            (4, 16 * 1024 * 1024, 4, None),
+            (5, 13 * 1024 * 1024, 5, Some("api.body_too_large")),
+        ] {
+            for chunked in [false, true] {
+                let server = MockServer::start().await;
+                let base = server.uri();
+                Mock::given(method("GET"))
+                    .respond_with(move |request: &wiremock::Request| {
+                        let page = request
+                            .url
+                            .query_pairs()
+                            .find(|(key, _)| key == "after")
+                            .map(|(_, value)| value.parse::<usize>().unwrap())
+                            .unwrap_or(1);
+                        let mut body = br#"{"attestations":[{"bundle":{"ok":true}}]}"#.to_vec();
+                        body.resize(page_bytes, b' ');
+                        let mut response = ResponseTemplate::new(200).set_body_bytes(body);
+                        if page < pages {
+                            response = response.insert_header(
+                                "Link",
+                                format!("<{}?after={}>; rel=\"next\"", base, page + 1),
+                            );
+                        }
+                        if chunked {
+                            response = response.insert_header("Transfer-Encoding", "chunked");
+                        }
+                        response
+                    })
+                    .expect(expected_calls)
+                    .mount(&server)
+                    .await;
+                let client = Client::builder().no_proxy().build().unwrap();
+                let result =
+                    fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                        .await;
+                if let Some(code) = error_code {
+                    let error = result.unwrap_err();
+                    assert_eq!(error.code(), code);
+                    assert!(!error.retryable());
+                } else {
+                    assert_eq!(result.unwrap().len(), pages);
+                }
+                assert_eq!(
+                    server.received_requests().await.unwrap().len(),
+                    expected_calls as usize
+                );
+            }
+        }
     }
 
     #[tokio::test]

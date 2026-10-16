@@ -22,6 +22,12 @@ import (
 type ImageProvenancePolicy struct{ Repository, Workflow, Ref, Commit, SignerIdentity, Issuer string }
 type VerifiedImageProvenance struct{ Digest, Repository, Workflow, Ref, Commit, CertificateIdentity, Issuer, PredicateType string }
 
+const (
+	maxProvenancePageBytes  = 16 << 20
+	maxProvenanceTotalBytes = 64 << 20
+	maxProvenancePages      = 32
+)
+
 // ProvenanceOptions permits an offline, caller-trusted Sigstore root. Nil selects
 // the production root through Sigstore's authenticated TUF update mechanism.
 type ProvenanceOptions struct {
@@ -64,8 +70,15 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 	base := apiBase + "/repos/" + repository + "/attestations/" + strings.ToLower(digest) + "?per_page=100"
 	target := base
 	visited := map[string]bool{}
+	var totalBytes int64
 	var bundles []json.RawMessage
 	for {
+		if len(visited) >= maxProvenancePages {
+			return nil, failure("api.invalid_response", fmt.Errorf("provenance page limit exceeded"))
+		}
+		if totalBytes >= maxProvenanceTotalBytes {
+			return nil, failure("api.body_too_large", nil)
+		}
 		if visited[target] {
 			return nil, failure("api.invalid_response", nil)
 		}
@@ -83,7 +96,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		if e != nil {
 			return nil, &Error{Code: "api.transport_failed", Retryable: true, Cause: e}
 		}
-		raw, e := readBounded(res.Body, 16<<20)
+		raw, e := readBounded(res.Body, min(maxProvenancePageBytes, maxProvenanceTotalBytes-totalBytes))
 		res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			return nil, &Error{
@@ -95,6 +108,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		if e != nil {
 			return nil, e
 		}
+		totalBytes += int64(len(raw))
 		var result struct {
 			Attestations *[]struct {
 				Bundle json.RawMessage `json:"bundle"`
