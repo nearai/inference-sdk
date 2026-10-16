@@ -747,7 +747,10 @@ or ordering. Same-model in-flight verification remains shared; new distinct
 preflights at capacity fail locally. Active response streams are bounded per body
 and are accounted in the receipt budget at EOF, including signed SSE tails after
 `[DONE]`. Capacity limits are independent of TTL; a zero response TTL disables
-retention. Oversized requests fail before inference; oversized responses fail with
+retention. Oversized requests fail before preflight, including the hex ciphertext
+and per-field envelope overhead of E2EE. Sizing uses the same field traversal as
+encryption and requires no attested key or network access. The actual transformed
+body is checked again before sending. Oversized responses fail with
 `api.body_too_large` and do not evict existing useful receipts. External OpenAI
 wrappers may wrap transport errors; `client.fetch` exposes the SDK error directly.
 

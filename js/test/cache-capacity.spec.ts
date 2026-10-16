@@ -1,7 +1,9 @@
+import { createE2eeClientKeyPair } from '../src/core/e2ee';
+import { prepareE2eeChatRequest } from '../src/core/e2ee-request';
 import {
-  VerifiedInferenceClientBase,
   type InferenceSession,
   type InferenceTransportOptions,
+  VerifiedInferenceClientBase,
 } from '../src/core/inference-client';
 
 class Client extends VerifiedInferenceClientBase<string, string> {
@@ -116,6 +118,69 @@ describe('inference cache capacity', () => {
     });
     expect(client.verified).toEqual([]);
   });
+
+  describe.each(['ed25519', 'ecdsa'] as const)(
+    '%s encrypted request bounds',
+    (signingAlgo) => {
+      test.each(['maxBodyBytes', 'maxReceiptCacheBytes'] as const)(
+        'checks %s against the wire body before preflight',
+        async (limitName) => {
+          const body = JSON.stringify({
+            model: 'm',
+            messages: [{ role: 'user', content: '雪'.repeat(200) }],
+          });
+          const pair = createE2eeClientKeyPair(signingAlgo);
+          const prepared = await prepareE2eeChatRequest({
+            request: new Request('https://example.test/v1/chat/completions', {
+              method: 'POST',
+              body,
+            }),
+            modelKey: { signingAlgo, publicKey: pair.publicKey },
+          });
+          const wireSize = (await prepared.request.arrayBuffer()).byteLength;
+          expect(new TextEncoder().encode(body).byteLength).toBeLessThan(
+            wireSize - 1,
+          );
+          for (const limit of [wireSize - 1, wireSize]) {
+            const client = new Client({
+              e2ee: true,
+              signingAlgo,
+              [limitName]: limit,
+            });
+            await expect(
+              client.fetch('https://example.test/v1/chat/completions', {
+                method: 'POST',
+                body,
+              }),
+            ).rejects.toMatchObject({
+              failure: {
+                code:
+                  limit < wireSize
+                    ? 'api.body_too_large'
+                    : 'policy.model_attestation_required',
+              },
+            });
+            // The fake session deliberately has no key; reaching that error shows
+            // exact-boundary requests passed sizing and invoked preflight.
+            expect(client.verified).toEqual(limit < wireSize ? [] : ['m']);
+          }
+        },
+      );
+
+      test('ignores the receipt budget when retention is disabled', async () => {
+        const client = new Client({
+          e2ee: true,
+          signingAlgo,
+          maxReceiptCacheBytes: 1,
+          responseCacheTimeToLiveMs: 0,
+        });
+        await expect(client.send()).rejects.toMatchObject({
+          failure: { code: 'policy.model_attestation_required' },
+        });
+        expect(client.verified).toEqual(['m']);
+      });
+    },
+  );
 
   test('disabled receipt retention does not limit a plaintext request', async () => {
     const client = new Client({
