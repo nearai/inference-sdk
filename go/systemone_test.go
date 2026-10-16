@@ -1,14 +1,17 @@
 package nearai
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -60,6 +63,7 @@ type systemOneCloud struct {
 	sharedSigner        bool
 	key                 *secp.PrivateKey
 	calls               atomic.Int32
+	dropDecisionAt      int32
 }
 
 func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +92,17 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.f.ServeHTTP(w, r)
 		return
 	}
-	f.calls.Add(1)
+	if f.calls.Add(1) == f.dropDecisionAt {
+		// Consume the request, then lose the response on a reused connection.
+		_, _ = io.Copy(io.Discard, r.Body)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			f.f.t.Error(err)
+			return
+		}
+		_ = conn.Close()
+		return
+	}
 	if r.Header.Get("Authorization") != "Bearer test" || r.Header.Get("Api-Key") != "" || r.Header.Get("Accept-Encoding") != "identity" || r.Header.Get(NoAliasingHeader) != "true" {
 		f.f.t.Errorf("incorrect owned headers: %v", r.Header)
 	}
@@ -282,6 +296,90 @@ func TestSystemOneRetainsEveryReportSharingReceiptSigner(t *testing.T) {
 			}
 			if fixture.calls.Load() != 1 {
 				t.Fatal("replayed decision")
+			}
+		})
+	}
+}
+
+func TestSystemOneDoesNotReplayAfterConnectionFailure(t *testing.T) {
+	for _, tc := range []struct {
+		header, source string
+		value          []string
+	}{
+		{"", "none", nil},
+		{"Idempotency-Key", "client", []string{"decision-key"}},
+		{"Idempotency-Key", "call", []string{"decision-key"}},
+		{"X-Idempotency-Key", "client", []string{"decision-key"}},
+		{"X-Idempotency-Key", "call", []string{"decision-key"}},
+		{"Idempotency-Key", "client-empty", []string{}},
+		{"Idempotency-Key", "call-empty", []string{}},
+	} {
+		t.Run(tc.header+"/"+tc.source, func(t *testing.T) {
+			transport := &http.Transport{}
+			t.Cleanup(transport.CloseIdleConnections)
+			c, f := systemOneClient(t, false, Ed25519, func(f *systemOneCloud, o *InferenceOptions) {
+				f.dropDecisionAt = 2
+				o.HTTPClient = &http.Client{Transport: transport}
+				if strings.HasPrefix(tc.source, "client") {
+					o.Headers = http.Header{tc.header: tc.value}
+				}
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if _, err := c.CreateSystemOne(ctx, systemOneRequest()); err != nil {
+				t.Fatal(err)
+			}
+			var reused atomic.Bool
+			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+				GotConn: func(info httptrace.GotConnInfo) {
+					if info.Reused {
+						reused.Store(true)
+					}
+				},
+			})
+			var headers http.Header
+			if strings.HasPrefix(tc.source, "call") {
+				headers = http.Header{tc.header: tc.value}
+			}
+			_, err := c.CreateSystemOneWithHeaders(ctx, systemOneRequest(), headers)
+			if !reused.Load() {
+				t.Fatal("did not exercise a reused connection")
+			}
+			if f.calls.Load() != 2 {
+				t.Fatalf("decision was replayed: %d requests, want warmup + one failed request", f.calls.Load())
+			}
+			requireCode(t, err, "api.transport_failed")
+		})
+	}
+}
+
+func TestSystemOnePreservesStructuredLegendNumbers(t *testing.T) {
+	for _, number := range []string{"9007199254740993", "-9007199254740993", "0.12345678901234567890123456789", "1e400", "-0"} {
+		t.Run(number, func(t *testing.T) {
+			wire := fmt.Sprintf(`{"model":"canonical/model","answers":{"q":{"type":"score","score":1.5,"confidence":0.9,"probabilities":{"1":1},"legend":{"1":{"value":%s},"2":[%s,{"value":%s}],"3":"text"}}},"usage":{"input_tokens":1,"output_tokens":1}}`, number, number, number)
+			c, _ := systemOneClient(t, false, Ed25519, func(f *systemOneCloud, _ *InferenceOptions) { f.body = wire })
+			result, err := c.CreateSystemOne(context.Background(), systemOneRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer := result.Data.Answers["q"]
+			nested := answer.Legend["1"].(map[string]any)["value"]
+			array := answer.Legend["2"].([]any)
+			for _, value := range []any{nested, array[0], array[1].(map[string]any)["value"]} {
+				n, ok := value.(json.Number)
+				if !ok || n.String() != number {
+					t.Fatalf("number changed: %#v (%T), want json.Number(%s)", value, value, number)
+				}
+			}
+			if answer.Score == nil || *answer.Score != 1.5 || answer.Probabilities["1"] != 1 {
+				t.Fatal("typed numeric answer fields changed")
+			}
+			encoded, err := json.Marshal(answer.Legend)
+			if err != nil || !bytes.Contains(encoded, []byte(`"value":`+number)) {
+				t.Fatalf("roundtrip lost number: %s, %v", encoded, err)
+			}
+			if _, err := c.VerifyResponse(context.Background(), result.DecisionID); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

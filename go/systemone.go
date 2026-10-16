@@ -10,7 +10,8 @@ import (
 )
 
 // SystemOneContent is text, a JSON object, or an array. Business validation of
-// request state and criteria belongs to the server.
+// request state and criteria belongs to the server. Response numbers nested in
+// structured content are json.Number values so their precision is preserved.
 type SystemOneContent = any
 type SystemOneQuestion struct {
 	Type         string           `json:"type"`
@@ -56,7 +57,11 @@ func (a *SystemOneAnswer) UnmarshalJSON(body []byte) error {
 	known := []string{"type"}
 	for name, target := range selected {
 		if raw, ok := fields[name]; ok {
-			if err := json.Unmarshal(raw, target); err != nil {
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			// Typed scalar fields still use float64; opaque legend content must
+			// retain numeric values without converting them through float64.
+			decoder.UseNumber()
+			if err := decoder.Decode(target); err != nil {
 				return err
 			}
 		}
@@ -212,6 +217,10 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, err
 	}
+	// System One is dispatched once, even when callers supply an idempotency
+	// header. Prevent the standard transport from replaying this nonempty body
+	// after a failure on a reused connection.
+	req.GetBody = nil
 	req.Header = c.api.headers.Clone()
 	for k, v := range headers {
 		req.Header[http.CanonicalHeaderKey(k)] = append([]string(nil), v...)

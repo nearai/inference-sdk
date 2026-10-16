@@ -530,8 +530,13 @@ Request state and business criteria are passed through to the server. Typed
 responses support `noul`, `choice`, and `score`, preserve unknown fields and
 arbitrary dictionary keys, and reject malformed output. Response bytes, receipt
 count/bytes, TTL, duplicate IDs, and memoization use the ordinary client limits.
+Numbers nested in structured score legends are `json.Number`, preserving large
+integers, decimal precision and exponents. Typed score/probability fields remain
+`float64`; receipt verification always uses the original response bytes.
 Caller headers cannot replace client authentication or negotiate compression.
-The SDK does not retry inference requests. Retry only transient/unavailable
+The SDK disables automatic transport replay for System One, including when
+client or per-call headers contain `Idempotency-Key` or `X-Idempotency-Key`.
+It does not retry inference requests. Retry only transient/unavailable
 receipt retrieval, with bounded backoff; never retry a signature failure.
 
 `CreateSystemOne(ctx, request)` accepts `SystemOneRequest` or a JSON-serializable
