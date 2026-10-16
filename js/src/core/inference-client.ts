@@ -1,17 +1,11 @@
 import OpenAI from 'openai';
-import { createSystemOne } from './systemone';
-import type { InferenceSystemOne } from '../types/systemone';
 import * as v from 'valibot';
 import {
   ChatCompletionRequestSchema,
   CompletionResponseIdSchema,
 } from '../schemas';
-import type {
-  ModelAttestationVerifiers,
-  VerifiedModelAttestation,
-} from '../types/verification';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { OhttpAttestation } from '../types/ohttp';
+import type { CompletionSignature } from '../types/chat';
 import type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
@@ -20,18 +14,24 @@ import type {
   FetchModelAttestationsParams,
   ModelMetadata,
 } from '../types/cloud-api';
-import type { CompletionSignature } from '../types/chat';
-import type {
-  NodeInferenceClientOptions,
-  InferenceChat,
-  InferenceClientOptions,
-  VerifiedCompletionResult,
-  AttestationVerificationResult,
-  InferenceClientCommonOptions,
-  InferenceEncryptionOptions,
-} from '../types/inference-client';
-import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
+import type {
+  AttestationVerificationResult,
+  InferenceChat,
+  InferenceClientCommonOptions,
+  InferenceClientOptions,
+  InferenceEncryptionOptions,
+  NodeInferenceClientOptions,
+  VerifiedCompletionResult,
+} from '../types/inference-client';
+import type { OhttpAttestation } from '../types/ohttp';
+import type { Awaitable } from '../types/shared';
+import type { InferenceSystemOne } from '../types/systemone';
+import type {
+  ModelAttestationVerifiers,
+  VerifiedModelAttestation,
+} from '../types/verification';
+import { hexToBuffer } from '../utils/common';
 import {
   ApiError,
   isApiError,
@@ -39,7 +39,15 @@ import {
   VerificationError,
 } from '../utils/errors';
 import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
-import { hexToBuffer } from '../utils/common';
+import { verifyGatewayAttestation } from './attestation-gateway';
+import { verifyModelAttestation } from './attestation-model';
+import {
+  BoundedBodyBuffer,
+  readBoundedBody,
+  requireBodySize,
+} from './body-limit';
+import { verifyGatewayResponse, verifyModelResponse } from './chat';
+import type { CloudApiRequestConfiguration } from './cloud-api';
 import {
   AttestationClient,
   CloudApiClient,
@@ -48,12 +56,7 @@ import {
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
-import type { CloudApiRequestConfiguration } from './cloud-api';
-import { verifyGatewayAttestation } from './attestation-gateway';
-import { verifyModelAttestation } from './attestation-model';
-import { verifyOhttpKeyConfig } from './ohttp-attestation';
-import { createOhttpFetch } from './ohttp-fetch';
-import { verifyGatewayResponse, verifyModelResponse } from './chat';
+import { measureE2eeChatRequestBytes } from './e2ee-chat';
 import {
   decodeChatRequest,
   isServerSentEventContentType,
@@ -61,6 +64,9 @@ import {
   prepareE2eeChatRequest,
   removeE2eeHeaders,
 } from './e2ee-request';
+import { verifyOhttpKeyConfig } from './ohttp-attestation';
+import { createOhttpFetch } from './ohttp-fetch';
+import { createSystemOne } from './systemone';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -112,6 +118,8 @@ type InferenceEndpoint = 'chat' | 'systemone';
 type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
+    retainedBytes?: number;
+    expiry?: ReturnType<typeof setTimeout>;
   };
 
 type ParsedSecureRequest = {
@@ -233,6 +241,9 @@ export abstract class VerifiedInferenceClientBase<
   AttestationResult,
 > {
   private readonly baseUrl: string;
+  protected readonly maxBodyBytes: number;
+  private readonly maxCacheEntries: number;
+  private readonly maxReceiptCacheBytes: number;
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
@@ -257,6 +268,22 @@ export abstract class VerifiedInferenceClientBase<
 
   protected constructor(options: InferenceTransportOptions) {
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
+    this.maxBodyBytes = options.maxBodyBytes ?? 64 * 1024 * 1024;
+    this.maxCacheEntries = options.maxCacheEntries ?? 128;
+    this.maxReceiptCacheBytes =
+      options.maxReceiptCacheBytes ?? 64 * 1024 * 1024;
+    for (const [field, value] of Object.entries({
+      maxBodyBytes: this.maxBodyBytes,
+      maxCacheEntries: this.maxCacheEntries,
+      maxReceiptCacheBytes: this.maxReceiptCacheBytes,
+    })) {
+      if (!Number.isSafeInteger(value) || value <= 0)
+        throw invalidInput({
+          field,
+          reason: 'unsupported_value',
+          expected: 'a positive safe integer',
+        });
+    }
     this.attestationCacheTimeToLiveMs =
       options.attestationCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
     this.e2eeEnabled = options.e2ee ?? false;
@@ -386,16 +413,60 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /** Both endpoints share byte retention, expiry, and verification retries. */
-  protected registerResponse(record: ResponseRecord<VerificationResult>): void {
-    const id = record.id;
+  protected registerResponse(params: ResponseRecord<VerificationResult>): void {
+    if (this.responseCacheTimeToLiveMs === 0) return;
+    const id = params.id;
+    const previous = this.responses.get(id);
+    if (previous?.expiry !== undefined) clearTimeout(previous.expiry);
+    const record: ResponseRecord<VerificationResult> = { ...params };
     this.responses.set(id, record);
-    const expire = (): void => {
-      const timer = setTimeout(() => {
+    // Streaming placeholders permit verifyResponse before EOF. Only completed
+    // records consume the retained-byte/count budgets; active streams are body-bounded.
+    void record.responseBody.then(
+      (bytes) => {
+        if (this.responses.get(id) !== record) return;
+        const size = record.requestBody.byteLength + bytes.byteLength;
+        if (size > this.maxReceiptCacheBytes) {
+          this.responses.delete(id);
+          return;
+        }
+        const completed = [...this.responses].filter(
+          ([, entry]) => entry.retainedBytes !== undefined,
+        );
+        let retained = completed.reduce(
+          (total, [, entry]) => total + (entry.retainedBytes ?? 0),
+          0,
+        );
+        while (
+          completed.length >= this.maxCacheEntries ||
+          retained + size > this.maxReceiptCacheBytes
+        ) {
+          const oldest = completed.shift();
+          if (oldest === undefined) break;
+          retained -= oldest[1].retainedBytes ?? 0;
+          if (oldest[1].expiry !== undefined) clearTimeout(oldest[1].expiry);
+          this.responses.delete(oldest[0]);
+        }
+        record.retainedBytes = size;
+        // Reinsert at completion time to make FIFO ordering independent of stream start time.
+        this.responses.delete(id);
+        this.responses.set(id, record);
+        record.expiry = setTimeout(() => {
+          if (this.responses.get(id) === record) this.responses.delete(id);
+        }, this.responseCacheTimeToLiveMs);
+        record.expiry.unref?.();
+      },
+      () => {
         if (this.responses.get(id) === record) this.responses.delete(id);
-      }, this.responseCacheTimeToLiveMs);
-      timer.unref?.();
-    };
-    void record.responseBody.then(expire, expire);
+      },
+    );
+  }
+
+  protected responseByteLimit(requestSize: number): number {
+    requireBodySize(requestSize, this.maxBodyBytes);
+    if (this.responseCacheTimeToLiveMs === 0) return this.maxBodyBytes;
+    requireBodySize(requestSize, this.maxReceiptCacheBytes);
+    return Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes - requestSize);
   }
 
   private async sendSecureCompletion({
@@ -435,12 +506,17 @@ export abstract class VerifiedInferenceClientBase<
     const decryptResponse =
       'decryptResponse' in prepared ? prepared.decryptResponse : undefined;
 
-    const requestBody = captureRequestEntityBody(prepared.request);
+    const requestBytes = await captureRequestEntityBody(prepared.request);
+    const responseLimit = this.responseByteLimit(requestBytes.byteLength);
+    const requestBody = Promise.resolve(requestBytes);
     const response = await this.sendCompletionRequest({
       request: prepared.request,
       transport: session.transport,
     });
-    const capturedResponse = captureResponseEntityBody(response);
+    const capturedResponse = captureResponseEntityBody(
+      response,
+      response.ok ? responseLimit : this.maxBodyBytes,
+    );
     return {
       response: capturedResponse.response,
       session,
@@ -500,11 +576,26 @@ export abstract class VerifiedInferenceClientBase<
       return existing;
     }
 
+    if (this.pendingVerifications.size >= this.maxCacheEntries) {
+      return Promise.reject(
+        invalidInput({
+          field: 'model',
+          reason: 'unsupported_value',
+          expected: 'fewer concurrent preflights',
+        }),
+      );
+    }
     const verification = this.createVerificationState(model, endpoint);
     this.pendingVerifications.set(cacheKey, verification);
     void verification.then(
       (session) => {
         if (this.attestationCacheTimeToLiveMs !== 0) {
+          this.removeExpiredVerifications(Date.now());
+          while (this.cachedVerifications.size >= this.maxCacheEntries) {
+            const oldest = this.cachedVerifications.keys().next().value;
+            if (oldest === undefined) break;
+            this.cachedVerifications.delete(oldest);
+          }
           this.cachedVerifications.set(cacheKey, {
             expiresAt: Date.now() + this.attestationCacheTimeToLiveMs,
             session,
@@ -555,8 +646,16 @@ export abstract class VerifiedInferenceClientBase<
     input: RequestInfo | URL,
     init: RequestInit | undefined,
   ): Promise<ParsedSecureRequest> {
-    const request = createRequest(input, init);
-    this.requireSupportedEndpoint(request);
+    const original = createRequest(input, init);
+    this.requireSupportedEndpoint(original);
+    const bytes = await readBoundedBody(
+      original.body,
+      this.responseCacheTimeToLiveMs === 0
+        ? this.maxBodyBytes
+        : Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes),
+      original.signal,
+    );
+    const request = new Request(original, { body: bytes });
     const value = await decodeChatRequest({ request });
     const generic = v.safeParse(ChatCompletionRequestSchema, value);
     if (!generic.success) {
@@ -565,6 +664,11 @@ export abstract class VerifiedInferenceClientBase<
         reason: 'unsupported_value',
         expected: 'a JSON Chat Completions request with a string model',
       });
+    }
+    if (this.e2eeEnabled) {
+      this.responseByteLimit(
+        measureE2eeChatRequestBytes(generic.output, this.signingAlgo),
+      );
     }
     const model = generic.output.model;
     return { model, request };
@@ -648,6 +752,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         options,
         baseUrl: this.getBaseUrl(),
         encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
+        responseByteLimit: (size) => this.responseByteLimit(size),
         headers: this.createCompletionHeaders(options?.headers ?? {}),
         getSession: (model) => {
           const operation = this.startVerification(model, 'systemone');
@@ -1039,6 +1144,7 @@ function captureRequestEntityBody(request: Request): Promise<Uint8Array> {
 
 function captureResponseEntityBody(
   response: Response,
+  limit: number,
 ): CapturedResponseEntityBody {
   if (response.body === null) {
     return {
@@ -1058,12 +1164,15 @@ function captureResponseEntityBody(
   void responseBody.catch(() => undefined);
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const buffer = new BoundedBodyBuffer(limit);
+  const append = (chunk: Uint8Array): void => {
+    buffer.append(chunk);
+  };
   let settled = false;
   const resolve = (): void => {
     if (settled) return;
     try {
-      const body = concatChunks(chunks);
+      const body = buffer.take();
       settled = true;
       resolveBody(body);
     } catch (cause) {
@@ -1073,7 +1182,9 @@ function captureResponseEntityBody(
   const reject = (cause: unknown): void => {
     if (settled) return;
     settled = true;
+    buffer.clear();
     rejectBody(cause);
+    void reader.cancel(cause).catch(() => undefined);
   };
 
   const body = new ReadableStream<Uint8Array>({
@@ -1085,7 +1196,7 @@ function captureResponseEntityBody(
           controller.close();
           return;
         }
-        chunks.push(next.value.slice());
+        append(next.value);
         controller.enqueue(next.value);
       } catch (cause) {
         reject(cause);
@@ -1095,11 +1206,11 @@ function captureResponseEntityBody(
     async cancel(reason) {
       if (
         hasSseCompletionSentinel({
-          chunks,
+          body: buffer.view(),
           contentType: response.headers.get('content-type'),
         })
       ) {
-        void drainResponseEntityBody({ reader, chunks, resolve, reject });
+        void drainResponseEntityBody({ reader, append, resolve, reject });
       } else {
         reject(reason);
         await reader.cancel(reason);
@@ -1115,17 +1226,6 @@ function captureResponseEntityBody(
     }),
     responseBody,
   };
-}
-
-function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
-  const body = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
 }
 
 function getSseCompletionId(text: string): string {
@@ -1148,21 +1248,19 @@ function getSseCompletionId(text: string): string {
 }
 
 type HasSseCompletionSentinelParams = {
-  readonly chunks: readonly Uint8Array[];
+  readonly body: Uint8Array;
   readonly contentType: string | null;
 };
 
 function hasSseCompletionSentinel({
-  chunks,
+  body,
   contentType,
 }: HasSseCompletionSentinelParams): boolean {
   if (!isServerSentEventContentType(contentType)) {
     return false;
   }
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(
-      concatChunks(chunks),
-    );
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
     return getSseDataRecords(text).some((data) => data === '[DONE]');
   } catch {
     return false;
@@ -1171,14 +1269,14 @@ function hasSseCompletionSentinel({
 
 type DrainResponseEntityBodyParams = {
   readonly reader: ReadableStreamDefaultReader<Uint8Array>;
-  readonly chunks: Uint8Array[];
+  readonly append: (chunk: Uint8Array) => void;
   readonly resolve: () => void;
   readonly reject: (cause: unknown) => void;
 };
 
 async function drainResponseEntityBody({
   reader,
-  chunks,
+  append,
   resolve,
   reject,
 }: DrainResponseEntityBodyParams): Promise<void> {
@@ -1189,7 +1287,7 @@ async function drainResponseEntityBody({
         resolve();
         return;
       }
-      chunks.push(next.value.slice());
+      append(next.value);
     }
   } catch (cause) {
     reject(cause);

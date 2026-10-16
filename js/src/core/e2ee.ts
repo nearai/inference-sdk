@@ -86,6 +86,18 @@ export function encryptE2eeText({
     : encryptEcdsaText({ plaintext, publicKey: modelKey.publicKey });
 }
 
+/** Exact hex ciphertext length, including the ephemeral key, nonce and tag. */
+export function e2eeCiphertextLength(
+  plaintext: string,
+  signingAlgo: SigningAlgo,
+): number {
+  const prefixBytes =
+    signingAlgo === 'ed25519'
+      ? ED25519_ENVELOPE_PREFIX_BYTES
+      : ECDSA_ENVELOPE_PREFIX_BYTES;
+  return 2 * (utf8(plaintext).byteLength + prefixBytes + E2EE_AUTH_TAG_BYTES);
+}
+
 /** Decrypt one UTF-8 field produced by the selected E2EE protocol. */
 export function decryptE2eeText({
   ciphertext,

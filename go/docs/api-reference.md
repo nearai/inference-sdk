@@ -45,7 +45,7 @@ inference client when finished.
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
 | `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
-| `MaxCacheEntries` | Zero selects 128 entries for each cache. |
+| `MaxCacheEntries` | Zero selects 128 completed entries per cache and distinct pending preflights. |
 | `MaxReceiptCacheBytes` | Zero selects 64 MiB combined retained request/response bytes. |
 
 Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
@@ -313,7 +313,7 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
 	MaxBodyBytes int64
-	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
+	// MaxCacheEntries bounds retained sessions/receipts and distinct pending preflights. Defaults to 128.
 	MaxCacheEntries int
 	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
 	MaxReceiptCacheBytes int64

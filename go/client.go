@@ -214,6 +214,10 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 	}
 	p := c.pending[model]
 	if p == nil {
+		if len(c.pending) >= c.options.MaxCacheEntries {
+			c.mu.Unlock()
+			return nil, detail("api.invalid_input", "reason", "too many concurrent verification operations")
+		}
 		p = &pendingSession{done: make(chan struct{})}
 		c.pending[model] = p
 		c.wg.Add(1)

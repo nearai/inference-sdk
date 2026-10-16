@@ -4156,6 +4156,26 @@ describe('System One decisions', () => {
     },
   );
 
+  test('bounds System One wire bytes before retaining a receipt', async () => {
+    const fixture = decisionGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+      maxReceiptCacheBytes:
+        Buffer.byteLength(JSON.stringify(decisionRequest)) +
+        Buffer.byteLength(`${JSON.stringify(decisionResponse, null, 2)}\n`) -
+        1,
+    });
+    await expect(
+      client.systemone.create(decisionRequest),
+    ).rejects.toMatchObject({ failure: { code: 'api.body_too_large' } });
+    expect(fixture.requests).toHaveLength(1);
+    await expect(
+      client.verifyResponse('decision-receipt'),
+    ).rejects.toMatchObject({ failure: { code: 'api.completion_not_found' } });
+  });
+
   test('expires decision response records using the shared response TTL', async () => {
     const fixture = decisionGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);

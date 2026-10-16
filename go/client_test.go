@@ -573,3 +573,34 @@ func TestRequestAuthorityUsesConfiguredEndpoint(t *testing.T) {
 		t.Fatal("request not served")
 	}
 }
+
+func TestPendingPreflightsRespectEntryCapacity(t *testing.T) {
+	gate := make(chan struct{})
+	f := newFakeCloud(t)
+	f.slow = gate
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.MaxCacheEntries = 1 })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 2)
+	go func() { _, err := c.Verify(ctx, "canonical/model"); done <- err }()
+	for f.attestations.Load() == 0 {
+		select {
+		case <-ctx.Done():
+			close(gate)
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	go func() { _, err := c.Verify(ctx, "canonical/model"); done <- err }()
+	_, err := c.Verify(ctx, "other/model")
+	close(gate)
+	requireCode(t, err, "api.invalid_input")
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.attestations.Load() != 1 {
+		t.Fatal("same-model preflight was not shared")
+	}
+}

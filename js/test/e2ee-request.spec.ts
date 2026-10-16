@@ -5,7 +5,9 @@ import {
   decryptE2eeText,
   encryptE2eeText,
 } from '../src/core/e2ee';
+import { measureE2eeChatRequestBytes } from '../src/core/e2ee-chat';
 import type { SigningAlgo } from '../src/types/attestation-common';
+import type { SecureChatCompletionRequest } from '../src/types/inference-client';
 
 const endpoint = 'https://gateway.test/v1/chat/completions';
 const prompt = {
@@ -37,6 +39,83 @@ function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
 describe.each(['ed25519', 'ecdsa'] as const)(
   '%s bare Chat E2EE',
   (signingAlgo) => {
+    test('measures every encrypted field exactly without changing the request', async () => {
+      const { modelKey } = createModelKeys(signingAlgo);
+      const bodies: SecureChatCompletionRequest[] = [
+        {
+          model: '私密模型',
+          messages: [
+            {
+              role: 'assistant',
+              content: '雪☃️\n"quoted"',
+              name: '',
+              refusal: '',
+              reasoning: 'think',
+              reasoning_content: '思考',
+              audio: { data: 'audio', id: 'opaque-id' },
+              tool_calls: [
+                {
+                  id: 'opaque',
+                  type: 'function',
+                  function: { name: 'f', arguments: '{"x":"雪"}' },
+                },
+              ],
+              function_call: { name: 'legacy', arguments: '{}' },
+            },
+          ],
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: '工具',
+                description: '',
+                parameters: {
+                  type: 'object',
+                  properties: { x: { type: 'string' } },
+                },
+              },
+            },
+          ],
+          tool_choice: { type: 'function', function: { name: '工具' } },
+          function_call: {
+            name: 'legacy',
+            arguments: 'not encrypted at top level',
+          },
+          metadata: { opaque: 'text stays plain' },
+        },
+        {
+          model: 'm',
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: '图像' },
+                {
+                  type: 'image_url',
+                  image_url: { url: 'data:image/png;base64,AAAA' },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          model: 'm',
+          messages: [{ role: 'user', content: null }],
+          unknown: ['plain', 1, true],
+        },
+      ];
+      for (const body of bodies) {
+        const before = JSON.stringify(body);
+        const size = measureE2eeChatRequestBytes(body, signingAlgo);
+        expect(JSON.stringify(body)).toBe(before);
+        const prepared = await prepareE2eeChatRequest({
+          request: chatRequest({ body: before }),
+          modelKey,
+        });
+        expect(size).toBe((await prepared.request.arrayBuffer()).byteLength);
+      }
+    });
+
     test('prepares protocol headers and a request that the model can decrypt', async () => {
       const { modelKey, keyPair } = createModelKeys(signingAlgo);
       const controller = new AbortController();

@@ -107,7 +107,7 @@ impl Default for InferenceClientOptions {
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
             max_response_bytes: 64 * 1024 * 1024,
-            max_cache_entries: 1024,
+            max_cache_entries: 128,
             max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
