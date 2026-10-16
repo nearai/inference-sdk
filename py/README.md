@@ -78,7 +78,7 @@ Chat request and shares Chat's verification cache and in-flight work. It returns
 verified Gateway and model evidence with the verification time, preserved on
 cache hits. It raises if verification fails and does not verify a particular reply.
 
-Successful deployment verification is cached for 60 minutes per model by default.
+Successful deployment verification is cached for 60 minutes per model and endpoint.
 Set `attestation_cache_time_to_live_ms=0` to verify before every request. Response
 records have a separate 60-minute lifetime starting when the body finishes;
 verify replies before records expire and before closing the client. See
@@ -134,6 +134,17 @@ Only Chat Completions are supported; the Responses API is not supported.
   fingerprint requests are disabled pending complete fleet coverage; normal HTTPS
   verification remains enabled. Use Gateway clients for production. See
   [direct-endpoint limitations](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
+
+## System One decisions
+
+`InferenceClient.systemone.create()` sends typed `noul`, `choice`, and `score`
+decision requests after Gateway and applicable model verification. Its result
+provides `data` and `decision_id` from the `X-Generation-Id` header, including for
+hosted responses without a JSON ID. Call `client.verify_response(result.decision_id)`
+to verify the captured bytes. Chat and System One share caching, response retention,
+and verification retries, with separate attestation sessions for each endpoint.
+System One does not support streaming, E2EE, or OHTTP and never automatically
+repeats inference. Receipt lookups can be retried without sending another decision.
 
 ## Documentation
 
