@@ -1079,3 +1079,96 @@ async def test_pending_preflights_share_work_at_capacity(monkeypatch, gateway):
         release.set()
         await asyncio.gather(first, second)
         assert gateway.gateway_requests == 1
+
+
+@pytest.mark.parametrize('shared', [False, True])
+async def test_cancelled_preflight_releases_capacity_only_after_last_waiter(
+    monkeypatch, gateway, shared
+):
+    gateway.install(monkeypatch)
+    started, release, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    async with gateway.client(max_cache_entries=1) as client:
+        original = client._create_session
+
+        async def create(model, *, endpoint):
+            if model == MODEL:
+                started.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+            return await original(model, endpoint=endpoint)
+
+        monkeypatch.setattr(client, '_create_session', create)
+        first = asyncio.create_task(client.verify(MODEL))
+        await started.wait()
+        second = asyncio.create_task(client.verify(MODEL)) if shared else None
+        await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        if second is not None:
+            assert not cancelled.is_set()
+            with pytest.raises(ApiError, match='api.invalid_input'):
+                await client.verify('different-model')
+            release.set()
+            await second
+            assert gateway.gateway_requests == 1
+        else:
+            # A stalled request must neither occupy the slot nor survive its caller.
+            async with asyncio.timeout(1):
+                await client.verify('different-model')
+                await cancelled.wait()
+
+
+async def test_abandoned_preflight_completion_cannot_remove_its_replacement(
+    monkeypatch, gateway
+):
+    from types import SimpleNamespace
+
+    gateway.install(monkeypatch)
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    finish_old, finish_new = asyncio.Event(), asyncio.Event()
+    calls = 0
+    async with gateway.client(max_cache_entries=1) as client:
+
+        async def create(model, *, endpoint):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    # Simulate a transport completing during cancellation cleanup.
+                    await finish_old.wait()
+                    return SimpleNamespace(attestation_result='abandoned')
+            await finish_new.wait()
+            return SimpleNamespace(attestation_result='replacement')
+
+        monkeypatch.setattr(client, '_create_session', create)
+        first = asyncio.create_task(client.verify(MODEL))
+        await started.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        try:
+            async with asyncio.timeout(1):
+                await cancelled.wait()
+            replacement = asyncio.create_task(client.verify(MODEL))
+            await asyncio.sleep(0)
+            finish_old.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            with pytest.raises(ApiError, match='api.invalid_input'):
+                await client.verify('different-model')
+            shared = asyncio.create_task(client.verify(MODEL))
+            finish_new.set()
+            assert await replacement == 'replacement'
+            assert await shared == 'replacement'
+            assert calls == 2
+        finally:
+            finish_old.set()
+            finish_new.set()

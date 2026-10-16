@@ -204,6 +204,9 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             tuple[_InferenceEndpoint, str],
             asyncio.Task[_VerifiedSession[Result, AttestationResult]],
         ] = {}
+        self._pending_waiters: dict[
+            asyncio.Task[_VerifiedSession[Result, AttestationResult]], int
+        ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
         self._drains: set[asyncio.Task[None]] = set()
@@ -239,7 +242,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         await self._close_sessions()
 
     async def _close_sessions(self) -> None:
-        pending = [*self._pending.values(), *self._drains]
+        # Include abandoned tasks until their cancellation cleanup has finished.
+        pending = [*self._pending_waiters, *self._drains]
         pending.extend(
             record.verification
             for record in self._responses.values()
@@ -480,11 +484,16 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             def finished(
                 completed: asyncio.Task[_VerifiedSession[Result, AttestationResult]],
             ) -> None:
+                self._pending_waiters.pop(completed, None)
+                if self._pending.get(cache_key) is not completed:
+                    _observe_exception(completed)
+                    return
                 self._pending.pop(cache_key, None)
                 if (
                     not completed.cancelled()
                     and completed.exception() is None
                     and self._attestation_ttl != 0
+                    and not self._chat_client.is_closed
                 ):
                     while len(self._sessions) >= self._max_cache_entries:
                         del self._sessions[next(iter(self._sessions))]
@@ -494,8 +503,17 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     )
 
             task.add_done_callback(finished)
-        # Cancelling one caller must not cancel shared verification for others.
-        return await asyncio.shield(task)
+        self._pending_waiters[task] = self._pending_waiters.get(task, 0) + 1
+        try:
+            # Cancelling one caller must not cancel verification still in use.
+            return await asyncio.shield(task)
+        finally:
+            if task in self._pending_waiters:
+                self._pending_waiters[task] -= 1
+                if self._pending_waiters[task] == 0 and not task.done():
+                    if self._pending.get(cache_key) is task:
+                        del self._pending[cache_key]
+                    task.cancel()
 
     async def _create_session(
         self, model: str, *, endpoint: _InferenceEndpoint
