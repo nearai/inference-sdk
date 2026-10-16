@@ -35,6 +35,27 @@ void api.create({
   },
 });
 
+interface GenericQuestionMap {
+  question: SystemOneQuestion<Choices>;
+}
+declare const genericQuestionMap: GenericQuestionMap;
+void api.create({ model: 'm', state: 'state', questions: genericQuestionMap });
+declare const genericRequest: SystemOneRequest<GenericQuestionMap>;
+void api.create(genericRequest);
+declare const genericDictionary: Record<string, SystemOneQuestion<Choices>>;
+void api.create({ model: 'm', state: 'state', questions: genericDictionary });
+declare const invalidUnion: {
+  model: string;
+  state: string;
+  questions: {
+    q:
+      | SystemOneQuestion<Choices>
+      | { type: 'choice'; instructions: string; criteria: { bad: number } };
+  };
+};
+// @ts-expect-error A valid variant cannot conceal an invalid branch of a union.
+void api.create(invalidUnion);
+
 declare const dictionary: SystemOneRequest;
 void api.create(dictionary);
 declare const typed: SystemOneRequest<Questions>;

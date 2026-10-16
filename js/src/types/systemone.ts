@@ -28,19 +28,18 @@ export type SystemOneQuestion<
       readonly criteria: readonly SystemOneContent[];
     };
 
+// Distribute over question unions so explicitly annotated generic questions
+// retain the known keys of each choice variant.
+type CheckedSystemOneQuestion<Question> = Question extends {
+  readonly criteria: infer Choices extends object;
+}
+  ? SystemOneQuestion<Readonly<Record<keyof Choices, SystemOneContent | null>>>
+  : SystemOneQuestion;
+
 /** Validate the named questions without requiring a string index signature. */
 export type SystemOneQuestions<Questions> = {
-  readonly [Name in keyof Questions as Name]: SystemOneQuestion<
-    Readonly<
-      Record<
-        Questions[Name] extends {
-          readonly criteria: infer Choices extends object;
-        }
-          ? keyof Choices
-          : string,
-        SystemOneContent | null
-      >
-    >
+  readonly [Name in keyof Questions as Name]: CheckedSystemOneQuestion<
+    Questions[Name]
   >;
 };
 
