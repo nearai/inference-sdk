@@ -33,10 +33,12 @@ async def main() -> None:
                     },
                     'format': {
                         'type': 'choice',
+                        'instructions': 'Which format should the answer use?',
                         'criteria': {'text': 'Use plain text', 'code': 'Use code'},
                     },
                     'detail': {
                         'type': 'score',
+                        'instructions': 'How much detail should the answer include?',
                         'criteria': ['brief', 'moderate', 'detailed'],
                     },
                 },
