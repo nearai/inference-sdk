@@ -3,12 +3,12 @@ package nearai
 import (
 	"context"
 	"crypto/ed25519"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,14 +18,15 @@ import (
 	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
+// Keep this copy in sync with rs/test-fixtures/systemone-responses.json.
+//
+//go:embed testdata/systemone-responses.json
+var systemOneResponseVectors []byte
+
 func systemOneVectors(t *testing.T) map[string][]json.RawMessage {
 	t.Helper()
-	body, err := os.ReadFile("../rs/test-fixtures/systemone-responses.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var fixture map[string][]json.RawMessage
-	if err = json.Unmarshal(body, &fixture); err != nil {
+	if err := json.Unmarshal(systemOneResponseVectors, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	return fixture
