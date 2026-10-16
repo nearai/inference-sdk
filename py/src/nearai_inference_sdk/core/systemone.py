@@ -22,6 +22,7 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
+from .body_limit import read_bounded_body, require_identity_encoding
 from .e2ee_request import remove_e2ee_headers
 
 if TYPE_CHECKING:
@@ -58,6 +59,7 @@ class InferenceSystemOne:
             request_body = json.dumps(request, allow_nan=False).encode()
         except (ValueError, TypeError):
             raise _invalid_input('a JSON-serializable System One request') from None
+        response_limit = client._response_byte_limit(len(request_body))
         # Leave request business rules to the server and retain the exact bytes.
         request_headers = client._request_headers(headers or {})
         remove_e2ee_headers(request_headers)
@@ -105,6 +107,7 @@ class InferenceSystemOne:
                     'api.http_status',
                     {'resource': 'completion', 'status': response.status_code},
                 )
+            require_identity_encoding(response)
             try:
                 decision_id = CompletionResponseIdSchema.model_validate(
                     {'id': response.headers.get('x-generation-id')}
@@ -112,7 +115,9 @@ class InferenceSystemOne:
             except ValidationError:
                 raise _invalid_response('System One X-Generation-Id') from None
             try:
-                response_body = await response.aread()
+                response_body = await read_bounded_body(
+                    response.aiter_bytes(), response_limit
+                )
             except httpx.HTTPError as error:
                 raise api_failure(
                     'api.transport_failed',

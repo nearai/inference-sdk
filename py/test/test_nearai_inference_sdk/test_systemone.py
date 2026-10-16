@@ -704,6 +704,15 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     assert len(gateway.requests) == 1
 
 
+async def test_decision_body_uses_configured_receipt_byte_limit(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, max_receipt_cache_bytes=500) as client:
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.systemone.create(REQUEST)
+        assert len(gateway.requests) == 1
+
+
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 async def test_retains_all_reports_sharing_a_decision_signer(monkeypatch, signing_algo):
     gateway = DecisionGateway(signing_algo, 'provider_tee')

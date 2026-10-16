@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from nacl.signing import SigningKey
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI, BadRequestError
 
 from nearai_inference_sdk import (
     ApiError,
@@ -831,3 +831,344 @@ async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
             assert verified.signature_kind == 'provider_tee'
         finally:
             gateway.tail_gate.set()
+
+
+@pytest.mark.parametrize('value', [0, -1, 1.5, float('inf'), True])
+def test_rejects_invalid_cache_capacity_options(gateway, value):
+    for field in ('max_body_bytes', 'max_cache_entries', 'max_receipt_cache_bytes'):
+        with pytest.raises(ApiError):
+            gateway.client(**{field: value})
+
+
+async def test_cache_entry_limits_evict_sessions_and_receipts(monkeypatch, gateway):
+    gateway.install(monkeypatch)
+    async with gateway.client(max_cache_entries=1) as client:
+        first = await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        second = await client.chat.completions.create(
+            model='other-model', messages=MESSAGES
+        )
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response(first.id)
+        await client.verify_response(second.id)
+        await client.verify(MODEL)
+        assert gateway.gateway_requests == 3
+
+
+async def test_byte_budget_evicts_old_receipts_and_preserves_them_on_oversize(
+    monkeypatch, gateway
+):
+    gateway.install(monkeypatch)
+    request = httpx.Request(
+        'POST',
+        BASE_URL + 'chat/completions',
+        json={'model': MODEL, 'messages': MESSAGES},
+    )
+    async with gateway.client(e2ee=False) as client:
+        response = await client.send(request)
+        wire = await response.aread()
+        budget = len(request.content) + len(wire) + 10
+    async with gateway.client(e2ee=False, max_receipt_cache_bytes=budget) as client:
+
+        async def send():
+            response = await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+            return json.loads(await response.aread())['id']
+
+        first, second = await send(), await send()
+        await asyncio.sleep(0)
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response(first)
+        before = len(gateway.completion_requests)
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={
+                        'model': MODEL,
+                        'messages': [{'role': 'user', 'content': 'x' * budget}],
+                    },
+                )
+            )
+        assert len(gateway.completion_requests) == before
+        await client.verify_response(second)
+
+
+@pytest.mark.parametrize(
+    'limits', [{'max_body_bytes': 10}, {'max_receipt_cache_bytes': 10}]
+)
+async def test_large_request_fails_before_preflight(monkeypatch, gateway, limits):
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, **limits) as client:
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert gateway.gateway_requests == 0
+    assert not gateway.completion_requests
+
+
+async def test_sync_request_stream_stops_at_body_limit(monkeypatch, gateway):
+    gateway.install(monkeypatch)
+    consumed = 0
+
+    def chunks():
+        nonlocal consumed
+        for _ in range(10):
+            consumed += 1
+            yield b'x' * 512
+
+    async with gateway.client(max_body_bytes=1024) as client:
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.send(
+                httpx.Request('POST', BASE_URL + 'chat/completions', content=chunks())
+            )
+    assert consumed == 3
+    assert gateway.gateway_requests == 0
+
+
+async def test_sync_request_stream_with_disabled_receipt_retention(
+    monkeypatch, gateway
+):
+    gateway.install(monkeypatch)
+    body = json.dumps({'model': MODEL, 'messages': MESSAGES}).encode()
+    async with gateway.client(
+        e2ee=False, response_cache_time_to_live_ms=0, max_receipt_cache_bytes=1
+    ) as client:
+        response = await client.send(
+            httpx.Request(
+                'POST',
+                BASE_URL + 'chat/completions',
+                content=iter([body[:10], body[10:]]),
+            )
+        )
+        assert json.loads(await response.aread())['id']
+        assert not client._responses
+    assert gateway.plaintexts == ['Hello']
+
+
+@pytest.mark.parametrize('oversized', [False, True])
+@pytest.mark.parametrize('interface', ['send', 'openai'])
+async def test_error_response_uses_body_limit_without_receipt_retention(
+    monkeypatch, oversized, interface
+):
+    gateway = Gateway()
+    original = gateway.handle
+    closed = asyncio.Event()
+    consumed = 0
+
+    class ErrorStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal consumed
+            for _ in range(5 if oversized else 1):
+                consumed += 1
+                yield b'x' * 512
+
+        async def aclose(self):
+            closed.set()
+
+    async def respond(request):
+        if request.url.path == '/v1/chat/completions':
+            return httpx.Response(400, stream=ErrorStream())
+        return await original(request)
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    async with gateway.client(
+        e2ee=False, max_body_bytes=1024, max_receipt_cache_bytes=128
+    ) as client:
+        if interface == 'send':
+            response = await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+            if oversized:
+                with pytest.raises(ApiError, match='api.body_too_large'):
+                    await response.aread()
+            else:
+                assert await response.aread() == b'x' * 512
+        else:
+            # OpenAI wraps transport/body errors; inspect its original cause.
+            async with AsyncOpenAI(
+                api_key='test-key',
+                base_url=BASE_URL,
+                http_client=client.http_client,
+                max_retries=0,
+            ) as openai:
+                if oversized:
+                    with pytest.raises(APIConnectionError) as failure:
+                        await openai.chat.completions.create(
+                            model=MODEL, messages=MESSAGES
+                        )
+                    assert isinstance(failure.value.__cause__, ApiError)
+                    assert failure.value.__cause__.failure.code == 'api.body_too_large'
+                else:
+                    with pytest.raises(BadRequestError) as failure:
+                        await openai.chat.completions.create(
+                            model=MODEL, messages=MESSAGES
+                        )
+                    assert failure.value.response.content == b'x' * 512
+        assert consumed == (3 if oversized else 1)
+        assert not client._responses
+    assert closed.is_set()
+
+
+async def test_signed_sse_tail_is_body_bounded(monkeypatch):
+    gateway = Gateway()
+    original = gateway.handle
+    release = asyncio.Event()
+
+    async def respond(request):
+        response = await original(request)
+        if request.url.path != '/v1/chat/completions':
+            return response
+        wire = await response.aread()
+
+        class OversizedTail(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield wire
+                await release.wait()
+                yield b': ' + b'x' * 8192 + b'\n\n'
+
+        return httpx.Response(200, headers=response.headers, stream=OversizedTail())
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    async with gateway.client(max_body_bytes=4096) as client:
+        stream = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES, stream=True
+        )
+        chunks = [chunk async for chunk in stream]
+        verification = asyncio.create_task(client.verify_response(chunks[0].id))
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await verification
+
+
+async def test_pending_preflights_share_work_at_capacity(monkeypatch, gateway):
+    original = gateway.handle
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def respond(request):
+        if request.url.path == '/v1/attestation/report':
+            started.set()
+            await release.wait()
+        return await original(request)
+
+    monkeypatch.setattr(gateway, 'handle', respond)
+    gateway.install(monkeypatch)
+    async with gateway.client(max_cache_entries=1) as client:
+        first = asyncio.create_task(client.verify(MODEL))
+        await started.wait()
+        second = asyncio.create_task(client.verify(MODEL))
+        with pytest.raises(ApiError, match='api.invalid_input'):
+            await client.verify('different-model')
+        release.set()
+        await asyncio.gather(first, second)
+        assert gateway.gateway_requests == 1
+
+
+@pytest.mark.parametrize('shared', [False, True])
+async def test_cancelled_preflight_releases_capacity_only_after_last_waiter(
+    monkeypatch, gateway, shared
+):
+    gateway.install(monkeypatch)
+    started, release, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    async with gateway.client(max_cache_entries=1) as client:
+        original = client._create_session
+
+        async def create(model, *, endpoint):
+            if model == MODEL:
+                started.set()
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+            return await original(model, endpoint=endpoint)
+
+        monkeypatch.setattr(client, '_create_session', create)
+        first = asyncio.create_task(client.verify(MODEL))
+        await started.wait()
+        second = asyncio.create_task(client.verify(MODEL)) if shared else None
+        await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        if second is not None:
+            assert not cancelled.is_set()
+            with pytest.raises(ApiError, match='api.invalid_input'):
+                await client.verify('different-model')
+            release.set()
+            await second
+            assert gateway.gateway_requests == 1
+        else:
+            # A stalled request must neither occupy the slot nor survive its caller.
+            async with asyncio.timeout(1):
+                await client.verify('different-model')
+                await cancelled.wait()
+
+
+async def test_abandoned_preflight_completion_cannot_remove_its_replacement(
+    monkeypatch, gateway
+):
+    from types import SimpleNamespace
+
+    gateway.install(monkeypatch)
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    finish_old, finish_new = asyncio.Event(), asyncio.Event()
+    calls = 0
+    async with gateway.client(max_cache_entries=1) as client:
+
+        async def create(model, *, endpoint):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    # Simulate a transport completing during cancellation cleanup.
+                    await finish_old.wait()
+                    return SimpleNamespace(attestation_result='abandoned')
+            await finish_new.wait()
+            return SimpleNamespace(attestation_result='replacement')
+
+        monkeypatch.setattr(client, '_create_session', create)
+        first = asyncio.create_task(client.verify(MODEL))
+        await started.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        try:
+            async with asyncio.timeout(1):
+                await cancelled.wait()
+            replacement = asyncio.create_task(client.verify(MODEL))
+            await asyncio.sleep(0)
+            finish_old.set()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            with pytest.raises(ApiError, match='api.invalid_input'):
+                await client.verify('different-model')
+            shared = asyncio.create_task(client.verify(MODEL))
+            finish_new.set()
+            assert await replacement == 'replacement'
+            assert await shared == 'replacement'
+            assert calls == 2
+        finally:
+            finish_old.set()
+            finish_new.set()
