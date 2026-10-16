@@ -17,6 +17,10 @@ use x509_cert::{
 };
 
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
+// Match the Go provenance page bound, including GitHub-compatible proxies.
+const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROVENANCE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROVENANCE_PAGES: usize = 32;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
 const SOURCE_REPOSITORY_URI: ObjectIdentifier =
@@ -39,6 +43,29 @@ pub async fn fetch_image_provenance(
     digest: &str,
     github_token: Option<&str>,
 ) -> Result<Vec<String>, ApiError> {
+    fetch_image_provenance_with_options(
+        repository,
+        digest,
+        ImageProvenanceFetchOptions {
+            github_token,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct ImageProvenanceFetchOptions<'a> {
+    pub github_token: Option<&'a str>,
+    /// Absolute GitHub-compatible API base. Tokens are never forwarded to a proxy.
+    pub github_proxy_url: Option<&'a str>,
+}
+
+pub async fn fetch_image_provenance_with_options(
+    repository: &str,
+    digest: &str,
+    options: ImageProvenanceFetchOptions<'_>,
+) -> Result<Vec<String>, ApiError> {
     if !valid_repository(repository) {
         return Err(api_input("repository", "expected owner/repo"));
     }
@@ -48,11 +75,26 @@ pub async fn fetch_image_provenance(
             "expected sha256: followed by 64 hexadecimal digits",
         )
     })?;
+    let base = github_api_base(options.github_proxy_url)?;
     let url = Url::parse(&format!(
-        "https://api.github.com/repos/{repository}/attestations/sha256:{hash}?per_page=100"
+        "{}/repos/{repository}/attestations/sha256:{hash}?per_page=100",
+        base.as_str().trim_end_matches('/')
     ))
-    .expect("validated repository and digest form a valid GitHub URL");
-    fetch_image_provenance_pages(&Client::new(), url, github_token).await
+    .map_err(|_| api_input("github_proxy_url", "invalid URL"))?;
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| api_input("http_client", "could not build client"))?;
+    fetch_image_provenance_pages(
+        &client,
+        url,
+        if options.github_proxy_url.is_none() {
+            options.github_token
+        } else {
+            None
+        },
+    )
+    .await
 }
 
 async fn fetch_image_provenance_pages(
@@ -63,7 +105,14 @@ async fn fetch_image_provenance_pages(
     let mut bundles = Vec::new();
     let mut url = original_url.clone();
     let mut visited = HashSet::new();
+    let mut total_bytes = 0;
     loop {
+        if visited.len() >= MAX_PROVENANCE_PAGES {
+            return Err(pagination_error("provenance page limit exceeded"));
+        }
+        if total_bytes >= MAX_PROVENANCE_TOTAL_BYTES {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
         if !visited.insert(url.clone()) {
             return Err(pagination_error("repeated pagination cursor"));
         }
@@ -86,11 +135,10 @@ async fn fetch_image_provenance_pages(
             });
         }
         let next = next_attestation_page(&original_url, response.headers())?;
-        let text = response.text().await.map_err(|_| ApiError::Transport {
-            resource: RESOURCE,
-            reason: ApiTransportReason::ResponseBody,
-        })?;
-        let response: GitHubAttestations = serde_json::from_str(&text).map_err(|error| {
+        let limit = MAX_PROVENANCE_PAGE_BYTES.min(MAX_PROVENANCE_TOTAL_BYTES - total_bytes);
+        let bytes = read_provenance_body(response, limit).await?;
+        total_bytes += bytes.len();
+        let response: GitHubAttestations = serde_json::from_slice(&bytes).map_err(|error| {
             if error.is_syntax() || error.is_eof() {
                 ApiError::InvalidJson { resource: RESOURCE }
             } else {
@@ -112,6 +160,29 @@ async fn fetch_image_provenance_pages(
         };
         url = next;
     }
+}
+
+async fn read_provenance_body(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, ApiError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+        resource: RESOURCE,
+        reason: ApiTransportReason::ResponseBody,
+    })? {
+        if chunk.len() > limit - bytes.len() {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 
 fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, ApiError> {
@@ -635,6 +706,24 @@ struct SourceDigest {
     sha1: Option<String>,
 }
 
+pub(crate) fn github_api_base(proxy: Option<&str>) -> Result<Url, ApiError> {
+    let url = Url::parse(proxy.unwrap_or("https://api.github.com"))
+        .map_err(|_| api_input("github_proxy_url", "expected absolute HTTP(S) URL"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(api_input(
+            "github_proxy_url",
+            "expected HTTP(S) URL without credentials, query or fragment",
+        ));
+    }
+    Ok(url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,6 +917,117 @@ mod tests {
                 ),
                 Err(Reason::SourceMismatch)
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_proxy_pages_before_json_parsing() {
+        for chunked in [false, true] {
+            let server = MockServer::start().await;
+            let mut response =
+                ResponseTemplate::new(200)
+                    .set_body_bytes(vec![b'x'; MAX_PROVENANCE_PAGE_BYTES + 1]);
+            if chunked {
+                response = response.insert_header("Transfer-Encoding", "chunked");
+            }
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let proxy = server.uri();
+            let error = fetch_image_provenance_with_options(
+                "nearai/compose-manager",
+                &format!("sha256:{}", "ab".repeat(32)),
+                ImageProvenanceFetchOptions {
+                    github_proxy_url: Some(&proxy),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                ApiError::BodyTooLarge {
+                    resource: ApiResource::ImageProvenance
+                }
+            ));
+            assert_eq!(error.code(), "api.body_too_large");
+            assert!(!error.retryable());
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_provenance_page_at_the_exact_byte_limit() {
+        let server = MockServer::start().await;
+        let mut body = br#"{"attestations":[{"bundle":{"at_limit":true}}]}"#.to_vec();
+        body.resize(MAX_PROVENANCE_PAGE_BYTES, b' ');
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::builder().no_proxy().build().unwrap();
+        let bundles =
+            fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                .await
+                .unwrap();
+        assert_eq!(bundles, vec![r#"{"at_limit":true}"#]);
+    }
+
+    #[tokio::test]
+    async fn bounds_entire_provenance_pagination() {
+        // Finite servers ensure the regression also terminates without limits.
+        for (pages, page_bytes, expected_calls, error_code) in [
+            (32, 128, 32, None),
+            (33, 128, 32, Some("api.invalid_response")),
+            (4, 16 * 1024 * 1024, 4, None),
+            (5, 13 * 1024 * 1024, 5, Some("api.body_too_large")),
+        ] {
+            for chunked in [false, true] {
+                let server = MockServer::start().await;
+                let base = server.uri();
+                Mock::given(method("GET"))
+                    .respond_with(move |request: &wiremock::Request| {
+                        let page = request
+                            .url
+                            .query_pairs()
+                            .find(|(key, _)| key == "after")
+                            .map(|(_, value)| value.parse::<usize>().unwrap())
+                            .unwrap_or(1);
+                        let mut body = br#"{"attestations":[{"bundle":{"ok":true}}]}"#.to_vec();
+                        body.resize(page_bytes, b' ');
+                        let mut response = ResponseTemplate::new(200).set_body_bytes(body);
+                        if page < pages {
+                            response = response.insert_header(
+                                "Link",
+                                format!("<{}?after={}>; rel=\"next\"", base, page + 1),
+                            );
+                        }
+                        if chunked {
+                            response = response.insert_header("Transfer-Encoding", "chunked");
+                        }
+                        response
+                    })
+                    .expect(expected_calls)
+                    .mount(&server)
+                    .await;
+                let client = Client::builder().no_proxy().build().unwrap();
+                let result =
+                    fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                        .await;
+                if let Some(code) = error_code {
+                    let error = result.unwrap_err();
+                    assert_eq!(error.code(), code);
+                    assert!(!error.retryable());
+                } else {
+                    assert_eq!(result.unwrap().len(), pages);
+                }
+                assert_eq!(
+                    server.received_requests().await.unwrap().len(),
+                    expected_calls as usize
+                );
+            }
         }
     }
 

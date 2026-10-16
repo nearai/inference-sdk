@@ -468,6 +468,10 @@ occur, and every matching service must pin a digest. Unresolved image variables
 and malformed Compose are rejected before fetching evidence.
 
 `FetchImageProvenance` retrieves inline GitHub bundles, including pagination.
+Each page is limited to 16 MiB; a complete fetch is limited to 32 pages and
+64 MiB of cumulative response bytes, including responses without Content-Length.
+Byte overflow fails with `api.body_too_large`; the page cap fails with
+`api.invalid_response`. Both are non-retryable and return no partial bundles.
 Pagination contributes only a cursor; supplied origins/paths and bundle URLs are
 never followed. `ProvenanceOptions.GitHubToken` is separate from the Gateway key.
 `VerifyImageProvenance` checks Sigstore signatures, certificate transparency,
@@ -477,6 +481,45 @@ workflows. `Commit` optionally pins reviewed source. The default Sigstore root
 uses authenticated production TUF updates; `TrustedRoot` supports offline trusted
 material. Trust-root refresh uses the upstream synchronous API; cancellation is
 checked before and after it, not during its network operation.
+
+## Compose Manager deployment provenance
+
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
+`Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
+When present in a model report, verification checks its quote/TCB, nonce, canonical
+action hash, event log, and binding to the model's measured app-compose. The
+callback receives `MeasuredDeployment.ComposeManager`, including authenticated
+actions, TCB status, advisory IDs and runtime measurements.
+
+`VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, imagePolicies, options)`
+requires manager evidence, selects the latest matching `compose_up`, fetches its
+recorded file at its commit, verifies exact SHA-256 and UTF-8, and verifies images
+in the action's named `services`. An absent/empty service list selects the entire
+file; unknown services fail. Unselected images cannot satisfy a required policy.
+
+| Option | Meaning |
+| --- | --- |
+| `ComposeRepository` | Trusted `owner/repo`; defaults to `nearai/cvm-compose-files`. |
+| `ComposeFile` | Exact file path, or the latest `compose_up` across all files. |
+| `ManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
+| `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubProxyURL`. |
+
+The manager image is checked independently; an old compose image cannot satisfy
+this policy. Missing/unlisted startup images fail. Empty image policies fail
+before any network access. These checks authenticate recorded deployment intent,
+not successful execution, current containers, model weights, or a unique CVM.
+
+`GitHubProxyURL` is an optional absolute HTTP(S) GitHub-compatible API base for
+compose files and image proofs. Tokens are omitted when a proxy is configured;
+redirects and pagination outside the requested artifact are rejected.
+
+For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
+`VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
+It runs after every report and TLS binding pass, marks only the serving report's
+provenance, and constrains routing/receipt attribution to it. Only root-envelope
+manager evidence is attached to the serving report; nested manager fields are
+discarded. Direct network TLS binding remains experimental and disabled as before.
 
 ## Errors and development
 

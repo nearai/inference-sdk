@@ -28,11 +28,24 @@ pub(crate) async fn verify_dstack_quote<'a>(
 ) -> Result<VerifiedDstackQuote<'a>, VerificationError> {
     verify_reported_nonce(&attestation.nonce, nonce, "attestation_nonce")?;
     let signer = validate_signing_identity(&attestation.signer)?;
+    let quote =
+        verify_tdx_quote_policy(&attestation.intel_quote, policy, tdx_quote_verifier).await?;
+    verify_advertised_report_data(advertised_report_data, &quote.report_data)?;
+    Ok(VerifiedDstackQuote {
+        attestation,
+        quote,
+        signer,
+    })
+}
+
+pub(crate) async fn verify_tdx_quote_policy(
+    intel_quote: &str,
+    policy: Option<&AttestationPolicy>,
+    tdx_quote_verifier: Option<&dyn TdxQuoteVerifier>,
+) -> Result<TdxQuoteVerificationResult, VerificationError> {
     let default_verifier = DefaultTdxQuoteVerifier::default();
     let verifier = tdx_quote_verifier.unwrap_or(&default_verifier);
-    let quote = verifier.verify(&attestation.intel_quote).await?;
-
-    verify_advertised_report_data(advertised_report_data, &quote.report_data)?;
+    let quote = verifier.verify(intel_quote).await?;
     if quote.debug_enabled {
         return Err(VerificationError::DebugEnabled);
     }
@@ -46,16 +59,13 @@ pub(crate) async fn verify_dstack_quote<'a>(
             advisory_ids: quote.advisory_ids.clone(),
         });
     }
-    Ok(VerifiedDstackQuote {
-        attestation,
-        quote,
-        signer,
-    })
+    Ok(quote)
 }
 
 pub(crate) async fn verify_dstack_deployment(
     verified: &VerifiedDstackQuote<'_>,
     deployment_verifier: Option<&dyn DeploymentVerifier>,
+    compose_manager: Option<crate::VerifiedComposeManagerAttestation>,
 ) -> Result<VerifiedAttestationEvidence, VerificationError> {
     let runtime_measurements =
         verify_and_replay_rtmr3(&verified.attestation.event_log, &verified.quote.rt_mr3)?;
@@ -64,6 +74,7 @@ pub(crate) async fn verify_dstack_deployment(
         &verified.quote.mr_config_id,
     )?;
     let deployment = MeasuredDeployment {
+        compose_manager,
         app_compose: verified.attestation.app_compose.clone(),
         runtime_measurements,
     };

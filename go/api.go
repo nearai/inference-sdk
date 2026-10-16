@@ -252,6 +252,9 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		if !sameHex(a.Nonce, n) || a.SPKIFingerprint != "" || (c.direct && a.ModelName == "") {
 			return out, failure("api.invalid_response", nil)
 		}
+		if c.direct {
+			a.ComposeManagerAttestation = nil
+		}
 		out.Attestations = append(out.Attestations, a)
 	}
 	if c.direct {
@@ -261,7 +264,10 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 		found := false
 		for i := range out.Attestations {
-			if sameAttestation(a, out.Attestations[i]) {
+			candidate := a
+			candidate.ComposeManagerAttestation = nil
+			if sameAttestation(candidate, out.Attestations[i]) {
+				out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
 				out.ServingAttestation = &out.Attestations[i]
 				found = true
 				break
@@ -346,14 +352,18 @@ func decodeAttestation(data []byte) (Attestation, error) {
 			TCB        json.RawMessage `json:"tcb_info"`
 			InstanceID string          `json:"instance_id"`
 		} `json:"info"`
-		Report    string  `json:"report_data"`
-		PublicKey string  `json:"signing_public_key"`
-		GPU       *string `json:"nvidia_payload"`
-		FP        string  `json:"tls_cert_fingerprint"`
-		Model     string  `json:"model_name"`
+		Manager   *ComposeManagerAttestation `json:"compose_manager_attestation"`
+		Report    string                     `json:"report_data"`
+		PublicKey string                     `json:"signing_public_key"`
+		GPU       *string                    `json:"nvidia_payload"`
+		FP        string                     `json:"tls_cert_fingerprint"`
+		Model     string                     `json:"model_name"`
 	}
 	if e := json.Unmarshal(data, &raw); e != nil {
 		return a, failure("api.invalid_response", e)
+	}
+	if raw.Manager != nil && (raw.Manager.Actions == nil || raw.Manager.Nonce == "" || raw.Manager.IntelQuote == "" || len(raw.Manager.EventLog) == 0 || raw.Manager.ActionsHash == "") {
+		return a, failure("api.invalid_response", nil)
 	}
 	var encoded string
 	if json.Unmarshal(raw.Info.TCB, &encoded) == nil {
@@ -366,17 +376,18 @@ func decodeAttestation(data []byte) (Attestation, error) {
 		return a, failure("api.invalid_response", e)
 	}
 	a = Attestation{
-		Nonce:             raw.Nonce,
-		Signer:            SigningIdentity{raw.Algo, raw.Address},
-		IntelQuote:        raw.Quote,
-		EventLog:          raw.EventLog,
-		AppCompose:        *tcb.Compose,
-		ReportedQuoteData: raw.Report,
-		SigningPublicKey:  raw.PublicKey,
-		NvidiaPayload:     raw.GPU,
-		SPKIFingerprint:   raw.FP,
-		ModelName:         raw.Model,
-		InstanceID:        raw.Info.InstanceID,
+		ComposeManagerAttestation: raw.Manager,
+		Nonce:                     raw.Nonce,
+		Signer:                    SigningIdentity{raw.Algo, raw.Address},
+		IntelQuote:                raw.Quote,
+		EventLog:                  raw.EventLog,
+		AppCompose:                *tcb.Compose,
+		ReportedQuoteData:         raw.Report,
+		SigningPublicKey:          raw.PublicKey,
+		NvidiaPayload:             raw.GPU,
+		SPKIFingerprint:           raw.FP,
+		ModelName:                 raw.Model,
+		InstanceID:                raw.Info.InstanceID,
 	}
 	if _, e := hexSize(a.Nonce, 32); e != nil {
 		return a, failure("api.invalid_response", e)

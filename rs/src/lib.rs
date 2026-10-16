@@ -9,6 +9,8 @@
 mod attestation;
 mod bindings;
 mod cloud_api;
+mod compose_manager;
+mod compose_manager_provenance;
 mod deployment_provenance;
 mod errors;
 mod event_log;
@@ -25,15 +27,25 @@ pub use cloud_api::{
     find_model_attestation_for_signature, AttestationClient, DEFAULT_NEAR_AI_CLOUD_BASE_URL,
     NO_ALIASING_HEADER,
 };
+pub use compose_manager::{
+    ComposeManagerAction, ComposeManagerActionValue, ComposeManagerAttestation,
+    VerifiedComposeManagerAttestation,
+};
+pub use compose_manager_provenance::{
+    verify_compose_manager_deployment_image_provenance,
+    ComposeManagerDeploymentImageProvenanceOptions, ComposeManagerImagePolicy,
+};
 pub use deployment_provenance::{
-    verify_deployment_image_provenance, verify_deployment_image_provenance_with_signer_identities,
+    verify_deployment_image_provenance, verify_deployment_image_provenance_with_options,
+    verify_deployment_image_provenance_with_signer_identities, DeploymentImageProvenanceOptions,
 };
 pub use errors::{ApiError, ApiResource, ApiTransportReason, InferenceError, VerificationError};
 pub use gateway::verify_gateway_attestation;
 pub use model::verify_model_attestation;
 pub use nvidia::{NrasGpuEvidenceVerifier, DEFAULT_NVIDIA_JWKS_URL, DEFAULT_NVIDIA_NRAS_URL};
 pub use provenance::{
-    fetch_image_provenance, verify_image_provenance, verify_image_provenance_with_signer_identity,
+    fetch_image_provenance, fetch_image_provenance_with_options, verify_image_provenance,
+    verify_image_provenance_with_signer_identity, ImageProvenanceFetchOptions,
 };
 pub use quote::{verify_tdx_quote, DefaultTdxQuoteVerifier, DEFAULT_INTEL_PCCS_URL};
 pub use response::{verify_gateway_response, verify_model_response};
@@ -49,9 +61,10 @@ mod ohttp;
 mod sse;
 pub use direct::{
     verify_direct_model_attestation, verify_direct_model_attestations,
-    verify_direct_model_response, DirectAttestationClient, DirectAttestationVerificationResult,
-    DirectClientBinding, DirectInferenceClient, DirectInferenceClientOptions,
-    DirectModelAttestation, FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
+    verify_direct_model_attestations_with_serving_deployment, verify_direct_model_response,
+    DirectAttestationClient, DirectAttestationVerificationResult, DirectClientBinding,
+    DirectInferenceClient, DirectInferenceClientOptions, DirectModelAttestation,
+    FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
 };
 pub use inference::{
     AttestationVerificationResult, ByteStream, DeploymentPolicy, GatewayVerificationOptions,

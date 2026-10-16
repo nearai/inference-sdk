@@ -32,6 +32,18 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	if out.ServingAttestation.SPKIFingerprint != "" && !sameHex(out.ServingAttestation.SPKIFingerprint, fetched.ClientBinding.SPKIFingerprint) {
 		return VerifiedDirectModelAttestations{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
+	if o.ServingDeployment != nil {
+		if err := o.ServingDeployment(ctx, out.ServingAttestation.Deployment); err != nil {
+			return VerifiedDirectModelAttestations{}, failure("provenance.verification_failed", err)
+		}
+		out.ServingAttestation.DeploymentProvenance = "verified"
+		out.Attestations[serving] = out.ServingAttestation
+		if out.ServingAttestation.SPKIFingerprint != "" {
+			out.SPKIFingerprints = []string{out.ServingAttestation.SPKIFingerprint}
+		} else {
+			out.SPKIFingerprints = nil
+		}
+	}
 	return out, nil
 }
 

@@ -48,7 +48,7 @@ pub async fn verify_gateway_attestation(
             )?;
             crate::types::GatewayTlsBinding::None
         };
-    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
+    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment, None).await?;
     Ok(VerifiedGatewayAttestation {
         evidence,
         tls_binding,

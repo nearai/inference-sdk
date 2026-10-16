@@ -213,6 +213,67 @@ the same signer. Select it from the verified preflight results with
 
 ## Image build provenance
 
+### Compose Manager deployment images
+
+Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+
+`verify_compose_manager_deployment_image_provenance(deployment, image_policies, manager_image_policy, options)`
+returns `Result<(), VerificationError>`. Use in a model deployment callback or
+after verification. It requires authenticated manager evidence, selects the latest
+matching `compose_up`, verifies the recorded file's exact hash, and checks the
+required images in the action's selected services. Independently, the latest
+manager-start image must satisfy the required `manager_image_policy`. It does not
+prove action success, current runtime state or a unique CVM identity.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `deployment` | `&MeasuredDeployment` | Verified deployment containing `compose_manager`. |
+| `image_policies` | `&BTreeMap<String, ImageProvenancePolicy>` | Nonempty required image repositories and approved builds. |
+| `manager_image_policy` | `&ComposeManagerImagePolicy` | Required `image_repository`, `build` policy, and optional `signer_identity` for the latest startup image. |
+| `options` | `ComposeManagerDeploymentImageProvenanceOptions<'_>` | File selection and GitHub access; accepts `Default::default()`. |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `compose_repository` | `&str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `Option<&str>` | `None` | Exact file path to select; otherwise latest `compose_up` overall. |
+| `github_token` | `Option<&str>` | `None` | Optional GitHub token for file/proof retrieval. |
+| `github_proxy_url` | `Option<&str>` | `None` | Absolute HTTP(S) API base; GitHub tokens are never sent to proxies. |
+| `image_signer_identities` | `Option<&BTreeMap<String, String>>` | `None` | Reusable-workflow identities keyed by exact image-policy names. |
+
+`ModelAttestation.compose_manager_attestation` optionally contains raw
+`ComposeManagerAttestation`: `actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`. When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `Option<VerifiedComposeManagerAttestation>`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `Vec<ComposeManagerAction>` | Quote-authenticated actions; unknown string/string-array fields are retained in `extra`. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `Vec<String>` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
+also supports `github_token` and `github_proxy_url`.
+Each GitHub or proxy response page is limited to 16 MiB before JSON decoding,
+including responses without `Content-Length`. An entire fetch is limited to 32
+pages and 64 MiB of cumulative response bytes. Byte overflow fails with
+non-retryable `api.body_too_large`; exceeding the page count fails with
+`api.invalid_response`. No partial bundles are returned on either failure.
+`verify_deployment_image_provenance_with_options` accepts
+`DeploymentImageProvenanceOptions` with those fields and optional
+`image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
+same API origin and artifact path. Redirects are rejected.
+
+For direct evidence, nested `all_attestations` manager fields are discarded.
+`verify_direct_model_attestations_with_serving_deployment` accepts the same first
+three arguments as `verify_direct_model_attestations`, followed by an optional
+`&dyn DeploymentVerifier`. The integrated equivalent is
+`ModelVerificationOptions.serving_deployment`. It runs after all reports and the
+serving TLS binding pass, marks only the serving report's provenance, and restricts
+routing, TLS pins and receipt attribution to that report.
+
+### Measured compose and individual image helpers
+
 These functions are asynchronous. The low-level functions separate retrieval
 from verification; the deployment helper combines them for required images.
 
