@@ -4,7 +4,11 @@ import type { SystemOneResponseSchema } from '../schemas';
 /** Text or structured JSON passed through to the decision model. */
 export type SystemOneContent = string | object;
 
-export type SystemOneQuestion =
+export type SystemOneQuestion<
+  Choices extends Readonly<
+    Record<keyof Choices, SystemOneContent | null>
+  > = Readonly<Record<string, SystemOneContent | null>>,
+> =
   | {
       readonly type: 'noul';
       readonly instructions: SystemOneContent;
@@ -16,7 +20,7 @@ export type SystemOneQuestion =
   | {
       readonly type: 'choice';
       readonly instructions: SystemOneContent;
-      readonly criteria: Readonly<Record<string, SystemOneContent | null>>;
+      readonly criteria: Choices;
     }
   | {
       readonly type: 'score';
@@ -24,11 +28,31 @@ export type SystemOneQuestion =
       readonly criteria: readonly SystemOneContent[];
     };
 
+/** Validate the named questions without requiring a string index signature. */
+export type SystemOneQuestions<Questions> = {
+  readonly [Name in keyof Questions as Name]: SystemOneQuestion<
+    Readonly<
+      Record<
+        Questions[Name] extends {
+          readonly criteria: infer Choices extends object;
+        }
+          ? keyof Choices
+          : string,
+        SystemOneContent | null
+      >
+    >
+  >;
+};
+
 /** Text or structured context for a decision. */
-export type SystemOneRequest = {
+export type SystemOneRequest<
+  Questions extends object & SystemOneQuestions<Questions> = Readonly<
+    Record<string, SystemOneQuestion>
+  >,
+> = {
   readonly model: string;
   readonly state: SystemOneContent;
-  readonly questions: Readonly<Record<string, SystemOneQuestion>>;
+  readonly questions: Questions;
 };
 
 export type SystemOneResponse = v.InferOutput<typeof SystemOneResponseSchema>;
@@ -47,8 +71,10 @@ export type SystemOneResult = {
 };
 
 export type InferenceSystemOne = {
-  readonly create: (
-    request: SystemOneRequest,
+  readonly create: <
+    const Questions extends object & SystemOneQuestions<Questions>,
+  >(
+    request: SystemOneRequest<Questions>,
     options?: SystemOneRequestOptions,
   ) => Promise<SystemOneResult>;
 };

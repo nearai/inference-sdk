@@ -6,6 +6,7 @@ import {
 } from '../schemas';
 import type { VerifiedCompletionResult } from '../types/inference-client';
 import type {
+  SystemOneQuestions,
   SystemOneRequest,
   SystemOneRequestOptions,
   SystemOneResponse,
@@ -19,8 +20,10 @@ import type {
   VerifyCapturedResponseParams,
 } from './inference-client';
 
-type CreateSystemOneParams = {
-  readonly request: SystemOneRequest;
+type CreateSystemOneParams<
+  Questions extends object & SystemOneQuestions<Questions>,
+> = {
+  readonly request: SystemOneRequest<Questions>;
   readonly options?: SystemOneRequestOptions;
   readonly baseUrl: string;
   readonly encryptionEnabled: boolean;
@@ -35,7 +38,9 @@ type CreateSystemOneParams = {
 };
 
 /** Send once and retain exact bytes for the client's ordinary verifyResponse API. */
-export async function createSystemOne({
+export async function createSystemOne<
+  Questions extends object & SystemOneQuestions<Questions>,
+>({
   request,
   options,
   baseUrl,
@@ -44,7 +49,7 @@ export async function createSystemOne({
   headers,
   getSession,
   registerResponse,
-}: CreateSystemOneParams): Promise<SystemOneResult> {
+}: CreateSystemOneParams<Questions>): Promise<SystemOneResult> {
   if (encryptionEnabled)
     throw invalidInput('System One requires e2ee: false and ohttp: false');
   if ('stream' in request)
