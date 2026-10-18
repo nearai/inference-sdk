@@ -245,15 +245,25 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	for _, entry := range entries {
+		if c.direct {
+			// Only the serving envelope supplies manager evidence. Discard nested
+			// payloads before typed decoding, including unsupported future shapes.
+			var nested map[string]json.RawMessage
+			if e = json.Unmarshal(entry, &nested); e != nil || nested == nil {
+				return out, failure("api.invalid_response", e)
+			}
+			delete(nested, "compose_manager_attestation")
+			entry, e = json.Marshal(nested)
+			if e != nil {
+				return out, failure("api.invalid_response", e)
+			}
+		}
 		a, e := decodeAttestation(entry)
 		if e != nil {
 			return out, e
 		}
 		if !sameHex(a.Nonce, n) || a.SPKIFingerprint != "" || (c.direct && a.ModelName == "") {
 			return out, failure("api.invalid_response", nil)
-		}
-		if c.direct {
-			a.ComposeManagerAttestation = nil
 		}
 		out.Attestations = append(out.Attestations, a)
 	}

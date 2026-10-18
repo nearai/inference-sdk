@@ -91,9 +91,14 @@ impl DirectAttestationClient {
         let mut attestations = reports
             .iter()
             .map(|value| {
-                let mut report = decode(value)?;
-                report.attestation.compose_manager_attestation = None;
-                Ok(report)
+                // Only the serving envelope supplies manager evidence. Ignore
+                // nested payloads before decoding even if their shape is unknown.
+                let mut value = value.clone();
+                value
+                    .as_object_mut()
+                    .ok_or_else(|| invalid("all_attestations"))?
+                    .remove("compose_manager_attestation");
+                decode(&value)
             })
             .collect::<Result<Vec<_>, ApiError>>()?;
         let mut bare = serving.clone();

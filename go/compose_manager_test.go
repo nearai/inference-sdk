@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -175,6 +177,59 @@ func TestDirectManagerEvidenceOnlyComesFromEnvelope(t *testing.T) {
 	}
 	if result.ServingAttestation.ComposeManagerAttestation != nil || result.Attestations[0].ComposeManagerAttestation != nil {
 		t.Fatal("nested evidence was promoted")
+	}
+}
+
+func TestDirectDiscardsMalformedNestedManagerEvidenceBeforeDecoding(t *testing.T) {
+	f := loadManagerFixture(t)
+	for name, nestedManager := range map[string]any{
+		"future action field": map[string]any{"actions": []any{map[string]any{"action": "future", "timestamp": "now", "version": 2}}},
+		"wrong type":          "future format",
+		"missing fields":      map[string]any{},
+	} {
+		for _, envelope := range []string{"absent", "valid", "invalid"} {
+			t.Run(name+"/"+envelope, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					nonce := r.URL.Query().Get("nonce")
+					report := map[string]any{"model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519", "signing_address": strings.Repeat("aa", 32), "intel_quote": "bb", "event_log": []any{}, "info": map[string]any{"tcb_info": map[string]any{"app_compose": "{}"}}}
+					nested := maps.Clone(report)
+					nested["compose_manager_attestation"] = nestedManager
+					other := maps.Clone(nested)
+					other["signing_address"] = strings.Repeat("dd", 32)
+					report["all_attestations"] = []any{nested, other}
+					if envelope == "valid" {
+						report["compose_manager_attestation"] = ComposeManagerAttestation{Actions: f.Actions, ActionsHash: f.ActionsHash, Nonce: nonce, IntelQuote: "cc", EventLog: json.RawMessage(`[]`)}
+					} else if envelope == "invalid" {
+						report["compose_manager_attestation"] = nestedManager
+					}
+					json.NewEncoder(w).Encode(report)
+				}))
+				defer server.Close()
+				client, err := NewDirectAttestationClient(ClientOptions{BaseURL: server.URL})
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := client.FetchModelAttestations(context.Background(), "test", FetchOptions{})
+				if envelope == "invalid" {
+					requireCode(t, err, "api.invalid_response")
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(result.Attestations) != 2 || result.Attestations[1].ComposeManagerAttestation != nil {
+					t.Fatal("non-serving evidence was retained")
+				}
+				manager := result.ServingAttestation.ComposeManagerAttestation
+				if envelope == "valid" {
+					if manager == nil || !reflect.DeepEqual(manager.Actions, f.Actions) || result.Attestations[0].ComposeManagerAttestation != manager {
+						t.Fatal("envelope manager evidence was not preserved")
+					}
+				} else if manager != nil || result.Attestations[0].ComposeManagerAttestation != nil {
+					t.Fatal("nested evidence was promoted")
+				}
+			})
+		}
 	}
 }
 

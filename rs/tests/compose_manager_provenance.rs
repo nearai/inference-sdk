@@ -336,6 +336,71 @@ async fn direct_decoder_never_promotes_nested_manager_evidence() {
 }
 
 #[tokio::test]
+async fn direct_discards_malformed_nested_manager_evidence_before_decoding() {
+    use wiremock::{matchers::method, Mock, MockServer, Request, ResponseTemplate};
+    for nested_manager in [
+        json!({"actions": [{"action": "future", "timestamp": "now", "version": 2}]}),
+        json!("future format"),
+        json!({}),
+    ] {
+        for envelope in ["absent", "valid", "invalid"] {
+            let server = MockServer::start().await;
+            let nested_manager = nested_manager.clone();
+            Mock::given(method("GET"))
+                .respond_with(move |request: &Request| {
+                    let nonce = request.url.query_pairs().find(|(key, _)| key == "nonce").unwrap().1.into_owned();
+                    let fixture: Value = serde_json::from_str(FIXTURE).unwrap();
+                    let mut report = json!({"model_name":"test","request_nonce":nonce,"signing_algo":"ed25519","signing_address":"aa".repeat(32),"intel_quote":"bb","event_log":[],"info":{"tcb_info":{"app_compose":"{}"}}});
+                    let mut nested = report.clone();
+                    nested["compose_manager_attestation"] = nested_manager.clone();
+                    let mut other = nested.clone();
+                    other["signing_address"] = json!("dd".repeat(32));
+                    report["all_attestations"] = json!([nested, other]);
+                    if envelope == "valid" {
+                        report["compose_manager_attestation"] = json!({"actions":fixture["actions"],"actions_hash":fixture["actions_hash"],"nonce":nonce,"quote":"cc","event_log":[]});
+                    } else if envelope == "invalid" {
+                        report["compose_manager_attestation"] = nested_manager.clone();
+                    }
+                    ResponseTemplate::new(200).set_body_json(report)
+                })
+                .mount(&server)
+                .await;
+            let client =
+                nearai_inference_sdk::DirectAttestationClient::new(&server.uri(), None).unwrap();
+            let result = client.fetch_model_attestations(None, None).await;
+            if envelope == "invalid" {
+                assert!(matches!(
+                    result,
+                    Err(nearai_inference_sdk::ApiError::InvalidResponse { .. })
+                ));
+                continue;
+            }
+            let result = result.unwrap();
+            assert_eq!(result.attestations.len(), 2);
+            assert!(result.attestations[1]
+                .attestation
+                .compose_manager_attestation
+                .is_none());
+            let manager = &result
+                .serving_attestation
+                .attestation
+                .compose_manager_attestation;
+            assert_eq!(
+                manager,
+                &result.attestations[0]
+                    .attestation
+                    .compose_manager_attestation
+            );
+            if envelope == "valid" {
+                assert_eq!(manager.as_ref().unwrap().actions, manager_report().actions);
+            } else {
+                assert!(manager.is_none());
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn rejects_oversized_compose_before_hashing_or_image_proofs() {
     use wiremock::{matchers::method, Mock, MockServer, ResponseTemplate};
     for chunked in [false, true] {
