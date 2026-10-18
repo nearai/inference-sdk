@@ -175,12 +175,7 @@ func (c *InferenceClient) Close() error {
 
 func cloneAttestation(a VerifiedAttestation) VerifiedAttestation {
 	a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
-	if a.Deployment.ComposeManager != nil {
-		data, _ := json.Marshal(a.Deployment.ComposeManager)
-		var manager VerifiedComposeManagerAttestation
-		_ = json.Unmarshal(data, &manager)
-		a.Deployment.ComposeManager = &manager
-	}
+	a.Deployment = cloneDeployment(a.Deployment)
 	return a
 }
 
@@ -276,11 +271,11 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	if o.DeploymentPolicy != nil {
 		opts.DeploymentVerifier = func(ctx context.Context, d MeasuredDeployment) error {
 			if original != nil {
-				if e := original(ctx, d); e != nil {
+				if e := original(ctx, cloneDeployment(d)); e != nil {
 					return e
 				}
 			}
-			return o.DeploymentPolicy(ctx, model, d)
+			return o.DeploymentPolicy(ctx, model, cloneDeployment(d))
 		}
 	}
 	var models FetchedModelAttestations
@@ -399,7 +394,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, failure("api.invalid_response", nil)
 		}
 		serving := s.result.Models[servingIndex]
-		if err := opts.ServingDeployment(ctx, serving.Deployment); err != nil {
+		if err := opts.ServingDeployment(ctx, cloneDeployment(serving.Deployment)); err != nil {
 			return nil, failure("provenance.verification_failed", err)
 		}
 		serving.DeploymentProvenance = "verified"

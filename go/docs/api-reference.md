@@ -461,6 +461,9 @@ bounded to 1 MiB and at most 32 informational responses precede the final respon
 `DeploymentPolicy(ctx, model, deployment)` runs after the model's configured
 `DeploymentVerifier`. Verification alone does not approve a publisher, image,
 measurement or release version. Supply policies for those decisions.
+Each deployment callback, including `ServingDeployment`, receives an independent
+copy of the verified Compose Manager evidence. Mutating or retaining that copy
+cannot change later callbacks, returned verification results, or cached receipts.
 
 `VerifyDeploymentImageProvenance` selects digest-pinned images from measured
 app-compose JSON's `docker_compose_file`. Every configured image repository must

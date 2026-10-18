@@ -31,6 +31,17 @@ type VerifiedComposeManagerAttestation struct {
 	RuntimeMeasurements RuntimeMeasurements
 }
 
+// cloneDeployment isolates verified manager evidence at callback and result boundaries.
+func cloneDeployment(deployment MeasuredDeployment) MeasuredDeployment {
+	if deployment.ComposeManager != nil {
+		data, _ := json.Marshal(deployment.ComposeManager)
+		var manager VerifiedComposeManagerAttestation
+		_ = json.Unmarshal(data, &manager)
+		deployment.ComposeManager = &manager
+	}
+	return deployment
+}
+
 func (a *ComposeManagerAction) UnmarshalJSON(raw []byte) error {
 	var fields map[string]any
 	if err := json.Unmarshal(raw, &fields); err != nil {

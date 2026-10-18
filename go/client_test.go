@@ -89,7 +89,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
 		}
-		if f.a.ComposeManagerAttestation != nil && r.URL.Query().Get("model") != "" {
+		if f.a.ComposeManagerAttestation != nil && (f.direct || r.URL.Query().Get("model") != "") {
 			manager := *f.a.ComposeManagerAttestation
 			manager.Nonce = n
 			managerQuote := q
@@ -328,6 +328,102 @@ func TestProviderReceiptManagerEvidenceDoesNotAliasCachedResults(t *testing.T) {
 	}
 	if f.signatureCalls.Load() != 1 || f.attestations.Load() != 2 {
 		t.Fatal("expected cached receipt and session results")
+	}
+}
+
+func TestClientDeploymentCallbacksPreserveCachedManagerEvidence(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		t.Run(itoa(boolInt(direct)), func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee = true
+			f.direct = direct
+			f.q.AdvisoryIDs = []string{"original-advisory"}
+			fixture := loadManagerFixture(t)
+			f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
+			server := httptest.NewServer(f)
+			defer server.Close()
+			var expected []byte
+			var retained []*VerifiedComposeManagerAttestation
+			var calls []string
+			check := func(deployment MeasuredDeployment) {
+				t.Helper()
+				actual, err := json.Marshal(deployment)
+				if err != nil {
+					t.Error(err)
+				}
+				if !bytes.Equal(actual, expected) {
+					t.Error("callback mutation changed evidence received by another callback or caller")
+				}
+			}
+			callback := func(name string) DeploymentVerifier {
+				return func(_ context.Context, deployment MeasuredDeployment) error {
+					if len(calls) == 0 {
+						expected, _ = json.Marshal(deployment)
+						if !reflect.DeepEqual(deployment.ComposeManager.Actions, fixture.Actions) {
+							t.Error("callback did not receive authenticated actions")
+						}
+					}
+					check(deployment)
+					calls = append(calls, name)
+					retained = append(retained, deployment.ComposeManager)
+					mutateManagerEvidence(deployment.ComposeManager, name)
+					return nil
+				}
+			}
+			policy := callback("policy")
+			opts := InferenceOptions{
+				ClientOptions:       ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+				DisableTLSBinding:   true,
+				GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+				ModelVerification:   VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: callback("verifier")},
+				DeploymentPolicy: func(ctx context.Context, model string, deployment MeasuredDeployment) error {
+					if model != "canonical/model" {
+						t.Error("wrong policy model")
+					}
+					return policy(ctx, deployment)
+				},
+			}
+			var client *InferenceClient
+			var err error
+			wantCalls := []string{"verifier", "policy"}
+			if direct {
+				opts.ModelVerification.ServingDeployment = callback("serving")
+				client, err = NewDirectInferenceClient(DirectInferenceOptions{InferenceOptions: opts})
+				wantCalls = append(wantCalls, "serving")
+			} else {
+				client, err = NewInferenceClient(opts)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			ctx := context.Background()
+			if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+				t.Fatal(err)
+			}
+			for _, manager := range retained {
+				mutateManagerEvidence(manager, "after verification")
+			}
+			for range 2 {
+				verified, err := client.Verify(ctx, "canonical/model")
+				if err != nil {
+					t.Fatal(err)
+				}
+				check(verified.Models[0].Deployment)
+				receipt, err := client.VerifyResponse(ctx, "chat-1")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if direct {
+					check(receipt.Attestations[0].Deployment)
+				} else {
+					check(receipt.Attestation.Deployment)
+				}
+			}
+			if !reflect.DeepEqual(calls, wantCalls) || f.signatureCalls.Load() != 1 {
+				t.Fatal("callback order or receipt caching changed", calls)
+			}
+		})
 	}
 }
 func TestClientRejectsTamperingAndUnsupportedPrivacy(t *testing.T) {

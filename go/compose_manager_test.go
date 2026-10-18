@@ -79,6 +79,84 @@ func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 	}
 }
 
+func mutateManagerEvidence(manager *VerifiedComposeManagerAttestation, value string) {
+	manager.Actions[0]["tag"] = value
+	manager.Actions[0]["services"].([]string)[0] = value
+	manager.AdvisoryIDs[0] = value
+	manager.RuntimeMeasurements.ComposeHash = value
+	manager.TCBStatus = value
+}
+
+func TestManagerDeploymentCallbacksReceiveIsolatedEvidence(t *testing.T) {
+	for _, mode := range []string{"model", "direct model", "direct serving"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := loadManagerFixture(t)
+			a, q, _ := attestationFixture(t, Ed25519)
+			a.ModelName = "canonical/model"
+			managerQuote := q
+			managerQuote.AdvisoryIDs = []string{"original-advisory"}
+			managerQuote.ReportData = bytes.Clone(q.ReportData)
+			hash, _ := hex.DecodeString(fixture.ActionsHash)
+			copy(managerQuote.ReportData, hash)
+			a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, Nonce: a.Nonce, IntelQuote: "bb", EventLog: a.EventLog}
+			opts := VerificationOptions{QuoteVerifier: func(_ context.Context, raw string) (QuoteVerificationResult, error) {
+				if raw == "bb" {
+					return managerQuote, nil
+				}
+				return q, nil
+			}}
+			ctx := context.Background()
+			binding := ClientBinding{Nonce: a.Nonce}
+			baseline, err := VerifyModelAttestation(ctx, a, binding, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var retained *VerifiedComposeManagerAttestation
+			callback := func(_ context.Context, deployment MeasuredDeployment) error {
+				if !reflect.DeepEqual(deployment, baseline.Deployment) {
+					t.Error("callback did not receive the verified evidence")
+				}
+				retained = deployment.ComposeManager
+				mutateManagerEvidence(retained, "during callback")
+				return nil
+			}
+			var results []VerifiedAttestation
+			if mode == "direct serving" {
+				opts.ServingDeployment = callback
+				value, e := VerifyDirectModelAttestations(ctx, FetchedModelAttestations{Attestations: []Attestation{a}, ServingAttestation: &a, ClientBinding: binding}, opts)
+				err = e
+				results = append(value.Attestations, value.ServingAttestation)
+			} else {
+				opts.DeploymentVerifier = callback
+				verify := VerifyModelAttestation
+				if mode == "direct model" {
+					verify = VerifyDirectModelAttestation
+				}
+				value, e := verify(ctx, a, binding, opts)
+				err = e
+				results = []VerifiedAttestation{value}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if retained == nil {
+				t.Fatal("callback was not invoked")
+			}
+			for _, value := range results {
+				if value.DeploymentProvenance != "verified" || !reflect.DeepEqual(value.Deployment, baseline.Deployment) {
+					t.Error("callback mutation changed returned verified evidence")
+				}
+			}
+			mutateManagerEvidence(retained, "after return")
+			for _, value := range results {
+				if !reflect.DeepEqual(value.Deployment, baseline.Deployment) {
+					t.Error("retained callback input aliases returned evidence")
+				}
+			}
+		})
+	}
+}
+
 func TestManagerImagePolicyAndProxy(t *testing.T) {
 	f := loadManagerFixture(t)
 	bundle, e := os.ReadFile("../test-fixtures/provenance/compose-manager-launcher.bundle.json")
