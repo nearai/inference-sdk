@@ -23,9 +23,11 @@ type ImageProvenancePolicy struct{ Repository, Workflow, Ref, Commit, SignerIden
 type VerifiedImageProvenance struct{ Digest, Repository, Workflow, Ref, Commit, CertificateIdentity, Issuer, PredicateType string }
 
 const (
-	maxProvenancePageBytes  = 16 << 20
-	maxProvenanceTotalBytes = 64 << 20
-	maxProvenancePages      = 32
+	maxProvenancePageBytes   = 16 << 20
+	maxProvenanceTotalBytes  = 64 << 20
+	maxProvenancePages       = 32
+	maxProvenanceLinkBytes   = 8 << 10
+	maxProvenanceCursorBytes = 4 << 10
 )
 
 // ProvenanceOptions permits an offline, caller-trusted Sigstore root. Nil selects
@@ -124,7 +126,18 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 			bundles = append(bundles, item.Bundle)
 		}
 		next := ""
-		for _, link := range strings.Split(strings.Join(res.Header.Values("Link"), ","), ",") {
+		links := res.Header.Values("Link")
+		linkBytes := 0
+		for i, link := range links {
+			if i > 0 {
+				linkBytes++ // Count the separator inserted by Join, even for empty values.
+			}
+			if len(link) > maxProvenanceLinkBytes-linkBytes {
+				return nil, failure("api.invalid_response", fmt.Errorf("provenance Link header limit exceeded"))
+			}
+			linkBytes += len(link)
+		}
+		for _, link := range strings.Split(strings.Join(links, ","), ",") {
 			parts := strings.Split(link, ";")
 			isNext := false
 			for _, p := range parts[1:] {
@@ -162,7 +175,11 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 			if count != 1 || next != "" {
 				return nil, failure("api.invalid_response", nil)
 			}
-			next = base + "&" + cursor.Encode()
+			encoded := cursor.Encode()
+			if len(encoded) > maxProvenanceCursorBytes {
+				return nil, failure("api.invalid_response", fmt.Errorf("provenance cursor limit exceeded"))
+			}
+			next = base + "&" + encoded
 		}
 		if next == "" {
 			return bundles, nil

@@ -21,6 +21,8 @@ const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROVENANCE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PROVENANCE_PAGES: usize = 32;
+const MAX_PROVENANCE_LINK_BYTES: usize = 8 * 1024;
+const MAX_PROVENANCE_CURSOR_BYTES: usize = 4 * 1024;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
 const SOURCE_REPOSITORY_URI: ObjectIdentifier =
@@ -186,6 +188,19 @@ async fn read_provenance_body(
 }
 
 fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, ApiError> {
+    // Check every field before parsing or returning the first next link.
+    let mut link_bytes = 0;
+    for (index, header) in headers.get_all(reqwest::header::LINK).iter().enumerate() {
+        if index > 0 {
+            link_bytes += 1; // Include separators, even between empty values.
+        }
+        if link_bytes > MAX_PROVENANCE_LINK_BYTES
+            || header.as_bytes().len() > MAX_PROVENANCE_LINK_BYTES - link_bytes
+        {
+            return Err(pagination_error("provenance Link header limit exceeded"));
+        }
+        link_bytes += header.as_bytes().len();
+    }
     for header in headers.get_all(reqwest::header::LINK) {
         let header = header
             .to_str()
@@ -224,11 +239,14 @@ fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Opti
             }
             // Retain the caller's validated GitHub origin and attestation path;
             // only the cursor is taken from the server-supplied URL.
+            let cursor = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(&name, &value)
+                .finish();
+            if cursor.len() > MAX_PROVENANCE_CURSOR_BYTES {
+                return Err(pagination_error("provenance cursor limit exceeded"));
+            }
             let mut url = original_url.clone();
-            url.set_query(None);
-            url.query_pairs_mut()
-                .append_pair("per_page", "100")
-                .append_pair(&name, &value);
+            url.set_query(Some(&format!("per_page=100&{cursor}")));
             return Ok(Some(url));
         }
     }
@@ -1028,6 +1046,72 @@ mod tests {
                     expected_calls as usize
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn bounds_pagination_link_headers_and_reencoded_cursors() {
+        let link = |query: &str| format!("<https://example.test/?{query}>; rel=\"next\"");
+        let next = link("after=next");
+        for (links, valid) in [
+            (
+                vec![format!(
+                    "{}; title=\"{}\"",
+                    next,
+                    "x".repeat(8192 - next.len() - 10)
+                )],
+                true,
+            ),
+            (
+                vec![format!(
+                    "{}; title=\"{}\"",
+                    next,
+                    "x".repeat(8193 - next.len() - 10)
+                )],
+                false,
+            ),
+            (vec![next.clone(), "x".repeat(8192 - next.len() - 1)], true),
+            (vec![next.clone(), "x".repeat(8193 - next.len() - 1)], false),
+            (vec![link(&format!("after={}", "x".repeat(4096 - 6)))], true),
+            (
+                vec![link(&format!("after={}", "x".repeat(4097 - 6)))],
+                false,
+            ),
+            (vec![link(&format!("after={}x", "!".repeat(1363)))], true),
+            (vec![link(&format!("after={}", "!".repeat(1364)))], false),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(move |request: &wiremock::Request| {
+                    let mut response = ResponseTemplate::new(200).set_body_raw(
+                        r#"{"attestations":[{"bundle":{"ok":true}}]}"#,
+                        "application/json",
+                    );
+                    if !request.url.query_pairs().any(|(name, _)| name == "after") {
+                        for value in &links {
+                            response = response.append_header("Link", value);
+                        }
+                    }
+                    response
+                })
+                .expect(if valid { 2 } else { 1 })
+                .mount(&server)
+                .await;
+            let client = Client::builder().no_proxy().build().unwrap();
+            let result =
+                fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                    .await;
+            if valid {
+                assert_eq!(result.unwrap().len(), 2);
+            } else {
+                assert!(
+                    matches!(result, Err(ApiError::InvalidResponse { path, .. }) if path == "Link")
+                );
+            }
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                if valid { 2 } else { 1 }
+            );
         }
     }
 

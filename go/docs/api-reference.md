@@ -471,7 +471,11 @@ and malformed Compose are rejected before fetching evidence.
 Each page is limited to 16 MiB; a complete fetch is limited to 32 pages and
 64 MiB of cumulative response bytes, including responses without Content-Length.
 Byte overflow fails with `api.body_too_large`; the page cap fails with
-`api.invalid_response`. Both are non-retryable and return no partial bundles.
+`api.invalid_response`. Per page, combined `Link` values (including separators)
+are limited to 8 KiB and the re-encoded `before`/`after` query pair to 4 KiB.
+Exceeding either pagination-header limit fails with `api.invalid_response`
+before following the cursor. All limit failures are non-retryable and return
+no partial bundles.
 Pagination contributes only a cursor; supplied origins/paths and bundle URLs are
 never followed. `ProvenanceOptions.GitHubToken` is separate from the Gateway key.
 `VerifyImageProvenance` checks Sigstore signatures, certificate transparency,

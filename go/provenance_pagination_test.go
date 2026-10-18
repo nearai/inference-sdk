@@ -66,3 +66,47 @@ func TestProvenancePaginationLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestProvenancePaginationLinkLimits(t *testing.T) {
+	link := func(query string) string { return "<https://example.test/?" + query + ">; rel=\"next\"" }
+	next := link("after=next")
+	padding := func(size int) string { return strings.Repeat("x", size) }
+	for _, tc := range []struct {
+		name  string
+		links []string
+		valid bool
+	}{
+		{"exact Link bytes", []string{next + "; title=\"" + padding(8192-len(next)-10) + "\""}, true},
+		{"oversized Link", []string{next + "; title=\"" + padding(8193-len(next)-10) + "\""}, false},
+		{"exact combined Link bytes", []string{next, padding(8192 - len(next) - 1)}, true},
+		{"oversized combined Link bytes", []string{next, padding(8193 - len(next) - 1)}, false},
+		{"exact encoded cursor", []string{link("after=" + strings.Repeat("x", 4096-6))}, true},
+		{"oversized encoded cursor", []string{link("after=" + strings.Repeat("x", 4097-6))}, false},
+		{"exact reencoded cursor", []string{link("after=" + strings.Repeat("!", 1363) + "x")}, true},
+		{"oversized reencoded cursor", []string{link("after=" + strings.Repeat("!", 1364))}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					for _, value := range tc.links {
+						w.Header().Add("Link", value)
+					}
+				}
+				_, _ = w.Write([]byte(`{"attestations":[{"bundle":{"ok":true}}]}`))
+			}))
+			defer server.Close()
+			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL, HTTPClient: server.Client()})
+			if tc.valid {
+				if err != nil || len(bundles) != 2 || calls.Load() != 2 {
+					t.Fatalf("bundles=%d calls=%d error=%v", len(bundles), calls.Load(), err)
+				}
+			} else {
+				requireCode(t, err, "api.invalid_response")
+				if len(bundles) != 0 || calls.Load() != 1 {
+					t.Fatalf("bundles=%d calls=%d", len(bundles), calls.Load())
+				}
+			}
+		})
+	}
+}

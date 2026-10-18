@@ -258,7 +258,10 @@ Each GitHub or proxy response page is limited to 16 MiB before JSON decoding,
 including responses without `Content-Length`. An entire fetch is limited to 32
 pages and 64 MiB of cumulative response bytes. Byte overflow fails with
 non-retryable `api.body_too_large`; exceeding the page count fails with
-`api.invalid_response`. No partial bundles are returned on either failure.
+`api.invalid_response`. Per page, combined `Link` values (including separators)
+are limited to 8 KiB and the re-encoded `before`/`after` query pair to 4 KiB.
+Exceeding either pagination-header limit fails with `api.invalid_response`
+before following the cursor. No partial bundles are returned on failure.
 `verify_deployment_image_provenance_with_options` accepts
 `DeploymentImageProvenanceOptions` with those fields and optional
 `image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
