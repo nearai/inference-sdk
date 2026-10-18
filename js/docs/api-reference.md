@@ -735,6 +735,10 @@ Response records use the same `responseCacheTimeToLiveMs`, memoization, and
 receipt-retry behavior as Chat. Neither inference nor response-body failures
 trigger automatic inference retries. A later `verifyResponse(id)`
 can retry a transient or unavailable receipt lookup without repeating inference.
+System One send and response-body transport failures use
+`api.inference_transport_failed` with `retryable: false`. The existing
+`api.transport_failed` variant retains its `retryable: true` type contract for
+Chat and evidence operations.
 
 See the [guide](./verification-guide.md#system-one-decisions) for a complete call
 and the [runnable Jev example](../../examples/README.md#jev--system-one-typescript--nodejs).

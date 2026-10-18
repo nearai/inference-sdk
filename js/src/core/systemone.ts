@@ -93,7 +93,7 @@ export async function createSystemOne<
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.transport_failed',
+        code: 'api.inference_transport_failed',
         details: { resource: 'completion', reason: 'request' },
         retryable: false,
       },
@@ -102,7 +102,7 @@ export async function createSystemOne<
   }
   if (!response.ok) {
     // Error bodies may contain private state; do not retain them.
-    await response.body?.cancel();
+    await discardResponse(response);
     throw new ApiError({
       code: 'api.http_status',
       details: { resource: 'completion', status: response.status },
@@ -113,7 +113,7 @@ export async function createSystemOne<
     id: response.headers.get('x-generation-id'),
   });
   if (!parsedId.success) {
-    await response.body?.cancel();
+    await discardResponse(response);
     throw invalidResponse('System One X-Generation-Id');
   }
   const decisionId = parsedId.output.id;
@@ -124,7 +124,7 @@ export async function createSystemOne<
     options?.signal?.throwIfAborted();
     throw new ApiError(
       {
-        code: 'api.transport_failed',
+        code: 'api.inference_transport_failed',
         details: { resource: 'completion', reason: 'response_body' },
         retryable: false,
       },
@@ -149,6 +149,14 @@ export async function createSystemOne<
     session,
   });
   return { data, decisionId };
+}
+
+async function discardResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Cleanup must not replace the classified HTTP/response error.
+  }
 }
 
 function invalidInput(expected: string): ApiError {

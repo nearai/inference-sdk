@@ -3855,6 +3855,92 @@ describe('System One decisions', () => {
     },
   );
 
+  test.each(['request', 'response_body'] as const)(
+    'classifies a System One %s failure without making it retryable',
+    async (reason) => {
+      const fixture = decisionGateway();
+      const cause = new Error('connection reset');
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const response = await fixture.fetch(input, init);
+          if (url.endsWith('/systemone')) {
+            if (reason === 'request') throw cause;
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(cause);
+                },
+              }),
+              response,
+            );
+          }
+          return response;
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      await expect(
+        client.systemone.create(decisionRequest),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'api.inference_transport_failed',
+          details: { resource: 'completion', reason },
+          retryable: false,
+        },
+        retryable: false,
+        cause,
+      });
+      expect(fixture.requests).toHaveLength(1);
+      expect(fixture.signaturePaths).toHaveLength(0);
+    },
+  );
+
+  test.each([
+    { status: 400, missingId: false, code: 'api.http_status' },
+    { status: 200, missingId: true, code: 'api.invalid_response' },
+  ])('preserves $code when response cleanup fails', async (scenario) => {
+    for (const alreadyErrored of [false, true]) {
+      const fixture = decisionGateway(scenario);
+      const cause = new Error('response cleanup failed');
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          const response = await fixture.fetch(input, init);
+          if (url.endsWith('/systemone')) {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  if (alreadyErrored) controller.error(cause);
+                },
+                cancel() {
+                  return Promise.reject(cause);
+                },
+              }),
+              response,
+            );
+          }
+          return response;
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      await expect(
+        client.systemone.create(decisionRequest),
+      ).rejects.toMatchObject({
+        name: 'ApiError',
+        failure: { code: scenario.code },
+        retryable: false,
+      });
+      expect(fixture.requests).toHaveLength(1);
+      expect(fixture.signaturePaths).toHaveLength(0);
+    }
+  });
+
   test.each([
     { missingId: true },
     { decisionId: '' },
