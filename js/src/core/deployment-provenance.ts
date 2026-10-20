@@ -177,24 +177,33 @@ function selectRequiredImages({
       });
     }
     for (const { service, image } of references) {
-      const suffix = image.slice(repository.length);
-      const digest = /^(?::\w[\w.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$/.exec(
-        suffix,
-      )?.[1];
-      if (digest === undefined) {
-        throw new VerificationError({
-          code: 'provenance.deployment_images_invalid',
-          details: {
-            reason: 'image_not_pinned',
-            imageRepository: repository,
-            service,
-          },
-        });
-      }
-      requiredImages.push({ repository, digest: digest.toLowerCase(), policy });
+      const digest = requirePinnedImageDigest(image, repository, service);
+      requiredImages.push({ repository, digest, policy });
     }
   }
   return requiredImages;
+}
+
+export function requirePinnedImageDigest(
+  image: string,
+  repository: string,
+  service: string,
+): string {
+  const suffix = image.slice(repository.length);
+  const digest = /^(?::\w[\w.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$/.exec(
+    suffix,
+  )?.[1];
+  if (digest === undefined) {
+    throw new VerificationError({
+      code: 'provenance.deployment_images_invalid',
+      details: {
+        reason: 'image_not_pinned',
+        imageRepository: repository,
+        service,
+      },
+    });
+  }
+  return digest.toLowerCase();
 }
 
 function requireImagePolicies(

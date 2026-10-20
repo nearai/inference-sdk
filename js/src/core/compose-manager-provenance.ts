@@ -5,7 +5,10 @@ import type {
 } from '../types/compose-manager';
 import { sha256 } from '../utils/common';
 import { VerificationError } from '../utils/errors';
-import { verifyComposeImageProvenance } from './deployment-provenance';
+import {
+  requirePinnedImageDigest,
+  verifyComposeImageProvenance,
+} from './deployment-provenance';
 
 type FetchComposeFileParams = {
   repository: string;
@@ -61,6 +64,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
       !managerImage.startsWith(`${managerRepository}:`))
   )
     throw invalidDeployment('manager_image_mismatch');
+  requirePinnedImageDigest(managerImage, managerRepository, 'compose-manager');
   const { commit, file, file_sha256: digest } = action;
   if (
     commit === undefined ||

@@ -3,13 +3,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TrustedRootProvider } from '@freedomofpress/sigstore-browser';
 import {
-  verifyComposeManagerDeploymentImageProvenance,
-  verifyModelAttestation,
-  verifyDirectModelAttestations,
   type ComposeManagerAttestation,
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyDirectModelAttestations,
+  verifyModelAttestation,
 } from '../src';
-import type { VerifiedTdxQuote } from '../src/types/verification';
 import { decodeModelAttestationReport } from '../src/boundaries/cloud-api';
+import type { VerifiedTdxQuote } from '../src/types/verification';
 import {
   appCompose,
   createModelAttestation,
@@ -64,6 +64,55 @@ function managerQuote(report: ComposeManagerAttestation): VerifiedTdxQuote {
 
 describe('Compose Manager deployment image provenance', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  test.each([':latest', '@sha256:abcd', `:bad tag@sha256:${'aa'.repeat(32)}`])(
+    'rejects an unpinned manager image before any request: %s',
+    async (suffix) => {
+      const report = managerReport();
+      const verified = await verifyModelAttestation({
+        attestation: createModelAttestation({
+          composeManagerAttestation: report,
+        }),
+        clientBinding: { nonce },
+        verifiers: {
+          tdxQuote: (quote) =>
+            quote === 'bb' ? managerQuote(report) : createModelQuote(),
+        },
+      });
+      const manager = verified.deployment.composeManager;
+      if (manager === undefined) throw new Error('Missing manager evidence');
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Unexpected network request'));
+      await expect(
+        verifyComposeManagerDeploymentImageProvenance({
+          deployment: {
+            ...verified.deployment,
+            composeManager: {
+              ...manager,
+              actions: manager.actions.map((action) =>
+                action.action === 'compose_manager_started'
+                  ? {
+                      ...action,
+                      image: MANAGER_POLICY.imageRepository + suffix,
+                    }
+                  : action,
+              ),
+            },
+          },
+          imagePolicies: IMAGE_POLICIES,
+          managerImagePolicy: MANAGER_POLICY,
+          githubToken: 'test-github-token',
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'provenance.deployment_images_invalid',
+          details: { reason: 'image_not_pinned' },
+        },
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   test.each([undefined, 'https://app.example/verification/github'])(
     'verifies the signed log, compose bytes and image build with proxy %s',
