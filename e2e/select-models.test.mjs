@@ -97,3 +97,10 @@ test('decision models cannot satisfy Chat provider coverage', async t => {
 test('rejects an unknown language', async t => {
   await assert.rejects(runSelector(t, catalog, 'typo'), /Unknown E2E language/);
 });
+
+for (const separator of ['\n', '\r', '\r\n']) {
+  test(`rejects line breaks in decision model IDs (${JSON.stringify(separator)})`, async t => {
+    const models = [...catalog, model(`typesafe/cheap${separator}models=[]`, 'external', 0, true)];
+    await assert.rejects(runSelector(t, models), /Model IDs must not contain line breaks/);
+  });
+}

@@ -51,6 +51,7 @@ async function main() {
     );
     assert.ok(decisions.length > 0, 'Expected a hosted Jev decision model');
     systemoneModel = decisions[0].modelId;
+    assert.ok(!/[\r\n]/.test(systemoneModel), 'Model IDs must not contain line breaks');
   }
 
   const chatModels = models.filter(({ metadata }) => {
