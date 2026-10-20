@@ -112,7 +112,8 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat or System One response. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `VerifiedCompletionResult.id` | `string` | Chat completion ID or System One decision ID whose signature was verified. |
+| `VerifiedCompletionResult.completionId` | `string` | Chat completion ID or System One decision ID whose signature was verified. Preserved for existing Chat consumers. |
+| `VerifiedCompletionResult.id` | `string \| undefined` | Alias of `completionId`, always populated by SDK clients; optional in the public type for existing custom verifiers. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the selected Chat signer or a System One fleet signer. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
@@ -187,7 +188,8 @@ annotate application types; `create()` also infers question and choice maps.
 Attestation sessions are cached per model and endpoint, separately from Chat.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
 receipts expose every report matching the signer in `attestations`;
-`attestation` is the first matching report.
+`attestation` is the first matching report. The `attestations` property is optional
+in the public type for existing custom verifiers; SDK clients always populate it.
 
 Inference is sent once. Transport failures use `api.inference_transport_failed`.
 Retry transient receipt lookups with `verifyResponse(result.decisionId)` while

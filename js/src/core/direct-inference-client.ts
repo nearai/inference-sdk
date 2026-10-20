@@ -117,6 +117,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
         });
         return {
           id,
+          completionId: id,
           signatureKind: 'provider_tee',
           signature,
           attestations: matchingAttestations,

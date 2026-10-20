@@ -49,6 +49,8 @@ export async function createSystemOne<
 }: CreateSystemOneParams<Questions>): Promise<SystemOneResult> {
   if (encryptionEnabled)
     throw invalidInput('System One requires e2ee: false and ohttp: false');
+  if ('stream' in request)
+    throw invalidInput('System One does not support streaming');
   options?.signal?.throwIfAborted();
   const body = JSON.stringify(request);
   const session = await getSession(request.model);

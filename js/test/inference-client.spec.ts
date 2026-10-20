@@ -1215,6 +1215,7 @@ describe('inference client', () => {
       const verified = await inferenceClient.verifyResponse(completion.id);
 
       expect(verified.id).toBe(completion.id);
+      expect(verified.completionId).toBe(completion.id);
       for (const request of requests) {
         expect(request.headers.has('authorization')).toBe(false);
       }
@@ -3500,6 +3501,8 @@ describe('System One decisions', () => {
     const verified = await client.verifyResponse(result.decisionId);
     if (verified.signatureKind !== 'provider_tee')
       throw new Error('wrong signature kind');
+    if (verified.attestations === undefined)
+      throw new Error('missing signer group');
     expect(verified.attestations).toHaveLength(2);
     for (const report of verified.attestations) {
       expect(report.signer.signingAddress).toBe(keyHex(keyPair(3).publicKey));
@@ -3601,6 +3604,7 @@ describe('System One decisions', () => {
       result.data.model = 'caller-edited';
       const verified = await client.verifyResponse(result.decisionId);
       expect(verified.id).toBe(result.decisionId);
+      expect(verified.completionId).toBe(result.decisionId);
       expect(verified.signatureKind).toBe(tee ? 'provider_tee' : 'gateway');
       expect(verified.attestation.signer.signingAddress).toBe(
         keyHex(keyPair(tee ? 3 : 1).publicKey),
@@ -3938,6 +3942,20 @@ describe('System One decisions', () => {
       await expect(
         client.systemone.create(decisionRequest),
       ).rejects.toMatchObject({ failure: { code: 'api.invalid_input' } });
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([true, false])(
+    'rejects runtime stream=%s before preflight',
+    async (stream) => {
+      const fetch = jest.spyOn(globalThis, 'fetch');
+      const client = new InferenceClient({ baseUrl, apiKey: 'test-key' });
+      const request = { ...decisionRequest, stream };
+
+      await expect(client.systemone.create(request)).rejects.toMatchObject({
+        failure: { code: 'api.invalid_input' },
+      });
       expect(fetch).not.toHaveBeenCalled();
     },
   );

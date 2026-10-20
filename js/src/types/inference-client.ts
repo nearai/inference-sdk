@@ -139,18 +139,24 @@ export type AttestationVerificationResult = {
 
 /** A response signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionResult = {
-  readonly id: string;
+  /** Receipt lookup ID, retained for compatibility with Chat consumers. */
+  readonly completionId: string;
+  /** Alias populated by SDK clients; optional for existing custom verifiers. */
+  readonly id?: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
   /** Representative matching report; a shared signing key does not identify one CVM. */
   readonly attestation: VerifiedModelAttestation;
-  /** Every verified report matching the receipt signer, or the selected Chat report. */
-  readonly attestations: readonly VerifiedModelAttestation[];
+  /** SDK clients populate every matching report; optional for existing custom verifiers. */
+  readonly attestations?: readonly VerifiedModelAttestation[];
 };
 
 /** A response signature verified against the Gateway evidence used for the request. */
 export type VerifiedGatewayCompletionResult = {
-  readonly id: string;
+  /** Receipt lookup ID, retained for compatibility with Chat consumers. */
+  readonly completionId: string;
+  /** Alias populated by SDK clients; optional for existing custom verifiers. */
+  readonly id?: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
   readonly attestation: VerifiedGatewayAttestation;

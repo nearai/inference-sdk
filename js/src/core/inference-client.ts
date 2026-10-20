@@ -799,6 +799,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           });
           return {
             id,
+            completionId: id,
             signatureKind: 'provider_tee',
             signature,
             attestation: servingAttestation,
@@ -813,6 +814,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         });
         return {
           id,
+          completionId: id,
           signatureKind: 'gateway',
           signature,
           attestation: gatewayAttestation,
