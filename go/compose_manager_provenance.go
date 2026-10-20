@@ -59,7 +59,8 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	if repo == "" || (!strings.HasPrefix(normalized, repo+"@") && !strings.HasPrefix(normalized, repo+":")) {
 		return invalid("manager_image_mismatch")
 	}
-	if !pinnedImageSuffixPattern.MatchString(strings.TrimPrefix(normalized, repo)) {
+	managerPin := pinnedImageSuffixPattern.FindStringSubmatch(strings.TrimPrefix(normalized, repo))
+	if managerPin == nil {
 		return failure("provenance.deployment_images_invalid", nil)
 	}
 	repository := o.ComposeRepository
@@ -121,8 +122,8 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 		return detail("provenance.deployment_images_invalid", "reason", "invalid_docker_compose")
 	}
 	services, _ := action["services"].([]string)
-	if err = verifyComposeImages(ctx, string(body), policies, o.ProvenanceOptions, services, nil); err != nil {
+	if err = verifyComposeImages(ctx, string(body), policies, o.ProvenanceOptions, services); err != nil {
 		return err
 	}
-	return verifyComposeImages(ctx, "services: {}", map[string]ImageProvenancePolicy{repo: o.ManagerImagePolicy.Build}, o.ProvenanceOptions, nil, map[string]string{"compose-manager": image})
+	return verifyRequiredImage(ctx, strings.ToLower(managerPin[1]), o.ManagerImagePolicy.Build, o.ProvenanceOptions)
 }

@@ -1,7 +1,11 @@
 const MAX_COMPOSE_FILE_BYTES: usize = 8 * 1024 * 1024;
 
-use crate::deployment_provenance::{pinned_digest, verify_compose_image_provenance};
-use crate::{ImageProvenancePolicy, MeasuredDeployment, VerificationError};
+use crate::deployment_provenance::{
+    pinned_digest, verify_compose_image_provenance, verify_required_image_provenance,
+};
+use crate::{
+    ImageProvenanceFetchOptions, ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
 use std::collections::BTreeMap;
 
 /// File selection and GitHub access for Compose Manager image provenance.
@@ -86,13 +90,13 @@ pub async fn verify_compose_manager_deployment_image_provenance(
     {
         return Err(invalid("manager_image_mismatch"));
     }
-    if pinned_digest(&normalized[manager_repository.len()..]).is_none() {
-        return Err(VerificationError::DeploymentImagesInvalid {
+    let manager_digest = pinned_digest(&normalized[manager_repository.len()..])
+        .ok_or_else(|| VerificationError::DeploymentImagesInvalid {
             reason: crate::DeploymentImagesFailureReason::ImageNotPinned,
             image_repository: Some(manager_repository.to_owned()),
             service: Some("compose-manager".to_owned()),
-        });
-    }
+        })?
+        .to_ascii_lowercase();
     let (Some(commit), Some(file), Some(digest)) =
         (&action.commit, &action.file, &action.file_sha256)
     else {
@@ -189,27 +193,19 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         image_policies,
         options.image_signer_identities,
         options.github_token,
-        &[],
         action.services.as_deref(),
         options.github_proxy_url,
     )
     .await?;
-    let policies = BTreeMap::from([(
-        manager_repository.to_owned(),
-        manager_image_policy.build.clone(),
-    )]);
-    let identities = manager_image_policy
-        .signer_identity
-        .as_ref()
-        .map(|value| BTreeMap::from([(manager_repository.to_owned(), value.clone())]));
-    verify_compose_image_provenance(
-        "services: {}",
-        &policies,
-        identities.as_ref(),
-        options.github_token,
-        &[("compose-manager", manager_image)],
-        None,
-        options.github_proxy_url,
+    verify_required_image_provenance(
+        manager_repository,
+        &manager_digest,
+        &manager_image_policy.build,
+        manager_image_policy.signer_identity.as_deref(),
+        ImageProvenanceFetchOptions {
+            github_token: options.github_token,
+            github_proxy_url: options.github_proxy_url,
+        },
     )
     .await
 }

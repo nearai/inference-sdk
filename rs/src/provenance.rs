@@ -21,6 +21,7 @@ const RESOURCE: ApiResource = ApiResource::ImageProvenance;
 const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PROVENANCE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PROVENANCE_PAGES: usize = 32;
+const MAX_PROVENANCE_PAGE_ENTRIES: usize = 100;
 const MAX_PROVENANCE_LINK_BYTES: usize = 8 * 1024;
 const MAX_PROVENANCE_CURSOR_BYTES: usize = 4 * 1024;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
@@ -628,7 +629,45 @@ fn provenance_error(digest: &str, reasons: Vec<Reason>) -> VerificationError {
 
 #[derive(Deserialize)]
 struct GitHubAttestations {
+    #[serde(deserialize_with = "deserialize_attestations")]
     attestations: Vec<GitHubAttestation>,
+}
+
+fn deserialize_attestations<'de, D>(deserializer: D) -> Result<Vec<GitHubAttestation>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct AttestationsVisitor;
+    impl<'de> serde::de::Visitor<'de> for AttestationsVisitor {
+        type Value = Vec<GitHubAttestation>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_PROVENANCE_PAGE_ENTRIES} attestations"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut entries = Vec::new();
+            for _ in 0..MAX_PROVENANCE_PAGE_ENTRIES {
+                match sequence.next_element()? {
+                    Some(entry) => entries.push(entry),
+                    None => return Ok(entries),
+                }
+            }
+            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom(
+                    "provenance attestation count limit exceeded",
+                ));
+            }
+            Ok(entries)
+        }
+    }
+    deserializer.deserialize_seq(AttestationsVisitor)
 }
 
 #[derive(Deserialize)]
@@ -991,6 +1030,29 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(bundles, vec![r#"{"at_limit":true}"#]);
+    }
+
+    #[tokio::test]
+    async fn bounds_attestation_count_per_page() {
+        for count in [100, 101] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "attestations": vec![json!({"bundle": {}}); count]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = Client::builder().no_proxy().build().unwrap();
+            let result =
+                fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                    .await;
+            if count == 100 {
+                assert_eq!(result.unwrap().len(), count);
+            } else {
+                assert_eq!(result.unwrap_err().code(), "api.invalid_response");
+            }
+        }
     }
 
     #[tokio::test]

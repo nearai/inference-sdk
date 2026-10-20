@@ -110,3 +110,26 @@ func TestProvenancePaginationLinkLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestProvenanceAttestationCount(t *testing.T) {
+	for _, count := range []int{100, 101} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			body := `{"attestations":[` + strings.Repeat(`{"bundle":{}},`, count-1) + `{"bundle":{}}]}`
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL})
+			if count == 100 {
+				if err != nil || len(bundles) != count {
+					t.Fatalf("bundles=%d error=%v", len(bundles), err)
+				}
+			} else {
+				requireCode(t, err, "api.invalid_response")
+				if len(bundles) != 0 {
+					t.Fatal("returned partial provenance")
+				}
+			}
+		})
+	}
+}

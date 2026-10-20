@@ -1,6 +1,7 @@
 package nearai
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/asn1"
@@ -26,6 +27,7 @@ const (
 	maxProvenancePageBytes   = 16 << 20
 	maxProvenanceTotalBytes  = 64 << 20
 	maxProvenancePages       = 32
+	maxProvenancePageEntries = 100
 	maxProvenanceLinkBytes   = 8 << 10
 	maxProvenanceCursorBytes = 4 << 10
 )
@@ -113,9 +115,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		}
 		totalBytes += int64(len(raw))
 		var result struct {
-			Attestations *[]struct {
-				Bundle json.RawMessage `json:"bundle"`
-			} `json:"attestations"`
+			Attestations *provenanceAttestations `json:"attestations"`
 		}
 		if e = json.Unmarshal(raw, &result); e != nil || result.Attestations == nil {
 			return nil, failure("api.invalid_response", e)
@@ -187,6 +187,36 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		}
 		target = next
 	}
+}
+
+type provenanceAttestation struct {
+	Bundle json.RawMessage `json:"bundle"`
+}
+
+type provenanceAttestations []provenanceAttestation
+
+func (entries *provenanceAttestations) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token != json.Delim('[') {
+		return fmt.Errorf("attestations must be an array")
+	}
+	*entries = nil
+	for decoder.More() {
+		if len(*entries) >= maxProvenancePageEntries {
+			return fmt.Errorf("provenance attestation count limit exceeded")
+		}
+		var entry provenanceAttestation
+		if err := decoder.Decode(&entry); err != nil {
+			return err
+		}
+		*entries = append(*entries, entry)
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func VerifyImageProvenance(ctx context.Context, bundles []json.RawMessage, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) (VerifiedImageProvenance, error) {
@@ -384,10 +414,10 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 	if e := json.Unmarshal([]byte(appCompose), &app); e != nil || app.Compose == "" {
 		return failure("provenance.deployment_images_invalid", e)
 	}
-	return verifyComposeImages(ctx, app.Compose, policies, o, nil, nil)
+	return verifyComposeImages(ctx, app.Compose, policies, o, nil)
 }
 
-func verifyComposeImages(ctx context.Context, content string, policies map[string]ImageProvenancePolicy, o ProvenanceOptions, services []string, additional map[string]string) error {
+func verifyComposeImages(ctx context.Context, content string, policies map[string]ImageProvenancePolicy, o ProvenanceOptions, services []string) error {
 	if len(policies) == 0 {
 		return detail("provenance.deployment_images_invalid", "reason", "empty_policy")
 	}
@@ -422,9 +452,6 @@ func verifyComposeImages(ctx context.Context, content string, policies map[strin
 		}
 		images[name] = image
 	}
-	for name, image := range additional {
-		images[name] = image
-	}
 	type selection struct {
 		digest string
 		policy ImageProvenancePolicy
@@ -457,15 +484,20 @@ func verifyComposeImages(ctx context.Context, content string, policies map[strin
 		}
 	}
 	for _, item := range selected {
-		bundles, e := FetchImageProvenance(ctx, item.policy.Repository, item.digest, o)
-		if e != nil {
-			return failure("provenance.image_request_failed", e)
-		}
-		if _, e = VerifyImageProvenance(ctx, bundles, item.digest, item.policy, o); e != nil {
-			return e
+		if err := verifyRequiredImage(ctx, item.digest, item.policy, o); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func verifyRequiredImage(ctx context.Context, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) error {
+	bundles, err := FetchImageProvenance(ctx, policy.Repository, digest, o)
+	if err != nil {
+		return failure("provenance.image_request_failed", err)
+	}
+	_, err = VerifyImageProvenance(ctx, bundles, digest, policy, o)
+	return err
 }
 
 func provenanceAPIBase(proxy string) (string, error) {
