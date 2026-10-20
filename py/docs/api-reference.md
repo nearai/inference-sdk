@@ -428,7 +428,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `github_proxy_url` | `str \| None` | `None` | Absolute HTTP(S) GitHub proxy base URL for compose files and image proofs. |
 
 Missing evidence, file/hash mismatches and image-policy failures raise
-`VerificationError`. This does not prove current runtime state or action success.
+`VerificationError`. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
 
 `ModelAttestation.compose_manager_attestation` optionally retains the raw
 `ComposeManagerAttestation` (`actions`, `actions_hash`, `nonce`, `intel_quote`,

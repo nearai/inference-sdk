@@ -541,26 +541,19 @@ for attestation in fetched_models.attestations:
     )
 ```
 
-Model verification authenticates supplied Compose Manager evidence: its TDX quote,
-TCB policy, nonce, action hash, event log and binding to the same measured
-`app_compose`. The callback receives `deployment.compose_manager`. The helper
-selects the last `compose_up`, downloads its file from `nearai/cvm-compose-files`
-at the recorded commit, verifies `file_sha256`, then checks the required image
-builds from the action's named `services`. An omitted or empty list selects the
-whole file; unknown service names are rejected. Images in unselected services
-cannot satisfy a policy. The required `manager_image_policy` separately verifies the latest `compose_manager_started` image. Missing startup evidence, a different image repository, an unpinned image, or a rejected build fails verification; an older compose reference cannot satisfy this policy.
-Use `compose_file` for a specific project's latest recorded file, and
-`compose_repository` for another trusted repository. In `InferenceClient`, use
-this callback through `model_verification.verifiers.deployment`.
+Model verification authenticates the manager quote, nonce, action log and measured
+configuration before passing `deployment.compose_manager` to the callback. The helper
+checks the latest `compose_up` file's recorded commit and SHA-256, then verifies
+the required image builds in its selected services. An empty service list selects
+all services. The manager's latest startup image has its own required build policy.
 
-This proves recorded deployment intent, not action success or current runtime
-state. Matching boot configuration does not identify a unique CVM. The policies
-cover the proxy and manager builds, not every container, model weights or boot
-launcher provenance; approve the boot configuration separately. Missing manager
-evidence is allowed by basic model verification but rejected by this helper.
-On direct endpoints, envelope-level evidence applies only to the serving report.
-Use `serving_deployment` for this policy, keeping per-report checks in
-`verifiers.deployment`:
+Use `compose_file` to select a project's file and `compose_repository` to change the
+trusted repository. Configure this callback as `model_verification.verifiers.deployment`
+on the inference client.
+
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. For Direct clients, use
+`serving_deployment` so the policy applies to the serving report:
 
 ```python
 from nearai_inference_sdk import verify_direct_model_attestations
