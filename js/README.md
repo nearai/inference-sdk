@@ -122,12 +122,9 @@ Browser Fetch does not expose the TLS peer certificate, so the browser client
 cannot perform the attested TLS identity check provided by the Node entry point.
 Standard HTTPS certificate validation still applies.
 
-See the runnable [browser Private TEE chat example](../examples/example-browser/README.md)
-for deployment preverification, E2EE streaming, hardware-evidence details, and
-per-response signature verification. The example sends a user-provided key
-directly to a trusted CORS-enabled endpoint. For production applications that
-must keep long-lived API credentials off user devices, use an
-[application proxy](./docs/verification-guide.md#connect-through-an-application-proxy).
+Run the [browser chat example](../examples/example-browser/README.md) with a
+user-provided key, or use an [application proxy](./docs/verification-guide.md#connect-through-an-application-proxy)
+to keep application credentials on your backend.
 
 ## Use the OpenAI SDK
 

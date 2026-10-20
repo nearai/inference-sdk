@@ -118,11 +118,9 @@ provenance.
 
 ## Browser (Private TEE chat)
 
-[`example-browser`](example-browser/README.md) demonstrates E2EE streaming and
-uses `InferenceClient.verify(model)` to prepare Gateway and model verification
-before sending. It verifies each completed response in the browser and includes
-an optional raw-evidence details view. See its README for setup and
-browser-specific limitations.
+[`example-browser`](example-browser/README.md) provides a chat UI with encrypted
+streaming, deployment evidence, and verified response receipts. Its README
+covers local setup and browser deployment requirements.
 
 ## Python
 
