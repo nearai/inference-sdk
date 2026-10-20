@@ -545,11 +545,8 @@ before verifying image builds in the action’s selected services. The latest
 `ComposeManagerImagePolicy`; a stale manager image in Compose cannot satisfy it. Use options to select a specific `compose_file`
 or another trusted `compose_repository`.
 
-This proves recorded deployment intent, not successful execution or current
-runtime state. Matching boot configuration is not a unique CVM identity. Only
-configured images are covered, not model weights or boot launcher provenance;
-approve the boot configuration separately. Missing manager evidence is allowed
-by basic model verification but rejected by this helper.
+The evidence covers recorded deployment actions and the configured image builds.
+Current runtime state and model weights require separate evidence.
 
 ## Handle errors
 

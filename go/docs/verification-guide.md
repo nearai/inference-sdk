@@ -461,11 +461,10 @@ check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
 // Direct:  ModelVerification: nearai.VerificationOptions{ServingDeployment: check}
 ```
 
-Pin optional source commits/refs according to your policy. This approves the
-recorded compose bytes and listed builds; it does not prove deployment succeeded
-or identify currently running containers. Approve the boot configuration and
-model weights separately. The direct callback applies only to the root serving
-envelope after all reports have been verified.
+Pin source commits/refs according to your release policy. The evidence covers
+recorded deployment actions and the configured image builds; current runtime
+state and model weights require separate evidence. The Direct callback applies
+to the serving report after all reports have been verified.
 
 ## Handle errors
 
