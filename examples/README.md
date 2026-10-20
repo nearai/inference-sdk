@@ -6,19 +6,20 @@ then verify the response signature.
 ## JavaScript (Node.js)
 
 The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
-They use `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`:
+The Chat examples use `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`:
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key
 ```
 
 Gateway and direct examples are grouped in separate folders and share the same
-project configuration. Each entry point includes non-streaming and streaming calls:
+project configuration. The Chat entry points include non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
 | `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| [`gateway/jev.ts`](example-js/gateway/jev.ts) | Sends structured decisions and verifies the receipt before printing answers. | Disabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct/client.ts` | Experimental: connects using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Experimental: passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
@@ -56,6 +57,13 @@ pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
 Requires Node.js 24 or later.
+
+For the decision example, set `NEARAI_MODEL` to a decision model from your
+endpoint's catalog, then run `pnpm --dir examples/example-js start:jev`.
+`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
+ECDSA or `NEARAI_EXPECT_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
+are Ed25519 and Gateway receipts. See the
+[System One guide](../js/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ### Direct model endpoints
 
@@ -200,40 +208,6 @@ its own reqwest transport API rather than an OpenAI adapter.
 The Python and Rust projects use the sibling SDK source through local path
 dependencies. Replace those dependencies with released package versions when
 using these examples outside this repository.
-
-## Jev / System One (TypeScript / Node.js)
-
-[`gateway/jev.ts`](example-js/gateway/jev.ts) sends one non-streaming decision
-request, retrieves the receipt using `X-Generation-Id`, and verifies the exact
-request/response bytes before printing answers. It includes `noul`, `choice`, and
-`score` questions. Node.js 24+ is required.
-
-Build the SDK and install the example dependencies from the repository root:
-
-```sh
-pnpm --dir js install --frozen-lockfile
-pnpm --dir js build
-pnpm --dir examples/example-js install --frozen-lockfile
-pnpm --dir examples/example-js check
-
-export NEARAI_API_KEY='your-staging-cloud-api-key'
-export NEARAI_BASE_URL='https://cloud-stg-api.near.ai/v1'
-# Replace this with the exact active, priced model ID registered in your catalog.
-export NEARAI_MODEL='typesafe/jev-staging'
-export NEARAI_EXPECT_SIGNATURE_KIND='gateway'
-pnpm --dir examples/example-js start:jev
-```
-
-Use a service that supports System One, a model with the `decisions` output
-modality, and a funded Cloud API key. Each run makes one billable inference call
-and prints verified answers and token usage.
-
-Hosted Jev uses Gateway receipts. For a model with TEE attestation, set
-`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`. Set `NEARAI_SIGNING_ALGO=ecdsa`
-to try ECDSA instead of the default Ed25519.
-
-See the [System One guide](../js/docs/verification-guide.md#system-one-decisions)
-for receipt verification and API options.
 
 ## Go
 

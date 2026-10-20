@@ -136,6 +136,66 @@ Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
 including after successful or failed verification. TTL starts at body completion.
 
+## System One decisions (`InferenceClient.systemone`)
+
+Available on the generic and Node Gateway clients. Use `e2ee: false` and
+`ohttp: false` for nonstreaming decision requests.
+
+| Method | Parameters | Returns |
+| --- | --- | --- |
+| `client.systemone.create(request, options?)` | `SystemOneRequest`, optional `SystemOneRequestOptions` | `Promise<SystemOneResult>` |
+| `client.verifyResponse(id)` | `result.decisionId` from `X-Generation-Id` | `Promise<VerifiedCompletionResult>` |
+
+| `SystemOneRequest` field | Type | Description |
+| --- | --- | --- |
+| `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
+| `state` | Text, object, or array | Decision context forwarded as JSON. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+
+| Question `type` | Required `instructions` | `criteria` |
+| --- | --- | --- |
+| `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
+| `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
+| `score` | Text, object, or array | Ordered array of level descriptions. |
+
+Use `SystemOneRequest<MyQuestions>` and `SystemOneQuestion<MyChoices>` to
+annotate application types; `create()` also infers question and choice maps.
+
+| `SystemOneRequestOptions` field | Type | Description |
+| --- | --- | --- |
+| `headers?` | `HeadersInit` | Per-request headers, following the client's configured authorization rules. |
+| `signal?` | `AbortSignal` | Cancels this caller's preflight wait and inference fetch, without cancelling shared evidence work or later response verification. |
+
+| `SystemOneResult` field | Type | Description |
+| --- | --- | --- |
+| `data` | `SystemOneResponse` | Parsed output, unverified until `client.verifyResponse(id)` succeeds. |
+| `decisionId` | `string` | Decision ID from `X-Generation-Id`, used to retrieve and verify the signature. |
+
+| `SystemOneResponse` field | Type | Description |
+| --- | --- | --- |
+| `id?` | `string` | Optional upstream ID; JSON `null` is normalized to `undefined`. |
+| `model` | `string` | Reported model ID. |
+| `answers` | `Record<string, SystemOneAnswer>` | Named answers. |
+| `usage` | `{ input_tokens: number; output_tokens: number }` | Nonnegative integer token counts. |
+
+| Answer `type` | Fields |
+| --- | --- |
+| `noul` | `noul`: probability in `[0, 1]`. |
+| `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
+| `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
+
+Attestation sessions are cached per model and endpoint, separately from Chat.
+Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
+receipts expose every report matching the signer in `attestations`;
+`attestation` is the first matching report.
+
+Inference is sent once. Transport failures use `api.inference_transport_failed`.
+Retry transient receipt lookups with `verifyResponse(result.decisionId)` while
+the response remains cached.
+
+See the [guide](./verification-guide.md#system-one-decisions) for a complete call
+and the [Node examples](../../examples/README.md#javascript-nodejs) to run it.
+
 ## `DirectInferenceClient`
 
 > **Experimental — not recommended for production.** Use the Gateway
@@ -666,79 +726,3 @@ trust roots or another verification service.
 | `GatewayTlsBinding` | `{ kind: 'none' } \| { kind: 'attested'; spkiFingerprint: string }` |
 | `GpuEvidenceStatus` | `'not_provided' \| 'verified'` |
 | `DeploymentProvenanceStatus` | `'not_checked' \| 'verified'` |
-
-## System One decisions (`InferenceClient.systemone`)
-
-For a provider TEE receipt, `attestations` retains every verified report sharing
-its signing identity. `attestation` is the first matching report; a shared key
-does not identify a unique CVM. Chat retains its selected routing report.
-
-Available on the generic and Node Gateway clients. Direct clients and the
-OpenAI-compatible `fetch`/`chat` surface remain Chat-only.
-
-| Method | Parameters | Returns |
-| --- | --- | --- |
-| `client.systemone.create(request, options?)` | `SystemOneRequest`, optional `SystemOneRequestOptions` | `Promise<SystemOneResult>` |
-| `client.verifyResponse(id)` | `result.decisionId` from `X-Generation-Id` | `Promise<VerifiedCompletionResult>` |
-
-| `SystemOneRequest` field | Type | Description |
-| --- | --- | --- |
-| `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
-| `state` | Text, object, or array | Decision context forwarded as JSON. |
-| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
-
-| Question `type` | Required `instructions` | `criteria` |
-| --- | --- | --- |
-| `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
-| `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
-| `score` | Text, object, or array | Ordered array of level descriptions. |
-
-The create method infers interface-typed question and choice maps without requiring
-a string index signature. Use `SystemOneRequest<MyQuestions>` or
-`SystemOneQuestion<MyChoices>` when annotating an application DTO; invalid question
-types, missing instructions and non-content criterion values remain type errors.
-
-| `SystemOneRequestOptions` field | Type | Description |
-| --- | --- | --- |
-| `headers?` | `HeadersInit` | Per-request headers, following the client's configured authorization rules. Body-derived headers are removed before sending generated JSON. |
-| `signal?` | `AbortSignal` | Cancels this caller's preflight wait and inference fetch, without cancelling shared evidence work or later response verification. |
-
-| `SystemOneResult` field | Type | Description |
-| --- | --- | --- |
-| `data` | `SystemOneResponse` | Parsed output, unverified until `client.verifyResponse(id)` succeeds. |
-| `decisionId` | `string` | Decision ID from `X-Generation-Id`, used to retrieve and verify the signature. |
-
-| `SystemOneResponse` field | Type | Description |
-| --- | --- | --- |
-| `id?` | `string` | Optional upstream ID; JSON `null` is normalized to `undefined`. |
-| `model` | `string` | Reported model ID. |
-| `answers` | `Record<string, SystemOneAnswer>` | Named answers. |
-| `usage` | `{ input_tokens: number; output_tokens: number }` | Nonnegative integer token counts. |
-
-| Answer `type` | Fields |
-| --- | --- |
-| `noul` | `noul`: probability in `[0, 1]`. |
-| `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
-| `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
-
-System One requires `e2ee: false` and `ohttp: false`; streaming is unsupported.
-Request business validation belongs to the server. The SDK parses response
-shapes and verifies exact request/response bytes.
-
-`attestationCacheTimeToLiveMs` and in-flight deduplication apply per model and
-endpoint. Chat sessions route to a selected model key; System One sessions
-retain the verified fleet and match the response signer. They do not reuse each
-other's session. Model and deployment policies still apply, and Node requests
-use the verified Gateway TLS pin.
-
-Response records use the same `responseCacheTimeToLiveMs`, memoization, and
-receipt-retry behavior as Chat. Neither inference nor response-body failures
-trigger automatic inference retries. A later `verifyResponse(id)`
-can retry a transient or unavailable receipt lookup without repeating inference.
-System One send and response-body transport failures use
-`api.inference_transport_failed` with `retryable: false`. The existing
-`api.transport_failed` variant retains its `retryable: true` type contract for
-Chat and evidence operations.
-
-See the [guide](./verification-guide.md#system-one-decisions) for a complete call
-and the [runnable Jev example](../../examples/README.md#jev--system-one-typescript--nodejs).

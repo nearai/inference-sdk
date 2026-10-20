@@ -131,6 +131,8 @@ to configure it and verify responses.
 
 ## Advanced APIs
 
+- **System One decisions:** send structured questions with `client.systemone.create()`
+  and verify the returned decision. See the [System One guide](./docs/verification-guide.md#system-one-decisions).
 - **Manual verification:** `AttestationClient` fetches metadata, evidence, and
   signatures. Use the [standalone verification functions](./docs/verification-guide.md#verify-gateway-requests-manually)
   when your application needs to control each step.
@@ -142,14 +144,6 @@ to configure it and verify responses.
   verification. They are not recommended for production in either entry point;
   direct TLS fingerprint binding is currently disabled. Use Gateway clients
   for production and review the [direct-endpoint limitations](./docs/verification-guide.md#use-a-direct-model-endpoint).
-
-## Jev decisions
-
-Use `client.systemone.create({ model, state, questions })` with `e2ee: false`
-and `ohttp: false`, then call `client.verifyResponse(result.decisionId)` before
-using `result.data.answers`. System One uses `X-Generation-Id` receipt lookup and does
-not use Chat Completions. See the [runnable Node example](../examples/README.md#jev--system-one-typescript--nodejs)
-and [API reference](docs/api-reference.md#system-one-decisions-inferenceclientsystemone).
 
 ## Documentation
 
