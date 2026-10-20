@@ -165,6 +165,46 @@ fn deployment() -> nearai_inference_sdk::MeasuredDeployment {
 }
 
 #[tokio::test]
+async fn rejects_unpinned_manager_image_before_any_request() {
+    let server = wiremock::MockServer::start().await;
+    let proxy = server.uri();
+    let policies = BTreeMap::from([("nearaidev/compose-manager-launcher".into(), image_policy())]);
+    for suffix in [
+        ":latest".to_owned(),
+        "@sha256:abcd".to_owned(),
+        format!(":bad tag@sha256:{}", "aa".repeat(32)),
+    ] {
+        let mut deployment = deployment();
+        let manager = deployment.compose_manager.as_mut().unwrap();
+        for action in &mut manager.actions {
+            if action.action == "compose_manager_started" {
+                action.image = Some(format!("nearaidev/compose-manager-launcher{suffix}"));
+            }
+        }
+        let error = verify_compose_manager_deployment_image_provenance(
+            &deployment,
+            &policies,
+            &manager_image_policy(),
+            nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
+                github_proxy_url: Some(&proxy),
+                github_token: Some("test-github-token"),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            VerificationError::DeploymentImagesInvalid {
+                reason: nearai_inference_sdk::DeploymentImagesFailureReason::ImageNotPinned,
+                ..
+            }
+        ));
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn independently_verifies_current_manager_and_proxy_requests() {
     use wiremock::{
         matchers::{method, path},

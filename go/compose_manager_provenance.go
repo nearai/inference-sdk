@@ -59,6 +59,9 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	if repo == "" || (!strings.HasPrefix(normalized, repo+"@") && !strings.HasPrefix(normalized, repo+":")) {
 		return invalid("manager_image_mismatch")
 	}
+	if !pinnedImageSuffixPattern.MatchString(strings.TrimPrefix(normalized, repo)) {
+		return failure("provenance.deployment_images_invalid", nil)
+	}
 	repository := o.ComposeRepository
 	if repository == "" {
 		repository = "nearai/cvm-compose-files"

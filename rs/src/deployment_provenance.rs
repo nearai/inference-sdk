@@ -255,7 +255,7 @@ fn select_compose_images<'a>(
     Ok(selected)
 }
 
-fn pinned_digest(suffix: &str) -> Option<&str> {
+pub(crate) fn pinned_digest(suffix: &str) -> Option<&str> {
     let (tag, digest) = suffix.split_once('@')?;
     if !tag.is_empty() {
         let tag = tag.strip_prefix(':')?;

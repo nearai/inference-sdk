@@ -41,6 +41,7 @@ type ProvenanceOptions struct {
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
+var pinnedImageSuffixPattern = regexp.MustCompile(`^(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
@@ -439,13 +440,12 @@ func verifyComposeImages(ctx context.Context, content string, policies map[strin
 		if repo == "" {
 			return failure("provenance.deployment_images_invalid", nil)
 		}
-		pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(repo) + `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$`)
 		found := false
 		for _, reference := range images {
 			image := strings.TrimPrefix(reference, "docker.io/")
 			if image == repo || strings.HasPrefix(image, repo+"@") || strings.HasPrefix(image, repo+":") {
 				found = true
-				match := pattern.FindStringSubmatch(image)
+				match := pinnedImageSuffixPattern.FindStringSubmatch(strings.TrimPrefix(image, repo))
 				if match == nil {
 					return failure("provenance.deployment_images_invalid", nil)
 				}

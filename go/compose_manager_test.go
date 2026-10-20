@@ -34,6 +34,39 @@ func loadManagerFixture(t *testing.T) managerFixture {
 	}
 	return f
 }
+
+func TestRejectUnpinnedManagerImageBeforeAnyRequest(t *testing.T) {
+	for _, suffix := range []string{":latest", "@sha256:abcd", ":bad tag@sha256:" + strings.Repeat("aa", 32)} {
+		t.Run(suffix, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("unexpected network request")
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+			defer server.Close()
+			fixture := loadManagerFixture(t)
+			for _, action := range fixture.Actions {
+				if action["action"] == "compose_manager_started" {
+					action["image"] = "nearaidev/compose-manager-launcher" + suffix
+				}
+			}
+			policy := ImageProvenancePolicy{Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml"}
+			err := VerifyComposeManagerDeploymentImageProvenance(
+				context.Background(),
+				MeasuredDeployment{ComposeManager: &VerifiedComposeManagerAttestation{Actions: fixture.Actions}},
+				map[string]ImageProvenancePolicy{"nearaidev/compose-manager-launcher": policy},
+				ComposeManagerDeploymentImageProvenanceOptions{
+					ManagerImagePolicy: ComposeManagerImagePolicy{
+						ImageRepository: "nearaidev/compose-manager-launcher",
+						Build:           policy,
+					},
+					ProvenanceOptions: ProvenanceOptions{GitHubProxyURL: server.URL, GitHubToken: "test-github-token"},
+				},
+			)
+			requireCode(t, err, "provenance.deployment_images_invalid")
+		})
+	}
+}
+
 func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 	f := loadManagerFixture(t)
 	canonical, e := canonicalActions(f.Actions)

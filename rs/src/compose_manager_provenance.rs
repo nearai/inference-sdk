@@ -1,6 +1,6 @@
 const MAX_COMPOSE_FILE_BYTES: usize = 8 * 1024 * 1024;
 
-use crate::deployment_provenance::verify_compose_image_provenance;
+use crate::deployment_provenance::{pinned_digest, verify_compose_image_provenance};
 use crate::{ImageProvenancePolicy, MeasuredDeployment, VerificationError};
 use std::collections::BTreeMap;
 
@@ -85,6 +85,13 @@ pub async fn verify_compose_manager_deployment_image_provenance(
             || normalized.starts_with(&format!("{manager_repository}:")))
     {
         return Err(invalid("manager_image_mismatch"));
+    }
+    if pinned_digest(&normalized[manager_repository.len()..]).is_none() {
+        return Err(VerificationError::DeploymentImagesInvalid {
+            reason: crate::DeploymentImagesFailureReason::ImageNotPinned,
+            image_repository: Some(manager_repository.to_owned()),
+            service: Some("compose-manager".to_owned()),
+        });
     }
     let (Some(commit), Some(file), Some(digest)) =
         (&action.commit, &action.file, &action.file_sha256)
