@@ -469,7 +469,7 @@ func FindModelAttestationForSignature(items []VerifiedAttestation, sig Completio
 	if count != 1 {
 		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", count)
 	}
-	return found, nil
+	return cloneAttestation(found), nil
 }
 
 // Compare parsed event logs so JSON whitespace/key ordering cannot affect routing.

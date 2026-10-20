@@ -44,6 +44,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 			out.SPKIFingerprints = nil
 		}
 	}
+	out.ServingAttestation = cloneAttestation(out.ServingAttestation)
 	return out, nil
 }
 
