@@ -115,19 +115,13 @@ these images from the model's authenticated deployment-control evidence:
 | `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
 | `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
 
-The model callback checks the compose file at the recorded commit against its
-signed file hash before checking image builds. The manager's latest start action
-supplies its own image. This authenticates recorded deployment intent, not the
-success or current state of running containers. Other model images and weights
-remain outside these policies.
+See [model image policies](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
 
 Gateway/model attestation and image-check failures block both Chat modes.
 `client.ts` reuses successful checks through its 60-minute attestation cache;
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
-
-These examples verify build provenance, not reproducible builds. They do not
-approve all boot software or prove current runtime state.
 
 ## Python
 

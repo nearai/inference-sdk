@@ -687,51 +687,6 @@ configuration, failed proof retrieval, or failed proof verification. A retrieval
 failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
 
-#### GitHub authentication and proxies
-
-Server-side applications can pass `githubToken` to use GitHub's authenticated
-API quota. This is a GitHub token, not a Gateway API key. Do not embed a shared
-token in browser code.
-
-For browser applications, configure a backend proxy instead:
-
-```ts
-await verifyDeploymentImageProvenance({
-  appCompose: deployment.appCompose,
-  imagePolicies,
-  githubProxyUrl: 'https://app.example/verification/github',
-});
-```
-
-`fetchImageProvenance` and `verifyComposeManagerDeploymentImageProvenance`
-accept the same option. The latter uses it for both compose files and image
-proofs. Without it, requests go directly to GitHub. With it, `githubToken` is
-ignored; the proxy supplies its own token on the server.
-
-The SDK appends GitHub API paths to the proxy base URL, preserving its path
-prefix. The proxy must support these read-only requests:
-
-| Path after the proxy prefix | Response |
-| --- | --- |
-| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
-| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
-
-Forward pagination cursors and preserve HTTP status codes. The SDK keeps all
-pages on the proxy even when `Link` contains absolute GitHub URLs. Return the
-content directly, not a redirect. Use an absolute HTTP(S) base URL without
-credentials, query parameters or a fragment; a trailing slash is optional.
-
-Prefer a same-origin proxy. A cross-origin proxy must allow the SDK's `Accept`
-and `X-GitHub-Api-Version` request headers and expose `Link` through CORS.
-Keep GitHub credentials on the backend, restrict allowed repositories and
-read-only routes, and cache bundles by repository and digest with a refresh
-policy for newly published proofs. A proxy concentrates requests onto its own
-GitHub quota, so authentication alone is not a substitute for caching.
-
-The proxy returns evidence, not a verification verdict. The SDK still verifies
-the original bundle and caller policy, and checks compose-file hashes locally.
-This option does not change Sigstore trust-root retrieval.
-
 #### Model images deployed by Compose Manager
 
 A model's measured `appCompose` can describe its launcher rather than the
@@ -772,11 +727,8 @@ for (const attestation of fetchedModels.attestations) {
 }
 ```
 
-Model verification authenticates the manager quote, nonce, action log and measured
-configuration before passing `deployment.composeManager` to the callback. The helper
-checks the latest `compose_up` file's recorded commit and SHA-256, then verifies
-the required image builds in its selected services. An empty service list selects
-all services. The manager's latest startup image has its own required build policy.
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
 
 Use `composeFile` to select a project's file and `composeRepository` to change the
 trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
@@ -804,14 +756,32 @@ const verified = await verifyDirectModelAttestations({
 });
 ```
 
-For `DirectInferenceClient`, use `modelVerification.servingDeployment`. Every
-model report still undergoes its normal quote, GPU and deployment checks. This
-additional policy runs after the whole set and its TLS binding pass; it marks
-only the serving report's provenance as verified. Missing manager evidence in
-that report still fails the policy. With this option, the client uses only the
-serving report for Chat's signer, TLS pins (when enabled), and response verification.
-When composing the bare functions yourself, pass `[verified.servingAttestation]`
-to `verifyDirectModelResponse` to apply the same restriction.
+For `DirectInferenceClient`, use `modelVerification.servingDeployment` to
+apply this policy to the serving report and use its signer for Chat and receipt
+verification. With standalone calls, pass `[verified.servingAttestation]` to
+`verifyDirectModelResponse`. See the [API reference](./api-reference.md#verifycomposemanagerdeploymentimageprovenance)
+for options and evidence fields.
+
+#### GitHub authentication and proxies
+
+Set `githubToken` for authenticated GitHub requests, or `githubProxyUrl` to retrieve
+evidence through your backend. When a proxy is configured, it supplies the
+GitHub credential and the SDK ignores `githubToken`.
+
+The proxy base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured proxy. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the proxy to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ### Verify the response signature
 

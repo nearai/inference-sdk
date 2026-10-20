@@ -469,8 +469,6 @@ preserve the `ApiError` cause and retryability.
 
 ### `verifyComposeManagerDeploymentImageProvenance`
 
-Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
-
 Use after model verification or in its deployment callback. Returns `Promise<void>`.
 The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
 Image selection uses the action's named `services`. Independently, the latest
@@ -488,6 +486,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
 | `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
 | `githubProxyUrl` | `string` | No | — | Absolute HTTP(S) GitHub proxy base URL for compose-file and image-proof retrieval. |
+
+Compose files are limited to 8 MiB before hashing or parsing.
 
 Fails with `VerificationError` if manager evidence or a matching action is missing,
 the file cannot be retrieved, its hash differs, or an image policy fails. See the
