@@ -342,20 +342,16 @@ Gateway `reported_quote_data` is required.
 
 | Export | Construction or signature | Description |
 | --- | --- | --- |
-| `DefaultTdxQuoteVerifier` | `DefaultTdxQuoteVerifier::default()` or `DefaultTdxQuoteVerifier::new(pccs_base_url)` | Built-in Intel TDX quote verifier. Pass a custom PCCS base URL when needed. |
-| `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_base_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
-| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::from_base_url(nras_base_url)`, or `NrasGpuEvidenceVerifier::from_base_url_with_client(client, nras_base_url)` | Built-in NVIDIA verifier. Appends `/v3/attest/gpu` to the base. The last form accepts a `reqwest::Client`. |
-| `NrasGpuEvidenceVerifier::new` | `fn new(url: impl Into<String>) -> Self` | Deprecated. Accepts a complete POST URL unchanged. Use `from_base_url`. |
-| `NrasGpuEvidenceVerifier::with_client` | `fn with_client(client: reqwest::Client, url: impl Into<String>) -> Self` | Deprecated. Accepts a complete POST URL unchanged. Use `from_base_url_with_client`. |
+| `DefaultTdxQuoteVerifier` | `DefaultTdxQuoteVerifier::default()` or `DefaultTdxQuoteVerifier::new(pccs_url)` | Built-in Intel TDX quote verifier. Pass a custom PCCS base URL when needed. |
+| `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
+| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA verifier. Accepts a complete GPU evidence POST URL. `with_client` accepts a `reqwest::Client`. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
-| `DEFAULT_PCCS_BASE_URL` | `&str` | `https://cloud.near.ai/api/proxy/pccs` |
-| `DEFAULT_NRAS_BASE_URL` | `&str` | `https://cloud.near.ai/api/proxy/nras` |
+| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://cloud.near.ai/api/proxy/pccs` |
+| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
 | `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
-| `DEFAULT_INTEL_PCCS_URL` | `&str` | Deprecated; retains `https://api.trustedservices.intel.com`. Use `DEFAULT_PCCS_BASE_URL` for the default service. |
-| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | Deprecated; retains `https://nras.attestation.nvidia.com/v3/attest/gpu`. Use `DEFAULT_NRAS_BASE_URL` with `from_base_url`. |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
-timestamps, signed nonce, and boolean verdict. A custom NRAS base URL changes where
+timestamps, signed nonce, and boolean verdict. A custom NRAS URL changes where
 evidence is submitted; `with_jwks_url` independently configures the signing-key
 source. Use only a trusted JWKS proxy, since those keys authenticate the verdict.
 The required NVIDIA issuer

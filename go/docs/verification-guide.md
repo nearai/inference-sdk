@@ -302,7 +302,7 @@ The built-in verifiers use these defaults:
 | Service | URL |
 | --- | --- |
 | PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS base | `https://cloud.near.ai/api/proxy/nras` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 To use your own services, configure the verifier callbacks:
@@ -311,19 +311,15 @@ To use your own services, configure the verifier callbacks:
 verifiers := nearai.VerificationOptions{
     QuoteVerifier: nearai.CreateTDXQuoteVerifier("https://attestation.example.com/pccs"),
     GPUVerifier: nearai.CreateGPUEvidenceVerifier(nearai.GPUVerifierOptions{
-        NRASBaseURL: "https://attestation.example.com/nras",
+        NRASURL: "https://attestation.example.com/nras/v3/attest/gpu",
     }),
 }
 ```
 
 Pass these options to model verification; Gateway verification uses the same
 quote callback. DCAP builds the SGX and TDX collateral paths beneath the PCCS
-base URL. The NVIDIA verifier appends `/v3/attest/gpu` to `NRASBaseURL`,
-preserving its path prefix. Trailing slashes are supported. Signing keys still
-come from NVIDIA; set `JWKSURL` separately to use another trusted key source.
-
-The deprecated `NRASURL` field remains supported as a complete POST URL.
-`NRASBaseURL` takes precedence when both are set.
+base URL. `NRASURL` is the complete GPU evidence POST URL. Signing keys come
+from NVIDIA; set `JWKSURL` separately to use another trusted key source.
 
 ## Encryption and TLS binding
 

@@ -84,8 +84,8 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 			}))
 			defer server.Close()
 			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{
-				NRASBaseURL: server.URL + "/proxy/nras/",
-				JWKSURL:     server.URL + "/keys",
+				NRASURL: server.URL + "/proxy/nras/v3/attest/gpu",
+				JWKSURL: server.URL + "/keys",
 			})
 			e = verifier(context.Background(), `{"nonce":"`+n+`"}`)
 			if strings.HasSuffix(variant, "timeout") {
@@ -112,13 +112,10 @@ func (f gpuTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestGPUServiceURLs(t *testing.T) {
 	for _, tc := range []struct {
-		name, baseURL, legacyURL, attestURL string
+		name, nrasURL, attestURL string
 	}{
-		{"defaults", "", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
-		{"custom base", "https://attestation.example/nras", "", "https://attestation.example/nras/v3/attest/gpu"},
-		{"trailing slash", "https://attestation.example/nras/", "", "https://attestation.example/nras/v3/attest/gpu"},
-		{"deprecated full URL", "", "https://legacy.example/attest", "https://legacy.example/attest"},
-		{"base overrides deprecated URL", "https://attestation.example/nras", "https://legacy.example/attest", "https://attestation.example/nras/v3/attest/gpu"},
+		{"defaults", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
+		{"custom endpoint", "https://attestation.example/attest", "https://attestation.example/attest"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests []string
@@ -131,9 +128,8 @@ func TestGPUServiceURLs(t *testing.T) {
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			})}
 			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{
-				NRASBaseURL: tc.baseURL,
-				NRASURL:     tc.legacyURL,
-				HTTPClient:  client,
+				NRASURL:    tc.nrasURL,
+				HTTPClient: client,
 			})
 			err := verifier(context.Background(), `{"nonce":"`+strings.Repeat("11", 32)+`"}`)
 			var sdkErr *Error

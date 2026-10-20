@@ -356,10 +356,10 @@ The built-in verifiers use these defaults:
 | Service | URL |
 | --- | --- |
 | PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS base | `https://cloud.near.ai/api/proxy/nras` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
-To use your own services, construct verifiers with custom base URLs:
+To use your own services, construct verifiers with custom URLs:
 
 ```rust,no_run
 use nearai_inference_sdk::{
@@ -373,8 +373,8 @@ async fn verify_with_proxies(
     binding: &ModelClientBinding,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
     let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/pccs");
-    let gpu_evidence = NrasGpuEvidenceVerifier::from_base_url(
-        "https://attestation.example.com/nras",
+    let gpu_evidence = NrasGpuEvidenceVerifier::new(
+        "https://attestation.example.com/nras/v3/attest/gpu",
     );
     verify_model_attestation(
         attestation,
@@ -395,13 +395,8 @@ Pass the same `tdx_quote` verifier as `AttestationVerifiers { tdx_quote: Some(&t
 `None` to use the defaults above.
 
 DCAP builds the SGX and TDX collateral paths beneath the PCCS base URL.
-`NrasGpuEvidenceVerifier` appends `/v3/attest/gpu` to the NRAS base URL, preserving
-its path prefix. Trailing slashes are supported. Signing keys still come from
-NVIDIA; call `with_jwks_url` to use another trusted key source.
-
-The deprecated `NrasGpuEvidenceVerifier::new` and `with_client` constructors
-remain supported and take complete POST URLs. Use `from_base_url` or
-`from_base_url_with_client` for base URLs.
+`NrasGpuEvidenceVerifier` accepts the complete GPU evidence POST URL. Signing
+keys come from NVIDIA; call `with_jwks_url` to use another trusted key source.
 
 ## Verify an image's build provenance
 

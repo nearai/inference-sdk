@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 from typing import cast
 
 from dcap_qvl import Quote, get_collateral, verify
@@ -11,38 +10,23 @@ from dcap_qvl import Quote, get_collateral, verify
 from ..types.attestation_common import SUPPORTED_TCB_STATUSES, TcbStatus
 from ..types.verification import TdxQuoteVerificationResult, TdxQuoteVerifier
 from .common import hex_to_bytes
-from .consts import DEFAULT_PCCS_BASE_URL
+from .consts import INTEL_PCCS_API_URL
 from .errors import VerificationError, verification_failure
 
 
 def create_tdx_quote_verifier(
-    pccs_url: str | None = None,
-    *,
-    pccs_base_url: str | None = None,
+    pccs_url: str = INTEL_PCCS_API_URL,
 ) -> TdxQuoteVerifier:
-    """Create the Intel DCAP verifier with a PCCS-compatible collateral URL.
-
-    Deprecated: pccs_url (including positional use). Use pccs_base_url instead;
-    it takes precedence when both are supplied.
-    """
-
-    if pccs_url is not None:
-        warnings.warn(
-            'pccs_url is deprecated; use pccs_base_url instead',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if pccs_base_url is None:
-        pccs_base_url = pccs_url if pccs_url is not None else DEFAULT_PCCS_BASE_URL
+    """Create the Intel DCAP verifier with a PCCS-compatible collateral URL."""
 
     async def verify_quote(quote: str) -> TdxQuoteVerificationResult:
-        return await verify_dcap_quote(quote, pccs_base_url)
+        return await verify_dcap_quote(quote, pccs_url)
 
     return verify_quote
 
 
 async def verify_dcap_quote(
-    quote: str, pccs_base_url: str = DEFAULT_PCCS_BASE_URL
+    quote: str, pccs_url: str = INTEL_PCCS_API_URL
 ) -> TdxQuoteVerificationResult:
     """Verify a TDX quote and expose the facts used by the SDK core."""
 
@@ -65,7 +49,7 @@ async def verify_dcap_quote(
         ) from error
 
     try:
-        collateral = await get_collateral(pccs_base_url, quote_bytes)
+        collateral = await get_collateral(pccs_url, quote_bytes)
     except Exception as error:
         raise verification_failure(
             'quote.collateral_unavailable', retryable=True, cause=error

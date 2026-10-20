@@ -43,15 +43,11 @@ export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
 
 export type CreateTdxQuoteVerifierParams = {
   /** Collateral base URL. Defaults to https://cloud.near.ai/api/proxy/pccs. */
-  readonly pccsBaseUrl?: string;
-  /** @deprecated Use pccsBaseUrl. Used only when pccsBaseUrl is omitted. */
   readonly pccsUrl?: string;
 };
 
 export type CreateGpuEvidenceVerifierParams = {
-  /** NRAS base URL; /v3/attest/gpu is appended. Defaults to https://cloud.near.ai/api/proxy/nras. */
-  readonly nrasBaseUrl?: string;
-  /** @deprecated Use nrasBaseUrl. Complete POST URL, used only when nrasBaseUrl is omitted. */
+  /** GPU attestation POST URL. Defaults to https://cloud.near.ai/api/proxy/nras/v3/attest/gpu. */
   readonly nrasUrl?: string;
   /** Public-key GET URL. Defaults to NVIDIA's JWKS. Use only a trusted proxy. */
   readonly jwksUrl?: string;

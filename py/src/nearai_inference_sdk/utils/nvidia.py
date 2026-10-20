@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 
 import aiohttp
 import jwt
@@ -17,7 +16,7 @@ from ..schemas import (
 )
 from ..types.verification import GpuEvidenceVerifier
 from .common import require_byte_length
-from .consts import DEFAULT_NRAS_BASE_URL
+from .consts import NVIDIA_GPU_VERIFIER_API_URL
 from .errors import verification_failure
 from .fetch import FetchResponse, fetch
 
@@ -26,38 +25,20 @@ NVIDIA_JWKS_URL = f'{NVIDIA_ISSUER}/.well-known/jwks.json'
 
 
 def create_gpu_evidence_verifier(
-    nras_url: str | None = None,
+    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
     jwks_url: str = NVIDIA_JWKS_URL,
-    *,
-    nras_base_url: str | None = None,
 ) -> GpuEvidenceVerifier:
-    """Create the NVIDIA verifier with an NRAS base URL and a signing-key URL.
+    """Create the NVIDIA verifier with NRAS and signing-key URLs.
 
-    The evidence endpoint is /v3/attest/gpu beneath the base URL.
     The issuer remains NVIDIA. The JWKS endpoint supplies trusted signing keys;
     configure only a trusted source. The returned verifier binds the signed
     verdict to the payload nonce; callers must bind that nonce to their request,
     as verify_model_attestation does.
-
-    Deprecated: nras_url (including positional use) accepts a complete POST URL.
-    Use nras_base_url instead; it takes precedence when both are supplied.
     """
-
-    if nras_url is not None:
-        warnings.warn(
-            'nras_url is deprecated; use nras_base_url instead',
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if nras_base_url is None and nras_url is not None:
-        attest_url = nras_url
-    else:
-        base_url = nras_base_url if nras_base_url is not None else DEFAULT_NRAS_BASE_URL
-        attest_url = f'{base_url.rstrip("/")}/v3/attest/gpu'
 
     async def verify_evidence(payload: str) -> None:
         nonce = decode_nvidia_payload_nonce(payload)
-        await verify_nvidia_nras(payload, nonce, attest_url, jwks_url)
+        await verify_nvidia_nras(payload, nonce, nras_url, jwks_url)
 
     return verify_evidence
 
@@ -83,7 +64,7 @@ def decode_nvidia_payload_nonce(payload: str) -> str:
 async def verify_nvidia_nras(
     nvidia_payload: str,
     nonce: str,
-    attest_url: str = f'{DEFAULT_NRAS_BASE_URL}/v3/attest/gpu',
+    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
     jwks_url: str = NVIDIA_JWKS_URL,
 ) -> None:
     """Verify NRAS's ES384-signed overall verdict, issuer, time and nonce.
@@ -93,7 +74,7 @@ async def verify_nvidia_nras(
 
     try:
         response = await fetch(
-            attest_url,
+            nras_url,
             method='POST',
             data=nvidia_payload,
             headers={'content-type': 'application/json'},

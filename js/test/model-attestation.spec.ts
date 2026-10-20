@@ -582,35 +582,16 @@ describe('model attestation verification', () => {
 
   test.each([
     {
-      name: 'base URL',
-      params: { nrasBaseUrl: '/api/proxy/nras', jwksUrl: undefined },
-      attestUrl: '/api/proxy/nras/v3/attest/gpu',
+      nrasUrl: '/api/proxy/nras/v3/attest/gpu',
+      jwksUrl: undefined,
     },
     {
-      name: 'base URL with a trailing slash',
-      params: {
-        nrasBaseUrl: '/api/proxy/nras/',
-        jwksUrl: '/api/keys/.well-known/jwks.json',
-      },
-      attestUrl: '/api/proxy/nras/v3/attest/gpu',
-    },
-    {
-      name: 'deprecated full URL',
-      params: { nrasUrl: '/api/attestation/nvidia', jwksUrl: undefined },
-      attestUrl: '/api/attestation/nvidia',
-    },
-    {
-      name: 'base URL taking precedence over the deprecated URL',
-      params: {
-        nrasBaseUrl: '/api/proxy/nras',
-        nrasUrl: '/api/attestation/nvidia',
-        jwksUrl: undefined,
-      },
-      attestUrl: '/api/proxy/nras/v3/attest/gpu',
+      nrasUrl: '/api/attestation/nvidia',
+      jwksUrl: '/api/keys/.well-known/jwks.json',
     },
   ])(
-    'verifies NVIDIA evidence with a $name and independent JWKS',
-    async ({ params, attestUrl }) => {
+    'verifies NVIDIA evidence at $nrasUrl with independent JWKS',
+    async (params) => {
       mockNrasOverallResult(true);
       const nvidiaPayload = JSON.stringify({ nonce });
       const gpuEvidence = createGpuEvidenceVerifier(params);
@@ -622,7 +603,7 @@ describe('model attestation verification', () => {
       });
 
       expect(result.gpuEvidence).toBe('verified');
-      expect(globalThis.fetch).toHaveBeenCalledWith(attestUrl, {
+      expect(globalThis.fetch).toHaveBeenCalledWith(params.nrasUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: nvidiaPayload,
@@ -735,7 +716,7 @@ describe('model attestation verification', () => {
   ])('rejects an NRAS token with %s', async (_, overrides, reason) => {
     mockNrasJwtPayload(nrasClaims(overrides));
     const gpuEvidence = createGpuEvidenceVerifier({
-      nrasBaseUrl: '/api/attestation/nvidia',
+      nrasUrl: '/api/attestation/nvidia',
     });
     await expect(
       verifyModelAttestation({
@@ -760,7 +741,7 @@ describe('model attestation verification', () => {
     );
     mockNrasResponse([['JWT', `${header}.${modifiedPayload}.${signature}`]]);
     const gpuEvidence = createGpuEvidenceVerifier({
-      nrasBaseUrl: '/api/attestation/nvidia',
+      nrasUrl: '/api/attestation/nvidia',
     });
     await expect(
       verifyModelAttestation({

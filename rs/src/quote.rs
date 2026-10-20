@@ -7,29 +7,26 @@ use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::verify;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_PCCS_BASE_URL: &str = "https://cloud.near.ai/api/proxy/pccs";
-
-#[deprecated(note = "Use DEFAULT_PCCS_BASE_URL for the default collateral service")]
-pub const DEFAULT_INTEL_PCCS_URL: &str = "https://api.trustedservices.intel.com";
+pub const DEFAULT_INTEL_PCCS_URL: &str = "https://cloud.near.ai/api/proxy/pccs";
 
 /// Built-in Intel TDX quote verifier, using NEAR AI's PCCS proxy by default.
 #[derive(Clone, Debug)]
 pub struct DefaultTdxQuoteVerifier {
-    pccs_base_url: String,
+    pccs_url: String,
 }
 
 impl Default for DefaultTdxQuoteVerifier {
     fn default() -> Self {
-        Self::new(DEFAULT_PCCS_BASE_URL)
+        Self::new(DEFAULT_INTEL_PCCS_URL)
     }
 }
 
 impl DefaultTdxQuoteVerifier {
     /// Retrieve collateral from a PCCS-compatible base URL. This changes the
     /// collateral source while retaining Intel's cryptographic trust roots.
-    pub fn new(pccs_base_url: impl Into<String>) -> Self {
+    pub fn new(pccs_url: impl Into<String>) -> Self {
         Self {
-            pccs_base_url: pccs_base_url.into(),
+            pccs_url: pccs_url.into(),
         }
     }
 }
@@ -40,14 +37,14 @@ impl TdxQuoteVerifier for DefaultTdxQuoteVerifier {
         &self,
         intel_quote: &str,
     ) -> Result<TdxQuoteVerificationResult, VerificationError> {
-        verify_tdx_quote(&self.pccs_base_url, intel_quote).await
+        verify_tdx_quote(&self.pccs_url, intel_quote).await
     }
 }
 
 /// Verify an Intel TDX quote using DCAP and expose the measurements required
 /// by the shared model/Gateway verification flow.
 pub async fn verify_tdx_quote(
-    pccs_base_url: &str,
+    pccs_url: &str,
     intel_quote: &str,
 ) -> Result<TdxQuoteVerificationResult, VerificationError> {
     let quote_bytes =
@@ -61,7 +58,7 @@ pub async fn verify_tdx_quote(
         reason: "invalid_quote",
     })?;
 
-    let collateral = get_collateral(pccs_base_url, &quote_bytes)
+    let collateral = get_collateral(pccs_url, &quote_bytes)
         .await
         .map_err(|_| VerificationError::QuoteCollateralUnavailable)?;
     let current_time = SystemTime::now()
@@ -117,7 +114,7 @@ mod tests {
     #[test]
     fn uses_the_near_ai_pccs_proxy_by_default() {
         assert_eq!(
-            DefaultTdxQuoteVerifier::default().pccs_base_url,
+            DefaultTdxQuoteVerifier::default().pccs_url,
             "https://cloud.near.ai/api/proxy/pccs"
         );
     }

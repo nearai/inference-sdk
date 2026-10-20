@@ -10,7 +10,7 @@ import type {
   CreateGpuEvidenceVerifierParams,
   GpuEvidenceVerifier,
 } from '../types/verification';
-import { DEFAULT_NRAS_BASE_URL } from './consts';
+import { NVIDIA_GPU_VERIFIER_API_URL } from './consts';
 import { isVerificationError, VerificationError } from './errors';
 import type { VerificationFailure } from './errors';
 
@@ -32,20 +32,14 @@ const NVIDIA_JWKS_URL = `${NVIDIA_ISSUER}/.well-known/jwks.json`;
  * Model verification separately binds that payload nonce to the client nonce.
  */
 export function createGpuEvidenceVerifier({
-  nrasBaseUrl,
-  nrasUrl,
+  nrasUrl = NVIDIA_GPU_VERIFIER_API_URL,
   jwksUrl = NVIDIA_JWKS_URL,
 }: CreateGpuEvidenceVerifierParams = {}): GpuEvidenceVerifier {
-  const baseUrl = nrasBaseUrl ?? DEFAULT_NRAS_BASE_URL;
-  const attestUrl =
-    nrasBaseUrl === undefined && nrasUrl !== undefined
-      ? nrasUrl
-      : `${baseUrl.replace(/\/+$/, '')}/v3/attest/gpu`;
   return async (nvidiaPayload) =>
     nvidiaNrasVerifier({
       nvidiaPayload,
       nonce: decodeNvidiaPayloadNonce(nvidiaPayload),
-      attestUrl,
+      nrasUrl,
       jwksUrl,
     });
 }
@@ -53,7 +47,7 @@ export function createGpuEvidenceVerifier({
 type NvidiaNrasVerifierParams = {
   nvidiaPayload: string;
   nonce: string;
-  attestUrl: string;
+  nrasUrl: string;
   jwksUrl: string;
 };
 
@@ -65,11 +59,11 @@ type NvidiaNrasVerifierParams = {
 async function nvidiaNrasVerifier({
   nvidiaPayload,
   nonce,
-  attestUrl,
+  nrasUrl,
   jwksUrl,
 }: NvidiaNrasVerifierParams): Promise<void> {
   const [token, jwks] = await Promise.all([
-    fetchNrasToken(nvidiaPayload, attestUrl),
+    fetchNrasToken(nvidiaPayload, nrasUrl),
     fetchNvidiaJwks(jwksUrl),
   ]);
   let payload: unknown;
@@ -127,9 +121,9 @@ async function nvidiaNrasVerifier({
 
 async function fetchNrasToken(
   nvidiaPayload: string,
-  attestUrl: string,
+  nrasUrl: string,
 ): Promise<string> {
-  const response = await fetchNras(nvidiaPayload, attestUrl);
+  const response = await fetchNras(nvidiaPayload, nrasUrl);
   if (!response.ok) {
     throw new VerificationError({
       code: 'gpu.nras_request_failed',
@@ -191,10 +185,10 @@ function jwtFailure(
 
 async function fetchNras(
   nvidiaPayload: string,
-  attestUrl: string,
+  nrasUrl: string,
 ): Promise<Response> {
   try {
-    return await fetch(attestUrl, {
+    return await fetch(nrasUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

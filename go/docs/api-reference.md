@@ -87,7 +87,7 @@ func VerifyDirectModelResponse(id string, request, response []byte, sig Completi
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
 func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
-func CreateTDXQuoteVerifier(pccsBaseURL string) QuoteVerifier
+func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
 
@@ -102,9 +102,8 @@ when finished.
 
 | Factory | Parameter or field | Default | Description |
 | --- | --- | --- | --- |
-| `CreateTDXQuoteVerifier` | `pccsBaseURL string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
-| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASBaseURL string` | `https://cloud.near.ai/api/proxy/nras` | NRAS base URL; the verifier appends `/v3/attest/gpu`. Takes precedence over `NRASURL` when set. |
-| | `GPUVerifierOptions.NRASURL string` | `""` | Deprecated complete POST URL, used unchanged when `NRASBaseURL` is empty. |
+| `CreateTDXQuoteVerifier` | `pccsURL string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
+| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASURL string` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | Complete GPU evidence POST URL. An empty string selects the default. |
 | | `GPUVerifierOptions.JWKSURL string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent trusted signing-key URL. An empty string selects the default. |
 | | `GPUVerifierOptions.HTTPClient *http.Client` | Built-in HTTP client | Optional HTTP configuration for NRAS and JWKS requests. |
 

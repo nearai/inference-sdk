@@ -226,10 +226,10 @@ In browsers and Node.js, the built-in verifiers use these defaults:
 | Service | URL |
 | --- | --- |
 | PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS base | `https://cloud.near.ai/api/proxy/nras` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
-To use your own services, pass verifier callbacks with custom base URLs:
+To use your own services, pass verifier callbacks with custom URLs:
 
 ```ts
 import {
@@ -238,10 +238,10 @@ import {
 } from '@nearai/inference-sdk';
 
 const tdxQuote = createTdxQuoteVerifier({
-  pccsBaseUrl: 'https://attestation.example.com/pccs',
+  pccsUrl: 'https://attestation.example.com/pccs',
 });
 const gpuEvidence = createGpuEvidenceVerifier({
-  nrasBaseUrl: 'https://attestation.example.com/nras',
+  nrasUrl: 'https://attestation.example.com/nras/v3/attest/gpu',
 });
 ```
 
@@ -249,13 +249,9 @@ Pass `{ tdxQuote }` to Gateway verification or `{ tdxQuote, gpuEvidence }` to
 model verification through `verifiers`. In `InferenceClient`, these are
 `gatewayVerification.verifiers` and `modelVerification.verifiers`.
 
-DCAP builds the SGX and TDX collateral paths beneath `pccsBaseUrl`. The NVIDIA
-verifier appends `/v3/attest/gpu` to `nrasBaseUrl`, preserving its path prefix.
-Trailing slashes are supported. Signing keys still come from NVIDIA; set
-`jwksUrl` separately to use another trusted key source.
-
-The deprecated `pccsUrl` and `nrasUrl` options remain supported. New base URL
-options take precedence; legacy `nrasUrl` retains its complete POST URL meaning.
+DCAP builds the SGX and TDX collateral paths beneath `pccsUrl`. `nrasUrl` is the
+complete GPU evidence POST URL. Signing keys come from NVIDIA; set `jwksUrl`
+separately to use another trusted key source.
 
 ## E2EE scope and response handling
 

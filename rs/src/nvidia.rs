@@ -11,9 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const DEFAULT_NRAS_BASE_URL: &str = "https://cloud.near.ai/api/proxy/nras";
-#[deprecated(note = "Use DEFAULT_NRAS_BASE_URL with NrasGpuEvidenceVerifier::from_base_url")]
-pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
+pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu";
 pub const DEFAULT_NVIDIA_JWKS_URL: &str =
     "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
@@ -26,47 +24,28 @@ const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
 #[derive(Clone, Debug)]
 pub struct NrasGpuEvidenceVerifier {
     client: Client,
-    attest_url: String,
+    url: String,
     jwks_url: String,
 }
 
 impl Default for NrasGpuEvidenceVerifier {
     fn default() -> Self {
-        Self::from_base_url(DEFAULT_NRAS_BASE_URL)
+        Self::new(DEFAULT_NVIDIA_NRAS_URL)
     }
 }
 
 impl NrasGpuEvidenceVerifier {
-    /// Submit evidence to /v3/attest/gpu beneath this base URL.
-    /// Signing keys come from NVIDIA's official JWKS URL by default.
-    pub fn from_base_url(nras_base_url: impl Into<String>) -> Self {
-        Self::from_base_url_with_client(Client::new(), nras_base_url)
-    }
-
-    pub fn from_base_url_with_client(client: Client, nras_base_url: impl Into<String>) -> Self {
-        let nras_base_url = nras_base_url.into();
-        Self::from_endpoint(
-            client,
-            format!("{}/v3/attest/gpu", nras_base_url.trim_end_matches('/')),
-        )
-    }
-
     /// Submit evidence to a complete POST URL.
-    #[deprecated(note = "Use from_base_url with an NRAS base URL")]
+    /// Signing keys come from NVIDIA's official JWKS URL by default.
     pub fn new(url: impl Into<String>) -> Self {
-        Self::from_endpoint(Client::new(), url.into())
+        Self::with_client(Client::new(), url)
     }
 
     /// Submit evidence to a complete POST URL with a caller-provided HTTP client.
-    #[deprecated(note = "Use from_base_url_with_client with an NRAS base URL")]
     pub fn with_client(client: Client, url: impl Into<String>) -> Self {
-        Self::from_endpoint(client, url.into())
-    }
-
-    fn from_endpoint(client: Client, attest_url: String) -> Self {
         Self {
             client,
-            attest_url,
+            url: url.into(),
             jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
         }
     }
@@ -102,7 +81,7 @@ impl GpuEvidenceVerifier for NrasGpuEvidenceVerifier {
         })?;
         let response = self
             .client
-            .post(&self.attest_url)
+            .post(&self.url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(nvidia_payload.to_owned())
             .send()
@@ -407,7 +386,7 @@ mod tests {
     fn uses_the_near_ai_nras_proxy_and_official_jwks_by_default() {
         let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
-            verifier.attest_url,
+            verifier.url,
             "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"
         );
         assert_eq!(
@@ -415,25 +394,21 @@ mod tests {
             "https://nras.attestation.nvidia.com/.well-known/jwks.json"
         );
         assert_eq!(
-            NrasGpuEvidenceVerifier::from_base_url("https://proxy.example/nras").jwks_url,
+            NrasGpuEvidenceVerifier::new("https://proxy.example/attest").jwks_url,
             verifier.jwks_url
         );
     }
 
     #[tokio::test]
     async fn verifies_proxy_responses_with_custom_nras_and_jwks_urls_and_a_fixed_issuer() {
-        for (issuer, base_path) in [
-            (NVIDIA_ISSUER, "/proxy/nras"),
-            (NVIDIA_ISSUER, "/proxy/nras/"),
-            ("https://proxy.example.com", "/proxy/nras"),
-        ] {
+        for issuer in [NVIDIA_ISSUER, "https://proxy.example.com"] {
             let server = MockServer::start().await;
             let payload = json!({"nonce": "11".repeat(32)}).to_string();
             let mut claims = claims();
             claims["iss"] = json!(issuer);
             let jwt = sign_claims(&claims, "test-nras");
             Mock::given(method("POST"))
-                .and(path("/proxy/nras/v3/attest/gpu"))
+                .and(path("/proxy/attest"))
                 .and(body_string(&payload))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!([["JWT", jwt]])))
                 .expect(1)
@@ -446,9 +421,9 @@ mod tests {
                 .mount(&server)
                 .await;
 
-            let verifier = NrasGpuEvidenceVerifier::from_base_url_with_client(
+            let verifier = NrasGpuEvidenceVerifier::with_client(
                 Client::builder().no_proxy().build().unwrap(),
-                format!("{}{base_path}", server.uri()),
+                format!("{}/proxy/attest", server.uri()),
             )
             .with_jwks_url(format!("{}/proxy/jwks", server.uri()));
             let result = verifier.verify(&payload).await;
@@ -466,43 +441,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(deprecated)]
-    async fn legacy_constructors_preserve_the_complete_post_url() {
-        let server = MockServer::start().await;
-        let payload = json!({"nonce": "11".repeat(32)}).to_string();
-        let jwt = sign_claims(&claims(), "test-nras");
-        Mock::given(method("POST"))
-            .and(path("/legacy/attest"))
-            .and(body_string(&payload))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([["JWT", jwt]])))
-            .expect(2)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path("/keys"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks()))
-            .expect(2)
-            .mount(&server)
-            .await;
-
-        let url = format!("{}/legacy/attest", server.uri());
-        for verifier in [
-            NrasGpuEvidenceVerifier::new(&url),
-            NrasGpuEvidenceVerifier::with_client(Client::new(), &url),
-        ] {
-            verifier
-                .with_jwks_url(format!("{}/keys", server.uri()))
-                .verify(&payload)
-                .await
-                .unwrap();
-        }
-        assert_eq!(
-            NrasGpuEvidenceVerifier::new(DEFAULT_NVIDIA_NRAS_URL).attest_url,
-            "https://nras.attestation.nvidia.com/v3/attest/gpu"
-        );
-    }
-
-    #[tokio::test]
     async fn submits_the_unchanged_payload_to_the_custom_endpoint() {
         let server = MockServer::start().await;
         let payload = format!(
@@ -510,7 +448,7 @@ mod tests {
             "AB".repeat(32)
         );
         Mock::given(method("POST"))
-            .and(path("/proxy/nras/v3/attest/gpu"))
+            .and(path("/proxy/nras"))
             .and(header("content-type", "application/json"))
             .and(body_string(&payload))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": true})))
@@ -518,8 +456,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let verifier =
-            NrasGpuEvidenceVerifier::from_base_url(format!("{}/proxy/nras", server.uri()));
+        let verifier = NrasGpuEvidenceVerifier::new(format!("{}/proxy/nras", server.uri()));
         let error = verifier.verify(&payload).await.unwrap_err();
 
         // A successful proxy HTTP response is not sufficient attestation evidence.
@@ -534,7 +471,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_payload_nonces_before_contacting_the_custom_endpoint() {
         let server = MockServer::start().await;
-        let verifier = NrasGpuEvidenceVerifier::from_base_url(server.uri());
+        let verifier = NrasGpuEvidenceVerifier::new(server.uri());
         for nonce in [
             "".to_owned(),
             "11".repeat(31),
