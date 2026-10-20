@@ -15,6 +15,7 @@
     "@nearai/inference-sdk": "link:../../js"
   },
   "devDependencies": {
+    "@types/node": "24.19.2",
     "typescript": "6.0.3",
     "vite": "7.3.1"
   }
