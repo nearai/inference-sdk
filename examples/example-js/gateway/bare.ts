@@ -184,7 +184,11 @@ async function fetchAndVerifyModelAttestations(
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: MODEL_IMAGE_POLICIES,
-      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
+              managerImagePolicy: {
+                imageRepository: 'nearaidev/compose-manager',
+                repository: 'nearai/compose-manager',
+                workflow: '.github/workflows/build.yml',
+              },
             }),
         },
       }),

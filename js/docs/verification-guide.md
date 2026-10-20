@@ -761,38 +761,30 @@ for (const attestation of fetchedModels.attestations) {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: modelImagePolicies,
-      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
+          managerImagePolicy: {
+            imageRepository: 'nearaidev/compose-manager',
+            repository: 'nearai/compose-manager',
+            workflow: '.github/workflows/build.yml',
+          },
         }),
     },
   });
 }
 ```
 
-When a model report includes Compose Manager evidence, model verification also
-checks its TDX quote, TCB policy, client nonce, action-log hash, event log and
-binding to the same measured `appCompose`. The callback receives these
-authenticated actions in `deployment.composeManager`.
+Model verification authenticates the manager quote, nonce, action log and measured
+configuration before passing `deployment.composeManager` to the callback. The helper
+checks the latest `compose_up` file's recorded commit and SHA-256, then verifies
+the required image builds in its selected services. An empty service list selects
+all services. The manager's latest startup image has its own required build policy.
 
-The image helper selects the last `compose_up`, fetches its file from
-`nearai/cvm-compose-files` at the recorded commit, checks the exact file bytes
-against `file_sha256`, and verifies the required image builds from the action's
-named `services`. An omitted or empty list selects the whole file; unknown service
-names are rejected. Images in unselected services cannot satisfy a policy. The
-latest `compose_manager_started` must name a digest-pinned image matching the
-separate `managerImagePolicy`; a compose-file image cannot satisfy that policy.
-Missing startup evidence fails verification. Set `composeFile` to
-select a particular project's file, or `composeRepository` to use another
-trusted repository. A configured image that is absent or unpinned fails verification.
-For `InferenceClient`, use this callback as `modelVerification.verifiers.deployment`.
+Use `composeFile` to select a project's file and `composeRepository` to change the
+trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
+on the inference client.
 
-This authenticates **recorded deployment intent**, not successful execution or
-the currently running containers. Matching `appCompose` is not a unique CVM
-identity. The policies above cover the proxy and Compose Manager images, not
-model weights, every container or the boot launcher's build. Approve the boot
-configuration separately. A missing Compose Manager report is allowed by basic
-model verification but rejected when this provenance helper is used. For direct
-endpoints, envelope-level evidence applies only to the serving report. Use
-`servingDeployment` for this policy, keeping per-report checks in `verifiers.deployment`:
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. For Direct clients, use
+`servingDeployment` so the policy applies to the serving report:
 
 ```ts
 import { verifyDirectModelAttestations } from '@nearai/inference-sdk/node';
@@ -803,7 +795,11 @@ const verified = await verifyDirectModelAttestations({
     verifyComposeManagerDeploymentImageProvenance({
       deployment,
       imagePolicies: modelImagePolicies,
-      managerImagePolicy: { imageRepository: 'nearaidev/compose-manager', repository: 'nearai/compose-manager', workflow: '.github/workflows/build.yml' },
+      managerImagePolicy: {
+        imageRepository: 'nearaidev/compose-manager',
+        repository: 'nearai/compose-manager',
+        workflow: '.github/workflows/build.yml',
+      },
     }),
 });
 ```

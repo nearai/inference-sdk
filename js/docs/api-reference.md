@@ -490,8 +490,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `githubProxyUrl` | `string` | No | — | Absolute HTTP(S) GitHub proxy base URL for compose-file and image-proof retrieval. |
 
 Fails with `VerificationError` if manager evidence or a matching action is missing,
-the file cannot be retrieved, its hash differs, or an image policy fails. No claim
-of action success, current runtime state or unique CVM identity is made.
+the file cannot be retrieved, its hash differs, or an image policy fails. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
