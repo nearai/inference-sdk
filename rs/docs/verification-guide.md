@@ -7,7 +7,7 @@ standalone verification functions.
 
 ## Integrated Chat client
 
-The [README quickstart](../README.md#quickstart) sends encrypted Chat and verifies
+The [README example](../README.md#send-and-verify-a-chat-completion) sends encrypted Chat and verifies
 its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
 `InferenceClientOptions` for a custom base URL, headers, encryption, policies,
 and cache settings. Only Chat Completions are accepted by `send`.
@@ -497,10 +497,8 @@ runtime images loaded later by a launcher or another service.
 
 ### Model images deployed by Compose Manager
 
-When a model report includes Compose Manager evidence, model verification also
-checks its quote, TCB policy, nonce, canonical action hash, event log and binding
-to the model's measured `app_compose`. A deployment callback receives the verified
-actions in `MeasuredDeployment.compose_manager`.
+Use a model deployment callback to require the model-serving images and
+manager startup image to come from approved builds:
 
 ```rust,no_run
 use std::collections::BTreeMap;
@@ -531,22 +529,13 @@ For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
 `ModelAttestationVerifiers.deployment`. Keep the manager repository and build
 identity in `ComposeManagerImagePolicy`, separate from the compose image map.
 
-For Direct clients, set `model_verification.serving_deployment` to this verifier.
-All reports and the serving TLS binding are checked first; only the serving
-report receives envelope-level manager evidence and a verified provenance status.
-The client then limits routing, TLS pins and receipt attribution to that report's
-signer. The standalone equivalent is
-`verify_direct_model_attestations_with_serving_deployment`.
-
-The helper selects the latest `compose_up`, fetches its file from
-`nearai/cvm-compose-files` at the recorded commit and checks its exact SHA-256
-before verifying image builds in the action’s selected services. The latest
-`compose_manager_started` image is required and verified independently against
-`ComposeManagerImagePolicy`; a stale manager image in Compose cannot satisfy it. Use options to select a specific `compose_file`
-or another trusted `compose_repository`.
+For Direct clients, use the same verifier as `model_verification.serving_deployment`.
+It applies to the serving report and uses its signer for routing and receipt
+verification. See the [API reference](./api-reference.md#compose-manager-deployment-images)
+for file selection, GitHub access, and standalone verification options.
 
 The evidence covers recorded deployment actions and the configured image builds.
-Current runtime state and model weights require separate evidence.
+Current runtime state requires separate evidence.
 
 ## Handle errors
 

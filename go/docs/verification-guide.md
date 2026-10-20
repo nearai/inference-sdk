@@ -295,6 +295,37 @@ Configure the two callbacks with separate model and Gateway image policies.
 Custom quote, GPU, and deployment verifiers are trusted application code. They
 must authenticate evidence, rather than merely parse it.
 
+## Images deployed by Compose Manager
+
+Use a model deployment callback to require authenticated deployment actions and
+published-image provenance. The compose file and manager have independent policies:
+
+```go
+modelImages := map[string]nearai.ImageProvenancePolicy{
+    "nearaidev/vllm-proxy-rs": {
+        Repository: "nearai/inference-proxy", Workflow: ".github/workflows/build.yml",
+    },
+}
+check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
+    return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, modelImages,
+        nearai.ComposeManagerDeploymentImageProvenanceOptions{
+            ManagerImagePolicy: nearai.ComposeManagerImagePolicy{
+                ImageRepository: "nearaidev/compose-manager",
+                Build: nearai.ImageProvenancePolicy{
+                    Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml",
+                },
+            },
+        })
+}
+// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
+// Direct:  ModelVerification: nearai.VerificationOptions{ServingDeployment: check}
+```
+
+Pin source commits or refs according to your release policy. The evidence
+covers recorded deployment actions and image builds. Current runtime state
+requires separate evidence. See the [API reference](./api-reference.md#compose-manager-deployment-provenance)
+for file selection, GitHub access, and Direct client options.
+
 ## Encryption and TLS binding
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.
@@ -434,37 +465,6 @@ the corresponding cache; disabling response retention prevents later receipt
 verification. Expired or evicted receipts cannot be verified. Check the
 [cache limits](./api-reference.md#clients-and-lifecycle) when sizing services that
 retain large or streaming completions.
-
-## Images deployed by Compose Manager
-
-Use a model deployment callback to require authenticated deployment actions and
-published-image provenance. The compose file and manager have independent policies:
-
-```go
-modelImages := map[string]nearai.ImageProvenancePolicy{
-    "nearaidev/vllm-proxy-rs": {
-        Repository: "nearai/inference-proxy", Workflow: ".github/workflows/build.yml",
-    },
-}
-check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
-    return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, modelImages,
-        nearai.ComposeManagerDeploymentImageProvenanceOptions{
-            ManagerImagePolicy: nearai.ComposeManagerImagePolicy{
-                ImageRepository: "nearaidev/compose-manager",
-                Build: nearai.ImageProvenancePolicy{
-                    Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml",
-                },
-            },
-        })
-}
-// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
-// Direct:  ModelVerification: nearai.VerificationOptions{ServingDeployment: check}
-```
-
-Pin source commits/refs according to your release policy. The evidence covers
-recorded deployment actions and the configured image builds; current runtime
-state and model weights require separate evidence. The Direct callback applies
-to the serving report after all reports have been verified.
 
 ## Handle errors
 

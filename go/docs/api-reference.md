@@ -489,9 +489,7 @@ uses authenticated production TUF updates; `TrustedRoot` supports offline truste
 material. Trust-root refresh uses the upstream synchronous API; cancellation is
 checked before and after it, not during its network operation.
 
-## Compose Manager deployment provenance
-
-Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
+### Compose Manager deployment provenance
 
 `Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
 When present in a model report, verification checks its quote/TCB, nonce, canonical
@@ -512,10 +510,10 @@ file; unknown services fail. Unselected images cannot satisfy a required policy.
 | `ManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
 | `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubProxyURL`. |
 
-The manager image is checked independently; an old compose image cannot satisfy
-this policy. Missing/unlisted startup images fail. Empty image policies fail
-before any network access. These checks authenticate recorded deployment intent,
-not successful execution, current containers, model weights, or a unique CVM.
+Compose files are limited to 8 MiB before hashing or parsing. Missing evidence,
+hash mismatches, and rejected image policies fail verification. See the
+[guide](./verification-guide.md#images-deployed-by-compose-manager) for usage
+and evidence scope.
 
 `GitHubProxyURL` is an optional absolute HTTP(S) GitHub-compatible API base for
 compose files and image proofs. Tokens are omitted when a proxy is configured;
@@ -524,9 +522,7 @@ redirects and pagination outside the requested artifact are rejected.
 For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
 `VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
 It runs after every report and TLS binding pass, marks only the serving report's
-provenance, and constrains routing/receipt attribution to it. Only root-envelope
-manager evidence is attached to the serving report; nested manager fields are
-discarded. Direct network TLS binding remains experimental and disabled as before.
+provenance, and constrains routing and receipt attribution to that report.
 
 ## Errors and development
 
