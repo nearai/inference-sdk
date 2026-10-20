@@ -323,14 +323,19 @@ and evidence scope.
 
 `fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
 also supports `github_token` and `github_proxy_url`.
-Each GitHub or proxy response page is limited to 16 MiB before JSON decoding,
-including responses without `Content-Length`. An entire fetch is limited to 32
-pages and 64 MiB of cumulative response bytes. Byte overflow fails with
-non-retryable `api.body_too_large`; exceeding the page count fails with
-`api.invalid_response`. Per page, combined `Link` values (including separators)
-are limited to 8 KiB and the re-encoded `before`/`after` query pair to 4 KiB.
-Exceeding either pagination-header limit fails with `api.invalid_response`
-before following the cursor. No partial bundles are returned on failure.
+Provenance fetch limits:
+
+| Resource | Limit |
+| --- | --- |
+| Response page | 16 MiB and 100 attestations |
+| Entire fetch | 32 pages and 64 MiB |
+| Combined `Link` headers per page | 8 KiB |
+| Encoded `before`/`after` query | 4 KiB |
+
+Body limits apply while reading, including responses without `Content-Length`,
+and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
+Limit failures are non-retryable and return no partial bundles.
+
 `verify_deployment_image_provenance_with_options` accepts
 `DeploymentImageProvenanceOptions` with those fields and optional
 `image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
