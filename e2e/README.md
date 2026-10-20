@@ -88,26 +88,8 @@ verification APIs. Its streaming support is separately gated by the provider,
 so this suite tests Chutes with JSON only and verifies the Gateway signature over
 the client-facing response. A missing signature fails every receipt test.
 
-## Jev / System One
-
-SDKs with System One support also test a hosted Jev model selected from each
-environment's public catalog. Discovery uses the `decisions` output capability
-and TypeSafe ownership, preferring lower prices; a missing model fails the run.
-Rust-only releases do not require a System One model.
-
-Client cases use Ed25519 and ECDSA with automatic preflight and response
-verification. Each request contains `noul`, `choice`, and `score` questions.
-Tests verify real Gateway quotes and receipts indexed by `X-Generation-Id`.
-Standalone cases additionally reject altered request and response bytes using
-the same real receipt. Native clients keep peer TLS binding enabled.
-
-Hosted Jev uses Gateway receipts; these tests do not claim model TEE execution
-or GPU verification. System One does not support streaming, E2EE, or OHTTP.
-Tests check typed answers, not a particular probabilistic decision. Inference
-is sent once; only retryable receipt lookups are retried.
-
-System One cases use the same environment credentials and language test commands
-as Chat. The workflow discovers the model automatically and passes it through
+System One tests use the same credentials and commands as Chat. Model discovery
+also selects a Jev model for SDKs with System One tests and passes it through
 `NEARAI_E2E_SYSTEMONE_MODEL`.
 
 ## Local use
@@ -116,14 +98,16 @@ Select one environment by setting `NEARAI_BASE_URL` to its URL above and
 `NEARAI_API_KEY` to that environment's key through your local secret manager
 or shell. Do not commit a key or paste it into a
 command that saves shell history.
-Discover models once from the repository root (Node.js 24; no API key used):
+Discover models once from the repository root (Node.js 24 and `jq`):
 
 ```sh
-NEARAI_E2E_MODELS=$(node e2e/select-models.mjs)
-export NEARAI_E2E_MODELS
-NEARAI_E2E_SYSTEMONE_MODEL=$(node e2e/select-models.mjs systemone)
-export NEARAI_E2E_SYSTEMONE_MODEL
+selection=$(node e2e/select-models.mjs)
+export NEARAI_E2E_MODELS="$(printf '%s' "$selection" | jq -c '.models')"
+export NEARAI_E2E_SYSTEMONE_MODEL="$(printf '%s' "$selection" | jq -r '.systemoneModel')"
 ```
+
+Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` when
+discovering models for one SDK. It defaults to all available test suites.
 
 Then run the relevant command from the repository root:
 

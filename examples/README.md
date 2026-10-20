@@ -224,35 +224,16 @@ export NEARAI_EXPECT_SIGNATURE_KIND='gateway'
 pnpm --dir examples/example-js start:jev
 ```
 
-The endpoint must deploy [cloud-api #1126](https://github.com/nearai/cloud-api/pull/1126),
-and the model must have the `decisions` output modality and a configured provider.
-Use a funded **Cloud API** key, not the upstream TypeSafe key. This example makes
-one billable inference call; it does not retry inference automatically. An error
-exits nonzero. Successful output begins with `Verified gateway receipt ...`
-(or `Verified provider_tee receipt ...`) followed by answers and token usage.
+Use a service that supports System One, a model with the `decisions` output
+modality, and a funded Cloud API key. Each run makes one billable inference call
+and prints verified answers and token usage.
 
-The Node client verifies fresh Gateway attestation and pins metadata, inference,
-and receipt requests to the attested TLS key. Hosted TypeSafe/OpenRouter models
-use a **gateway receipt**, proving response integrity and Gateway provenance,
-not confidential execution of the upstream model. For a self-hosted Jev model
-with model attestation and TEE receipts, set its canonical ID and
-`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`; the client verifies model evidence
-and matches the receipt signer to the serving instance. A different receipt kind
-fails the example rather than silently weakening the requested check.
+Hosted Jev uses Gateway receipts. For a model with TEE attestation, set
+`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`. Set `NEARAI_SIGNING_ALGO=ecdsa`
+to try ECDSA instead of the default Ed25519.
 
-To test the other signature algorithm, rerun with
-`NEARAI_SIGNING_ALGO=ecdsa` (default: `ed25519`). Each run makes a new inference
-call. The example uses the SDK's default attestation verifiers and does not
-install a caller-specific measurement or image-provenance allowlist.
-
-System One requires `e2ee: false` and `ohttp: false`; encryption and model-key
-routing headers are removed. It sends plaintext request fields over pinned
-HTTPS. Streaming is unsupported. Aliases are rejected with `x-no-aliasing`:
-use the canonical catalog ID. Missing `X-Generation-Id`, malformed output, failed
-attestation, an invalid signature, or the wrong expected receipt kind fails the
-check. A missing receipt can also mean the server failed to persist it; retry
-`client.verifyResponse(result.decisionId)` in your application without
-submitting inference again.
+See the [System One guide](../js/docs/verification-guide.md#system-one-decisions)
+for receipt verification and API options.
 
 ## Go
 

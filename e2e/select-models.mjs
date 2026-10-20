@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 
 // Shared by all SDK suites. Discovery uses only the public catalog, not API keys.
 async function main() {
-  const endpoint = process.argv[2] ?? 'chat';
-  assert.ok(['chat', 'systemone'].includes(endpoint), 'Expected chat or systemone');
+  const language = process.env.NEARAI_E2E_LANGUAGE || 'all';
+  const systemOneSuites = {
+    javascript: '../js/e2e/systemone.test.ts',
+    python: '../py/e2e/test_systemone.py',
+    rust: '../rs/e2e/systemone.rs',
+    go: '../go/e2e/systemone_test.go',
+  };
+  assert.ok(language === 'all' || Object.hasOwn(systemOneSuites, language), 'Unknown E2E language');
+  const needsSystemOne = Object.entries(systemOneSuites).some(
+    ([sdk, path]) => (language === 'all' || language === sdk) &&
+      existsSync(new URL(path, import.meta.url)),
+  );
   assert.ok(process.env.NEARAI_BASE_URL, 'NEARAI_BASE_URL is required');
   const baseUrl = `${process.env.NEARAI_BASE_URL.replace(/\/+$/, '')}/`;
   const models = [];
@@ -26,8 +37,9 @@ async function main() {
     model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
     model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
 
-  if (endpoint === 'systemone') {
-    // Hosted Jev provides Gateway receipts, not NEAR model-TEE evidence.
+  let systemoneModel = '';
+  if (needsSystemOne) {
+    // Hosted Jev cases verify Gateway receipts.
     const decisions = models.filter(({ metadata }) =>
       metadata.ownedBy === 'typesafe' &&
       metadata.providerType === 'external' &&
@@ -38,8 +50,7 @@ async function main() {
       (a, b) => price(a) - price(b) || a.modelId.localeCompare(b.modelId),
     );
     assert.ok(decisions.length > 0, 'Expected a hosted Jev decision model');
-    console.log(decisions[0].modelId);
-    return;
+    systemoneModel = decisions[0].modelId;
   }
 
   const chatModels = models.filter(({ metadata }) => {
@@ -84,7 +95,7 @@ async function main() {
       })),
     );
   }
-  console.log(JSON.stringify(selected));
+  console.log(JSON.stringify({ models: selected, systemoneModel }));
 }
 
 await main();

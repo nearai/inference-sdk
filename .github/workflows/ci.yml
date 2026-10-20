@@ -34,7 +34,7 @@ jobs:
         run: |
           pnpm typecheck:e2e
           node --test e2e/*.spec.ts
-          node --check ../e2e/select-models.mjs
+          node --test ../e2e/select-models.test.mjs
       - name: Check JavaScript example
         working-directory: examples/example-js
         run: |

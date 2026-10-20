@@ -66,11 +66,6 @@ console.log(
   `Verified ${verified.signatureKind} receipt ${result.decisionId} (${signingAlgo}).`,
 );
 console.log(
-  verified.signatureKind === 'gateway'
-    ? 'Gateway receipt: integrity and Gateway provenance; not proof of TypeSafe model execution in a TEE.'
-    : 'Provider TEE receipt: response signed by the matching verified model deployment.',
-);
-console.log(
   JSON.stringify(
     { answers: result.data.answers, usage: result.data.usage },
     null,

@@ -175,7 +175,8 @@ model reports may also run concurrently.
 
 Use `systemone.create()` for Jev decision models. It verifies the required
 deployments before sending state, using the client's attestation cache and
-policies. System One supports neither streaming nor E2EE/OHTTP.
+policies. Use a Gateway client with `e2ee: false` and `ohttp: false`;
+System One returns a complete JSON response.
 
 ```ts
 import { InferenceClient } from '@nearai/inference-sdk/node';
@@ -193,21 +194,14 @@ const verified = await client.verifyResponse(result.decisionId);
 console.log(verified.signatureKind, result.data.answers);
 ```
 
-`result.decisionId` comes from `X-Generation-Id` and is available even when
-the provider omits `result.data.id`. Verification uses the captured request and
-response bytes, even if the parsed data is later edited. Wait for it before acting on
-answers. A `provider_tee` receipt matches a signer in the preverified model
-fleet; a `gateway` receipt proves Gateway signing, not model TEE execution.
+`result.decisionId` comes from `X-Generation-Id`. Call `verifyResponse()` before
+using the answers; it checks the exact bytes captured by the client. Gateway
+receipts authenticate Gateway signing; provider TEE receipts authenticate a
+signer in the verified model reports.
 
-Response retention, concurrent verification, and receipt lookup retries use the
-same `verifyResponse` lifecycle as Chat. Inference is sent once. If the receipt
-is not available yet, retry `verifyResponse(result.decisionId)` without making
-another decision request.
-
-Pass `signal` in the second argument to cancel a caller's preflight wait or
-inference request. Cancelling one caller does not stop shared attestation work
-needed by another. Request business rules, including question limits, are
-validated by the server.
+Response retention and receipt retries follow the same lifecycle as Chat.
+If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
+Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
 ## Connect through an application proxy
 
