@@ -27,7 +27,7 @@ export NEARAI_E2E_SYSTEMONE_MODEL="$(printf '%s' "$selection" | jq -r '.systemon
 Run the selected SDK's command from the repository root:
 
 ```sh
-# JavaScript: Node.js 24 and pnpm
+# Node.js 24
 cd js
 pnpm install --frozen-lockfile
 pnpm build
@@ -36,20 +36,20 @@ pnpm test:e2e
 ```
 
 ```sh
-# Python: Python 3.12 and uv
+# Python 3.12
 cd py
 uv sync --locked
 uv run --no-sync pytest e2e -v --tb=short
 ```
 
 ```sh
-# Rust: stable toolchain
+# Rust stable
 cd rs
 cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
 ```sh
-# Go 1.25.8+; includes the external OpenAI client example
+# Go 1.25.8+
 export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
 go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
