@@ -101,6 +101,24 @@ describe('DirectAttestationClient', () => {
     jest.restoreAllMocks();
   });
 
+  test('ignores nested manager data and retains only the serving envelope', async () => {
+    const api = directFor((request) => {
+      const report = reportFor(request);
+      return jsonResponse({
+        ...report,
+        all_attestations: report.all_attestations.map((item) => ({
+          ...item,
+          compose_manager_attestation: { future_format: true },
+        })),
+      });
+    });
+    const result = await api.client.fetchModelAttestations();
+    expect(
+      result.servingAttestation.composeManagerAttestation?.intelQuote,
+    ).toBe('bb');
+    expect(result.attestations[1].composeManagerAttestation).toBeUndefined();
+  });
+
   test('preserves OHTTP metadata on the response envelope without changing serving evidence', async () => {
     const api = directFor((request) =>
       jsonResponse({

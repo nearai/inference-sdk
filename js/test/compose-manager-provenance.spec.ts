@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { TrustedRootProvider } from '@freedomofpress/sigstore-browser';
 import {
   type ComposeManagerAttestation,
+  fetchImageProvenance,
   verifyComposeManagerDeploymentImageProvenance,
   verifyDirectModelAttestations,
   verifyModelAttestation,
@@ -62,23 +63,68 @@ function managerQuote(report: ComposeManagerAttestation): VerifiedTdxQuote {
   });
 }
 
+async function verifyManagerFixture() {
+  const report = managerReport();
+  return verifyModelAttestation({
+    attestation: createModelAttestation({ composeManagerAttestation: report }),
+    clientBinding: { nonce },
+    verifiers: {
+      tdxQuote: (quote) =>
+        quote === 'bb' ? managerQuote(report) : createModelQuote(),
+    },
+  });
+}
+
 describe('Compose Manager deployment image provenance', () => {
   afterEach(() => jest.restoreAllMocks());
+
+  test.each([
+    '',
+    '/github',
+    'ftp://proxy.example/github',
+    'https://user:password@proxy.example/github',
+    'https://proxy.example/github?token=test',
+    'https://proxy.example/github?',
+    'https://proxy.example/github#fragment',
+    'https://proxy.example/github#',
+    'https://proxy.example:99999/github',
+  ])(
+    'rejects an invalid proxy before requesting compose files or proofs: %s',
+    async (githubProxyUrl) => {
+      const verified = await verifyManagerFixture();
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Unexpected network request'));
+      for (const operation of [
+        () =>
+          fetchImageProvenance({
+            repository: POLICY.repository,
+            digest: `sha256:${'aa'.repeat(32)}`,
+            githubProxyUrl,
+          }),
+        () =>
+          verifyComposeManagerDeploymentImageProvenance({
+            deployment: verified.deployment,
+            imagePolicies: IMAGE_POLICIES,
+            managerImagePolicy: MANAGER_POLICY,
+            githubProxyUrl,
+          }),
+      ]) {
+        await expect(operation()).rejects.toMatchObject({
+          failure: {
+            code: 'api.invalid_input',
+            details: { field: 'githubProxyUrl' },
+          },
+        });
+      }
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
 
   test.each([':latest', '@sha256:abcd', `:bad tag@sha256:${'aa'.repeat(32)}`])(
     'rejects an unpinned manager image before any request: %s',
     async (suffix) => {
-      const report = managerReport();
-      const verified = await verifyModelAttestation({
-        attestation: createModelAttestation({
-          composeManagerAttestation: report,
-        }),
-        clientBinding: { nonce },
-        verifiers: {
-          tdxQuote: (quote) =>
-            quote === 'bb' ? managerQuote(report) : createModelQuote(),
-        },
-      });
+      const verified = await verifyManagerFixture();
       const manager = verified.deployment.composeManager;
       if (manager === undefined) throw new Error('Missing manager evidence');
       const fetch = jest
@@ -114,7 +160,11 @@ describe('Compose Manager deployment image provenance', () => {
     },
   );
 
-  test.each([undefined, 'https://app.example/verification/github'])(
+  test.each([
+    undefined,
+    'https://app.example/verification/github',
+    'http://127.0.0.1:8080/github',
+  ])(
     'verifies the signed log, compose bytes and image build with proxy %s',
     async (githubProxyUrl) => {
       const report = managerReport();
@@ -251,17 +301,7 @@ describe('Compose Manager deployment image provenance', () => {
   );
 
   test('rejects downloaded compose bytes with the wrong hash before fetching image proofs', async () => {
-    const report = managerReport();
-    const verified = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        composeManagerAttestation: report,
-      }),
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: async (quote) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-      },
-    });
+    const verified = await verifyManagerFixture();
     const fetch = jest
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response(`${COMPOSE}\n# changed`));
@@ -278,18 +318,7 @@ describe('Compose Manager deployment image provenance', () => {
   });
 
   test('cancels an oversized streamed compose file before image proof retrieval', async () => {
-    const report = managerReport();
-    const verified = await verifyModelAttestation({
-      attestation: {
-        ...createModelAttestation(),
-        composeManagerAttestation: report,
-      },
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: (quote) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-      },
-    });
+    const verified = await verifyManagerFixture();
     let chunks = 0;
     let cancelled = false;
     const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
@@ -401,17 +430,7 @@ describe('Compose Manager deployment image provenance', () => {
   ])(
     'rejects a service selection that cannot satisfy the image policy: %p',
     async (services, reason) => {
-      const report = managerReport();
-      const verified = await verifyModelAttestation({
-        attestation: createModelAttestation({
-          composeManagerAttestation: report,
-        }),
-        clientBinding: { nonce },
-        verifiers: {
-          tdxQuote: (quote) =>
-            quote === 'bb' ? managerQuote(report) : createModelQuote(),
-        },
-      });
+      const verified = await verifyManagerFixture();
       const compose = `${COMPOSE}  other:\n    image: other/model:latest\n`;
       const manager = verified.deployment.composeManager;
       if (manager === undefined)
@@ -495,17 +514,7 @@ describe('Compose Manager deployment image provenance', () => {
   });
 
   test('selects the requested compose project and the latest manager-start image', async () => {
-    const report = managerReport();
-    const verified = await verifyModelAttestation({
-      attestation: createModelAttestation({
-        composeManagerAttestation: report,
-      }),
-      clientBinding: { nonce },
-      verifiers: {
-        tdxQuote: async (quote) =>
-          quote === 'bb' ? managerQuote(report) : createModelQuote(),
-      },
-    });
+    const verified = await verifyManagerFixture();
     const manager = verified.deployment.composeManager;
     if (manager === undefined)
       throw new Error('Expected verified manager evidence');

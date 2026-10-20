@@ -26,7 +26,6 @@ type VerifyComposeImageProvenanceParams = {
   imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
   githubToken?: string;
   githubProxyUrl?: string;
-  additionalImages?: readonly ComposeImage[];
   /** An explicit compose_up selection; omitted or empty selects the whole file. */
   services?: readonly string[];
 };
@@ -69,45 +68,48 @@ export async function verifyComposeImageProvenance({
   imagePolicies,
   githubToken,
   githubProxyUrl,
-  additionalImages = [],
   services,
 }: VerifyComposeImageProvenanceParams): Promise<void> {
   const requiredImages = selectRequiredImages({
     dockerCompose,
     imagePolicies,
-    additionalImages,
     services,
   });
   await Promise.all(
-    requiredImages.map(async ({ repository, digest, policy }) => {
-      let bundles: readonly string[];
-      try {
-        bundles = await fetchImageProvenance({
-          repository: policy.repository,
-          digest,
-          githubToken,
-          githubProxyUrl,
-        });
-      } catch (cause) {
-        if (!(cause instanceof ApiError)) throw cause;
-        throw new VerificationError(
-          {
-            code: 'provenance.image_request_failed',
-            details: { imageRepository: repository, digest },
-            retryable: cause.retryable,
-          },
-          { cause },
-        );
-      }
-      await verifyImageProvenance({ bundles, digest, policy });
-    }),
+    requiredImages.map((image) =>
+      verifyRequiredImageProvenance(image, { githubToken, githubProxyUrl }),
+    ),
   );
+}
+
+export async function verifyRequiredImageProvenance(
+  { repository, digest, policy }: RequiredImage,
+  access: { githubToken?: string; githubProxyUrl?: string },
+): Promise<void> {
+  let bundles: readonly string[];
+  try {
+    bundles = await fetchImageProvenance({
+      repository: policy.repository,
+      digest,
+      ...access,
+    });
+  } catch (cause) {
+    if (!(cause instanceof ApiError)) throw cause;
+    throw new VerificationError(
+      {
+        code: 'provenance.image_request_failed',
+        details: { imageRepository: repository, digest },
+        retryable: cause.retryable,
+      },
+      { cause },
+    );
+  }
+  await verifyImageProvenance({ bundles, digest, policy });
 }
 
 function selectRequiredImages({
   dockerCompose,
   imagePolicies,
-  additionalImages = [],
   services,
 }: VerifyComposeImageProvenanceParams): RequiredImage[] {
   const policies = Object.entries(imagePolicies);
@@ -152,12 +154,6 @@ function selectRequiredImages({
     }
     images.push({ service, image: image.replace(/^docker\.io\//, '') });
   }
-  images.push(
-    ...additionalImages.map(({ service, image }) => ({
-      service,
-      image: image.replace(/^docker\.io\//, ''),
-    })),
-  );
 
   // Finish selection before making any requests, including checking repeated
   // references so a pinned service cannot hide an unpinned one.

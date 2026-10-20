@@ -8,7 +8,9 @@ import { VerificationError } from '../utils/errors';
 import {
   requirePinnedImageDigest,
   verifyComposeImageProvenance,
+  verifyRequiredImageProvenance,
 } from './deployment-provenance';
+import { githubApiBaseUrl } from './provenance';
 
 type FetchComposeFileParams = {
   repository: string;
@@ -64,7 +66,11 @@ export async function verifyComposeManagerDeploymentImageProvenance({
       !managerImage.startsWith(`${managerRepository}:`))
   )
     throw invalidDeployment('manager_image_mismatch');
-  requirePinnedImageDigest(managerImage, managerRepository, 'compose-manager');
+  const managerDigest = requirePinnedImageDigest(
+    managerImage,
+    managerRepository,
+    'compose-manager',
+  );
   const { commit, file, file_sha256: digest } = action;
   if (
     commit === undefined ||
@@ -97,13 +103,14 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     services: action.services,
   });
   // A stale compose reference cannot satisfy the current manager's policy.
-  await verifyComposeImageProvenance({
-    dockerCompose: 'services: {}',
-    imagePolicies: { [managerRepository]: managerImagePolicy },
-    githubToken,
-    githubProxyUrl,
-    additionalImages: [{ service: 'compose-manager', image: managerImage }],
-  });
+  await verifyRequiredImageProvenance(
+    {
+      repository: managerRepository,
+      digest: managerDigest,
+      policy: managerImagePolicy,
+    },
+    { githubToken, githubProxyUrl },
+  );
 }
 
 async function fetchComposeFile({
@@ -119,10 +126,7 @@ async function fetchComposeFile({
     .map(encodeURIComponent)
     .join('/');
   const filePath = file.split('/').map(encodeURIComponent).join('/');
-  const apiUrl = (githubProxyUrl ?? 'https://api.github.com').replace(
-    /\/+$/,
-    '',
-  );
+  const apiUrl = githubApiBaseUrl(githubProxyUrl);
   const url = `${apiUrl}/repos/${repositoryPath}/contents/${filePath}?ref=${commit}`;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.raw+json',

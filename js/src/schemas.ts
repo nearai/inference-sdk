@@ -198,12 +198,12 @@ const CloudApiModelAttestationEntries = {
   ...CloudApiAttestationEntries,
   nvidia_payload: OptionalCloudApiStringSchema,
   signing_public_key: OptionalCloudApiStringSchema,
-  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
 };
 
-export const CloudApiModelAttestationSchema = objectSchema(
-  CloudApiModelAttestationEntries,
-);
+export const CloudApiModelAttestationSchema = objectSchema({
+  ...CloudApiModelAttestationEntries,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
+});
 
 const DirectApiModelAttestationEntries = {
   ...CloudApiModelAttestationEntries,
@@ -220,6 +220,7 @@ export const DirectApiModelAttestationSchema = objectSchema(
 
 export const DirectApiAttestationReportSchema = objectSchema({
   ...DirectApiModelAttestationEntries,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
   all_attestations: v.pipe(
     v.array(DirectApiModelAttestationSchema),
     v.minLength(1),

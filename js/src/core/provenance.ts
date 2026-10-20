@@ -70,10 +70,7 @@ export async function fetchImageProvenance({
     headers.Authorization = `Bearer ${githubToken}`;
   }
 
-  const apiUrl = (githubProxyUrl ?? 'https://api.github.com').replace(
-    /\/+$/,
-    '',
-  );
+  const apiUrl = githubApiBaseUrl(githubProxyUrl);
   const baseUrl = `${apiUrl}/repos/${repositoryPath}/attestations/${encodeURIComponent(digest.toLowerCase())}?per_page=100`;
   const bundles: string[] = [];
   const visited = new Set<string>();
@@ -131,6 +128,27 @@ export async function fetchImageProvenance({
     url = nextGitHubAttestationsUrl(response.headers.get('link'), baseUrl);
   }
   return bundles;
+}
+
+export function githubApiBaseUrl(proxyUrl?: string): string {
+  if (proxyUrl === undefined) return 'https://api.github.com';
+  try {
+    const url = new URL(proxyUrl);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username !== '' ||
+      url.password !== '' ||
+      proxyUrl.includes('?') ||
+      proxyUrl.includes('#')
+    )
+      throw new Error('Invalid proxy URL');
+    return url.href.replace(/\/+$/, '');
+  } catch {
+    throw invalidApiInput(
+      'githubProxyUrl',
+      'Expected an absolute HTTP(S) URL without credentials, query, or fragment',
+    );
+  }
 }
 
 function nextGitHubAttestationsUrl(
