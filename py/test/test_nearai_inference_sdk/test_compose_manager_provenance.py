@@ -8,6 +8,7 @@ from sigstore.models import TrustedRoot
 from sigstore.verify import Verifier
 
 from nearai_inference_sdk import (
+    ApiError,
     ComposeManagerAttestation,
     ComposeManagerImagePolicy,
     DirectClientBinding,
@@ -116,7 +117,12 @@ async def test_rejects_unpinned_manager_image_before_any_request(monkeypatch, su
 
 @pytest.mark.parametrize('direct', [False, True])
 @pytest.mark.parametrize(
-    'github_proxy_url', [None, 'https://app.example/verification/github/']
+    'github_proxy_url',
+    [
+        None,
+        'https://app.example/verification/github/',
+        'http://localhost:8080/github/',
+    ],
 )
 async def test_verifies_recorded_compose_and_real_image_proof_through_deployment_policy(
     monkeypatch,
@@ -197,6 +203,53 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
         assert request.await_args.kwargs['headers'].get('Authorization') == (
             'Bearer test-token' if github_proxy_url is None else None
         )
+
+
+@pytest.mark.parametrize('request_path', ['compose', 'image'])
+@pytest.mark.parametrize(
+    'github_proxy_url',
+    [
+        '',
+        '/verification/github',
+        '//proxy.example/github',
+        'ftp://proxy.example/github',
+        'https:///github',
+        'https://proxy.example:invalid/github',
+        'https://user:password@proxy.example/github',
+        'https://proxy.example/github?tenant=x',
+        'https://proxy.example/github?',
+        'https://proxy.example/github#section',
+        'https://proxy.example/github#',
+    ],
+)
+async def test_rejects_invalid_github_proxy_before_any_request(
+    monkeypatch, request_path, github_proxy_url
+):
+    fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
+    monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
+    monkeypatch.setattr(provenance, 'fetch', fetch)
+    with pytest.raises(ApiError) as error:
+        if request_path == 'compose':
+            verified = await verify_model_attestation(
+                create_model_attestation(compose_manager_attestation=manager_report()),
+                MODEL_CLIENT_BINDING,
+                verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
+            )
+            await verify_compose_manager_deployment_image_provenance(
+                verified.deployment,
+                POLICIES,
+                manager_image_policy=MANAGER_POLICY,
+                github_proxy_url=github_proxy_url,
+            )
+        else:
+            await provenance.fetch_image_provenance(
+                MANAGER_POLICY.repository,
+                'sha256:' + 'aa' * 32,
+                github_proxy_url=github_proxy_url,
+            )
+    assert error.value.failure.code == 'api.invalid_input'
+    assert error.value.failure.details['field'] == 'github_proxy_url'
+    fetch.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

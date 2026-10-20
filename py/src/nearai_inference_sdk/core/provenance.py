@@ -176,6 +176,34 @@ def _deployment_images_failure(
     return verification_failure('provenance.deployment_images_invalid', details)
 
 
+def github_api_base_url(github_proxy_url: str | None) -> str:
+    if github_proxy_url is None:
+        return 'https://api.github.com'
+    try:
+        parsed = urlsplit(github_proxy_url)
+        _ = parsed.port
+        if (
+            parsed.scheme not in {'http', 'https'}
+            or not parsed.hostname
+            or parsed.username is not None
+            or '?' in github_proxy_url
+            or '#' in github_proxy_url
+        ):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise api_failure(
+            'api.invalid_input',
+            {
+                'field': 'github_proxy_url',
+                'reason': 'invalid_url',
+                'expected': (
+                    'an absolute HTTP(S) URL without credentials, query, or fragment'
+                ),
+            },
+        ) from None
+    return github_proxy_url.rstrip('/')
+
+
 async def fetch_image_provenance(
     repository: str,
     digest: str,
@@ -217,9 +245,7 @@ async def fetch_image_provenance(
     if github_proxy_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
 
-    api_url = (
-        'https://api.github.com' if github_proxy_url is None else github_proxy_url
-    ).rstrip('/')
+    api_url = github_api_base_url(github_proxy_url)
     base_url = (
         f'{api_url}/repos/{repository}/attestations/'
         f'{quote(digest.lower(), safe=":")}?per_page=100'

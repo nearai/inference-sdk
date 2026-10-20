@@ -11,7 +11,11 @@ from ..types.verification import MeasuredDeployment
 from ..utils.common import sha256
 from ..utils.errors import VerificationError, verification_failure
 from ..utils.fetch import ResponseBodyTooLarge, fetch
-from .provenance import require_pinned_image_digest, verify_compose_image_provenance
+from .provenance import (
+    github_api_base_url,
+    require_pinned_image_digest,
+    verify_compose_image_provenance,
+)
 
 
 async def verify_compose_manager_deployment_image_provenance(
@@ -88,9 +92,7 @@ async def verify_compose_manager_deployment_image_provenance(
         quote(part, safe='') for part in compose_repository.split('/')
     )
     file_path = '/'.join(quote(part, safe='') for part in file.split('/'))
-    api_url = (
-        'https://api.github.com' if github_proxy_url is None else github_proxy_url
-    ).rstrip('/')
+    api_url = github_api_base_url(github_proxy_url)
     url = f'{api_url}/repos/{repository_path}/contents/{file_path}?ref={commit}'
     headers = {
         'Accept': 'application/vnd.github.raw+json',
