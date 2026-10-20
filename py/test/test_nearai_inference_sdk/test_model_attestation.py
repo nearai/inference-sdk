@@ -73,7 +73,7 @@ def use_fake_nras_response(monkeypatch: pytest.MonkeyPatch, body: object) -> Non
 @pytest.fixture
 def nras_verifier() -> GpuEvidenceVerifier:
     return create_gpu_evidence_verifier(
-        nras_url='https://nras.example/gpu', jwks_url=PROXY_JWKS_URL
+        nras_base_url='https://nras.example/gpu', jwks_url=PROXY_JWKS_URL
     )
 
 
@@ -100,32 +100,34 @@ async def test_nras_factories_route_evidence_and_jwks_independently(
 
     monkeypatch.setattr(nvidia, 'fetch', fake_fetch)
     first = create_gpu_evidence_verifier(
-        nras_url='https://first.example/gpu', jwks_url='https://first.example/keys'
+        nras_base_url='https://first.example/nras',
+        jwks_url='https://first.example/keys',
     )
     second = create_gpu_evidence_verifier(
-        nras_url='https://second.example/gpu', jwks_url='https://second.example/keys'
+        nras_base_url='https://second.example/nras/',
+        jwks_url='https://second.example/keys',
     )
     default = create_gpu_evidence_verifier()
-    nras_only = create_gpu_evidence_verifier(nras_url='https://first.example/gpu')
+    nras_only = create_gpu_evidence_verifier(nras_base_url='https://first.example/nras')
     jwks_only = create_gpu_evidence_verifier(jwks_url='https://first.example/keys')
     for verifier in (first, second, first, default, nras_only, jwks_only):
         await verifier(payload)
 
     expected_calls = []
     for url, jwks_url in (
-        ('https://first.example/gpu', 'https://first.example/keys'),
-        ('https://second.example/gpu', 'https://second.example/keys'),
-        ('https://first.example/gpu', 'https://first.example/keys'),
+        ('https://first.example/nras/v3/attest/gpu', 'https://first.example/keys'),
+        ('https://second.example/nras/v3/attest/gpu', 'https://second.example/keys'),
+        ('https://first.example/nras/v3/attest/gpu', 'https://first.example/keys'),
         (
-            'https://nras.attestation.nvidia.com/v3/attest/gpu',
+            'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
             'https://nras.attestation.nvidia.com/.well-known/jwks.json',
         ),
         (
-            'https://first.example/gpu',
+            'https://first.example/nras/v3/attest/gpu',
             'https://nras.attestation.nvidia.com/.well-known/jwks.json',
         ),
         (
-            'https://nras.attestation.nvidia.com/v3/attest/gpu',
+            'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
             'https://first.example/keys',
         ),
     ):
@@ -173,7 +175,7 @@ async def test_nras_factory_rejects_invalid_payload_nonce_before_network(
         raise AssertionError('invalid evidence must not be sent')
 
     monkeypatch.setattr(nvidia, 'fetch', unexpected_fetch)
-    verifier = create_gpu_evidence_verifier(nras_url='https://nras.example/gpu')
+    verifier = create_gpu_evidence_verifier(nras_base_url='https://nras.example/gpu')
     with pytest.raises(VerificationError) as raised:
         if mode == 'standalone':
             await verifier(payload)
@@ -194,7 +196,7 @@ async def test_nras_factory_compares_payload_and_signed_nonce_as_bytes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     use_fake_nras_response(monkeypatch, [['JWT', nras_jwt({'eat_nonce': 'AB' * 32})]])
-    verifier = create_gpu_evidence_verifier(nras_url='https://nras.example/gpu')
+    verifier = create_gpu_evidence_verifier(nras_base_url='https://nras.example/gpu')
     await verifier(json.dumps({'nonce': '0X' + 'ab' * 32}))
 
 

@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
+pub const DEFAULT_NRAS_BASE_URL: &str = "https://cloud.near.ai/api/proxy/nras";
 pub const DEFAULT_NVIDIA_JWKS_URL: &str =
     "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
@@ -24,31 +24,28 @@ const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
 #[derive(Clone, Debug)]
 pub struct NrasGpuEvidenceVerifier {
     client: Client,
-    url: String,
+    attest_url: String,
     jwks_url: String,
 }
 
 impl Default for NrasGpuEvidenceVerifier {
     fn default() -> Self {
-        Self::new(DEFAULT_NVIDIA_NRAS_URL)
+        Self::new(DEFAULT_NRAS_BASE_URL)
     }
 }
 
 impl NrasGpuEvidenceVerifier {
-    /// Submit evidence to this URL, using NVIDIA's official JWKS URL by default.
-    pub fn new(url: impl Into<String>) -> Self {
-        let client = Client::new();
-        Self {
-            client,
-            url: url.into(),
-            jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
-        }
+    /// Submit evidence to /v3/attest/gpu beneath this base URL.
+    /// Signing keys come from NVIDIA's official JWKS URL by default.
+    pub fn new(nras_base_url: impl Into<String>) -> Self {
+        Self::with_client(Client::new(), nras_base_url)
     }
 
-    pub fn with_client(client: Client, url: impl Into<String>) -> Self {
+    pub fn with_client(client: Client, nras_base_url: impl Into<String>) -> Self {
+        let nras_base_url = nras_base_url.into();
         Self {
             client,
-            url: url.into(),
+            attest_url: format!("{}/v3/attest/gpu", nras_base_url.trim_end_matches('/')),
             jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
         }
     }
@@ -84,7 +81,7 @@ impl GpuEvidenceVerifier for NrasGpuEvidenceVerifier {
         })?;
         let response = self
             .client
-            .post(&self.url)
+            .post(&self.attest_url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .body(nvidia_payload.to_owned())
             .send()
@@ -386,28 +383,36 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_official_nras_endpoint_by_default() {
+    fn uses_the_near_ai_nras_proxy_and_official_jwks_by_default() {
         let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
-            verifier.url,
-            "https://nras.attestation.nvidia.com/v3/attest/gpu"
+            verifier.attest_url,
+            "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"
         );
         assert_eq!(
             verifier.jwks_url,
             "https://nras.attestation.nvidia.com/.well-known/jwks.json"
         );
+        assert_eq!(
+            NrasGpuEvidenceVerifier::new("https://proxy.example/nras").jwks_url,
+            verifier.jwks_url
+        );
     }
 
     #[tokio::test]
     async fn verifies_proxy_responses_with_custom_nras_and_jwks_urls_and_a_fixed_issuer() {
-        for issuer in [NVIDIA_ISSUER, "https://proxy.example.com"] {
+        for (issuer, base_path) in [
+            (NVIDIA_ISSUER, "/proxy/nras"),
+            (NVIDIA_ISSUER, "/proxy/nras/"),
+            ("https://proxy.example.com", "/proxy/nras"),
+        ] {
             let server = MockServer::start().await;
             let payload = json!({"nonce": "11".repeat(32)}).to_string();
             let mut claims = claims();
             claims["iss"] = json!(issuer);
             let jwt = sign_claims(&claims, "test-nras");
             Mock::given(method("POST"))
-                .and(path("/proxy/attest"))
+                .and(path("/proxy/nras/v3/attest/gpu"))
                 .and(body_string(&payload))
                 .respond_with(ResponseTemplate::new(200).set_body_json(json!([["JWT", jwt]])))
                 .expect(1)
@@ -422,7 +427,7 @@ mod tests {
 
             let verifier = NrasGpuEvidenceVerifier::with_client(
                 Client::builder().no_proxy().build().unwrap(),
-                format!("{}/proxy/attest", server.uri()),
+                format!("{}{base_path}", server.uri()),
             )
             .with_jwks_url(format!("{}/proxy/jwks", server.uri()));
             let result = verifier.verify(&payload).await;
@@ -447,7 +452,7 @@ mod tests {
             "AB".repeat(32)
         );
         Mock::given(method("POST"))
-            .and(path("/proxy/nras"))
+            .and(path("/proxy/nras/v3/attest/gpu"))
             .and(header("content-type", "application/json"))
             .and(body_string(&payload))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"result": true})))

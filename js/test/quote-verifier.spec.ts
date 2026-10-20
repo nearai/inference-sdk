@@ -31,12 +31,12 @@ describe('Intel quote verifier configuration', () => {
     } as unknown as ReturnType<typeof verify>);
   });
 
-  test('uses Intel collateral by default', async () => {
+  test('fetches collateral through the NEAR AI proxy by default', async () => {
     const verifyQuote = createTdxQuoteVerifier();
     const quote = await verifyQuote('abcd');
 
     expect(getCollateral).toHaveBeenCalledWith(
-      'https://api.trustedservices.intel.com',
+      'https://cloud.near.ai/api/proxy/pccs',
       expect.any(Uint8Array),
     );
     expect(quote).toEqual(createModelQuote());
@@ -44,7 +44,7 @@ describe('Intel quote verifier configuration', () => {
 
   test('verifies collateral fetched through a configured PCCS proxy', async () => {
     const verifyQuote = createTdxQuoteVerifier({
-      pccsUrl: 'https://app.example.com/api/attestation/intel',
+      pccsBaseUrl: 'https://app.example.com/api/attestation/intel',
     });
     const quote = await verifyQuote('abcd');
 
@@ -80,7 +80,7 @@ describe('Intel quote verifier configuration', () => {
       throw new Error('Invalid collateral signature');
     });
     const verifyQuote = createTdxQuoteVerifier({
-      pccsUrl: '/api/attestation/intel',
+      pccsBaseUrl: '/api/attestation/intel',
     });
 
     await expect(verifyQuote('abcd')).rejects.toMatchObject({

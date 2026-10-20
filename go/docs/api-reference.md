@@ -87,7 +87,7 @@ func VerifyDirectModelResponse(id string, request, response []byte, sig Completi
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
 func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
-func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
+func CreateTDXQuoteVerifier(pccsBaseURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
 
@@ -98,9 +98,14 @@ matching instances; a shared signer does not uniquely identify an instance.
 
 `NewPinnedTransport` clones a standard HTTP transport and checks the attested
 SPKI fingerprint in addition to normal TLS validation. Close its idle connections
-when finished. `CreateTDXQuoteVerifier("")` uses the default PCCS service.
-`GPUVerifierOptions` has `NRASURL`, `JWKSURL`, and `HTTPClient` fields; empty URLs
-select NVIDIA's NRAS and JWKS endpoints.
+when finished.
+
+| Factory | Parameter or field | Default | Description |
+| --- | --- | --- | --- |
+| `CreateTDXQuoteVerifier` | `pccsBaseURL string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
+| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASBaseURL string` | `https://cloud.near.ai/api/proxy/nras` | NRAS base URL; the verifier appends `/v3/attest/gpu`. An empty string selects the default. |
+| | `GPUVerifierOptions.JWKSURL string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent trusted signing-key URL. An empty string selects the default. |
+| | `GPUVerifierOptions.HTTPClient *http.Client` | Built-in HTTP client | Optional HTTP configuration for NRAS and JWKS requests. |
 
 ## Encryption helpers
 

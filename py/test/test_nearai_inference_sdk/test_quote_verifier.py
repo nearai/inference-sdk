@@ -46,8 +46,8 @@ async def test_quote_factories_route_collateral_and_keep_configuration_isolated(
     monkeypatch.setattr(intel, 'get_collateral', get_collateral)
     monkeypatch.setattr(intel, 'verify', verify)
     monkeypatch.setattr(intel, '_unix_time', lambda: 1800000000)
-    first = create_tdx_quote_verifier(pccs_url='https://first.example/pccs')
-    second = create_tdx_quote_verifier(pccs_url='https://second.example/pccs')
+    first = create_tdx_quote_verifier(pccs_base_url='https://first.example/pccs')
+    second = create_tdx_quote_verifier(pccs_base_url='https://second.example/pccs')
     default = create_tdx_quote_verifier()
     for verifier in (first, second, first, default, intel.verify_dcap_quote):
         assert await verifier('aabb') == quote
@@ -56,8 +56,8 @@ async def test_quote_factories_route_collateral_and_keep_configuration_isolated(
         ('https://first.example/pccs', b'\xaa\xbb'),
         ('https://second.example/pccs', b'\xaa\xbb'),
         ('https://first.example/pccs', b'\xaa\xbb'),
-        ('https://api.trustedservices.intel.com', b'\xaa\xbb'),
-        ('https://api.trustedservices.intel.com', b'\xaa\xbb'),
+        ('https://cloud.near.ai/api/proxy/pccs', b'\xaa\xbb'),
+        ('https://cloud.near.ai/api/proxy/pccs', b'\xaa\xbb'),
     ]
     assert parsed_quotes == [b'\xaa\xbb'] * 5
     assert verified_quotes == [(b'\xaa\xbb', collateral, 1800000000)] * 5
@@ -83,7 +83,7 @@ async def test_quote_factory_propagates_collateral_and_verification_failures(
     monkeypatch.setattr(intel, 'Quote', SimpleNamespace(parse=lambda _: None))
     monkeypatch.setattr(intel, 'get_collateral', get_collateral)
     monkeypatch.setattr(intel, 'verify', verify)
-    verifier = create_tdx_quote_verifier(pccs_url='https://proxy.example/pccs')
+    verifier = create_tdx_quote_verifier(pccs_base_url='https://proxy.example/pccs')
     with pytest.raises(VerificationError) as raised:
         await verifier('aabb')
 

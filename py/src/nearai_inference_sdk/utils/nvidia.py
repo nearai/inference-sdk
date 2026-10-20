@@ -16,7 +16,7 @@ from ..schemas import (
 )
 from ..types.verification import GpuEvidenceVerifier
 from .common import require_byte_length
-from .consts import NVIDIA_GPU_VERIFIER_API_URL
+from .consts import DEFAULT_NRAS_BASE_URL
 from .errors import verification_failure
 from .fetch import FetchResponse, fetch
 
@@ -25,11 +25,12 @@ NVIDIA_JWKS_URL = f'{NVIDIA_ISSUER}/.well-known/jwks.json'
 
 
 def create_gpu_evidence_verifier(
-    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
+    nras_base_url: str = DEFAULT_NRAS_BASE_URL,
     jwks_url: str = NVIDIA_JWKS_URL,
 ) -> GpuEvidenceVerifier:
-    """Create the NVIDIA verifier with NRAS and signing-key URLs.
+    """Create the NVIDIA verifier with an NRAS base URL and a signing-key URL.
 
+    The evidence endpoint is /v3/attest/gpu beneath the base URL.
     The issuer remains NVIDIA. The JWKS endpoint supplies trusted signing keys;
     configure only a trusted source. The returned verifier binds the signed
     verdict to the payload nonce; callers must bind that nonce to their request,
@@ -38,7 +39,7 @@ def create_gpu_evidence_verifier(
 
     async def verify_evidence(payload: str) -> None:
         nonce = decode_nvidia_payload_nonce(payload)
-        await verify_nvidia_nras(payload, nonce, nras_url, jwks_url)
+        await verify_nvidia_nras(payload, nonce, nras_base_url, jwks_url)
 
     return verify_evidence
 
@@ -64,7 +65,7 @@ def decode_nvidia_payload_nonce(payload: str) -> str:
 async def verify_nvidia_nras(
     nvidia_payload: str,
     nonce: str,
-    nras_url: str = NVIDIA_GPU_VERIFIER_API_URL,
+    nras_base_url: str = DEFAULT_NRAS_BASE_URL,
     jwks_url: str = NVIDIA_JWKS_URL,
 ) -> None:
     """Verify NRAS's ES384-signed overall verdict, issuer, time and nonce.
@@ -74,7 +75,7 @@ async def verify_nvidia_nras(
 
     try:
         response = await fetch(
-            nras_url,
+            f'{nras_base_url.rstrip("/")}/v3/attest/gpu',
             method='POST',
             data=nvidia_payload,
             headers={'content-type': 'application/json'},

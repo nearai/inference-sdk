@@ -49,8 +49,8 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
-| `create_tdx_quote_verifier` | `(pccs_url=...)` | `TdxQuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
-| `create_gpu_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
+| `create_tdx_quote_verifier` | `(pccs_base_url=...)` | `TdxQuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
+| `create_gpu_evidence_verifier` | `(nras_base_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
 | `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
 | `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
@@ -499,19 +499,14 @@ arguments are independent of `AttestationClient.base_url`.
 
 | Factory | Argument | Default |
 | --- | --- | --- |
-| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
-| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| `create_tdx_quote_verifier` | `pccs_base_url: str` | `https://cloud.near.ai/api/proxy/pccs` |
+| `create_gpu_evidence_verifier` | `nras_base_url: str` | `https://cloud.near.ai/api/proxy/nras` |
 | | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
-`pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral
-paths. A proxy must preserve PCCS bodies and issuer-chain headers, and serve
-`/sgx/certification/v4/rootcacrl` to avoid a direct root-CRL fallback. See the
-[proxy configuration example](./verification-guide.md#configure-attestation-service-urls).
-
-`nras_url` receives the evidence POST; `jwks_url` supplies the trusted signing
-keys. Use only a trusted JWKS source: checking the fixed NVIDIA issuer does not
-authenticate an arbitrary JWKS endpoint. The full signature, issuer, time,
-nonce, and verdict checks remain enabled.
+DCAP constructs SGX and TDX collateral paths beneath `pccs_base_url`. The NVIDIA
+verifier appends `/v3/attest/gpu` to `nras_base_url`; `jwks_url` independently
+selects a trusted signing-key source. See the
+[configuration example](./verification-guide.md#configure-attestation-service-urls).
 
 Model verification checks the payload nonce against the client nonce before
 calling a NVIDIA verifier. The factory additionally requires a 32-byte
