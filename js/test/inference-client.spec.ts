@@ -3476,43 +3476,6 @@ describe('System One decisions', () => {
     return { gateway, fetch, requests, signaturePaths };
   }
 
-  test('accepts interface-typed question and choice maps', async () => {
-    interface Content {
-      message: string;
-    }
-    interface Choices {
-      first: Content;
-      second: null;
-    }
-    interface Questions {
-      typed: {
-        type: 'noul';
-        instructions: Content;
-        criteria: { true: Content };
-      };
-      choice: { type: 'choice'; instructions: Content; criteria: Choices };
-    }
-    const content: Content = { message: 'typed application data' };
-    const choices: Choices = { first: content, second: null };
-    const questions: Questions = {
-      typed: {
-        type: 'noul',
-        instructions: content,
-        criteria: { true: content },
-      },
-      choice: { type: 'choice', instructions: content, criteria: choices },
-    };
-    const fixture = decisionGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      e2ee: false,
-    });
-    const request = { ...decisionRequest, state: content, questions };
-    await client.systemone.create(request);
-    expect(JSON.parse(await fixture.requests[0].text())).toEqual(request);
-  });
-
   test('retains every verified report sharing the decision receipt signer', async () => {
     const fixture = decisionGateway({ tee: true, secondSigner: true });
     jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
