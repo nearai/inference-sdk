@@ -398,7 +398,6 @@ trusted image repositories and build policies:
 ```python
 from nearai_inference_sdk import (
     AttestationVerifiers,
-    ComposeManagerImagePolicy,
     ImageProvenancePolicy,
     MeasuredDeployment,
     verify_deployment_image_provenance,
@@ -453,51 +452,6 @@ This proves the selected digest's build provenance. It does not approve the code
 rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
 
-#### GitHub authentication and proxies
-
-Server-side applications can pass `github_token` to use GitHub's authenticated
-API quota. This is a GitHub token, not a Gateway API key. Keep it on the backend,
-never in browser code.
-
-To retrieve evidence through a backend proxy instead:
-
-```python
-await verify_deployment_image_provenance(
-    deployment.app_compose,
-    image_policies,
-    github_proxy_url='https://app.example/verification/github',
-)
-```
-
-`fetch_image_provenance` and `verify_compose_manager_deployment_image_provenance`
-accept the same keyword-only option. The latter uses it for both compose files
-and image proofs. Without it, requests go directly to GitHub. With it,
-`github_token` is ignored; the proxy supplies its own token on the server.
-
-The SDK appends GitHub API paths to the proxy base URL, preserving its path
-prefix. The proxy must support these read-only requests:
-
-| Path after the proxy prefix | Response |
-| --- | --- |
-| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON containing `attestations[].bundle`, with the `Link` header for additional pages. |
-| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
-
-Forward pagination cursors and preserve HTTP status codes. All pages stay on
-the proxy even when `Link` contains absolute GitHub URLs. Return content
-directly, not a redirect. Use an absolute HTTP(S) base URL without credentials,
-query parameters or a fragment; a trailing slash is optional.
-
-Keep GitHub credentials on the backend, restrict allowed repositories and
-read-only routes, and cache bundles by repository and digest with a refresh
-policy for newly published proofs. Authentication alone does not eliminate
-limits on the proxy's shared GitHub quota. If the same proxy also serves a
-browser SDK, prefer same-origin access or configure CORS to allow `Accept` and
-`X-GitHub-Api-Version` and expose `Link`.
-
-The proxy returns evidence, not a verification verdict. The SDK still verifies
-the original bundle and caller policy, and checks compose-file hashes locally.
-This option does not change Sigstore trust-root retrieval.
-
 #### Model images deployed by Compose Manager
 
 A model's measured `app_compose` can describe the launcher rather than containers
@@ -541,11 +495,8 @@ for attestation in fetched_models.attestations:
     )
 ```
 
-Model verification authenticates the manager quote, nonce, action log and measured
-configuration before passing `deployment.compose_manager` to the callback. The helper
-checks the latest `compose_up` file's recorded commit and SHA-256, then verifies
-the required image builds in its selected services. An empty service list selects
-all services. The manager's latest startup image has its own required build policy.
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
 
 Use `compose_file` to select a project's file and `compose_repository` to change the
 trusted repository. Configure this callback as `model_verification.verifiers.deployment`
@@ -565,15 +516,32 @@ verified = await verify_direct_model_attestations(
 ```
 
 For `DirectInferenceClient`, pass
-`model_verification=DirectModelVerificationOptions(serving_deployment=check_model_images)`
-(import `DirectModelVerificationOptions` from the SDK). Every model report still
-undergoes its normal quote, GPU and deployment checks. This additional policy
-runs after the whole set and its TLS binding pass; it marks only the serving
-report's provenance as verified. Missing manager evidence in that report still
-fails the policy. With this option, the client uses only the serving report for
-Chat's signer, TLS pins (when enabled), and response verification. When composing
-the bare functions yourself, pass `(verified.serving_attestation,)` to
-`verify_direct_model_response` to apply the same restriction.
+`model_verification=DirectModelVerificationOptions(serving_deployment=check_model_images)`.
+This applies the policy to the serving report and uses its signer for Chat and
+receipt verification. With standalone calls, pass `(verified.serving_attestation,)`
+to `verify_direct_model_response`. See the [API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
+for options and evidence fields.
+
+#### GitHub authentication and proxies
+
+Set `github_token` for authenticated GitHub requests, or `github_proxy_url` to retrieve
+evidence through your backend. When a proxy is configured, it supplies the
+GitHub credential and the SDK ignores `github_token`.
+
+The proxy base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path after the proxy prefix | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured proxy. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the proxy to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ## 2. Send the completion and retain exact bytes
 

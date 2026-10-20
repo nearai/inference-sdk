@@ -402,14 +402,6 @@ Image verification errors pass through unchanged.
 
 ### `verify_compose_manager_deployment_image_provenance`
 
-Compose-file responses are limited to 8 MiB before hashing or YAML parsing.
-
-The required keyword `manager_image_policy: ComposeManagerImagePolicy` supplies
-`image_repository` plus the ordinary image build policy fields. It applies only
-to the latest `compose_manager_started` image, independently of `image_policies`
-for selected compose services. Missing startup evidence and mismatched repositories
-fail closed; stale compose references cannot satisfy the manager policy.
-
 Asynchronous. Use in a model deployment callback or after model verification.
 Selects the latest matching `compose_up`, verifies the recorded file's exact
 SHA-256, then checks the action's named `services` and the latest manager-start
@@ -426,6 +418,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
 | `github_token` | `str \| None` | `None` | GitHub token for direct requests; ignored when `github_proxy_url` is set. |
 | `github_proxy_url` | `str \| None` | `None` | Absolute HTTP(S) GitHub proxy base URL for compose files and image proofs. |
+
+Compose files are limited to 8 MiB before hashing or parsing.
 
 Missing evidence, file/hash mismatches and image-policy failures raise
 `VerificationError`. See the

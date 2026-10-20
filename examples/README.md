@@ -144,12 +144,8 @@ Gateway image policies listed above. Their model deployment callbacks also call
 | `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
 | `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
 
-The helper uses authenticated Compose Manager actions to retrieve the compose
-file at its recorded commit, checks its exact SHA-256, and verifies the required
-image builds. The manager's latest start action supplies its own image. This
-authenticates recorded deployment intent, not successful deployment or current
-runtime state. Other model images and weights remain outside these policies.
-Attestation and image-check failures block Chat requests.
+See [model image policies](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
 
 ```sh
 cd examples/example-py
