@@ -11,7 +11,7 @@ from ..types.verification import MeasuredDeployment
 from ..utils.common import sha256
 from ..utils.errors import VerificationError, verification_failure
 from ..utils.fetch import ResponseBodyTooLarge, fetch
-from .provenance import verify_compose_image_provenance
+from .provenance import require_pinned_image_digest, verify_compose_image_provenance
 
 
 async def verify_compose_manager_deployment_image_provenance(
@@ -62,6 +62,7 @@ async def verify_compose_manager_deployment_image_provenance(
     image = image.removeprefix('docker.io/')
     if not repository or not image.startswith((f'{repository}@', f'{repository}:')):
         raise _invalid_deployment('manager_image_mismatch')
+    require_pinned_image_digest(image, repository, 'compose-manager')
     commit, file, digest = (
         action.get('commit'),
         action.get('file'),

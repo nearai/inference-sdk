@@ -74,6 +74,46 @@ def quote_verifier(quote: str):
     return create_model_quote()
 
 
+@pytest.mark.parametrize(
+    'suffix', [':latest', '@sha256:abcd', ':bad tag@sha256:' + 'aa' * 32]
+)
+async def test_rejects_unpinned_manager_image_before_any_request(monkeypatch, suffix):
+    verified = await verify_model_attestation(
+        replace(
+            create_model_attestation(), compose_manager_attestation=manager_report()
+        ),
+        MODEL_CLIENT_BINDING,
+        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
+    )
+    manager = verified.deployment.compose_manager
+    assert manager is not None
+    deployment = replace(
+        verified.deployment,
+        compose_manager=replace(
+            manager,
+            actions=tuple(
+                {**action, 'image': MANAGER_POLICY.image_repository + suffix}
+                if action['action'] == 'compose_manager_started'
+                else action
+                for action in manager.actions
+            ),
+        ),
+    )
+    fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
+    monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
+    monkeypatch.setattr(provenance, 'fetch_image_provenance', fetch)
+    with pytest.raises(VerificationError) as error:
+        await verify_compose_manager_deployment_image_provenance(
+            deployment,
+            POLICIES,
+            manager_image_policy=MANAGER_POLICY,
+            github_token='test-github-token',
+        )
+    assert error.value.failure.code == 'provenance.deployment_images_invalid'
+    assert error.value.failure.details['reason'] == 'image_not_pinned'
+    fetch.assert_not_awaited()
+
+
 @pytest.mark.parametrize('direct', [False, True])
 @pytest.mark.parametrize(
     'github_proxy_url', [None, 'https://app.example/verification/github/']

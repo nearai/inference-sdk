@@ -125,16 +125,8 @@ async def verify_compose_image_provenance(
             ):
                 continue
             found = True
-            pinned = re.fullmatch(
-                re.escape(repository)
-                + r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})',
-                image,
-            )
-            if pinned is None:
-                raise _deployment_images_failure(
-                    'image_not_pinned', image_repository=repository, service=service
-                )
-            selected.append((repository, pinned[1].lower(), policy))
+            digest = require_pinned_image_digest(image, repository, service)
+            selected.append((repository, digest, policy))
         if not found:
             raise _deployment_images_failure(
                 'image_missing', image_repository=repository
@@ -156,6 +148,18 @@ async def verify_compose_image_provenance(
                 cause=error,
             ) from error
         await verify_image_provenance(bundles, digest, policy)
+
+
+def require_pinned_image_digest(image: str, repository: str, service: str) -> str:
+    pinned = re.fullmatch(
+        r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})',
+        image[len(repository) :],
+    )
+    if pinned is None:
+        raise _deployment_images_failure(
+            'image_not_pinned', image_repository=repository, service=service
+        )
+    return pinned[1].lower()
 
 
 def _deployment_images_failure(
