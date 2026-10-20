@@ -656,6 +656,10 @@ verifier appends `/v3/attest/gpu` to `nras_base_url`, preserving its path prefix
 Trailing slashes are supported. Signing keys still come from NVIDIA; set
 `jwks_url` separately to use another trusted key source.
 
+Use keyword arguments for the new base URLs. The deprecated `pccs_url` and
+`nras_url` arguments, including their positional forms, remain supported.
+New base URLs take precedence; legacy `nras_url` remains a complete POST URL.
+
 ## Handle retrieval and verification errors
 
 For integrated Chat, OpenAI wraps transport errors in `APIConnectionError`;

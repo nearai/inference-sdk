@@ -32,10 +32,15 @@ const NVIDIA_JWKS_URL = `${NVIDIA_ISSUER}/.well-known/jwks.json`;
  * Model verification separately binds that payload nonce to the client nonce.
  */
 export function createGpuEvidenceVerifier({
-  nrasBaseUrl = DEFAULT_NRAS_BASE_URL,
+  nrasBaseUrl,
+  nrasUrl,
   jwksUrl = NVIDIA_JWKS_URL,
 }: CreateGpuEvidenceVerifierParams = {}): GpuEvidenceVerifier {
-  const attestUrl = `${nrasBaseUrl.replace(/\/+$/, '')}/v3/attest/gpu`;
+  const baseUrl = nrasBaseUrl ?? DEFAULT_NRAS_BASE_URL;
+  const attestUrl =
+    nrasBaseUrl === undefined && nrasUrl !== undefined
+      ? nrasUrl
+      : `${baseUrl.replace(/\/+$/, '')}/v3/attest/gpu`;
   return async (nvidiaPayload) =>
     nvidiaNrasVerifier({
       nvidiaPayload,

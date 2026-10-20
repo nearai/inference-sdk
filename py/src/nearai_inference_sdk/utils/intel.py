@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from typing import cast
 
 from dcap_qvl import Quote, get_collateral, verify
@@ -15,9 +16,24 @@ from .errors import VerificationError, verification_failure
 
 
 def create_tdx_quote_verifier(
-    pccs_base_url: str = DEFAULT_PCCS_BASE_URL,
+    pccs_url: str | None = None,
+    *,
+    pccs_base_url: str | None = None,
 ) -> TdxQuoteVerifier:
-    """Create the Intel DCAP verifier with a PCCS-compatible collateral URL."""
+    """Create the Intel DCAP verifier with a PCCS-compatible collateral URL.
+
+    Deprecated: pccs_url (including positional use). Use pccs_base_url instead;
+    it takes precedence when both are supplied.
+    """
+
+    if pccs_url is not None:
+        warnings.warn(
+            'pccs_url is deprecated; use pccs_base_url instead',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    if pccs_base_url is None:
+        pccs_base_url = pccs_url if pccs_url is not None else DEFAULT_PCCS_BASE_URL
 
     async def verify_quote(quote: str) -> TdxQuoteVerificationResult:
         return await verify_dcap_quote(quote, pccs_base_url)

@@ -254,6 +254,9 @@ verifier appends `/v3/attest/gpu` to `nrasBaseUrl`, preserving its path prefix.
 Trailing slashes are supported. Signing keys still come from NVIDIA; set
 `jwksUrl` separately to use another trusted key source.
 
+The deprecated `pccsUrl` and `nrasUrl` options remain supported. New base URL
+options take precedence; legacy `nrasUrl` retains its complete POST URL meaning.
+
 ## E2EE scope and response handling
 
 The client supports `POST /v1/chat/completions` with a model public key bound

@@ -322,6 +322,9 @@ base URL. The NVIDIA verifier appends `/v3/attest/gpu` to `NRASBaseURL`,
 preserving its path prefix. Trailing slashes are supported. Signing keys still
 come from NVIDIA; set `JWKSURL` separately to use another trusted key source.
 
+The deprecated `NRASURL` field remains supported as a complete POST URL.
+`NRASBaseURL` takes precedence when both are set.
+
 ## Encryption and TLS binding
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.

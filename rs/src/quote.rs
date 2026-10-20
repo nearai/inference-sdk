@@ -9,6 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_PCCS_BASE_URL: &str = "https://cloud.near.ai/api/proxy/pccs";
 
+#[deprecated(note = "Use DEFAULT_PCCS_BASE_URL for the default collateral service")]
+pub const DEFAULT_INTEL_PCCS_URL: &str = "https://api.trustedservices.intel.com";
+
 /// Built-in Intel TDX quote verifier, using NEAR AI's PCCS proxy by default.
 #[derive(Clone, Debug)]
 pub struct DefaultTdxQuoteVerifier {

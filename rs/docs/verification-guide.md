@@ -373,7 +373,7 @@ async fn verify_with_proxies(
     binding: &ModelClientBinding,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
     let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/pccs");
-    let gpu_evidence = NrasGpuEvidenceVerifier::new(
+    let gpu_evidence = NrasGpuEvidenceVerifier::from_base_url(
         "https://attestation.example.com/nras",
     );
     verify_model_attestation(
@@ -398,6 +398,10 @@ DCAP builds the SGX and TDX collateral paths beneath the PCCS base URL.
 `NrasGpuEvidenceVerifier` appends `/v3/attest/gpu` to the NRAS base URL, preserving
 its path prefix. Trailing slashes are supported. Signing keys still come from
 NVIDIA; call `with_jwks_url` to use another trusted key source.
+
+The deprecated `NrasGpuEvidenceVerifier::new` and `with_client` constructors
+remain supported and take complete POST URLs. Use `from_base_url` or
+`from_base_url_with_client` for base URLs.
 
 ## Verify an image's build provenance
 

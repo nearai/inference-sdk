@@ -112,11 +112,13 @@ func (f gpuTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func TestGPUServiceURLs(t *testing.T) {
 	for _, tc := range []struct {
-		name, baseURL, attestURL string
+		name, baseURL, legacyURL, attestURL string
 	}{
-		{"defaults", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
-		{"custom base", "https://attestation.example/nras", "https://attestation.example/nras/v3/attest/gpu"},
-		{"trailing slash", "https://attestation.example/nras/", "https://attestation.example/nras/v3/attest/gpu"},
+		{"defaults", "", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
+		{"custom base", "https://attestation.example/nras", "", "https://attestation.example/nras/v3/attest/gpu"},
+		{"trailing slash", "https://attestation.example/nras/", "", "https://attestation.example/nras/v3/attest/gpu"},
+		{"deprecated full URL", "", "https://legacy.example/attest", "https://legacy.example/attest"},
+		{"base overrides deprecated URL", "https://attestation.example/nras", "https://legacy.example/attest", "https://attestation.example/nras/v3/attest/gpu"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests []string
@@ -128,7 +130,11 @@ func TestGPUServiceURLs(t *testing.T) {
 				}
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			})}
-			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{NRASBaseURL: tc.baseURL, HTTPClient: client})
+			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{
+				NRASBaseURL: tc.baseURL,
+				NRASURL:     tc.legacyURL,
+				HTTPClient:  client,
+			})
 			err := verifier(context.Background(), `{"nonce":"`+strings.Repeat("11", 32)+`"}`)
 			var sdkErr *Error
 			if !errors.As(err, &sdkErr) || sdkErr.Code != "gpu.jwt_verification_failed" {

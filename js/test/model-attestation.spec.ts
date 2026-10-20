@@ -581,14 +581,36 @@ describe('model attestation verification', () => {
   });
 
   test.each([
-    { nrasBaseUrl: '/api/proxy/nras', jwksUrl: undefined },
     {
-      nrasBaseUrl: '/api/proxy/nras/',
-      jwksUrl: '/api/keys/.well-known/jwks.json',
+      name: 'base URL',
+      params: { nrasBaseUrl: '/api/proxy/nras', jwksUrl: undefined },
+      attestUrl: '/api/proxy/nras/v3/attest/gpu',
+    },
+    {
+      name: 'base URL with a trailing slash',
+      params: {
+        nrasBaseUrl: '/api/proxy/nras/',
+        jwksUrl: '/api/keys/.well-known/jwks.json',
+      },
+      attestUrl: '/api/proxy/nras/v3/attest/gpu',
+    },
+    {
+      name: 'deprecated full URL',
+      params: { nrasUrl: '/api/attestation/nvidia', jwksUrl: undefined },
+      attestUrl: '/api/attestation/nvidia',
+    },
+    {
+      name: 'base URL taking precedence over the deprecated URL',
+      params: {
+        nrasBaseUrl: '/api/proxy/nras',
+        nrasUrl: '/api/attestation/nvidia',
+        jwksUrl: undefined,
+      },
+      attestUrl: '/api/proxy/nras/v3/attest/gpu',
     },
   ])(
-    'verifies NVIDIA evidence with NRAS base $nrasBaseUrl and independent JWKS',
-    async (params) => {
+    'verifies NVIDIA evidence with a $name and independent JWKS',
+    async ({ params, attestUrl }) => {
       mockNrasOverallResult(true);
       const nvidiaPayload = JSON.stringify({ nonce });
       const gpuEvidence = createGpuEvidenceVerifier(params);
@@ -600,14 +622,11 @@ describe('model attestation verification', () => {
       });
 
       expect(result.gpuEvidence).toBe('verified');
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        '/api/proxy/nras/v3/attest/gpu',
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: nvidiaPayload,
-        },
-      );
+      expect(globalThis.fetch).toHaveBeenCalledWith(attestUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: nvidiaPayload,
+      });
       expect(globalThis.fetch).toHaveBeenCalledWith(
         params.jwksUrl ??
           'https://nras.attestation.nvidia.com/.well-known/jwks.json',

@@ -497,11 +497,16 @@ Both factories are synchronous and return asynchronous verifier callbacks for
 the `verifiers.tdx_quote` and `verifiers.gpu_evidence` fields. Their optional
 arguments are independent of `AttestationClient.base_url`.
 
-| Factory | Argument | Default |
-| --- | --- | --- |
-| `create_tdx_quote_verifier` | `pccs_base_url: str` | `https://cloud.near.ai/api/proxy/pccs` |
-| `create_gpu_evidence_verifier` | `nras_base_url: str` | `https://cloud.near.ai/api/proxy/nras` |
-| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+| Factory | Argument | Effective default | Description |
+| --- | --- | --- | --- |
+| `create_tdx_quote_verifier` | `pccs_base_url: str \| None` | `https://cloud.near.ai/api/proxy/pccs` | Keyword-only PCCS base URL. Takes precedence over `pccs_url`. |
+| | `pccs_url: str \| None` | `None` | Deprecated positional or keyword alias. |
+| `create_gpu_evidence_verifier` | `nras_base_url: str \| None` | `https://cloud.near.ai/api/proxy/nras` | Keyword-only NRAS base URL. Takes precedence over `nras_url`. |
+| | `nras_url: str \| None` | `None` | Deprecated first positional or keyword argument. Complete POST URL, used unchanged. |
+| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent signing-key URL; remains the second positional argument. |
+
+Supplying either deprecated argument emits `DeprecationWarning` when the factory
+is called.
 
 DCAP constructs SGX and TDX collateral paths beneath `pccs_base_url`. The NVIDIA
 verifier appends `/v3/attest/gpu` to `nras_base_url`; `jwks_url` independently

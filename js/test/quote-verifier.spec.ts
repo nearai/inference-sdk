@@ -42,10 +42,24 @@ describe('Intel quote verifier configuration', () => {
     expect(quote).toEqual(createModelQuote());
   });
 
-  test('verifies collateral fetched through a configured PCCS proxy', async () => {
-    const verifyQuote = createTdxQuoteVerifier({
-      pccsBaseUrl: 'https://app.example.com/api/attestation/intel',
-    });
+  test.each([
+    {
+      name: 'base URL',
+      params: { pccsBaseUrl: 'https://app.example.com/api/attestation/intel' },
+    },
+    {
+      name: 'deprecated URL',
+      params: { pccsUrl: 'https://app.example.com/api/attestation/intel' },
+    },
+    {
+      name: 'base URL taking precedence over the deprecated URL',
+      params: {
+        pccsBaseUrl: 'https://app.example.com/api/attestation/intel',
+        pccsUrl: 'https://legacy.example.com/pccs',
+      },
+    },
+  ])('verifies collateral with a $name', async ({ params }) => {
+    const verifyQuote = createTdxQuoteVerifier(params);
     const quote = await verifyQuote('abcd');
 
     expect(getCollateral).toHaveBeenCalledWith(

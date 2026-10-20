@@ -18,9 +18,11 @@ import { isVerificationError, VerificationError } from './errors';
 
 /** Use Intel DCAP verification with collateral fetched from the selected service. */
 export function createTdxQuoteVerifier({
-  pccsBaseUrl = DEFAULT_PCCS_BASE_URL,
+  pccsBaseUrl,
+  pccsUrl,
 }: CreateTdxQuoteVerifierParams = {}): TdxQuoteVerifier {
-  return (quote) => verifyDcapQuote(quote, pccsBaseUrl);
+  const baseUrl = pccsBaseUrl ?? pccsUrl ?? DEFAULT_PCCS_BASE_URL;
+  return (quote) => verifyDcapQuote(quote, baseUrl);
 }
 
 /**

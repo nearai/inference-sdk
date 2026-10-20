@@ -110,7 +110,28 @@ async def test_nras_factories_route_evidence_and_jwks_independently(
     default = create_gpu_evidence_verifier()
     nras_only = create_gpu_evidence_verifier(nras_base_url='https://first.example/nras')
     jwks_only = create_gpu_evidence_verifier(jwks_url='https://first.example/keys')
-    for verifier in (first, second, first, default, nras_only, jwks_only):
+    with pytest.warns(DeprecationWarning, match='nras_url'):
+        legacy = create_gpu_evidence_verifier(nras_url='https://legacy.example/attest')
+    with pytest.warns(DeprecationWarning, match='nras_url'):
+        positional = create_gpu_evidence_verifier(
+            'https://legacy.example/attest', 'https://first.example/keys'
+        )
+    with pytest.warns(DeprecationWarning, match='nras_url'):
+        preferred = create_gpu_evidence_verifier(
+            nras_url='https://legacy.example/attest',
+            nras_base_url='https://first.example/nras',
+        )
+    for verifier in (
+        first,
+        second,
+        first,
+        default,
+        nras_only,
+        jwks_only,
+        legacy,
+        positional,
+        preferred,
+    ):
         await verifier(payload)
 
     expected_calls = []
@@ -129,6 +150,15 @@ async def test_nras_factories_route_evidence_and_jwks_independently(
         (
             'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
             'https://first.example/keys',
+        ),
+        (
+            'https://legacy.example/attest',
+            'https://nras.attestation.nvidia.com/.well-known/jwks.json',
+        ),
+        ('https://legacy.example/attest', 'https://first.example/keys'),
+        (
+            'https://first.example/nras/v3/attest/gpu',
+            'https://nras.attestation.nvidia.com/.well-known/jwks.json',
         ),
     ):
         expected_calls.extend(
