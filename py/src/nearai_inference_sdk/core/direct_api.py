@@ -72,29 +72,19 @@ class DirectAttestationClient(_ApiClient):
             _raise_invalid_wire_response(error, root='direct attestation report')
         root = _map_direct_attestation(raw, 'attestation')
         attestations = tuple(
-            replace(
-                _map_direct_attestation(item, f'all_attestations[{index}]'),
-                compose_manager_attestation=None,
-            )
+            _map_direct_attestation(item, f'all_attestations[{index}]')
             for index, item in enumerate(raw.all_attestations)
         )
         # Dataclass equality compares report contents, including opaque event logs.
         # A shared signing identity alone cannot identify the serving report.
-        serving_index = next(
-            (
-                index
-                for index, item in enumerate(attestations)
-                if replace(item, compose_manager_attestation=None)
-                == replace(root, compose_manager_attestation=None)
-            ),
-            None,
-        )
-        if serving_index is None:
+        bare = replace(root, compose_manager_attestation=None)
+        if bare not in attestations:
             raise _invalid_response(
                 'all_attestations',
                 'array containing the top-level attestation',
                 raw.all_attestations,
             )
+        serving_index = attestations.index(bare)
         # The envelope's manager report belongs to the serving report only.
         if root.compose_manager_attestation is not None:
             attestations = tuple(

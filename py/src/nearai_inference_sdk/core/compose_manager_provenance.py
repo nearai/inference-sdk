@@ -15,6 +15,7 @@ from .provenance import (
     github_api_base_url,
     require_pinned_image_digest,
     verify_compose_image_provenance,
+    verify_required_image_provenance,
 )
 
 
@@ -66,7 +67,7 @@ async def verify_compose_manager_deployment_image_provenance(
     image = image.removeprefix('docker.io/')
     if not repository or not image.startswith((f'{repository}@', f'{repository}:')):
         raise _invalid_deployment('manager_image_mismatch')
-    require_pinned_image_digest(image, repository, 'compose-manager')
+    manager_digest = require_pinned_image_digest(image, repository, 'compose-manager')
     commit, file, digest = (
         action.get('commit'),
         action.get('file'),
@@ -74,11 +75,11 @@ async def verify_compose_manager_deployment_image_provenance(
     )
     if (
         not isinstance(commit, str)
-        or re.fullmatch(r'[\da-fA-F]{40}', commit) is None
+        or re.fullmatch(r'[0-9a-fA-F]{40}', commit) is None
         or not isinstance(file, str)
         or any(part in ('', '.', '..') for part in file.split('/'))
         or not isinstance(digest, str)
-        or re.fullmatch(r'[\da-fA-F]{64}', digest) is None
+        or re.fullmatch(r'[0-9a-fA-F]{64}', digest) is None
         or re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', compose_repository) is None
         or any(part in ('.', '..') for part in compose_repository.split('/'))
     ):
@@ -138,11 +139,11 @@ async def verify_compose_manager_deployment_image_provenance(
         github_proxy_url=github_proxy_url,
     )
     # A stale compose reference cannot satisfy the current manager's policy.
-    await verify_compose_image_provenance(
-        'services: {}',
-        {repository: manager_image_policy},
+    await verify_required_image_provenance(
+        repository,
+        manager_digest,
+        manager_image_policy,
         github_token,
-        [('compose-manager', image)],
         github_proxy_url=github_proxy_url,
     )
 

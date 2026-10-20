@@ -84,7 +84,6 @@ async def verify_compose_image_provenance(
     docker_compose: str,
     image_policies: Mapping[str, ImageProvenancePolicy],
     github_token: str | None = None,
-    additional_images: Sequence[tuple[str, str]] = (),
     *,
     services: Sequence[str] = (),
     github_proxy_url: str | None = None,
@@ -110,10 +109,6 @@ async def verify_compose_image_provenance(
         if '$' in config.image:
             raise _deployment_images_failure('unresolved_image', service=service)
         images.append((service, config.image.removeprefix('docker.io/')))
-    images.extend(
-        (service, image.removeprefix('docker.io/'))
-        for service, image in additional_images
-    )
 
     selected: list[tuple[str, str, ImageProvenancePolicy]] = []
     for configured_repository, policy in image_policies.items():
@@ -133,21 +128,31 @@ async def verify_compose_image_provenance(
             )
 
     for repository, digest, policy in selected:
-        try:
-            bundles = await fetch_image_provenance(
-                policy.repository,
-                digest,
-                github_token,
-                github_proxy_url=github_proxy_url,
-            )
-        except ApiError as error:
-            raise verification_failure(
-                'provenance.image_request_failed',
-                {'imageRepository': repository, 'digest': digest},
-                retryable=error.retryable,
-                cause=error,
-            ) from error
-        await verify_image_provenance(bundles, digest, policy)
+        await verify_required_image_provenance(
+            repository, digest, policy, github_token, github_proxy_url=github_proxy_url
+        )
+
+
+async def verify_required_image_provenance(
+    repository: str,
+    digest: str,
+    policy: ImageProvenancePolicy,
+    github_token: str | None = None,
+    *,
+    github_proxy_url: str | None = None,
+) -> None:
+    try:
+        bundles = await fetch_image_provenance(
+            policy.repository, digest, github_token, github_proxy_url=github_proxy_url
+        )
+    except ApiError as error:
+        raise verification_failure(
+            'provenance.image_request_failed',
+            {'imageRepository': repository, 'digest': digest},
+            retryable=error.retryable,
+            cause=error,
+        ) from error
+    await verify_image_provenance(bundles, digest, policy)
 
 
 def require_pinned_image_digest(image: str, repository: str, service: str) -> str:

@@ -207,7 +207,6 @@ class DirectInfoSchema(CloudInfoSchema):
 
 
 class DirectModelAttestationSchema(CloudAttestationSchema):
-    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
     model_name: StrictStr = Field(min_length=1)
     info: DirectInfoSchema
     report_data: StrictStr | None = None
@@ -216,6 +215,7 @@ class DirectModelAttestationSchema(CloudAttestationSchema):
 
 
 class DirectAttestationReportSchema(DirectModelAttestationSchema):
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
     all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
     ohttp_attestation: OhttpAttestationSchema | None = None
 

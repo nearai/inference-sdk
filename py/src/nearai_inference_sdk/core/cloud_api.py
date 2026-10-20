@@ -365,6 +365,8 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
 def _map_model_attestation(
     raw: CloudModelAttestationSchema | DirectModelAttestationSchema, label: str
 ) -> ModelAttestation:
+    # Direct reports carry manager evidence only on the response envelope.
+    manager = getattr(raw, 'compose_manager_attestation', None)
     if raw.signing_public_key is not None:
         _api_hex_to_bytes(raw.signing_public_key, f'{label}.signing_public_key')
     return ModelAttestation(
@@ -378,16 +380,14 @@ def _map_model_attestation(
         signing_public_key=raw.signing_public_key,
         compose_manager_attestation=(
             None
-            if raw.compose_manager_attestation is None
+            if manager is None
             else ComposeManagerAttestation(
-                actions=tuple(
-                    action.root for action in raw.compose_manager_attestation.actions
-                ),
-                actions_hash=raw.compose_manager_attestation.actions_hash,
-                nonce=raw.compose_manager_attestation.nonce,
-                intel_quote=raw.compose_manager_attestation.quote,
-                event_log=raw.compose_manager_attestation.event_log,
-                reported_quote_data=raw.compose_manager_attestation.report_data,
+                actions=tuple(action.root for action in manager.actions),
+                actions_hash=manager.actions_hash,
+                nonce=manager.nonce,
+                intel_quote=manager.quote,
+                event_log=manager.event_log,
+                reported_quote_data=manager.report_data,
             )
         ),
     )

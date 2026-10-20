@@ -75,21 +75,51 @@ def quote_verifier(quote: str):
     return create_model_quote()
 
 
-@pytest.mark.parametrize(
-    'suffix', [':latest', '@sha256:abcd', ':bad tag@sha256:' + 'aa' * 32]
-)
-async def test_rejects_unpinned_manager_image_before_any_request(monkeypatch, suffix):
+@pytest.fixture
+async def verified_deployment():
     verified = await verify_model_attestation(
-        replace(
-            create_model_attestation(), compose_manager_attestation=manager_report()
-        ),
+        create_model_attestation(compose_manager_attestation=manager_report()),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
     )
-    manager = verified.deployment.compose_manager
+    return verified.deployment
+
+
+@pytest.mark.parametrize('field,width', [('commit', 40), ('file_sha256', 64)])
+async def test_rejects_unicode_hashes_before_fetching_compose(
+    monkeypatch, verified_deployment, field, width
+):
+    manager = verified_deployment.compose_manager
+    deployment = replace(
+        verified_deployment,
+        compose_manager=replace(
+            manager,
+            actions=(
+                {**manager.actions[0], field: '\u0661' * width},
+                *manager.actions[1:],
+            ),
+        ),
+    )
+    fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
+    monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
+    with pytest.raises(VerificationError) as raised:
+        await verify_compose_manager_deployment_image_provenance(
+            deployment, POLICIES, manager_image_policy=MANAGER_POLICY
+        )
+    assert raised.value.failure.details['reason'] == 'invalid_file_reference'
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    'suffix', [':latest', '@sha256:abcd', ':bad tag@sha256:' + 'aa' * 32]
+)
+async def test_rejects_unpinned_manager_image_before_any_request(
+    monkeypatch, suffix, verified_deployment
+):
+    manager = verified_deployment.compose_manager
     assert manager is not None
     deployment = replace(
-        verified.deployment,
+        verified_deployment,
         compose_manager=replace(
             manager,
             actions=tuple(
@@ -223,20 +253,15 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
     ],
 )
 async def test_rejects_invalid_github_proxy_before_any_request(
-    monkeypatch, request_path, github_proxy_url
+    monkeypatch, request_path, github_proxy_url, verified_deployment
 ):
     fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
     monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
     monkeypatch.setattr(provenance, 'fetch', fetch)
     with pytest.raises(ApiError) as error:
         if request_path == 'compose':
-            verified = await verify_model_attestation(
-                create_model_attestation(compose_manager_attestation=manager_report()),
-                MODEL_CLIENT_BINDING,
-                verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
-            )
             await verify_compose_manager_deployment_image_provenance(
-                verified.deployment,
+                verified_deployment,
                 POLICIES,
                 manager_image_policy=MANAGER_POLICY,
                 github_proxy_url=github_proxy_url,
@@ -257,17 +282,12 @@ async def test_rejects_invalid_github_proxy_before_any_request(
     [(['other'], 'image_missing'), (['model', 'missing'], 'service_missing')],
 )
 async def test_service_selection_must_satisfy_the_image_policy(
-    monkeypatch, services, reason
+    monkeypatch, services, reason, verified_deployment
 ):
-    verified = await verify_model_attestation(
-        create_model_attestation(compose_manager_attestation=manager_report()),
-        MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
-    )
     compose = FIXTURE['compose'] + '  other:\n    image: other/model:latest\n'
-    manager = verified.deployment.compose_manager
+    manager = verified_deployment.compose_manager
     deployment = replace(
-        verified.deployment,
+        verified_deployment,
         compose_manager=replace(
             manager,
             actions=(
@@ -322,12 +342,9 @@ async def test_rejects_tampered_or_replayed_manager_evidence_before_policy(
     policy.assert_not_awaited()
 
 
-async def test_rejects_changed_compose_before_image_proof_retrieval(monkeypatch):
-    verified = await verify_model_attestation(
-        create_model_attestation(compose_manager_attestation=manager_report()),
-        MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
-    )
+async def test_rejects_changed_compose_before_image_proof_retrieval(
+    monkeypatch, verified_deployment
+):
     monkeypatch.setattr(
         compose_manager_provenance,
         'fetch',
@@ -337,7 +354,7 @@ async def test_rejects_changed_compose_before_image_proof_retrieval(monkeypatch)
     monkeypatch.setattr(provenance, 'fetch_image_provenance', image_fetch)
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            verified.deployment,
+            verified_deployment,
             POLICIES,
             manager_image_policy=MANAGER_POLICY,
             github_proxy_url='https://app.example/verification/github',
@@ -360,7 +377,9 @@ async def test_requires_manager_evidence_when_its_provenance_policy_is_used():
     assert raised.value.failure.details == {'reason': 'attestation_missing'}
 
 
-async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch():
+async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch(
+    verified_deployment,
+):
     from aiohttp import web
     from aiohttp.test_utils import TestServer
 
@@ -375,15 +394,10 @@ async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch():
 
     app = web.Application()
     app.router.add_get('/{path:.*}', oversized)
-    verified = await verify_model_attestation(
-        create_model_attestation(compose_manager_attestation=manager_report()),
-        MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(tdx_quote=quote_verifier),
-    )
     async with TestServer(app) as server:
         with pytest.raises(VerificationError) as raised:
             await verify_compose_manager_deployment_image_provenance(
-                verified.deployment,
+                verified_deployment,
                 POLICIES,
                 manager_image_policy=MANAGER_POLICY,
                 github_proxy_url=str(server.make_url('/')),
