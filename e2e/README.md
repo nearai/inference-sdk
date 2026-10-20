@@ -88,10 +88,6 @@ verification APIs. Its streaming support is separately gated by the provider,
 so this suite tests Chutes with JSON only and verifies the Gateway signature over
 the client-facing response. A missing signature fails every receipt test.
 
-System One tests use the same credentials and commands as Chat. Model discovery
-also selects a Jev model for SDKs with System One tests and passes it through
-`NEARAI_E2E_SYSTEMONE_MODEL`.
-
 ## Local use
 
 Select one environment by setting `NEARAI_BASE_URL` to its URL above and
