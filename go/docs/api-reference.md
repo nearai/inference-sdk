@@ -527,7 +527,8 @@ redirects and pagination outside the requested artifact are rejected.
 For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
 `VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
 It runs after every report and TLS binding pass, marks only the serving report's
-provenance, and constrains routing and receipt attribution to that report.
+provenance, and constrains routing to that report. Receipts retain all reports
+that share the response signer.
 
 ## Errors and development
 

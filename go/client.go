@@ -14,12 +14,11 @@ import (
 )
 
 type session struct {
-	receiptModels []VerifiedAttestation
-	result        AttestationVerificationResult
-	selected      *VerifiedAttestation
-	api           *AttestationClient
-	transport     http.RoundTripper
-	expires       time.Time
+	result    AttestationVerificationResult
+	selected  *VerifiedAttestation
+	api       *AttestationClient
+	transport http.RoundTripper
+	expires   time.Time
 }
 type pendingSession struct {
 	done  chan struct{}
@@ -399,10 +398,6 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		}
 		serving.DeploymentProvenance = "verified"
 		s.result.Models[servingIndex] = serving
-		s.receiptModels = []VerifiedAttestation{serving}
-	}
-	if s.receiptModels == nil {
-		s.receiptModels = s.result.Models
 	}
 	if o.OHTTP {
 		if ohttp == nil {
@@ -712,7 +707,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifiedCompletionResult{}, e
 	}
 	if c.api.direct {
-		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.receiptModels)
+		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
 	copy := *a
 	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil

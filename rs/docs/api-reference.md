@@ -346,7 +346,8 @@ three arguments as `verify_direct_model_attestations`, followed by an optional
 `&dyn DeploymentVerifier`. The integrated equivalent is
 `ModelVerificationOptions.serving_deployment`. It runs after all reports and the
 serving TLS binding pass, marks only the serving report's provenance, and restricts
-routing, TLS pins and receipt attribution to that report.
+routing and TLS pins to that report. Receipts retain all reports that share the
+response signer.
 
 ## Signatures and evidence
 

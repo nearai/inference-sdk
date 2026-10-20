@@ -592,13 +592,6 @@ impl InferenceClient {
                 let session = record.session.clone();
                 let id = id.to_owned();
                 let algo = self.inner.options.signing_algo;
-                let serving_only = self.inner.direct
-                    && self
-                        .inner
-                        .options
-                        .model_verification
-                        .serving_deployment
-                        .is_some();
                 *pending = Some(
                     async move {
                         let signature = session.api.signature(&id, algo).await?;
@@ -625,12 +618,8 @@ impl InferenceClient {
                                 )?;
                                 verify_model_response(&request, &response, &signature, model)?;
                                 if let Some(direct) = &session.direct {
-                                    let candidates = if serving_only {
-                                        std::slice::from_ref(&direct.serving_attestation)
-                                    } else {
-                                        &direct.attestations
-                                    };
-                                    let matching = candidates
+                                    let matching = direct
+                                        .attestations
                                         .iter()
                                         .filter(|a| {
                                             crate::direct::same_signer(

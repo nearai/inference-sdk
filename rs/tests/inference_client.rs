@@ -107,11 +107,13 @@ impl Respond for Fixture {
                 if self.direct {
                     self.model.fetch_add(1, Ordering::SeqCst);
                     let mut root = self.report(nonce, 7);
+                    root["info"]["instance_id"] = json!("serving");
                     if self.alternate_direct_signer {
                         root.as_object_mut().unwrap().remove("signing_public_key");
                     }
                     let mut value = root.clone();
                     let mut other = self.report(nonce, 7);
+                    other["info"]["instance_id"] = json!("other");
                     if self.alternate_direct_signer {
                         other["signing_address"] = json!(format!(
                             "0X{}",
@@ -338,7 +340,7 @@ impl DeploymentVerifier for ServingPolicy {
     }
 }
 #[tokio::test]
-async fn serving_policy_runs_after_every_report_and_limits_receipt_attribution() {
+async fn serving_policy_preserves_shared_signer_reports_for_receipts() {
     for bad_model in [false, true] {
         let (_server, f, mut options) = setup(Fixture {
             direct: true,
@@ -372,11 +374,17 @@ async fn serving_policy_runs_after_every_report_and_limits_receipt_attribution()
         client.chat_completions(body()).await.unwrap();
         match client.verify_response("chat-0").await.unwrap().attestation {
             VerifiedCompletionAttestation::Direct(reports) => {
-                assert_eq!(reports.len(), 1);
+                assert_eq!(reports.len(), 2);
+                assert_eq!(reports[0].instance_id.as_deref(), Some("serving"));
+                assert_eq!(reports[1].instance_id.as_deref(), Some("other"));
                 assert_eq!(
                     reports[0].attestation.evidence.deployment_provenance,
                     DeploymentProvenanceStatus::Verified
-                )
+                );
+                assert_eq!(
+                    reports[1].attestation.evidence.deployment_provenance,
+                    DeploymentProvenanceStatus::NotChecked
+                );
             }
             _ => panic!("expected direct receipt"),
         }
