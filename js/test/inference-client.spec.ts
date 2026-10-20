@@ -3942,16 +3942,9 @@ describe('System One decisions', () => {
     },
   );
 
-  test('rejects streaming and pre-aborted calls before any network request', async () => {
+  test('rejects pre-aborted calls before any network request', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch');
     const client = new InferenceClient({ baseUrl, apiKey: 'test-key' });
-    await expect(
-      client.systemone.create({
-        ...decisionRequest,
-        // @ts-expect-error System One does not support streaming.
-        stream: true,
-      }),
-    ).rejects.toMatchObject({ failure: { code: 'api.invalid_input' } });
     const signal = AbortSignal.abort(new Error('cancelled'));
     await expect(
       client.systemone.create(decisionRequest, { signal }),

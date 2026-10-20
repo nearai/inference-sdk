@@ -49,17 +49,8 @@ export async function createSystemOne<
 }: CreateSystemOneParams<Questions>): Promise<SystemOneResult> {
   if (encryptionEnabled)
     throw invalidInput('System One requires e2ee: false and ohttp: false');
-  if ('stream' in request)
-    throw invalidInput('System One does not support streaming');
   options?.signal?.throwIfAborted();
-  let body: string;
-  try {
-    body = JSON.stringify(request);
-  } catch {
-    throw invalidInput('a JSON-serializable System One request');
-  }
-  // Request business rules belong to the server. Select evidence using the
-  // typed model field and preserve the serialized bytes for verification.
+  const body = JSON.stringify(request);
   const session = await getSession(request.model);
   options?.signal?.throwIfAborted();
   removeE2eeHeaders(headers);
