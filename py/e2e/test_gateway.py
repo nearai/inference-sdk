@@ -321,6 +321,10 @@ def required_env(name: str) -> str:
 
 def selected_models(provider: str) -> list[str]:
     selected = json.loads(required_env('NEARAI_E2E_MODELS'))
-    models = [model['id'] for model in selected if model['provider'] == provider]
+    models = [
+        model['id']
+        for model in selected
+        if model['endpoint'] == 'chat' and model['provider'] == provider
+    ]
     assert models, f'Expected {provider} models from the catalog'
     return models

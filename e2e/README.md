@@ -14,14 +14,12 @@ Set `NEARAI_API_KEY` through your local secret manager or shell and set
 | Staging | `https://cloud-stg-api.near.ai/v1` |
 | Production | `https://cloud-api.near.ai/v1` |
 
-Install Node.js 24 and `jq`, then discover models once from the repository root.
+Install Node.js 24, then discover models once from the repository root.
 Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` to select
 one SDK's suites; the default selects all available suites.
 
 ```sh
-selection=$(node e2e/select-models.mjs)
-export NEARAI_E2E_MODELS="$(printf '%s' "$selection" | jq -c '.models')"
-export NEARAI_E2E_SYSTEMONE_MODEL="$(printf '%s' "$selection" | jq -r '.systemoneModel')"
+export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 ```
 
 Run the selected SDK's command from the repository root:
@@ -72,7 +70,10 @@ block publication on failure.
 
 Each environment selects representative models from its public `/model/list`
 catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
-external model; all SDKs use the same selection. A missing category fails setup.
+external model; all SDKs use the same selection. The same list includes a hosted
+Jev model when the selected SDK has a System One suite. Each entry carries an
+`endpoint` (`chat` or `systemone`), and each suite uses only its endpoint. A
+missing required category fails setup.
 
 | Area | Live checks |
 | --- | --- |

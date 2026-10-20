@@ -59,27 +59,27 @@ async function runSelector(t, models = catalog, language = 'all', pageSize = 100
 
 test('selects Chat and System One from one catalog request', async t => {
   const { result, requests } = await runSelector(t);
-  assert.deepEqual(result, {
-    models: [
-      { id: 'near/a', provider: 'near' }, { id: 'near/b', provider: 'near' },
-      { id: 'chutes/a', provider: 'chutes' }, { id: 'external/chat', provider: 'external' },
-    ],
-    systemoneModel: 'typesafe/cheap',
-  });
+  assert.deepEqual(result, [
+    { id: 'near/a', provider: 'near', endpoint: 'chat' },
+    { id: 'near/b', provider: 'near', endpoint: 'chat' },
+    { id: 'chutes/a', provider: 'chutes', endpoint: 'chat' },
+    { id: 'external/chat', provider: 'external', endpoint: 'chat' },
+    { id: 'typesafe/cheap', provider: 'external', endpoint: 'systemone' },
+  ]);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].pathname, '/v1/model/list');
 });
 
 test('loads each catalog page once for both selections', async t => {
   const { result, requests } = await runSelector(t, catalog, 'all', 2);
-  assert.equal(result.systemoneModel, 'typesafe/cheap');
+  assert.equal(result.find(model => model.endpoint === 'systemone').id, 'typesafe/cheap');
   assert.deepEqual(requests.map(url => url.searchParams.get('offset')), ['0', '2', '4']);
 });
 
 test('a language without System One tests needs only Chat models', async t => {
   const { result } = await runSelector(t, catalog.slice(0, 4), 'rust');
-  assert.equal(result.models.length, 4);
-  assert.equal(result.systemoneModel, '');
+  assert.equal(result.length, 4);
+  assert.ok(result.every(model => model.endpoint === 'chat'));
 });
 
 test('a language with System One tests requires a decision model', async t => {

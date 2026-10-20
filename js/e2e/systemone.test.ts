@@ -11,12 +11,13 @@ import {
   verifyGatewayAttestation,
   verifyGatewayResponse,
 } from '../dist/node.js';
-import { requiredEnv, retryReceipt } from './helpers.ts';
+import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
 
 const BASE_URL = `${requiredEnv('NEARAI_BASE_URL').replace(/\/+$/, '')}/`;
 const API_KEY = requiredEnv('NEARAI_API_KEY');
 // The selector chooses a hosted Jev deployment, which has Gateway receipts.
-const MODEL = requiredEnv('NEARAI_E2E_SYSTEMONE_MODEL');
+const MODEL = selectedModels('systemone')[0]?.id;
+assert.ok(MODEL, 'Expected a hosted Jev model for System One tests');
 const REQUEST = {
   model: MODEL,
   state: { message: 'I was charged twice for my subscription. Please help.' },

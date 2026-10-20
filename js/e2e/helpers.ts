@@ -40,3 +40,14 @@ export async function retryReceipt<T>(
   signal?.throwIfAborted();
   return lookup();
 }
+
+export function selectedModels(endpoint: 'chat' | 'systemone'): {
+  id: string;
+  provider: 'near' | 'chutes' | 'external';
+  endpoint: 'chat' | 'systemone';
+}[] {
+  const models = JSON.parse(requiredEnv('NEARAI_E2E_MODELS'));
+  return models.filter(
+    (model: { endpoint: string }) => model.endpoint === endpoint,
+  );
+}

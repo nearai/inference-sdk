@@ -93,10 +93,14 @@ async function main() {
       ...candidates.slice(0, count).map(({ modelId }) => ({
         id: modelId,
         provider,
+        endpoint: 'chat',
       })),
     );
   }
-  console.log(JSON.stringify({ models: selected, systemoneModel }));
+  if (systemoneModel) {
+    selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
+  }
+  console.log(JSON.stringify(selected));
 }
 
 await main();

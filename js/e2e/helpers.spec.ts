@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ApiError, VerificationError } from '../dist/node.js';
-import { retryReceipt } from './helpers.ts';
+import { retryReceipt, selectedModels } from './helpers.ts';
 
 const unavailable = () =>
   new ApiError({
@@ -87,4 +87,22 @@ test('a test deadline prevents receipt lookup and cancels propagation backoff', 
     { name: 'AbortError' },
   );
   assert.equal(calls, 1);
+});
+
+test('routes mixed model selections by endpoint', (t) => {
+  const chat = { id: 'external/chat', provider: 'external', endpoint: 'chat' };
+  const decision = {
+    id: 'typesafe/jev',
+    provider: 'external',
+    endpoint: 'systemone',
+  };
+  const previous = process.env.NEARAI_E2E_MODELS;
+  t.after(() => {
+    if (previous === undefined) delete process.env.NEARAI_E2E_MODELS;
+    else process.env.NEARAI_E2E_MODELS = previous;
+  });
+  process.env.NEARAI_E2E_MODELS = JSON.stringify([decision, chat]);
+
+  assert.deepEqual(selectedModels('chat'), [chat]);
+  assert.deepEqual(selectedModels('systemone'), [decision]);
 });

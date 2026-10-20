@@ -18,7 +18,7 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '../dist/node.js';
-import { requiredEnv, retryReceipt } from './helpers.ts';
+import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
 
 type LiveModel = {
   id: string;
@@ -27,7 +27,7 @@ type LiveModel = {
 
 const BASE_URL = `${requiredEnv('NEARAI_BASE_URL').replace(/\/+$/, '')}/`;
 const API_KEY = requiredEnv('NEARAI_API_KEY');
-const MODELS: LiveModel[] = JSON.parse(requiredEnv('NEARAI_E2E_MODELS'));
+const MODELS: LiveModel[] = selectedModels('chat');
 const MODEL = MODELS.find(({ provider }) => provider === 'near')?.id;
 assert.ok(MODEL, 'Expected a NEAR model for the E2EE/OHTTP client cases');
 const CHAT_REQUEST = {

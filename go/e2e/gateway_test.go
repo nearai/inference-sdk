@@ -18,7 +18,7 @@ import (
 	nearai "github.com/nearai/inference-sdk/go"
 )
 
-type liveModel struct{ ID, Provider string }
+type liveModel struct{ ID, Provider, Endpoint string }
 
 func required(t *testing.T, name string) string {
 	t.Helper()
@@ -34,6 +34,13 @@ func models(t *testing.T, encryption bool) []liveModel {
 	if err := json.Unmarshal([]byte(required(t, "NEARAI_E2E_MODELS")), &all); err != nil {
 		t.Fatal(err)
 	}
+	chat := make([]liveModel, 0, len(all))
+	for _, m := range all {
+		if m.Endpoint == "chat" {
+			chat = append(chat, m)
+		}
+	}
+	all = chat
 	if len(all) == 0 {
 		t.Fatal("expected representative Chat models")
 	}
