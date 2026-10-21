@@ -44,6 +44,7 @@ jobs:
         working-directory: examples/example-browser
         run: |
           pnpm install --frozen-lockfile
+          pnpm test
           pnpm build
 
   python:

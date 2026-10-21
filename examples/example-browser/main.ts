@@ -9,6 +9,7 @@ import {
   type VerifiedGatewayAttestation,
   type VerifiedModelAttestation,
 } from '@nearai/inference-sdk';
+import { isRetryableSignatureLookup } from './receipt';
 import './style.css';
 
 const DEFAULT_BASE_URL = 'https://cloud-api.near.ai/v1';
@@ -396,10 +397,6 @@ function schedulePreparation(delay = 500): void {
 
 function requireModelSignature(result: VerifiedCompletionResult): void {
   if (result.signatureKind !== 'provider_tee') throw new Error('The completion was signed by the Gateway, not the verified model TEE.');
-}
-
-function isRetryableSignatureLookup(error: unknown): boolean {
-  return isApiError(error) && error.retryable;
 }
 
 async function retryVerification(record: VerificationRecord): Promise<void> {

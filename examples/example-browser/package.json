@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "test": "node --test *.test.mjs",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit"
   },
