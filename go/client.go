@@ -197,6 +197,8 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 }
 
 func (c *InferenceClient) getSession(ctx context.Context, model string) (*session, error) {
+	key := model
+
 	if model == "" {
 		return nil, failure("api.invalid_input", nil)
 	}
@@ -208,14 +210,14 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 		c.mu.Unlock()
 		return nil, failure("api.client_closed", nil)
 	}
-	if s := c.sessions[model]; s != nil && time.Now().Before(s.expires) {
+	if s := c.sessions[key]; s != nil && time.Now().Before(s.expires) {
 		c.mu.Unlock()
 		return s, nil
 	}
-	p := c.pending[model]
+	p := c.pending[key]
 	if p == nil {
 		p = &pendingSession{done: make(chan struct{})}
-		c.pending[model] = p
+		c.pending[key] = p
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -225,7 +227,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			p.value, p.err = s, e
-			delete(c.pending, model)
+			delete(c.pending, key)
 			if e == nil && !c.closed && c.attestationTTL > 0 {
 				c.prune(time.Now())
 				for len(c.sessions) >= c.options.MaxCacheEntries {
@@ -239,7 +241,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 					delete(c.sessions, oldest)
 				}
 				s.expires = time.Now().Add(c.attestationTTL)
-				c.sessions[model] = s
+				c.sessions[key] = s
 			}
 			close(p.done)
 		}()
@@ -696,7 +698,7 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
 	copy := *a
-	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
+	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

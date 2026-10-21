@@ -94,6 +94,8 @@ jobs:
           cache-dependency-path: |
             go/go.sum
             examples/example-go/go.sum
+      - name: Check shared System One response vectors
+        run: cmp rs/test-fixtures/systemone-responses.json go/testdata/systemone-responses.json
       - run: make -C go check
       - name: Verify consumer builds without CGO
         env:
@@ -102,9 +104,9 @@ jobs:
           go -C go test ./...
           go -C examples/example-go test ./...
           go -C examples/example-go build ./...
-      - name: Compile live Go tests without credentials
+      - name: Test live model selection without credentials
         working-directory: go
-        run: go test -tags=e2e ./e2e -run '^$'
+        run: go test -tags=e2e ./e2e -run '^TestSelectedModels$'
       - name: Check Go OpenAI integration example
         working-directory: examples/example-go
         run: |

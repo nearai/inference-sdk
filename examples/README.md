@@ -174,13 +174,14 @@ are Ed25519 and Gateway receipts. See the
 
 Uses the `nearai-inference-sdk` crate, imported as `nearai_inference_sdk`.
 
-Gateway and direct examples both cover JSON and SSE, with explicit receipt
+Gateway and direct Chat examples both cover JSON and SSE, with explicit receipt
 verification after consuming the full HTTP response. Set `ALGO` in
 `src/lib.rs` to `SigningAlgo::Ecdsa` to use ECDSA throughout.
 
 | File | Usage | E2EE |
 | --- | --- | --- |
 | `src/gateway/bare.rs` | Standalone Gateway/model verification, Gateway image provenance, pinned Chat TLS, encrypted JSON/SSE, and exact ciphertext receipt verification. | Enabled |
+| [`src/bin/systemone.rs`](example-rs/src/bin/systemone.rs) | Structured decisions with verified receipts. | Disabled |
 | `src/gateway/client.rs` | Integrated Gateway client with the same four Gateway image policies, default TLS pinning, JSON/SSE, and `verify_response(id)`. | Enabled |
 | `src/direct/bare.rs` | Experimental standalone verification of every supplied direct model report and exact response bytes. | Plaintext over HTTPS |
 | `src/direct/client.rs` | Experimental integrated direct verification, encrypted JSON/SSE, and receipts from the selected model signer. | Enabled |
@@ -194,6 +195,11 @@ cargo run --bin gateway-client
 cargo run --bin direct-bare
 cargo run --bin direct-client
 ```
+
+For the decision example, set `NEARAI_API_KEY`, `NEARAI_BASE_URL`, and
+`NEARAI_SYSTEMONE_MODEL`, then run `cargo run --locked --bin systemone` from
+`examples/example-rs`. It prints answers after receipt verification succeeds.
+See the [guide](../rs/docs/verification-guide.md#verify-system-one-decisions) for API usage.
 
 `cargo run` and `cargo run --bin client` remain aliases for the Gateway bare and
 client examples. Gateway examples use the four image policies listed above;

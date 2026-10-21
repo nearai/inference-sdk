@@ -48,6 +48,31 @@ An explicit model policy or deployment callback rejects Gateway-only models.
 `InferenceError` wraps `ApiError` and `VerificationError` and exposes `code()` and
 `retryable()`. Retryable receipt-fetch failures can be retried without replaying Chat.
 
+## System One decisions
+
+| Method | Result |
+| --- | --- |
+| `systemone_create(&request)` | `SystemOneResult { data, decision_id }` |
+| `systemone_create_with_headers(&request, headers)` | Same result, with per-call headers. |
+| `verify_response(&result.decision_id)` | Verified receipt for the captured request and response. |
+
+Use a Gateway client with E2EE and OHTTP disabled. Each create call verifies the
+required deployments and sends one nonstreaming request. `decision_id` comes
+from `X-Generation-Id`. Verify the receipt before using `data`.
+
+Requests accept `SystemOneRequest` or another serializable JSON value. Each
+question requires `instructions` as text, an object, or an array. Responses
+support `noul`, `choice`, and `score`, preserving unknown fields. Structured
+content preserves arbitrary-precision JSON numbers; scores and probabilities
+use finite `f64` values.
+
+System One shares Chat's per-model session and the client's
+body limits and receipt cache.
+Dropping the request future cancels the operation.
+
+Inference is sent once. Retry transient receipt lookups through the verification
+method while the response remains cached.
+
 ## Standalone transport and experimental direct APIs
 
 - `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
