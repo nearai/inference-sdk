@@ -340,10 +340,12 @@ type InferenceOptions struct {
 	MaxReceiptCacheBytes int64
 }
 
-// DirectInferenceOptions defaults E2EE to true, matching the other SDKs.
+// DirectInferenceOptions leaves E2EE disabled by default.
 // Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
 	InferenceOptions
+	// Deprecated: set InferenceOptions.E2EE to enable encryption.
+	// When true, DisableE2EE takes precedence over E2EE.
 	DisableE2EE bool
 }
 
