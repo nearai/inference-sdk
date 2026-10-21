@@ -31,12 +31,12 @@ describe('Intel quote verifier configuration', () => {
     } as unknown as ReturnType<typeof verify>);
   });
 
-  test('uses Intel collateral by default', async () => {
+  test('fetches collateral through the NEAR AI proxy by default', async () => {
     const verifyQuote = createTdxQuoteVerifier();
     const quote = await verifyQuote('abcd');
 
     expect(getCollateral).toHaveBeenCalledWith(
-      'https://api.trustedservices.intel.com',
+      'https://cloud.near.ai/api/proxy/pccs',
       expect.any(Uint8Array),
     );
     expect(quote).toEqual(createModelQuote());

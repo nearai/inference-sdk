@@ -56,8 +56,8 @@ async def test_quote_factories_route_collateral_and_keep_configuration_isolated(
         ('https://first.example/pccs', b'\xaa\xbb'),
         ('https://second.example/pccs', b'\xaa\xbb'),
         ('https://first.example/pccs', b'\xaa\xbb'),
-        ('https://api.trustedservices.intel.com', b'\xaa\xbb'),
-        ('https://api.trustedservices.intel.com', b'\xaa\xbb'),
+        ('https://cloud.near.ai/api/proxy/pccs', b'\xaa\xbb'),
+        ('https://cloud.near.ai/api/proxy/pccs', b'\xaa\xbb'),
     ]
     assert parsed_quotes == [b'\xaa\xbb'] * 5
     assert verified_quotes == [(b'\xaa\xbb', collateral, 1800000000)] * 5

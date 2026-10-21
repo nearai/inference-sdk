@@ -16,15 +16,19 @@ import (
 )
 
 type GPUVerifierOptions struct {
-	NRASURL, JWKSURL string
-	HTTPClient       *http.Client
+	// NRASURL is a complete GPU attestation POST URL.
+	// It defaults to https://cloud.near.ai/api/proxy/nras/v3/attest/gpu.
+	NRASURL string
+	// JWKSURL defaults to NVIDIA's official signing-key endpoint.
+	JWKSURL    string
+	HTTPClient *http.Client
 }
 
 // CreateGPUEvidenceVerifier authenticates NVIDIA's ES384 overall verdict, issuer,
 // validity interval and nonce. A custom JWKS URL must be a trusted key source.
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier {
 	if o.NRASURL == "" {
-		o.NRASURL = "https://nras.attestation.nvidia.com/v3/attest/gpu"
+		o.NRASURL = "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"
 	}
 	if o.JWKSURL == "" {
 		o.JWKSURL = "https://nras.attestation.nvidia.com/.well-known/jwks.json"

@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,13 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 				t.Fatal(e)
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				expectedPath := "/keys"
+				if r.Method == "POST" {
+					expectedPath = "/proxy/nras/v3/attest/gpu"
+				}
+				if r.URL.Path != expectedPath {
+					t.Errorf("request path = %s, want %s", r.URL.Path, expectedPath)
+				}
 				if (variant == "verdict timeout" && r.Method == "POST") || (variant == "jwks timeout" && r.Method == "GET") {
 					w.WriteHeader(http.StatusRequestTimeout)
 					return
@@ -74,7 +83,11 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			e = CreateGPUEvidenceVerifier(GPUVerifierOptions{NRASURL: server.URL, JWKSURL: server.URL})(context.Background(), `{"nonce":"`+n+`"}`)
+			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{
+				NRASURL: server.URL + "/proxy/nras/v3/attest/gpu",
+				JWKSURL: server.URL + "/keys",
+			})
+			e = verifier(context.Background(), `{"nonce":"`+n+`"}`)
 			if strings.HasSuffix(variant, "timeout") {
 				var sdkErr *Error
 				if !errors.As(e, &sdkErr) || !sdkErr.Retryable {
@@ -86,6 +99,49 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 			}
 			if variant != "ok" && e == nil {
 				t.Fatal("bad verdict accepted")
+			}
+		})
+	}
+}
+
+type gpuTestTransport func(*http.Request) (*http.Response, error)
+
+func (f gpuTestTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestGPUServiceURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name, nrasURL, attestURL string
+	}{
+		{"defaults", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
+		{"custom endpoint", "https://attestation.example/attest", "https://attestation.example/attest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests []string
+			client := &http.Client{Transport: gpuTestTransport(func(r *http.Request) (*http.Response, error) {
+				requests = append(requests, r.Method+" "+r.URL.String())
+				body := `[["JWT","invalid-test-token"]]`
+				if r.Method == "GET" {
+					body = `{"keys":[]}`
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
+			})}
+			verifier := CreateGPUEvidenceVerifier(GPUVerifierOptions{
+				NRASURL:    tc.nrasURL,
+				HTTPClient: client,
+			})
+			err := verifier(context.Background(), `{"nonce":"`+strings.Repeat("11", 32)+`"}`)
+			var sdkErr *Error
+			if !errors.As(err, &sdkErr) || sdkErr.Code != "gpu.jwt_verification_failed" {
+				t.Fatalf("expected the fetched token to fail verification, got %v", err)
+			}
+			expected := []string{
+				"POST " + tc.attestURL,
+				"GET https://nras.attestation.nvidia.com/.well-known/jwks.json",
+			}
+			if !slices.Equal(requests, expected) {
+				t.Fatalf("requests = %v, want %v", requests, expected)
 			}
 		})
 	}

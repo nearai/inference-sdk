@@ -413,27 +413,24 @@ Gateway `reported_quote_data` is required.
 | --- | --- | --- |
 | `DefaultTdxQuoteVerifier` | `DefaultTdxQuoteVerifier::default()` or `DefaultTdxQuoteVerifier::new(pccs_url)` | Built-in Intel TDX quote verifier. Pass a custom PCCS base URL when needed. |
 | `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
-| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
+| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA verifier. Accepts a complete GPU evidence POST URL. `with_client` accepts a `reqwest::Client`. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
-| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
-| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://cloud.near.ai/api/proxy/pccs` |
+| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
 | `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict. A custom NRAS URL changes where
 evidence is submitted; `with_jwks_url` independently configures the signing-key
 source. Use only a trusted JWKS proxy, since those keys authenticate the verdict.
-Both URLs default to NVIDIA's official endpoints. The required NVIDIA issuer
+The required NVIDIA issuer
 (`https://nras.attestation.nvidia.com`) remains fixed. Payload nonces
 must decode to exactly 32 bytes of hexadecimal data, with an optional `0x` or
 `0X` prefix; invalid values fail before any request. Model verification checks
 the client challenge before invoking an override.
 
-Custom Intel URLs must provide PCCS-compatible certification-v4 endpoints
-for both SGX and TDX, including issuer-chain response headers and a hex-encoded
-SGX `rootcacrl` response. Local DCAP signature and trust-root checks remain in
-place. See [the proxy example](./verification-guide.md#use-a-pccs-or-nras-proxy)
-for construction and the required wire formats.
+DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
+[service URL configuration](./verification-guide.md#configure-attestation-service-urls).
 
 ### Quote and deployment values
 

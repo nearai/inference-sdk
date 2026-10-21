@@ -326,6 +326,32 @@ covers recorded deployment actions and image builds. Current runtime state
 requires separate evidence. See the [API reference](./api-reference.md#compose-manager-deployment-provenance)
 for file selection, GitHub access, and Direct client options.
 
+## Configure attestation service URLs
+
+The built-in verifiers use these defaults:
+
+| Service | URL |
+| --- | --- |
+| PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+To use your own services, configure the verifier callbacks:
+
+```go
+verifiers := nearai.VerificationOptions{
+    QuoteVerifier: nearai.CreateTDXQuoteVerifier("https://attestation.example.com/pccs"),
+    GPUVerifier: nearai.CreateGPUEvidenceVerifier(nearai.GPUVerifierOptions{
+        NRASURL: "https://attestation.example.com/nras/v3/attest/gpu",
+    }),
+}
+```
+
+Pass these options to model verification; Gateway verification uses the same
+quote callback. DCAP builds the SGX and TDX collateral paths beneath the PCCS
+base URL. `NRASURL` is the complete GPU evidence POST URL. Signing keys come
+from NVIDIA; set `JWKSURL` separately to use another trusted key source.
+
 ## Encryption and TLS binding
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.

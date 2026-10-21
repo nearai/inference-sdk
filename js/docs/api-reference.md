@@ -569,8 +569,7 @@ the provider signature no longer matches the client-visible bytes.
 
 Both factories return callbacks for the existing `verifiers` parameter. They
 retain the built-in verification checks and accept custom service or proxy URLs.
-PCCS defaults to Phala in browsers and Intel in Node.js. NVIDIA defaults are
-the same in both runtimes.
+Defaults are the same in browsers and Node.js.
 
 | Function | Parameter type | Returns |
 | --- | --- | --- |
@@ -579,16 +578,16 @@ the same in both runtimes.
 
 | Parameter type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
-| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
 nonce. `verifyModelAttestation` additionally binds that nonce to
 `clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
 The expected NVIDIA issuer remains fixed when either URL changes.
-See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
-for routing and response-header requirements.
+See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
+for custom URLs.
 
 ## Policies and verifier callbacks
 

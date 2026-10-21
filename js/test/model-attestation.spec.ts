@@ -569,7 +569,7 @@ describe('model attestation verification', () => {
       'https://nras.attestation.nvidia.com/.well-known/jwks.json',
     );
     expect(fetch).toHaveBeenCalledWith(
-      'https://nras.attestation.nvidia.com/v3/attest/gpu',
+      'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
       expect.objectContaining({ method: 'POST', body: nvidiaPayload }),
     );
     jwks.resolve(new Response(JSON.stringify(NRAS_JWKS)));
@@ -580,30 +580,40 @@ describe('model attestation verification', () => {
     expect(result.gpuEvidence).toBe('verified');
   });
 
-  test('verifies NVIDIA evidence through configured NRAS and JWKS proxies', async () => {
-    mockNrasOverallResult(true);
-    const nvidiaPayload = JSON.stringify({ nonce });
-    const gpuEvidence = createGpuEvidenceVerifier({
+  test.each([
+    {
+      nrasUrl: '/api/proxy/nras/v3/attest/gpu',
+      jwksUrl: undefined,
+    },
+    {
       nrasUrl: '/api/attestation/nvidia',
-      jwksUrl: '/api/attestation/nvidia/jwks.json',
-    });
+      jwksUrl: '/api/keys/.well-known/jwks.json',
+    },
+  ])(
+    'verifies NVIDIA evidence at $nrasUrl with independent JWKS',
+    async (params) => {
+      mockNrasOverallResult(true);
+      const nvidiaPayload = JSON.stringify({ nonce });
+      const gpuEvidence = createGpuEvidenceVerifier(params);
 
-    const result = await verifyModelAttestation({
-      attestation: createModelAttestation({ nvidiaPayload }),
-      clientBinding: { nonce },
-      verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
-    });
+      const result = await verifyModelAttestation({
+        attestation: createModelAttestation({ nvidiaPayload }),
+        clientBinding: { nonce },
+        verifiers: { tdxQuote: tdxQuoteVerifier, gpuEvidence },
+      });
 
-    expect(result.gpuEvidence).toBe('verified');
-    expect(globalThis.fetch).toHaveBeenCalledWith('/api/attestation/nvidia', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: nvidiaPayload,
-    });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      '/api/attestation/nvidia/jwks.json',
-    );
-  });
+      expect(result.gpuEvidence).toBe('verified');
+      expect(globalThis.fetch).toHaveBeenCalledWith(params.nrasUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: nvidiaPayload,
+      });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        params.jwksUrl ??
+          'https://nras.attestation.nvidia.com/.well-known/jwks.json',
+      );
+    },
+  );
 
   test('rejects a malformed payload nonce before contacting NRAS', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch');

@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
+pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu";
 pub const DEFAULT_NVIDIA_JWKS_URL: &str =
     "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
@@ -35,16 +35,13 @@ impl Default for NrasGpuEvidenceVerifier {
 }
 
 impl NrasGpuEvidenceVerifier {
-    /// Submit evidence to this URL, using NVIDIA's official JWKS URL by default.
+    /// Submit evidence to a complete POST URL.
+    /// Signing keys come from NVIDIA's official JWKS URL by default.
     pub fn new(url: impl Into<String>) -> Self {
-        let client = Client::new();
-        Self {
-            client,
-            url: url.into(),
-            jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
-        }
+        Self::with_client(Client::new(), url)
     }
 
+    /// Submit evidence to a complete POST URL with a caller-provided HTTP client.
     pub fn with_client(client: Client, url: impl Into<String>) -> Self {
         Self {
             client,
@@ -386,15 +383,19 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_official_nras_endpoint_by_default() {
+    fn uses_the_near_ai_nras_proxy_and_official_jwks_by_default() {
         let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
             verifier.url,
-            "https://nras.attestation.nvidia.com/v3/attest/gpu"
+            "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"
         );
         assert_eq!(
             verifier.jwks_url,
             "https://nras.attestation.nvidia.com/.well-known/jwks.json"
+        );
+        assert_eq!(
+            NrasGpuEvidenceVerifier::new("https://proxy.example/attest").jwks_url,
+            verifier.jwks_url
         );
     }
 
