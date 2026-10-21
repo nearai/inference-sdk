@@ -55,13 +55,9 @@ afterEach(() => jest.restoreAllMocks());
 test.each([undefined, 'unlisted/manager@sha256:' + 'bb'.repeat(32)])(
   'rejects a stale compose manager when the latest startup image is %s',
   async (image) => {
-    jest
-      .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
-      .mockResolvedValue(root);
     const fetch = jest
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(compose))
-      .mockResolvedValueOnce(Response.json({ attestations: [{ bundle }] }));
+      .mockRejectedValue(new Error('Unexpected network request'));
     await expect(
       verifyComposeManagerDeploymentImageProvenance({
         deployment: deployment(image),
