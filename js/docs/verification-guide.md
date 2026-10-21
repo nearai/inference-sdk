@@ -83,9 +83,9 @@ Gateway signer, or the serving model signer for a direct endpoint. Missing or
 invalid OHTTP evidence prevents Chat from being sent. The authenticated
 configuration is cached with the deployment verification result.
 
-`e2ee` is independent: it defaults to `false` for `InferenceClient` and `true`
-for `DirectInferenceClient`. Through the Gateway, OHTTP protects the HTTP
-exchange to the Gateway, while E2EE encrypts supported Chat fields to the model.
+`e2ee` is independent and defaults to `false` for both clients.
+Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
+encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
@@ -138,7 +138,9 @@ the quote, event log, and any NVIDIA payload. The sibling fields such as
 Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model share verification work and cached results.
+requests for the same model and endpoint share verification work and cached
+results. `verify(model)` and Chat share a session; System One uses a separate
+session because its model-routing rules differ.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -171,6 +173,38 @@ may still finish in the background.
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
+
+## System One decisions
+
+Use `systemone.create()` for Jev decision models. It verifies the required
+deployments before sending state, using the client's attestation cache and
+policies. Use a Gateway client with `e2ee: false` and `ohttp: false`;
+System One returns a complete JSON response.
+
+```ts
+import { InferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new InferenceClient({ apiKey, baseUrl, e2ee: false, ohttp: false });
+const result = await client.systemone.create({
+  model: canonicalModelId,
+  state: { message: 'I was charged twice.' },
+  questions: {
+    billing: { type: 'noul', instructions: 'Is this about billing?' },
+  },
+});
+
+const verified = await client.verifyResponse(result.decisionId);
+console.log(verified.signatureKind, result.data.answers);
+```
+
+`result.decisionId` comes from `X-Generation-Id`. Call `verifyResponse()` before
+using the answers; it checks the exact bytes captured by the client. Gateway
+receipts authenticate Gateway signing; provider TEE receipts authenticate a
+signer in the verified model reports.
+
+Response retention and receipt retries follow the same lifecycle as Chat.
+If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
+Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
 ## Connect through an application proxy
 
@@ -211,10 +245,13 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, and `/v1/signature/{id}`. Preserve the URL-encoded model
-ID. It authenticates the user and supplies its upstream
-NEAR AI credential. Preserve the request and response bodies, model-key routing header,
-and encryption headers unchanged so decryption and signature verification work.
+`/v1/chat/completions`, and `/v1/signature/{id}`. For System One decisions,
+also forward `POST /v1/systemone`. Preserve the URL-encoded model and completion
+IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
+Preserve the request and response bodies, model-key routing header, and encryption
+headers unchanged so decryption and signature verification work. Forward the
+`X-Generation-Id` response header for System One and expose it through
+`Access-Control-Expose-Headers` when the proxy is cross-origin.
 
 The attestation-service routes are separate from the inference API proxy:
 
@@ -364,8 +401,9 @@ if (completionId !== undefined) {
 Each ID identifies its own request bytes, response bytes, and verified deployment
 evidence. Concurrent requests can finish in any order. Repeated verification of
 the same ID shares the in-flight operation and its result. After a retryable
-API failure, call `verifyResponse(id)` again to retry the signature lookup.
-Successful results and non-retryable failures remain cached.
+API failure or `api.completion_signature_unavailable`, call `verifyResponse(id)`
+again to retry the signature lookup. Successful results and other non-retryable
+failures remain cached.
 
 Response records retain complete bodies in memory. They expire
 `responseCacheTimeToLiveMs` after body completion (default: 60 minutes),
@@ -429,7 +467,8 @@ Known endpoint limitations affect the direct flow:
 or model-metadata lookup.
 It fetches and verifies every returned model attestation before
 sending Chat.
-E2EE defaults to enabled with Ed25519. Both cache defaults are 60 minutes.
+E2EE is opt-in, as with the Gateway client. The example enables it explicitly.
+The signing algorithm defaults to Ed25519. Both cache defaults are 60 minutes.
 
 ```ts
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
@@ -437,6 +476,7 @@ import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 const client = new DirectInferenceClient({
   baseUrl: 'https://glm-5-3-flash.completions.near.ai/v1',
   apiKey: process.env.NEARAI_API_KEY,
+  e2ee: true,
 });
 ```
 

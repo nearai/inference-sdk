@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .attestation_common import AttestationEvidence
+from .ohttp import OhttpAttestation
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -15,3 +16,4 @@ class GatewayAttestation(AttestationEvidence):
     #: requested it.
     spki_fingerprint: str | None = None
     reported_quote_data: str
+    ohttp_attestation: OhttpAttestation | None = None

@@ -129,6 +129,7 @@ fn client(server: &MockServer) -> AttestationClient {
 
 fn verified_model_attestation_for_signer(signer: SigningIdentity) -> VerifiedModelAttestation {
     VerifiedModelAttestation {
+        signing_public_key: None,
         evidence: VerifiedAttestationEvidence {
             signer,
             tcb_status: TcbStatus::UpToDate,

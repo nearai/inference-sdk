@@ -1,90 +1,28 @@
 # Live E2E tests
 
-These tests send real Chat requests and verify real attestation evidence and
-response signatures. They run after pushes to `main` (including merged PRs)
-and daily at 03:00 UTC, after the daily production deployment. GitHub may delay scheduled runs.
-The **Live E2E** workflow can also be started manually from `main`.
-Push, scheduled, and manual runs test both staging and production with all
-three SDKs, as six separate jobs. Releases run only the selected language
-against both environments and block publication on failure. A failing test job
-does not cancel the other environment.
-
-## Configuration
-
-Add these repository secrets in **Settings → Secrets and variables → Actions**:
-
-| Environment | Fixed API URL | API key secret |
-| --- | --- | --- |
-| STG | `https://cloud-stg-api.near.ai/v1` | `NEARAI_STG_API_KEY` |
-| PRD | `https://cloud-api.near.ai/v1` | `NEARAI_PRD_API_KEY` |
-
-Use a dedicated test account with inference credits in each environment. URLs
-are defined in the workflow; no URL secret is needed. Each test job receives only
-its environment's API key, and both secrets are required before tests start.
-
-Each environment discovers representative Chat models from its public
-`/model/list` catalog: two NEAR TEE models, one Chutes model, and one external
-model. All three SDKs receive the same selection for that environment. The
-selector uses Chat capabilities, prefers non-reasoning models and lower token
-prices, and fails if a category is missing. It does not silently fall back to a
-hardcoded model.
-
-The first NEAR model also runs JavaScript's E2EE and OHTTP feature cases. These
-capabilities are not listed separately in the catalog; missing support fails
-the relevant case. The Gateway URL must expose its own TLS certificate, not an
-aggregator's certificate.
-
-Missing secrets fail the workflow. It does not run on pull requests and does
-not expose credentials to build or dependency-install steps. Tests do not log
-credentials, request bodies, or full attestation reports.
-
-## Coverage
-
-| SDK | Live checks |
-| --- | --- |
-| All three, all selected models | Gateway quote and peer TLS binding, JSON Chat responses and signature lookup |
-| All three, NEAR and external models | Complete SSE responses and exact-byte receipt verification |
-| All three, NEAR models | Every returned model report and GPU evidence; model or Gateway receipt verification according to the returned signature kind |
-| All three, external models | Gateway receipt verification; no NEAR model attestation or E2EE claims |
-| All three, Chutes | Original JSON responses must report `SIGNATURE_UNSUPPORTED`; this is not successful response verification |
-| All three, signed responses | An altered response is rejected using the real receipt, without sending another request |
-| JavaScript | Node `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
-| JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
-| Python and Rust | Standalone verification with both Ed25519 and ECDSA |
-
-The JavaScript tests import the built package entry points. Its generic entry
-is exercised in Node; this is not a browser or CORS test. This suite targets
-Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
-default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
-deployment allowlist.
-
-A complete three-language run sends 50 small Chat requests per environment (100 total), each
-capped at 128 completion tokens. JavaScript disables OpenAI request retries.
-Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
-2, and 4 second backoffs, within each model case's 180 second deadline. It never
-resends Chat or retries a cryptographic verification failure.
-Test failures and timeouts fail CI; they are not converted into skipped or
-successful tests.
-
-Chutes' own evidence format and encrypted channel are outside these SDK
-verification APIs. Its streaming support is separately gated by the provider,
-so this suite tests Chutes with JSON only and checks the explicit unavailable
-signature error. A missing signature still fails every NEAR/external receipt test.
+Run the SDKs against staging or production to check deployment attestation,
+inference, and response signatures. These tests require a funded test account
+and make billable requests.
 
 ## Local use
 
-Select one environment by setting `NEARAI_BASE_URL` to its URL above and
-`NEARAI_API_KEY` to that environment's key through your local secret manager
-or shell. Do not commit a key or paste it into a
-command that saves shell history.
-Discover models once from the repository root (Node.js 24; no API key used):
+Set `NEARAI_API_KEY` through your local secret manager or shell and set
+`NEARAI_BASE_URL` to the matching environment:
+
+| Environment | `NEARAI_BASE_URL` |
+| --- | --- |
+| Staging | `https://cloud-stg-api.near.ai/v1` |
+| Production | `https://cloud-api.near.ai/v1` |
+
+Install Node.js 24, then discover models once from the repository root.
+Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` to select
+one SDK's suites; the default selects all available suites.
 
 ```sh
-NEARAI_E2E_MODELS=$(node e2e/select-models.mjs)
-export NEARAI_E2E_MODELS
+export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 ```
 
-Then run the relevant command from the repository root:
+Run the selected SDK's command from the repository root:
 
 ```sh
 # Node.js 24
@@ -108,7 +46,50 @@ cd rs
 cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
-Normal unit-test commands do not contact the live service. Jest selects only
-`test/**/*.spec.ts`, pytest defaults to `test/`, and Rust's live tests are
-explicitly ignored until the E2E command opts into them. PR CI still lints and
-typechecks/compiles the live test code without using secrets.
+```sh
+# Go 1.25.8+
+export CGO_ENABLED=0
+go -C go test -tags=e2e ./e2e -v -timeout 15m
+go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
+```
+
+Ordinary unit-test commands exclude the live suites. PR CI checks their source
+without making live requests.
+
+## CI configuration
+
+Add `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` as repository Actions secrets.
+Both are required. Each test job receives only its environment's key.
+
+The [Live E2E workflow](../.github/workflows/e2e.yml) runs all four SDKs against
+both environments after pushes to `main`, daily at 03:00 UTC, and on manual
+dispatch from `main`. Releases test the selected SDK in both environments and
+block publication on failure.
+
+## Coverage
+
+Each environment selects representative models from its public `/model/list`
+catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
+external model; all SDKs use the same selection. The same list includes a hosted
+Jev model when the selected SDK has a System One suite. Each entry carries an
+`endpoint` (`chat` or `systemone`), and each suite uses only its endpoint. A
+missing required category fails setup.
+
+| Area | Live checks |
+| --- | --- |
+| Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
+| Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
+| Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
+
+The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
+Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
+integration requirements.
+
+The four-SDK Chat matrix sends 105 requests per environment before retries,
+with at most 1,024 completion tokens each. Responses must contain an answer and
+finish with `stop`. Test failures and timeouts fail the workflow.
+
+Receipt lookups retry transient API failures up to five attempts within the
+model case's 180 second deadline. A receipt retry does not send another
+inference request.

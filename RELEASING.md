@@ -2,20 +2,24 @@
 
 Each SDK is released independently through the **Publish package** GitHub
 Actions workflow. Choose one language and its version. Pushing a tag does not
-start a release.
+start the workflow; for Go, the tag itself makes the module installable.
 
 | Language input | Registry package | Version source | Release tag |
 | --- | --- | --- | --- |
 | `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` | `javascript-v<version>` |
 | `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` | `python-v<version>` |
 | `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` | `rust-v<version>` |
+| `go` | Go proxy: `github.com/nearai/inference-sdk/go` | Workflow input | `go/v<version>` |
 
-The input version must exactly match the selected manifest. The workflow does
+Except for Go, the input version must exactly match the selected manifest.
+Go has no package version field; enter SemVer without `v`, such as `0.1.1`
+or `0.2.0-rc1`. Major versions >=2 require a new module path first. The workflow does
 not bump versions or require the other SDKs to use the same version.
 
 ## Prepare a release
 
 1. Update the selected package's manifest and its lockfile as needed in a PR.
+   Go has no version field; prepare code and documentation changes as needed.
 2. Run its checks and inspect the package contents using the commands below.
 3. Merge the release preparation into the default branch (`main`).
 
@@ -71,19 +75,29 @@ gh workflow run release.yml --repo nearai/inference-sdk --ref main \
   -f language=javascript -f version=0.1.0
 ```
 
+To publish Python `0.1.0` after its version preparation is merged:
+
+```sh
+gh workflow run release.yml --repo nearai/inference-sdk --ref main \
+  -f language=python -f version=0.1.0
+```
+
 The workflow:
 
-1. Requires the default branch and checks the selected manifest's version.
+1. Requires the default branch and validates the version (against the selected
+   manifest except for Go).
 2. Runs CI and live E2E against both STG and PRD for the selected language.
    A failure blocks tag creation and publication. Ordinary PR and push CI still
-   checks all three languages without contacting the service.
+   checks all four languages without contacting the service.
 3. Creates the package-specific tag at the run's commit and a draft GitHub
    Release. An existing tag must point to that same commit.
 4. Rechecks the remote tag and publishes only the selected package, using the
-   `release` environment. Published versions are not automatically skipped.
+   `release` environment. For Go this environment gates step 3, since the tag
+   publishes the module; step 4 verifies a fresh public-proxy consumer instead.
+   Published versions are not automatically skipped.
 5. Rechecks the remote tag before making its GitHub Release public.
 
-JavaScript and Rust accept `X.Y.Z` or prerelease versions such as `X.Y.Z-rc.1`.
+JavaScript, Rust, and Go accept `X.Y.Z` or prerelease versions such as `X.Y.Z-rc.1`.
 Python uses normalized public PEP 440 versions, such as `1.0.0` or `1.0.0rc1`.
 Prereleases are marked as such on GitHub. npm prereleases use the `next`
 dist-tag, while stable versions use `latest`; candidates do not replace the
@@ -96,8 +110,9 @@ for the live release checks. See [Live E2E configuration](e2e/README.md#configur
 
 Create a GitHub Actions environment named `release`, restrict deployments to
 the default branch, and optionally add required reviewers. Add a tag ruleset for
-`javascript-v*`, `python-v*`, and `rust-v*` that restricts updates and deletions, without
-blocking creation by the release workflow. Draft-release tags are not immutable;
+`javascript-v*`, `python-v*`, `rust-v*`, and `go/v*` that restricts updates and deletions, without
+blocking creation by the release workflow. A draft GitHub release does not prevent
+its tag from being changed;
 these rules prevent changes between the workflow's tag check and publication.
 Configure trusted publishing for each registry you intend to use:
 
@@ -144,3 +159,33 @@ backward. A version comparison or registry lookup failure stops publication.
 Published versions cannot be overwritten. If the fix changes package contents,
 prepare a new version instead of moving its tag. After publication, install the
 released package in a fresh project and verify its public imports.
+
+## Go module
+
+Select `go` in **Publish package**, run it from `main`, and enter the version
+without `v`. The module has no manifest version to bump. Update documentation or
+code in a reviewed PR as needed, then merge it before starting the workflow.
+
+Before publishing, the workflow runs Go formatting, vet, race tests, Linux/macOS
+checks, CGO-disabled builds, examples, embedded WASM reproduction, and staging
+and production live E2E. The `release` environment gates tag creation, because
+creating `go/vX.Y.Z` publishes the Go module immediately.
+
+The workflow creates the tag at its validated commit, creates a draft GitHub
+release, and checks public-proxy availability and a fresh CGO-disabled consumer.
+It confirms the proxy source commit, initializes the public client, and exercises
+the packaged verifier before publishing the GitHub release. RC versions produce
+pre-releases. Go releases do not replace the repository's latest release marker.
+
+If post-tag verification fails, the module tag is already public; leave it
+immutable. Rerun the failed jobs to retry proxy verification against the same
+commit and draft release. A tag pointing at another commit or an already
+published GitHub release is rejected. Code changes require a new version.
+
+No registry token or native-library upload is needed. Consumers install with:
+
+```sh
+go get github.com/nearai/inference-sdk/go@v0.1.0
+```
+
+Package documentation is indexed by pkg.go.dev from the public Go module proxy.

@@ -92,6 +92,7 @@ class VerifiedAttestationEvidence:
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelAttestation(VerifiedAttestationEvidence):
     gpu_evidence: Literal['not_provided', 'verified']
+    signing_public_key: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+from cryptography.hazmat.primitives.asymmetric import ec
+from eth_utils.crypto import keccak
+
 from ..types.attestation_model import ModelAttestation
 from ..types.verification import (
     GpuEvidenceVerifier,
     ModelAttestationPolicy,
     ModelAttestationVerifiers,
     ModelClientBinding,
+    VerifiedAttestationEvidence,
     VerifiedModelAttestation,
 )
-from ..utils.common import maybe_await
+from ..utils.common import gather_cancel_on_error, hex_to_bytes, maybe_await
 from ..utils.errors import (
     VerificationError,
     verification_failure,
@@ -29,6 +35,32 @@ async def verify_model_attestation(
 ) -> VerifiedModelAttestation:
     """Verify model evidence returned through NEAR AI Cloud."""
 
+    evidence, gpu_evidence = await gather_cancel_on_error(
+        _verify_model_cpu(attestation, client_binding, policy, verifiers),
+        _verify_gpu_evidence(
+            payload=attestation.nvidia_payload,
+            nonce=client_binding.nonce,
+            policy=policy,
+            verifier=None if verifiers is None else verifiers.gpu_evidence,
+        ),
+    )
+    return VerifiedModelAttestation(
+        signer=evidence.signer,
+        tcb_status=evidence.tcb_status,
+        advisory_ids=evidence.advisory_ids,
+        deployment=evidence.deployment,
+        deployment_provenance=evidence.deployment_provenance,
+        gpu_evidence=gpu_evidence,
+        signing_public_key=_verify_signing_public_key(attestation),
+    )
+
+
+async def _verify_model_cpu(
+    attestation: ModelAttestation,
+    client_binding: ModelClientBinding,
+    policy: ModelAttestationPolicy | None,
+    verifiers: ModelAttestationVerifiers | None,
+) -> VerifiedAttestationEvidence:
     nonce = client_binding.nonce
     verified_quote = await verify_dstack_quote(
         attestation=attestation,
@@ -42,23 +74,37 @@ async def verify_model_attestation(
         nonce=nonce,
         signer=verified_quote.signer,
     )
-    evidence = await verify_dstack_deployment(
+    return await verify_dstack_deployment(
         verified_quote, None if verifiers is None else verifiers.deployment
     )
-    gpu_evidence = await _verify_gpu_evidence(
-        payload=attestation.nvidia_payload,
-        nonce=nonce,
-        policy=policy,
-        verifier=None if verifiers is None else verifiers.gpu_evidence,
+
+
+def _verify_signing_public_key(attestation: ModelAttestation) -> str | None:
+    """Bind an optional E2EE key to the quote-authenticated model signer."""
+
+    if attestation.signing_public_key is None:
+        return None
+    public_key = hex_to_bytes(
+        attestation.signing_public_key, 'attestation.signing_public_key'
     )
-    return VerifiedModelAttestation(
-        signer=evidence.signer,
-        tcb_status=evidence.tcb_status,
-        advisory_ids=evidence.advisory_ids,
-        deployment=evidence.deployment,
-        deployment_provenance=evidence.deployment_provenance,
-        gpu_evidence=gpu_evidence,
-    )
+    address = hex_to_bytes(attestation.signer.signing_address, 'signer.signing_address')
+    if attestation.signer.signing_algo == 'ed25519':
+        matches = len(public_key) == 32 and public_key == address
+    else:
+        if len(public_key) == 65 and public_key[0] == 4:
+            public_key = public_key[1:]
+        matches = False
+        if len(public_key) == 64:
+            try:
+                ec.EllipticCurvePublicKey.from_encoded_point(
+                    ec.SECP256K1(), b'\x04' + public_key
+                )
+                matches = keccak(public_key)[-20:] == address
+            except ValueError:
+                pass
+    if not matches:
+        raise verification_failure('binding.model_public_key_mismatch')
+    return public_key.hex()
 
 
 async def _verify_gpu_evidence(
@@ -67,7 +113,7 @@ async def _verify_gpu_evidence(
     nonce: str,
     policy: ModelAttestationPolicy | None,
     verifier: GpuEvidenceVerifier | None,
-) -> str:
+) -> Literal['not_provided', 'verified']:
     requirement = 'if-present' if policy is None else policy.gpu_evidence
     if payload is None:
         if requirement == 'required':

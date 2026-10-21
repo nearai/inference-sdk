@@ -97,6 +97,56 @@ export const CompletionResponseIdSchema = objectSchema({
   id: v.pipe(v.string(), v.minLength(1)),
 });
 
+// System One permits arbitrary dictionary keys. Unlike v.record, parsing
+// entries preserves names such as "constructor", "prototype", and "__proto__".
+function dictionarySchema<TValue extends v.GenericSchema>(value: TValue) {
+  return v.pipe(
+    NonArrayObjectSchema,
+    v.transform((input) => Object.entries(input)),
+    v.array(v.tuple([v.string(), value])),
+    v.transform((entries) => Object.fromEntries(entries)),
+  );
+}
+
+const SystemOneContentSchema = v.union([
+  v.string(),
+  NonArrayObjectSchema,
+  v.array(v.unknown()),
+]);
+const ProbabilitySchema = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
+const ProbabilitiesSchema = dictionarySchema(ProbabilitySchema);
+const TokenCountSchema = v.pipe(v.number(), v.integer(), v.minValue(0));
+
+export const SystemOneResponseSchema = looseObjectSchema({
+  id: v.pipe(
+    v.optional(v.nullable(v.string())),
+    v.transform((value) => value ?? undefined),
+  ),
+  model: v.pipe(v.string(), v.minLength(1)),
+  answers: dictionarySchema(
+    v.variant('type', [
+      v.looseObject({ type: v.literal('noul'), noul: ProbabilitySchema }),
+      v.looseObject({
+        type: v.literal('choice'),
+        choice: v.string(),
+        confidence: ProbabilitySchema,
+        probabilities: ProbabilitiesSchema,
+      }),
+      v.looseObject({
+        type: v.literal('score'),
+        score: v.pipe(v.number(), v.finite()),
+        confidence: ProbabilitySchema,
+        probabilities: ProbabilitiesSchema,
+        legend: dictionarySchema(SystemOneContentSchema),
+      }),
+    ]),
+  ),
+  usage: looseObjectSchema({
+    input_tokens: TokenCountSchema,
+    output_tokens: TokenCountSchema,
+  }),
+});
+
 export const TdxQuoteVerificationResultSchema = objectSchema({
   tcbStatus: TcbStatusSchema,
   advisoryIds: v.pipe(v.array(v.string()), v.readonly()),

@@ -118,6 +118,24 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
     service = 'GitHub' if details.get('resource') == 'image_provenance' else 'Cloud API'
 
     match code:
+        case 'ohttp.attestation_required':
+            return f'[{code}] The endpoint did not provide an OHTTP key attestation'
+        case 'ohttp.signer_mismatch':
+            return (
+                f'[{code}] OHTTP key signer does not match the verified '
+                'Ed25519 attestation'
+            )
+        case 'ohttp.signature_invalid':
+            return f'[{code}] OHTTP key configuration signature is invalid'
+        case 'ohttp.key_config_invalid':
+            return (
+                f'[{code}] OHTTP key configuration is invalid or uses an '
+                'unsupported cipher suite'
+            )
+        case 'ohttp.encryption_failed':
+            return f'[{code}] OHTTP request could not be encrypted'
+        case 'ohttp.decryption_failed':
+            return f'[{code}] OHTTP response could not be authenticated and decoded'
         case 'input.invalid' | 'api.invalid_input':
             return f'[{code}] {_format_input_failure(details)}'
         case 'api.transport_failed':
@@ -163,6 +181,8 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'
+        case 'api.completion_not_found':
+            return f'[{code}] Completion is not retained by this client'
         case 'quote.verification_failed':
             return f'[{code}] Intel TDX quote verification failed: {_detail(details, "reason")}'
         case 'quote.invalid_result':
@@ -184,8 +204,18 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'policy.gpu_evidence_required':
             return f'[{code}] GPU evidence is required by policy'
+        case 'policy.model_attestation_required':
+            return f'[{code}] This request requires verified model attestation'
+        case 'binding.model_public_key_mismatch':
+            return f'[{code}] Model public key does not match the verified signer'
+        case 'e2ee.model_public_key_required':
+            return f'[{code}] A verified model public key is required'
+        case 'e2ee.model_public_key_invalid':
+            return f'[{code}] Model public key is invalid for E2EE'
+        case 'e2ee.decryption_failed':
+            return f'[{code}] Could not decrypt {_detail(details, "field")}'
         case 'binding.spki_fingerprint_required':
-            return f'[{code}] Gateway attestation requires an observed TLS peer fingerprint'
+            return f'[{code}] Attestation requires an observed TLS peer fingerprint'
         case 'binding.nonce_mismatch':
             return f'[{code}] Nonce in {_detail(details, "source")} does not match'
         case 'binding.report_data_invalid':
@@ -288,6 +318,8 @@ def _api_resource(details: ErrorDetails) -> str:
             return 'completion signature'
         case 'image_provenance':
             return 'image provenance'
+        case 'ohttp':
+            return 'OHTTP'
         case _:
             return 'resource'
 
