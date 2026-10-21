@@ -239,8 +239,8 @@ service images are ignored. All Compose/reference checks finish before fetching.
 Malformed Compose or unsupported references return
 `provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
 (`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
-`unresolved_image`, `image_missing`, or `image_not_pinned`) and optional image
-repository/service details. Fetch failures become
+`unresolved_image`, `service_missing`, `image_missing`, or `image_not_pinned`)
+and optional image repository/service details. Fetch failures become
 `provenance.image_request_failed`, preserving the `ApiError` source and its
 retryability. Cryptographic verification errors are returned unchanged.
 
