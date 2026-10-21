@@ -40,7 +40,8 @@ E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 response signatures. ECDSA uses the legacy AES-GCM protocol and omits
 `X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
 
-Successful attestation checks are reused for 60 minutes per model.
+Successful attestation checks are reused for 60 minutes per model across
+`verify()`, Chat, and System One calls on the same client.
 Set `attestation_cache_time_to_live_ms=0` to check every request.
 `response_cache_time_to_live_ms` separately controls how long exact response
 bytes remain available after completion; its default is also 60 minutes.
@@ -135,6 +136,7 @@ time. With a cache TTL of zero, the later Chat verifies again.
 set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
 result. In both workflows, response signatures are still checked separately
 with `verify_response(id)` after Chat.
+Chat and System One share the session warmed by `verify(model)`.
 
 ### Use OHTTP
 
@@ -193,9 +195,45 @@ async with InferenceClient(
 ```
 
 Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. Preserve URL-encoded model and signature IDs, bodies,
-model-key routing, and encryption headers. The device verifies evidence and
-response signatures; the proxy can only forward the encrypted Chat fields.
+`/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+`X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
+bodies, model-key routing, and encryption headers. A browser-facing proxy must
+expose `X-Generation-Id` through CORS. The device verifies evidence and response
+signatures; the proxy can only forward the encrypted Chat fields. System One
+decision content is not encrypted by this SDK.
+
+## System One decisions
+
+`systemone.create()` sends one non-streaming decision request. Use an active
+decision model and an endpoint serving `/v1/systemone`. The client verifies the
+Gateway and all applicable model reports before sending the request.
+
+```python
+async with InferenceClient(api_key, base_url=base_url) as inference_client:
+    result = await inference_client.systemone.create(
+        {
+            'model': decision_model,
+            'state': {'message': 'Please explain this briefly.'},
+            'questions': {
+                'brief': {'type': 'noul', 'instructions': 'Should the answer be brief?'}
+            },
+        }
+    )
+    verified = await inference_client.verify_response(result.decision_id)
+    print(result.data['answers'])
+```
+
+`result.decision_id` comes from `X-Generation-Id`. Call `verify_response()` before
+using the answers; it checks the exact bytes captured by the client. Gateway
+receipts authenticate Gateway signing; provider TEE receipts authenticate the
+model signer selected before the request. Self-hosted models use
+`x-model-pub-key` routing, which the endpoint must support.
+
+Use a Gateway client with E2EE and OHTTP disabled (the defaults). System One
+returns a complete JSON response and shares Chat's attestation session per model.
+Response retention and receipt retries follow the same
+lifecycle as Chat. If a receipt is temporarily unavailable, retry
+`verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
 
 ## Direct model endpoints
 

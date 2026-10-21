@@ -138,11 +138,13 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
+| `gateway/jev.py` | System One decisions; verifies the receipt before displaying answers. |
 
 Gateway and direct Chat client examples explicitly enable E2EE; both clients default to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
-client caches attestations for 60 minutes per model and retains response records for
+client shares its 60-minute per-model attestation cache across `verify()`, Chat,
+and System One calls and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
 Gateway image policies listed above; they do not check model runtime images.
 
@@ -160,6 +162,13 @@ Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 
 Direct examples share the JavaScript clients' experimental limitations above.
 For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
+
+For the decision example, set `NEARAI_SYSTEMONE_MODEL` to a decision model
+from your endpoint's catalog, then run `uv run python gateway/jev.py`.
+`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
+ECDSA or `NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
+are Ed25519 and Gateway receipts. See the
+[System One guide](../py/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ## Rust
 
