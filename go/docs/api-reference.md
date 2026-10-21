@@ -179,17 +179,36 @@ type SigningIdentity struct {
 }
 
 type Attestation struct {
-	Nonce             string
-	Signer            SigningIdentity
-	IntelQuote        string
-	EventLog          json.RawMessage
-	AppCompose        string
-	ReportedQuoteData string
-	SigningPublicKey  string
-	NvidiaPayload     *string
-	SPKIFingerprint   string
-	ModelName         string
-	InstanceID        string
+	ComposeManagerAttestation *ComposeManagerAttestation
+	Nonce                     string
+	Signer                    SigningIdentity
+	IntelQuote                string
+	EventLog                  json.RawMessage
+	AppCompose                string
+	ReportedQuoteData         string
+	SigningPublicKey          string
+	NvidiaPayload             *string
+	SPKIFingerprint           string
+	ModelName                 string
+	InstanceID                string
+}
+
+type ComposeManagerAction map[string]any
+
+type ComposeManagerAttestation struct {
+	Actions           []ComposeManagerAction `json:"actions"`
+	ActionsHash       string                 `json:"actions_hash"`
+	Nonce             string                 `json:"nonce"`
+	IntelQuote        string                 `json:"quote"`
+	EventLog          json.RawMessage        `json:"event_log"`
+	ReportedQuoteData string                 `json:"report_data"`
+}
+
+type VerifiedComposeManagerAttestation struct {
+	Actions             []ComposeManagerAction
+	TCBStatus           string
+	AdvisoryIDs         []string
+	RuntimeMeasurements RuntimeMeasurements
 }
 
 type ClientBinding struct{ Nonce, SPKIFingerprint string }
@@ -237,6 +256,7 @@ type QuoteVerificationResult struct {
 type RuntimeMeasurements struct{ OSImageHash, ComposeHash string }
 
 type MeasuredDeployment struct {
+	ComposeManager      *VerifiedComposeManagerAttestation
 	AppCompose          string
 	RuntimeMeasurements RuntimeMeasurements
 }
@@ -250,6 +270,7 @@ type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error
 type GPUEvidenceVerifier func(context.Context, string) error
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
+	ServingDeployment  DeploymentVerifier
 	Policy             AttestationPolicy
 	QuoteVerifier      QuoteVerifier
 	GPUVerifier        GPUEvidenceVerifier
