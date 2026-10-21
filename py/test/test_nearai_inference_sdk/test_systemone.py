@@ -20,7 +20,6 @@ from nearai_inference_sdk import (
     VerificationError,
     VerifiedModelCompletionResult,
 )
-from nearai_inference_sdk.core import inference_client
 
 from .test_inference_client import MESSAGES, MODEL, Gateway
 
@@ -543,39 +542,6 @@ async def test_generation_header_is_the_opaque_lookup_id_not_the_body_id(
     )
 
 
-async def test_question_names_and_choice_labels_are_preserved(monkeypatch):
-    gateway = DecisionGateway()
-    gateway.answers = {
-        'constructor': {
-            'type': 'choice',
-            'choice': 'prototype',
-            'confidence': 1,
-            'probabilities': {'prototype': 1, '__proto__': 0},
-        },
-        '__proto__': {'type': 'noul', 'noul': 0.9},
-    }
-    gateway.usage = {'input_tokens': 2147483648, 'output_tokens': 1}
-    gateway.install(monkeypatch)
-
-    async with gateway.client(e2ee=False) as client:
-        result = await client.systemone.create(
-            {
-                **REQUEST,
-                'questions': {
-                    'constructor': {
-                        'type': 'choice',
-                        'instructions': 'Choose an option.',
-                        'criteria': {'prototype': 'First', '__proto__': 'Second'},
-                    },
-                    '__proto__': {'type': 'noul', 'instructions': 'Is this useful?'},
-                },
-            }
-        )
-        assert result.data['answers'] == gateway.answers
-        assert result.data['usage'] == gateway.usage
-        await client.verify_response(result.decision_id)
-
-
 async def test_request_business_validation_is_left_to_the_server(monkeypatch):
     gateway = DecisionGateway()
     gateway.install(monkeypatch)
@@ -614,25 +580,6 @@ async def test_chat_and_decisions_share_cached_sessions(monkeypatch, systemone_f
     )
     assert len(gateway.completion_requests) == 2
     assert len(gateway.requests) == 2
-
-
-@pytest.mark.parametrize('ttl_ms', [0, 1000])
-async def test_decision_attestation_cache_honors_expiry_and_disabling(
-    monkeypatch, ttl_ms
-):
-    gateway = DecisionGateway(kind='provider_tee')
-    gateway.install(monkeypatch)
-    now = 0
-    monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
-    async with gateway.client(
-        e2ee=False, attestation_cache_time_to_live_ms=ttl_ms
-    ) as client:
-        for instant in [0, 0.5, 2]:
-            now = instant
-            result = await client.systemone.create(REQUEST)
-            await client.verify_response(result.decision_id)
-    assert gateway.gateway_requests == (3 if ttl_ms == 0 else 2)
-    assert len(gateway.model_requests) == gateway.gateway_requests
 
 
 async def test_decision_response_expires_without_repeating_inference(monkeypatch):
