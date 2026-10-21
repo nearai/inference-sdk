@@ -120,10 +120,6 @@ Gateway/model attestation and image-check failures block both Chat modes.
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
 
-These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image, or model-weight
-provenance.
-
 ## Browser (Private TEE chat)
 
 [`example-browser`](example-browser/README.md) provides a chat UI with encrypted
