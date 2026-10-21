@@ -279,7 +279,7 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				res, err := client.Do(r)
+				res, err := sendChatWithRetry(ctx, client, r)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -351,7 +351,7 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				res, err := client.HTTPClient().Do(r)
+				res, err := sendChatWithRetry(ctx, client.HTTPClient(), r)
 				if err != nil {
 					t.Fatal(err)
 				}

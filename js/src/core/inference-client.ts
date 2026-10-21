@@ -205,7 +205,11 @@ class GatewaySessionEvidenceClient extends CloudApiClient {
 
   protected override requestCloudApi(request: Request): Promise<Response> {
     this.signal.throwIfAborted();
-    return this.gatewayFetch(new Request(request, { signal: this.signal }));
+    return this.gatewayFetch(
+      new Request(request, {
+        signal: AbortSignal.any([this.signal, request.signal]),
+      }),
+    );
   }
 }
 
@@ -364,10 +368,18 @@ export abstract class VerifiedInferenceClientBase<
   };
 
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(id: string): Promise<VerificationResult> {
+  verifyResponse(
+    id: string,
+    { signal }: { readonly signal?: AbortSignal } = {},
+  ): Promise<VerificationResult> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     const record = this.responses.get(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
+    }
+    // A caller-owned deadline must not cancel another caller's cached lookup.
+    if (signal !== undefined) {
+      return this.verifyCapturedResponse(record, signal);
     }
     record.verification ??= this.verifyCapturedResponse(record).catch(
       (cause: unknown) => {
@@ -457,16 +469,23 @@ export abstract class VerifiedInferenceClientBase<
     return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
-  private async verifyCapturedResponse({
-    id,
-    requestBody,
-    responseBody,
-    session,
-  }: VerifyCapturedResponseParams<VerificationResult>): Promise<VerificationResult> {
-    const bytes = await responseBody;
+  private async verifyCapturedResponse(
+    {
+      id,
+      requestBody,
+      responseBody,
+      session,
+    }: VerifyCapturedResponseParams<VerificationResult>,
+    signal?: AbortSignal,
+  ): Promise<VerificationResult> {
+    const bytes = await (signal === undefined
+      ? responseBody
+      : awaitWithAbort({ operation: responseBody, signal }));
+    signal?.throwIfAborted();
     const signature = await session.transport.fetchCompletionSignature({
       completionId: id,
       signingAlgo: this.signingAlgo,
+      signal,
     });
 
     if (signature.signer.signingAlgo !== this.signingAlgo) {
@@ -901,6 +920,7 @@ function createOpenAiClient({
     apiKey: requestConfiguration.apiKey ?? OPENAI_WRAPPER_API_KEY,
     baseURL: baseUrl,
     dangerouslyAllowBrowser: true,
+    maxRetries: 0,
     defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
   });

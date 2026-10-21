@@ -77,6 +77,7 @@ export type NodeFetchGatewayAttestationParams = {
 export type FetchCompletionSignatureParams = {
   readonly completionId: string;
   readonly signingAlgo?: SigningAlgo;
+  readonly signal?: AbortSignal;
 };
 export type CloudApiModelAttestation = v.InferOutput<
   typeof CloudApiModelAttestationSchema

@@ -1798,6 +1798,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hkdf",
+ "httpdate",
  "jsonwebtoken",
  "k256",
  "ohttp",

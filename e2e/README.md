@@ -90,6 +90,8 @@ The four-SDK Chat matrix sends 105 requests per environment before retries,
 with at most 1,024 completion tokens each. Responses must contain an answer and
 finish with `stop`. Test failures and timeouts fail the workflow.
 
-Receipt lookups retry transient API failures up to five attempts within the
-model case's 180 second deadline. A receipt retry does not send another
-inference request.
+HTTP 429 Chat starts have up to three retries with 5, 10, and 20 second
+backoffs, honoring a longer `Retry-After`. Receipt lookups have a separate
+five-attempt budget. Both stay within the model case's 180 second deadline.
+Successful responses, interrupted streams, and verification failures are not
+replayed.

@@ -1,4 +1,5 @@
 mod integrated;
+mod retry;
 mod systemone;
 
 use std::{env, error::Error, io, time::Duration};
@@ -10,6 +11,8 @@ use nearai_inference_sdk::{
     GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
 };
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_TYPE};
+use reqwest::{RequestBuilder, Response};
+use retry::{rate_limit_delay, retry_rate_limit};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -135,15 +138,14 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
             "max_completion_tokens": 1024,
             "stream": stream,
         }))?;
-        let response = http
+        let request = http
             .post(&url)
             .bearer_auth(&api_key)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT_ENCODING, "identity")
             .header("x-no-aliasing", "true")
-            .body(request_body.clone())
-            .send()
-            .await?;
+            .body(request_body.clone());
+        let response = send_chat_with_retry(request).await?;
         assert!(
             response.status().is_success(),
             "Chat returned HTTP {}",
@@ -184,6 +186,29 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
     Ok(())
 }
 
+async fn send_chat_with_retry(request: RequestBuilder) -> Result<Response, reqwest::Error> {
+    retry_rate_limit(
+        || {
+            request
+                .try_clone()
+                .expect("Chat uses replayable bytes")
+                .send()
+        },
+        |result| {
+            result.as_ref().ok().and_then(|response| {
+                rate_limit_delay(
+                    response.status().as_u16(),
+                    response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
+                )
+            })
+        },
+    )
+    .await
+}
+
 async fn fetch_signature_with_retry(
     client: &AttestationClient,
     id: &str,
@@ -195,7 +220,10 @@ async fn fetch_signature_with_retry(
             .fetch_completion_signature(id, Some(signing_algo))
             .await
         {
-            Err(error) if error.retryable() => {
+            Err(error)
+                if error.retryable()
+                    || matches!(error, ApiError::CompletionSignatureUnavailable { .. }) =>
+            {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             result => return result,

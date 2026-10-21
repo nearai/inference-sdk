@@ -12,7 +12,7 @@ export function requiredEnv(name: string): string {
 // Allow receipt propagation without repeating inference or retrying
 // cryptographic failures. Each live test still has an overall deadline.
 export async function retryReceipt<T>(
-  lookup: () => Promise<T>,
+  lookup: (signal?: AbortSignal) => Promise<T>,
   waitOrSignal:
     | ((milliseconds: number) => Promise<unknown>)
     | AbortSignal = delay,
@@ -25,8 +25,9 @@ export async function retryReceipt<T>(
   for (const backoffMs of [500, 1_000, 2_000, 4_000]) {
     signal?.throwIfAborted();
     try {
-      return await lookup();
+      return await lookup(signal);
     } catch (error) {
+      signal?.throwIfAborted();
       if (
         !(isApiError(error) || isGenericApiError(error)) ||
         (!error.retryable &&
@@ -38,7 +39,7 @@ export async function retryReceipt<T>(
     await wait(backoffMs);
   }
   signal?.throwIfAborted();
-  return lookup();
+  return lookup(signal);
 }
 
 export function selectedModels(endpoint: 'chat' | 'systemone'): {

@@ -119,11 +119,15 @@ async def verify_client_chat(
     signing_algo: SigningAlgo,
     stream: bool,
 ) -> VerifiedCompletionResult:
-    response = await chat.completions.create(
-        model=model,
-        messages=[{'role': 'user', 'content': 'Reply with the single word OK.'}],
-        max_completion_tokens=1024,
-        stream=stream,
+    from e2e.retry import retry_rate_limit
+
+    response = await retry_rate_limit(
+        lambda: chat.completions.create(
+            model=model,
+            messages=[{'role': 'user', 'content': 'Reply with the single word OK.'}],
+            max_completion_tokens=1024,
+            stream=stream,
+        )
     )
     if stream:
         completion_id = None
@@ -183,6 +187,8 @@ async def test_gateway_chat_receipt(
 async def verify_chat(
     model: str, provider: str, signing_algo: SigningAlgo, stream: bool
 ) -> None:
+    from e2e.retry import retry_rate_limit
+
     base_url = required_env('NEARAI_BASE_URL').rstrip('/') + '/'
     api_key = required_env('NEARAI_API_KEY')
     client = AttestationClient(api_key, base_url=base_url)
@@ -232,8 +238,10 @@ async def verify_chat(
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
-        response = await pinned_tls_client.post(
-            base_url + 'chat/completions', content=request_body, headers=headers
+        response = await retry_rate_limit(
+            lambda: pinned_tls_client.post(
+                base_url + 'chat/completions', content=request_body, headers=headers
+            )
         )
         assert response.status_code == 200, f'Chat returned HTTP {response.status_code}'
         response_body = response.content

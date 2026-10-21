@@ -877,6 +877,26 @@ function isChatCompletionRequest(input: RequestInfo | URL): boolean {
 }
 
 describe('inference client', () => {
+  test('the built-in Chat client does not silently replay HTTP 429', async () => {
+    const gateway = createTestGateway();
+    let posts = 0;
+    jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (isChatCompletionRequest(input)) {
+        posts++;
+        return Promise.resolve(new Response('rate limited', { status: 429 }));
+      }
+      return gateway.fetch(input, init);
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    await expect(
+      client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(posts).toBe(1);
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
     jest.useRealTimers();
@@ -1154,6 +1174,70 @@ describe('inference client', () => {
       expect(signatureRequests).toBe(2);
     },
   );
+
+  test('cancels only the caller-owned receipt lookup and keeps the response available', async () => {
+    const gateway = createTestGateway();
+    const providerFetch = createSignatureFetch(gateway);
+    let notifyStarted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signatureRequests = 0;
+    let pendingSignal: AbortSignal | undefined;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname.startsWith('/v1/signature/')) {
+        signatureRequests++;
+        if (signatureRequests === 1) {
+          await released;
+        } else if (signatureRequests === 2) {
+          pendingSignal = request.signal;
+          notifyStarted();
+          await new Promise<void>((_, reject) => {
+            request.signal.addEventListener(
+              'abort',
+              () => reject(request.signal.reason),
+              { once: true },
+            );
+          });
+        }
+      }
+      return providerFetch(request);
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const shared = client.verifyResponse(completion.id);
+    const controller = new AbortController();
+    const cancelled = client.verifyResponse(completion.id, {
+      signal: controller.signal,
+    });
+    const rejected = expect(cancelled).rejects.toMatchObject({
+      failure: { code: 'api.transport_failed' },
+    });
+    await started;
+    controller.abort(new Error('deadline'));
+    await rejected;
+    expect(pendingSignal?.aborted).toBe(true);
+    expect(client.verifyResponse(completion.id)).toBe(shared);
+    release();
+    await expect(shared).resolves.toMatchObject({
+      completionId: completion.id,
+    });
+    await expect(
+      client.verifyResponse(completion.id, {
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ completionId: completion.id });
+    expect(signatureRequests).toBe(3);
+    expect(gateway.state.completionRequests).toBe(1);
+  });
 
   test('preserves proxy authorization with an external OpenAI client', async () => {
     const authorization = 'Bearer proxy-token';
@@ -3998,7 +4082,9 @@ describe('System One decisions', () => {
     expect(result.decisionId).toBe(decisionId);
     expect(result.data.id).toBeUndefined();
     await expect(
-      client.verifyResponse(result.decisionId),
+      client.verifyResponse(result.decisionId, {
+        signal: new AbortController().signal,
+      }),
     ).resolves.toMatchObject({
       id: decisionId,
       signatureKind: 'gateway',
