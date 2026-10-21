@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic, time
@@ -63,6 +64,7 @@ from .e2ee_request import (
 from .ohttp import create_ohttp_client
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
+from .systemone import InferenceSystemOne
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
@@ -166,10 +168,12 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
         self._sessions: dict[
-            str, tuple[float, _VerifiedSession[Result, AttestationResult]]
+            str,
+            tuple[float, _VerifiedSession[Result, AttestationResult]],
         ] = {}
         self._pending: dict[
-            str, asyncio.Task[_VerifiedSession[Result, AttestationResult]]
+            str,
+            asyncio.Task[_VerifiedSession[Result, AttestationResult]],
         ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
@@ -265,8 +269,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             )
         parsed = await decode_chat_request(request)
         body = request.content
-        session = await self._start_verification(parsed['model'])
         headers = self._request_headers(request.headers)
+        session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
         headers.pop('transfer-encoding', None)
         headers.pop('trailer', None)
@@ -325,7 +329,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 
     def _request_headers(self, request_headers: Mapping[str, str]) -> httpx.Headers:
         headers = httpx.Headers(self._headers)
-        headers.update(request_headers)
+        try:
+            headers.update(request_headers)
+        except UnicodeError:
+            raise api_failure(
+                'api.invalid_input',
+                {'field': 'headers', 'reason': 'invalid_header_value'},
+            ) from None
         # Use the same configured authorization for evidence, Chat, and signatures,
         # including when an external OpenAI client supplies its own API key.
         if 'authorization' in self._headers:
@@ -334,6 +344,17 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             headers.pop('authorization', None)
         if self._api_key is not None:
             headers.pop('api-key', None)
+        # HTTPX stores headers without checking the syntax sent on the wire.
+        for name, value in headers.raw:
+            if (
+                not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or re.search(rb'[\x00-\x08\x0a-\x1f\x7f]', value)
+                or value != value.strip(b' \t')
+            ):
+                raise api_failure(
+                    'api.invalid_input',
+                    {'field': 'headers', 'reason': 'invalid_header_value'},
+                )
         return headers
 
     async def verify_response(self, id: str) -> Result:
@@ -376,27 +397,28 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     ) -> _VerifiedSession[Result, AttestationResult]:
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
+        cache_key = model
         now = monotonic()
         self._sessions = {
             name: value for name, value in self._sessions.items() if value[0] > now
         }
-        if self._attestation_ttl != 0 and model in self._sessions:
-            return self._sessions[model][1]
-        task = self._pending.get(model)
+        if self._attestation_ttl != 0 and cache_key in self._sessions:
+            return self._sessions[cache_key][1]
+        task = self._pending.get(cache_key)
         if task is None:
             task = asyncio.create_task(self._create_session(model))
-            self._pending[model] = task
+            self._pending[cache_key] = task
 
             def finished(
                 completed: asyncio.Task[_VerifiedSession[Result, AttestationResult]],
             ) -> None:
-                self._pending.pop(model, None)
+                self._pending.pop(cache_key, None)
                 if (
                     not completed.cancelled()
                     and completed.exception() is None
                     and self._attestation_ttl != 0
                 ):
-                    self._sessions[model] = (
+                    self._sessions[cache_key] = (
                         monotonic() + self._attestation_ttl,
                         completed.result(),
                     )
@@ -447,8 +469,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result, AttestationResult],
     ) -> None:
-        """Retain exact wire bytes for expiry and independent verification retries."""
+        """Both endpoints share byte retention, expiry, and verification retries."""
 
+        if self._chat_client.is_closed:
+            raise RuntimeError('InferenceClient is closed')
         record = _ResponseRecord(request_body, response_body, session)
         previous = self._responses.get(id)
         if previous is not None and previous.expiry is not None:
@@ -456,6 +480,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._responses[id] = record
 
         def settled(_future: asyncio.Future[bytes]) -> None:
+            # A completed future's callback may run after close or replacement.
+            if self._chat_client.is_closed or self._responses.get(id) is not record:
+                return
+
             def expire() -> None:
                 if self._responses.get(id) is record:
                     del self._responses[id]
@@ -470,7 +498,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 class InferenceClient(
     _VerifiedInferenceClient[VerifiedCompletionResult, AttestationVerificationResult]
 ):
-    """Gateway Chat with preflight and explicit response verification.
+    """Gateway Chat and System One with preflight and explicit response verification.
 
     E2EE is opt-in. NEAR TEE models require model evidence; Incognito models
     verify only the Gateway. All calls share the configured authentication.
@@ -507,6 +535,7 @@ class InferenceClient(
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
+        self.systemone = InferenceSystemOne(self)
 
     async def _create_session(
         self, model: str
