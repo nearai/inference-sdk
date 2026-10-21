@@ -1,24 +1,25 @@
 # NEAR AI Inference SDK examples
 
 These projects verify deployment evidence before sending Chat Completions,
-then verify the response signature. All examples use
-`z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`.
+then verify the response signature.
+
+## JavaScript (Node.js)
+
+The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
+The Chat examples use `z-ai/glm-5.3-flash` and read the API key from `NEARAI_API_KEY`:
 
 ```sh
 export NEARAI_API_KEY=sk-your-api-key
 ```
 
-## JavaScript (Node.js)
-
-The examples use `@nearai/inference-sdk`, linked to the local TypeScript SDK.
-
 Gateway and direct examples are grouped in separate folders and share the same
-project configuration. Each entry point includes non-streaming and streaming calls:
+project configuration. The Chat entry points include non-streaming and streaming calls:
 
 | File | Usage | E2EE |
 | --- | --- | --- |
 | `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| [`gateway/jev.ts`](example-js/gateway/jev.ts) | Sends structured decisions and verifies the receipt before printing answers. | Disabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct/client.ts` | Experimental: connects using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Experimental: passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
@@ -56,6 +57,13 @@ pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
 Requires Node.js 24 or later.
+
+For the decision example, set `NEARAI_MODEL` to a decision model from your
+endpoint's catalog, then run `pnpm --dir examples/example-js start:jev`.
+`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
+ECDSA or `NEARAI_EXPECT_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
+are Ed25519 and Gateway receipts. See the
+[System One guide](../js/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ### Direct model endpoints
 

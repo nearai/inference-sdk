@@ -105,13 +105,17 @@ export function mergeCloudApiRequestHeaders({
   configuration,
   requestHeaders,
 }: MergeCloudApiRequestHeadersParams): Headers {
+  const headers = new Headers(configuration.defaultHeaders);
   try {
-    const headers = new Headers(configuration.defaultHeaders);
     if (requestHeaders !== undefined) {
       for (const [name, value] of new Headers(requestHeaders)) {
         headers.set(name, value);
       }
     }
+  } catch (cause) {
+    throw invalidHeaderInput('headers', cause);
+  }
+  try {
     const authorization =
       configuration.apiKey === undefined
         ? configuration.defaultHeaders.get('authorization')
