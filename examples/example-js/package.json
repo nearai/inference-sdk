@@ -18,10 +18,10 @@
   },
   "dependencies": {
     "@nearai/inference-sdk": "link:../../js",
-    "openai": "7.25.0"
+    "openai": "7.32.0"
   },
   "devDependencies": {
-    "@types/node": "24.19.0",
+    "@types/node": "24.19.2",
     "typescript": "6.0.3"
   }
 }
