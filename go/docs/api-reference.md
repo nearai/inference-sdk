@@ -38,7 +38,7 @@ inference client when finished.
 | `ClientOptions.Headers` | Additional request headers. |
 | `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
-| `E2EE` | `false` for Gateway. Direct clients use `DisableE2EE` instead, defaulting to encryption enabled. |
+| `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
 | `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
