@@ -364,9 +364,9 @@ describe('ECDSA inference client', () => {
       ).resolves.toMatchObject({ signatureKind });
       expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
       expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
-      expect(
-        gateway.state.completionHeaders[0].get('x-model-pub-key'),
-      ).toBeNull();
+      expect(gateway.state.completionHeaders[0].get('x-model-pub-key')).toBe(
+        modelPublicKey,
+      );
       expect(
         gateway.state.completionHeaders[0].get('x-signing-algo'),
       ).toBeNull();

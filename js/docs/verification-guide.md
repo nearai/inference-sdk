@@ -135,9 +135,8 @@ the quote, event log, and any NVIDIA payload. The sibling fields such as
 Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model and endpoint share verification work and cached
-results. `verify(model)` and Chat share a session; System One uses a separate
-session because its model-routing rules differ.
+requests for the same model share verification work and cached results across
+`verify(model)`, Chat, and System One.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -196,8 +195,9 @@ console.log(verified.signatureKind, result.data.answers);
 
 `result.decisionId` comes from `X-Generation-Id`. Call `verifyResponse()` before
 using the answers; it checks the exact bytes captured by the client. Gateway
-receipts authenticate Gateway signing; provider TEE receipts authenticate a
-signer in the verified model reports.
+receipts authenticate Gateway signing; provider TEE receipts authenticate the
+model signer selected before the request. Self-hosted models use
+`x-model-pub-key` routing, which the endpoint must support.
 
 Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
