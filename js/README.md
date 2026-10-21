@@ -131,6 +131,8 @@ to configure it and verify responses.
 
 ## Advanced APIs
 
+- **System One decisions:** send structured questions with `client.systemone.create()`
+  and verify the returned decision. See the [System One guide](./docs/verification-guide.md#system-one-decisions).
 - **Manual verification:** `AttestationClient` fetches metadata, evidence, and
   signatures. Use the [standalone verification functions](./docs/verification-guide.md#verify-gateway-requests-manually)
   when your application needs to control each step.

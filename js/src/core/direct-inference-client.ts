@@ -117,12 +117,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
         ...transport,
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
-      verifyResponse: ({
-        completionId,
-        requestBody,
-        responseBody,
-        signature,
-      }) => {
+      verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         const matchingAttestations = verifyDirectModelResponse({
           requestBody,
           responseBody,
@@ -130,7 +125,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
           attestations,
         });
         return {
-          completionId,
+          id,
+          completionId: id,
           signatureKind: 'provider_tee',
           signature,
           attestations: matchingAttestations,

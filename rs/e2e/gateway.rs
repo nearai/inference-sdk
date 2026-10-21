@@ -28,10 +28,16 @@ async fn ecdsa_gateway_chat_receipts() -> Result<(), Box<dyn Error>> {
 struct LiveModel {
     id: String,
     provider: String,
+    endpoint: String,
 }
 
 async fn verify_models(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
     let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
+    let models: Vec<_> = models
+        .into_iter()
+        .filter(|model| model.endpoint == "chat")
+        .collect();
+
     assert!(!models.is_empty(), "Expected representative Chat models");
     for model in &models {
         println!("{}: {}, {signing_algo}", model.provider, model.id);

@@ -37,6 +37,11 @@ async fn verify_models(
     ohttp: bool,
 ) -> Result<(), Box<dyn Error>> {
     let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
+    let models: Vec<_> = models
+        .into_iter()
+        .filter(|model| model.endpoint == "chat")
+        .collect();
+
     assert!(!models.is_empty(), "Expected representative Chat models");
     let selected: Vec<_> = if e2ee || ohttp {
         vec![models
