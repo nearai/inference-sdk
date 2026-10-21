@@ -10,6 +10,7 @@ pub enum ApiResource {
     ModelAttestation,
     ModelMetadata,
     Completion,
+    SystemOne,
     Ohttp,
     GatewayAttestation,
     CompletionSignature,
@@ -37,6 +38,7 @@ impl std::fmt::Display for ApiResource {
         let value = match self {
             Self::ModelMetadata => "model metadata",
             Self::Completion => "completion",
+            Self::SystemOne => "systemone",
             Self::Ohttp => "OHTTP",
             Self::ModelAttestation => "model attestation",
             Self::GatewayAttestation => "gateway attestation",
@@ -124,13 +126,14 @@ impl ApiError {
     /// Whether retrying the same operation may reasonably succeed.
     pub const fn retryable(&self) -> bool {
         match self {
-            Self::Transport { .. } => true,
+            Self::Transport { resource, .. } => !matches!(resource, ApiResource::SystemOne),
             Self::HttpStatus { resource, status } => {
-                (matches!(resource, ApiResource::CompletionSignature) && *status == 404)
-                    || *status == 408
-                    || *status == 425
-                    || *status == 429
-                    || *status >= 500
+                !matches!(resource, ApiResource::SystemOne)
+                    && ((matches!(resource, ApiResource::CompletionSignature) && *status == 404)
+                        || *status == 408
+                        || *status == 425
+                        || *status == 429
+                        || *status >= 500)
             }
             _ => false,
         }
