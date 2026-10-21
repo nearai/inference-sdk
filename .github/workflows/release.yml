@@ -1,20 +1,27 @@
-name: Publish package
-run-name: Publish ${{ inputs.language }} ${{ inputs.version }}
+name: Publish packages
+run-name: Publish SDKs ${{ inputs.version }}
 
 on:
   workflow_dispatch:
     inputs:
-      language:
-        description: SDK to publish
-        required: true
-        type: choice
-        options:
-          - javascript
-          - python
-          - rust
-          - go
+      javascript:
+        description: Publish JavaScript (npm)
+        type: boolean
+        default: false
+      python:
+        description: Publish Python (PyPI)
+        type: boolean
+        default: false
+      rust:
+        description: Publish Rust (crates.io)
+        type: boolean
+        default: false
+      go:
+        description: Publish Go
+        type: boolean
+        default: false
       version:
-        description: Version without a v prefix; must match the manifest except for Go
+        description: Version without v, e.g. 0.2.0 or 0.2.0-rc.1 (Python becomes 0.2.0rc1)
         required: true
         type: string
 
@@ -22,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-${{ inputs.language }}
+  group: publish-packages
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +37,9 @@ jobs:
     if: github.repository == 'nearai/inference-sdk'
     runs-on: ubuntu-latest
     outputs:
-      release-tag: ${{ steps.version.outputs.release-tag }}
+      languages: ${{ steps.version.outputs.languages }}
+      registry-languages: ${{ steps.version.outputs.registry-languages }}
+      packages: ${{ steps.version.outputs.packages }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       npm-tag: ${{ steps.version.outputs.npm-tag }}
     steps:
@@ -47,93 +56,46 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - run: python -m pip install packaging==25.0
-      - name: Check selected package version
+      - name: Check selected package versions
         id: version
         env:
-          RELEASE_LANGUAGE: ${{ inputs.language }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-
-          from packaging.version import Version
-
-          language = os.environ["RELEASE_LANGUAGE"]
-          version = os.environ["RELEASE_VERSION"]
-          if language == "javascript":
-              path = Path("js/package.json")
-              expected = json.loads(path.read_text(encoding="utf-8"))["version"]
-          elif language == "python":
-              path = Path("py/pyproject.toml")
-              expected = tomllib.loads(path.read_text(encoding="utf-8"))["project"]["version"]
-          elif language == "rust":
-              path = Path("rs/Cargo.toml")
-              expected = tomllib.loads(path.read_text(encoding="utf-8"))["package"]["version"]
-          elif language == "go":
-              path = Path("go/go.mod")
-              if not re.search(r"^module github\.com/nearai/inference-sdk/go$", path.read_text(), re.M):
-                  raise SystemExit("Unexpected Go module path.")
-              expected = version
-          else:
-              raise SystemExit(f"Unknown language: {language!r}")
-
-          if version != expected:
-              raise SystemExit(
-                  f"Requested version {version!r} does not match {path}: {expected!r}."
-              )
-
-          if language == "python":
-              parsed = Version(version)
-              if str(parsed) != version or parsed.local is not None:
-                  raise SystemExit("Use a normalized public PEP 440 version, such as 1.0.0rc1.")
-              prerelease = parsed.is_prerelease
-          else:
-              number = r"(?:0|[1-9][0-9]*)"
-              identifier = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
-              match = re.fullmatch(
-                  rf"{number}\.{number}\.{number}(?:-({identifier}(?:\.{identifier})*))?",
-                  version,
-              )
-              if match is None:
-                  raise SystemExit("Use X.Y.Z or a prerelease such as X.Y.Z-rc.1.")
-              prerelease = match.group(1) is not None
-              if language == "go" and version.split(".", 1)[0] not in {"0", "1"}:
-                  raise SystemExit("Go major versions >=2 require a new /vN module path.")
-
-          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-              tag = f"go/v{version}" if language == "go" else f"{language}-v{version}"
-              print(f"release-tag={tag}", file=output)
-              print(f"prerelease={str(prerelease).lower()}", file=output)
-              print(f"npm-tag={'next' if prerelease else 'latest'}", file=output)
-          PY
+          RELEASE_INPUTS: ${{ toJSON(inputs) }}
+        run: python .github/scripts/release_plan.py
 
   checks:
     needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.validate-release.outputs.languages) }}
     uses: ./.github/workflows/ci.yml
     with:
-      language: ${{ inputs.language }}
+      language: ${{ matrix.language }}
 
   live-checks:
     needs: validate-release
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.validate-release.outputs.languages) }}
     uses: ./.github/workflows/e2e.yml
     with:
-      language: ${{ inputs.language }}
+      language: ${{ matrix.language }}
     secrets:
       NEARAI_STG_API_KEY: ${{ secrets.NEARAI_STG_API_KEY }}
       NEARAI_PRD_API_KEY: ${{ secrets.NEARAI_PRD_API_KEY }}
 
   create-release:
-    if: inputs.language != 'go'
+    if: inputs.javascript || inputs.python || inputs.rust
     needs:
       - validate-release
       - checks
       - live-checks
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(needs.validate-release.outputs.registry-languages) }}
     permissions:
       contents: write
     steps:
@@ -144,7 +106,7 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
+          RELEASE_TAG: ${{ fromJSON(needs.validate-release.outputs.packages)[matrix.language].tag }}
           PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
         run: |
           if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
@@ -169,7 +131,7 @@ jobs:
             --title "$RELEASE_TAG" --verify-tag --prerelease="$PRERELEASE"
 
   publish-npm:
-    if: inputs.language == 'javascript'
+    if: inputs.javascript
     needs:
       - validate-release
       - create-release
@@ -184,8 +146,8 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
-      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ fromJSON(needs.validate-release.outputs.packages).javascript.tag }}
+      RELEASE_VERSION: ${{ fromJSON(needs.validate-release.outputs.packages).javascript.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
@@ -206,7 +168,7 @@ jobs:
           npm publish --access public --tag "$NPM_TAG"
 
   build-python:
-    if: inputs.language == 'python'
+    if: inputs.python
     needs: create-release
     runs-on: ubuntu-latest
     defaults:
@@ -239,7 +201,7 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
+      RELEASE_TAG: ${{ fromJSON(needs.validate-release.outputs.packages).python.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -256,7 +218,7 @@ jobs:
           packages-dir: dist/
 
   publish-crates:
-    if: inputs.language == 'rust'
+    if: inputs.rust
     needs:
       - validate-release
       - create-release
@@ -271,7 +233,7 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
+      RELEASE_TAG: ${{ fromJSON(needs.validate-release.outputs.packages).rust.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
@@ -286,7 +248,7 @@ jobs:
           cargo publish --locked --registry crates-io
 
   publish-go:
-    if: inputs.language == 'go'
+    if: inputs.go
     needs:
       - validate-release
       - checks
@@ -298,8 +260,8 @@ jobs:
     env:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
-      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_TAG: ${{ fromJSON(needs.validate-release.outputs.packages).go.tag }}
+      RELEASE_VERSION: ${{ fromJSON(needs.validate-release.outputs.packages).go.version }}
       PRERELEASE: ${{ needs.validate-release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -341,29 +303,23 @@ jobs:
       - publish-pypi
       - publish-crates
       - publish-go
-    # Unselected publishers are skipped, not failed dependencies.
-    if: >-
-      ${{ !cancelled() &&
-          ((inputs.language == 'javascript' && needs.publish-npm.result == 'success') ||
-           (inputs.language == 'python' && needs.publish-pypi.result == 'success') ||
-           (inputs.language == 'rust' && needs.publish-crates.result == 'success') ||
-           (inputs.language == 'go' && needs.publish-go.result == 'success')) }}
+    # Finalize successful packages even when another publisher fails or is skipped.
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Publish GitHub release
+      - name: Publish GitHub releases and summarize results
         env:
-          RELEASE_LANGUAGE: ${{ inputs.language }}
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.validate-release.outputs.release-tag }}
+          RELEASE_PACKAGES: ${{ needs.validate-release.outputs.packages }}
+          PUBLISH_RESULTS: >-
+            {"javascript":"${{ needs.publish-npm.result }}",
+             "python":"${{ needs.publish-pypi.result }}",
+             "rust":"${{ needs.publish-crates.result }}",
+             "go":"${{ needs.publish-go.result }}"}
         run: |
           source .github/scripts/release.sh
-          verify_release_tag
-          if [ "$RELEASE_LANGUAGE" = go ]; then
-            gh release edit "$RELEASE_TAG" --draft=false --latest=false
-          else
-            gh release edit "$RELEASE_TAG" --draft=false
-          fi
+          publish_github_releases

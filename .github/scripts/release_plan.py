@@ -1,0 +1,115 @@
+"""Validate a batch release and resolve each SDK's package version."""
+
+import json
+import os
+import re
+import tomllib
+from pathlib import Path
+
+LANGUAGES = ("javascript", "python", "rust", "go")
+NUMBER = r"(?:0|[1-9][0-9]*)"
+IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+SEMVER = re.compile(
+    rf"({NUMBER}\.{NUMBER}\.{NUMBER})(?:-({IDENTIFIER}(?:\.{IDENTIFIER})*))?"
+)
+
+
+def plan_release(root: Path, inputs: dict) -> dict:
+    languages = [language for language in LANGUAGES if inputs.get(language, False)]
+    if not languages:
+        raise ValueError("Select at least one SDK to publish.")
+
+    version = inputs["version"]
+    match = SEMVER.fullmatch(version)
+    if match is None:
+        raise ValueError(
+            "Use X.Y.Z or a SemVer prerelease such as X.Y.Z-rc.1, without v."
+        )
+    base, prerelease = match.groups()
+    packages = {}
+    for language in languages:
+        package_version = version
+        if language == "python" and prerelease is not None:
+            python_pre = re.fullmatch(rf"(alpha|beta|rc)\.({NUMBER})", prerelease)
+            if python_pre is None:
+                raise ValueError(
+                    "Python prereleases require X.Y.Z-alpha.N, X.Y.Z-beta.N, or X.Y.Z-rc.N."
+                )
+            phase, number = python_pre.groups()
+            package_version = (
+                base + {"alpha": "a", "beta": "b", "rc": "rc"}[phase] + number
+            )
+
+        if language == "javascript":
+            path = root / "js/package.json"
+            expected = json.loads(path.read_text(encoding="utf-8"))["version"]
+        elif language == "python":
+            path = root / "py/pyproject.toml"
+            expected = tomllib.loads(path.read_text(encoding="utf-8"))["project"][
+                "version"
+            ]
+        elif language == "rust":
+            path = root / "rs/Cargo.toml"
+            expected = tomllib.loads(path.read_text(encoding="utf-8"))["package"][
+                "version"
+            ]
+        else:
+            path = root / "go/go.mod"
+            if not re.search(
+                r"^module github\.com/nearai/inference-sdk/go$",
+                path.read_text(encoding="utf-8"),
+                re.MULTILINE,
+            ):
+                raise ValueError("Unexpected Go module path.")
+            if base.split(".", 1)[0] not in {"0", "1"}:
+                raise ValueError("Go major versions >=2 require a new /vN module path.")
+            expected = package_version
+
+        if package_version != expected:
+            raise ValueError(
+                f"Requested {language} version {package_version!r} does not match "
+                f"{path.relative_to(root)}: {expected!r}."
+            )
+        packages[language] = {
+            "version": package_version,
+            "tag": f"go/v{package_version}"
+            if language == "go"
+            else f"{language}-v{package_version}",
+        }
+
+    return {
+        "languages": languages,
+        "registry-languages": [language for language in languages if language != "go"],
+        "packages": packages,
+        "prerelease": prerelease is not None,
+        "npm-tag": "next" if prerelease is not None else "latest",
+    }
+
+
+def main() -> None:
+    try:
+        plan = plan_release(Path.cwd(), json.loads(os.environ["RELEASE_INPUTS"]))
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
+    # Write outputs only after every selected package has passed validation.
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+        for name, value in plan.items():
+            encoded = (
+                value
+                if isinstance(value, str)
+                else json.dumps(value, separators=(",", ":"))
+            )
+            print(f"{name}={encoded}", file=output)
+    with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
+        print("| SDK | Package version | Release tag |", file=summary)
+        print("| --- | --- | --- |", file=summary)
+        for language, package in plan["packages"].items():
+            print(
+                f"| {language} | `{package['version']}` | `{package['tag']}` |",
+                file=summary,
+            )
+
+
+if __name__ == "__main__":
+    main()

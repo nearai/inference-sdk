@@ -37,3 +37,41 @@ verify_npm_channel() {
     return 1
   fi
 }
+
+publish_github_release() {
+  local draft
+  # Called in a conditional below, so propagate failures explicitly.
+  verify_release_tag || return $?
+  draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft) || return $?
+  if [ "$draft" = false ]; then
+    return 0
+  fi
+  if [ "$1" = go ]; then
+    gh release edit "$RELEASE_TAG" --draft=false --latest=false
+  else
+    gh release edit "$RELEASE_TAG" --draft=false
+  fi
+}
+
+publish_github_releases() {
+  local language result tag failed=0
+  printf '| SDK | Package publication | GitHub Release |\n| --- | --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+  for language in javascript python rust go; do
+    tag=$(jq -r --arg language "$language" '.[$language].tag // empty' <<< "$RELEASE_PACKAGES") || return $?
+    [ -n "$tag" ] || continue
+    result=$(jq -r --arg language "$language" '.[$language]' <<< "$PUBLISH_RESULTS") || return $?
+    if [ "$result" != success ]; then
+      printf '| %s | %s | skipped |\n' "$language" "$result" >> "$GITHUB_STEP_SUMMARY"
+      continue
+    fi
+    # Already-public releases are left unchanged when rerunning failed jobs.
+    # Complete every successful package even if another finalization fails.
+    if RELEASE_TAG="$tag" publish_github_release "$language"; then
+      printf '| %s | success | published |\n' "$language" >> "$GITHUB_STEP_SUMMARY"
+    else
+      printf '| %s | success | failed |\n' "$language" >> "$GITHUB_STEP_SUMMARY"
+      failed=1
+    fi
+  done
+  return "$failed"
+}
