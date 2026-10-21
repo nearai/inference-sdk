@@ -1,3 +1,4 @@
+import { readBoundedBody } from './body-limit';
 import * as v from 'valibot';
 import {
   CompletionResponseIdSchema,
@@ -26,6 +27,7 @@ type CreateSystemOneParams<
   readonly options?: SystemOneRequestOptions;
   readonly baseUrl: string;
   readonly encryptionEnabled: boolean;
+  readonly responseByteLimit: (requestSize: number) => number;
   readonly headers: Headers;
   readonly getSession: (
     model: string,
@@ -43,6 +45,7 @@ export async function createSystemOne<
   options,
   baseUrl,
   encryptionEnabled,
+  responseByteLimit,
   headers,
   getSession,
   registerResponse,
@@ -53,6 +56,8 @@ export async function createSystemOne<
     throw invalidInput('System One does not support streaming');
   options?.signal?.throwIfAborted();
   const body = JSON.stringify(request);
+  const requestBody = new TextEncoder().encode(body);
+  const responseLimit = responseByteLimit(requestBody.byteLength);
   const session = await getSession(request.model);
   options?.signal?.throwIfAborted();
   removeE2eeHeaders(headers);
@@ -71,7 +76,6 @@ export async function createSystemOne<
   headers.set(NO_ALIASING_HEADER, 'true');
   headers.set('content-type', 'application/json');
   headers.set('accept', 'application/json');
-  const requestBody = new TextEncoder().encode(body);
   const httpRequest = new Request(new URL('systemone', baseUrl), {
     method: 'POST',
     headers,
@@ -112,9 +116,14 @@ export async function createSystemOne<
   const decisionId = parsedId.output.id;
   let responseBody: Uint8Array;
   try {
-    responseBody = new Uint8Array(await response.arrayBuffer());
+    responseBody = await readBoundedBody(
+      response.body,
+      responseLimit,
+      options?.signal,
+    );
   } catch (cause) {
     options?.signal?.throwIfAborted();
+    if (isApiError(cause)) throw cause;
     throw new ApiError(
       {
         code: 'api.inference_transport_failed',

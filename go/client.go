@@ -49,6 +49,7 @@ type InferenceClient struct {
 	sessions                    map[string]*session
 	pending                     map[string]*pendingSession
 	responses                   map[string]*responseRecord
+	responseVerifications       map[*responseRecord]struct{}
 	transports                  map[string]*http.Transport
 	wg                          sync.WaitGroup
 	closed                      bool
@@ -101,17 +102,18 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &InferenceClient{
-		options:        o,
-		api:            a,
-		ctx:            ctx,
-		cancel:         cancel,
-		sessions:       map[string]*session{},
-		pending:        map[string]*pendingSession{},
-		responses:      map[string]*responseRecord{},
-		transports:     map[string]*http.Transport{},
-		attestationTTL: at,
-		responseTTL:    rt,
-		maxBody:        o.MaxBodyBytes,
+		options:               o,
+		api:                   a,
+		ctx:                   ctx,
+		cancel:                cancel,
+		sessions:              map[string]*session{},
+		pending:               map[string]*pendingSession{},
+		responses:             map[string]*responseRecord{},
+		responseVerifications: map[*responseRecord]struct{}{},
+		transports:            map[string]*http.Transport{},
+		attestationTTL:        at,
+		responseTTL:           rt,
+		maxBody:               o.MaxBodyBytes,
 	}
 	// Expiry also runs while idle so sensitive retained bodies do not linger.
 	c.wg.Add(1)
@@ -216,6 +218,10 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 	}
 	p := c.pending[key]
 	if p == nil {
+		if len(c.pending) >= c.options.MaxCacheEntries {
+			c.mu.Unlock()
+			return nil, detail("api.invalid_input", "reason", "too many concurrent verification operations")
+		}
 		p = &pendingSession{done: make(chan struct{})}
 		c.pending[key] = p
 		c.wg.Add(1)
@@ -596,10 +602,15 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	c.prune(time.Now())
 	size := int64(len(request)) + int64(len(response))
 	var retained int64
-	for _, record := range c.responses {
+	for record := range c.responseVerifications {
 		retained += int64(len(record.request)) + int64(len(record.response))
 	}
-	for len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size {
+	for _, record := range c.responses {
+		if _, active := c.responseVerifications[record]; !active {
+			retained += int64(len(record.request)) + int64(len(record.response))
+		}
+	}
+	for len(c.responses) > 0 && (len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size) {
 		var oldest string
 		var expires time.Time
 		for key, record := range c.responses {
@@ -608,8 +619,13 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 			}
 		}
 		record := c.responses[oldest]
-		retained -= int64(len(record.request)) + int64(len(record.response))
+		if _, active := c.responseVerifications[record]; !active {
+			retained -= int64(len(record.request)) + int64(len(record.response))
+		}
 		delete(c.responses, oldest)
+	}
+	if retained > budget-size {
+		return nil
 	}
 	c.responses[id] = &responseRecord{
 		request:  append([]byte(nil), request...),
@@ -621,6 +637,9 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return VerifiedCompletionResult{}, err
+	}
 	c.mu.Lock()
 	record := c.responses[id]
 	if record == nil || !time.Now().Before(record.expires) {
@@ -629,6 +648,11 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 	}
 	p := record.verifying
 	if p == nil {
+		if len(c.responseVerifications) >= c.options.MaxCacheEntries {
+			c.mu.Unlock()
+			return VerifiedCompletionResult{}, detail("api.invalid_input", "expected", "fewer concurrent receipt verifications")
+		}
+		c.responseVerifications[record] = struct{}{}
 		p = &pendingResponse{done: make(chan struct{})}
 		record.verifying = p
 		c.wg.Add(1)
@@ -639,6 +663,7 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 			value, e := c.verifyRecord(ctx, id, record)
 			c.mu.Lock()
 			defer c.mu.Unlock()
+			delete(c.responseVerifications, record)
 			p.value, p.err = value, e
 			var sdk *Error
 			if e != nil &&

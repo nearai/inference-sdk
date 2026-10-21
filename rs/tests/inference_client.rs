@@ -41,6 +41,7 @@ struct Fixture {
     systemone_tamper: bool,
 
     signatures: AtomicUsize,
+    signature_started: tokio::sync::Notify,
     receipts: Mutex<std::collections::HashMap<String, ReceiptBytes>>,
     metadata: Mutex<Option<Value>>,
     empty: bool,
@@ -287,6 +288,7 @@ impl Respond for Fixture {
                 if self.retry_signature && n == 0 {
                     return ResponseTemplate::new(404).set_delay(Duration::from_millis(20));
                 }
+                self.signature_started.notify_one();
                 let receipts = self.receipts.lock().unwrap();
                 let (req, res, kind) = receipts.get(path.rsplit('/').next().unwrap()).unwrap();
                 let text = if kind == "gateway" {
@@ -917,6 +919,87 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     options.max_receipt_cache_bytes = 0;
     assert!(InferenceClient::with_options(options.clone()).is_err());
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
+}
+
+#[tokio::test]
+async fn canceled_receipt_verification_releases_byte_capacity() {
+    let (_server, f, mut options) = setup(Fixture::default()).await;
+    let probe = InferenceClient::with_options(options.clone()).unwrap();
+    probe.chat_completions(body()).await.unwrap();
+    {
+        let receipts = f.receipts.lock().unwrap();
+        let (request, response, _) = &receipts["chat-0"];
+        options.max_receipt_cache_bytes = request.len() + response.len();
+    }
+    let client = InferenceClient::with_options(options).unwrap();
+    client.chat_completions(body()).await.unwrap();
+    {
+        let verification = client.verify_response("chat-1");
+        tokio::pin!(verification);
+        tokio::select! {
+            result = &mut verification => panic!("verification finished before cancellation: {result:?}"),
+            _ = f.signature_started.notified() => {},
+        }
+    }
+    client.chat_completions(body()).await.unwrap();
+    assert_eq!(client.verify_response("chat-2").await.unwrap().id, "chat-2");
+}
+
+#[tokio::test]
+async fn evicted_verification_keeps_capacity() {
+    for eviction in ["count", "bytes", "expiry"] {
+        let (_server, f, mut options) = setup(Fixture::default()).await;
+        let probe = InferenceClient::with_options(options.clone()).unwrap();
+        probe.chat_completions(body()).await.unwrap();
+        if eviction == "bytes" {
+            let receipts = f.receipts.lock().unwrap();
+            let (request, response, _) = &receipts["chat-0"];
+            options.max_receipt_cache_bytes = request.len() + response.len();
+        }
+        if eviction == "count" {
+            options.max_cache_entries = 1;
+        }
+        if eviction == "expiry" {
+            options.response_cache_ttl = Duration::from_millis(20);
+        }
+        let client = InferenceClient::with_options(options).unwrap();
+        client.chat_completions(body()).await.unwrap();
+        let verification = client.verify_response("chat-1");
+        tokio::pin!(verification);
+        tokio::select! {
+            result = &mut verification => panic!("verification finished before eviction: {result:?}"),
+            _ = f.signature_started.notified() => {},
+        }
+        if eviction == "expiry" {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        } else {
+            client.chat_completions(body()).await.unwrap();
+            assert_eq!(
+                client.verify_response("chat-2").await.unwrap_err().code(),
+                if eviction == "count" {
+                    "api.invalid_input"
+                } else {
+                    "api.completion_not_found"
+                }
+            );
+        }
+        assert_eq!(
+            client.verify_response("chat-1").await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+        assert_eq!(verification.await.unwrap().id, "chat-1");
+        if eviction != "count" {
+            client.chat_completions(body()).await.unwrap();
+        }
+        client
+            .verify_response(if eviction == "bytes" {
+                "chat-3"
+            } else {
+                "chat-2"
+            })
+            .await
+            .unwrap();
+    }
 }
 
 fn systemone_request() -> Value {

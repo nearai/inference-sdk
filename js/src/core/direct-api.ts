@@ -48,6 +48,7 @@ export class DirectApiClient {
   async fetchCompletionSignature({
     completionId,
     signingAlgo,
+    signal,
   }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
     const url = new URL(
       `signature/${encodeURIComponent(completionId)}`,
@@ -56,7 +57,7 @@ export class DirectApiClient {
     if (signingAlgo !== undefined) {
       url.searchParams.set('signing_algo', signingAlgo);
     }
-    const request = this.createRequest(url);
+    const request = new Request(this.createRequest(url), { signal });
     let response: Response;
     try {
       response = await this.requestApi(request);

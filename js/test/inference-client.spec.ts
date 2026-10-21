@@ -1155,6 +1155,70 @@ describe('inference client', () => {
     },
   );
 
+  test('cancels only the caller-owned receipt lookup and keeps the response available', async () => {
+    const gateway = createTestGateway();
+    const providerFetch = createSignatureFetch(gateway);
+    let notifyStarted!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      notifyStarted = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signatureRequests = 0;
+    let pendingSignal: AbortSignal | undefined;
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname.startsWith('/v1/signature/')) {
+        signatureRequests++;
+        if (signatureRequests === 1) {
+          await released;
+        } else if (signatureRequests === 2) {
+          pendingSignal = request.signal;
+          notifyStarted();
+          await new Promise<void>((_, reject) => {
+            request.signal.addEventListener(
+              'abort',
+              () => reject(request.signal.reason),
+              { once: true },
+            );
+          });
+        }
+      }
+      return providerFetch(request);
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    const shared = client.verifyResponse(completion.id);
+    const controller = new AbortController();
+    const cancelled = client.verifyResponse(completion.id, {
+      signal: controller.signal,
+    });
+    const rejected = expect(cancelled).rejects.toMatchObject({
+      failure: { code: 'api.transport_failed' },
+    });
+    await started;
+    controller.abort(new Error('deadline'));
+    await rejected;
+    expect(pendingSignal?.aborted).toBe(true);
+    expect(client.verifyResponse(completion.id)).toBe(shared);
+    release();
+    await expect(shared).resolves.toMatchObject({
+      completionId: completion.id,
+    });
+    await expect(
+      client.verifyResponse(completion.id, {
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ completionId: completion.id });
+    expect(signatureRequests).toBe(3);
+    expect(gateway.state.completionRequests).toBe(1);
+  });
+
   test('preserves proxy authorization with an external OpenAI client', async () => {
     const authorization = 'Bearer proxy-token';
     const gateway = createTestGateway({
@@ -1688,6 +1752,30 @@ describe('inference client', () => {
     });
     expect(gateway.state.gatewayAttestationRequests).toBe(0);
     expect(gateway.state.modelAttestationRequests).toBe(0);
+  });
+
+  test('classifies a failed request stream before preverification', async () => {
+    const fetch = jest.spyOn(globalThis, 'fetch');
+    const client = new InferenceClient({ baseUrl, apiKey: 'test-key' });
+    const cause = new Error('upload broke');
+    const request = new Request(`${baseUrl}chat/completions`, {
+      method: 'POST',
+      body: new ReadableStream({
+        start(controller) {
+          controller.error(cause);
+        },
+      }),
+      duplex: 'half',
+    } as RequestInit);
+
+    await expect(client.fetch(request)).rejects.toMatchObject({
+      failure: {
+        code: 'api.invalid_input',
+        details: { field: 'request body' },
+      },
+      cause,
+    });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('blocks an E2EE request when model evidence has no signing public key', async () => {
@@ -4215,6 +4303,26 @@ describe('System One decisions', () => {
       ).toBe(true);
     },
   );
+
+  test('bounds System One wire bytes before retaining a receipt', async () => {
+    const fixture = decisionGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+      maxReceiptCacheBytes:
+        Buffer.byteLength(JSON.stringify(decisionRequest)) +
+        Buffer.byteLength(`${JSON.stringify(decisionResponse, null, 2)}\n`) -
+        1,
+    });
+    await expect(
+      client.systemone.create(decisionRequest),
+    ).rejects.toMatchObject({ failure: { code: 'api.body_too_large' } });
+    expect(fixture.requests).toHaveLength(1);
+    await expect(
+      client.verifyResponse('decision-receipt'),
+    ).rejects.toMatchObject({ failure: { code: 'api.completion_not_found' } });
+  });
 
   test('expires decision response records using the shared response TTL', async () => {
     const fixture = decisionGateway();
