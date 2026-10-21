@@ -32,6 +32,14 @@ struct Fixture {
     gateway: AtomicUsize,
     model: AtomicUsize,
     chat: AtomicUsize,
+    systemone: AtomicUsize,
+    systemone_body: Option<String>,
+    systemone_id: Option<String>,
+    systemone_status: Option<u16>,
+    missing_model_key: bool,
+    extra_model: bool,
+    systemone_tamper: bool,
+
     signatures: AtomicUsize,
     receipts: Mutex<std::collections::HashMap<String, ReceiptBytes>>,
     metadata: Mutex<Option<Value>>,
@@ -67,6 +75,9 @@ impl Fixture {
             value["signing_public_key"] = json!(public);
             value["report_data"] = json!(data);
             value["intel_quote"] = json!(data);
+        }
+        if self.missing_model_key && seed != 9 {
+            value.as_object_mut().unwrap().remove("signing_public_key");
         }
         value
     }
@@ -133,6 +144,9 @@ impl Respond for Fixture {
                             json!(hex::encode(key(8).verifying_key().as_bytes()));
                     }
                     let mut reports = vec![value];
+                    if self.extra_model {
+                        reports.insert(0, self.report(nonce, 8));
+                    }
                     if self.bad_model {
                         let mut bad = self.report(nonce, 8);
                         bad["report_data"] = json!("ff".repeat(64));
@@ -149,6 +163,66 @@ impl Respond for Fixture {
                         )
                         .set_delay(Duration::from_millis(20))
                 }
+            }
+            "/v1/systemone" => {
+                let n = self.systemone.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(r.headers.get("accept-encoding").unwrap(), "identity");
+                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
+                if self.metadata.lock().unwrap().is_none() {
+                    let seed = if self.extra_model { 8 } else { 7 };
+                    let public = if self.ecdsa {
+                        encryption::ecdsa_identity(seed).1
+                    } else {
+                        hex::encode(key(seed).verifying_key().as_bytes())
+                    };
+                    assert_eq!(r.headers.get("x-model-pub-key").unwrap(), public.as_str());
+                } else {
+                    assert!(r.headers.get("x-model-pub-key").is_none());
+                }
+                for name in [
+                    "x-client-pub-key",
+                    "x-signing-algo",
+                    "digest",
+                    "content-encoding",
+                ] {
+                    assert!(r.headers.get(name).is_none(), "unexpected {name}");
+                }
+                if let Some(status) = self.systemone_status {
+                    return ResponseTemplate::new(status);
+                }
+                let id = self
+                    .systemone_id
+                    .clone()
+                    .unwrap_or_else(|| format!("decision-{n}"));
+                let response = self
+                    .systemone_body
+                    .clone()
+                    .unwrap_or_else(|| {
+                        let v: Value = serde_json::from_str(include_str!(
+                            "../test-fixtures/systemone-responses.json"
+                        ))
+                        .unwrap();
+                        format!(" \n{} \n", v["valid"][0])
+                    })
+                    .into_bytes();
+                let kind = if self.metadata.lock().unwrap().is_some() {
+                    "gateway"
+                } else {
+                    "provider_tee"
+                };
+                let mut encoded = reqwest::Url::parse("http://localhost/").unwrap();
+                encoded.path_segments_mut().unwrap().push(&id);
+                self.receipts.lock().unwrap().insert(
+                    encoded.path()[1..].into(),
+                    (r.body.clone(), response.clone(), kind.into()),
+                );
+                let mut wire = response;
+                if self.systemone_tamper {
+                    wire.push(b' ');
+                }
+                ResponseTemplate::new(200)
+                    .insert_header("x-generation-id", id)
+                    .set_body_bytes(wire)
             }
             "/v1/chat/completions" => {
                 let n = self.chat.fetch_add(1, Ordering::SeqCst);
@@ -329,6 +403,29 @@ async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, InferenceClientOp
 fn body() -> Value {
     json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
 }
+#[tokio::test]
+async fn chat_http_errors_keep_completion_resource_and_retryability() {
+    for status in [429, 503] {
+        let (server, _, options) = setup(Fixture::default()).await;
+        Mock::given(wiremock::matchers::path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(status))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let error = client.chat_completions(body()).await.unwrap_err();
+        assert!(error.retryable(), "{error}");
+        assert!(matches!(
+            error,
+            InferenceError::Api(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: actual,
+                ..
+            }) if actual == status
+        ));
+    }
+}
+
 #[tokio::test]
 async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
     let (_server, f, options) = setup(Fixture::default()).await;
@@ -820,4 +917,308 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     options.max_receipt_cache_bytes = 0;
     assert!(InferenceClient::with_options(options.clone()).is_err());
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
+}
+
+fn systemone_request() -> Value {
+    json!({
+        "model": "vendor/model",
+        "state": {"text": "hello"},
+        "questions": {
+            "q": {
+                "type": "noul",
+                "instructions": "Is this a greeting?"
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn systemone_plaintext_key_routing_and_receipts() {
+    for gateway_only in [false, true] {
+        for ecdsa in [false, true] {
+            let fixture = Fixture {
+                ecdsa,
+                systemone_id: Some("decision/with % space".into()),
+                ..Default::default()
+            };
+            if gateway_only {
+                *fixture.metadata.lock().unwrap() = Some(json!({
+                    "metadata": {
+                        "providerType": "proxy",
+                        "attestationSupported": false
+                    }
+                }));
+            }
+            let (_server, f, mut options) = setup(fixture).await;
+            if ecdsa {
+                options.signing_algo = SigningAlgo::Ecdsa;
+            }
+            let client = InferenceClient::with_options(options).unwrap();
+            let mut headers = reqwest::header::HeaderMap::new();
+            for (k, v) in [
+                ("authorization", "Bearer bad"),
+                ("api-key", "bad"),
+                ("accept-encoding", "gzip"),
+                ("content-encoding", "gzip"),
+                ("x-model-pub-key", "bad"),
+                ("digest", "bad"),
+            ] {
+                headers.insert(k, v.parse().unwrap());
+            }
+
+            let mut result = client
+                .systemone_create_with_headers(&systemone_request(), headers)
+                .await
+                .unwrap();
+
+            assert_eq!(result.decision_id, "decision/with % space");
+            assert!(result.data.id.is_none());
+
+            result.data.model = "mutated".into();
+
+            let receipt = client.verify_response(&result.decision_id).await.unwrap();
+            assert_eq!(
+                receipt.signature_kind(),
+                if gateway_only {
+                    CompletionSignatureKind::Gateway
+                } else {
+                    CompletionSignatureKind::ProviderTee
+                }
+            );
+
+            client.verify_response(&result.decision_id).await.unwrap();
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn systemone_shares_chat_session() {
+    for decision_first in [false, true] {
+        let (_server, f, options) = setup(Fixture::default()).await;
+        let client = InferenceClient::with_options(options).unwrap();
+
+        for decision in [decision_first, !decision_first] {
+            if decision {
+                client.systemone_create(&systemone_request()).await.unwrap();
+            } else {
+                client.chat_completions(body()).await.unwrap();
+            }
+        }
+
+        assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
+        assert_eq!(f.model.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn systemone_requires_model_public_key_before_send() {
+    let (_server, f, options) = setup(Fixture {
+        missing_model_key: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+
+    assert!(client.systemone_create(&systemone_request()).await.is_err());
+    assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn systemone_preserves_structured_legend_numbers_and_receipt_bytes() {
+    for (number, canonical) in [
+        ("18446744073709551616", "18446744073709551616"),
+        ("-18446744073709551617", "-18446744073709551617"),
+        (
+            "0.12345678901234567890123456789",
+            "0.12345678901234567890123456789",
+        ),
+        ("1e400", "1e+400"),
+        ("-0.0", "-0.0"),
+    ] {
+        for gateway_only in [false, true] {
+            let response = format!(
+                r#" {{"model":"vendor/model","answers":{{"q":{{"type":"score","score":0.5,"confidence":0.75,"probabilities":{{"0":0.5}},"legend":{{"0":{{"value":{number},"nested":[{number},{{"value":{number}}}]}},"1":[{number},{{"value":{number}}}]}}}}}},"usage":{{"input_tokens":1,"output_tokens":1}}}} "#
+            );
+            let fixture = Fixture {
+                systemone_body: Some(response),
+                ..Default::default()
+            };
+            if gateway_only {
+                *fixture.metadata.lock().unwrap() = Some(json!({
+                    "metadata": {
+                        "providerType": "proxy",
+                        "attestationSupported": false
+                    }
+                }));
+            }
+            let (_server, f, options) = setup(fixture).await;
+            let client = InferenceClient::with_options(options).unwrap();
+
+            let result = client.systemone_create(&systemone_request()).await.unwrap();
+            let value = serde_json::to_value(&result.data).unwrap();
+            let legend = &value["answers"]["q"]["legend"];
+            for value in [
+                &legend["0"]["value"],
+                &legend["0"]["nested"][0],
+                &legend["0"]["nested"][1]["value"],
+                &legend["1"][0],
+                &legend["1"][1]["value"],
+            ] {
+                assert!(value.is_number());
+                assert_eq!(value.to_string(), canonical);
+            }
+
+            let encoded = serde_json::to_vec(&result.data).unwrap();
+            let decoded: SystemOneResponse = serde_json::from_slice(&encoded).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+
+            client.verify_response(&result.decision_id).await.unwrap();
+            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn systemone_rejects_bad_evidence_unsupported_modes_and_stream_before_send() {
+    for mode in 0..4 {
+        let (_server, f, mut options) = setup(Fixture {
+            bad_model: mode == 3,
+            ..Default::default()
+        })
+        .await;
+        options.e2ee = mode == 0;
+        options.ohttp = mode == 1;
+        let client = InferenceClient::with_options(options).unwrap();
+        let mut request = systemone_request();
+        if mode == 2 {
+            request["stream"] = json!(false);
+        }
+
+        assert!(client.systemone_create(&request).await.is_err());
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
+        if mode < 3 {
+            assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
+        }
+    }
+}
+
+#[test]
+fn systemone_transport_failure_does_not_suggest_replay() {
+    for reason in [
+        ApiTransportReason::Request,
+        ApiTransportReason::ResponseBody,
+    ] {
+        let error = ApiError::Transport {
+            resource: ApiResource::SystemOne,
+            reason,
+        };
+        assert_eq!(error.code(), "api.transport_failed");
+        assert!(!error.retryable());
+        assert!(ApiError::Transport {
+            resource: ApiResource::CompletionSignature,
+            reason
+        }
+        .retryable());
+    }
+}
+
+#[tokio::test]
+async fn systemone_errors_do_not_retry_or_cache_unusable_responses() {
+    for fixture in [
+        Fixture {
+            systemone_status: Some(429),
+            ..Default::default()
+        },
+        Fixture {
+            systemone_status: Some(503),
+            ..Default::default()
+        },
+        Fixture {
+            systemone_body: Some("{}".into()),
+            ..Default::default()
+        },
+        Fixture {
+            systemone_id: Some(String::new()),
+            ..Default::default()
+        },
+    ] {
+        let (_server, f, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+
+        let error = client
+            .systemone_create(&systemone_request())
+            .await
+            .unwrap_err();
+
+        assert!(
+            !error.retryable(),
+            "inference failure must not suggest replay: {error}"
+        );
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            client
+                .verify_response("decision-0")
+                .await
+                .unwrap_err()
+                .code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
+#[tokio::test]
+async fn systemone_rejects_wire_tampering_and_wrong_signers() {
+    for fixture in [
+        Fixture {
+            extra_model: true,
+            ..Default::default()
+        },
+        Fixture {
+            systemone_tamper: true,
+            ..Default::default()
+        },
+        Fixture {
+            wrong_signer: true,
+            ..Default::default()
+        },
+        Fixture {
+            wrong_algo: true,
+            ..Default::default()
+        },
+    ] {
+        let (_server, _, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client.systemone_create(&systemone_request()).await.unwrap();
+
+        assert!(client.verify_response(&result.decision_id).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn systemone_retained_receipts_follow_size_and_count_limits() {
+    let (_server, _, mut options) = setup(Fixture::default()).await;
+    options.max_cache_entries = 1;
+    let client = InferenceClient::with_options(options).unwrap();
+
+    let first = client.systemone_create(&systemone_request()).await.unwrap();
+    let second = client.systemone_create(&systemone_request()).await.unwrap();
+    assert_eq!(
+        client
+            .verify_response(&first.decision_id)
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
+
+    client.verify_response(&second.decision_id).await.unwrap();
+
+    let (_server, _, mut options) = setup(Fixture::default()).await;
+    options.max_receipt_cache_bytes = 10;
+    let client = InferenceClient::with_options(options).unwrap();
+
+    assert!(client.systemone_create(&systemone_request()).await.is_err());
 }

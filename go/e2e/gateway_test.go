@@ -28,27 +28,31 @@ func required(t *testing.T, name string) string {
 	}
 	return value
 }
-func models(t *testing.T, encryption bool) []liveModel {
+func selectedModels(t *testing.T, endpoint string) []liveModel {
 	t.Helper()
 	var all []liveModel
 	if err := json.Unmarshal([]byte(required(t, "NEARAI_E2E_MODELS")), &all); err != nil {
 		t.Fatal(err)
 	}
-	chat := make([]liveModel, 0, len(all))
+	selected := make([]liveModel, 0, len(all))
 	for _, m := range all {
-		if m.Endpoint == "chat" {
-			chat = append(chat, m)
+		if m.Endpoint == endpoint {
+			selected = append(selected, m)
 		}
 	}
-	all = chat
-	if len(all) == 0 {
-		t.Fatal("expected representative Chat models")
+	if len(selected) == 0 {
+		t.Fatalf("expected representative %s models", endpoint)
 	}
-	for _, m := range all {
+	for _, m := range selected {
 		if m.ID == "" || (m.Provider != "near" && m.Provider != "chutes" && m.Provider != "external") {
 			t.Fatalf("invalid selected model: %v", m)
 		}
 	}
+	return selected
+}
+func models(t *testing.T, encryption bool) []liveModel {
+	t.Helper()
+	all := selectedModels(t, "chat")
 	if encryption {
 		for _, m := range all {
 			if m.Provider == "near" {
@@ -58,6 +62,19 @@ func models(t *testing.T, encryption bool) []liveModel {
 		t.Fatal("expected a NEAR model for encryption coverage")
 	}
 	return all
+}
+
+func TestSelectedModels(t *testing.T) {
+	t.Setenv("NEARAI_E2E_MODELS", `[
+		{"id":"near/chat","provider":"near","endpoint":"chat"},
+		{"id":"typesafe/decision","provider":"external","endpoint":"systemone"}
+	]`)
+	for endpoint, id := range map[string]string{"chat": "near/chat", "systemone": "typesafe/decision"} {
+		selected := selectedModels(t, endpoint)
+		if len(selected) != 1 || selected[0].ID != id {
+			t.Fatalf("%s selected wrong models: %v", endpoint, selected)
+		}
+	}
 }
 func chatRequest(ctx context.Context, base, key string, m liveModel, stream bool) (*http.Request, []byte, error) {
 	body, err := json.Marshal(map[string]any{
