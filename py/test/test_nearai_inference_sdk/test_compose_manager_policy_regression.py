@@ -59,21 +59,8 @@ def deployment(image=None):
 
 @pytest.mark.parametrize('image', [None, 'unlisted/manager@sha256:' + 'bb' * 32])
 async def test_rejects_unapproved_or_missing_current_manager(monkeypatch, image):
-    root = TrustedRoot.from_file(str(FIXTURES / 'provenance/trusted-root.json'))
-    monkeypatch.setattr(Verifier, 'production', lambda: Verifier(trusted_root=root))
-    monkeypatch.setattr(
-        compose_manager_provenance,
-        'fetch',
-        AsyncMock(return_value=FetchResponse(status=200, body=COMPOSE.encode())),
-    )
-    bundle = json.loads(
-        (FIXTURES / 'provenance/compose-manager-launcher.bundle.json').read_text()
-    )
-    fetch = AsyncMock(
-        return_value=FetchResponse(
-            status=200, body=json.dumps({'attestations': [{'bundle': bundle}]}).encode()
-        )
-    )
+    fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
+    monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
     monkeypatch.setattr(provenance, 'fetch', fetch)
     with pytest.raises(VerificationError) as result:
         await verify_compose_manager_deployment_image_provenance(
