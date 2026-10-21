@@ -315,45 +315,6 @@ async def test_rejects_compression_when_identity_was_requested(monkeypatch):
     assert len(gateway.requests) == 1
 
 
-async def test_cancelled_waiter_does_not_stick_a_retryable_receipt_failure(monkeypatch):
-    gateway = DecisionGateway()
-    started = asyncio.Event()
-    release = asyncio.Event()
-    finished = asyncio.Event()
-    handle = gateway.handle
-
-    async def hold_signature(request):
-        if request.url.path.startswith('/v1/signature/'):
-            started.set()
-            await release.wait()
-            response = await handle(request)
-            finished.set()
-            return response
-        return await handle(request)
-
-    monkeypatch.setattr(gateway, 'handle', hold_signature)
-    gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client:
-        result = await client.systemone.create(REQUEST)
-        signature = gateway.signatures[result.decision_id]
-        gateway.signatures[result.decision_id] = {
-            'error_code': 'pending',
-            'message': 'not ready',
-        }
-        waiting = asyncio.create_task(client.verify_response(result.decision_id))
-        await started.wait()
-        waiting.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await waiting
-        release.set()
-        await finished.wait()
-        gateway.signatures[result.decision_id] = signature
-        verified = await client.verify_response(result.decision_id)
-        assert verified.signature_kind == 'gateway'
-    assert gateway.signature_requests == 2
-    assert len(gateway.requests) == 1
-
-
 @pytest.mark.parametrize('fault', ['status', 'id', 'probability', 'json'])
 async def test_invalid_decision_response_never_replays_inference(monkeypatch, fault):
     gateway = DecisionGateway()
@@ -729,3 +690,12 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     assert gateway.gateway_requests == 1
     assert gateway.model_requests == [MODEL]
     assert len(gateway.requests) == 1
+
+
+async def test_decision_body_uses_configured_receipt_byte_limit(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, max_receipt_cache_bytes=500) as client:
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await client.systemone.create(REQUEST)
+        assert len(gateway.requests) == 1

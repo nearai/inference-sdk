@@ -38,7 +38,8 @@ bower_components
 build/Release
 
 # Dependency directories
-node_modules/
+node_modules
+.venv
 jspm_packages/
 .pnpm-store/
 

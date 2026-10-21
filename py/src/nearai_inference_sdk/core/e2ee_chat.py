@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import codecs
 import json
 from collections.abc import AsyncIterable, AsyncIterator
 from copy import deepcopy
+from io import StringIO
 from typing import Any
 
 from pydantic import ValidationError
@@ -13,7 +13,12 @@ from pydantic import ValidationError
 from ..schemas import ChatCompletionResponseSchema
 from ..types.e2ee import E2eeModelKey
 from ..utils.errors import ApiError, api_failure, verification_failure
-from ..utils.sse import get_sse_data, split_sse_lines, take_complete_sse_records
+from ..utils.sse import (
+    SseDecoder,
+    get_sse_data,
+    get_sse_record_data,
+    iter_sse_lines,
+)
 from .e2ee import E2eeClientKeyPair, decrypt_e2ee_text, encrypt_e2ee_text
 
 
@@ -108,18 +113,22 @@ async def decrypt_e2ee_chat_sse(
 ) -> AsyncIterator[bytes]:
     """Preserve SSE controls and boundaries, even across split UTF-8 or CRLF."""
 
-    decoder = codecs.getincrementaldecoder('utf-8')()
-    pending = ''
+    decoder = SseDecoder()
     try:
         async for chunk in source:
-            pending += decoder.decode(chunk)
-            complete = take_complete_sse_records(pending)
-            pending = complete.pending
-            for record in complete.records:
-                yield _transform_sse_record(
-                    record.value, record.separator, client_key_pair
-                ).encode()
-        pending += decoder.decode(b'', final=True)
+            buffered = bytearray()
+            for record in decoder.feed(chunk):
+                buffered.extend(
+                    _transform_sse_record(
+                        record.value, record.separator, client_key_pair
+                    ).encode()
+                )
+                if len(buffered) >= 64 * 1024:
+                    yield bytes(buffered)
+                    buffered.clear()
+            if buffered:
+                yield bytes(buffered)
+        pending = decoder.finish()
         if pending:
             yield _transform_sse_record(pending, '', client_key_pair).encode()
     except UnicodeDecodeError as cause:
@@ -212,22 +221,19 @@ def _decrypt_logprobs(
 def _transform_sse_record(
     record: str, separator: str, client_key_pair: E2eeClientKeyPair
 ) -> str:
-    lines = split_sse_lines(record)
-    data_lines = [
-        data for line in lines if (data := get_sse_data(line.content)) is not None
-    ]
-    if not data_lines:
+    data = get_sse_record_data(record)
+    if data in ('', '[DONE]'):
         return record + separator
-    data = '\n'.join(data_lines)
     event = None
-    for line in lines:
-        if line.content == 'event':
+    remaining = 0
+    for line in iter_sse_lines(record):
+        if get_sse_data(line.content) is not None:
+            remaining += 1
+        if event is None and line.content == 'event':
             event = ''
-            break
-        if line.content.startswith('event:'):
+        elif event is None and line.content.startswith('event:'):
             event = line.content[len('event:') :].removeprefix(' ')
-            break
-    if data in ('', '[DONE]') or event == 'error':
+    if event == 'error':
         return record + separator
     try:
         body = json.loads(data)
@@ -237,18 +243,17 @@ def _transform_sse_record(
     if 'choices' not in chunk:
         return record + separator
     decrypted = decrypt_e2ee_chat_response(chunk, client_key_pair, streaming=True)
-    remaining = len(data_lines)
-    output = []
-    for line in lines:
+    output = StringIO()
+    for line in iter_sse_lines(record):
         if get_sse_data(line.content) is None:
-            output.append(line.content + line.ending)
+            output.write(line.content + line.ending)
         else:
             remaining -= 1
             # Preserve the last data line's ending so mixed CR/LF cannot merge
             # into a single CRLF and erase the terminating blank line.
             if remaining == 0:
-                output.append(f'data: {_json(decrypted)}{line.ending}')
-    return ''.join(output) + separator
+                output.write(f'data: {_json(decrypted)}{line.ending}')
+    return output.getvalue() + separator
 
 
 def _objects(value: object) -> list[dict[str, Any]]:

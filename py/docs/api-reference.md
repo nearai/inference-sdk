@@ -74,6 +74,9 @@ automatically verify the response signature; use `verify_response` afterwards.
 | `ohttp` | `bool` | `False` | Encapsulate Chat requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
 | `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, and System One for this long; `0` verifies each request. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
+| `max_body_bytes` | `int` | 64 MiB | Maximum bytes in each request or response body. |
+| `max_cache_entries` | `int` | 128 | Completed entries per cache, distinct pending preflights and active receipt verifications. |
+| `max_receipt_cache_bytes` | `int` | 64 MiB | Combined request/response bytes in retained receipts. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
 | `deployment_policy` | `DeploymentPolicy \| None` | `None` | Optional callback `(model, deployment)` that rejects unapproved model deployments by raising. May be asynchronous. |
@@ -83,6 +86,24 @@ verification for `provider_type='vllm'` and `attestation_supported=True`; other
 models use Incognito verification. `e2ee=True`, a model policy, or a deployment
 callback requires model evidence. Invalid metadata and failed verification stop
 inference. The catalog decision shares the attestation cache's lifetime.
+
+### Body and cache limits
+
+Values must be positive integers. Completed entries are evicted in completion order
+or when their TTL expires. A zero response TTL disables retention. Verify receipts
+while they remain cached; an evicted response is no longer available by ID.
+Verification already in progress continues after eviction and keeps its capacity
+reservation until it finishes. If those bytes fill the budget, new receipts are
+not retained.
+
+Concurrent requests for the same model share preflight work. New distinct
+preflights at capacity fail locally. Oversized bodies fail with `api.body_too_large`.
+Active streams have a per-body limit and enter the receipt budget at completion.
+Responses must use identity content encoding; other encodings fail with
+`api.invalid_response` before decompression.
+
+`max_body_bytes` bounds the original request and its encrypted wire body;
+`max_receipt_cache_bytes` counts the retained wire bytes.
 
 ### Verification options
 

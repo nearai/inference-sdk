@@ -181,6 +181,8 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'
+        case 'api.body_too_large':
+            return f'[{code}] Inference body exceeds its configured byte limit'
         case 'api.completion_not_found':
             return f'[{code}] Completion is not retained by this client'
         case 'quote.verification_failed':
