@@ -1286,12 +1286,17 @@ async def test_sse_capture_has_bounded_memory(monkeypatch, wire, has_id, e2ee):
     gateway = Gateway()
     original = gateway.handle
 
+    class Fragments(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for offset in range(0, len(wire), 2):
+                yield wire[offset : offset + 2]
+
     async def respond(request):
         if request.url.path == '/v1/chat/completions':
             return httpx.Response(
                 200,
                 headers={'content-type': 'text/event-stream'},
-                stream=ChunkStream([wire]),
+                stream=Fragments(),
             )
         return await original(request)
 

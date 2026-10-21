@@ -50,6 +50,7 @@ from ..utils.sse import SseDecoder, get_sse_data_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
 from .body_limit import (
+    BufferedResponse,
     read_bounded_request_body,
     require_body_size,
     require_identity_encoding,
@@ -381,7 +382,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         def register(completion_id: str) -> None:
             self._register_response(completion_id, request_body, response_body, session)
 
-        captured = httpx.Response(
+        captured = BufferedResponse(
             response.status_code,
             headers=_decoded_headers(response.headers),
             stream=_CapturedResponseStream(response, response_body, register, self),

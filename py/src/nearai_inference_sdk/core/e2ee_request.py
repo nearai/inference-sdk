@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from ..schemas import ChatCompletionRequestSchema
 from ..types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
 from ..utils.errors import api_failure
+from .body_limit import BufferedResponse
 from .e2ee import E2eeClientKeyPair, create_e2ee_client_key_pair
 from .e2ee_chat import (
     decrypt_e2ee_chat_response,
@@ -142,7 +143,7 @@ async def _decrypt_response(
     except RuntimeError:
         request = None
     if is_server_sent_event_response(response):
-        return httpx.Response(
+        return BufferedResponse(
             status_code=response.status_code,
             headers=headers,
             extensions=dict(response.extensions),

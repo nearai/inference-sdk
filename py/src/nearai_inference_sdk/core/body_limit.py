@@ -9,6 +9,18 @@ from httpx._content import AsyncIteratorByteStream, IteratorByteStream
 from ..utils.errors import api_failure
 
 
+class BufferedResponse(httpx.Response):
+    """Coalesce buffered reads without delaying streamed events."""
+
+    async def aread(self) -> bytes:
+        if not hasattr(self, '_content'):
+            body = bytearray()
+            async for chunk in self.aiter_bytes():
+                body.extend(chunk)
+            self._content = bytes(body)
+        return self._content
+
+
 def require_body_size(size: int, limit: int) -> None:
     if size > limit:
         raise api_failure('api.body_too_large')
