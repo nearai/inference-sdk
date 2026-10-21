@@ -368,7 +368,8 @@ application proxy; consider that changed trust boundary before using it.
 
 ## Experimental direct endpoints
 
-Direct clients require an explicit model endpoint URL and default E2EE to on:
+Direct clients require an explicit model endpoint URL. E2EE is disabled by
+default; this example enables it:
 
 ```go
 client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
@@ -377,6 +378,7 @@ client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
 			APIKey:  apiKey,
 			BaseURL: directBaseURL,
 		},
+		E2EE: true,
 	},
 })
 if err != nil {
@@ -386,7 +388,7 @@ defer client.Close()
 ```
 
 The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Set `DisableE2EE: true` only when deliberately opting out. Direct clients omit
+Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
 Gateway verification and do not bind TLS identity to attestation; normal HTTPS
 validation still applies. They are experimental and not recommended for
 production. Use Gateway clients for production integrations.
