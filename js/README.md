@@ -14,6 +14,9 @@ Install with npm:
 npm install @nearai/inference-sdk
 ```
 
+Gateway clients also support [Responses](./docs/verification-guide.md#responses-api)
+with JSON, SSE, OHTTP, and Gateway receipt verification.
+
 ## Send and verify a Chat completion
 
 Set your NEAR AI Cloud API key in your server environment:

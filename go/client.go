@@ -30,6 +30,7 @@ type responseRecord struct {
 	session           *session
 	expires           time.Time
 	verifying         *pendingResponse
+	gatewayOnly       bool
 }
 type pendingResponse struct {
 	done  chan struct{}
@@ -411,17 +412,23 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip only accepts POSTs to this client's configured Chat endpoint.
+// RoundTrip accepts POSTs to Chat Completions and Gateway Responses creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	expected := *c.api.base
 	expected.Path += "chat/completions"
+	responsesURL := *c.api.base
+	responsesURL.Path += "responses"
 	u := *req.URL
 	u.RawQuery = ""
 	u.ForceQuery = false
-	if req.Method != "POST" || u.String() != expected.String() || req.Body == nil {
+	responses := u.String() == responsesURL.String()
+	if req.Method != "POST" || (u.String() != expected.String() && !responses) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
+	if responses && (c.api.direct || c.options.E2EE) {
+		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
+	}
 	body, e := readBounded(req.Body, c.maxBody)
 	if e != nil {
 		return nil, e
@@ -520,7 +527,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s); e != nil {
+		if e = c.register(id, body, wire, s, responses); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -544,6 +551,11 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			if _, ok := obj["error"]; ok {
 				failed = true
 			}
+			if responses {
+				// Output item IDs are not response IDs. Lifecycle events carry
+				// the receipt ID inside their response object.
+				obj, _ = obj["response"].(map[string]any)
+			}
 			if candidate, ok := obj["id"].(string); ok && candidate != "" {
 				if id != "" && candidate != id {
 					return nil, failure("api.invalid_response", nil)
@@ -560,7 +572,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if failed || id == "" {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s)
+		return c.register(id, body, capture.body.Bytes(), s, responses)
 	}
 	response.Body = &sseReader{source: capture, reader: bufio.NewReader(capture), transform: transform, finish: finish, limit: c.maxBody}
 	removeBodyHeaders(response.Header)
@@ -576,7 +588,7 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
 
-func (c *InferenceClient) register(id string, request, response []byte, s *session) error {
+func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -612,10 +624,11 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 		delete(c.responses, oldest)
 	}
 	c.responses[id] = &responseRecord{
-		request:  append([]byte(nil), request...),
-		response: append([]byte(nil), response...),
-		session:  s,
-		expires:  time.Now().Add(c.responseTTL),
+		request:     append([]byte(nil), request...),
+		response:    append([]byte(nil), response...),
+		session:     s,
+		gatewayOnly: gatewayOnly,
+		expires:     time.Now().Add(c.responseTTL),
 	}
 	return nil
 }
@@ -676,6 +689,9 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 	if sig.Signer.SigningAlgo != c.options.SigningAlgo {
 		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
 	}
+	if r.gatewayOnly && sig.Kind != "gateway" {
+		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
+	}
 	var a *VerifiedAttestation
 	if sig.Kind == "gateway" {
 		a = r.session.result.Gateway
@@ -704,11 +720,30 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.
 // For streaming or typed requests, use HTTPClient with the official Go OpenAI SDK.
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "chat/completions", request)
+}
+
+// CreateResponse sends a Gateway Responses request and retains its exact wire
+// bytes for VerifyResponse. Use HTTPClient with openai-go for typed SSE events.
+func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "responses", request)
+}
+
+func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
 	if e != nil {
 		return nil, e
 	}
-	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint("chat/completions", nil), bytes.NewReader(body))
+	if path == "responses" {
+		parsed, err := decodeObject(body)
+		if err != nil {
+			return nil, err
+		}
+		if parsed["stream"] == true {
+			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses")
+		}
+	}
+	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint(path, nil), bytes.NewReader(body))
 	if e != nil {
 		return nil, e
 	}

@@ -103,7 +103,7 @@ Use one reusable client for concurrent requests; each response is retained under
 its completion ID. `InferenceClient` owns and closes the shared HTTP connections.
 Closing the external OpenAI client only closes its adapter; receipts remain
 available until the owning inference client closes or their cache entries expire.
-Only Chat Completions are supported by this transport, not the Responses API.
+The Gateway transport supports Chat Completions and [Responses](#responses-api) creation.
 
 ### Verify before the first Chat request
 
@@ -234,6 +234,41 @@ returns a complete JSON response and shares Chat's attestation session per model
 Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
+
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store=False` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```python
+response = await client.responses.create(
+    model='z-ai/glm-5.3-flash',
+    input='Reply with the word ok.',
+    store=False,
+)
+receipt = await client.verify_response(response.id)
+print(receipt.signature_kind, response.output_text)
+```
+
+Set `stream=True` and use `async for` for typed Responses events. An external
+`AsyncOpenAI` client can use the same API through `http_client=client.http_client`.
 
 ## Direct model endpoints
 

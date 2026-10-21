@@ -171,6 +171,42 @@ CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
 
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```ts
+const response = await client.responses.create({
+  model: 'z-ai/glm-5.3-flash',
+  input: 'Reply with the word ok.',
+  store: false,
+});
+const receipt = await client.verifyResponse(response.id);
+console.log(receipt.signatureKind, response.output_text);
+```
+
+Set `stream: true` and iterate the returned stream for typed Responses events.
+The same API works with an external OpenAI client using `fetch: client.fetch`.
+`InferenceResponses` exposes the official OpenAI `create` overloads.
+
 ## System One decisions
 
 Use `systemone.create()` for Jev decision models. It verifies the required
@@ -296,8 +332,9 @@ const client = new InferenceClient({
 
 ## E2EE scope and response handling
 
-The client supports `POST /v1/chat/completions` with a model public key bound
-to verified attestation. Responses API and other endpoints are not supported.
+Field-level E2EE supports `POST /v1/chat/completions` with a model public key bound
+to verified attestation. [Responses](#responses-api) supports OHTTP but rejects
+field-level E2EE.
 
 Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
 and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the

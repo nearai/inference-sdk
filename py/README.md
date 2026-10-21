@@ -120,7 +120,8 @@ Pass `inference_client.http_client` to `openai.AsyncOpenAI` to use the same veri
 transport for JSON and streaming Chat. Configure credentials on `InferenceClient`
 and verify replies through it. See the
 [OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/client_openai_sdk.py).
-Only Chat Completions are supported; the Responses API is not supported.
+Gateway clients also support [Responses](./docs/verification-guide.md#responses-api),
+including JSON, SSE, OHTTP, and Gateway receipt verification.
 
 ## Advanced APIs
 

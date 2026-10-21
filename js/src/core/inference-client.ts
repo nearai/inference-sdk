@@ -24,6 +24,7 @@ import type { CompletionSignature } from '../types/chat';
 import type {
   NodeInferenceClientOptions,
   InferenceChat,
+  InferenceResponses,
   InferenceClientOptions,
   VerifiedCompletionResult,
   AttestationVerificationResult,
@@ -117,6 +118,7 @@ type ResponseRecord<VerificationResult> =
 type ParsedSecureRequest = {
   readonly model: string;
   readonly request: Request;
+  readonly responses: boolean;
 };
 
 type PreparePlaintextRequestParams = {
@@ -131,6 +133,7 @@ type SendSecureCompletionParams = {
 
 type SentSecureCompletion<VerificationResult> = {
   response: Response;
+  readonly responses: boolean;
   readonly session: InferenceSession<VerificationResult>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
@@ -151,6 +154,7 @@ export type VerifyCapturedResponseParams<VerificationResult> = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
   readonly session: InferenceSession<VerificationResult>;
+  readonly gatewayOnly?: boolean;
 };
 
 type SendCompletionRequestParams = {
@@ -236,11 +240,13 @@ export abstract class VerifiedInferenceClientBase<
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly responses = new Map<
+  private readonly responseRecords = new Map<
     string,
     ResponseRecord<VerificationResult>
   >();
   readonly chat: InferenceChat;
+  protected readonly openai: OpenAI;
+  protected readonly supportsResponses: boolean = false;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;
@@ -266,11 +272,12 @@ export abstract class VerifiedInferenceClientBase<
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
       options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
-    this.chat = createOpenAiClient({
+    this.openai = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
       requestConfiguration: this.requestConfiguration,
-    }).chat;
+    });
+    this.chat = this.openai.chat;
   }
 
   /** Verify every required report before creating an endpoint-specific session. */
@@ -331,10 +338,10 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions request.
+   * Send one verified Chat Completions or Gateway Responses request.
    *
-   * Only POST requests to this client's configured Chat Completions endpoint
-   * are accepted. Other API paths, including Responses, are rejected locally.
+   * Only POST requests to the configured creation endpoints are accepted.
+   * Responses uses Gateway receipts and does not support field-level E2EE.
    */
   readonly fetch = async (
     input: RequestInfo | URL,
@@ -351,12 +358,14 @@ export abstract class VerifiedInferenceClientBase<
       // Register before exposing the response, including its first SSE event.
       completion.response = registerCompletionResponse({
         response: completion.response,
+        responses: completion.responses,
         register: (completionId) =>
           this.registerResponse({
             id: completionId,
             requestBody,
             responseBody,
             session: completion.session,
+            gatewayOnly: completion.responses,
           }),
       });
     }
@@ -365,7 +374,7 @@ export abstract class VerifiedInferenceClientBase<
 
   /** Verify a captured response by ID. Consume streaming responses first. */
   verifyResponse(id: string): Promise<VerificationResult> {
-    const record = this.responses.get(id);
+    const record = this.responseRecords.get(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
@@ -388,10 +397,11 @@ export abstract class VerifiedInferenceClientBase<
   /** Both endpoints share byte retention, expiry, and verification retries. */
   protected registerResponse(record: ResponseRecord<VerificationResult>): void {
     const id = record.id;
-    this.responses.set(id, record);
+    this.responseRecords.set(id, record);
     const expire = (): void => {
       const timer = setTimeout(() => {
-        if (this.responses.get(id) === record) this.responses.delete(id);
+        if (this.responseRecords.get(id) === record)
+          this.responseRecords.delete(id);
       }, this.responseCacheTimeToLiveMs);
       timer.unref?.();
     };
@@ -443,6 +453,7 @@ export abstract class VerifiedInferenceClientBase<
     const capturedResponse = captureResponseEntityBody(response);
     return {
       response: capturedResponse.response,
+      responses: parsed.responses,
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
@@ -462,6 +473,7 @@ export abstract class VerifiedInferenceClientBase<
     requestBody,
     responseBody,
     session,
+    gatewayOnly,
   }: VerifyCapturedResponseParams<VerificationResult>): Promise<VerificationResult> {
     const bytes = await responseBody;
     const signature = await session.transport.fetchCompletionSignature({
@@ -471,6 +483,12 @@ export abstract class VerifiedInferenceClientBase<
 
     if (signature.signer.signingAlgo !== this.signingAlgo) {
       throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
+    if (gatewayOnly && signature.kind !== 'gateway') {
+      throw new VerificationError({
+        code: 'signature.kind_mismatch',
+        details: { expected: 'gateway', actual: signature.kind },
+      });
     }
 
     return session.verifyResponse({
@@ -556,36 +574,46 @@ export abstract class VerifiedInferenceClientBase<
     init: RequestInit | undefined,
   ): Promise<ParsedSecureRequest> {
     const request = createRequest(input, init);
-    this.requireSupportedEndpoint(request);
+    const responses = this.requireSupportedEndpoint(request);
     const value = await decodeChatRequest({ request });
     const generic = v.safeParse(ChatCompletionRequestSchema, value);
     if (!generic.success) {
       throw invalidInput({
         field: 'request body',
         reason: 'unsupported_value',
-        expected: 'a JSON Chat Completions request with a string model',
+        expected: 'a JSON inference request with a string model',
       });
     }
     const model = generic.output.model;
-    return { model, request };
+    return { model, request, responses };
   }
 
-  private requireSupportedEndpoint(request: Request): void {
+  private requireSupportedEndpoint(request: Request): boolean {
     const url = new URL(request.url);
     const baseUrl = new URL(this.baseUrl);
     const chatPath = new URL('chat/completions', this.baseUrl).pathname;
+    const responses =
+      url.pathname === new URL('responses', this.baseUrl).pathname;
     if (
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
-      url.pathname !== chatPath
+      (url.pathname !== chatPath && !(responses && this.supportsResponses))
     ) {
       throw invalidInput({
         field: 'request',
         reason: 'unsupported_value',
-        expected: 'a POST to the configured Chat Completions endpoint',
+        expected: 'a POST to a supported inference creation endpoint',
         actual: `${request.method} ${url.pathname}`,
       });
     }
+    if (responses && this.e2eeEnabled) {
+      throw invalidInput({
+        field: 'e2ee',
+        reason: 'unsupported_value',
+        expected: 'field-level E2EE disabled for Responses',
+      });
+    }
+    return responses;
   }
 
   private preparePlaintextRequest({
@@ -639,6 +667,12 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   AttestationVerificationResult
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
+  protected override readonly supportsResponses = true;
+
+  /** Create a Response, then verify its top-level ID with verifyResponse(). */
+  get responses(): InferenceResponses {
+    return this.openai.responses;
+  }
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
@@ -970,12 +1004,14 @@ function createRequest(
 
 type RegisterCompletionResponseParams = {
   readonly response: Response;
+  readonly responses: boolean;
   readonly register: (id: string) => void;
 };
 
 /** Register IDs before forwarding their bytes; streaming follows consumer backpressure. */
 function registerCompletionResponse({
   response,
+  responses,
   register,
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
@@ -994,7 +1030,7 @@ function registerCompletionResponse({
             for (const record of complete.records) {
               let id: string;
               try {
-                id = getSseCompletionId(record.value);
+                id = getSseCompletionId(record.value, responses);
               } catch {
                 continue;
               }
@@ -1013,7 +1049,7 @@ function registerCompletionResponse({
           let id: string;
           try {
             id = streaming
-              ? getSseCompletionId(pending)
+              ? getSseCompletionId(pending, responses)
               : parseCompletionId(JSON.parse(pending));
           } catch (cause) {
             throw invalidCompletionId(cause);
@@ -1130,7 +1166,7 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
   return body;
 }
 
-function getSseCompletionId(text: string): string {
+function getSseCompletionId(text: string, responses: boolean): string {
   for (const data of getSseDataRecords(text)) {
     if (data === '' || data === '[DONE]') {
       continue;
@@ -1140,6 +1176,12 @@ function getSseCompletionId(text: string): string {
       value = JSON.parse(data);
     } catch (cause) {
       throw invalidCompletionId(cause);
+    }
+    if (responses) {
+      value =
+        value !== null && typeof value === 'object' && 'response' in value
+          ? value.response
+          : undefined;
     }
     const parsed = v.safeParse(CompletionResponseIdSchema, value);
     if (parsed.success) {

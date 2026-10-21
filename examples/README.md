@@ -1,7 +1,22 @@
 # NEAR AI Inference SDK examples
 
-These projects verify deployment evidence before sending Chat Completions,
+These projects verify deployment evidence before sending inference requests,
 then verify the response signature.
+
+## Responses API
+
+Gateway examples send JSON and SSE requests, then verify their Gateway receipts:
+
+| Language | Example | Run from its project directory |
+| --- | --- | --- |
+| JavaScript | [responses.ts](example-js/gateway/responses.ts) | `node gateway/responses.ts` |
+| Python | [responses.py](example-py/gateway/responses.py) | `uv run python gateway/responses.py` |
+| Rust | [responses.rs](example-rs/src/bin/responses.rs) | `cargo run --bin responses` |
+| Go | [responses/main.go](example-go/gateway/responses/main.go) | `go run ./gateway/responses` |
+
+Set `NEARAI_API_KEY`. These examples leave field-level E2EE disabled; OHTTP can
+be enabled separately. Signature availability depends on successful Gateway
+receipt persistence. Streamed text remains provisional until verification succeeds.
 
 ## JavaScript (Node.js)
 

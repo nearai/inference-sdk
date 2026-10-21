@@ -31,7 +31,7 @@ the attestation socket to be reused.
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `InferenceClient` | `new InferenceClient(options)` | Chat Completions and System One with deployment and response verification; optional Chat E2EE. |
+| `InferenceClient` | `new InferenceClient(options)` | Chat Completions, Responses, and System One with deployment and response verification; optional Chat E2EE. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches model metadata, Gateway signatures, and attestation evidence. |
 | `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Not recommended for production. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
 | `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Not recommended for production. Fetches direct model attestations and signatures. |
@@ -53,9 +53,9 @@ the attestation socket to be reused.
 
 ## `InferenceClient`
 
-Provides `chat.completions.create()`, a reusable Chat `fetch` adapter,
-`systemone.create()`, and `verifyResponse(id)`. Supports streaming and
-non-streaming Chat Completions and non-streaming System One decisions.
+Provides `chat.completions.create()`, `responses.create()`, a reusable `fetch`
+adapter, `systemone.create()`, and `verifyResponse(id)`. Chat and Responses
+support JSON and streaming; System One uses non-streaming decisions.
 On a cache miss, the client fetches Gateway evidence, then verifies it and any
 required OHTTP evidence concurrently with model metadata retrieval and model
 attestation verification. All required checks must pass before the session is
@@ -69,6 +69,9 @@ and failed model verification reject the request without falling back to
 Gateway-only mode.
 See the [guide](./verification-guide.md#e2ee-scope-and-response-handling)
 for supported encryption fields and protocols.
+
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+semantics, streaming, and supported privacy options.
 
 ### Constructor options
 
@@ -85,7 +88,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
-| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
+| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat and Responses HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Requires model attestation. Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. An explicit `policy` or `verifiers.deployment` requires model attestation; quote/GPU verifier overrides alone do not. |

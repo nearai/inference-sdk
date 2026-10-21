@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,12 +62,14 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 	for _, framing := range []byte{1, 3} {
 		for _, scenario := range []struct {
 			name, method  string
+			path          string
 			status        int
 			length        string
 			empty         bool
 			informational int
 		}{
 			{name: "stream", method: "POST", status: 200},
+			{name: "responses", method: "POST", status: 200, path: "/v1/responses"},
 			{name: "fixed-length", method: "POST", status: 200, length: "48"},
 			{name: "32 informational", method: "POST", status: 200, informational: 32},
 			{name: "33 informational", method: "POST", status: 200, informational: 33},
@@ -85,6 +88,10 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					continue
 				}
 				t.Run(itoa(int(framing))+"/"+scenario.name+"/"+variant, func(t *testing.T) {
+					path := scenario.path
+					if path == "" {
+						path = "/v1/chat/completions"
+					}
 					pub, priv, e := hpke.KEM_X25519_HKDF_SHA256.Scheme().GenerateKeyPair()
 					if e != nil {
 						t.Fatal(e)
@@ -93,6 +100,12 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					config := append([]byte{1, 0, 32}, pubBytes...)
 					config = append(config, 0, 4, 0, 1, 0, 1)
 					reply := []byte("data: {\"id\":\"test\",\"choices\":[]}\n\ndata: [DONE]\n\n")
+					if scenario.name == "responses" {
+						reply, e = os.ReadFile("testdata/responses/response.sse")
+						if e != nil {
+							t.Fatal(e)
+						}
+					}
 					if scenario.empty {
 						reply = nil
 					}
@@ -145,7 +158,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 						if serverReadInt(t, bhttp) != 0 {
 							t.Error("request framing")
 						}
-						for _, want := range []string{scenario.method, "http", r.Host, "/v1/chat/completions"} {
+						for _, want := range []string{scenario.method, "http", r.Host, path} {
 							if got := string(serverReadVector(t, bhttp)); got != want {
 								t.Errorf("%q != %q", got, want)
 							}
@@ -231,7 +244,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					req, _ := http.NewRequest(scenario.method, server.URL+"/v1/chat/completions", strings.NewReader("sensitive"))
+					req, _ := http.NewRequest(scenario.method, server.URL+path, strings.NewReader("sensitive"))
 					req.Host = "other.example"
 					req.Header["Host"] = []string{"other.example"}
 					req.Header["hOsT"] = []string{"another.example"}
