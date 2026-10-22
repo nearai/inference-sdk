@@ -181,7 +181,7 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, failure("api.invalid_input", err)
 	}
-	if int64(len(body)) > c.maxBody {
+	if int64(len(body)) > c.maxBody || (c.responseTTL > 0 && int64(len(body)) > c.options.MaxReceiptCacheBytes) {
 		return result, failure("api.body_too_large", nil)
 	}
 	parsed, err := decodeObject(body)

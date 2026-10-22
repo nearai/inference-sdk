@@ -322,9 +322,23 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 	}
 }
 func TestSystemOneUsesResponseCacheBoundsAndCancellation(t *testing.T) {
-	c, _ := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) { o.MaxReceiptCacheBytes = 10 })
+	c, f := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) { o.MaxReceiptCacheBytes = 10 })
 	_, err := c.CreateSystemOne(context.Background(), systemOneRequest())
 	requireCode(t, err, "api.body_too_large")
+	if f.calls.Load() != 0 {
+		t.Fatal("sent a decision that cannot fit in the receipt cache")
+	}
+	zero := time.Duration(0)
+	c, f = systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) {
+		o.MaxReceiptCacheBytes = 10
+		o.ResponseTTL = &zero
+	})
+	if _, err := c.CreateSystemOne(context.Background(), systemOneRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if f.calls.Load() != 1 {
+		t.Fatal("receipt budget restricted a client with retention disabled")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = c.CreateSystemOne(ctx, systemOneRequest())

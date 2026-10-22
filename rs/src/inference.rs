@@ -362,6 +362,9 @@ impl InferenceClient {
         if body.len() > options.max_response_bytes {
             return Err(input("body", "request exceeds configured byte limit").into());
         }
+        if !options.response_cache_ttl.is_zero() && body.len() > options.max_receipt_cache_bytes {
+            return Err(input("body", "request exceeds configured cache byte limit").into());
+        }
         let value: Value = serde_json::from_slice(&body)
             .map_err(|_| input("systemone", "expected JSON object"))?;
         if !value.is_object() || value.get("stream").is_some() {
@@ -650,6 +653,9 @@ impl InferenceClient {
         session: Arc<Session>,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
+        if options.response_cache_ttl.is_zero() {
+            return Ok(());
+        }
         let mut state = self.inner.state.lock().await;
         state
             .responses

@@ -1299,9 +1299,23 @@ async fn systemone_retained_receipts_follow_size_and_count_limits() {
 
     client.verify_response(&second.decision_id).await.unwrap();
 
-    let (_server, _, mut options) = setup(Fixture::default()).await;
+    let (_server, f, mut options) = setup(Fixture::default()).await;
     options.max_receipt_cache_bytes = 10;
-    let client = InferenceClient::with_options(options).unwrap();
+    let client = InferenceClient::with_options(options.clone()).unwrap();
 
     assert!(client.systemone_create(&systemone_request()).await.is_err());
+    assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
+
+    options.response_cache_ttl = Duration::ZERO;
+    let client = InferenceClient::with_options(options).unwrap();
+    let result = client.systemone_create(&systemone_request()).await.unwrap();
+    assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        client
+            .verify_response(&result.decision_id)
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
 }
