@@ -1300,7 +1300,7 @@ async fn systemone_retained_receipts_follow_size_and_count_limits() {
     client.verify_response(&second.decision_id).await.unwrap();
 
     let (_server, f, mut options) = setup(Fixture::default()).await;
-    options.max_receipt_cache_bytes = 10;
+    options.max_receipt_cache_bytes = serde_json::to_vec(&systemone_request()).unwrap().len();
     let client = InferenceClient::with_options(options.clone()).unwrap();
 
     assert!(client.systemone_create(&systemone_request()).await.is_err());

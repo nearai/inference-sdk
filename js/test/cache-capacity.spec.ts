@@ -314,7 +314,11 @@ describe('inference cache capacity', () => {
           expect(new TextEncoder().encode(body).byteLength).toBeLessThan(
             wireSize - 1,
           );
-          for (const limit of [wireSize - 1, wireSize]) {
+          for (const [limit, admitted] of [
+            [wireSize - 1, false],
+            [wireSize, limitName === 'maxBodyBytes'],
+            [wireSize + 1, true],
+          ] as const) {
             const client = new Client({
               e2ee: true,
               signingAlgo,
@@ -327,15 +331,14 @@ describe('inference cache capacity', () => {
               }),
             ).rejects.toMatchObject({
               failure: {
-                code:
-                  limit < wireSize
-                    ? 'api.body_too_large'
-                    : 'policy.model_attestation_required',
+                code: admitted
+                  ? 'policy.model_attestation_required'
+                  : 'api.body_too_large',
               },
             });
             // The fake session deliberately has no key; reaching that error shows
-            // exact-boundary requests passed sizing and invoked preflight.
-            expect(client.verified).toEqual(limit < wireSize ? [] : ['m']);
+            // the request passed sizing and invoked preflight.
+            expect(client.verified).toEqual(admitted ? ['m'] : []);
           }
         },
       );
@@ -367,9 +370,9 @@ describe('inference cache capacity', () => {
         const wireSize = (await prepared.request.arrayBuffer()).byteLength;
         expect(wireSize).toBeLessThan(inputSize);
         for (const [maxBodyBytes, maxReceiptCacheBytes, admitted] of [
-          [inputSize, wireSize, true],
-          [inputSize, wireSize - 1, false],
-          [inputSize - 1, wireSize, false],
+          [inputSize, wireSize + 1, true],
+          [inputSize, wireSize, false],
+          [inputSize - 1, wireSize + 1, false],
         ] as const) {
           const client = new Client({
             e2ee: true,

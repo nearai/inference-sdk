@@ -496,7 +496,8 @@ export abstract class VerifiedInferenceClientBase<
   protected responseByteLimit(requestSize: number): number {
     requireBodySize(requestSize, this.maxBodyBytes);
     if (this.responseCacheTimeToLiveMs === 0) return this.maxBodyBytes;
-    requireBodySize(requestSize, this.maxReceiptCacheBytes);
+    if (requestSize >= this.maxReceiptCacheBytes)
+      throw new ApiError({ code: 'api.body_too_large' });
     return Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes - requestSize);
   }
 
