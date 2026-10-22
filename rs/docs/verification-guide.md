@@ -355,8 +355,8 @@ The built-in verifiers use these defaults:
 
 | Service | URL |
 | --- | --- |
-| PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 To use your own services, construct verifiers with custom URLs:

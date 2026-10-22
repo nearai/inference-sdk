@@ -346,8 +346,8 @@ Gateway `reported_quote_data` is required.
 | `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
 | `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA verifier. Accepts a complete GPU evidence POST URL. `with_client` accepts a `reqwest::Client`. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
-| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://cloud.near.ai/api/proxy/pccs` |
-| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
+| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,

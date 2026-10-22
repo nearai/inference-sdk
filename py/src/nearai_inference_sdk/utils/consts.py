@@ -1,3 +1,3 @@
-INTEL_PCCS_API_URL = 'https://cloud.near.ai/api/proxy/pccs'
+INTEL_PCCS_API_URL = 'https://api.trustedservices.intel.com'
 
-NVIDIA_GPU_VERIFIER_API_URL = 'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu'
+NVIDIA_GPU_VERIFIER_API_URL = 'https://nras.attestation.nvidia.com/v3/attest/gpu'

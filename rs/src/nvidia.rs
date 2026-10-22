@@ -11,7 +11,7 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu";
+pub const DEFAULT_NVIDIA_NRAS_URL: &str = "https://nras.attestation.nvidia.com/v3/attest/gpu";
 pub const DEFAULT_NVIDIA_JWKS_URL: &str =
     "https://nras.attestation.nvidia.com/.well-known/jwks.json";
 const NVIDIA_ISSUER: &str = "https://nras.attestation.nvidia.com";
@@ -383,11 +383,11 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_near_ai_nras_proxy_and_official_jwks_by_default() {
+    fn uses_the_official_nras_and_jwks_endpoints_by_default() {
         let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
             verifier.url,
-            "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"
+            "https://nras.attestation.nvidia.com/v3/attest/gpu"
         );
         assert_eq!(
             verifier.jwks_url,

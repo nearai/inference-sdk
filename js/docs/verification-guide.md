@@ -221,13 +221,14 @@ const client = new InferenceClient({
 
 ## Configure attestation service URLs
 
-In browsers and Node.js, the built-in verifiers use these defaults:
+Browser verification uses NEAR AI's proxies for PCCS and NRAS. Node.js uses
+Intel and NVIDIA directly. The built-in verifiers use these defaults:
 
-| Service | URL |
-| --- | --- |
-| PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
-| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+| Service | Browser | Node.js |
+| --- | --- | --- |
+| PCCS base | `https://cloud.near.ai/api/proxy/pccs` | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 To use your own services, pass verifier callbacks with custom URLs:
 

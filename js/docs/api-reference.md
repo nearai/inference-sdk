@@ -569,7 +569,8 @@ the provider signature no longer matches the client-visible bytes.
 
 Both factories return callbacks for the existing `verifiers` parameter. They
 retain the built-in verification checks and accept custom service or proxy URLs.
-Defaults are the same in browsers and Node.js.
+PCCS and NRAS default to NEAR AI's proxies in browsers and the official services
+in Node.js. NVIDIA signing keys use the official JWKS URL in both runtimes.
 
 | Function | Parameter type | Returns |
 | --- | --- | --- |
@@ -578,8 +579,8 @@ Defaults are the same in browsers and Node.js.
 
 | Parameter type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
-| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | Complete GPU evidence POST URL. |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | NEAR AI proxy (browser); Intel PCS (Node.js) | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | NEAR AI proxy (browser); NVIDIA NRAS (Node.js) | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
@@ -587,7 +588,7 @@ nonce. `verifyModelAttestation` additionally binds that nonce to
 `clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
 The expected NVIDIA issuer remains fixed when either URL changes.
 See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
-for custom URLs.
+for default URLs and custom configuration.
 
 ## Policies and verifier callbacks
 

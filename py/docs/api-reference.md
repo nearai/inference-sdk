@@ -499,8 +499,8 @@ arguments are independent of `AttestationClient.base_url`.
 
 | Factory | Argument | Default | Description |
 | --- | --- | --- | --- |
-| `create_tdx_quote_verifier` | `pccs_url: str` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL. |
-| `create_gpu_evidence_verifier` | `nras_url: str` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | Complete GPU evidence POST URL. |
+| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` | PCCS base URL. |
+| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Complete GPU evidence POST URL. |
 | | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent signing-key URL. |
 
 DCAP constructs SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is
