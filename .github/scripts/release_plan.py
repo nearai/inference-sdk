@@ -72,14 +72,12 @@ def plan_release(root: Path, inputs: dict) -> dict:
             )
         packages[language] = {
             "version": package_version,
-            "tag": f"go/v{package_version}"
-            if language == "go"
-            else f"{language}-v{package_version}",
+            "tag": f"go/v{package_version}" if language == "go" else f"v{version}",
         }
 
     return {
         "languages": languages,
-        "registry-languages": [language for language in languages if language != "go"],
+        "release-tag": f"v{version}",
         "packages": packages,
         "prerelease": prerelease is not None,
         "npm-tag": "next" if prerelease is not None else "latest",
@@ -102,7 +100,8 @@ def main() -> None:
             )
             print(f"{name}={encoded}", file=output)
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-        print("| SDK | Package version | Release tag |", file=summary)
+        print(f"GitHub Release: `{plan['release-tag']}`\n", file=summary)
+        print("| SDK | Package version | Source tag |", file=summary)
         print("| --- | --- | --- |", file=summary)
         for language, package in plan["packages"].items():
             print(

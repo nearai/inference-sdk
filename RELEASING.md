@@ -5,12 +5,16 @@ SDKs from the same commit. Check the languages to publish and enter one shared
 version. Pushing a tag does not start the workflow; for Go, the tag itself makes
 the module installable.
 
-| Language checkbox | Registry package | Version source | Release tag |
-| --- | --- | --- | --- |
-| `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` | `javascript-v<version>` |
-| `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` | `python-v<version>` |
-| `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` | `rust-v<version>` |
-| `go` | Go proxy: `github.com/nearai/inference-sdk/go` | Workflow input | `go/v<version>` |
+| Language checkbox | Registry package | Version source |
+| --- | --- | --- |
+| `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` |
+| `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` |
+| `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` |
+| `go` | Go proxy: `github.com/nearai/inference-sdk/go` | Workflow input |
+
+Each version has one GitHub Release tagged `v<version>`, with the selected SDKs,
+their package versions, and the source commit in its notes. Go also uses
+`go/v<version>` for its module, without a separate GitHub Release.
 
 Enter SemVer without `v`, such as `0.2.0` or `0.2.0-rc.1`, including when only
 Python is selected. JavaScript, Rust, and Go use that version directly; Python
@@ -98,14 +102,16 @@ The workflow:
    All selected checks must pass before any tag creation or publication.
    Ordinary PR and push CI still checks all four languages without contacting
    the service.
-3. Creates package-specific tags at the run's commit and draft GitHub Releases.
-   Existing tags must point to that same commit.
+3. Creates the shared `v<version>` tag at the run's commit and one draft GitHub
+   Release. Existing tags must point to that same commit, and an existing draft
+   must match the selected SDKs and their package versions.
 4. Rechecks remote tags and publishes the selected packages in parallel, using
-   the `release` environment. For Go this environment gates step 3, since its
-   tag publishes the module; step 4 verifies a fresh public-proxy consumer instead.
+   the `release` environment. For Go, this creates `go/v<version>` and verifies
+   a fresh public-proxy consumer after environment approval.
    Published versions are not automatically skipped.
-5. Rechecks tags and makes the GitHub Releases public for successful packages,
-   even if another publisher failed. The summary lists each package's result.
+5. Makes the combined GitHub Release public only after every selected package
+   succeeds and the tags and release plan still match. Otherwise it stays a draft.
+   The summary lists each package's result.
 
 Prereleases are marked as such on GitHub. npm prereleases use the `next`
 dist-tag, while stable versions use `latest`; candidates do not replace the
@@ -120,11 +126,9 @@ Configure the `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` repository secrets
 for the live release checks. See [Live E2E configuration](e2e/README.md#configuration).
 
 Create a GitHub Actions environment named `release`, restrict deployments to
-the default branch, and optionally add required reviewers. Add a tag ruleset for
-`javascript-v*`, `python-v*`, `rust-v*`, and `go/v*` that restricts updates and deletions, without
-blocking creation by the release workflow. A draft GitHub release does not prevent
-its tag from being changed;
-these rules prevent changes between the workflow's tag check and publication.
+the default branch, and optionally add required reviewers. Add tag rulesets for
+`v*` and `go/v*` that allow the workflow to create tags and block later updates
+or deletions.
 Configure trusted publishing for each registry you intend to use:
 
 | Setting | Value |
@@ -152,19 +156,22 @@ Registry setup guides: [npm](https://docs.npmjs.com/trusted-publishers/),
 ## Retry a failed release
 
 Check the failed job and whether the registry accepted the upload before
-retrying. Keep the package tag and draft release. Rerunning failed jobs in the
+retrying. Keep the tags and draft release. Rerunning failed jobs in the
 original workflow run keeps the same source commit and inputs even if `main`
 has advanced.
 
-A batch can partially succeed because the registries publish independently.
+A batch can partially succeed because the registries publish independently;
+keeping the GitHub Release in draft does not hide or roll back uploaded packages.
 Use **Re-run failed jobs** in the original run so successful package uploads are
-not repeated. GitHub Release finalization can safely repeat for packages already
-completed by that run. Avoid **Re-run all jobs** or starting a fresh batch with
-the same published versions.
+not repeated. This also reruns the finalization job after the remaining packages
+succeed. The source commit and SDK selection are fixed for that version; a new
+dispatch with a different plan is rejected. Avoid **Re-run all jobs** or starting
+a fresh batch with the same published versions.
 
 - If the upload did not reach the registry, fix the cause and rerun failed jobs.
 - If the package job succeeded and only GitHub Release publication failed,
-  rerun failed jobs to finish the release without repeating the upload.
+  rerun failed jobs to finish the release without repeating the upload. If the
+  release was already made public, finalization leaves it unchanged.
 - If the upload was accepted but the package job failed, or a Python upload is
   partial, check the registry artifacts against the original build and finish
   recovery manually. The workflow does not skip existing versions or repair
@@ -188,16 +195,14 @@ checks, CGO-disabled builds, examples, embedded WASM reproduction, and staging
 and production live E2E. The `release` environment gates tag creation, because
 creating `go/vX.Y.Z` publishes the Go module immediately.
 
-The workflow creates the tag at its validated commit, creates a draft GitHub
-release, and checks public-proxy availability and a fresh CGO-disabled consumer.
+The workflow creates the module tag at its validated commit and checks
+public-proxy availability and a fresh CGO-disabled consumer.
 It confirms the proxy source commit, initializes the public client, and exercises
-the packaged verifier before publishing the GitHub release. RC versions produce
-pre-releases. Go releases do not replace the repository's latest release marker.
+the packaged verifier before the combined GitHub Release can be published.
 
 If post-tag verification fails, the module tag is already public; leave it
 immutable. Rerun the failed jobs to retry proxy verification against the same
-commit and draft release. A tag pointing at another commit or an already
-published GitHub release is rejected. Code changes require a new version.
+commit. Code changes require a new version.
 
 No registry token or native-library upload is needed. Consumers install with:
 
