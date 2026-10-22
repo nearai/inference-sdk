@@ -1,41 +1,38 @@
 # Releasing
 
-Use the **Publish packages** GitHub Actions workflow to release one or more
-SDKs from the same commit. Check the languages to publish and enter one shared
-version. Pushing a tag does not start the workflow; for Go, the tag itself makes
-the module installable.
+Use the **Publish packages** GitHub Actions workflow to release all four SDKs
+from the same commit with one shared version. Patch releases also publish all
+four SDKs, even when the fix affects only one language.
 
-| Language checkbox | Registry package | Version source |
+| SDK | Registry package | Version source |
 | --- | --- | --- |
-| `javascript` | npm: `@nearai/inference-sdk` | `js/package.json` |
-| `python` | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` |
-| `rust` | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` |
-| `go` | Go proxy: `github.com/nearai/inference-sdk/go` | Workflow input |
+| JavaScript | npm: `@nearai/inference-sdk` | `js/package.json` |
+| Python | PyPI: `nearai-inference-sdk` | `py/pyproject.toml` |
+| Rust | crates.io: `nearai-inference-sdk` | `rs/Cargo.toml` |
+| Go | Go proxy: `github.com/nearai/inference-sdk/go` | Workflow input |
 
-Each version has one GitHub Release tagged `v<version>`, with the selected SDKs,
+Each version has one GitHub Release tagged `v<version>`, with all four SDKs,
 their package versions, and the source commit in its notes. Go also uses
 `go/v<version>` for its module, without a separate GitHub Release.
 
-Enter SemVer without `v`, such as `0.2.0` or `0.2.0-rc.1`, including when only
-Python is selected. JavaScript, Rust, and Go use that version directly; Python
-converts `0.2.0-rc.1` to `0.2.0rc1`. Python also maps `-alpha.N` to `aN` and
-`-beta.N` to `bN`; other SemVer prerelease labels require Python to be unchecked.
+Enter SemVer without `v`, such as `0.2.0` or `0.2.0-rc.1`. JavaScript, Rust, and
+Go use that version directly; Python converts `0.2.0-rc.1` to `0.2.0rc1`.
+Python also maps `-alpha.N` to `aN` and
+`-beta.N` to `bN`. These are the supported prerelease formats.
 
-Each selected manifest must already match its resolved package version. Update
-versions and lockfiles in a preparation PR; the workflow validates them without
-editing them. Go has no package version field. Go major versions >=2 require a
-new module path first. Unchecked SDKs are not released and may have other versions.
+Each manifest must already match its resolved package version; the workflow
+validates versions without editing them. Go has no package version field.
+Go major versions >=2 require a new module path first.
 
 ## Prepare a release
 
-1. Update each selected package's manifest and its lockfile as needed in a PR.
-   Go has no version field; prepare code and documentation changes as needed.
+1. Update the JavaScript, Python, and Rust manifests and lockfiles in a PR.
 2. Run their checks and inspect the package contents using the commands below.
 3. Merge the release preparation into the default branch (`main`).
 
 Use Node.js 24 and pnpm 11.24.0 for JavaScript, Python 3.12 with uv for Python,
-and a current stable Rust toolchain for Rust. Run the commands for the SDK being
-released from the repository root.
+and a current stable Rust toolchain for Rust. Run each set of commands from the
+repository root.
 
 ### JavaScript
 
@@ -76,41 +73,31 @@ changes. Commit those changes and repeat without that flag before publication.
 
 ## Run the workflow
 
-In GitHub, open **Actions → Publish packages → Run workflow**. Select `main`,
-check at least one of `javascript`, `python`, `rust`, and `go`, and enter the shared
-version. All checkboxes default to unchecked. For example, after merging version
-bumps to `0.2.0-rc.1` for JavaScript/Rust and `0.2.0rc1` for Python:
+In GitHub, open **Actions → Publish packages → Run workflow**. Select `main`
+and enter the shared version. For example, after merging version bumps to
+`0.2.0-rc.1` for JavaScript/Rust and `0.2.0rc1` for Python:
 
 ```sh
 gh workflow run release.yml --repo nearai/inference-sdk --ref main \
-  -F javascript=true -F python=true -F rust=true -F go=true \
   -f version=0.2.0-rc.1
-```
-
-To publish only Python `0.2.0rc1`:
-
-```sh
-gh workflow run release.yml --repo nearai/inference-sdk --ref main \
-  -F python=true -f version=0.2.0-rc.1
 ```
 
 The workflow:
 
-1. Requires the default branch, validates every selected package version, and
+1. Requires the default branch, validates every package version, and
    shows the resolved versions and tags in the run summary.
-2. Runs CI and live E2E against both STG and PRD for each selected language.
-   All selected checks must pass before any tag creation or publication.
+2. Runs CI and live E2E against both STG and PRD for all four languages.
+   All checks must pass before any tag creation or publication.
    Ordinary PR and push CI still checks all four languages without contacting
    the service.
 3. Creates the shared `v<version>` tag at the run's commit and one draft GitHub
-   Release. Existing tags must point to that same commit, and an existing draft
-   must match the selected SDKs and their package versions.
-4. Rechecks remote tags and publishes the selected packages in parallel, using
+   Release. Existing tags must point to that same commit.
+4. Rechecks remote tags and publishes all four packages in parallel, using
    the `release` environment. For Go, this creates `go/v<version>` and verifies
    a fresh public-proxy consumer after environment approval.
    Published versions are not automatically skipped.
-5. Makes the combined GitHub Release public only after every selected package
-   succeeds and the tags and release plan still match. Otherwise it stays a draft.
+5. Makes the GitHub Release public only after every package succeeds and both
+   tags still point to the run's commit. Otherwise it stays a draft.
    The summary lists each package's result.
 
 Prereleases are marked as such on GitHub. npm prereleases use the `next`
@@ -129,7 +116,7 @@ Create a GitHub Actions environment named `release`, restrict deployments to
 the default branch, and optionally add required reviewers. Add tag rulesets for
 `v*` and `go/v*` that allow the workflow to create tags and block later updates
 or deletions.
-Configure trusted publishing for each registry you intend to use:
+Configure trusted publishing for npm, PyPI, and crates.io:
 
 | Setting | Value |
 | --- | --- |
@@ -140,8 +127,7 @@ Configure trusted publishing for each registry you intend to use:
 
 For npm, configure `@nearai/inference-sdk` and allow direct `npm publish`.
 For PyPI and crates.io, configure `nearai-inference-sdk`. The workflow uses
-short-lived OIDC credentials rather than long-lived registry tokens. Only the
-selected registries need to be configured for that release.
+short-lived OIDC credentials rather than long-lived registry tokens.
 
 PyPI supports a pending trusted publisher before the first upload. npm and
 crates.io require an existing package to configure trusted publishing; if a
@@ -164,9 +150,8 @@ A batch can partially succeed because the registries publish independently;
 keeping the GitHub Release in draft does not hide or roll back uploaded packages.
 Use **Re-run failed jobs** in the original run so successful package uploads are
 not repeated. This also reruns the finalization job after the remaining packages
-succeed. The source commit and SDK selection are fixed for that version; a new
-dispatch with a different plan is rejected. Avoid **Re-run all jobs** or starting
-a fresh batch with the same published versions.
+succeed. The source commit is fixed for that version. Avoid **Re-run all jobs**
+or starting a fresh batch with the same published versions.
 
 - If the upload did not reach the registry, fix the cause and rerun failed jobs.
 - If the package job succeeded and only GitHub Release publication failed,
@@ -181,14 +166,14 @@ npm uploads also check that the candidate will not move `latest` or `next`
 backward. A version comparison or registry lookup failure stops publication.
 
 Published versions cannot be overwritten. If the fix changes package contents,
-prepare a new version instead of moving its tag. After publication, install the
-released package in a fresh project and verify its public imports.
+prepare a new shared version for all four SDKs instead of moving its tag. After
+publication, install each released package in a fresh project and verify its
+public imports.
 
 ## Go module
 
-Check `go` in **Publish packages**, run it from `main`, and enter the version
-without `v`. The module has no manifest version to bump. Update documentation or
-code in a reviewed PR as needed, then merge it before starting the workflow.
+Go is published with the other SDKs. Its `go/v<version>` tag makes the module
+installable; pushing a tag does not start the release workflow.
 
 Before publishing, the workflow runs Go formatting, vet, race tests, Linux/macOS
 checks, CGO-disabled builds, examples, embedded WASM reproduction, and staging
@@ -198,7 +183,7 @@ creating `go/vX.Y.Z` publishes the Go module immediately.
 The workflow creates the module tag at its validated commit and checks
 public-proxy availability and a fresh CGO-disabled consumer.
 It confirms the proxy source commit, initializes the public client, and exercises
-the packaged verifier before the combined GitHub Release can be published.
+the packaged verifier before the GitHub Release can be published.
 
 If post-tag verification fails, the module tag is already public; leave it
 immutable. Rerun the failed jobs to retry proxy verification against the same

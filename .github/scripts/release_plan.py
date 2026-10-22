@@ -1,4 +1,4 @@
-"""Validate a batch release and resolve each SDK's package version."""
+"""Validate a shared release and resolve all four SDK package versions."""
 
 import json
 import os
@@ -8,34 +8,20 @@ from pathlib import Path
 
 LANGUAGES = ("javascript", "python", "rust", "go")
 NUMBER = r"(?:0|[1-9][0-9]*)"
-IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
-SEMVER = re.compile(
-    rf"({NUMBER}\.{NUMBER}\.{NUMBER})(?:-({IDENTIFIER}(?:\.{IDENTIFIER})*))?"
-)
+SEMVER = re.compile(rf"({NUMBER}\.{NUMBER}\.{NUMBER})(?:-(alpha|beta|rc)\.({NUMBER}))?")
 
 
-def plan_release(root: Path, inputs: dict) -> dict:
-    languages = [language for language in LANGUAGES if inputs.get(language, False)]
-    if not languages:
-        raise ValueError("Select at least one SDK to publish.")
-
-    version = inputs["version"]
+def plan_release(root: Path, version: str) -> dict:
     match = SEMVER.fullmatch(version)
     if match is None:
         raise ValueError(
-            "Use X.Y.Z or a SemVer prerelease such as X.Y.Z-rc.1, without v."
+            "Use X.Y.Z or X.Y.Z-alpha.N, X.Y.Z-beta.N, or X.Y.Z-rc.N, without v."
         )
-    base, prerelease = match.groups()
+    base, phase, number = match.groups()
     packages = {}
-    for language in languages:
+    for language in LANGUAGES:
         package_version = version
-        if language == "python" and prerelease is not None:
-            python_pre = re.fullmatch(rf"(alpha|beta|rc)\.({NUMBER})", prerelease)
-            if python_pre is None:
-                raise ValueError(
-                    "Python prereleases require X.Y.Z-alpha.N, X.Y.Z-beta.N, or X.Y.Z-rc.N."
-                )
-            phase, number = python_pre.groups()
+        if language == "python" and phase is not None:
             package_version = (
                 base + {"alpha": "a", "beta": "b", "rc": "rc"}[phase] + number
             )
@@ -76,21 +62,20 @@ def plan_release(root: Path, inputs: dict) -> dict:
         }
 
     return {
-        "languages": languages,
         "release-tag": f"v{version}",
         "packages": packages,
-        "prerelease": prerelease is not None,
-        "npm-tag": "next" if prerelease is not None else "latest",
+        "prerelease": phase is not None,
+        "npm-tag": "next" if phase is not None else "latest",
     }
 
 
 def main() -> None:
     try:
-        plan = plan_release(Path.cwd(), json.loads(os.environ["RELEASE_INPUTS"]))
+        plan = plan_release(Path.cwd(), os.environ["RELEASE_VERSION"])
     except ValueError as error:
         raise SystemExit(str(error)) from error
 
-    # Write outputs only after every selected package has passed validation.
+    # Write outputs only after every package has passed validation.
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for name, value in plan.items():
             encoded = (
