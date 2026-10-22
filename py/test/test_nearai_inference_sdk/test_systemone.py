@@ -692,10 +692,20 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     assert len(gateway.requests) == 1
 
 
-async def test_decision_body_uses_configured_receipt_byte_limit(monkeypatch):
+@pytest.mark.parametrize(
+    ('budget', 'sent'),
+    [
+        (len(json.dumps(REQUEST).encode()) - 1, 0),
+        (len(json.dumps(REQUEST).encode()), 0),
+        (500, 1),
+    ],
+)
+async def test_decision_body_uses_configured_receipt_byte_limit(
+    monkeypatch, budget, sent
+):
     gateway = DecisionGateway()
     gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False, max_receipt_cache_bytes=500) as client:
+    async with gateway.client(e2ee=False, max_receipt_cache_bytes=budget) as client:
         with pytest.raises(ApiError, match='api.body_too_large'):
             await client.systemone.create(REQUEST)
-        assert len(gateway.requests) == 1
+        assert len(gateway.requests) == sent

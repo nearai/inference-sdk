@@ -590,7 +590,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         require_body_size(request_size, self._max_body_bytes)
         if self._response_ttl == 0:
             return self._max_body_bytes
-        require_body_size(request_size, self._max_receipt_cache_bytes)
+        if request_size >= self._max_receipt_cache_bytes:
+            raise api_failure('api.body_too_large')
         return min(self._max_body_bytes, self._max_receipt_cache_bytes - request_size)
 
     def _evict_response(self, id: str) -> None:
