@@ -1,5 +1,7 @@
 const isNode =
-  typeof process !== 'undefined' && Boolean(process.versions?.node);
+  typeof window === 'undefined' &&
+  typeof process !== 'undefined' &&
+  Boolean(process.versions?.node);
 
 export const INTEL_PCCS_API_URL = isNode
   ? 'https://api.trustedservices.intel.com'
