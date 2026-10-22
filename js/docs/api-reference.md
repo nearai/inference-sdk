@@ -113,8 +113,8 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat or System One response. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `VerifiedCompletionResult.completionId` | `string` | Chat completion ID or System One decision ID whose signature was verified. Preserved for existing Chat consumers. |
-| `VerifiedCompletionResult.id` | `string \| undefined` | Alias of `completionId`, always populated by SDK clients; optional in the public type for existing custom verifiers. |
+| `VerifiedCompletionResult.id` | `string` | Chat completion ID or System One decision ID whose signature was verified. |
+| `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the selected Chat signer or a System One fleet signer. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
@@ -245,6 +245,7 @@ There is no `gatewayVerification` option.
 | `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
 | `id` | `string` | Verified response ID. |
+| `completionId` | `string` | Deprecated alias of `id`. |
 | `signatureKind` | `'provider_tee'` | Direct responses use model signatures. |
 | `signature` | `CompletionSignature` | Verified signature record. |
 | `attestations` | `readonly VerifiedDirectModelAttestation[]` | All verified attestations sharing the selected model signer, which must match the response signature. |

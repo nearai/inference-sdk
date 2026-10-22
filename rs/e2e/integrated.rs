@@ -1,5 +1,5 @@
 //! Real Gateway coverage for the integrated transport; never use mock verifiers.
-use super::{read_completion_id, required_env, LiveModel};
+use super::{read_completion_id, required_env, select_models, LiveModel};
 use nearai_inference_sdk::{
     CompletionSignatureKind, GatewayTlsBinding, GpuEvidenceStatus, InferenceClient,
     InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
@@ -36,13 +36,7 @@ async fn verify_models(
     signing_algo: SigningAlgo,
     ohttp: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
-    let models: Vec<_> = models
-        .into_iter()
-        .filter(|model| model.endpoint == "chat")
-        .collect();
-
-    assert!(!models.is_empty(), "Expected representative Chat models");
+    let models = select_models(&required_env("NEARAI_E2E_MODELS")?, "chat")?;
     let selected: Vec<_> = if e2ee || ohttp {
         vec![models
             .iter()

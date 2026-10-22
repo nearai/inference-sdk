@@ -282,7 +282,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
-	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
+	if id == "" || id == "." || id == ".." {
 		return sig, failure("api.invalid_input", nil)
 	}
 	q, e := optionsQuery(FetchOptions{SigningAlgo: algo})

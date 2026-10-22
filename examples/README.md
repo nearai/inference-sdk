@@ -145,11 +145,13 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
+| `gateway/jev.py` | System One decisions; verifies the receipt before displaying answers. |
 
 Gateway and direct Chat client examples explicitly enable E2EE; both clients default to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
 `'ed25519'` to `'ecdsa'` to use ECDSA throughout the workflow. The integrated
-client caches attestations for 60 minutes per model and retains response records for
+client shares its 60-minute per-model attestation cache across `verify()`, Chat,
+and System One calls and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
 Gateway image policies listed above; they do not check model runtime images.
 
@@ -168,17 +170,25 @@ Requires Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
 Direct examples share the JavaScript clients' experimental limitations above.
 For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
 
+For the decision example, set `NEARAI_SYSTEMONE_MODEL` to a decision model
+from your endpoint's catalog, then run `uv run python gateway/jev.py`.
+`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
+ECDSA or `NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
+are Ed25519 and Gateway receipts. See the
+[System One guide](../py/docs/verification-guide.md#system-one-decisions) for API usage.
+
 ## Rust
 
 Uses the `nearai-inference-sdk` crate, imported as `nearai_inference_sdk`.
 
-Gateway and direct examples both cover JSON and SSE, with explicit receipt
+Gateway and direct Chat examples both cover JSON and SSE, with explicit receipt
 verification after consuming the full HTTP response. Set `ALGO` in
 `src/lib.rs` to `SigningAlgo::Ecdsa` to use ECDSA throughout.
 
 | File | Usage | E2EE |
 | --- | --- | --- |
 | `src/gateway/bare.rs` | Standalone Gateway/model verification, Gateway image provenance, pinned Chat TLS, encrypted JSON/SSE, and exact ciphertext receipt verification. | Enabled |
+| [`src/bin/systemone.rs`](example-rs/src/bin/systemone.rs) | Structured decisions with verified receipts. | Disabled |
 | `src/gateway/client.rs` | Integrated Gateway client with the same four Gateway image policies, default TLS pinning, JSON/SSE, and `verify_response(id)`. | Enabled |
 | `src/direct/bare.rs` | Experimental standalone verification of every supplied direct model report and exact response bytes. | Plaintext over HTTPS |
 | `src/direct/client.rs` | Experimental integrated direct verification, encrypted JSON/SSE, and receipts from the selected model signer. | Enabled |
@@ -192,6 +202,11 @@ cargo run --bin gateway-client
 cargo run --bin direct-bare
 cargo run --bin direct-client
 ```
+
+For the decision example, set `NEARAI_API_KEY`, `NEARAI_BASE_URL`, and
+`NEARAI_SYSTEMONE_MODEL`, then run `cargo run --locked --bin systemone` from
+`examples/example-rs`. It prints answers after receipt verification succeeds.
+See the [guide](../rs/docs/verification-guide.md#verify-system-one-decisions) for API usage.
 
 `cargo run` and `cargo run --bin client` remain aliases for the Gateway bare and
 client examples. Gateway examples use the four image policies listed above;

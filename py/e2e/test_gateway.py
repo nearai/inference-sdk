@@ -2,15 +2,13 @@
 
 import asyncio
 import json
-import os
-from collections.abc import Awaitable, Callable
 
 import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
+from e2e.helpers import required_env, retry_receipt, selected_models
 from nearai_inference_sdk import (
-    ApiError,
     AttestationClient,
     InferenceClient,
     ModelAttestationPolicy,
@@ -41,7 +39,7 @@ from nearai_inference_sdk import (
 async def test_inference_client_verifies_json_and_streams(
     e2ee: bool, signing_algo: SigningAlgo, ohttp: bool
 ) -> None:
-    model = selected_models('near')[0]
+    model = selected_models('chat', 'near')[0]
     async with (
         asyncio.timeout(180),
         InferenceClient(
@@ -66,7 +64,7 @@ async def test_inference_client_verifies_json_and_streams(
 @pytest.mark.asyncio
 @pytest.mark.parametrize('provider', ['chutes', 'external'])
 async def test_inference_client_verifies_gateway_only_receipts(provider: str) -> None:
-    for model in selected_models(provider):
+    for model in selected_models('chat', provider):
         async with (
             asyncio.timeout(180),
             InferenceClient(
@@ -89,7 +87,7 @@ async def test_inference_client_verifies_gateway_only_receipts(provider: str) ->
 async def test_openai_sdk_uses_the_verified_http_client() -> None:
     api_key = required_env('NEARAI_API_KEY')
     base_url = required_env('NEARAI_BASE_URL')
-    model = selected_models('near')[0]
+    model = selected_models('chat', 'near')[0]
     async with (
         asyncio.timeout(180),
         InferenceClient(
@@ -176,7 +174,7 @@ async def verify_client_chat(
 async def test_gateway_chat_receipt(
     signing_algo: SigningAlgo, stream: bool, provider: str
 ) -> None:
-    for model in selected_models(provider):
+    for model in selected_models('chat', provider):
         print(f'{provider}: {model}, {signing_algo}, stream={stream}')
         async with asyncio.timeout(180):
             await verify_chat(model, provider, signing_algo, stream)
@@ -262,18 +260,6 @@ async def verify_chat(
             verify_gateway_response(request_body, altered, signature, gateway)
 
 
-async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
-    # Retry receipt propagation only. Never repeat Chat or cryptographic checks.
-    for delay in (0.5, 1, 2, 4):
-        try:
-            return await lookup()
-        except ApiError as error:
-            if not error.retryable:
-                raise
-        await asyncio.sleep(delay)
-    return await lookup()
-
-
 def read_completion_id(response_body: bytes, stream: bool) -> str:
     if not stream:
         completion = json.loads(response_body)
@@ -310,21 +296,3 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     )
     assert content.strip(), 'Expected non-empty Chat content'
     return completion_id
-
-
-def required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f'{name} is required for live E2E tests')
-    return value
-
-
-def selected_models(provider: str) -> list[str]:
-    selected = json.loads(required_env('NEARAI_E2E_MODELS'))
-    models = [
-        model['id']
-        for model in selected
-        if model['endpoint'] == 'chat' and model['provider'] == provider
-    ]
-    assert models, f'Expected {provider} models from the catalog'
-    return models
