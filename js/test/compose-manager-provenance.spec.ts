@@ -468,6 +468,45 @@ describe('Compose Manager deployment image provenance', () => {
     },
   );
 
+  test.each(['missing', 'different'])(
+    'rejects %s manager evidence in the serving entry',
+    async (kind) => {
+      const report = managerReport();
+      const serving = {
+        ...createModelAttestation({
+          composeManagerAttestation: { ...report, intelQuote: 'invalid' },
+        }),
+        modelName: 'glm-5.2',
+      };
+
+      await expect(
+        verifyDirectModelAttestations({
+          servingAttestation: serving,
+          attestations: [
+            {
+              ...serving,
+              composeManagerAttestation:
+                kind === 'missing' ? undefined : report,
+            },
+          ],
+          clientBinding: { nonce },
+          verifiers: {
+            tdxQuote: (quote) =>
+              quote === 'bb' ? managerQuote(report) : createModelQuote(),
+          },
+        }),
+      ).rejects.toMatchObject({
+        failure: {
+          code: 'input.invalid',
+          details: {
+            field: 'servingAttestation',
+            reason: 'not_in_attestation_set',
+          },
+        },
+      });
+    },
+  );
+
   test('applies manager provenance only to the serving report while verifying the whole set', async () => {
     const report = managerReport();
     const serving = {

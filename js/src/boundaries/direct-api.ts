@@ -36,7 +36,12 @@ export function decodeDirectModelAttestations(
   // The top-level report identifies the endpoint that answered this request.
   // The returned attestation set must contain that same evidence; do not infer it
   // from a shared signer or instance ID.
-  const servingIndex = findDirectModelAttestationIndex(attestations, root);
+  // Manager evidence belongs to the envelope, not individual wire reports.
+  const { composeManagerAttestation, ...modelReport } = root;
+  const servingIndex = findDirectModelAttestationIndex(
+    attestations,
+    modelReport,
+  );
   let servingAttestation = attestations[servingIndex];
   if (servingAttestation === undefined) {
     throw invalidCloudApiResponse({
@@ -47,10 +52,10 @@ export function decodeDirectModelAttestations(
   }
   // The top-level control-plane report belongs to the serving entry. Never
   // copy it to other CVMs merely because they share a model or signing key.
-  if (root.composeManagerAttestation !== undefined) {
+  if (composeManagerAttestation !== undefined) {
     servingAttestation = {
       ...servingAttestation,
-      composeManagerAttestation: root.composeManagerAttestation,
+      composeManagerAttestation,
     };
     attestations[servingIndex] = servingAttestation;
   }
