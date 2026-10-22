@@ -647,11 +647,17 @@ the same in both runtimes.
 | `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
 | `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
+|  | `clockToleranceSeconds?` | `number` | `0` | Non-negative future `iat`/`nbf` tolerance. Expired tokens are always rejected, including inside this window. |
+|  | `jwksCacheTtlMs?` | `number` | `0` | Non-negative JWKS cache lifetime; `0` disables caching. Each verifier instance owns its cache. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
 nonce. `verifyModelAttestation` additionally binds that nonce to
 `clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
 The expected NVIDIA issuer remains fixed when either URL changes.
+With caching enabled, concurrent calls share key retrieval. An unknown signing
+key triggers one refresh and retry; failed fetches are not cached. Reuse the
+verifier instance across replicas to share this cache. Strict time checks and
+uncached key retrieval remain the defaults.
 See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
 for routing and response-header requirements.
 

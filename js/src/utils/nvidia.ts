@@ -34,13 +34,49 @@ const NVIDIA_JWKS_URL = `${NVIDIA_ISSUER}/.well-known/jwks.json`;
 export function createGpuEvidenceVerifier({
   nrasUrl = NVIDIA_GPU_VERIFIER_API_URL,
   jwksUrl = NVIDIA_JWKS_URL,
+  clockToleranceSeconds = 0,
+  jwksCacheTtlMs = 0,
 }: CreateGpuEvidenceVerifierParams = {}): GpuEvidenceVerifier {
+  for (const [name, value] of Object.entries({
+    clockToleranceSeconds,
+    jwksCacheTtlMs,
+  })) {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new RangeError(`${name} must be a finite non-negative number`);
+    }
+  }
+  // Each verifier owns its cache, so separate trusted JWKS URLs cannot mix keys.
+  let cached: { resolver: NvidiaJwksResolver; expiresAt: number } | undefined;
+  let pending: Promise<NvidiaJwksResolver> | undefined;
+  const loadJwks = async (
+    refresh?: NvidiaJwksResolver,
+  ): Promise<NvidiaJwksResolver> => {
+    if (jwksCacheTtlMs === 0) return fetchNvidiaJwks(jwksUrl);
+    if (
+      cached &&
+      cached.expiresAt > Date.now() &&
+      cached.resolver !== refresh
+    ) {
+      return cached.resolver;
+    }
+    if (pending) return pending;
+    pending = fetchNvidiaJwks(jwksUrl);
+    try {
+      const resolver = await pending;
+      cached = { resolver, expiresAt: Date.now() + jwksCacheTtlMs };
+      return resolver;
+    } finally {
+      pending = undefined;
+    }
+  };
   return async (nvidiaPayload) =>
     nvidiaNrasVerifier({
       nvidiaPayload,
       nonce: decodeNvidiaPayloadNonce(nvidiaPayload),
       nrasUrl,
-      jwksUrl,
+      loadJwks,
+      clockToleranceSeconds,
+      refreshMissingKey: jwksCacheTtlMs > 0,
     });
 }
 
@@ -48,7 +84,9 @@ type NvidiaNrasVerifierParams = {
   nvidiaPayload: string;
   nonce: string;
   nrasUrl: string;
-  jwksUrl: string;
+  loadJwks: (refresh?: NvidiaJwksResolver) => Promise<NvidiaJwksResolver>;
+  clockToleranceSeconds: number;
+  refreshMissingKey: boolean;
 };
 
 /**
@@ -60,24 +98,39 @@ async function nvidiaNrasVerifier({
   nvidiaPayload,
   nonce,
   nrasUrl,
-  jwksUrl,
+  loadJwks,
+  clockToleranceSeconds,
+  refreshMissingKey,
 }: NvidiaNrasVerifierParams): Promise<void> {
   const [token, jwks] = await Promise.all([
     fetchNrasToken(nvidiaPayload, nrasUrl),
-    fetchNvidiaJwks(jwksUrl),
+    loadJwks(),
   ]);
   let payload: unknown;
   try {
     const verified = await jwtVerify(
       token,
-      (header, signature) => {
+      async (header, signature) => {
         if (header.kid === undefined) throw jwtFailure('key_not_found');
-        return jwks(header, signature);
+        try {
+          return await jwks(header, signature);
+        } catch (cause) {
+          if (
+            !refreshMissingKey ||
+            !(cause instanceof errors.JWKSNoMatchingKey)
+          )
+            throw cause;
+          // Retry a rotated key once. Concurrent replicas share this refresh.
+          const refreshed = await loadJwks(jwks);
+          return refreshed(header, signature);
+        }
       },
       {
         algorithms: ['ES384'],
         issuer: NVIDIA_ISSUER,
         requiredClaims: ['exp', 'nbf', 'iat'],
+        clockTolerance: clockToleranceSeconds,
+        currentDate: new Date(Date.now()),
       },
     );
     payload = verified.payload;
@@ -101,7 +154,11 @@ async function nvidiaNrasVerifier({
     throw jwtFailure('invalid_signature', cause);
   }
   const claims = decodeNrasOverallAttestationClaims(payload);
-  if (claims.iat > Date.now() / 1000) throw jwtFailure('not_yet_valid');
+  const now = Date.now() / 1000;
+  // JOSE's tolerance also covers exp; explicitly keep expiration fail-closed.
+  if (claims.exp <= now) throw jwtFailure('expired');
+  if (claims.iat > now + clockToleranceSeconds)
+    throw jwtFailure('not_yet_valid');
   const expectedNonce = nonce.replace(/^0x/i, '');
   if (
     !Buffer.from(claims.eat_nonce, 'hex').equals(

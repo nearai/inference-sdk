@@ -51,6 +51,10 @@ export type CreateGpuEvidenceVerifierParams = {
   readonly nrasUrl?: string;
   /** Public-key GET URL. Defaults to NVIDIA's JWKS. Use only a trusted proxy. */
   readonly jwksUrl?: string;
+  /** Allowed future iat/nbf skew in seconds. Defaults to 0; expiry stays strict. */
+  readonly clockToleranceSeconds?: number;
+  /** Per-verifier JWKS cache lifetime in milliseconds. Defaults to 0 (disabled). */
+  readonly jwksCacheTtlMs?: number;
 };
 
 export type DeploymentVerifier = (
