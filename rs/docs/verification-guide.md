@@ -2,7 +2,7 @@
 
 Use this SDK to verify NEAR AI Cloud deployments before requesting inference,
 then verify the receipt returned for a particular completion. Use `InferenceClient`
-for integrated verified Chat, or retain exact bytes yourself when using the
+for integrated verified inference, or retain exact bytes yourself when using the
 standalone verification functions.
 
 ## Integrated Chat client
@@ -10,7 +10,8 @@ standalone verification functions.
 The [README example](../README.md#send-and-verify-a-chat-completion) sends encrypted Chat and verifies
 its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
 `InferenceClientOptions` for a custom base URL, headers, encryption, policies,
-and cache settings. Only Chat Completions are accepted by `send`.
+and cache settings. `send` accepts Chat Completions and Gateway
+[Responses creation](#responses-api).
 The client owns authentication and forces `Accept-Encoding: identity` so captured
 bytes match the completion receipt, including when adapting an existing request.
 
@@ -61,7 +62,7 @@ Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP fina
 chunk authentication are part of verification. Dropping a partial stream leaves
 no verifiable receipt. Content delivered before `verify_response` succeeds is
 not yet signature-verified. `bytes()` and `json()` fully consume the body; use
-`json()` only for non-streaming Chat. Unlike an OpenAI SDK transport adapter,
+`json()` for JSON responses. Unlike an OpenAI SDK transport adapter,
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 

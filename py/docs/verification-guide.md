@@ -154,7 +154,8 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
 
 OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
 The client verifies the advertised OHTTP configuration against the attested
-Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
+Gateway signer. Missing or invalid OHTTP evidence prevents the inference request
+from being sent.
 The authenticated configuration is reused with the attestation cache.
 
 `e2ee` is independent and defaults to `False` for both clients.
@@ -166,8 +167,9 @@ JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
 `verify_response()` checks the inner request and response bodies before E2EE
 decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
 
-Only Chat uses OHTTP. Metadata, attestation, and signature requests keep their normal HTTP
-paths. The configured endpoint or proxy must serve `/ohttp` at its origin.
+Chat and Gateway Responses can use OHTTP. Metadata, attestation, and signature
+requests keep their normal HTTP paths. The configured endpoint or proxy must
+serve `/ohttp` at its origin.
 Authorization and explicitly configured custom headers are also sent on the
 outer request for authentication; OHTTP does not hide them or the client's
 network address from that endpoint.

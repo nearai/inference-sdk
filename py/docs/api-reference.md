@@ -119,7 +119,7 @@ the owner open while sending requests and verifying responses.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
-| `id` | `str` | ID supplied to `verify_response`, from Chat's `completion.id` or System One's `result.decision_id`. |
+| `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, or System One decision ID. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |

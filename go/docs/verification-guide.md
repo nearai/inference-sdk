@@ -165,8 +165,9 @@ func complete(ctx context.Context, client *nearai.InferenceClient, apiKey, model
 ```
 
 Use the configured `BaseURL` and HTTP client together. Disable OpenAI automatic
-retries to avoid replaying completion requests. This adapter supports Chat
-Completions only; use `AttestationClient` for evidence and metadata.
+retries to avoid replaying inference requests. This adapter supports Chat
+Completions and Gateway [Responses creation](#responses-api); use
+`AttestationClient` for evidence and metadata.
 
 ## Streaming
 

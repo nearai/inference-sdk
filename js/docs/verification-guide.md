@@ -77,8 +77,8 @@ const client = new InferenceClient({
 OHTTP is disabled by default and requires `signingAlgo: 'ed25519'` (the default).
 The client verifies the advertised OHTTP key configuration against the attested
 Gateway signer, or the serving model signer for a direct endpoint. Missing or
-invalid OHTTP evidence prevents Chat from being sent. The authenticated
-configuration is cached with the deployment verification result.
+invalid OHTTP evidence prevents the inference request from being sent. The
+authenticated configuration is cached with the deployment verification result.
 
 `e2ee` is independent and defaults to `false` for both clients.
 Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
@@ -86,8 +86,9 @@ encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
-Only Chat uses OHTTP; metadata, attestation, and signature requests keep their
-normal HTTP paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
+Chat and Gateway Responses can use OHTTP; metadata, attestation, and signature
+requests keep their normal HTTP paths. Your endpoint or proxy must support
+`/ohttp` at the configured origin.
 Authorization and explicitly configured custom headers are also sent on this
 outer request so the endpoint can authenticate it. OHTTP does not hide these
 outer headers or the client's network address from the endpoint.
