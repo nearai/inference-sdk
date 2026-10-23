@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 
@@ -23,42 +24,62 @@ class CompleteSseRecords:
     pending: str
 
 
+class SseDecoder:
+    """Scan each incoming byte once, retaining an unfinished event between chunks."""
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+        self._index = 0
+        self._line_start = 0
+
+    def feed(self, chunk: bytes) -> Iterator[SseRecord]:
+        self._buffer.extend(chunk)
+        record_start = 0
+        index, line_start = self._index, self._line_start
+        while index < len(self._buffer):
+            if self._buffer[index] not in (10, 13):
+                index += 1
+                continue
+            # The next chunk determines whether a trailing CR belongs to CRLF.
+            if self._buffer[index] == 13 and index + 1 == len(self._buffer):
+                break
+            line_end = index
+            index += 2 if self._buffer[index : index + 2] == b'\r\n' else 1
+            if line_end == line_start:
+                yield SseRecord(
+                    self._buffer[record_start:line_start].decode(),
+                    self._buffer[line_start:index].decode(),
+                )
+                record_start = index
+            line_start = index
+        if record_start:
+            del self._buffer[:record_start]
+        self._index, self._line_start = index - record_start, line_start - record_start
+
+    def finish(self) -> str:
+        pending = self._buffer.decode()
+        self._buffer.clear()
+        self._index = self._line_start = 0
+        return pending
+
+
 def take_complete_sse_records(value: str) -> CompleteSseRecords:
-    """Split complete events, keeping a trailing CR for the next byte chunk."""
-
-    records: list[SseRecord] = []
-    record_start = line_start = index = 0
-    while index < len(value):
-        if value[index] not in '\r\n':
-            index += 1
-            continue
-        if value[index] == '\r' and index + 1 == len(value):
-            break
-        line_end = index
-        index += 2 if value[index : index + 2] == '\r\n' else 1
-        if line_end == line_start:
-            records.append(
-                SseRecord(value[record_start:line_start], value[line_start:index])
-            )
-            record_start = index
-        line_start = index
-    return CompleteSseRecords(records, value[record_start:])
+    decoder = SseDecoder()
+    return CompleteSseRecords(list(decoder.feed(value.encode())), decoder.finish())
 
 
-def split_sse_lines(value: str) -> list[SseLine]:
-    lines: list[SseLine] = []
+def iter_sse_lines(value: str) -> Iterator[SseLine]:
     start = index = 0
     while index < len(value):
         if value[index] not in '\r\n':
             index += 1
             continue
         ending = '\r\n' if value[index : index + 2] == '\r\n' else value[index]
-        lines.append(SseLine(value[start:index], ending))
+        yield SseLine(value[start:index], ending)
         index += len(ending)
         start = index
     if start < len(value):
-        lines.append(SseLine(value[start:], ''))
-    return lines
+        yield SseLine(value[start:], '')
 
 
 def get_sse_data(line: str) -> str | None:
@@ -70,6 +91,18 @@ def get_sse_data(line: str) -> str | None:
     return value.removeprefix(' ')
 
 
+def get_sse_record_data(record: str) -> str:
+    data = bytearray()
+    for line in iter_sse_lines(record):
+        value = get_sse_data(line.content)
+        if value is not None:
+            data.extend(value.encode())
+            data.append(10)
+    if data:
+        data.pop()
+    return data.decode()
+
+
 def get_sse_data_records(text: str) -> list[str]:
     """Read complete response data payloads, joining each event's data lines."""
 
@@ -77,11 +110,4 @@ def get_sse_data_records(text: str) -> list[str]:
     values = [record.value for record in complete.records]
     if complete.pending:
         values.append(complete.pending)
-    return [
-        '\n'.join(
-            data
-            for line in split_sse_lines(value)
-            if (data := get_sse_data(line.content)) is not None
-        )
-        for value in values
-    ]
+    return [get_sse_record_data(value) for value in values]
