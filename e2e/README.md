@@ -63,7 +63,7 @@ Both are required. Each test job receives only its environment's key.
 
 The [Live E2E workflow](../.github/workflows/e2e.yml) runs all four SDKs against
 both environments after pushes to `main`, daily at 03:00 UTC, and on manual
-dispatch from `main`. Releases test the selected SDK in both environments and
+dispatch from `main`. Releases test all four SDKs in both environments and
 block publication on failure.
 
 ## Coverage
