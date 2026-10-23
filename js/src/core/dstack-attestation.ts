@@ -1,13 +1,9 @@
 import type { AttestationEvidence } from '../types/attestation-common';
-import type { VerifiedComposeManagerAttestation } from '../types/compose-manager';
 import type {
   AttestationPolicy,
-  DeploymentProvenanceStatus,
-  DeploymentVerifier,
   MeasuredDeployment,
   TdxQuoteVerifier,
   TcbStatus,
-  VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
 import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
@@ -104,56 +100,20 @@ export async function verifyTdxQuote({
   return quote;
 }
 
-type VerifyDstackDeploymentParams = {
-  verifiedQuote: VerifiedDstackQuote;
-  deploymentVerifier?: DeploymentVerifier;
-  composeManager?: VerifiedComposeManagerAttestation;
-};
-
-/**
- * Replay measurements and optionally apply caller-owned deployment policy.
- * A supplied verifier is required to resolve successfully; there is no second
- * boolean that can silently change that requirement.
- */
-export async function verifyDstackDeployment({
-  verifiedQuote,
-  deploymentVerifier,
-  composeManager,
-}: VerifyDstackDeploymentParams): Promise<VerifiedAttestationEvidence> {
-  const { attestation, quote, signer } = verifiedQuote;
+/** Verify the compose binding and replay dstack runtime measurements. */
+export async function verifyDstackDeployment(
+  verifiedQuote: VerifiedDstackQuote,
+): Promise<MeasuredDeployment> {
+  const { attestation, quote } = verifiedQuote;
   const runtimeMeasurements = await verifyAndReplayRtmr3(
     attestation.eventLog,
     quote.rtMr3,
   );
   const { appCompose } = attestation;
   await verifyAppComposeMrConfigBinding(appCompose, quote.mrConfigId);
-  const deployment: MeasuredDeployment = {
+  return {
     appCompose,
     runtimeMeasurements,
-    ...(composeManager === undefined ? {} : { composeManager }),
-  };
-
-  let deploymentProvenance: DeploymentProvenanceStatus = 'not_checked';
-  if (deploymentVerifier) {
-    try {
-      await deploymentVerifier(deployment);
-      deploymentProvenance = 'verified';
-    } catch (cause) {
-      throw wrapVerificationError(
-        {
-          code: 'provenance.verification_failed',
-        },
-        cause,
-      );
-    }
-  }
-
-  return {
-    signer,
-    tcbStatus: quote.tcbStatus,
-    advisoryIds: quote.advisoryIds,
-    deployment,
-    deploymentProvenance,
   };
 }
 

@@ -25,6 +25,7 @@ import {
 } from './dstack-attestation';
 import type { VerifiedDstackQuote } from './dstack-attestation';
 import { verifyComposeManagerAttestation } from './compose-manager-attestation';
+import { runDeploymentVerifier } from './deployment-verifier';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
@@ -104,20 +105,28 @@ export async function verifyModelDeployment({
           policy,
           tdxQuoteVerifier,
         });
-  const evidence = await verifyDstackDeployment({
-    verifiedQuote,
+  const baseDeployment = await verifyDstackDeployment(verifiedQuote);
+  const deployment =
+    composeManager === undefined
+      ? baseDeployment
+      : { ...baseDeployment, composeManager };
+  const deploymentProvenance = await runDeploymentVerifier(
+    deployment,
     deploymentVerifier,
-    composeManager,
-  });
+  );
 
   const signingPublicKey = verifySigningPublicKey({
     attestation,
-    signingAlgo: evidence.signer.signingAlgo,
-    signingAddress: evidence.signer.signingAddress,
+    signingAlgo: verifiedQuote.signer.signingAlgo,
+    signingAddress: verifiedQuote.signer.signingAddress,
   });
 
   return {
-    ...evidence,
+    signer: verifiedQuote.signer,
+    tcbStatus: verifiedQuote.quote.tcbStatus,
+    advisoryIds: verifiedQuote.quote.advisoryIds,
+    deployment,
+    deploymentProvenance,
     ...(signingPublicKey === undefined ? {} : { signingPublicKey }),
   };
 }
