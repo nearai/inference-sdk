@@ -45,7 +45,7 @@ pub struct ComposeManagerImagePolicy {
 pub async fn verify_compose_manager_deployment_image_provenance(
     deployment: &MeasuredDeployment,
     image_policies: &BTreeMap<String, ImageProvenancePolicy>,
-    manager_image_policy: &ComposeManagerImagePolicy,
+    compose_manager_image_policy: &ComposeManagerImagePolicy,
     options: ComposeManagerDeploymentImageProvenanceOptions<'_>,
 ) -> Result<(), VerificationError> {
     if image_policies.is_empty() {
@@ -77,10 +77,10 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         .find(|a| a.action == "compose_manager_started")
         .and_then(|a| a.image.as_deref())
         .ok_or_else(|| invalid("manager_image_missing"))?;
-    let manager_repository = manager_image_policy
+    let manager_repository = compose_manager_image_policy
         .image_repository
         .strip_prefix("docker.io/")
-        .unwrap_or(&manager_image_policy.image_repository);
+        .unwrap_or(&compose_manager_image_policy.image_repository);
     let normalized = manager_image
         .strip_prefix("docker.io/")
         .unwrap_or(manager_image);
@@ -200,8 +200,8 @@ pub async fn verify_compose_manager_deployment_image_provenance(
     verify_required_image_provenance(
         manager_repository,
         &manager_digest,
-        &manager_image_policy.build,
-        manager_image_policy.signer_identity.as_deref(),
+        &compose_manager_image_policy.build,
+        compose_manager_image_policy.signer_identity.as_deref(),
         ImageProvenanceFetchOptions {
             github_token: options.github_token,
             github_proxy_url: options.github_proxy_url,

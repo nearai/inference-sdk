@@ -565,7 +565,7 @@ file; unknown services fail. Unselected images cannot satisfy a required policy.
 | --- | --- |
 | `ComposeRepository` | Trusted `owner/repo`; defaults to `nearai/cvm-compose-files`. |
 | `ComposeFile` | Exact file path, or the latest `compose_up` across all files. |
-| `ManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
+| `ComposeManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
 | `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubProxyURL`. |
 
 Compose files are limited to 8 MiB before hashing or parsing. Missing evidence,

@@ -19,9 +19,9 @@ type ComposeManagerImagePolicy struct {
 }
 type ComposeManagerDeploymentImageProvenanceOptions struct {
 	ProvenanceOptions
-	ComposeRepository  string
-	ComposeFile        string
-	ManagerImagePolicy ComposeManagerImagePolicy
+	ComposeRepository         string
+	ComposeFile               string
+	ComposeManagerImagePolicy ComposeManagerImagePolicy
 }
 
 // VerifyComposeManagerDeploymentImageProvenance authenticates recorded intent.
@@ -54,7 +54,7 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	if !ok {
 		return invalid("manager_image_missing")
 	}
-	repo := strings.TrimPrefix(o.ManagerImagePolicy.ImageRepository, "docker.io/")
+	repo := strings.TrimPrefix(o.ComposeManagerImagePolicy.ImageRepository, "docker.io/")
 	normalized := strings.TrimPrefix(image, "docker.io/")
 	if repo == "" || (!strings.HasPrefix(normalized, repo+"@") && !strings.HasPrefix(normalized, repo+":")) {
 		return invalid("manager_image_mismatch")
@@ -125,5 +125,5 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	if err = verifyComposeImages(ctx, string(body), policies, o.ProvenanceOptions, services); err != nil {
 		return err
 	}
-	return verifyRequiredImage(ctx, strings.ToLower(managerPin[1]), o.ManagerImagePolicy.Build, o.ProvenanceOptions)
+	return verifyRequiredImage(ctx, strings.ToLower(managerPin[1]), o.ComposeManagerImagePolicy.Build, o.ProvenanceOptions)
 }

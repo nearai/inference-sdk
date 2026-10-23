@@ -309,12 +309,12 @@ is supplied, and unlisted images are not approved by the helper.
 
 ### Compose Manager deployment images
 
-`verify_compose_manager_deployment_image_provenance(deployment, image_policies, manager_image_policy, options)`
+`verify_compose_manager_deployment_image_provenance(deployment, image_policies, compose_manager_image_policy, options)`
 returns `Result<(), VerificationError>`. Use in a model deployment callback or
 after verification. It requires authenticated manager evidence, selects the latest
 matching `compose_up`, verifies the recorded file's exact hash, and checks the
 required images in the action's selected services. Independently, the latest
-manager-start image must satisfy the required `manager_image_policy`.
+manager-start image must satisfy the required `compose_manager_image_policy`.
 Compose files are limited to 8 MiB before hashing or parsing. See the
 [guide](./verification-guide.md#model-images-deployed-by-compose-manager) for usage
 and evidence scope.
@@ -323,7 +323,7 @@ and evidence scope.
 | --- | --- | --- |
 | `deployment` | `&MeasuredDeployment` | Verified deployment containing `compose_manager`. |
 | `image_policies` | `&BTreeMap<String, ImageProvenancePolicy>` | Nonempty required image repositories and approved builds. |
-| `manager_image_policy` | `&ComposeManagerImagePolicy` | Required `image_repository`, `build` policy, and optional `signer_identity` for the latest startup image. |
+| `compose_manager_image_policy` | `&ComposeManagerImagePolicy` | Required `image_repository`, `build` policy, and optional `signer_identity` for the latest startup image. |
 | `options` | `ComposeManagerDeploymentImageProvenanceOptions<'_>` | File selection and GitHub access; accepts `Default::default()`. |
 
 | Option | Type | Default | Description |

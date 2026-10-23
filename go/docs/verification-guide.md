@@ -323,7 +323,7 @@ modelImages := map[string]nearai.ImageProvenancePolicy{
 check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
     return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, modelImages,
         nearai.ComposeManagerDeploymentImageProvenanceOptions{
-            ManagerImagePolicy: nearai.ComposeManagerImagePolicy{
+            ComposeManagerImagePolicy: nearai.ComposeManagerImagePolicy{
                 ImageRepository: "nearaidev/compose-manager",
                 Build: nearai.ImageProvenancePolicy{
                     Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml",

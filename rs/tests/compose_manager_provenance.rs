@@ -144,7 +144,7 @@ fn image_policy() -> nearai_inference_sdk::ImageProvenancePolicy {
         ".github/workflows/build.yml".into(),
     )
 }
-fn manager_image_policy() -> nearai_inference_sdk::ComposeManagerImagePolicy {
+fn compose_manager_image_policy() -> nearai_inference_sdk::ComposeManagerImagePolicy {
     nearai_inference_sdk::ComposeManagerImagePolicy {
         image_repository: "nearaidev/compose-manager-launcher".into(),
         build: image_policy(),
@@ -184,7 +184,7 @@ async fn rejects_unpinned_manager_image_before_any_request() {
         let error = verify_compose_manager_deployment_image_provenance(
             &deployment,
             &policies,
-            &manager_image_policy(),
+            &compose_manager_image_policy(),
             nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
                 github_proxy_url: Some(&proxy),
                 github_token: Some("test-github-token"),
@@ -244,7 +244,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
     verify_compose_manager_deployment_image_provenance(
         &deployment(),
         &policies,
-        &manager_image_policy(),
+        &compose_manager_image_policy(),
         options.clone(),
     )
     .await
@@ -287,7 +287,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
     let error = verify_compose_manager_deployment_image_provenance(
         &stale,
         &policies,
-        &manager_image_policy(),
+        &compose_manager_image_policy(),
         options.clone(),
     )
     .await
@@ -298,7 +298,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
     let error = verify_compose_manager_deployment_image_provenance(
         &missing,
         &policies,
-        &manager_image_policy(),
+        &compose_manager_image_policy(),
         options,
     )
     .await
@@ -318,7 +318,7 @@ async fn empty_policy_and_missing_or_unlisted_manager_fail_before_network() {
     let error = verify_compose_manager_deployment_image_provenance(
         &deployment(),
         &BTreeMap::new(),
-        &manager_image_policy(),
+        &compose_manager_image_policy(),
         Default::default(),
     )
     .await
@@ -339,7 +339,7 @@ async fn empty_policy_and_missing_or_unlisted_manager_fail_before_network() {
         let error = verify_compose_manager_deployment_image_provenance(
             &d,
             &policies,
-            &manager_image_policy(),
+            &compose_manager_image_policy(),
             Default::default(),
         )
         .await
@@ -459,7 +459,7 @@ async fn rejects_oversized_compose_before_hashing_or_image_proofs() {
         let error = verify_compose_manager_deployment_image_provenance(
             &deployment(),
             &BTreeMap::from([("nearaidev/compose-manager-launcher".into(), image_policy())]),
-            &manager_image_policy(),
+            &compose_manager_image_policy(),
             nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
                 github_proxy_url: Some(&proxy),
                 ..Default::default()
