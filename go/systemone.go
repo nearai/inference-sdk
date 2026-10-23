@@ -252,7 +252,7 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, err
 	}
-	if err = c.register(id, body, wire, s); err != nil {
+	if err = c.register(id, body, wire, s, false); err != nil {
 		return result, err
 	}
 	return SystemOneResult{Data: data, DecisionID: id}, nil
