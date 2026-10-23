@@ -32,9 +32,11 @@ type responseRecord struct {
 	verifying         *pendingResponse
 }
 type pendingResponse struct {
-	done  chan struct{}
-	value VerifiedCompletionResult
-	err   error
+	done    chan struct{}
+	value   VerifiedCompletionResult
+	err     error
+	waiters int
+	cancel  context.CancelFunc
 }
 
 // InferenceClient implements http.RoundTripper for OpenAI-compatible Chat
@@ -653,14 +655,14 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 			return VerifiedCompletionResult{}, detail("api.invalid_input", "expected", "fewer concurrent receipt verifications")
 		}
 		c.responseVerifications[record] = struct{}{}
-		p = &pendingResponse{done: make(chan struct{})}
+		verificationCtx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
+		p = &pendingResponse{done: make(chan struct{}), cancel: cancel}
 		record.verifying = p
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
 			defer cancel()
-			value, e := c.verifyRecord(ctx, id, record)
+			value, e := c.verifyRecord(verificationCtx, id, record)
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			delete(c.responseVerifications, record)
@@ -675,7 +677,21 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 			close(p.done)
 		}()
 	}
+	p.waiters++
 	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		p.waiters--
+		last := p.waiters == 0
+		if last {
+			p.cancel()
+		}
+		c.mu.Unlock()
+		if last {
+			// Release the worker's capacity reservation before its last caller returns.
+			<-p.done
+		}
+	}()
 	select {
 	case <-ctx.Done():
 		return VerifiedCompletionResult{}, ctx.Err()
