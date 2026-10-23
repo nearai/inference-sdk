@@ -49,8 +49,8 @@ the attestation socket to be reused.
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
-| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
-| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies recorded deployment-file bytes and required image builds from authenticated Compose Manager actions. |
+| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
+| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
 
 ## `InferenceClient`
 
@@ -411,7 +411,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Returned model-attestation set from the fetch helper. Every entry is checked. |
-|  | `servingDeployment?` | `DeploymentVerifier` | No | Additional serving-only deployment check, after every report and the TLS binding pass. Use for envelope-level Compose Manager evidence. |
+|  | `servingDeployment?` | `DeploymentVerifier` | No | Checks deployment policy for the instance that answered the attestation request, after all reports and TLS binding pass. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
@@ -520,7 +520,7 @@ against a quote itself.
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
 | `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | Absolute HTTP(S) GitHub proxy base URL. Omit to access GitHub directly. |
+| `githubProxyUrl` | `string` | No | URL of a GitHub-compatible proxy on your backend. Omit to access GitHub directly. See the [proxy contract](verification-guide.md#github-authentication-and-proxies). |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -546,11 +546,11 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | --- | --- | --- | --- | --- |
 | `deployment` | `MeasuredDeployment` | Yes | — | Verified deployment with authenticated `composeManager` actions. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
-| `managerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required build identity and image repository for the latest manager-start image; compose references cannot satisfy it. |
+| `managerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
 | `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
 | `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
 | `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | — | Absolute HTTP(S) GitHub proxy base URL for compose-file and image-proof retrieval. |
+| `githubProxyUrl` | `string` | No | — | URL of your backend's GitHub-compatible proxy for compose files and image proofs. See the [proxy contract](verification-guide.md#github-authentication-and-proxies). |
 
 Compose files are limited to 8 MiB before hashing or parsing.
 
@@ -584,7 +584,7 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
 | `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | Absolute HTTP(S) GitHub proxy base URL. Repository API paths are appended to this prefix. |
+| `githubProxyUrl` | `string` | No | URL of your backend's GitHub-compatible proxy. Repository API paths are appended to this prefix. |
 
 Proxy responses use the GitHub API format. Pagination stays on the configured
 base URL; redirects and returned bundle URLs are not followed. See
@@ -592,6 +592,9 @@ base URL; redirects and returned bundle URLs are not followed. See
 for the proxy contract.
 
 ### `verifyImageProvenance`
+
+Verifies supplied Sigstore bundles against a digest and build policy. Both
+deployment helpers call this after selecting images and fetching their proofs.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the

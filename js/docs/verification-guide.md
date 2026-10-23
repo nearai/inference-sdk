@@ -802,9 +802,10 @@ for options and evidence fields.
 
 #### GitHub authentication and proxies
 
-Set `githubToken` for authenticated GitHub requests, or `githubProxyUrl` to retrieve
-evidence through your backend. When a proxy is configured, it supplies the
-GitHub credential and the SDK ignores `githubToken`.
+Set `githubToken` for authenticated requests directly to GitHub. To use a proxy,
+deploy a GitHub-compatible endpoint on your backend and set `githubProxyUrl` to
+its URL. The backend supplies the GitHub credential; the SDK ignores `githubToken`
+when a proxy is configured.
 
 The proxy base URL must be absolute HTTP(S), without credentials, a query, or
 a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
