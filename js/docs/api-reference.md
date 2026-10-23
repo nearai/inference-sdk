@@ -222,7 +222,7 @@ There is no `gatewayVerification` option.
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Additional model-aware deployment check. No approval policy is supplied by default. |
-| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Per-report `policy` and `verifiers`. Optional `servingDeployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). |
+| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model `policy` and `verifiers`. |
 
 ### Methods and response result
 
@@ -411,7 +411,6 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
 |  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Returned model-attestation set from the fetch helper. Every entry is checked. |
-|  | `servingDeployment?` | `DeploymentVerifier` | No | Checks deployment policy for the instance that answered the attestation request, after all reports and TLS binding pass. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |

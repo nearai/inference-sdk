@@ -9,12 +9,7 @@ import type {
   InferenceEncryptionOptions,
   ModelVerificationOptions,
 } from './inference-client';
-import type { DeploymentVerifier } from './verification';
-
-export type DirectModelVerificationOptions = ModelVerificationOptions & {
-  /** Checks the serving report and restricts Chat to its signer and TLS pin. */
-  readonly servingDeployment?: DeploymentVerifier;
-};
+export type DirectModelVerificationOptions = ModelVerificationOptions;
 
 export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 

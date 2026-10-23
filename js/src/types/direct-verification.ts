@@ -4,7 +4,6 @@ import type {
 } from './direct-api';
 import type {
   GatewayTlsBinding,
-  DeploymentVerifier,
   ModelAttestationPolicy,
   ModelAttestationVerifiers,
   ModelClientBinding,
@@ -34,8 +33,6 @@ export type VerifyDirectModelAttestationsParams =
   FetchedDirectModelAttestations & {
     readonly policy?: ModelAttestationPolicy;
     readonly verifiers?: ModelAttestationVerifiers;
-    /** Additional policy for the serving report's envelope-level deployment evidence. */
-    readonly servingDeployment?: DeploymentVerifier;
   };
 
 /** TLS identity of the direct endpoint that returned the attestation. */

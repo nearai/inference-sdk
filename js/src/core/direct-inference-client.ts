@@ -56,18 +56,11 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     >
   > {
     const fetched = await this.fetchModelAttestations();
-    const servingDeployment =
-      this.directOptions.modelVerification?.servingDeployment;
     const verifiedModelAttestations = await verifyDirectModelAttestations({
       ...fetched,
       policy: this.directOptions.modelVerification?.policy,
       verifiers: this.getModelVerifiers(model),
-      servingDeployment,
     });
-    const eligibleAttestations =
-      servingDeployment === undefined
-        ? verifiedModelAttestations.attestations
-        : [verifiedModelAttestations.servingAttestation];
     const servingSigner = verifiedModelAttestations.servingAttestation.signer;
     const ohttpKeyConfig = this.getOhttpKeyConfig(
       fetched.ohttpAttestation,
@@ -75,15 +68,13 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     );
     // Every attestation is verified before choosing an encryption key. Entries
     // sharing a key may still have different deployment measurements.
-    // OHTTP and a serving-only policy restrict Chat to the serving signer. Its public key
+    // OHTTP restricts Chat to the serving signer. Its public key
     // may come from any verified report sharing that exact signing identity.
-    const requireServingSigner =
-      this.ohttpEnabled || servingDeployment !== undefined;
     const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         candidate.signingPublicKey !== undefined &&
-        (!requireServingSigner ||
+        (!this.ohttpEnabled ||
           (candidate.signer.signingAlgo === servingSigner.signingAlgo &&
             hexToBuffer(candidate.signer.signingAddress).equals(
               hexToBuffer(servingSigner.signingAddress),
@@ -93,9 +84,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     const signingAddress = hexToBuffer(modelAttestation.signer.signingAddress);
-    // Encryption, TLS pins and response verification use the same signer
-    // group, limited to the serving report when only its provenance was checked.
-    const attestations = eligibleAttestations.filter(
+    // Encryption, TLS pins and response verification use the same signer group.
+    const attestations = verifiedModelAttestations.attestations.filter(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
         hexToBuffer(candidate.signer.signingAddress).equals(signingAddress),
