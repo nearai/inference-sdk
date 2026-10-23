@@ -203,8 +203,8 @@ async with InferenceClient(
     verified = await inference_client.verify_response(completion.id)
 ```
 
-Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`,
+`/v1/responses`, and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
 `X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
 bodies, model-key routing, and encryption headers. A browser-facing proxy must
 expose `X-Generation-Id` through CORS. The device verifies evidence and response

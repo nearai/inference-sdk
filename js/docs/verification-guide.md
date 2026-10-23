@@ -314,9 +314,9 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, and `/v1/signature/{id}`. For System One decisions,
-also forward `POST /v1/systemone`. Preserve the URL-encoded model and completion
-IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
+`/v1/chat/completions`, `/v1/responses`, and `/v1/signature/{id}`. For System One
+decisions, also forward `POST /v1/systemone`. Preserve the URL-encoded model and
+completion IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
 Preserve the request and response bodies, model-key routing header, and encryption
 headers unchanged so decryption and signature verification work. Forward the
 `X-Generation-Id` response header for System One and expose it through
