@@ -68,7 +68,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
     );
     // Every attestation is verified before choosing an encryption key. Entries
     // sharing a key may still have different deployment measurements.
-    // The top-level OHTTP key belongs to the serving signer. Its public key
+    // OHTTP restricts Chat to the serving signer. Its public key
     // may come from any verified report sharing that exact signing identity.
     const modelAttestation = verifiedModelAttestations.attestations.find(
       (candidate) =>
@@ -84,8 +84,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     const signingAddress = hexToBuffer(modelAttestation.signer.signingAddress);
-    // Encryption, TLS pins and response verification use the same signer
-    // group, retaining every verified deployment that shares the selected key.
+    // Encryption, TLS pins and response verification use the same signer group.
     const attestations = verifiedModelAttestations.attestations.filter(
       (candidate) =>
         candidate.signer.signingAlgo === this.signingAlgo &&
@@ -108,12 +107,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
         ...transport,
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
-      verifyResponse: ({
-        completionId,
-        requestBody,
-        responseBody,
-        signature,
-      }) => {
+      verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         const matchingAttestations = verifyDirectModelResponse({
           requestBody,
           responseBody,
@@ -121,7 +115,8 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
           attestations,
         });
         return {
-          completionId,
+          id,
+          completionId: id,
           signatureKind: 'provider_tee',
           signature,
           attestations: matchingAttestations,

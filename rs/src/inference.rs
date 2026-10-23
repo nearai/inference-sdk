@@ -178,6 +178,7 @@ struct Record {
     request: Arc<[u8]>,
     response: Arc<[u8]>,
     session: Arc<Session>,
+    gateway_only: bool,
     finished: Instant,
     verification: Mutex<Option<ReceiptFuture>>,
 }
@@ -255,6 +256,7 @@ impl InferenceClient {
         })
     }
     pub(crate) async fn session(&self, model: &str) -> Result<Arc<Session>, InferenceError> {
+        let cache_key = model.to_owned();
         if model.is_empty() || matches!(model, "." | "..") {
             return Err(input("model", "expected a canonical model ID").into());
         }
@@ -264,11 +266,11 @@ impl InferenceClient {
             state
                 .sessions
                 .retain(|_, (time, _)| time.elapsed() < options.attestation_cache_ttl);
-            if let Some((_, session)) = state.sessions.get(model) {
+            if let Some((_, session)) = state.sessions.get(&cache_key) {
                 return Ok(session.clone());
             }
             state.pending.retain(|_, f| f.upgrade().is_some());
-            if let Some(future) = state.pending.get(model).and_then(|f| f.upgrade()) {
+            if let Some(future) = state.pending.get(&cache_key).and_then(|f| f.upgrade()) {
                 future
             } else {
                 if state.pending.len() >= options.max_cache_entries {
@@ -290,7 +292,7 @@ impl InferenceClient {
                 .shared();
                 state
                     .pending
-                    .insert(model.to_owned(), future.downgrade().expect("live future"));
+                    .insert(cache_key.clone(), future.downgrade().expect("live future"));
                 future
             }
         };
@@ -298,11 +300,11 @@ impl InferenceClient {
         let mut state = self.inner.state.lock().await;
         if state
             .pending
-            .get(model)
+            .get(&cache_key)
             .and_then(|f| f.upgrade())
             .is_some_and(|f| f.ptr_eq(&future))
         {
-            state.pending.remove(model);
+            state.pending.remove(&cache_key);
             if let Ok(session) = &result {
                 if !options.attestation_cache_ttl.is_zero() {
                     if state.sessions.len() >= options.max_cache_entries {
@@ -317,11 +319,124 @@ impl InferenceClient {
                     }
                     state
                         .sessions
-                        .insert(model.to_owned(), (Instant::now(), session.clone()));
+                        .insert(cache_key.clone(), (Instant::now(), session.clone()));
                 }
             }
         }
         result
+    }
+    /// Send one plaintext System One decision and retain exact bytes for verify_response.
+    pub async fn systemone_create<T: serde::Serialize>(
+        &self,
+        request: &T,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        self.systemone_create_with_headers(request, HeaderMap::new())
+            .await
+    }
+    pub async fn systemone_create_with_headers<T: serde::Serialize>(
+        &self,
+        request: &T,
+        headers: HeaderMap,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        let options = &self.inner.options;
+        if self.inner.direct || options.e2ee || options.ohttp {
+            return Err(input("systemone", "requires a plaintext Gateway client").into());
+        }
+        let body =
+            serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
+        if body.len() > options.max_response_bytes {
+            return Err(input("body", "request exceeds configured byte limit").into());
+        }
+        let value: Value = serde_json::from_slice(&body)
+            .map_err(|_| input("systemone", "expected JSON object"))?;
+        if !value.is_object() || value.get("stream").is_some() {
+            return Err(input("systemone", "streaming is unsupported").into());
+        }
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| input("model", "missing model"))?;
+        let mut owned = options.headers.clone();
+        owned.extend(headers);
+        for name in ["authorization", "api-key"] {
+            owned.remove(name);
+            if let Some(value) = options.headers.get(name) {
+                owned.insert(name, value.clone());
+            }
+        }
+        remove_e2ee_headers(&mut owned);
+        for name in [
+            "host",
+            "content-length",
+            "content-encoding",
+            "transfer-encoding",
+            "trailer",
+            "content-md5",
+            "digest",
+            "content-digest",
+            "repr-digest",
+        ] {
+            owned.remove(name);
+        }
+        owned.insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
+        owned.insert("content-type", HeaderValue::from_static("application/json"));
+        owned.insert("accept", HeaderValue::from_static("application/json"));
+        owned.insert("accept-encoding", HeaderValue::from_static("identity"));
+        let session = self.session(model).await?;
+        if let Some(model) = session.model_key() {
+            owned.insert(
+                "x-model-pub-key",
+                HeaderValue::from_str(&model.public_key)
+                    .map_err(|_| input("model_key", "invalid header"))?,
+            );
+        }
+        let url = crate::cloud_api::parse_base_url(self.base_url())?
+            .join("systemone")
+            .map_err(|_| input("base_url", "invalid URL"))?;
+        let mut response = session
+            .client
+            .post(url)
+            .headers(owned)
+            .body(body.clone())
+            .send()
+            .await
+            .map_err(|_| ApiError::Transport {
+                resource: ApiResource::SystemOne,
+                reason: ApiTransportReason::Request,
+            })?;
+        if !response.status().is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::SystemOne,
+                status: response.status().as_u16(),
+            }
+            .into());
+        }
+        let decision_id = response
+            .headers()
+            .get("x-generation-id")
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ApiError::InvalidResponse {
+                path: "systemone.x-generation-id".into(),
+                expected: "nonempty receipt ID".into(),
+                actual: "missing or invalid".into(),
+            })?
+            .to_owned();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+            resource: ApiResource::SystemOne,
+            reason: ApiTransportReason::ResponseBody,
+        })? {
+            if chunk.len() > options.max_response_bytes.saturating_sub(bytes.len()) {
+                return Err(input("response", "body exceeds configured byte limit").into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let data = crate::systemone::decode_response(&bytes)?;
+        self.register(decision_id.clone(), body, bytes, session, false)
+            .await?;
+        Ok(crate::SystemOneResult { data, decision_id })
     }
     /// OpenAI-compatible JSON Chat request. Use `send` for a byte-stream response.
     pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
@@ -340,8 +455,31 @@ impl InferenceClient {
         response.json().await
     }
     pub fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("chat/completions", body)
+    }
+    /// Create a Gateway Response and retain its bytes for `verify_response`.
+    /// Use `response_request` and `send` for streaming responses.
+    pub async fn create_response(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Responses").into());
+        }
+        let response = self.send(self.response_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Responses creation request. `send` performs preflight and capture.
+    pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("responses", body)
+    }
+    fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
-            .join("chat/completions")
+            .join(path)
             .map_err(|_| input("base_url", "invalid URL"))?;
         let mut request = reqwest::Request::new(reqwest::Method::POST, url);
         *request.body_mut() = Some(body.to_string().into());
@@ -350,7 +488,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for buffered reqwest Chat requests. Request authentication
+    /// Transport adapter for buffered Chat and Gateway Responses requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -361,8 +499,23 @@ impl InferenceClient {
         let expected = crate::cloud_api::parse_base_url(self.base_url())?
             .join("chat/completions")
             .map_err(|_| input("base_url", "invalid URL"))?;
-        if actual != expected {
-            return Err(input("request.url", "expected configured Chat endpoint").into());
+        let responses = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("responses")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        if actual != expected && !responses {
+            return Err(input(
+                "request.url",
+                "expected configured inference creation endpoint",
+            )
+            .into());
+        }
+        if responses && (self.inner.direct || self.inner.options.e2ee) {
+            return Err(input(
+                "request",
+                "Responses requires a Gateway client with field-level E2EE disabled",
+            )
+            .into());
         }
         let parsed = decode_request(&request)?;
         let session = self
@@ -474,18 +627,18 @@ impl InferenceClient {
                 wire.extend_from_slice(&chunk);
                 if streaming {
                     for record in decoder.push(&chunk, false)? {
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
+                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
                         yield bytes::Bytes::from(transformed);
                     }
                 }
             }
             if streaming {
                 for record in decoder.push(&[], true)? {
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
+                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
                     yield bytes::Bytes::from(transformed);
                 }
                 let id = id.ok_or_else(invalid_response)?;
-                owner.register(id, request_body, wire, session).await?;
+                owner.register(id, request_body, wire, session, responses).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -502,7 +655,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session).await?;
+                owner.register(id, request_body, wire, session, responses).await?;
                 yield bytes::Bytes::from(body);
             }
         };
@@ -512,12 +665,13 @@ impl InferenceClient {
             body: Box::pin(stream),
         })
     }
-    async fn register(
+    pub(crate) async fn register(
         &self,
         id: String,
         request: Vec<u8>,
         response: Vec<u8>,
         session: Arc<Session>,
+        gateway_only: bool,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
         let mut state = self.inner.state.lock().await;
@@ -560,6 +714,7 @@ impl InferenceClient {
                 request: request.into(),
                 response: response.into(),
                 session,
+                gateway_only,
                 finished: Instant::now(),
                 verification: Mutex::new(None),
             }),
@@ -588,6 +743,7 @@ impl InferenceClient {
                 let request = record.request.clone();
                 let response = record.response.clone();
                 let session = record.session.clone();
+                let gateway_only = record.gateway_only;
                 let id = id.to_owned();
                 let algo = self.inner.options.signing_algo;
                 *pending = Some(
@@ -595,6 +751,13 @@ impl InferenceClient {
                         let signature = session.api.signature(&id, algo).await?;
                         if signature.signer.signing_algo != algo {
                             return Err(VerificationError::SignatureSignerMismatch.into());
+                        }
+                        if gateway_only && signature.kind != CompletionSignatureKind::Gateway {
+                            return Err(VerificationError::SignatureKindMismatch {
+                                expected: CompletionSignatureKind::Gateway,
+                                actual: signature.kind,
+                            }
+                            .into());
                         }
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {

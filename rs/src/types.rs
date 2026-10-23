@@ -79,6 +79,7 @@ pub enum DeploymentImagesFailureReason {
     UnresolvedImage,
     ImageMissing,
     ImageNotPinned,
+    ServiceMissing,
 }
 
 /// Signature algorithms exposed by NEAR AI Cloud.
@@ -128,6 +129,7 @@ pub struct AttestationEvidence {
 pub struct ModelAttestation {
     /// Optional encryption key; authenticated against the signer during verification.
     pub signing_public_key: Option<String>,
+    pub compose_manager_attestation: Option<crate::ComposeManagerAttestation>,
     pub evidence: AttestationEvidence,
     /// Optional server-declared copy of quote report data. An absent value
     /// becomes `None` at the Cloud API response boundary.
@@ -254,6 +256,7 @@ pub struct RuntimeMeasurements {
 /// Compose configuration and runtime measurements authenticated by a quote.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MeasuredDeployment {
+    pub compose_manager: Option<crate::VerifiedComposeManagerAttestation>,
     pub app_compose: String,
     pub runtime_measurements: RuntimeMeasurements,
 }

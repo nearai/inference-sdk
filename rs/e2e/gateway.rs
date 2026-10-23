@@ -1,4 +1,6 @@
 mod integrated;
+mod responses;
+mod systemone;
 
 use std::{env, error::Error, io, time::Duration};
 
@@ -28,11 +30,37 @@ async fn ecdsa_gateway_chat_receipts() -> Result<(), Box<dyn Error>> {
 struct LiveModel {
     id: String,
     provider: String,
+    endpoint: String,
+}
+
+fn select_models(json: &str, endpoint: &str) -> Result<Vec<LiveModel>, serde_json::Error> {
+    let models: Vec<LiveModel> = serde_json::from_str(json)?;
+    let models: Vec<_> = models
+        .into_iter()
+        .filter(|model| model.endpoint == endpoint)
+        .collect();
+    assert!(
+        !models.is_empty(),
+        "Expected representative {endpoint} models"
+    );
+    Ok(models)
+}
+
+#[test]
+fn selects_models_by_endpoint() {
+    let json = r#"[
+        {"id":"near/chat","provider":"near","endpoint":"chat"},
+        {"id":"typesafe/decision","provider":"external","endpoint":"systemone"}
+    ]"#;
+    for (endpoint, id) in [("chat", "near/chat"), ("systemone", "typesafe/decision")] {
+        let models = select_models(json, endpoint).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, id);
+    }
 }
 
 async fn verify_models(signing_algo: SigningAlgo) -> Result<(), Box<dyn Error>> {
-    let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
-    assert!(!models.is_empty(), "Expected representative Chat models");
+    let models = select_models(&required_env("NEARAI_E2E_MODELS")?, "chat")?;
     for model in &models {
         println!("{}: {}, {signing_algo}", model.provider, model.id);
         tokio::time::timeout(Duration::from_secs(180), verify_chat(signing_algo, model)).await??;

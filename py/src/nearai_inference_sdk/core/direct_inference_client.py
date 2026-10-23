@@ -111,6 +111,8 @@ class DirectInferenceClient(
             key_config = verify_ohttp_key_config(
                 fetched.ohttp_attestation, serving_signer
             )
+        # OHTTP requires the serving signer. Another
+        # verified report with that same identity may supply its public key.
         selected = next(
             (
                 item

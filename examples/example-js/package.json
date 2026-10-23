@@ -13,10 +13,13 @@
     "start:direct-client": "node direct/client.ts",
     "start:direct-client-openai-sdk": "node direct/client-openai-sdk.ts",
     "start:direct-bare": "node direct/bare.ts",
-    "start:client-openai-sdk": "node gateway/client-openai-sdk.ts"
+    "start:client-openai-sdk": "node gateway/client-openai-sdk.ts",
+    "start:jev": "node gateway/jev.ts",
+    "start:jev-sdk": "node gateway/jev-sdk.ts"
   },
   "dependencies": {
     "@nearai/inference-sdk": "link:../../js",
+    "@typesafe-ai/sdk": "0.7.0",
     "openai": "7.25.0"
   },
   "devDependencies": {

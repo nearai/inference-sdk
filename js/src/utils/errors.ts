@@ -1,4 +1,5 @@
 import type { TcbStatus } from '../types/verification';
+import type { ComposeManagerDeploymentFailureReason } from '../types/compose-manager';
 import type {
   DeploymentImagesFailureReason,
   ImageProvenanceFailureReason,
@@ -46,6 +47,15 @@ export type ApiFailure =
         reason: 'request' | 'response_body';
       };
       retryable: true;
+    }
+  | {
+      /** Replaying this inference could duplicate a billable request. */
+      code: 'api.inference_transport_failed';
+      details: {
+        resource: 'completion';
+        reason: 'request' | 'response_body';
+      };
+      retryable: false;
     }
   | {
       code: 'api.http_status';
@@ -156,8 +166,15 @@ export type VerificationFailure =
   | {
       code: 'binding.nonce_mismatch';
       details: {
-        source: 'attestationNonce' | 'quoteReportData' | 'nvidiaPayload';
+        source:
+          | 'attestationNonce'
+          | 'quoteReportData'
+          | 'nvidiaPayload'
+          | 'composeManagerAttestation';
       };
+    }
+  | {
+      code: 'binding.compose_manager_actions_mismatch';
     }
   | {
       code: 'binding.report_data_invalid';
@@ -268,6 +285,24 @@ export type VerificationFailure =
     }
   | {
       code: 'provenance.verification_failed';
+    }
+  | {
+      code: 'provenance.compose_manager_deployment_invalid';
+      details: { reason: ComposeManagerDeploymentFailureReason };
+    }
+  | {
+      code: 'provenance.compose_file_request_failed';
+      details: {
+        repository: string;
+        commit: string;
+        file: string;
+        status?: number;
+      };
+      retryable: boolean;
+    }
+  | {
+      code: 'provenance.compose_file_hash_mismatch';
+      details: { repository: string; commit: string; file: string };
     }
   | {
       code: 'provenance.deployment_images_invalid';
@@ -480,6 +515,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'input.invalid':
       return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':
+    case 'api.inference_transport_failed':
       return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} ${
         failure.details.reason === 'request'
           ? 'request failed'
@@ -519,6 +555,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] Attestation requires an observed TLS peer fingerprint`;
     case 'binding.nonce_mismatch':
       return `[${failure.code}] Nonce in ${failure.details.source} does not match`;
+    case 'binding.compose_manager_actions_mismatch':
+      return `[${failure.code}] Compose Manager actions do not match their quoted hash`;
     case 'binding.report_data_invalid':
       return `[${failure.code}] ${failure.details.source} is invalid: ${failure.details.reason}`;
     case 'binding.report_data_mismatch':
@@ -549,6 +587,12 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] GPU evidence was rejected by ${failure.details.source}`;
     case 'provenance.verification_failed':
       return `[${failure.code}] Deployment provenance verification failed`;
+    case 'provenance.compose_manager_deployment_invalid':
+      return `[${failure.code}] Compose Manager deployment evidence is invalid: ${failure.details.reason}`;
+    case 'provenance.compose_file_request_failed':
+      return `[${failure.code}] Could not fetch ${failure.details.repository}/${failure.details.file} at ${failure.details.commit}`;
+    case 'provenance.compose_file_hash_mismatch':
+      return `[${failure.code}] Deployment compose file does not match the attested SHA-256`;
     case 'provenance.deployment_images_invalid':
       return `[${failure.code}] Deployment images are invalid: ${failure.details.reason}${failure.details.imageRepository ? ` (${failure.details.imageRepository})` : ''}${failure.details.service ? ` in service ${failure.details.service}` : ''}`;
     case 'provenance.image_request_failed':

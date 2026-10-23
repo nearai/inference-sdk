@@ -8,11 +8,19 @@ Run from this directory:
 | Command | Demonstrates |
 | --- | --- |
 | `go run ./gateway/openai` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
+| `go run ./gateway/systemone` | Structured decisions with verified receipts |
 | `go run ./gateway/client` | Integrated Gateway preflight, E2EE, JSON/SSE, image provenance and receipts |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, E2EE, ciphertext capture/decryption and receipts |
 | `go run ./direct/openai` | Experimental official OpenAI Go client through the direct verified transport, E2EE, JSON/SSE, and receipts. |
 | `go run ./direct/client` | Experimental integrated direct inference, JSON/SSE, E2EE and receipts |
 | `go run ./direct/bare` | Standalone direct report verification, E2EE, ciphertext capture/decryption and all matching receipt signers |
+
+## System One decisions
+
+Set `NEARAI_SYSTEMONE_MODEL` to a decision model from your endpoint's catalog.
+`NEARAI_API_KEY` supplies the credential and `NEARAI_BASE_URL` selects the endpoint.
+Run `go run ./gateway/systemone` to send a question and print its verified answer.
+See the [guide](../../go/docs/verification-guide.md#verify-system-one-decisions) for API usage.
 
 ## Official OpenAI Go client
 
@@ -24,8 +32,9 @@ retries with `option.WithMaxRetries(0)`.
 
 The example sends JSON and streaming Chat with E2EE. It consumes streams through
 EOF and calls `client.VerifyResponse(ctx, completionID)` before displaying the
-answer. Only Chat Completions are supported; this transport does not support the
-Responses API. Local integration tests and the live `TestLiveOpenAI` case cover
+answer. The Gateway transport also supports
+[Responses creation](../../go/docs/verification-guide.md#responses-api) with E2EE
+disabled. Local integration tests and the live `TestLiveOpenAI` case cover
 both JSON and streaming through the Gateway implementation. Local adapter tests
 also exercise direct JSON/SSE with signed provider receipts; the live suite does
 not test experimental direct endpoints.
@@ -45,7 +54,7 @@ algorithm for evidence, encryption, and receipt lookup. Use a NEAR TEE model for
 Run direct examples separately with the matching direct URL and model; direct
 endpoints remain experimental and do not authenticate TLS with attestation.
 
-The examples each consume both JSON and SSE through HTTP EOF and verify
+The Chat examples consume both JSON and SSE through HTTP EOF and verify
 receipts before displaying plaintext. Standalone examples capture ciphertext
 below decryption; they never verify a signature over reserialized plaintext.
 Direct verification returns every report sharing the response signer, rather

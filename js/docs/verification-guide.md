@@ -77,8 +77,8 @@ const client = new InferenceClient({
 OHTTP is disabled by default and requires `signingAlgo: 'ed25519'` (the default).
 The client verifies the advertised OHTTP key configuration against the attested
 Gateway signer, or the serving model signer for a direct endpoint. Missing or
-invalid OHTTP evidence prevents Chat from being sent. The authenticated
-configuration is cached with the deployment verification result.
+invalid OHTTP evidence prevents the inference request from being sent. The
+authenticated configuration is cached with the deployment verification result.
 
 `e2ee` is independent and defaults to `false` for both clients.
 Through the Gateway, OHTTP protects the HTTP exchange to the Gateway, while E2EE
@@ -86,8 +86,9 @@ encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
-Only Chat uses OHTTP; metadata, attestation, and signature requests keep their
-normal HTTP paths. Your endpoint or proxy must support `/ohttp` at the configured origin.
+Chat and Gateway Responses can use OHTTP; metadata, attestation, and signature
+requests keep their normal HTTP paths. Your endpoint or proxy must support
+`/ohttp` at the configured origin.
 Authorization and explicitly configured custom headers are also sent on this
 outer request so the endpoint can authenticate it. OHTTP does not hide these
 outer headers or the client's network address from the endpoint.
@@ -135,7 +136,9 @@ the quote, event log, and any NVIDIA payload. The sibling fields such as
 Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model share verification work and cached results.
+requests for the same model and endpoint share verification work and cached
+results. `verify(model)` and Chat share a session; System One uses a separate
+session because its model-routing rules differ.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -169,6 +172,126 @@ CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
 
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```ts
+const response = await client.responses.create({
+  model: 'z-ai/glm-5.3-flash',
+  input: 'Reply with the word ok.',
+  store: false,
+});
+const receipt = await client.verifyResponse(response.id);
+console.log(receipt.signatureKind, response.output_text);
+```
+
+Set `stream: true` and iterate the returned stream for typed Responses events.
+The same API works with an external OpenAI client using `fetch: client.fetch`.
+`InferenceResponses` exposes the official OpenAI `create` overloads.
+
+## System One decisions
+
+Use `systemone.create()` for Jev decision models. It verifies the required
+deployments before sending state, using the client's attestation cache and
+policies. Use a Gateway client with `e2ee: false` and `ohttp: false`;
+System One returns a complete JSON response.
+
+```ts
+import { InferenceClient } from '@nearai/inference-sdk/node';
+
+const client = new InferenceClient({ apiKey, baseUrl, e2ee: false, ohttp: false });
+const result = await client.systemone.create({
+  model: canonicalModelId,
+  state: { message: 'I was charged twice.' },
+  questions: {
+    billing: { type: 'noul', instructions: 'Is this about billing?' },
+  },
+});
+
+const verified = await client.verifyResponse(result.decisionId);
+console.log(verified.signatureKind, result.data.answers);
+```
+
+`result.decisionId` comes from `X-Generation-Id`. Call `verifyResponse()` before
+using the answers; it checks the exact bytes captured by the client. Gateway
+receipts authenticate Gateway signing; provider TEE receipts authenticate a
+signer in the verified model reports.
+
+Response retention and receipt retries follow the same lifecycle as Chat.
+If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
+Pass an `AbortSignal` in the create method's second argument to cancel the call.
+
+### Use the official Jev SDK
+
+Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to
+`TypeSafeClient`. Its API root excludes `/v1`; the NEAR client includes `/v1/`.
+Use a canonical Jev model ID from your endpoint's catalog.
+
+```ts
+import { InferenceClient } from '@nearai/inference-sdk/node';
+import { TypeSafeClient, noul } from '@typesafe-ai/sdk';
+
+const inference = new InferenceClient({
+  apiKey,
+  baseUrl: 'https://cloud-api.near.ai/v1/',
+  e2ee: false,
+  ohttp: false,
+});
+const jev = new TypeSafeClient({
+  apiKey,
+  baseURL: 'https://cloud-api.near.ai',
+  fetch: inference.fetch,
+  compression: false,
+  retry: { maxRetries: 0 },
+  timeout: 60_000,
+});
+const { data, response } = await jev.systemOne({
+  model,
+  state: 'I was charged twice.',
+  questions: { billing: noul('Is this about billing?') },
+}).withResponse();
+const id = response.headers.get('x-generation-id');
+if (!id) throw new Error('Missing System One receipt ID');
+await inference.verifyResponse(id);
+console.log(data.answers.billing.noul);
+```
+
+The adapter accepts uncompressed, nonstreaming JSON at the configured System One
+endpoint. Keep E2EE, OHTTP, compression and automatic inference retries disabled;
+multipart uploads and other official SDK endpoints are outside this adapter's
+scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+
+`X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
+identifies the upstream request. Verification uses the exact captured bytes.
+Self-hosted requests route with the preselected attested `x-model-pub-key`.
+Provider receipts must match that identity; external models use Gateway receipts. The Node transport
+also pins Gateway TLS, as it does for Chat.
+
+See the [runnable official SDK example](../../examples/example-js/gateway/jev-sdk.ts).
+Its [reusable helpers](../../examples/example-js/gateway/jev-helpers.ts) keep the
+verified transport configuration and receipt-ID extraction together. See the
+[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+credential-gated validation against a deployed Gateway.
+
 ## Connect through an application proxy
 
 A proxy lets your backend keep the NEAR AI API key while users' devices verify
@@ -176,25 +299,10 @@ evidence and encrypt prompts. Direct server-to-Gateway integrations do not
 need a proxy.
 
 Set `baseUrl` to your backend's API endpoint and `headers` to the credentials
-it accepts. The Intel verifier uses Phala PCCS in browsers because Intel's
-service does not support CORS; Node.js uses Intel directly. NVIDIA uses its
-official NRAS and JWKS endpoints. Browser clients need a proxy for the NRAS
-POST. All three URLs can be overridden:
+it accepts:
 
 ```ts
-import {
-  createTdxQuoteVerifier,
-  createGpuEvidenceVerifier,
-  InferenceClient,
-} from '@nearai/inference-sdk';
-
-const tdxQuote = createTdxQuoteVerifier({
-  pccsUrl: '/api/attestation/intel',
-});
-const gpuEvidence = createGpuEvidenceVerifier({
-  nrasUrl: '/api/attestation/nvidia',
-  jwksUrl: '/api/attestation/nvidia/jwks.json',
-});
+import { InferenceClient } from '@nearai/inference-sdk';
 
 const client = new InferenceClient({
   baseUrl: 'https://api.example.com/v1',
@@ -202,37 +310,17 @@ const client = new InferenceClient({
   headers: {
     Authorization: 'Bearer <browser-scoped token>',
   },
-  gatewayVerification: { verifiers: { tdxQuote } },
-  modelVerification: { verifiers: { tdxQuote, gpuEvidence } },
 });
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, and `/v1/signature/{id}`. Preserve the URL-encoded model
-ID. It authenticates the user and supplies its upstream
-NEAR AI credential. Preserve the request and response bodies, model-key routing header,
-and encryption headers unchanged so decryption and signature verification work.
-
-The attestation-service routes are separate from the inference API proxy:
-
-- The Intel route must be PCCS-compatible: support `/sgx/certification/v4/*`
-  and `/tdx/certification/v4/*` below the configured base, preserve query
-  parameters and issuer-chain response headers, and serve the hex-encoded root
-  CRL at `/sgx/certification/v4/rootcacrl`. Without that route, DCAP can fall back
-  to fetching the certificate's CRL URL directly.
-- The NVIDIA routes forward the NRAS JSON POST and JWKS GET without modifying
-  their bodies. Omit `jwksUrl` to fetch NVIDIA's CORS-enabled JWKS directly.
-
-Use same-origin routes or a proxy that permits the application's origin. A
-cross-origin Intel proxy must also expose the issuer-chain response headers.
-Changing these URLs does not disable signature, nonce, or timestamp checks.
-The JWKS URL selects trusted signing keys, so use only a trusted proxy;
-the expected NVIDIA issuer stays fixed.
-
-The same callbacks can be passed to `verifyGatewayAttestation` and
-`verifyModelAttestation` through `verifiers`. The NVIDIA helper checks the signed
-result against the submitted payload nonce; model verification also checks
-that nonce against `clientBinding.nonce`.
+`/v1/chat/completions`, `/v1/responses`, and `/v1/signature/{id}`. For System One
+decisions, also forward `POST /v1/systemone`. Preserve the URL-encoded model and
+completion IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
+Preserve the request and response bodies, model-key routing header, and encryption
+headers unchanged so decryption and signature verification work. Forward the
+`X-Generation-Id` response header for System One and expose it through
+`Access-Control-Expose-Headers` when the proxy is cross-origin.
 
 Browser Fetch does not expose the TLS peer certificate, so the generic client
 does not verify Gateway TLS binding. Depending on the browser build, the default
@@ -257,10 +345,46 @@ const client = new InferenceClient({
 });
 ```
 
+## Configure attestation service URLs
+
+Browser verification uses NEAR AI's proxies for PCCS and NRAS. Node.js uses
+Intel and NVIDIA directly. The built-in verifiers use these defaults:
+
+| Service | Browser | Node.js |
+| --- | --- | --- |
+| PCCS base | `https://cloud.near.ai/api/proxy/pccs` | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+To use your own services, pass verifier callbacks with custom URLs:
+
+```ts
+import {
+  createTdxQuoteVerifier,
+  createGpuEvidenceVerifier,
+} from '@nearai/inference-sdk';
+
+const tdxQuote = createTdxQuoteVerifier({
+  pccsUrl: 'https://attestation.example.com/pccs',
+});
+const gpuEvidence = createGpuEvidenceVerifier({
+  nrasUrl: 'https://attestation.example.com/nras/v3/attest/gpu',
+});
+```
+
+Pass `{ tdxQuote }` to Gateway verification or `{ tdxQuote, gpuEvidence }` to
+model verification through `verifiers`. In `InferenceClient`, these are
+`gatewayVerification.verifiers` and `modelVerification.verifiers`.
+
+DCAP builds the SGX and TDX collateral paths beneath `pccsUrl`. `nrasUrl` is the
+complete GPU evidence POST URL. Signing keys come from NVIDIA; set `jwksUrl`
+separately to use another trusted key source.
+
 ## E2EE scope and response handling
 
-The client supports `POST /v1/chat/completions` with a model public key bound
-to verified attestation. Responses API and other endpoints are not supported.
+Field-level E2EE supports `POST /v1/chat/completions` with a model public key bound
+to verified attestation. [Responses](#responses-api) supports OHTTP but rejects
+field-level E2EE.
 
 Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
 and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the
@@ -361,8 +485,9 @@ if (completionId !== undefined) {
 Each ID identifies its own request bytes, response bytes, and verified deployment
 evidence. Concurrent requests can finish in any order. Repeated verification of
 the same ID shares the in-flight operation and its result. After a retryable
-API failure, call `verifyResponse(id)` again to retry the signature lookup.
-Successful results and non-retryable failures remain cached.
+API failure or `api.completion_signature_unavailable`, call `verifyResponse(id)`
+again to retry the signature lookup. Successful results and other non-retryable
+failures remain cached.
 
 Response records retain complete bodies in memory. They expire
 `responseCacheTimeToLiveMs` after body completion (default: 60 minutes),
@@ -686,7 +811,82 @@ build attestations; legacy Rekor `intoto` entries are not supported.
 configuration, failed proof retrieval, or failed proof verification. A retrieval
 failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
-The optional `githubToken` is a GitHub token, not a Gateway API key.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `appCompose` can describe its launcher rather than the
+model-serving containers deployed later. Use
+`verifyComposeManagerDeploymentImageProvenance` for those images:
+
+```ts
+import {
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyModelAttestation,
+  type ImageProvenancePolicy,
+} from '@nearai/inference-sdk';
+
+const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+for (const attestation of fetchedModels.attestations) {
+  await verifyModelAttestation({
+    attestation,
+    clientBinding: fetchedModels.clientBinding,
+    verifiers: {
+      deployment: deployment =>
+        verifyComposeManagerDeploymentImageProvenance({
+          deployment,
+          imagePolicies: modelImagePolicies,
+          composeManagerImagePolicy: {
+            imageRepository: 'nearaidev/compose-manager',
+            repository: 'nearai/compose-manager',
+            workflow: '.github/workflows/build.yml',
+          },
+        }),
+    },
+  });
+}
+```
+
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
+
+Use `composeFile` to select a project's file and `composeRepository` to change the
+trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
+on Gateway or Direct inference clients. The policy runs for every model report
+and requires Compose Manager evidence in each one.
+
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. See the
+[API reference](./api-reference.md#verifycomposemanagerdeploymentimageprovenance)
+for options and evidence fields.
+
+#### GitHub API access
+
+Requests use `https://api.github.com` by default, with optional `githubToken`
+authentication. When using a GitHub token in a frontend is impractical, set
+`githubApiUrl` to a GitHub-compatible endpoint on your backend. The backend
+supplies the GitHub credentials; the SDK ignores `githubToken` when
+`githubApiUrl` is set.
+
+The API base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path appended to the API URL | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured endpoint. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the backend to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ### Verify the response signature
 

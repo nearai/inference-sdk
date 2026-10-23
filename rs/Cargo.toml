@@ -2,14 +2,11 @@
 name = "nearai-inference-sdk"
 version = "0.1.0"
 edition = "2021"
-description = "Verification SDK for NEAR AI Cloud attestations"
+description = "Rust SDK for NEAR AI inference with attestation verification and end-to-end encryption"
 license = "MIT"
 repository = "https://github.com/nearai/inference-sdk"
 readme = "README.md"
-# This repository-only test uses a signed fixture shared by all three SDKs
-# outside the crate root. Do not publish a test whose fixture is unavailable.
-# Live E2E tests also stay in the repository, not the published crate.
-exclude = ["tests/image_provenance.rs", "e2e/**"]
+exclude = ["tests/**", "e2e/**"]
 
 [[test]]
 name = "e2e"
@@ -20,7 +17,7 @@ reqwest = { version = "0.12.26", features = ["json", "rustls-tls", "stream"] }
 x509-cert = { version = "0.2.5", default-features = false }
 
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
+serde_json = { version = "1.0.145", features = ["arbitrary_precision"] }
 serde_yaml_ng = "0.10.0"
 serde_path_to_error = "0.1.20"
 base64 = "0.22.1"

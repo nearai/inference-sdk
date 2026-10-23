@@ -1,4 +1,5 @@
 import * as v from 'valibot';
+import type { ComposeManagerAction } from './types/compose-manager';
 
 /** Values accepted at external HTTP, adapter, and signed-byte boundaries. */
 const SigningAlgoValues = ['ecdsa', 'ed25519'] as const;
@@ -97,6 +98,56 @@ export const CompletionResponseIdSchema = objectSchema({
   id: v.pipe(v.string(), v.minLength(1)),
 });
 
+// System One permits arbitrary dictionary keys. Unlike v.record, parsing
+// entries preserves names such as "constructor", "prototype", and "__proto__".
+function dictionarySchema<TValue extends v.GenericSchema>(value: TValue) {
+  return v.pipe(
+    NonArrayObjectSchema,
+    v.transform((input) => Object.entries(input)),
+    v.array(v.tuple([v.string(), value])),
+    v.transform((entries) => Object.fromEntries(entries)),
+  );
+}
+
+const SystemOneContentSchema = v.union([
+  v.string(),
+  NonArrayObjectSchema,
+  v.array(v.unknown()),
+]);
+const ProbabilitySchema = v.pipe(v.number(), v.minValue(0), v.maxValue(1));
+const ProbabilitiesSchema = dictionarySchema(ProbabilitySchema);
+const TokenCountSchema = v.pipe(v.number(), v.integer(), v.minValue(0));
+
+export const SystemOneResponseSchema = looseObjectSchema({
+  id: v.pipe(
+    v.optional(v.nullable(v.string())),
+    v.transform((value) => value ?? undefined),
+  ),
+  model: v.pipe(v.string(), v.minLength(1)),
+  answers: dictionarySchema(
+    v.variant('type', [
+      v.looseObject({ type: v.literal('noul'), noul: ProbabilitySchema }),
+      v.looseObject({
+        type: v.literal('choice'),
+        choice: v.string(),
+        confidence: ProbabilitySchema,
+        probabilities: ProbabilitiesSchema,
+      }),
+      v.looseObject({
+        type: v.literal('score'),
+        score: v.pipe(v.number(), v.finite()),
+        confidence: ProbabilitySchema,
+        probabilities: ProbabilitiesSchema,
+        legend: dictionarySchema(SystemOneContentSchema),
+      }),
+    ]),
+  ),
+  usage: looseObjectSchema({
+    input_tokens: TokenCountSchema,
+    output_tokens: TokenCountSchema,
+  }),
+});
+
 export const TdxQuoteVerificationResultSchema = objectSchema({
   tcbStatus: TcbStatusSchema,
   advisoryIds: v.pipe(v.array(v.string()), v.readonly()),
@@ -130,6 +181,46 @@ const OptionalCloudApiStringSchema = v.pipe(
   v.transform((value) => value ?? undefined),
 );
 
+export const ComposeManagerActionFieldsSchema = objectSchema({
+  action: v.string(),
+  timestamp: v.string(),
+  image: v.optional(v.string()),
+  commit: v.optional(v.string()),
+  file: v.optional(v.string()),
+  file_sha256: v.optional(v.string()),
+  services: v.optional(v.array(v.string())),
+});
+
+export const ComposeManagerActionValueSchema = v.union([
+  v.string(),
+  v.array(v.string()),
+]);
+const ComposeManagerActionValuesSchema = v.array(
+  ComposeManagerActionValueSchema,
+);
+
+// Validate without rebuilding the action: object/record schemas filter keys
+// such as __proto__, but every signed field must participate in its hash.
+export const ComposeManagerActionSchema = v.custom<ComposeManagerAction>(
+  (value) =>
+    v.is(ComposeManagerActionFieldsSchema, value) &&
+    v.is(ComposeManagerActionValuesSchema, Object.values(value)),
+);
+
+export const ComposeManagerAttestationSchema = objectSchema({
+  actions: v.array(ComposeManagerActionSchema),
+  actions_hash: v.string(),
+  nonce: v.string(),
+  quote: v.string(),
+  event_log: AttestationEventLogSchema,
+  report_data: OptionalCloudApiStringSchema,
+});
+
+const OptionalComposeManagerAttestationSchema = v.pipe(
+  v.optional(v.nullable(ComposeManagerAttestationSchema)),
+  v.transform((value) => value ?? undefined),
+);
+
 export const OhttpAttestationSchema = objectSchema({
   signing_algo: v.literal('ed25519'),
   signing_key: v.string(),
@@ -159,9 +250,10 @@ const CloudApiModelAttestationEntries = {
   signing_public_key: OptionalCloudApiStringSchema,
 };
 
-export const CloudApiModelAttestationSchema = objectSchema(
-  CloudApiModelAttestationEntries,
-);
+export const CloudApiModelAttestationSchema = objectSchema({
+  ...CloudApiModelAttestationEntries,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
+});
 
 const DirectApiModelAttestationEntries = {
   ...CloudApiModelAttestationEntries,
@@ -178,11 +270,11 @@ export const DirectApiModelAttestationSchema = objectSchema(
 
 export const DirectApiAttestationReportSchema = objectSchema({
   ...DirectApiModelAttestationEntries,
+  compose_manager_attestation: OptionalComposeManagerAttestationSchema,
   all_attestations: v.pipe(
     v.array(DirectApiModelAttestationSchema),
     v.minLength(1),
   ),
-  compose_manager_attestation: v.optional(v.unknown()),
   ohttp_attestation: OptionalOhttpAttestationSchema,
 });
 

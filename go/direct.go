@@ -32,6 +32,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 	if out.ServingAttestation.SPKIFingerprint != "" && !sameHex(out.ServingAttestation.SPKIFingerprint, fetched.ClientBinding.SPKIFingerprint) {
 		return VerifiedDirectModelAttestations{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
+	out.ServingAttestation = cloneAttestation(out.ServingAttestation)
 	return out, nil
 }
 
@@ -54,6 +55,7 @@ func VerifyDirectModelResponse(id string, request, response []byte, sig Completi
 		return VerifiedCompletionResult{}, e
 	}
 	return VerifiedCompletionResult{
+		ID:            id,
 		CompletionID:  id,
 		SignatureKind: sig.Kind,
 		Signature:     sig,
