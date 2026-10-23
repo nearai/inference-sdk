@@ -231,7 +231,7 @@ async function sendCompletion({
       model: MODEL,
       messages: [{ role: 'user', content: 'Reply with the word ok.' }],
       stream,
-      max_completion_tokens: 8,
+      max_completion_tokens: 1024,
     }),
   });
   // Encrypt protocol-supported fields to the verified model key and set the E2EE
