@@ -49,7 +49,8 @@ the attestation socket to be reused.
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
-| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
+| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
+| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
 
 ## `InferenceClient`
 
@@ -517,7 +518,8 @@ against a quote itself.
 | --- | --- | --- | --- |
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
-| `githubToken` | `string` | No | GitHub authentication for fetching proofs. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -529,6 +531,49 @@ configuration, `provenance.image_request_failed` for proof retrieval errors, or
 `provenance.image_verification_failed` for rejected proofs. Retrieval errors
 preserve the `ApiError` cause and retryability.
 
+### `verifyComposeManagerDeploymentImageProvenance`
+
+Use after model verification or in its deployment callback. Returns `Promise<void>`.
+The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
+Image selection uses the action's named `services`. Independently, the latest
+manager-start action must name an image satisfying `composeManagerImagePolicy`.
+An omitted or empty service list selects all services in the file.
+Unknown service names fail with `provenance.deployment_images_invalid`
+(`reason: 'service_missing'`); images in unselected services cannot satisfy a policy.
+
+| `VerifyComposeManagerDeploymentImageProvenanceParams` field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Yes | — | Verified deployment with authenticated `composeManager` actions. |
+| `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
+| `composeManagerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
+| `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
+| `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
+| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | — | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Compose files are limited to 8 MiB before hashing or parsing.
+
+Fails with `VerificationError` if manager evidence or a matching action is missing,
+the file cannot be retrieved, its hash differs, or an image policy fails. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `ComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Raw signed action fields, retaining wire names and unknown string/string-array fields. |
+|  | `actionsHash` | `string` | Reported SHA-256 of canonical action JSON. |
+|  | `nonce` | `string` | Echoed challenge. |
+|  | `intelQuote` | `string` | TDX quote binding the action hash and nonce. |
+|  | `eventLog` | `AttestationEventLog` | Event log to replay against RTMR3. |
+|  | `reportedQuoteData?` | `string` | Optional copy checked against verified quote report data. |
+| `VerifiedComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Quote-authenticated action log. |
+|  | `tcbStatus` | `TcbStatus` | Accepted manager quote status. |
+|  | `advisoryIds` | `readonly string[]` | Manager quote advisory IDs. |
+|  | `runtimeMeasurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+Model reports retain optional `composeManagerAttestation`; successful model
+verification exposes its authenticated form as `deployment.composeManager`.
+When supplied, manager evidence is checked even without an image policy.
+
 ### `fetchImageProvenance`
 
 Returns all inline Sigstore bundles as JSON strings. Does not verify them.
@@ -537,9 +582,18 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | --- | --- | --- | --- |
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
-| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub API access](verification-guide.md#github-api-access)
+for endpoint requirements.
 
 ### `verifyImageProvenance`
+
+Verifies supplied Sigstore bundles against a digest and build policy. Both
+deployment helpers call this after selecting images and fetching their proofs.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
@@ -624,6 +678,7 @@ the provider signature no longer matches the client-visible bytes.
 | Type | Additional field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
+|  | `composeManagerAttestation?` | `ComposeManagerAttestation` | No | Deployment-control evidence, authenticated during model verification when present. |
 |  | `signingPublicKey?` | `string` | No | E2EE model public key supplied by the service. Verification binds an Ed25519 key directly, or derives an ECDSA signing address, from the quote-bound signer before returning it. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
@@ -701,6 +756,7 @@ trust roots or another verification service.
 |  | `rtMr3` | `Uint8Array` | Authenticated quote RTMR3. |
 | `MeasuredDeployment` | `readonly appCompose` | `string` | Configuration text bound to MRCONFIGID. |
 |  | `readonly runtimeMeasurements` | `RuntimeMeasurements` | Runtime measurements derived from verified event-log entries. |
+|  | `readonly composeManager?` | `VerifiedComposeManagerAttestation` | Optional authenticated model deployment-control evidence. |
 | `RuntimeMeasurements` | `readonly osImageHash?` | `string` | Optional measured OS image hash. |
 |  | `readonly composeHash?` | `string` | Optional measured compose hash. |
 
