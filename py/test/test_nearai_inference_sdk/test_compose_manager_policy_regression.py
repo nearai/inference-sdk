@@ -66,7 +66,7 @@ async def test_rejects_unapproved_or_missing_current_manager(monkeypatch, image)
         await verify_compose_manager_deployment_image_provenance(
             deployment(image),
             POLICIES,
-            manager_image_policy=ComposeManagerImagePolicy(
+            compose_manager_image_policy=ComposeManagerImagePolicy(
                 image_repository='nearaidev/compose-manager',
                 **vars(POLICIES['nearaidev/compose-manager']),
             ),
@@ -84,7 +84,7 @@ async def test_empty_policy_rejects_before_fetch(monkeypatch):
         await verify_compose_manager_deployment_image_provenance(
             deployment(),
             {},
-            manager_image_policy=ComposeManagerImagePolicy(
+            compose_manager_image_policy=ComposeManagerImagePolicy(
                 image_repository='nearaidev/compose-manager',
                 **vars(POLICIES['nearaidev/compose-manager']),
             ),
@@ -145,7 +145,7 @@ async def test_stale_compose_cannot_vouch_for_current_manager_digest(monkeypatch
         await verify_compose_manager_deployment_image_provenance(
             deployment('nearaidev/compose-manager@' + digest),
             POLICIES,
-            manager_image_policy=ComposeManagerImagePolicy(
+            compose_manager_image_policy=ComposeManagerImagePolicy(
                 image_repository='nearaidev/compose-manager',
                 **vars(POLICIES['nearaidev/compose-manager']),
             ),

@@ -23,7 +23,7 @@ async def verify_compose_manager_deployment_image_provenance(
     deployment: MeasuredDeployment,
     image_policies: Mapping[str, ImageProvenancePolicy],
     *,
-    manager_image_policy: ComposeManagerImagePolicy,
+    compose_manager_image_policy: ComposeManagerImagePolicy,
     compose_repository: str = 'nearai/cvm-compose-files',
     compose_file: str | None = None,
     github_token: str | None = None,
@@ -63,7 +63,9 @@ async def verify_compose_manager_deployment_image_provenance(
     image = None if started is None else started.get('image')
     if not isinstance(image, str):
         raise _invalid_deployment('manager_image_missing')
-    repository = manager_image_policy.image_repository.removeprefix('docker.io/')
+    repository = compose_manager_image_policy.image_repository.removeprefix(
+        'docker.io/'
+    )
     image = image.removeprefix('docker.io/')
     if not repository or not image.startswith((f'{repository}@', f'{repository}:')):
         raise _invalid_deployment('manager_image_mismatch')
@@ -142,7 +144,7 @@ async def verify_compose_manager_deployment_image_provenance(
     await verify_required_image_provenance(
         repository,
         manager_digest,
-        manager_image_policy,
+        compose_manager_image_policy,
         github_token,
         github_proxy_url=github_proxy_url,
     )

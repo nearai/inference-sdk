@@ -479,7 +479,7 @@ async def check_model_images(deployment: MeasuredDeployment) -> None:
     await verify_compose_manager_deployment_image_provenance(
         deployment,
         model_image_policies,
-        manager_image_policy=ComposeManagerImagePolicy(
+        compose_manager_image_policy=ComposeManagerImagePolicy(
             image_repository='nearaidev/compose-manager',
             repository='nearai/compose-manager',
             workflow='.github/workflows/build.yml',

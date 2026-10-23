@@ -104,7 +104,7 @@ async def test_rejects_unicode_hashes_before_fetching_compose(
     monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            deployment, POLICIES, manager_image_policy=MANAGER_POLICY
+            deployment, POLICIES, compose_manager_image_policy=MANAGER_POLICY
         )
     assert raised.value.failure.details['reason'] == 'invalid_file_reference'
     fetch.assert_not_awaited()
@@ -137,7 +137,7 @@ async def test_rejects_unpinned_manager_image_before_any_request(
         await verify_compose_manager_deployment_image_provenance(
             deployment,
             POLICIES,
-            manager_image_policy=MANAGER_POLICY,
+            compose_manager_image_policy=MANAGER_POLICY,
             github_token='test-github-token',
         )
     assert error.value.failure.code == 'provenance.deployment_images_invalid'
@@ -180,7 +180,7 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
         await verify_compose_manager_deployment_image_provenance(
             deployment,
             POLICIES,
-            manager_image_policy=MANAGER_POLICY,
+            compose_manager_image_policy=MANAGER_POLICY,
             github_token='test-token',
             github_proxy_url=github_proxy_url,
         )
@@ -263,7 +263,7 @@ async def test_rejects_invalid_github_proxy_before_any_request(
             await verify_compose_manager_deployment_image_provenance(
                 verified_deployment,
                 POLICIES,
-                manager_image_policy=MANAGER_POLICY,
+                compose_manager_image_policy=MANAGER_POLICY,
                 github_proxy_url=github_proxy_url,
             )
         else:
@@ -308,7 +308,7 @@ async def test_service_selection_must_satisfy_the_image_policy(
     monkeypatch.setattr(provenance, 'fetch_image_provenance', image_fetch)
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            deployment, POLICIES, manager_image_policy=MANAGER_POLICY
+            deployment, POLICIES, compose_manager_image_policy=MANAGER_POLICY
         )
     assert raised.value.failure.code == 'provenance.deployment_images_invalid'
     assert raised.value.failure.details['reason'] == reason
@@ -356,7 +356,7 @@ async def test_rejects_changed_compose_before_image_proof_retrieval(
         await verify_compose_manager_deployment_image_provenance(
             verified_deployment,
             POLICIES,
-            manager_image_policy=MANAGER_POLICY,
+            compose_manager_image_policy=MANAGER_POLICY,
             github_proxy_url='https://app.example/verification/github',
         )
     assert raised.value.failure.code == 'provenance.compose_file_hash_mismatch'
@@ -371,7 +371,7 @@ async def test_requires_manager_evidence_when_its_provenance_policy_is_used():
     )
     with pytest.raises(VerificationError) as raised:
         await verify_compose_manager_deployment_image_provenance(
-            verified.deployment, POLICIES, manager_image_policy=MANAGER_POLICY
+            verified.deployment, POLICIES, compose_manager_image_policy=MANAGER_POLICY
         )
     assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
     assert raised.value.failure.details == {'reason': 'attestation_missing'}
@@ -399,7 +399,7 @@ async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch(
             await verify_compose_manager_deployment_image_provenance(
                 verified_deployment,
                 POLICIES,
-                manager_image_policy=MANAGER_POLICY,
+                compose_manager_image_policy=MANAGER_POLICY,
                 github_proxy_url=str(server.make_url('/')),
             )
     assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
