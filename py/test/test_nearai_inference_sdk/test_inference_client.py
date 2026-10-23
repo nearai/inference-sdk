@@ -58,7 +58,13 @@ class ChunkStream(httpx.AsyncByteStream):
 class Gateway:
     """Real message crypto; only the hardware quote verifier is substituted."""
 
-    def __init__(self, signing_algo: str = 'ed25519', kind: str = 'provider_tee'):
+    def __init__(
+        self,
+        signing_algo: str = 'ed25519',
+        kind: str = 'provider_tee',
+        *,
+        seed: bytes = bytes([7]) * 32,
+    ):
         self.signing_algo = signing_algo
         self.kind = kind
         self.gateway_requests = 0
@@ -76,7 +82,7 @@ class Gateway:
         self.additional_model_is_invalid = False
         self.bad_quote = False
         self.tail_gate: asyncio.Event | None = None
-        self.seed = bytes([7]) * 32
+        self.seed = seed
         if signing_algo == 'ed25519':
             self.key = SigningKey(self.seed)
             self.public_key = bytes(self.key.verify_key).hex()

@@ -56,6 +56,8 @@ async def verify_deployment_image_provenance(
     app_compose: str,
     image_policies: Mapping[str, ImageProvenancePolicy],
     github_token: str | None = None,
+    *,
+    github_api_url: str | None = None,
 ) -> None:
     """Verify digest-pinned images selected from measured app-compose JSON.
 
@@ -70,16 +72,38 @@ async def verify_deployment_image_provenance(
         app = DeploymentAppComposeSchema.model_validate_json(app_compose)
     except (ValidationError, TypeError):
         raise _deployment_images_failure('invalid_app_compose') from None
+    await verify_compose_image_provenance(
+        app.docker_compose_file,
+        image_policies,
+        github_token,
+        github_api_url=github_api_url,
+    )
+
+
+async def verify_compose_image_provenance(
+    docker_compose: str,
+    image_policies: Mapping[str, ImageProvenancePolicy],
+    github_token: str | None = None,
+    *,
+    services: Sequence[str] = (),
+    github_api_url: str | None = None,
+) -> None:
+    """Shared image selection for authenticated compose sources."""
+    if not image_policies:
+        raise _deployment_images_failure('empty_policy')
     try:
         yaml = YAML(typ='safe', pure=True)
         compose = DeploymentDockerComposeSchema.model_validate(
-            yaml.load(app.docker_compose_file)
+            yaml.load(docker_compose)
         )
     except (YAMLError, ValidationError, ValueError, TypeError, RecursionError):
         raise _deployment_images_failure('invalid_docker_compose') from None
 
     images: list[tuple[str, str]] = []
-    for service, config in compose.services.items():
+    for service in services or compose.services.keys():
+        config = compose.services.get(service)
+        if config is None:
+            raise _deployment_images_failure('service_missing', service=service)
         if config.image is None:
             continue
         if '$' in config.image:
@@ -96,34 +120,51 @@ async def verify_deployment_image_provenance(
             ):
                 continue
             found = True
-            pinned = re.fullmatch(
-                re.escape(repository)
-                + r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})',
-                image,
-            )
-            if pinned is None:
-                raise _deployment_images_failure(
-                    'image_not_pinned', image_repository=repository, service=service
-                )
-            selected.append((repository, pinned[1].lower(), policy))
+            digest = require_pinned_image_digest(image, repository, service)
+            selected.append((repository, digest, policy))
         if not found:
             raise _deployment_images_failure(
                 'image_missing', image_repository=repository
             )
 
     for repository, digest, policy in selected:
-        try:
-            bundles = await fetch_image_provenance(
-                policy.repository, digest, github_token
-            )
-        except ApiError as error:
-            raise verification_failure(
-                'provenance.image_request_failed',
-                {'imageRepository': repository, 'digest': digest},
-                retryable=error.retryable,
-                cause=error,
-            ) from error
-        await verify_image_provenance(bundles, digest, policy)
+        await verify_required_image_provenance(
+            repository, digest, policy, github_token, github_api_url=github_api_url
+        )
+
+
+async def verify_required_image_provenance(
+    repository: str,
+    digest: str,
+    policy: ImageProvenancePolicy,
+    github_token: str | None = None,
+    *,
+    github_api_url: str | None = None,
+) -> None:
+    try:
+        bundles = await fetch_image_provenance(
+            policy.repository, digest, github_token, github_api_url=github_api_url
+        )
+    except ApiError as error:
+        raise verification_failure(
+            'provenance.image_request_failed',
+            {'imageRepository': repository, 'digest': digest},
+            retryable=error.retryable,
+            cause=error,
+        ) from error
+    await verify_image_provenance(bundles, digest, policy)
+
+
+def require_pinned_image_digest(image: str, repository: str, service: str) -> str:
+    pinned = re.fullmatch(
+        r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})',
+        image[len(repository) :],
+    )
+    if pinned is None:
+        raise _deployment_images_failure(
+            'image_not_pinned', image_repository=repository, service=service
+        )
+    return pinned[1].lower()
 
 
 def _deployment_images_failure(
@@ -140,13 +181,47 @@ def _deployment_images_failure(
     return verification_failure('provenance.deployment_images_invalid', details)
 
 
+def github_api_base_url(github_api_url: str | None) -> str:
+    if github_api_url is None:
+        return 'https://api.github.com'
+    try:
+        parsed = urlsplit(github_api_url)
+        _ = parsed.port
+        if (
+            parsed.scheme not in {'http', 'https'}
+            or not parsed.hostname
+            or parsed.username is not None
+            or '?' in github_api_url
+            or '#' in github_api_url
+        ):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise api_failure(
+            'api.invalid_input',
+            {
+                'field': 'github_api_url',
+                'reason': 'invalid_url',
+                'expected': (
+                    'an absolute HTTP(S) URL without credentials, query, or fragment'
+                ),
+            },
+        ) from None
+    return github_api_url.rstrip('/')
+
+
 async def fetch_image_provenance(
-    repository: str, digest: str, github_token: str | None = None
+    repository: str,
+    digest: str,
+    github_token: str | None = None,
+    *,
+    github_api_url: str | None = None,
 ) -> list[str]:
     """Fetch inline Sigstore bundles for an image digest from a GitHub repository.
 
-    ``github_token`` is an optional GitHub token, not a Gateway API key. Only
-    api.github.com is requested; returned bundle URLs are never followed.
+    Requests use https://api.github.com by default. When a frontend cannot supply
+    a GitHub token, set ``github_api_url`` to a backend endpoint that handles
+    GitHub authentication. ``github_token`` is used only with the default API.
+    Redirects and returned bundle URLs are not followed.
     """
 
     if not _REPOSITORY_PATTERN.fullmatch(repository) or any(
@@ -173,11 +248,12 @@ async def fetch_image_provenance(
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if github_token is not None:
+    if github_api_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
 
+    api_url = github_api_base_url(github_api_url)
     base_url = (
-        f'https://api.github.com/repos/{repository}/attestations/'
+        f'{api_url}/repos/{repository}/attestations/'
         f'{quote(digest.lower(), safe=":")}?per_page=100'
     )
     url = base_url
@@ -185,7 +261,7 @@ async def fetch_image_provenance(
     bundles: list[str] = []
     while True:
         try:
-            response = await fetch(url, headers=headers)
+            response = await fetch(url, headers=headers, allow_redirects=False)
         except Exception as error:
             raise api_failure(
                 'api.transport_failed',

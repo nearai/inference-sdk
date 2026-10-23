@@ -484,12 +484,90 @@ build provenance.
 The helpers are asynchronous. The deployment helper reports selection, request,
 and verification failures as `VerificationError`; wrapped request failures retain
 their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks. An optional GitHub
-token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
+Multiple bundles are tried until one satisfies all checks.
 
 This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides, inspect compose-manager,
+rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `app_compose` can describe the launcher rather than containers
+deployed later. Use the Compose Manager helper for the recorded model deployment:
+
+```python
+from nearai_inference_sdk import (
+    ComposeManagerImagePolicy,
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    ModelAttestationVerifiers,
+    verify_compose_manager_deployment_image_provenance,
+    verify_model_attestation,
+)
+
+model_image_policies = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy',
+        workflow='.github/workflows/build.yml',
+    ),
+}
+
+
+async def check_model_images(deployment: MeasuredDeployment) -> None:
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        model_image_policies,
+        compose_manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
+
+
+for attestation in fetched_models.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_models.client_binding,
+        verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+    )
+```
+
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
+
+Use `compose_file` to select a project's file and `compose_repository` to change the
+trusted repository. Configure this callback as `model_verification.verifiers.deployment`
+on Gateway or Direct inference clients. The policy runs for every model report
+and requires Compose Manager evidence in each one.
+
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. See the
+[API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
+for options and evidence fields.
+
+#### GitHub API access
+
+Requests use `https://api.github.com` by default, with optional `github_token`
+authentication. When using a GitHub token in a frontend is impractical, set
+`github_api_url` to a GitHub-compatible endpoint on your backend. The backend
+supplies the GitHub credentials; the SDK ignores `github_token` when
+`github_api_url` is set.
+
+The API base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path appended to the API URL | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured endpoint. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the backend to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ## 2. Send the completion and retain exact bytes
 
