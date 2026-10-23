@@ -54,8 +54,7 @@ go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m 
 ```
 
 Ordinary unit-test commands exclude the live suites. PR CI checks their source
-without making live requests, except for the temporary live-workflow opt-in
-for PR #118.
+without making live requests.
 
 ## CI configuration
 
