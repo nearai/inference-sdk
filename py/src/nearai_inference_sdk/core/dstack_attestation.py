@@ -29,7 +29,11 @@ from .attestation_common import (
 )
 from .event_log import verify_and_replay_rtmr3
 
-DEFAULT_ACCEPTED_TCB_STATUSES: tuple[TcbStatus, ...] = ('UpToDate', 'OutOfDate')
+DEFAULT_ACCEPTED_TCB_STATUSES: tuple[TcbStatus, ...] = (
+    'UpToDate',
+    'OutOfDate',
+    'TDRelaunchAdvised',
+)
 
 
 @dataclass(frozen=True, kw_only=True)
