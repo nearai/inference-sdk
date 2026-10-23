@@ -59,8 +59,6 @@ impl Default for GatewayVerificationOptions {
 }
 #[derive(Clone, Default)]
 pub struct ModelVerificationOptions {
-    /// Direct endpoints only: run after every report and TLS binding pass.
-    pub serving_deployment: Option<Arc<dyn DeploymentVerifier>>,
     pub policy: Option<ModelAttestationPolicy>,
     pub tdx_quote: Option<Arc<dyn TdxQuoteVerifier>>,
     pub gpu_evidence: Option<Arc<dyn GpuEvidenceVerifier>>,

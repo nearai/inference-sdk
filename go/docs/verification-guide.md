@@ -331,14 +331,14 @@ check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
             },
         })
 }
-// Gateway: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
-// Direct:  ModelVerification: nearai.VerificationOptions{ServingDeployment: check}
+// Gateway and Direct: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
 ```
 
-Pin source commits or refs according to your release policy. The evidence
+The policy runs for every model report and requires Compose Manager evidence in
+each one. Pin source commits or refs according to your release policy. The evidence
 covers recorded deployment actions and image builds. Current runtime state
 requires separate evidence. See the [API reference](./api-reference.md#compose-manager-deployment-provenance)
-for file selection, GitHub access, and Direct client options.
+for file selection and GitHub access.
 
 ## Configure attestation service URLs
 

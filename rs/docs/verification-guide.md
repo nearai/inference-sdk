@@ -530,9 +530,9 @@ For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
 `ModelAttestationVerifiers.deployment`. Keep the manager repository and build
 identity in `ComposeManagerImagePolicy`, separate from the compose image map.
 
-For Direct clients, use the same verifier as `model_verification.serving_deployment`.
-It applies to the serving report and uses its signer for routing and receipt
-verification. See the [API reference](./api-reference.md#compose-manager-deployment-images)
+On Gateway or Direct inference clients, set `model_verification.deployment`.
+The policy runs for every model report and requires Compose Manager evidence in
+each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
 for file selection, GitHub access, and standalone verification options.
 
 The evidence covers recorded deployment actions and the configured image builds.

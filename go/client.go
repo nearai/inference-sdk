@@ -356,7 +356,6 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, failure("policy.model_attestation_required", nil)
 		}
 	}
-	servingIndex := -1
 	for _, report := range models.Attestations {
 		var verified VerifiedAttestation
 		var e error
@@ -371,12 +370,11 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		s.result.Models = append(s.result.Models, verified)
 		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
 			ohttpSigner = verified.Signer
-			servingIndex = len(s.result.Models) - 1
 		}
 		if s.selected == nil &&
 			verified.Signer.SigningAlgo == o.SigningAlgo &&
 			verified.SigningPublicKey != "" &&
-			(!c.api.direct || (!o.OHTTP && opts.ServingDeployment == nil) ||
+			(!c.api.direct || !o.OHTTP ||
 				(models.ServingAttestation != nil &&
 					verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo &&
 					sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
@@ -389,17 +387,6 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	}
 	if c.api.direct && len(s.result.Models) == 0 {
 		return nil, failure("policy.model_attestation_required", nil)
-	}
-	if c.api.direct && opts.ServingDeployment != nil {
-		if servingIndex < 0 {
-			return nil, failure("api.invalid_response", nil)
-		}
-		serving := s.result.Models[servingIndex]
-		if err := opts.ServingDeployment(ctx, serving.Deployment); err != nil {
-			return nil, failure("provenance.verification_failed", err)
-		}
-		serving.DeploymentProvenance = "verified"
-		s.result.Models[servingIndex] = serving
 	}
 	if o.OHTTP {
 		if ohttp == nil {

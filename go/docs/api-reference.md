@@ -300,7 +300,6 @@ type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error
 type GPUEvidenceVerifier func(context.Context, string) error
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
-	ServingDeployment  DeploymentVerifier
 	Policy             AttestationPolicy
 	QuoteVerifier      QuoteVerifier
 	GPUVerifier        GPUEvidenceVerifier
@@ -579,12 +578,6 @@ is impractical, set it to a GitHub-compatible endpoint on your backend. The
 backend supplies the GitHub credentials; the SDK omits `GitHubToken` when
 `GitHubAPIURL` is set. Redirects and pagination outside the requested artifact
 are rejected.
-
-For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
-`VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
-It runs after every report and TLS binding pass, marks only the serving report's
-provenance, and constrains routing to that report. Receipts retain all reports
-that share the response signer.
 
 ## Errors and development
 

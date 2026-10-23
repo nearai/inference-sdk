@@ -62,10 +62,9 @@ mod ohttp;
 mod sse;
 pub use direct::{
     verify_direct_model_attestation, verify_direct_model_attestations,
-    verify_direct_model_attestations_with_serving_deployment, verify_direct_model_response,
-    DirectAttestationClient, DirectAttestationVerificationResult, DirectClientBinding,
-    DirectInferenceClient, DirectInferenceClientOptions, DirectModelAttestation,
-    FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
+    verify_direct_model_response, DirectAttestationClient, DirectAttestationVerificationResult,
+    DirectClientBinding, DirectInferenceClient, DirectInferenceClientOptions,
+    DirectModelAttestation, FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
 };
 pub use inference::{
     AttestationVerificationResult, ByteStream, DeploymentPolicy, GatewayVerificationOptions,

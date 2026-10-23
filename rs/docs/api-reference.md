@@ -366,14 +366,6 @@ Limit failures are non-retryable and return no partial bundles.
 `image_signer_identities`. The token is omitted when `github_api_url` is set. Pagination must remain on the
 same API origin and artifact path. Redirects are rejected.
 
-`verify_direct_model_attestations_with_serving_deployment` accepts the same first
-three arguments as `verify_direct_model_attestations`, followed by an optional
-`&dyn DeploymentVerifier`. The integrated equivalent is
-`ModelVerificationOptions.serving_deployment`. It runs after all reports and the
-serving TLS binding pass, marks only the serving report's provenance, and restricts
-routing and TLS pins to that report. Receipts retain all reports that share the
-response signer.
-
 ## Signatures and evidence
 
 ### Signature types

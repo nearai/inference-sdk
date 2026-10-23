@@ -209,16 +209,6 @@ pub async fn verify_direct_model_attestations(
     policy: Option<&ModelAttestationPolicy>,
     verifiers: ModelAttestationVerifiers<'_>,
 ) -> Result<DirectAttestationVerificationResult, VerificationError> {
-    verify_direct_model_attestations_with_serving_deployment(fetched, policy, verifiers, None).await
-}
-
-/// Verify every report and the TLS binding, then apply a policy only to the serving envelope.
-pub async fn verify_direct_model_attestations_with_serving_deployment(
-    fetched: &FetchedDirectModelAttestations,
-    policy: Option<&ModelAttestationPolicy>,
-    verifiers: ModelAttestationVerifiers<'_>,
-    serving_deployment: Option<&dyn DeploymentVerifier>,
-) -> Result<DirectAttestationVerificationResult, VerificationError> {
     if fetched.attestations.is_empty() {
         return Err(protocol(
             "policy.model_attestation_required",
@@ -233,7 +223,7 @@ pub async fn verify_direct_model_attestations_with_serving_deployment(
     let binding = ModelClientBinding {
         nonce: fetched.client_binding.nonce.clone(),
     };
-    let mut attestations =
+    let attestations =
         futures_util::future::try_join_all(fetched.attestations.iter().map(|report| {
             verify_direct_model_attestation(
                 report,
@@ -247,7 +237,7 @@ pub async fn verify_direct_model_attestations_with_serving_deployment(
             )
         }))
         .await?;
-    let mut serving = attestations[index].clone();
+    let serving = attestations[index].clone();
     let tls_binding = if let Some(pin) = &serving.spki_fingerprint {
         let peer = fetched
             .client_binding
@@ -270,14 +260,6 @@ pub async fn verify_direct_model_attestations_with_serving_deployment(
                 spki_fingerprints.push(pin.clone());
             }
         }
-    }
-    if let Some(verifier) = serving_deployment {
-        verifier
-            .verify(&serving.attestation.evidence.deployment)
-            .await?;
-        serving.attestation.evidence.deployment_provenance = DeploymentProvenanceStatus::Verified;
-        attestations[index] = serving.clone();
-        spki_fingerprints = serving.spki_fingerprint.iter().cloned().collect();
     }
     Ok(DirectAttestationVerificationResult {
         serving_attestation: serving,
@@ -453,7 +435,7 @@ pub(crate) async fn create_session(
     } else {
         None
     };
-    let verified = verify_direct_model_attestations_with_serving_deployment(
+    let verified = verify_direct_model_attestations(
         &fetched,
         o.policy.as_ref(),
         ModelAttestationVerifiers {
@@ -461,7 +443,6 @@ pub(crate) async fn create_session(
             gpu_evidence: o.gpu_evidence.as_deref(),
             deployment,
         },
-        o.serving_deployment.as_deref(),
     )
     .await?;
     let serving = &verified.serving_attestation.attestation.evidence.signer;
@@ -472,17 +453,12 @@ pub(crate) async fn create_session(
         .find(|a| {
             a.evidence.signer.signing_algo == options.signing_algo
                 && a.signing_public_key.is_some()
-                && (!(options.ohttp || o.serving_deployment.is_some())
-                    || same_signer(&a.evidence.signer, serving))
+                && (!options.ohttp || same_signer(&a.evidence.signer, serving))
         })
         .cloned()
         .ok_or_else(|| protocol("e2ee.model_public_key_required", "no matching model key"))?;
-    let tls_reports = if o.serving_deployment.is_some() {
-        vec![verified.serving_attestation.clone()]
-    } else {
-        verified.attestations.clone()
-    };
-    let pins: Vec<_> = tls_reports
+    let pins: Vec<_> = verified
+        .attestations
         .iter()
         .filter(|a| same_signer(&a.attestation.evidence.signer, &selected.evidence.signer))
         .filter_map(|a| a.spki_fingerprint.clone())

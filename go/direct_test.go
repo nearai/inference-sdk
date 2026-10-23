@@ -13,14 +13,9 @@ import (
 	"github.com/cloudflare/circl/hpke"
 )
 
-func TestDirectOHTTPSelectsServingSigner(t *testing.T) { testDirectServingRoute(t, true, false, false) }
-func TestDirectServingPolicySelectsServingSigner(t *testing.T) {
-	testDirectServingRoute(t, false, true, false)
-}
-func TestDirectServingPolicyPreservesSharedSignerReports(t *testing.T) {
-	testDirectServingRoute(t, false, true, true)
-}
-func testDirectServingRoute(t *testing.T, ohttp, servingPolicy, sharedSigner bool) {
+func TestDirectOHTTPSelectsServingSigner(t *testing.T)           { testDirectRoute(t, true, false) }
+func TestDirectDeploymentVerifierChecksEveryReport(t *testing.T) { testDirectRoute(t, false, true) }
+func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	a, qa, _ := attestationFixture(t, Ed25519)
 	b, qb, priv := attestationFixture(t, Ed25519)
 	a.InstanceID, b.InstanceID = "other", "serving"
@@ -88,16 +83,13 @@ func testDirectServingRoute(t *testing.T, ohttp, servingPolicy, sharedSigner boo
 	}))
 	defer server.Close()
 	calls := 0
-	var serving DeploymentVerifier
-	if servingPolicy {
-		serving = func(context.Context, MeasuredDeployment) error { calls++; return nil }
-	}
+	check := func(context.Context, MeasuredDeployment) error { calls++; return nil }
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
 		InferenceOptions: InferenceOptions{
 			ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
 			E2EE:              true,
 			OHTTP:             ohttp,
-			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, ServingDeployment: serving},
+			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: check},
 		},
 	})
 	if e != nil {
@@ -108,21 +100,19 @@ func testDirectServingRoute(t *testing.T, ohttp, servingPolicy, sharedSigner boo
 	if e != nil {
 		t.Fatal(e)
 	}
-	if servingPolicy {
-		if calls != 1 || session.result.Models[0].DeploymentProvenance != "not_checked" || session.result.Models[1].DeploymentProvenance != "verified" {
-			t.Fatal("serving policy must only mark the serving report")
+	if calls != 2 || session.result.Models[0].DeploymentProvenance != "verified" || session.result.Models[1].DeploymentProvenance != "verified" {
+		t.Fatal("deployment verifier must check every report")
+	}
+	receipt, err := client.verifyRecord(context.Background(), "chat", &responseRecord{session: session, request: request, response: response})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sharedSigner {
+		if len(receipt.Attestations) != 2 || receipt.Attestations[0].InstanceID != "other" || receipt.Attestations[1].InstanceID != "serving" {
+			t.Fatal("receipt must preserve every report sharing the signer")
 		}
-		receipt, err := client.verifyRecord(context.Background(), "chat", &responseRecord{session: session, request: request, response: response})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if sharedSigner {
-			if len(receipt.Attestations) != 2 || receipt.Attestations[0].InstanceID != "other" || receipt.Attestations[1].InstanceID != "serving" {
-				t.Fatal("receipt must preserve every report sharing the signer")
-			}
-		} else if len(receipt.Attestations) != 1 || receipt.Attestations[0].InstanceID != "serving" {
-			t.Fatal("receipt must only include reports matching the signer")
-		}
+	} else if len(receipt.Attestations) != 1 || receipt.Attestations[0].InstanceID != "serving" {
+		t.Fatal("receipt must only include reports matching the signer")
 	}
 	if len(session.result.Models) != 2 || session.selected.Signer != b.Signer || !client.options.E2EE {
 		t.Fatal("wrong routing or defaults")
