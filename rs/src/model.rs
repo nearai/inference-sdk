@@ -1,11 +1,12 @@
 use crate::attestation::{verify_dstack_deployment, verify_dstack_quote};
 use crate::bindings::{verify_report_data_binding, verify_reported_nonce};
+use crate::deployment_verifier::run_deployment_verifier;
 use crate::errors::VerificationError;
 use crate::nvidia::NrasGpuEvidenceVerifier;
 use crate::types::{
     AttestationPolicy, GpuEvidenceRequirement, GpuEvidenceStatus, GpuEvidenceVerifier,
     ModelAttestation, ModelAttestationPolicy, ModelAttestationVerifiers, ModelClientBinding,
-    VerifiedModelAttestation,
+    VerifiedAttestationEvidence, VerifiedModelAttestation,
 };
 use serde_json::Value;
 
@@ -55,7 +56,30 @@ pub(crate) async fn verify_model_with_tls(
             &verified_quote.signer.signing_address,
         )?;
     }
-    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
+    let manager = if let Some(manager) = &attestation.compose_manager_attestation {
+        Some(
+            crate::compose_manager::verify_compose_manager_attestation(
+                manager,
+                &attestation.evidence.app_compose,
+                &client_binding.nonce,
+                common_policy.as_ref(),
+                verifiers.tdx_quote,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let mut deployment = verify_dstack_deployment(&verified_quote)?;
+    deployment.compose_manager = manager;
+    let deployment_provenance = run_deployment_verifier(&deployment, verifiers.deployment).await?;
+    let evidence = VerifiedAttestationEvidence {
+        signer: verified_quote.signer,
+        tcb_status: verified_quote.quote.tcb_status,
+        advisory_ids: verified_quote.quote.advisory_ids,
+        deployment,
+        deployment_provenance,
+    };
     let gpu_evidence = verify_gpu_evidence(
         attestation.nvidia_payload.as_deref(),
         &client_binding.nonce,

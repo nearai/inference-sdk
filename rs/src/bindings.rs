@@ -145,7 +145,7 @@ pub fn verify_app_compose_mrconfigid_binding(
     Ok(())
 }
 
-fn verify_quote_report_data_nonce(
+pub(crate) fn verify_quote_report_data_nonce(
     report_data: &[u8],
     nonce: &str,
 ) -> Result<(), VerificationError> {

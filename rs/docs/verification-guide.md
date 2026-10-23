@@ -496,6 +496,48 @@ literal images are ignored; any unresolved `$` image reference is rejected,
 including defaults. This checks only images in the measured Compose, not model
 runtime images loaded later by a launcher or another service.
 
+### Model images deployed by Compose Manager
+
+Use a model deployment callback to require the model-serving images and
+manager startup image to come from approved builds:
+
+```rust,no_run
+use std::collections::BTreeMap;
+use async_trait::async_trait;
+use nearai_inference_sdk::{
+    verify_compose_manager_deployment_image_provenance, DeploymentVerifier,
+    ComposeManagerImagePolicy, ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
+
+struct ModelImages {
+    images: BTreeMap<String, ImageProvenancePolicy>,
+    manager: ComposeManagerImagePolicy,
+}
+
+#[async_trait]
+impl DeploymentVerifier for ModelImages {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        verify_compose_manager_deployment_image_provenance(
+            deployment, &self.images, &self.manager, Default::default(),
+        ).await
+    }
+}
+```
+
+For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
+`nearaidev/compose-manager` from `nearai/compose-manager`, both using
+`.github/workflows/build.yml`. Pass the verifier as
+`ModelAttestationVerifiers.deployment`. Keep the manager repository and build
+identity in `ComposeManagerImagePolicy`, separate from the compose image map.
+
+On Gateway or Direct inference clients, set `model_verification.deployment`.
+The policy runs for every model report and requires Compose Manager evidence in
+each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
+for file selection, GitHub access, and standalone verification options.
+
+The evidence covers recorded deployment actions and the configured image builds.
+Current runtime state requires separate evidence.
+
 ## Handle errors
 
 Cloud client methods and evidence selection return `Result<T, ApiError>`.

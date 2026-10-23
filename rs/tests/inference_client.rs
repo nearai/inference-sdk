@@ -118,11 +118,13 @@ impl Respond for Fixture {
                 if self.direct {
                     self.model.fetch_add(1, Ordering::SeqCst);
                     let mut root = self.report(nonce, 7);
+                    root["info"]["instance_id"] = json!("serving");
                     if self.alternate_direct_signer {
                         root.as_object_mut().unwrap().remove("signing_public_key");
                     }
                     let mut value = root.clone();
                     let mut other = self.report(nonce, 7);
+                    other["info"]["instance_id"] = json!("other");
                     if self.alternate_direct_signer {
                         other["signing_address"] = json!(format!(
                             "0X{}",
@@ -403,6 +405,40 @@ async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, InferenceClientOp
 fn body() -> Value {
     json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
 }
+struct DeploymentCheck(Arc<AtomicUsize>);
+#[async_trait]
+impl DeploymentVerifier for DeploymentCheck {
+    async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn direct_deployment_verifier_checks_every_report() {
+    let (_server, _fixture, mut options) = setup(Fixture {
+        direct: true,
+        ..Default::default()
+    })
+    .await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    options.model_verification.deployment = Some(Arc::new(DeploymentCheck(calls.clone())));
+    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let verified = client.verify("vendor/model").await.unwrap();
+    assert_eq!(verified.attestations.len(), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    client.chat_completions(body()).await.unwrap();
+    match client.verify_response("chat-0").await.unwrap().attestation {
+        VerifiedCompletionAttestation::Direct(reports) => {
+            assert_eq!(reports.len(), 2);
+            assert!(reports
+                .iter()
+                .all(|report| report.attestation.evidence.deployment_provenance
+                    == DeploymentProvenanceStatus::Verified));
+        }
+        _ => panic!("expected direct receipt"),
+    }
+}
+
 #[tokio::test]
 async fn chat_http_errors_keep_completion_resource_and_retryability() {
     for status in [429, 503] {

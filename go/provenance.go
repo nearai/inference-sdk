@@ -1,6 +1,7 @@
 package nearai
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/asn1"
@@ -22,15 +23,28 @@ import (
 type ImageProvenancePolicy struct{ Repository, Workflow, Ref, Commit, SignerIdentity, Issuer string }
 type VerifiedImageProvenance struct{ Digest, Repository, Workflow, Ref, Commit, CertificateIdentity, Issuer, PredicateType string }
 
+const (
+	maxProvenancePageBytes   = 16 << 20
+	maxProvenanceTotalBytes  = 64 << 20
+	maxProvenancePages       = 32
+	maxProvenancePageEntries = 100
+	maxProvenanceLinkBytes   = 8 << 10
+	maxProvenanceCursorBytes = 4 << 10
+)
+
 // ProvenanceOptions permits an offline, caller-trusted Sigstore root. Nil selects
 // the production root through Sigstore's authenticated TUF update mechanism.
 type ProvenanceOptions struct {
-	TrustedRoot root.TrustedMaterial
-	HTTPClient  *http.Client
-	GitHubToken string
+	// GitHubAPIURL overrides https://api.github.com. Use a backend endpoint when
+	// a frontend cannot supply a GitHub token; the backend handles authentication.
+	GitHubAPIURL string
+	TrustedRoot  root.TrustedMaterial
+	HTTPClient   *http.Client
+	GitHubToken  string
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
+var pinnedImageSuffixPattern = regexp.MustCompile(`^(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 var commitPattern = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
@@ -55,11 +69,22 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	base := "https://api.github.com/repos/" + repository + "/attestations/" + strings.ToLower(digest) + "?per_page=100"
+	apiBase, err := provenanceAPIBase(o.GitHubAPIURL)
+	if err != nil {
+		return nil, err
+	}
+	base := apiBase + "/repos/" + repository + "/attestations/" + strings.ToLower(digest) + "?per_page=100"
 	target := base
 	visited := map[string]bool{}
+	var totalBytes int64
 	var bundles []json.RawMessage
 	for {
+		if len(visited) >= maxProvenancePages {
+			return nil, failure("api.invalid_response", fmt.Errorf("provenance page limit exceeded"))
+		}
+		if totalBytes >= maxProvenanceTotalBytes {
+			return nil, failure("api.body_too_large", nil)
+		}
 		if visited[target] {
 			return nil, failure("api.invalid_response", nil)
 		}
@@ -70,14 +95,14 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if o.GitHubToken != "" {
+		if o.GitHubToken != "" && o.GitHubAPIURL == "" {
 			req.Header.Set("Authorization", "Bearer "+o.GitHubToken)
 		}
 		res, e := client.Do(req)
 		if e != nil {
 			return nil, &Error{Code: "api.transport_failed", Retryable: true, Cause: e}
 		}
-		raw, e := readBounded(res.Body, 16<<20)
+		raw, e := readBounded(res.Body, min(maxProvenancePageBytes, maxProvenanceTotalBytes-totalBytes))
 		res.Body.Close()
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			return nil, &Error{
@@ -89,10 +114,9 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		if e != nil {
 			return nil, e
 		}
+		totalBytes += int64(len(raw))
 		var result struct {
-			Attestations *[]struct {
-				Bundle json.RawMessage `json:"bundle"`
-			} `json:"attestations"`
+			Attestations *provenanceAttestations `json:"attestations"`
 		}
 		if e = json.Unmarshal(raw, &result); e != nil || result.Attestations == nil {
 			return nil, failure("api.invalid_response", e)
@@ -104,7 +128,18 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 			bundles = append(bundles, item.Bundle)
 		}
 		next := ""
-		for _, link := range strings.Split(strings.Join(res.Header.Values("Link"), ","), ",") {
+		links := res.Header.Values("Link")
+		linkBytes := 0
+		for i, link := range links {
+			if i > 0 {
+				linkBytes++ // Count the separator inserted by Join, even for empty values.
+			}
+			if len(link) > maxProvenanceLinkBytes-linkBytes {
+				return nil, failure("api.invalid_response", fmt.Errorf("provenance Link header limit exceeded"))
+			}
+			linkBytes += len(link)
+		}
+		for _, link := range strings.Split(strings.Join(links, ","), ",") {
 			parts := strings.Split(link, ";")
 			isNext := false
 			for _, p := range parts[1:] {
@@ -142,13 +177,47 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 			if count != 1 || next != "" {
 				return nil, failure("api.invalid_response", nil)
 			}
-			next = base + "&" + cursor.Encode()
+			encoded := cursor.Encode()
+			if len(encoded) > maxProvenanceCursorBytes {
+				return nil, failure("api.invalid_response", fmt.Errorf("provenance cursor limit exceeded"))
+			}
+			next = base + "&" + encoded
 		}
 		if next == "" {
 			return bundles, nil
 		}
 		target = next
 	}
+}
+
+type provenanceAttestation struct {
+	Bundle json.RawMessage `json:"bundle"`
+}
+
+type provenanceAttestations []provenanceAttestation
+
+func (entries *provenanceAttestations) UnmarshalJSON(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if token != json.Delim('[') {
+		return fmt.Errorf("attestations must be an array")
+	}
+	*entries = nil
+	for decoder.More() {
+		if len(*entries) >= maxProvenancePageEntries {
+			return fmt.Errorf("provenance attestation count limit exceeded")
+		}
+		var entry provenanceAttestation
+		if err := decoder.Decode(&entry); err != nil {
+			return err
+		}
+		*entries = append(*entries, entry)
+	}
+	_, err = decoder.Token()
+	return err
 }
 
 func VerifyImageProvenance(ctx context.Context, bundles []json.RawMessage, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) (VerifiedImageProvenance, error) {
@@ -346,21 +415,51 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 	if e := json.Unmarshal([]byte(appCompose), &app); e != nil || app.Compose == "" {
 		return failure("provenance.deployment_images_invalid", e)
 	}
-	var compose struct {
-		Services map[string]struct {
-			Image string `yaml:"image"`
-		} `yaml:"services"`
+	return verifyComposeImages(ctx, app.Compose, policies, o, nil)
+}
+
+func verifyComposeImages(ctx context.Context, content string, policies map[string]ImageProvenancePolicy, o ProvenanceOptions, services []string) error {
+	if len(policies) == 0 {
+		return detail("provenance.deployment_images_invalid", "reason", "empty_policy")
 	}
-	if e := yaml.Unmarshal([]byte(app.Compose), &compose); e != nil || compose.Services == nil {
-		return failure("provenance.deployment_images_invalid", e)
+	var compose struct {
+		Services map[string]any `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(content), &compose); err != nil || compose.Services == nil {
+		return failure("provenance.deployment_images_invalid", err)
+	}
+	wanted := map[string]bool{}
+	for _, name := range services {
+		if _, ok := compose.Services[name]; !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "service_missing")
+		}
+		wanted[name] = true
+	}
+	images := map[string]string{}
+	for name, value := range compose.Services {
+		if len(wanted) > 0 && !wanted[name] {
+			continue
+		}
+		config, ok := value.(map[string]any)
+		if !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "invalid_docker_compose")
+		}
+		if config["image"] == nil {
+			continue
+		}
+		image, ok := config["image"].(string)
+		if !ok {
+			return detail("provenance.deployment_images_invalid", "reason", "invalid_docker_compose")
+		}
+		images[name] = image
 	}
 	type selection struct {
 		digest string
 		policy ImageProvenancePolicy
 	}
 	var selected []selection
-	for _, service := range compose.Services {
-		if strings.Contains(service.Image, "$") {
+	for _, image := range images {
+		if strings.Contains(image, "$") {
 			return failure("provenance.deployment_images_invalid", nil)
 		}
 	}
@@ -369,13 +468,12 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 		if repo == "" {
 			return failure("provenance.deployment_images_invalid", nil)
 		}
-		pattern := regexp.MustCompile(`^` + regexp.QuoteMeta(repo) + `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$`)
 		found := false
-		for _, service := range compose.Services {
-			image := strings.TrimPrefix(service.Image, "docker.io/")
+		for _, reference := range images {
+			image := strings.TrimPrefix(reference, "docker.io/")
 			if image == repo || strings.HasPrefix(image, repo+"@") || strings.HasPrefix(image, repo+":") {
 				found = true
-				match := pattern.FindStringSubmatch(image)
+				match := pinnedImageSuffixPattern.FindStringSubmatch(strings.TrimPrefix(image, repo))
 				if match == nil {
 					return failure("provenance.deployment_images_invalid", nil)
 				}
@@ -387,13 +485,29 @@ func VerifyDeploymentImageProvenance(ctx context.Context, appCompose string, pol
 		}
 	}
 	for _, item := range selected {
-		bundles, e := FetchImageProvenance(ctx, item.policy.Repository, item.digest, o)
-		if e != nil {
-			return failure("provenance.image_request_failed", e)
-		}
-		if _, e = VerifyImageProvenance(ctx, bundles, item.digest, item.policy, o); e != nil {
-			return e
+		if err := verifyRequiredImage(ctx, item.digest, item.policy, o); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func verifyRequiredImage(ctx context.Context, digest string, policy ImageProvenancePolicy, o ProvenanceOptions) error {
+	bundles, err := FetchImageProvenance(ctx, policy.Repository, digest, o)
+	if err != nil {
+		return failure("provenance.image_request_failed", err)
+	}
+	_, err = VerifyImageProvenance(ctx, bundles, digest, policy, o)
+	return err
+}
+
+func provenanceAPIBase(apiURL string) (string, error) {
+	if apiURL == "" {
+		return "https://api.github.com", nil
+	}
+	value, err := url.Parse(apiURL)
+	if err != nil || (value.Scheme != "http" && value.Scheme != "https") || value.Host == "" || value.User != nil || value.RawQuery != "" || value.ForceQuery || value.Fragment != "" {
+		return "", detail("api.invalid_input", "field", "github_api_url")
+	}
+	return strings.TrimRight(value.String(), "/"), nil
 }

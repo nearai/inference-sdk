@@ -238,6 +238,8 @@ the same signer. Select it from the verified preflight results with
 
 ## Image build provenance
 
+### Measured compose and individual image helpers
+
 These functions are asynchronous. The low-level functions separate retrieval
 from verification; the deployment helper combines them for required images.
 
@@ -262,8 +264,8 @@ service images are ignored. All Compose/reference checks finish before fetching.
 Malformed Compose or unsupported references return
 `provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
 (`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
-`unresolved_image`, `image_missing`, or `image_not_pinned`) and optional image
-repository/service details. Fetch failures become
+`unresolved_image`, `service_missing`, `image_missing`, or `image_not_pinned`)
+and optional image repository/service details. Fetch failures become
 `provenance.image_request_failed`, preserving the `ApiError` source and its
 retryability. Cryptographic verification errors are returned unchanged.
 
@@ -304,6 +306,65 @@ authenticate `app_compose` themselves or run automatically during attestation
 verification. Call the deployment helper from a `DeploymentVerifier` so the SDK
 has already checked quote and measurement binding. No default image trust policy
 is supplied, and unlisted images are not approved by the helper.
+
+### Compose Manager deployment images
+
+`verify_compose_manager_deployment_image_provenance(deployment, image_policies, compose_manager_image_policy, options)`
+returns `Result<(), VerificationError>`. Use in a model deployment callback or
+after verification. It requires authenticated manager evidence, selects the latest
+matching `compose_up`, verifies the recorded file's exact hash, and checks the
+required images in the action's selected services. Independently, the latest
+manager-start image must satisfy the required `compose_manager_image_policy`.
+Compose files are limited to 8 MiB before hashing or parsing. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for usage
+and evidence scope.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `deployment` | `&MeasuredDeployment` | Verified deployment containing `compose_manager`. |
+| `image_policies` | `&BTreeMap<String, ImageProvenancePolicy>` | Nonempty required image repositories and approved builds. |
+| `compose_manager_image_policy` | `&ComposeManagerImagePolicy` | Required `image_repository`, `build` policy, and optional `signer_identity` for the latest startup image. |
+| `options` | `ComposeManagerDeploymentImageProvenanceOptions<'_>` | File selection and GitHub access; accepts `Default::default()`. |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `compose_repository` | `&str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `Option<&str>` | `None` | Exact file path to select; otherwise latest `compose_up` overall. |
+| `github_token` | `Option<&str>` | `None` | Token for the default GitHub API; ignored when `github_api_url` is set. |
+| `github_api_url` | `Option<&str>` | `None` | GitHub API base URL (default: `https://api.github.com`). Use a backend endpoint when a frontend cannot supply a GitHub token. |
+| `image_signer_identities` | `Option<&BTreeMap<String, String>>` | `None` | Reusable-workflow identities keyed by exact image-policy names. |
+
+`ModelAttestation.compose_manager_attestation` optionally contains raw
+`ComposeManagerAttestation`: `actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`. When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `Option<VerifiedComposeManagerAttestation>`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `Vec<ComposeManagerAction>` | Quote-authenticated actions; unknown string/string-array fields are retained in `extra`. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `Vec<String>` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
+also supports `github_token` and `github_api_url`.
+Provenance fetch limits:
+
+| Resource | Limit |
+| --- | --- |
+| Response page | 16 MiB and 100 attestations |
+| Entire fetch | 32 pages and 64 MiB |
+| Combined `Link` headers per page | 8 KiB |
+| Encoded `before`/`after` query | 4 KiB |
+
+Body limits apply while reading, including responses without `Content-Length`,
+and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
+Limit failures are non-retryable and return no partial bundles.
+
+`verify_deployment_image_provenance_with_options` accepts
+`DeploymentImageProvenanceOptions` with those fields and optional
+`image_signer_identities`. The token is omitted when `github_api_url` is set. Pagination must remain on the
+same API origin and artifact path. Redirects are rejected.
 
 ## Signatures and evidence
 
