@@ -35,11 +35,12 @@ const (
 // ProvenanceOptions permits an offline, caller-trusted Sigstore root. Nil selects
 // the production root through Sigstore's authenticated TUF update mechanism.
 type ProvenanceOptions struct {
-	// GitHubProxyURL is an absolute GitHub-compatible API base; GitHubToken is not forwarded.
-	GitHubProxyURL string
-	TrustedRoot    root.TrustedMaterial
-	HTTPClient     *http.Client
-	GitHubToken    string
+	// GitHubAPIURL overrides https://api.github.com. Use a backend endpoint when
+	// a frontend cannot supply a GitHub token; the backend handles authentication.
+	GitHubAPIURL string
+	TrustedRoot  root.TrustedMaterial
+	HTTPClient   *http.Client
+	GitHubToken  string
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
@@ -68,7 +69,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		*client = *o.HTTPClient
 	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	apiBase, err := provenanceAPIBase(o.GitHubProxyURL)
+	apiBase, err := provenanceAPIBase(o.GitHubAPIURL)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func FetchImageProvenance(ctx context.Context, repository, digest string, o Prov
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		if o.GitHubToken != "" && o.GitHubProxyURL == "" {
+		if o.GitHubToken != "" && o.GitHubAPIURL == "" {
 			req.Header.Set("Authorization", "Bearer "+o.GitHubToken)
 		}
 		res, e := client.Do(req)
@@ -500,13 +501,13 @@ func verifyRequiredImage(ctx context.Context, digest string, policy ImageProvena
 	return err
 }
 
-func provenanceAPIBase(proxy string) (string, error) {
-	if proxy == "" {
+func provenanceAPIBase(apiURL string) (string, error) {
+	if apiURL == "" {
 		return "https://api.github.com", nil
 	}
-	value, err := url.Parse(proxy)
+	value, err := url.Parse(apiURL)
 	if err != nil || (value.Scheme != "http" && value.Scheme != "https") || value.Host == "" || value.User != nil || value.RawQuery != "" || value.ForceQuery || value.Fragment != "" {
-		return "", detail("api.invalid_input", "field", "github_proxy_url")
+		return "", detail("api.invalid_input", "field", "github_api_url")
 	}
 	return strings.TrimRight(value.String(), "/"), nil
 }

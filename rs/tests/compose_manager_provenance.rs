@@ -186,7 +186,7 @@ async fn rejects_unpinned_manager_image_before_any_request() {
             &policies,
             &compose_manager_image_policy(),
             nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
-                github_proxy_url: Some(&proxy),
+                github_api_url: Some(&proxy),
                 github_token: Some("test-github-token"),
                 ..Default::default()
             },
@@ -237,7 +237,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
     let proxy = format!("{}/proxy", server.uri());
     let policies = BTreeMap::from([("nearaidev/compose-manager-launcher".into(), image_policy())]);
     let options = nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
-        github_proxy_url: Some(&proxy),
+        github_api_url: Some(&proxy),
         github_token: Some("do-not-forward"),
         ..Default::default()
     };
@@ -267,7 +267,7 @@ async fn independently_verifies_current_manager_and_proxy_requests() {
         &json!({"docker_compose_file": fixture["compose"]}).to_string(),
         &policies,
         nearai_inference_sdk::DeploymentImageProvenanceOptions {
-            github_proxy_url: Some(&proxy),
+            github_api_url: Some(&proxy),
             github_token: Some("do-not-forward"),
             ..Default::default()
         },
@@ -461,7 +461,7 @@ async fn rejects_oversized_compose_before_hashing_or_image_proofs() {
             &BTreeMap::from([("nearaidev/compose-manager-launcher".into(), image_policy())]),
             &compose_manager_image_policy(),
             nearai_inference_sdk::ComposeManagerDeploymentImageProvenanceOptions {
-                github_proxy_url: Some(&proxy),
+                github_api_url: Some(&proxy),
                 ..Default::default()
             },
         )

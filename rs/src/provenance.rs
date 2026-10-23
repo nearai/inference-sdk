@@ -60,8 +60,9 @@ pub async fn fetch_image_provenance(
 #[derive(Clone, Copy, Default)]
 pub struct ImageProvenanceFetchOptions<'a> {
     pub github_token: Option<&'a str>,
-    /// Absolute GitHub-compatible API base. Tokens are never forwarded to a proxy.
-    pub github_proxy_url: Option<&'a str>,
+    /// GitHub API base URL, defaulting to https://api.github.com. Use a backend
+    /// endpoint when a frontend cannot supply a token; the backend handles authentication.
+    pub github_api_url: Option<&'a str>,
 }
 
 pub async fn fetch_image_provenance_with_options(
@@ -78,12 +79,12 @@ pub async fn fetch_image_provenance_with_options(
             "expected sha256: followed by 64 hexadecimal digits",
         )
     })?;
-    let base = github_api_base(options.github_proxy_url)?;
+    let base = github_api_base(options.github_api_url)?;
     let url = Url::parse(&format!(
         "{}/repos/{repository}/attestations/sha256:{hash}?per_page=100",
         base.as_str().trim_end_matches('/')
     ))
-    .map_err(|_| api_input("github_proxy_url", "invalid URL"))?;
+    .map_err(|_| api_input("github_api_url", "invalid URL"))?;
     let client = Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -91,7 +92,7 @@ pub async fn fetch_image_provenance_with_options(
     fetch_image_provenance_pages(
         &client,
         url,
-        if options.github_proxy_url.is_none() {
+        if options.github_api_url.is_none() {
             options.github_token
         } else {
             None
@@ -763,9 +764,9 @@ struct SourceDigest {
     sha1: Option<String>,
 }
 
-pub(crate) fn github_api_base(proxy: Option<&str>) -> Result<Url, ApiError> {
-    let url = Url::parse(proxy.unwrap_or("https://api.github.com"))
-        .map_err(|_| api_input("github_proxy_url", "expected absolute HTTP(S) URL"))?;
+pub(crate) fn github_api_base(api_url: Option<&str>) -> Result<Url, ApiError> {
+    let url = Url::parse(api_url.unwrap_or("https://api.github.com"))
+        .map_err(|_| api_input("github_api_url", "expected absolute HTTP(S) URL"))?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -774,7 +775,7 @@ pub(crate) fn github_api_base(proxy: Option<&str>) -> Result<Url, ApiError> {
         || url.fragment().is_some()
     {
         return Err(api_input(
-            "github_proxy_url",
+            "github_api_url",
             "expected HTTP(S) URL without credentials, query or fragment",
         ));
     }
@@ -997,7 +998,7 @@ mod tests {
                 "nearai/compose-manager",
                 &format!("sha256:{}", "ab".repeat(32)),
                 ImageProvenanceFetchOptions {
-                    github_proxy_url: Some(&proxy),
+                    github_api_url: Some(&proxy),
                     ..Default::default()
                 },
             )

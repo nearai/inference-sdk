@@ -330,8 +330,8 @@ and evidence scope.
 | --- | --- | --- | --- |
 | `compose_repository` | `&str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
 | `compose_file` | `Option<&str>` | `None` | Exact file path to select; otherwise latest `compose_up` overall. |
-| `github_token` | `Option<&str>` | `None` | Optional GitHub token for file/proof retrieval. |
-| `github_proxy_url` | `Option<&str>` | `None` | Absolute HTTP(S) API base; GitHub tokens are never sent to proxies. |
+| `github_token` | `Option<&str>` | `None` | Token for the default GitHub API; ignored when `github_api_url` is set. |
+| `github_api_url` | `Option<&str>` | `None` | GitHub API base URL (default: `https://api.github.com`). Use a backend endpoint when a frontend cannot supply a GitHub token. |
 | `image_signer_identities` | `Option<&BTreeMap<String, String>>` | `None` | Reusable-workflow identities keyed by exact image-policy names. |
 
 `ModelAttestation.compose_manager_attestation` optionally contains raw
@@ -347,7 +347,7 @@ and evidence scope.
 | `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
 
 `fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
-also supports `github_token` and `github_proxy_url`.
+also supports `github_token` and `github_api_url`.
 Provenance fetch limits:
 
 | Resource | Limit |
@@ -363,7 +363,7 @@ Limit failures are non-retryable and return no partial bundles.
 
 `verify_deployment_image_provenance_with_options` accepts
 `DeploymentImageProvenanceOptions` with those fields and optional
-`image_signer_identities`. Tokens are never forwarded to a proxy. Pagination must remain on the
+`image_signer_identities`. The token is omitted when `github_api_url` is set. Pagination must remain on the
 same API origin and artifact path. Redirects are rejected.
 
 `verify_direct_model_attestations_with_serving_deployment` accepts the same first

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default)]
 pub struct DeploymentImageProvenanceOptions<'a> {
     pub github_token: Option<&'a str>,
-    pub github_proxy_url: Option<&'a str>,
+    pub github_api_url: Option<&'a str>,
     pub image_signer_identities: Option<&'a BTreeMap<String, String>>,
 }
 
@@ -64,7 +64,7 @@ pub async fn verify_deployment_image_provenance_with_signer_identities(
 }
 
 /// Verify measured Compose images using a GitHub API proxy and/or exact signer identities.
-/// A proxy never receives `github_token`; redirects are rejected.
+/// With a custom `github_api_url`, its backend handles GitHub authentication.
 pub async fn verify_deployment_image_provenance_with_options(
     app_compose: &str,
     image_policies: &BTreeMap<String, ImageProvenancePolicy>,
@@ -84,7 +84,7 @@ pub async fn verify_deployment_image_provenance_with_options(
         select_images(app_compose, image_policies)?,
         options.image_signer_identities,
         options.github_token,
-        options.github_proxy_url,
+        options.github_api_url,
     )
     .await
 }
@@ -95,14 +95,14 @@ pub(crate) async fn verify_compose_image_provenance(
     image_signer_identities: Option<&BTreeMap<String, String>>,
     github_token: Option<&str>,
     services: Option<&[String]>,
-    github_proxy_url: Option<&str>,
+    github_api_url: Option<&str>,
 ) -> Result<(), VerificationError> {
     let selected = select_compose_images(docker_compose, image_policies, services)?;
     verify_selected_images(
         selected,
         image_signer_identities,
         github_token,
-        github_proxy_url,
+        github_api_url,
     )
     .await
 }
@@ -111,7 +111,7 @@ async fn verify_selected_images(
     images: Vec<SelectedImage<'_>>,
     image_signer_identities: Option<&BTreeMap<String, String>>,
     github_token: Option<&str>,
-    github_proxy_url: Option<&str>,
+    github_api_url: Option<&str>,
 ) -> Result<(), VerificationError> {
     for image in images {
         verify_required_image_provenance(
@@ -123,7 +123,7 @@ async fn verify_selected_images(
                 .map(String::as_str),
             ImageProvenanceFetchOptions {
                 github_token,
-                github_proxy_url,
+                github_api_url,
             },
         )
         .await?;

@@ -14,7 +14,7 @@ pub struct ComposeManagerDeploymentImageProvenanceOptions<'a> {
     pub compose_repository: &'a str,
     /// Select the latest compose_up for this path, or the latest compose_up overall.
     pub compose_file: Option<&'a str>,
-    pub github_proxy_url: Option<&'a str>,
+    pub github_api_url: Option<&'a str>,
     pub github_token: Option<&'a str>,
     pub image_signer_identities: Option<&'a BTreeMap<String, String>>,
 }
@@ -25,7 +25,7 @@ impl Default for ComposeManagerDeploymentImageProvenanceOptions<'_> {
             compose_repository: "nearai/cvm-compose-files",
             compose_file: None,
             github_token: None,
-            github_proxy_url: None,
+            github_api_url: None,
             image_signer_identities: None,
         }
     }
@@ -133,7 +133,7 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         status,
         retryable: status.is_none_or(|status| status == 429 || status >= 500),
     };
-    let mut url = crate::provenance::github_api_base(options.github_proxy_url)
+    let mut url = crate::provenance::github_api_base(options.github_api_url)
         .map_err(|_| invalid("invalid_file_reference"))?;
     url.path_segments_mut()
         .expect("HTTPS URL supports path segments")
@@ -152,7 +152,7 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         .header("Accept", "application/vnd.github.raw+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
         .header("User-Agent", "nearai-inference-sdk");
-    if options.github_proxy_url.is_none() {
+    if options.github_api_url.is_none() {
         if let Some(token) = options.github_token {
             request = request.bearer_auth(token);
         }
@@ -194,7 +194,7 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         options.image_signer_identities,
         options.github_token,
         action.services.as_deref(),
-        options.github_proxy_url,
+        options.github_api_url,
     )
     .await?;
     verify_required_image_provenance(
@@ -204,7 +204,7 @@ pub async fn verify_compose_manager_deployment_image_provenance(
         compose_manager_image_policy.signer_identity.as_deref(),
         ImageProvenanceFetchOptions {
             github_token: options.github_token,
-            github_proxy_url: options.github_proxy_url,
+            github_api_url: options.github_api_url,
         },
     )
     .await

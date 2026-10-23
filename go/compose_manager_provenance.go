@@ -78,7 +78,7 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 		}
 		parts[i] = url.PathEscape(part)
 	}
-	base, err := provenanceAPIBase(o.GitHubProxyURL)
+	base, err := provenanceAPIBase(o.GitHubAPIURL)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func VerifyComposeManagerDeploymentImageProvenance(ctx context.Context, deployme
 	}
 	request.Header.Set("Accept", "application/vnd.github.raw+json")
 	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	if o.GitHubToken != "" && o.GitHubProxyURL == "" {
+	if o.GitHubToken != "" && o.GitHubAPIURL == "" {
 		request.Header.Set("Authorization", "Bearer "+o.GitHubToken)
 	}
 	client := &http.Client{Timeout: time.Minute}

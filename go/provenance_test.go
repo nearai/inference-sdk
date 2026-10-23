@@ -13,14 +13,14 @@ import (
 	"github.com/sigstore/sigstore-go/pkg/root"
 )
 
-func TestProvenanceProxyRejectsEmptyQuery(t *testing.T) {
+func TestProvenanceAPIURLRejectsEmptyQuery(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_, _ = w.Write([]byte(`{"attestations":[]}`))
 	}))
 	defer server.Close()
-	_, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL + "/github?"})
+	_, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubAPIURL: server.URL + "/github?"})
 	requireCode(t, err, "api.invalid_input")
 	if calls.Load() != 0 {
 		t.Fatal("invalid proxy URL reached the network")

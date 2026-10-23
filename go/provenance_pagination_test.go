@@ -50,7 +50,7 @@ func TestProvenancePaginationLimits(t *testing.T) {
 					_, _ = w.Write(body)
 				}))
 				defer server.Close()
-				bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL, HTTPClient: server.Client()})
+				bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubAPIURL: server.URL, HTTPClient: server.Client()})
 				if tc.code != "" {
 					requireCode(t, err, tc.code)
 					if len(bundles) != 0 {
@@ -96,7 +96,7 @@ func TestProvenancePaginationLinkLimits(t *testing.T) {
 				_, _ = w.Write([]byte(`{"attestations":[{"bundle":{"ok":true}}]}`))
 			}))
 			defer server.Close()
-			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL, HTTPClient: server.Client()})
+			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubAPIURL: server.URL, HTTPClient: server.Client()})
 			if tc.valid {
 				if err != nil || len(bundles) != 2 || calls.Load() != 2 {
 					t.Fatalf("bundles=%d calls=%d error=%v", len(bundles), calls.Load(), err)
@@ -119,7 +119,7 @@ func TestProvenanceAttestationCount(t *testing.T) {
 				_, _ = w.Write([]byte(body))
 			}))
 			defer server.Close()
-			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubProxyURL: server.URL})
+			bundles, err := FetchImageProvenance(context.Background(), "nearai/compose-manager", "sha256:"+strings.Repeat("ab", 32), ProvenanceOptions{GitHubAPIURL: server.URL})
 			if count == 100 {
 				if err != nil || len(bundles) != count {
 					t.Fatalf("bundles=%d error=%v", len(bundles), err)

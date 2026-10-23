@@ -59,7 +59,7 @@ func TestRejectUnpinnedManagerImageBeforeAnyRequest(t *testing.T) {
 						ImageRepository: "nearaidev/compose-manager-launcher",
 						Build:           policy,
 					},
-					ProvenanceOptions: ProvenanceOptions{GitHubProxyURL: server.URL, GitHubToken: "test-github-token"},
+					ProvenanceOptions: ProvenanceOptions{GitHubAPIURL: server.URL, GitHubToken: "test-github-token"},
 				},
 			)
 			requireCode(t, err, "provenance.deployment_images_invalid")
@@ -199,7 +199,7 @@ func TestComposeManagerImagePolicyAndProxy(t *testing.T) {
 	}))
 	defer server.Close()
 	policy := ImageProvenancePolicy{Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml"}
-	options := ComposeManagerDeploymentImageProvenanceOptions{ProvenanceOptions: ProvenanceOptions{TrustedRoot: trusted, GitHubProxyURL: server.URL + "/proxy", GitHubToken: "never-forward"}, ComposeManagerImagePolicy: ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager-launcher", Build: policy}}
+	options := ComposeManagerDeploymentImageProvenanceOptions{ProvenanceOptions: ProvenanceOptions{TrustedRoot: trusted, GitHubAPIURL: server.URL + "/proxy", GitHubToken: "never-forward"}, ComposeManagerImagePolicy: ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager-launcher", Build: policy}}
 	policies := map[string]ImageProvenancePolicy{"nearaidev/compose-manager-launcher": policy}
 	deployment := MeasuredDeployment{ComposeManager: &VerifiedComposeManagerAttestation{Actions: f.Actions}}
 	if e = VerifyComposeManagerDeploymentImageProvenance(context.Background(), deployment, policies, options); e != nil {
@@ -338,7 +338,7 @@ func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
 			}))
 			defer server.Close()
 			policy := ImageProvenancePolicy{Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml"}
-			options := ComposeManagerDeploymentImageProvenanceOptions{ProvenanceOptions: ProvenanceOptions{GitHubProxyURL: server.URL}, ComposeManagerImagePolicy: ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager-launcher", Build: policy}}
+			options := ComposeManagerDeploymentImageProvenanceOptions{ProvenanceOptions: ProvenanceOptions{GitHubAPIURL: server.URL}, ComposeManagerImagePolicy: ComposeManagerImagePolicy{ImageRepository: "nearaidev/compose-manager-launcher", Build: policy}}
 			err := VerifyComposeManagerDeploymentImageProvenance(context.Background(), MeasuredDeployment{ComposeManager: &VerifiedComposeManagerAttestation{Actions: fixture.Actions}}, map[string]ImageProvenancePolicy{"nearaidev/compose-manager-launcher": policy}, options)
 			requireCode(t, err, "provenance.compose_manager_deployment_invalid")
 			if err.(*Error).Details["reason"] != "compose_file_too_large" {

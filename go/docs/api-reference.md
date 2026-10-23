@@ -566,16 +566,19 @@ file; unknown services fail. Unselected images cannot satisfy a required policy.
 | `ComposeRepository` | Trusted `owner/repo`; defaults to `nearai/cvm-compose-files`. |
 | `ComposeFile` | Exact file path, or the latest `compose_up` across all files. |
 | `ComposeManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
-| `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubProxyURL`. |
+| `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubAPIURL`. |
 
 Compose files are limited to 8 MiB before hashing or parsing. Missing evidence,
 hash mismatches, and rejected image policies fail verification. See the
 [guide](./verification-guide.md#images-deployed-by-compose-manager) for usage
 and evidence scope.
 
-`GitHubProxyURL` is an optional absolute HTTP(S) GitHub-compatible API base for
-compose files and image proofs. Tokens are omitted when a proxy is configured;
-redirects and pagination outside the requested artifact are rejected.
+`GitHubAPIURL` sets the GitHub API base URL for compose files and image proofs;
+it defaults to `https://api.github.com`. When using a GitHub token in a frontend
+is impractical, set it to a GitHub-compatible endpoint on your backend. The
+backend supplies the GitHub credentials; the SDK omits `GitHubToken` when
+`GitHubAPIURL` is set. Redirects and pagination outside the requested artifact
+are rejected.
 
 For Direct clients, use `ModelVerification.ServingDeployment`. The standalone
 `VerifyDirectModelAttestations` accepts the same callback in `VerificationOptions`.
