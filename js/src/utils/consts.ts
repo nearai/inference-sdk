@@ -1,5 +1,5 @@
 const isNode =
-  typeof window === 'undefined' &&
+  typeof self === 'undefined' &&
   typeof process !== 'undefined' &&
   Boolean(process.versions?.node);
 
