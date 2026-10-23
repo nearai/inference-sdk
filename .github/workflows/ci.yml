@@ -34,7 +34,6 @@ jobs:
         run: |
           pnpm typecheck:e2e
           node --test e2e/*.spec.ts
-          node --test e2e/jev-sdk.test.ts
           node --test ../e2e/select-models.test.mjs
       - name: Check JavaScript example
         working-directory: examples/example-js
@@ -57,8 +56,6 @@ jobs:
       - run: uv sync --locked
       - run: make lint
       - run: uv build
-      - name: Check Jev live-test gating without credentials
-        run: uv run pytest e2e/test_jev_sdk.py -v -rs
       - name: Check Python examples
         working-directory: examples/example-py
         run: |

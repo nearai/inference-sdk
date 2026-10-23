@@ -96,37 +96,30 @@ inference request.
 
 ## Official Jev SDK integration
 
-`js/e2e/jev-sdk.test.ts` and `py/e2e/test_jev_sdk.py` exercise the published
+`js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
 `@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
 send one real decision per case, parse the official response types, extract
 `X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
 retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
 Both Ed25519 and ECDSA are covered.
 
-The existing live workflow includes these files automatically. External Jev
-models come from `NEARAI_E2E_MODELS`, or set `NEARAI_JEV_MODEL` to a canonical
-external Jev model ID to run only these suites without catalog selection:
+The official-SDK cases are part of the existing System One live suites and run
+through the existing live commands and workflow. They use the same
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
+native cases. The catalog selector supplies an external Jev model; there are no
+separate Jev environment variables or CI steps.
 
-```sh
-# Set NEARAI_API_KEY securely and NEARAI_BASE_URL for the target environment.
-export NEARAI_JEV_MODEL='<canonical external Jev model ID>'
-(cd js && pnpm build && pnpm typecheck:e2e && node --test e2e/jev-sdk.test.ts)
-(cd py && uv run pytest e2e/test_jev_sdk.py -v -rs)
-```
+Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
+same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
+these cases requires the routing contract from
+[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
+self-hosted deployment. They preverify the selected model and require a provider
+receipt matching its attested signing identity. An external model is never
+substituted. The current catalog selector chooses only hosted Jev deployments.
 
-For self-hosted coverage, deploy the public-key routing contract from
-[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285), then set
-`NEARAI_JEV_SELF_HOSTED_MODEL` to a canonical self-hosted Jev model ID. These
-cases preverify the model and require a provider receipt matching the selected
-attested signing identity. In CI, set the optional repository variables
-`NEARAI_STG_JEV_SELF_HOSTED_MODEL` and `NEARAI_PRD_JEV_SELF_HOSTED_MODEL`
-for the respective environments. Without that variable they explicitly skip with the
-server dependency in the reason; an external model is never substituted.
-
-Without `NEARAI_API_KEY` and `NEARAI_BASE_URL`, these two files skip all cases
-without network access. Once credentials are supplied, a missing external model
-selection or a verification failure fails the tests. The ordinary unit suite
-still excludes live tests.
+Like the existing live tests, these suites require explicit configuration and
+are excluded from ordinary unit-test runs. Missing required external-model
+configuration or verification failures fail the tests.
 
 Validation status (2026-10-23): [live CI run 39915153470](https://github.com/nearai/inference-sdk/actions/runs/39915153470)
 validated commit `7e3f5c8` against staging and production. Each JavaScript and
@@ -139,7 +132,8 @@ The eight self-hosted cases explicitly skipped because no self-hosted model was
 configured. **Self-hosted live validation remains pending** deployment of the
 routing contract from cloud-api#1285 and configuration of a suitable model. A
 skip is not a live pass. Local validation also passed 484 JavaScript and 459
-Python unit tests, type checks, builds, and credential-free live-test skip checks.
+Python unit tests, type checks and builds. The official-SDK cases were subsequently consolidated
+into the existing System One suites without rerunning live inference.
 
 The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
 `examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
