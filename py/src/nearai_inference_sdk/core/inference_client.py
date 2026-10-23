@@ -537,6 +537,14 @@ class InferenceClient(
         )
         self.systemone = InferenceSystemOne(self)
 
+    async def send(self, request: httpx.Request) -> httpx.Response:
+        """Send verified Chat or JSON System One through the configured Gateway."""
+        if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
+            self.base_url
+        ).join('systemone'):
+            return await self.systemone._send(request)
+        return await super().send(request)
+
     async def _create_session(
         self, model: str
     ) -> _VerifiedSession[VerifiedCompletionResult, AttestationVerificationResult]:
