@@ -9,7 +9,7 @@ import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic, time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
 from openai import AsyncOpenAI
@@ -65,6 +65,9 @@ from .ohttp import create_ohttp_client
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
 from .systemone import InferenceSystemOne
+
+if TYPE_CHECKING:
+    import httpx2
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
@@ -192,12 +195,25 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 
     @property
     def http_client(self) -> httpx.AsyncClient:
-        """Return a non-owning HTTPX adapter for an external OpenAI client.
+        """Return a non-owning HTTPX adapter for an external SDK.
 
         Each adapter may be closed independently; the inference client owns
         the connections, sessions, and response-verification records.
         """
         return httpx.AsyncClient(transport=_InferenceTransport(self), timeout=None)
+
+    @property
+    def httpx2_client(self) -> httpx2.AsyncClient:
+        """Return a non-owning HTTPX2 adapter using the same request pipeline.
+
+        Install ``httpx2`` before accessing this property; it is loaded on demand.
+        The adapter shares this client's supported endpoints, verification,
+        encryption, and receipts. Each access returns a new adapter that may be
+        closed independently. Keep the owner open while sending and verifying.
+        """
+        from ..integrations.httpx2 import _create_httpx2_client
+
+        return _create_httpx2_client(self)
 
     async def __aenter__(self) -> Self:
         return self
@@ -536,6 +552,14 @@ class InferenceClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
+
+    async def send(self, request: httpx.Request) -> httpx.Response:
+        """Send verified Chat or JSON System One through the configured Gateway."""
+        if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
+            self.base_url
+        ).join('systemone'):
+            return await self.systemone._send(request)
+        return await super().send(request)
 
     async def _create_session(
         self, model: str

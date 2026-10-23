@@ -109,7 +109,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, checks model metadata and verifies the required evidence on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for POST Chat Completions and uncompressed JSON System One at the configured Gateway. Reads `model` for preflight and retains exact bytes for receipt verification. Chat supports optional E2EE and streaming; System One requires E2EE and OHTTP disabled. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat or System One response. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
@@ -142,6 +142,12 @@ including after successful or failed verification. TTL starts at body completion
 
 Available on the generic and Node Gateway clients. Use `e2ee: false` and
 `ohttp: false` for nonstreaming decision requests.
+
+For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
+compression and inference retries. The official SDK parses the raw response;
+pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
+Chat's model session and selected-key routing. See the
+[official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
 
 | Method | Parameters | Returns |
 | --- | --- | --- |

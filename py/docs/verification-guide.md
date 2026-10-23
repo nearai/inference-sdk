@@ -94,6 +94,13 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
+To use HTTPX2 with an OpenAI version that supports it, install `openai[httpx2]`
+and replace `inference_client.http_client` with `inference_client.httpx2_client`.
+Both adapters share the same supported endpoints, streaming, encryption, and
+verification pipeline. The HTTPX2 adapter only converts types and stream
+interfaces; the owner retains its HTTPX connections. Other SDKs accepting an
+HTTPX2 client can use this property for the same supported endpoints.
+
 Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
 the authorization for evidence, Chat, and signature requests. An external
 `AsyncOpenAI` client's API key does not override it. With header-only authentication,
@@ -234,6 +241,66 @@ returns a complete JSON response and shares Chat's attestation session per model
 Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
+
+### Use the official Jev SDK
+
+Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs
+HTTPX2 automatically. Pass
+`inference.httpx2_client` to `AsyncTypeSafeClient` for the HTTPX2
+adapter; the NEAR client continues to use HTTPX for network I/O and verification.
+The official SDK's API root excludes `/v1`, while the NEAR client's base URL
+includes `/v1/`. Jev requires a non-empty `api_key` even with an injected client;
+for header-only authentication, pass a placeholder to Jev and configure the
+actual credentials on `InferenceClient`.
+
+```python
+from nearai_inference_sdk import InferenceClient
+from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
+
+
+async def decide(api_key: str, model: str) -> None:
+    async with InferenceClient(
+        api_key,
+        base_url='https://cloud-api.near.ai/v1/',
+        e2ee=False,
+        ohttp=False,
+    ) as inference:
+        async with AsyncTypeSafeClient(
+            api_key=api_key,
+            base_url='https://cloud-api.near.ai',
+            http_client=inference.httpx2_client,
+            compression=False,
+            retry=RetryPolicy(max_retries=0),
+            timeout=60,
+        ) as jev:
+            result = await jev.system_one(
+                model=model,
+                state='I was charged twice.',
+                questions={'billing': Noul(instructions='Is this about billing?')},
+            )
+        receipt_id = result.raw_http_response.headers['x-generation-id']
+        await inference.verify_response(receipt_id)
+        print(result.nouls['billing'].noul)
+```
+
+Use a canonical Jev model ID from your endpoint's catalog. System One accepts
+uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, compression
+and automatic inference retries disabled. Multipart uploads and other official
+SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
+receipt lookups through `verify_response(receipt_id)`.
+
+Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
+than the official SDK's upstream `request_id`. The official SDK parses the
+response; the NEAR client verifies the captured wire bytes. Self-hosted models
+route to the preselected attested public key, and external models use Gateway
+receipts. Closing the official client closes its borrowed adapter; keep the
+owning `InferenceClient` open until verification finishes.
+
+See the [runnable official SDK example](../../examples/example-py/gateway/jev_sdk.py).
+Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep the
+verified transport configuration and receipt-ID extraction together. See the
+[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+credential-gated validation against a deployed Gateway.
 
 ## Direct model endpoints
 

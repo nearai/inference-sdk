@@ -27,7 +27,9 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | --- | --- | --- | --- |
 | `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
-| `inference_client.send` | `(request)` | `httpx.Response` | The same verified Chat path using HTTP messages directly. |
+| `inference_client.http_client` | property | `httpx.AsyncClient` | HTTPX adapter for external SDKs using the verified request pipeline. |
+| `inference_client.httpx2_client` | property | `httpx2.AsyncClient` | HTTPX2 adapter sharing the verified HTTPX pipeline, loaded on demand. |
+| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One at the configured Gateway, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
@@ -108,11 +110,27 @@ pass. Cache hits return the original result without changing `verified_at`.
 
 ### HTTP integration and receipt results
 
-`http_client` returns a new, non-owning `httpx.AsyncClient` adapter accepted by
-`openai.AsyncOpenAI`. It uses the same verification, encryption, cache, and receipt
-capture as the built-in Chat interface. Closing an adapter or an external OpenAI
-client does not close the owning `InferenceClient` or discard its receipts. Keep
-the owner open while sending requests and verifying responses.
+Both adapters delegate to the same `send()` pipeline:
+
+| Property | Type | Supported requests |
+| --- | --- | --- |
+| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support System One. |
+| `httpx2_client` | `httpx2.AsyncClient` | The same requests, verification, and encryption settings. |
+
+They share authentication, preflight, TLS pinning, sessions, and receipt capture.
+HTTPX2 converts request/response types and forwards response streams on demand;
+network I/O remains with the owner's HTTPX clients. Both properties are also
+available on `DirectInferenceClient` for Chat.
+
+Install `httpx2` to use `httpx2_client`. It is loaded only when that property is
+accessed. For OpenAI, use a version supporting HTTPX2 and install `openai[httpx2]`;
+Jev's `typesafe-sdk` already depends on HTTPX2. Regular HTTPX consumers keep the
+existing dependencies. Standalone HTTP APIs continue to use HTTPX types.
+
+Each access returns a new, non-owning adapter. Closing an adapter or its external
+SDK client does not close the owner or discard receipts. Keep the owner open
+while sending requests and verifying responses, and consume streams completely
+before calling `verify_response()`.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -126,6 +144,17 @@ the owner open while sending requests and verifying responses.
 `inference_client.systemone.create(request, *, headers=None)` is asynchronous
 and available on Gateway clients. Use E2EE and OHTTP disabled for nonstreaming
 decision requests. The client verifies deployments before sending.
+
+### Official Jev SDK
+
+Use `inference_client.httpx2_client` with `AsyncTypeSafeClient`. Configure its API
+key, API root, timeout, and disabled compression/retries as shown in the
+[complete construction example](./verification-guide.md#use-the-official-jev-sdk).
+System One accepts uncompressed, nonstreaming JSON with E2EE/OHTTP disabled.
+Verify `raw_http_response.headers['x-generation-id']` through the owner before
+using the answers.
+
+### Request and result types
 
 | `SystemOneRequest` field | Type | Description |
 | --- | --- | --- |
