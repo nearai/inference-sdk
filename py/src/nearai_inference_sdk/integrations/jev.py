@@ -1,10 +1,16 @@
 """Jev's HTTPX2 boundary over the verified HTTPX System One transport."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import httpx
 import httpx2
 
-from ..core.inference_client import InferenceClient
 from ..utils.errors import api_failure
+
+if TYPE_CHECKING:
+    from ..core.inference_client import InferenceClient
 
 
 class _JevTransport(httpx2.AsyncBaseTransport):
@@ -35,12 +41,6 @@ class _JevTransport(httpx2.AsyncBaseTransport):
             await response.aclose()
 
 
-def create_jev_http_client(owner: InferenceClient) -> httpx2.AsyncClient:
-    """Create a non-owning adapter for uncompressed, nonstreaming System One.
-
-    Install ``typesafe-sdk`` to use this integration. Pass the adapter to Jev's
-    ``AsyncTypeSafeClient`` with compression and retries disabled. Keep ``owner``
-    open while sending requests and verifying receipts; closing this adapter
-    does not close its owner. All network I/O and verification use HTTPX.
-    """
+def _create_jev_http_client(owner: InferenceClient) -> httpx2.AsyncClient:
+    """Create the borrowed adapter exposed by InferenceClient.jev_http_client."""
     return httpx2.AsyncClient(transport=_JevTransport(owner), timeout=None)

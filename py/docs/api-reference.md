@@ -27,6 +27,8 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | --- | --- | --- | --- |
 | `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
+| `inference_client.http_client` | property | `httpx.AsyncClient` | Verified HTTPX adapter for `openai.AsyncOpenAI`. |
+| `inference_client.jev_http_client` | property | `httpx2.AsyncClient` | Verified HTTPX2 adapter for Jev's `AsyncTypeSafeClient`, loaded on demand. |
 | `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One at the configured Gateway, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
@@ -128,9 +130,9 @@ decision requests. The client verifies deployments before sending.
 
 ### Jev HTTP transport
 
-Install `typesafe-sdk`, which includes HTTPX2, and import
-`create_jev_http_client` from `nearai_inference_sdk.integrations.jev` for an
-HTTPX2 adapter. `create_jev_http_client(inference_client)` returns a new
+Install `typesafe-sdk`, which includes HTTPX2, and pass
+`inference_client.jev_http_client` as the official client's `http_client`.
+Each access returns a new, non-owning
 `httpx2.AsyncClient` for Jev's `AsyncTypeSafeClient`. It accepts only uncompressed,
 nonstreaming JSON requests to the owner's configured `/v1/systemone` endpoint.
 Disable Jev compression and inference retries, and set its HTTPX2 timeout.
@@ -141,8 +143,9 @@ transport. Verify `raw_http_response.headers['x-generation-id']` through the
 owner before using the answers. Keep the owner open while sending and verifying;
 closing the adapter does not close the owner or discard its receipts.
 
-HTTPX2 is optional. The regular `http_client`, OpenAI integration, and standalone
-E2EE/OHTTP APIs continue to use HTTPX.
+HTTPX2 is loaded only when `jev_http_client` is accessed. The regular
+`http_client`, OpenAI integration, and standalone E2EE/OHTTP APIs continue to use
+HTTPX.
 
 ### Request and result types
 

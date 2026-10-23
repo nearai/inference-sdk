@@ -9,7 +9,7 @@ import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic, time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
 from openai import AsyncOpenAI
@@ -65,6 +65,9 @@ from .ohttp import create_ohttp_client
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
 from .systemone import InferenceSystemOne
+
+if TYPE_CHECKING:
+    import httpx2
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
@@ -536,6 +539,19 @@ class InferenceClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
+
+    @property
+    def jev_http_client(self) -> httpx2.AsyncClient:
+        """Return a new, non-owning HTTPX2 adapter for Jev System One.
+
+        Install ``typesafe-sdk`` before accessing this property; HTTPX2 is loaded
+        on demand. Disable Jev compression and retries, and keep this inference
+        client open while sending requests and verifying receipts. Closing the
+        adapter does not close this client or discard its receipts.
+        """
+        from ..integrations.jev import _create_jev_http_client
+
+        return _create_jev_http_client(self)
 
     async def send(self, request: httpx.Request) -> httpx.Response:
         """Send verified Chat or JSON System One through the configured Gateway."""

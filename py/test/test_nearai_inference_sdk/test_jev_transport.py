@@ -10,7 +10,6 @@ import httpx2
 import pytest
 
 from nearai_inference_sdk import ApiError
-from nearai_inference_sdk.integrations.jev import create_jev_http_client
 
 from .test_inference_client import BASE_URL
 from .test_systemone import REQUEST, DecisionGateway
@@ -30,7 +29,7 @@ async def test_bridge_preserves_bytes_query_headers_and_timeouts(
         async with owner.http_client as chat:
             assert isinstance(chat, httpx.AsyncClient)
             assert not isinstance(chat, httpx2.AsyncClient)
-        async with create_jev_http_client(owner) as adapter:
+        async with owner.jev_http_client as adapter:
             response = await adapter.post(
                 url,
                 content=body,
@@ -76,7 +75,7 @@ async def test_bridge_cancels_body_read_before_preflight(monkeypatch):
 
     async with (
         gateway.client(e2ee=False) as owner,
-        create_jev_http_client(owner) as adapter,
+        owner.jev_http_client as adapter,
     ):
         request = httpx2.Request(
             'POST',
@@ -127,7 +126,7 @@ async def test_raw_systemone_rejects_unsupported_input_before_io(
     gateway.install(monkeypatch)
     async with (
         gateway.client(e2ee=False) as client,
-        create_jev_http_client(client) as adapter,
+        client.jev_http_client as adapter,
     ):
         with pytest.raises(ApiError) as raised:
             await adapter.send(
@@ -143,7 +142,7 @@ async def test_raw_systemone_rejects_configured_compression(monkeypatch):
 
     async with (
         gateway.client(e2ee=False, headers={'content-encoding': 'gzip'}) as client,
-        create_jev_http_client(client) as adapter,
+        client.jev_http_client as adapter,
     ):
         with pytest.raises(ApiError) as raised:
             await adapter.send(
@@ -161,7 +160,7 @@ async def test_bridge_propagates_failure_without_retry(monkeypatch, fault):
     gateway.install(monkeypatch)
     async with (
         gateway.client(e2ee=False) as owner,
-        create_jev_http_client(owner) as adapter,
+        owner.jev_http_client as adapter,
     ):
         with pytest.raises(ApiError):
             await adapter.post(BASE_URL + 'systemone', json=REQUEST)
@@ -172,7 +171,7 @@ async def test_bridge_propagates_failure_without_retry(monkeypatch, fault):
     assert gateway.signature_requests == 0
 
 
-def test_openai_integration_does_not_import_optional_jev_dependencies():
+def test_jev_dependencies_load_only_when_the_property_is_accessed():
     subprocess.run(
         [
             sys.executable,
@@ -187,7 +186,8 @@ class BlockOptionalDependencies(MetaPathFinder):
         if fullname.split('.')[0] in {'httpx2', 'typesafe_sdk'}:
             raise ImportError(f'Optional dependency unexpectedly imported: {fullname}')
 
-sys.meta_path.insert(0, BlockOptionalDependencies())
+blocker = BlockOptionalDependencies()
+sys.meta_path.insert(0, blocker)
 import httpx
 from openai import AsyncOpenAI
 from nearai_inference_sdk import InferenceClient
@@ -197,10 +197,18 @@ async def main():
         async with AsyncOpenAI(api_key='test-key', http_client=owner.http_client) as ai:
             assert isinstance(ai._client, httpx.AsyncClient)
             assert owner.chat is not None
+        assert 'httpx2' not in sys.modules
+        assert 'nearai_inference_sdk.integrations.jev' not in sys.modules
+        sys.meta_path.remove(blocker)
+        async with owner.jev_http_client as adapter:
+            import httpx2
+            assert isinstance(adapter, httpx2.AsyncClient)
+        async with owner.jev_http_client as other:
+            assert other is not adapter
+            assert not other.is_closed
+        assert 'typesafe_sdk' not in sys.modules
 
 asyncio.run(main())
-assert 'httpx2' not in sys.modules
-assert 'typesafe_sdk' not in sys.modules
 """,
         ],
         check=True,

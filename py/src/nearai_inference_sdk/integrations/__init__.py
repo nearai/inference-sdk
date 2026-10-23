@@ -1,1 +1,1 @@
-"""Optional integrations; import each adapter from its own module."""
+"""Optional transport implementations loaded when requested by a client."""
