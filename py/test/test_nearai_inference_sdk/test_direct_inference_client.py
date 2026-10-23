@@ -168,3 +168,30 @@ async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypat
             )
         assert raised.value.failure.code == 'policy.debug_enabled'
     assert endpoint.completion_requests == []
+
+
+async def test_deployment_verifier_blocks_chat(monkeypatch):
+    endpoint = DirectEndpoint()
+    endpoint.install(monkeypatch)
+
+    def reject(_deployment):
+        raise ValueError('Unapproved deployment')
+
+    async with DirectInferenceClient(
+        BASE_URL,
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=endpoint.quotes.__getitem__, deployment=reject
+            ),
+        ),
+    ) as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert raised.value.failure.code == 'provenance.verification_failed'
+    assert endpoint.completion_requests == []

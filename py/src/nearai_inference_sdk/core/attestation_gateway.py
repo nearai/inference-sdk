@@ -16,6 +16,7 @@ from .attestation_common import (
     verify_report_data_binding,
     verify_report_data_binding_with_tls_fingerprint,
 )
+from .deployment_verifier import run_deployment_verifier
 from .dstack_attestation import verify_dstack_deployment, verify_dstack_quote
 
 
@@ -56,14 +57,15 @@ async def verify_gateway_attestation(
             signer=verified_quote.signer,
         )
         tls_binding = GatewayTlsBinding(kind='none')
-    evidence = await verify_dstack_deployment(
-        verified_quote, None if verifiers is None else verifiers.deployment
+    deployment = await verify_dstack_deployment(verified_quote)
+    provenance = await run_deployment_verifier(
+        deployment, None if verifiers is None else verifiers.deployment
     )
     return VerifiedGatewayAttestation(
-        signer=evidence.signer,
-        tcb_status=evidence.tcb_status,
-        advisory_ids=evidence.advisory_ids,
-        deployment=evidence.deployment,
-        deployment_provenance=evidence.deployment_provenance,
+        signer=verified_quote.signer,
+        tcb_status=verified_quote.quote.tcb_status,
+        advisory_ids=tuple(verified_quote.quote.advisory_ids),
+        deployment=deployment,
+        deployment_provenance=provenance,
         tls_binding=tls_binding,
     )

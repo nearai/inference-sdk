@@ -44,6 +44,7 @@ export async function fetchImageProvenance({
   repository,
   digest,
   githubToken,
+  githubApiUrl,
 }: FetchImageProvenanceParams): Promise<readonly string[]> {
   if (
     !/^[\w.-]+\/[\w.-]+$/.test(repository) ||
@@ -65,11 +66,12 @@ export async function fetchImageProvenance({
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-  if (githubToken !== undefined) {
+  if (githubApiUrl === undefined && githubToken !== undefined) {
     headers.Authorization = `Bearer ${githubToken}`;
   }
 
-  const baseUrl = `https://api.github.com/repos/${repositoryPath}/attestations/${encodeURIComponent(digest.toLowerCase())}?per_page=100`;
+  const apiUrl = githubApiBaseUrl(githubApiUrl);
+  const baseUrl = `${apiUrl}/repos/${repositoryPath}/attestations/${encodeURIComponent(digest.toLowerCase())}?per_page=100`;
   const bundles: string[] = [];
   const visited = new Set<string>();
   let url: string | undefined = baseUrl;
@@ -78,7 +80,7 @@ export async function fetchImageProvenance({
     visited.add(url);
     let response: Response;
     try {
-      response = await fetch(url, { headers });
+      response = await fetch(url, { headers, redirect: 'error' });
     } catch (cause) {
       throw new ApiError(
         {
@@ -126,6 +128,27 @@ export async function fetchImageProvenance({
     url = nextGitHubAttestationsUrl(response.headers.get('link'), baseUrl);
   }
   return bundles;
+}
+
+export function githubApiBaseUrl(apiUrl?: string): string {
+  if (apiUrl === undefined) return 'https://api.github.com';
+  try {
+    const url = new URL(apiUrl);
+    if (
+      !['http:', 'https:'].includes(url.protocol) ||
+      url.username !== '' ||
+      url.password !== '' ||
+      apiUrl.includes('?') ||
+      apiUrl.includes('#')
+    )
+      throw new Error('Invalid GitHub API URL');
+    return url.href.replace(/\/+$/, '');
+  } catch {
+    throw invalidApiInput(
+      'githubApiUrl',
+      'Expected an absolute HTTP(S) URL without credentials, query, or fragment',
+    );
+  }
 }
 
 function nextGitHubAttestationsUrl(

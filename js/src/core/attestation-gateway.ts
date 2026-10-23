@@ -12,6 +12,7 @@ import {
   verifyDstackDeployment,
   verifyDstackQuote,
 } from './dstack-attestation';
+import { runDeploymentVerifier } from './deployment-verifier';
 
 /** Verify Gateway evidence using the report-data layout returned by Cloud API. */
 export async function verifyGatewayAttestation({
@@ -51,10 +52,19 @@ export async function verifyGatewayAttestation({
     });
     tlsBinding = { kind: 'none' };
   }
-  const evidence = await verifyDstackDeployment(
-    verifiedQuote,
+  const deployment = await verifyDstackDeployment(verifiedQuote);
+  const deploymentProvenance = await runDeploymentVerifier(
+    deployment,
     verifiers?.deployment,
   );
 
-  return { ...evidence, tlsBinding, report: attestation };
+  return {
+    signer: verifiedQuote.signer,
+    tcbStatus: verifiedQuote.quote.tcbStatus,
+    advisoryIds: verifiedQuote.quote.advisoryIds,
+    deployment,
+    deploymentProvenance,
+    tlsBinding,
+    report: attestation,
+  };
 }

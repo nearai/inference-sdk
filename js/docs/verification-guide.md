@@ -773,7 +773,82 @@ build attestations; legacy Rekor `intoto` entries are not supported.
 configuration, failed proof retrieval, or failed proof verification. A retrieval
 failure preserves the underlying `ApiError` as its cause and its retryability.
 Calling `fetchImageProvenance` directly still throws `ApiError`.
-The optional `githubToken` is a GitHub token, not a Gateway API key.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `appCompose` can describe its launcher rather than the
+model-serving containers deployed later. Use
+`verifyComposeManagerDeploymentImageProvenance` for those images:
+
+```ts
+import {
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyModelAttestation,
+  type ImageProvenancePolicy,
+} from '@nearai/inference-sdk';
+
+const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
+for (const attestation of fetchedModels.attestations) {
+  await verifyModelAttestation({
+    attestation,
+    clientBinding: fetchedModels.clientBinding,
+    verifiers: {
+      deployment: deployment =>
+        verifyComposeManagerDeploymentImageProvenance({
+          deployment,
+          imagePolicies: modelImagePolicies,
+          composeManagerImagePolicy: {
+            imageRepository: 'nearaidev/compose-manager',
+            repository: 'nearai/compose-manager',
+            workflow: '.github/workflows/build.yml',
+          },
+        }),
+    },
+  });
+}
+```
+
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
+
+Use `composeFile` to select a project's file and `composeRepository` to change the
+trusted repository. Configure this callback as `modelVerification.verifiers.deployment`
+on Gateway or Direct inference clients. The policy runs for every model report
+and requires Compose Manager evidence in each one.
+
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. See the
+[API reference](./api-reference.md#verifycomposemanagerdeploymentimageprovenance)
+for options and evidence fields.
+
+#### GitHub API access
+
+Requests use `https://api.github.com` by default, with optional `githubToken`
+authentication. When using a GitHub token in a frontend is impractical, set
+`githubApiUrl` to a GitHub-compatible endpoint on your backend. The backend
+supplies the GitHub credentials; the SDK ignores `githubToken` when
+`githubApiUrl` is set.
+
+The API base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path appended to the API URL | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured endpoint. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the backend to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ### Verify the response signature
 

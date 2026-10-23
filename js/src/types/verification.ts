@@ -4,6 +4,7 @@ import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignature } from './chat';
 import type { SigningIdentity } from './attestation-common';
 import type { Awaitable } from './shared';
+import type { VerifiedComposeManagerAttestation } from './compose-manager';
 
 export type TcbStatus =
   | 'UpToDate'
@@ -23,6 +24,8 @@ export type RuntimeMeasurements = {
 export type MeasuredDeployment = {
   readonly appCompose: string;
   readonly runtimeMeasurements: RuntimeMeasurements;
+  /** Authenticated deployment actions when the model report supplied them. */
+  readonly composeManager?: VerifiedComposeManagerAttestation;
 };
 
 /** Facts returned by a quote verifier before SDK policy and binding checks. */

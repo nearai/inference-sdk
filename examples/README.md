@@ -17,8 +17,8 @@ project configuration. The Chat entry points include non-streaming and streaming
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
-| `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `gateway/bare.ts` | Verifies attestations and required Gateway/model image builds, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `gateway/client.ts` | Configures Gateway/model image policies, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | [`gateway/jev.ts`](example-js/gateway/jev.ts) | Sends structured decisions and verifies the receipt before printing answers. | Disabled |
 | [`gateway/jev-sdk.ts`](example-js/gateway/jev-sdk.ts) | Injects the verified transport into the official Jev SDK and verifies `X-Generation-Id` before using answers. | Disabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
@@ -119,14 +119,21 @@ and unresolved `${VARIABLE:-default}` expressions are not.
 The policies belong to these examples, not an SDK default allowlist. Add `commit`
 to each policy to require a reviewed source commit.
 
+Both examples also use `verifyComposeManagerDeploymentImageProvenance` to require
+these images from the model's authenticated deployment-control evidence:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+See [model image policies](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
+
 Gateway/model attestation and image-check failures block both Chat modes.
 `client.ts` reuses successful checks through its 60-minute attestation cache;
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
-
-These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image, or model-weight
-provenance.
 
 ## Python
 
@@ -136,8 +143,8 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 
 | File | Usage |
 | --- | --- |
-| `gateway/bare.py` | Verifies attestations and Gateway image provenance, prepares E2EE requests, and verifies encrypted response bytes. |
-| `gateway/client.py` | Configures Gateway image provenance and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
+| `gateway/bare.py` | Verifies attestations and required Gateway/model image builds, prepares E2EE requests, and verifies encrypted response bytes. |
+| `gateway/client.py` | Configures Gateway/model image policies and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
 | `gateway/client_openai_sdk.py` | Shares `inference_client.http_client` with one reusable `openai.AsyncOpenAI` client. |
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
@@ -151,7 +158,16 @@ Gateway and direct Chat client examples explicitly enable E2EE; both clients def
 client shares its 60-minute per-model attestation cache across `verify()`, Chat,
 and System One calls and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
-Gateway image policies listed above; they do not check model runtime images.
+Gateway image policies listed above. Their model deployment callbacks also call
+`verify_compose_manager_deployment_image_provenance` to require these image builds:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+See [model image policies](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
 
 ```sh
 cd examples/example-py
