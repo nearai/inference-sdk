@@ -1279,10 +1279,24 @@ async fn systemone_retained_receipts_follow_size_and_count_limits() {
 }
 
 fn response_request_body(streaming: bool) -> Value {
-    json!({"model":"vendor/model","store":false,"stream":streaming,"input":[
-        {"type":"function_call","call_id":"prior","name":"weather","arguments":"{}"},
-        {"type":"function_call_output","call_id":"prior","output":"{\"temperature\":20}"}
-    ]})
+    json!({
+        "model": "vendor/model",
+        "store": false,
+        "stream": streaming,
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "prior",
+                "name": "weather",
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "prior",
+                "output": "{\"temperature\":20}"
+            }
+        ]
+    })
 }
 
 #[tokio::test]
@@ -1307,6 +1321,7 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
             options.ohttp = oblivious;
             let client = InferenceClient::with_options(options).unwrap();
             let body = response_request_body(streaming);
+
             if streaming {
                 let response = client
                     .send(client.response_request(body).unwrap())
@@ -1321,6 +1336,7 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                 assert_eq!(response["id"], "resp_fixture");
                 assert_eq!(response["output"][2]["arguments"], "{\"city\":\"北京\"}");
             }
+
             let receipt = client.verify_response("resp_fixture").await.unwrap();
             assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
             assert!(matches!(
@@ -1347,6 +1363,7 @@ async fn responses_reject_tampering_and_provider_receipts() {
             })
             .await;
             let client = InferenceClient::with_options(options).unwrap();
+
             client
                 .send(
                     client
@@ -1358,6 +1375,7 @@ async fn responses_reject_tampering_and_provider_receipts() {
                 .bytes()
                 .await
                 .unwrap();
+
             assert_eq!(
                 client
                     .verify_response("resp_fixture")
@@ -1382,10 +1400,12 @@ async fn responses_retry_receipts_without_repeating_inference() {
     })
     .await;
     let client = InferenceClient::with_options(options).unwrap();
+
     client
         .create_response(response_request_body(false))
         .await
         .unwrap();
+
     assert_eq!(
         client
             .verify_response("resp_fixture")
@@ -1395,6 +1415,7 @@ async fn responses_retry_receipts_without_repeating_inference() {
         "api.http_status"
     );
     client.verify_response("resp_fixture").await.unwrap();
+
     assert_eq!(f.chat.load(Ordering::SeqCst), 1);
     assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
 }
@@ -1413,6 +1434,7 @@ async fn responses_missing_ids_and_http_errors_are_not_receipts() {
         })
         .await;
         let client = InferenceClient::with_options(options).unwrap();
+
         let result = client
             .send(
                 client
@@ -1421,17 +1443,20 @@ async fn responses_missing_ids_and_http_errors_are_not_receipts() {
             )
             .await
             .unwrap();
+
         assert_eq!(
             result.bytes().await.unwrap_err().code(),
             "api.invalid_response"
         );
     }
+
     let (_server, _f, options) = setup(Fixture {
         response_status: Some(400),
         ..Default::default()
     })
     .await;
     let client = InferenceClient::with_options(options).unwrap();
+
     assert_eq!(
         client
             .create_response(response_request_body(false))
@@ -1455,6 +1480,7 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
     let (_server, f, mut options) = setup(Fixture::default()).await;
     options.e2ee = true;
     let client = InferenceClient::with_options(options.clone()).unwrap();
+
     assert_eq!(
         client
             .create_response(response_request_body(false))
@@ -1463,9 +1489,11 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
             .code(),
         "api.invalid_input"
     );
+
     options.e2ee = false;
     let direct = DirectInferenceClient::with_options(options.clone().into()).unwrap();
     let client = InferenceClient::with_options(options).unwrap();
+
     assert_eq!(
         client
             .create_response(response_request_body(true))
@@ -1487,10 +1515,12 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
             .code(),
         "api.invalid_input"
     );
+
     let mut request = client
         .response_request(response_request_body(false))
         .unwrap();
     request.url_mut().set_path("/v1/responses/resp_fixture");
+
     assert_eq!(
         client.send(request).await.err().unwrap().code(),
         "api.invalid_input"

@@ -5,7 +5,9 @@ use serde_json::json;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = InferenceClient::new(std::env::var("NEARAI_API_KEY")?)?;
     let request = json!({
-        "model": "z-ai/glm-5.3-flash", "input": "Reply with the word ok.", "store": false
+        "model": "z-ai/glm-5.3-flash",
+        "input": "Reply with the word ok.",
+        "store": false
     });
     let response = client.create_response(request.clone()).await?;
     let id = response["id"].as_str().ok_or("missing response ID")?;
