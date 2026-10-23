@@ -128,7 +128,7 @@ decision requests. The client verifies deployments before sending.
 
 ### Jev HTTP transport
 
-Install `nearai-inference-sdk[jev]` and import
+Install `typesafe-sdk`, which includes HTTPX2, and import
 `create_jev_http_client` from `nearai_inference_sdk.integrations.jev` for an
 HTTPX2 adapter. `create_jev_http_client(inference_client)` returns a new
 `httpx2.AsyncClient` for Jev's `AsyncTypeSafeClient`. It accepts only uncompressed,

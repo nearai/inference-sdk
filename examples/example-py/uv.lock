@@ -1235,7 +1235,6 @@ requires-dist = [
     { name = "eth-utils", specifier = ">=2.0.0" },
     { name = "httpcore", specifier = "==1.0.9" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
-    { name = "httpx2", marker = "extra == 'jev'", specifier = ">=2.16.0,<3" },
     { name = "openai", specifier = ">=2.0.0,<3" },
     { name = "pyasn1", specifier = ">=0.6.4,<0.7" },
     { name = "pydantic", specifier = ">=2.12.5" },
@@ -1245,7 +1244,6 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.19.1,<0.20" },
     { name = "sigstore", specifier = ">=4.5.0,<5" },
 ]
-provides-extras = ["jev"]
 
 [package.metadata.requires-dev]
 dev = [

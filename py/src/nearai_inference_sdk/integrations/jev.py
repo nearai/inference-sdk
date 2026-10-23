@@ -38,7 +38,7 @@ class _JevTransport(httpx2.AsyncBaseTransport):
 def create_jev_http_client(owner: InferenceClient) -> httpx2.AsyncClient:
     """Create a non-owning adapter for uncompressed, nonstreaming System One.
 
-    Install the ``jev`` extra to import this module. Pass the adapter to Jev's
+    Install ``typesafe-sdk`` to use this integration. Pass the adapter to Jev's
     ``AsyncTypeSafeClient`` with compression and retries disabled. Keep ``owner``
     open while sending requests and verifying receipts; closing this adapter
     does not close its owner. All network I/O and verification use HTTPX.
