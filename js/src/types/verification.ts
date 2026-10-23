@@ -13,6 +13,8 @@ export type TcbStatus =
   | 'ConfigurationAndSWHardeningNeeded'
   | 'OutOfDate'
   | 'OutOfDateConfigurationNeeded'
+  | 'TDRelaunchAdvised'
+  | 'TDRelaunchAdvisedConfigurationNeeded'
   | 'Revoked'
   | 'Unknown';
 

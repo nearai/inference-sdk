@@ -20,6 +20,7 @@ import { verifyAndReplayRtmr3 } from './event-log';
 const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
   'OutOfDate',
+  'TDRelaunchAdvised',
 ];
 
 /** Quote facts shared by model and gateway evidence. Internal to the SDK. */

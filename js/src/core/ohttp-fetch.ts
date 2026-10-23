@@ -34,6 +34,7 @@ export function createOhttpFetch({
         AEAD_AES_128_GCM,
       ),
       KeyConfig.parse(keyConfig.slice()),
+      { padding: 16_384 },
     );
   } catch (cause) {
     throw new VerificationError(
