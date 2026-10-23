@@ -189,3 +189,19 @@ async def test_raw_systemone_rejects_unsupported_input_before_io(
             )
         assert raised.value.failure.code == 'api.invalid_input'
     assert gateway.headers == []
+
+
+async def test_raw_systemone_rejects_configured_compression(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+
+    async with gateway.client(
+        e2ee=False, headers={'content-encoding': 'gzip'}
+    ) as client:
+        with pytest.raises(ApiError) as raised:
+            await client.send(
+                httpx2.Request('POST', BASE_URL + 'systemone', json=REQUEST)
+            )
+
+    assert raised.value.failure.code == 'api.invalid_input'
+    assert gateway.headers == []

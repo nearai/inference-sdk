@@ -331,7 +331,7 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions or Gateway System One request.
+   * Send one verified Chat Completions or Jev System One request.
    *
    * Only POST requests to this client's configured inference endpoints
    * are accepted. Other API paths, including Responses, are rejected locally.

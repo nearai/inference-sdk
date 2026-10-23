@@ -250,6 +250,10 @@ Provider receipts must match that identity; external models use Gateway receipts
 also pins Gateway TLS, as it does for Chat.
 
 See the [runnable official SDK example](../../examples/example-js/gateway/jev-sdk.ts).
+Its [reusable helpers](../../examples/example-js/gateway/jev-helpers.ts) keep the
+verified transport configuration and receipt-ID extraction together. See the
+[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+credential-gated validation against a deployed Gateway.
 
 ## Connect through an application proxy
 

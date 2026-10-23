@@ -285,6 +285,10 @@ receipts. Closing the official client closes its borrowed adapter; keep the
 owning `InferenceClient` open until verification finishes.
 
 See the [runnable official SDK example](../../examples/example-py/gateway/jev_sdk.py).
+Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep the
+verified transport configuration and receipt-ID extraction together. See the
+[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+credential-gated validation against a deployed Gateway.
 
 ## Direct model endpoints
 

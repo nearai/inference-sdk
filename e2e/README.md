@@ -93,3 +93,49 @@ finish with `stop`. Test failures and timeouts fail the workflow.
 Receipt lookups retry transient API failures up to five attempts within the
 model case's 180 second deadline. A receipt retry does not send another
 inference request.
+
+## Official Jev SDK integration
+
+`js/e2e/jev-sdk.test.ts` and `py/e2e/test_jev_sdk.py` exercise the published
+`@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
+send one real decision per case, parse the official response types, extract
+`X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
+retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
+Both Ed25519 and ECDSA are covered.
+
+The existing live workflow includes these files automatically. External Jev
+models come from `NEARAI_E2E_MODELS`, or set `NEARAI_JEV_MODEL` to a canonical
+external Jev model ID to run only these suites without catalog selection:
+
+```sh
+# Set NEARAI_API_KEY securely and NEARAI_BASE_URL for the target environment.
+export NEARAI_JEV_MODEL='<canonical external Jev model ID>'
+(cd js && pnpm build && pnpm typecheck:e2e && node --test e2e/jev-sdk.test.ts)
+(cd py && uv run pytest e2e/test_jev_sdk.py -v -rs)
+```
+
+For self-hosted coverage, deploy the public-key routing contract from
+[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285), then set
+`NEARAI_JEV_SELF_HOSTED_MODEL` to a canonical self-hosted Jev model ID. These
+cases preverify the model and require a provider receipt matching the selected
+attested signing identity. In CI, set the optional repository variables
+`NEARAI_STG_JEV_SELF_HOSTED_MODEL` and `NEARAI_PRD_JEV_SELF_HOSTED_MODEL`
+for the respective environments. Without that variable they explicitly skip with the
+server dependency in the reason; an external model is never substituted.
+
+Without `NEARAI_API_KEY` and `NEARAI_BASE_URL`, these two files skip all cases
+without network access. Once credentials are supplied, a missing external model
+selection or a verification failure fails the tests. The ordinary unit suite
+still excludes live tests.
+
+Validation status (2026-10-23): local fixture tests and credential-free skip
+checks were run. **No live external or self-hosted case has been run during this
+local validation**, because live credentials were unavailable. Self-hosted live validation
+also requires the server routing dependency and a configured deployment. A skip
+is not a live pass; record the target environment and successful case names when
+running with credentials.
+
+The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
+`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+transport, disabled retries/compression, and receipt-ID extraction together.
+The official SDKs remain example/test dependencies only.
