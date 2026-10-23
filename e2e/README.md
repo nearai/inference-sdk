@@ -54,7 +54,8 @@ go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m 
 ```
 
 Ordinary unit-test commands exclude the live suites. PR CI checks their source
-without making live requests.
+without making live requests, except for the temporary live-workflow opt-in
+for PR #118.
 
 ## CI configuration
 
@@ -72,14 +73,17 @@ Each environment selects representative models from its public `/model/list`
 catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
 external model; all SDKs use the same selection. The same list includes a hosted
 Jev model when the selected SDK has a System One suite. Each entry carries an
-`endpoint` (`chat` or `systemone`), and each suite uses only its endpoint. A
-missing required category fails setup.
+`endpoint` (`chat`, `responses`, or `systemone`), and each suite uses only its
+endpoint. A missing required category fails setup. Responses has its own `responses` entries:
+one of the selected NEAR TEE models and one OpenAI-owned external text model.
+The OpenAI model uses the same non-reasoning, price, and ID ordering as Chat;
+a cheaper external model from another owner cannot replace it.
 
 | Area | Live checks |
 | --- | --- |
 | Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
 | Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
-| Responses | JSON and SSE with `store: false`, using the existing NEAR model selection; Gateway receipts over plain transport and OHTTP. |
+| Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; Gateway receipts over plain transport and OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
 | Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
 

@@ -97,6 +97,16 @@ async function main() {
       })),
     );
   }
+  const nearResponse = selected.find(({ provider }) => provider === 'near');
+  const openaiResponse = chatModels.find(({ metadata }) =>
+    metadata.providerType === 'external' && metadata.ownedBy === 'openai' &&
+    !metadata.attestationSupported,
+  );
+  assert.ok(openaiResponse, 'Expected an OpenAI external text model for Responses');
+  selected.push(
+    { ...nearResponse, endpoint: 'responses' },
+    { id: openaiResponse.modelId, provider: 'external', endpoint: 'responses' },
+  );
   if (systemoneModel) {
     selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
   }

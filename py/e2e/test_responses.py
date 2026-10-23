@@ -10,9 +10,10 @@ from nearai_inference_sdk import InferenceClient
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('provider', ['near', 'external'])
 @pytest.mark.parametrize('ohttp', [False, True])
-async def test_responses_json_and_sse(ohttp: bool) -> None:
-    model = selected_models('chat', 'near')[0]
+async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
+    model = selected_models('responses', provider)[0]
     api_key = required_env('NEARAI_API_KEY')
     base_url = required_env('NEARAI_BASE_URL')
     async with (

@@ -5,6 +5,9 @@ on:
     branches: [main]
   schedule:
     - cron: '0 3 * * *'
+  # Temporary: validate Responses on PR #118 before merging.
+  pull_request:
+    branches: [main]
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -31,7 +34,13 @@ concurrency:
 
 jobs:
   configuration:
-    if: github.repository == 'nearai/inference-sdk' && github.ref == 'refs/heads/main'
+    # Remove the PR #118 exception after live validation.
+    if: >-
+      github.repository == 'nearai/inference-sdk' &&
+      (github.ref == 'refs/heads/main' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.number == 118 &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     outputs:
       stg-models: ${{ steps.stg.outputs.models }}
