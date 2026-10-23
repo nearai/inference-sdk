@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -339,5 +340,115 @@ func TestE2EEConfiguredBodyLimit(t *testing.T) {
 		} else if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestE2EEV3SharedVectors(t *testing.T) {
+	raw, err := os.ReadFile("../test-fixtures/e2ee-v3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Vectors []struct {
+			Algo        SigningAlgo `json:"signing_algo"`
+			ModelSecret string      `json:"model_secret"`
+			ModelPublic string      `json:"model_public"`
+			ReplyPublic string      `json:"reply_public"`
+			AAD         string      `json:"aad"`
+			Plaintext   string      `json:"plaintext"`
+			Ciphertext  string      `json:"ciphertext"`
+		}
+	}
+	if err = json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range fixture.Vectors {
+		t.Run(string(v.Algo), func(t *testing.T) {
+			seed, _ := hex.DecodeString(v.ModelSecret)
+			secret := seed
+			if v.Algo == Ed25519 {
+				h := sha512.Sum512(seed)
+				secret = h[:32]
+				secret[0] &= 248
+				secret[31] &= 127
+				secret[31] |= 64
+			}
+			key := e2eeKey{v.Algo, v.ModelPublic, secret}
+			aad, err := requestAAD(v.Algo, v.ReplyPublic)
+			if err != nil || hex.EncodeToString(aad) != v.AAD {
+				t.Fatalf("AAD: %v", err)
+			}
+			plain, err := decryptTextWithAAD(v.Ciphertext, key, aad)
+			if err != nil || plain != v.Plaintext {
+				t.Fatalf("vector: %q %v", plain, err)
+			}
+			if v.Algo == ECDSA {
+				canonical, err := requestAAD(v.Algo, v.ReplyPublic[2:])
+				if err != nil || !bytes.Equal(canonical, aad) {
+					t.Fatal("noncanonical reply key")
+				}
+			}
+			cipher, err := encryptTextWithAAD(v.Plaintext, E2EEModelKey{v.Algo, v.ModelPublic}, aad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plain, err = decryptTextWithAAD(cipher, key, aad)
+			if err != nil || plain != v.Plaintext {
+				t.Fatalf("round trip: %q %v", plain, err)
+			}
+			wrongKey, _ := requestAAD(v.Algo, v.ModelPublic)
+			wrongSuite := append([]byte(nil), aad...)
+			wrongSuite[22] = 255
+			for _, wrong := range [][]byte{nil, wrongKey, wrongSuite} {
+				if _, err = decryptTextWithAAD(v.Ciphertext, key, wrong); err == nil {
+					t.Fatal("accepted wrong AAD")
+				}
+			}
+
+			request, err := http.NewRequest("POST", "https://example.test/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"private prompt"}],"tools":[{"type":"function","function":{"name":"private_tool","parameters":{"type":"object"}}}]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := PrepareE2EEChatRequest(request, E2EEModelKey{v.Algo, v.ModelPublic})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Request.Header.Get("X-Encryption-Version") != "3" {
+				t.Fatal("missing v3 header")
+			}
+			preparedAAD, err := requestAAD(v.Algo, prepared.Request.Header.Get("X-Client-Pub-Key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var requestBody map[string]any
+			if err := json.NewDecoder(prepared.Request.Body).Decode(&requestBody); err != nil {
+				t.Fatal(err)
+			}
+			tool := object(objects(requestBody["tools"])[0]["function"])
+			for cipher, expected := range map[string]string{
+				objects(requestBody["messages"])[0]["content"].(string): "private prompt",
+				tool["name"].(string):       "private_tool",
+				tool["parameters"].(string): `{"type":"object"}`,
+			} {
+				plain, err := decryptTextWithAAD(cipher, key, preparedAAD)
+				if err != nil || plain != expected {
+					t.Fatalf("prepared field: %q %v", plain, err)
+				}
+				if _, err := decryptText(cipher, key); err == nil {
+					t.Fatal("request accepted without AAD")
+				}
+			}
+			for _, text := range []string{
+				`{"choices":[{"message":{},"logprobs":{"content":[{"bytes":[115]}]}}]}`,
+				`{"choices":[{"message":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}`,
+				`{"choices":[{"message":{"tool_calls":[{"function":{"arguments":{"secret":true}}}]}}]}`,
+			} {
+				var body map[string]any
+				json.Unmarshal([]byte(text), &body)
+				if err := decryptChat(body, key, false); err == nil {
+					t.Fatal("accepted clear protected field")
+				}
+			}
+		})
 	}
 }

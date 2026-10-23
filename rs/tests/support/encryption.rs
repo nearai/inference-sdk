@@ -1,6 +1,6 @@
 //! Independent local-provider crypto for integrated wire tests (fixed test-only keys).
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm,
 };
 use chacha20poly1305::XChaCha20Poly1305;
@@ -21,7 +21,14 @@ fn derived(shared: &[u8], algo: SigningAlgo) -> [u8; 32] {
         .unwrap();
     key
 }
-pub fn decrypt_request(cipher: &str, algo: SigningAlgo) -> String {
+pub fn decrypt_request(cipher: &str, algo: SigningAlgo, reply_public: &str) -> String {
+    let mut public = hex::decode(reply_public).unwrap();
+    if algo == SigningAlgo::Ecdsa && public.len() == 64 {
+        public.insert(0, 4);
+    }
+    let mut aad = b"nearai-e2ee-request-v3".to_vec();
+    aad.push(if algo == SigningAlgo::Ecdsa { 1 } else { 2 });
+    aad.extend(public);
     let cipher = hex::decode(cipher).unwrap();
     let plain = match algo {
         SigningAlgo::Ed25519 => {
@@ -30,7 +37,13 @@ pub fn decrypt_request(cipher: &str, algo: SigningAlgo) -> String {
             let public: [u8; 32] = cipher[..32].try_into().unwrap();
             let shared = secret.diffie_hellman(&public.into());
             XChaCha20Poly1305::new((&derived(shared.as_bytes(), algo)).into())
-                .decrypt(cipher[32..56].into(), &cipher[56..])
+                .decrypt(
+                    cipher[32..56].into(),
+                    Payload {
+                        msg: &cipher[56..],
+                        aad: &aad,
+                    },
+                )
                 .unwrap()
         }
         SigningAlgo::Ecdsa => {
@@ -38,7 +51,13 @@ pub fn decrypt_request(cipher: &str, algo: SigningAlgo) -> String {
             let public = k256::PublicKey::from_sec1_bytes(&cipher[..65]).unwrap();
             let shared = k256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), public.as_affine());
             Aes256Gcm::new((&derived(shared.raw_secret_bytes(), algo)).into())
-                .decrypt(cipher[65..77].into(), &cipher[77..])
+                .decrypt(
+                    cipher[65..77].into(),
+                    Payload {
+                        msg: &cipher[77..],
+                        aad: &aad,
+                    },
+                )
                 .unwrap()
         }
     };

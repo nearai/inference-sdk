@@ -39,12 +39,32 @@ export type E2eeClientKeyPair =
   | Ed25519E2eeClientKeyPair
   | EcdsaE2eeClientKeyPair;
 
+/** Internal request encryption context; legacy callers omit associatedData. */
+export type E2eeEncryptionKey = E2eeModelKey & {
+  readonly associatedData?: Uint8Array;
+};
+
+/** Bind a v3 request to its reply recipient, using canonical public-key bytes. */
+export function buildE2eeRequestAad(replyKey: E2eeModelKey): Uint8Array {
+  const publicKey =
+    replyKey.signingAlgo === 'ecdsa'
+      ? ethers.getBytes(toEcdsaPublicKey(replyKey.publicKey))
+      : hexToBuffer(replyKey.publicKey, 'replyPublicKey');
+  if (replyKey.signingAlgo === 'ed25519') toX25519PublicKey(replyKey.publicKey);
+  return Buffer.concat([
+    Buffer.from('nearai-e2ee-request-v3', 'utf8'),
+    Buffer.from([replyKey.signingAlgo === 'ecdsa' ? 1 : 2]),
+    Buffer.from(publicKey),
+  ]);
+}
+
 type EncryptE2eeTextParams = {
   readonly plaintext: string;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 type DecryptE2eeTextParams = {
+  readonly associatedData?: Uint8Array;
   readonly ciphertext: string;
   readonly clientKeyPair: E2eeClientKeyPair;
   readonly field: string;
@@ -82,8 +102,16 @@ export function encryptE2eeText({
   modelKey,
 }: EncryptE2eeTextParams): string {
   return modelKey.signingAlgo === 'ed25519'
-    ? encryptEd25519Text({ plaintext, publicKey: modelKey.publicKey })
-    : encryptEcdsaText({ plaintext, publicKey: modelKey.publicKey });
+    ? encryptEd25519Text({
+        plaintext,
+        publicKey: modelKey.publicKey,
+        associatedData: modelKey.associatedData,
+      })
+    : encryptEcdsaText({
+        plaintext,
+        publicKey: modelKey.publicKey,
+        associatedData: modelKey.associatedData,
+      });
 }
 
 /** Decrypt one UTF-8 field produced by the selected E2EE protocol. */
@@ -91,6 +119,7 @@ export function decryptE2eeText({
   ciphertext,
   clientKeyPair,
   field,
+  associatedData,
 }: DecryptE2eeTextParams): string {
   // The server represents an encrypted empty field as an empty string rather
   // than an envelope. Preserve that protocol value without treating it as a
@@ -100,8 +129,8 @@ export function decryptE2eeText({
   }
   try {
     return clientKeyPair.signingAlgo === 'ed25519'
-      ? decryptEd25519Text({ ciphertext, clientKeyPair, field })
-      : decryptEcdsaText({ ciphertext, clientKeyPair, field });
+      ? decryptEd25519Text({ ciphertext, clientKeyPair, field, associatedData })
+      : decryptEcdsaText({ ciphertext, clientKeyPair, field, associatedData });
   } catch (cause) {
     throw new VerificationError(
       {
@@ -114,6 +143,7 @@ export function decryptE2eeText({
 }
 
 type EncryptProtocolTextParams = {
+  readonly associatedData?: Uint8Array | undefined;
   readonly plaintext: string;
   readonly publicKey: string;
 };
@@ -121,6 +151,7 @@ type EncryptProtocolTextParams = {
 function encryptEd25519Text({
   plaintext,
   publicKey,
+  associatedData,
 }: EncryptProtocolTextParams): string {
   const recipientX25519PublicKey = toX25519PublicKey(publicKey);
   const ephemeralSecretKey = nacl.randomBytes(E2EE_KEY_BYTES);
@@ -130,9 +161,11 @@ function encryptEd25519Text({
     sharedSecret: nacl.scalarMult(ephemeralSecretKey, recipientX25519PublicKey),
     info: ED25519_HKDF_INFO,
   });
-  const ciphertext = xchacha20poly1305(encryptionKey, nonce).encrypt(
-    utf8(plaintext),
-  );
+  const ciphertext = xchacha20poly1305(
+    encryptionKey,
+    nonce,
+    associatedData,
+  ).encrypt(utf8(plaintext));
 
   return Buffer.concat([
     Buffer.from(ephemeralPublicKey),
@@ -144,6 +177,7 @@ function encryptEd25519Text({
 function encryptEcdsaText({
   plaintext,
   publicKey,
+  associatedData,
 }: EncryptProtocolTextParams): string {
   const recipientPublicKey = toEcdsaPublicKey(publicKey);
   const ephemeralPrivateKey = `0x${Buffer.from(nacl.randomBytes(E2EE_KEY_BYTES)).toString('hex')}`;
@@ -156,7 +190,9 @@ function encryptEcdsaText({
     }),
     info: ECDSA_HKDF_INFO,
   });
-  const ciphertext = gcm(encryptionKey, nonce).encrypt(utf8(plaintext));
+  const ciphertext = gcm(encryptionKey, nonce, associatedData).encrypt(
+    utf8(plaintext),
+  );
 
   return Buffer.concat([
     Buffer.from(ephemeralKey.publicKey.slice(2), 'hex'),
@@ -166,6 +202,7 @@ function encryptEcdsaText({
 }
 
 type DecryptProtocolTextParams<TClientKeyPair extends E2eeClientKeyPair> = {
+  readonly associatedData?: Uint8Array | undefined;
   readonly ciphertext: string;
   readonly clientKeyPair: TClientKeyPair;
   readonly field: string;
@@ -175,6 +212,7 @@ function decryptEd25519Text({
   ciphertext,
   clientKeyPair,
   field,
+  associatedData,
 }: DecryptProtocolTextParams<Ed25519E2eeClientKeyPair>): string {
   const envelope = hexToBuffer(ciphertext, field);
   if (envelope.length < ED25519_ENVELOPE_PREFIX_BYTES + E2EE_AUTH_TAG_BYTES) {
@@ -193,7 +231,11 @@ function decryptEd25519Text({
     ),
     info: ED25519_HKDF_INFO,
   });
-  const plaintext = xchacha20poly1305(decryptionKey, nonce).decrypt(encrypted);
+  const plaintext = xchacha20poly1305(
+    decryptionKey,
+    nonce,
+    associatedData,
+  ).decrypt(encrypted);
   return new TextDecoder('utf-8', { fatal: true }).decode(plaintext);
 }
 
@@ -201,6 +243,7 @@ function decryptEcdsaText({
   ciphertext,
   clientKeyPair,
   field,
+  associatedData,
 }: DecryptProtocolTextParams<EcdsaE2eeClientKeyPair>): string {
   const envelope = hexToBuffer(ciphertext, field);
   if (envelope.length < ECDSA_ENVELOPE_PREFIX_BYTES + E2EE_AUTH_TAG_BYTES) {
@@ -222,7 +265,9 @@ function decryptEcdsaText({
     }),
     info: ECDSA_HKDF_INFO,
   });
-  const plaintext = gcm(decryptionKey, nonce).decrypt(encrypted);
+  const plaintext = gcm(decryptionKey, nonce, associatedData).decrypt(
+    encrypted,
+  );
   return new TextDecoder('utf-8', { fatal: true }).decode(plaintext);
 }
 

@@ -1,14 +1,18 @@
 import { Buffer } from 'node:buffer';
 import ed2curve from 'ed2curve';
-import nacl from 'tweetnacl';
 import OpenAI from 'openai';
+import nacl from 'tweetnacl';
 import {
+  type DirectAttestationVerificationResult,
   DirectInferenceClient,
   type DirectInferenceClientOptions,
-  type DirectAttestationVerificationResult,
   type TdxQuoteVerificationResult,
 } from '../src';
-import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
+import {
+  buildE2eeRequestAad,
+  decryptE2eeText,
+  encryptE2eeText,
+} from '../src/core/e2ee';
 import * as nodeTls from '../src/node/attestation-client';
 import { NodeDirectInferenceClient } from '../src/node/direct-inference-client';
 import { createModelAttestation, createModelQuote, sha256 } from './fixtures';
@@ -191,6 +195,10 @@ function createDirectEndpoint({
               x25519SecretKey: secretKey,
             },
             field: 'messages[0].content',
+            associatedData: buildE2eeRequestAad({
+              signingAlgo: 'ed25519',
+              publicKey: clientPublicKey,
+            }),
           }),
     );
     const content = (plaintext: string): string =>
@@ -516,7 +524,7 @@ describe('DirectInferenceClient', () => {
     const sent = endpoint.state.requests[0];
     expect(sent.body.messages[0].content).not.toBe(prompt);
     expect(sent.headers.get('x-model-pub-key')).toBe(endpoint.publicKey);
-    expect(sent.headers.get('x-encryption-version')).toBe('2');
+    expect(sent.headers.get('x-encryption-version')).toBe('3');
 
     const result = await client.verifyResponse(response.id);
     expect(result.signatureKind).toBe('provider_tee');

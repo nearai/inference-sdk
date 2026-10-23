@@ -7,7 +7,11 @@ import type {
 import type { SecureChatCompletionResponse } from '../types/inference-client';
 import { ApiError, isApiError, isVerificationError } from '../utils/errors';
 import { NO_ALIASING_HEADER } from './cloud-api';
-import { createE2eeClientKeyPair, type E2eeClientKeyPair } from './e2ee';
+import {
+  buildE2eeRequestAad,
+  createE2eeClientKeyPair,
+  type E2eeClientKeyPair,
+} from './e2ee';
 import {
   createE2eeChatSseTransform,
   decryptE2eeChatResponse,
@@ -62,7 +66,14 @@ export async function prepareE2eeChatRequest({
   }
   request.signal.throwIfAborted();
   const clientKeyPair = createE2eeClientKeyPair(modelKey.signingAlgo);
-  const encrypted = encryptE2eeChatRequest({ body: parsed.output, modelKey });
+  const associatedData = buildE2eeRequestAad({
+    signingAlgo: modelKey.signingAlgo,
+    publicKey: clientKeyPair.publicKey,
+  });
+  const encrypted = encryptE2eeChatRequest({
+    body: parsed.output,
+    modelKey: { ...modelKey, associatedData },
+  });
   const headers = new Headers(request.headers);
   removeTransformedBodyHeaders(headers);
   headers.set('content-type', 'application/json');
@@ -70,9 +81,7 @@ export async function prepareE2eeChatRequest({
   headers.set('x-signing-algo', modelKey.signingAlgo);
   headers.set('x-client-pub-key', clientKeyPair.publicKey);
   headers.set('x-model-pub-key', modelKey.publicKey);
-  if (modelKey.signingAlgo === 'ed25519') {
-    headers.set('x-encryption-version', '2');
-  }
+  headers.set('x-encryption-version', '3');
   headers.set(NO_ALIASING_HEADER, 'true');
   headers.set('x-encrypt-all-fields', 'true');
 

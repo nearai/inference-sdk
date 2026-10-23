@@ -27,7 +27,7 @@ def parse_e2ee_chat_response(body: object) -> dict[str, Any]:
 
 
 def encrypt_e2ee_chat_request(
-    body: dict[str, Any], model_key: E2eeModelKey
+    body: dict[str, Any], model_key: E2eeModelKey, aad: bytes = b''
 ) -> dict[str, Any]:
     """Encrypt only protocol-supported fields, leaving ordinary Chat JSON alone."""
 
@@ -35,36 +35,41 @@ def encrypt_e2ee_chat_request(
     for message in _objects(encrypted.get('messages')):
         content = message.get('content')
         if isinstance(content, str):
-            message['content'] = encrypt_e2ee_text(content, model_key)
+            message['content'] = encrypt_e2ee_text(content, model_key, aad)
         elif isinstance(content, list):
-            message['content'] = encrypt_e2ee_text(_json(content), model_key)
+            message['content'] = encrypt_e2ee_text(_json(content), model_key, aad)
         _encrypt_fields(
             message,
             ('reasoning_content', 'reasoning', 'name', 'refusal'),
             model_key,
+            aad,
         )
         if isinstance(message.get('audio'), dict):
-            _encrypt_fields(message['audio'], ('data',), model_key)
+            _encrypt_fields(message['audio'], ('data',), model_key, aad)
         for tool_call in _objects(message.get('tool_calls')):
             if isinstance(tool_call.get('function'), dict):
-                _encrypt_fields(tool_call['function'], ('name', 'arguments'), model_key)
+                _encrypt_fields(
+                    tool_call['function'], ('name', 'arguments'), model_key, aad
+                )
         if isinstance(message.get('function_call'), dict):
-            _encrypt_fields(message['function_call'], ('name', 'arguments'), model_key)
+            _encrypt_fields(
+                message['function_call'], ('name', 'arguments'), model_key, aad
+            )
 
     for tool in _objects(encrypted.get('tools')):
         function = tool.get('function')
         if not isinstance(function, dict):
             continue
-        _encrypt_fields(function, ('name', 'description'), model_key)
+        _encrypt_fields(function, ('name', 'description'), model_key, aad)
         if 'parameters' in function:
             function['parameters'] = encrypt_e2ee_text(
-                _json(function['parameters']), model_key
+                _json(function['parameters']), model_key, aad
             )
     tool_choice = encrypted.get('tool_choice')
     if isinstance(tool_choice, dict) and isinstance(tool_choice.get('function'), dict):
-        _encrypt_fields(tool_choice['function'], ('name',), model_key)
+        _encrypt_fields(tool_choice['function'], ('name',), model_key, aad)
     if isinstance(encrypted.get('function_call'), dict):
-        _encrypt_fields(encrypted['function_call'], ('name',), model_key)
+        _encrypt_fields(encrypted['function_call'], ('name',), model_key, aad)
     return encrypted
 
 
@@ -127,12 +132,15 @@ async def decrypt_e2ee_chat_sse(
 
 
 def _encrypt_fields(
-    target: dict[str, Any], fields: tuple[str, ...], model_key: E2eeModelKey
+    target: dict[str, Any],
+    fields: tuple[str, ...],
+    model_key: E2eeModelKey,
+    aad: bytes = b'',
 ) -> None:
     for field in fields:
         value = target.get(field)
         if isinstance(value, str):
-            target[field] = encrypt_e2ee_text(value, model_key)
+            target[field] = encrypt_e2ee_text(value, model_key, aad)
 
 
 def _decrypt_fields(
@@ -143,6 +151,10 @@ def _decrypt_fields(
 ) -> None:
     for field in fields:
         value = target.get(field)
+        if value is not None and not isinstance(value, str):
+            raise verification_failure(
+                'e2ee.decryption_failed', {'field': f'{path}.{field}'}
+            )
         if isinstance(value, str):
             target[field] = decrypt_e2ee_text(value, client_key_pair, f'{path}.{field}')
 
@@ -152,11 +164,13 @@ def _decrypt_message(
 ) -> None:
     _decrypt_fields(
         message,
-        ('content', 'reasoning_content', 'reasoning', 'refusal'),
+        ('reasoning_content', 'reasoning', 'refusal'),
         client_key_pair,
         path,
     )
     content = message.get('content')
+    if not isinstance(content, list):
+        _decrypt_fields(message, ('content',), client_key_pair, path)
     if isinstance(content, list):
         for index, part in enumerate(content):
             if isinstance(part, dict):
@@ -195,6 +209,10 @@ def _decrypt_logprobs(
         entry_path = f'{path}[{index}]'
         _decrypt_fields(entry, ('token',), client_key_pair, entry_path)
         raw_bytes = entry.get('bytes')
+        if raw_bytes is not None and not isinstance(raw_bytes, str):
+            raise verification_failure(
+                'e2ee.decryption_failed', {'field': f'{entry_path}.bytes'}
+            )
         if isinstance(raw_bytes, str):
             field_path = f'{entry_path}.bytes'
             value = decrypt_e2ee_text(raw_bytes, client_key_pair, field_path)

@@ -174,7 +174,11 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			secret[0] &= 248
 			secret[31] &= 127
 			secret[31] |= 64
-			message, err := decryptText(content, e2eeKey{algo: Ed25519, secret: secret})
+			aad, err := requestAAD(Ed25519, r.Header.Get("X-Client-Pub-Key"))
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			message, err := decryptTextWithAAD(content, e2eeKey{algo: Ed25519, secret: secret}, aad)
 			if err != nil || message != "review" {
 				f.t.Errorf("E2EE request: %q %v", message, err)
 			}

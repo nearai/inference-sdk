@@ -259,7 +259,7 @@ signature, and a sequence of verified direct reports.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
-| `E2eeModelKey` | `signing_algo` | `SigningAlgo` | Selects Ed25519-v2 or legacy ECDSA encryption. |
+| `E2eeModelKey` | `signing_algo` | `SigningAlgo` | Selects the Ed25519 or ECDSA suite for E2EE v3. |
 | | `public_key` | `str` | Hexadecimal model encryption public key, not an ECDSA address. |
 | `PreparedE2eeChatRequest` | `request` | `httpx.Request` | Encrypted request with model-routing and encryption headers. |
 | | `decrypt_response` | asynchronous `(httpx.Response) -> httpx.Response` | Decrypts JSON or streaming SSE using this request's response key. |

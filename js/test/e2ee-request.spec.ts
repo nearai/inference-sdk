@@ -1,6 +1,7 @@
 import { prepareE2eeChatRequest, VerificationError } from '../src';
 import { NO_ALIASING_HEADER } from '../src/core/cloud-api';
 import {
+  buildE2eeRequestAad,
   createE2eeClientKeyPair,
   decryptE2eeText,
   encryptE2eeText,
@@ -83,9 +84,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       expect(headers.get('x-client-pub-key')).toHaveLength(
         signingAlgo === 'ecdsa' ? 128 : 64,
       );
-      expect(headers.get('x-encryption-version')).toBe(
-        signingAlgo === 'ed25519' ? '2' : null,
-      );
+      expect(headers.get('x-encryption-version')).toBe('3');
       expect(headers.get('x-encrypt-all-fields')).toBe('true');
       expect(headers.get(NO_ALIASING_HEADER)).toBe('true');
 
@@ -100,6 +99,10 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           ciphertext: encrypted.messages[0].content,
           clientKeyPair: keyPair,
           field: 'messages[0].content',
+          associatedData: buildE2eeRequestAad({
+            signingAlgo,
+            publicKey: headers.get('x-client-pub-key') ?? '',
+          }),
         }),
       ).toBe(prompt.messages[0]?.content);
       expect(await original.json()).toEqual(prompt);

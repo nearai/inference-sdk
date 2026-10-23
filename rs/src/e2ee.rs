@@ -1,9 +1,9 @@
-//! Wire-compatible Ed25519-v2 and legacy ECDSA field encryption.
+//! E2EE v3 request binding, with wire-compatible response encryption.
 use crate::{
     errors::protocol, util::decode_hex, ApiError, InferenceError, SigningAlgo, VerificationError,
 };
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm,
 };
 use chacha20poly1305::XChaCha20Poly1305;
@@ -63,6 +63,9 @@ impl ResponseKey {
         }
     }
     fn decrypt(&self, value: &str) -> Result<String, VerificationError> {
+        self.decrypt_with_aad(value, &[])
+    }
+    fn decrypt_with_aad(&self, value: &str, aad: &[u8]) -> Result<String, VerificationError> {
         if value.is_empty() {
             return Ok(String::new());
         }
@@ -77,7 +80,13 @@ impl ResponseKey {
                 let shared = secret.diffie_hellman(&x25519_dalek::PublicKey::from(public));
                 let key = derive(shared.as_bytes(), SigningAlgo::Ed25519).map_err(|_| failed())?;
                 XChaCha20Poly1305::new((&key).into())
-                    .decrypt(data[32..56].into(), &data[56..])
+                    .decrypt(
+                        data[32..56].into(),
+                        Payload {
+                            msg: &data[56..],
+                            aad,
+                        },
+                    )
                     .map_err(|_| failed())?
             }
             Self::Ecdsa(secret) => {
@@ -90,14 +99,52 @@ impl ResponseKey {
                 let key =
                     derive(shared.raw_secret_bytes(), SigningAlgo::Ecdsa).map_err(|_| failed())?;
                 Aes256Gcm::new((&key).into())
-                    .decrypt(data[65..77].into(), &data[77..])
+                    .decrypt(
+                        data[65..77].into(),
+                        Payload {
+                            msg: &data[77..],
+                            aad,
+                        },
+                    )
                     .map_err(|_| failed())?
             }
         };
         String::from_utf8(plaintext).map_err(|_| failed())
     }
 }
+#[cfg(test)]
 fn encrypt(value: &str, model: &E2eeModelKey) -> Result<String, VerificationError> {
+    encrypt_with_aad(value, model, &[])
+}
+fn request_aad(algo: SigningAlgo, reply_public: &str) -> Result<Vec<u8>, VerificationError> {
+    let mut public = decode_hex(reply_public).map_err(|_| invalid())?;
+    let suite = match algo {
+        SigningAlgo::Ecdsa => {
+            if public.len() == 64 {
+                public.insert(0, 4);
+            }
+            if public.len() != 65 || public[0] != 4 {
+                return Err(invalid());
+            }
+            k256::PublicKey::from_sec1_bytes(&public).map_err(|_| invalid())?;
+            1
+        }
+        SigningAlgo::Ed25519 => {
+            let bytes: [u8; 32] = public.as_slice().try_into().map_err(|_| invalid())?;
+            ed25519_dalek::VerifyingKey::from_bytes(&bytes).map_err(|_| invalid())?;
+            2
+        }
+    };
+    let mut aad = b"nearai-e2ee-request-v3".to_vec();
+    aad.push(suite);
+    aad.extend(public);
+    Ok(aad)
+}
+fn encrypt_with_aad(
+    value: &str,
+    model: &E2eeModelKey,
+    aad: &[u8],
+) -> Result<String, VerificationError> {
     let public = decode_hex(&model.public_key).map_err(|_| invalid())?;
     let (mut data, key, size) = match model.signing_algo {
         SigningAlgo::Ed25519 => {
@@ -144,9 +191,21 @@ fn encrypt(value: &str, model: &E2eeModelKey) -> Result<String, VerificationErro
     let mut nonce = vec![0; size];
     OsRng.fill_bytes(&mut nonce);
     let encrypted = if size == 24 {
-        XChaCha20Poly1305::new((&key).into()).encrypt(nonce.as_slice().into(), value.as_bytes())
+        XChaCha20Poly1305::new((&key).into()).encrypt(
+            nonce.as_slice().into(),
+            Payload {
+                msg: value.as_bytes(),
+                aad,
+            },
+        )
     } else {
-        Aes256Gcm::new((&key).into()).encrypt(nonce.as_slice().into(), value.as_bytes())
+        Aes256Gcm::new((&key).into()).encrypt(
+            nonce.as_slice().into(),
+            Payload {
+                msg: value.as_bytes(),
+                aad,
+            },
+        )
     }
     .map_err(|_| invalid())?;
     data.extend(nonce);
@@ -162,6 +221,11 @@ fn fields(
         if let Some(value) = target.get_mut(*name) {
             if let Some(text) = value.as_str() {
                 *value = Value::String(transform(text)?);
+            } else if !value.is_null() {
+                return Err(protocol(
+                    "e2ee.decryption_failed",
+                    "expected an encrypted string",
+                ));
             }
         }
     }
@@ -174,8 +238,12 @@ fn objects(value: Option<&mut Value>) -> impl Iterator<Item = &mut Value> {
         .flatten()
         .filter(|v| v.is_object())
 }
-fn encrypt_request(body: &mut Value, model: &E2eeModelKey) -> Result<(), VerificationError> {
-    let transform = |s: &str| encrypt(s, model);
+fn encrypt_request(
+    body: &mut Value,
+    model: &E2eeModelKey,
+    aad: &[u8],
+) -> Result<(), VerificationError> {
+    let transform = |s: &str| encrypt_with_aad(s, model, aad);
     for message in objects(body.get_mut("messages")) {
         if let Some(content) = message.get_mut("content") {
             if content.is_array() {
@@ -230,9 +298,12 @@ pub(crate) fn decrypt_response(
         if let Some(message) = choice.get_mut(if streaming { "delta" } else { "message" }) {
             fields(
                 message,
-                &["content", "reasoning_content", "reasoning", "refusal"],
+                &["reasoning_content", "reasoning", "refusal"],
                 &transform,
             )?;
+            if !message.get("content").is_some_and(Value::is_array) {
+                fields(message, &["content"], &transform)?;
+            }
             for part in objects(message.get_mut("content")) {
                 fields(part, &["text"], &transform)?;
             }
@@ -268,6 +339,11 @@ fn decrypt_logprobs(value: Option<&mut Value>, key: &ResponseKey) -> Result<(), 
             if let Some(text) = raw.as_str() {
                 *raw = serde_json::from_str(&key.decrypt(text)?)
                     .map_err(|_| protocol("e2ee.decryption_failed", "invalid logprob bytes"))?;
+            } else if !raw.is_null() {
+                return Err(protocol(
+                    "e2ee.decryption_failed",
+                    "expected encrypted logprob bytes",
+                ));
             }
         }
         decrypt_logprobs(entry.get_mut("top_logprobs"), key)?;
@@ -335,8 +411,9 @@ pub fn prepare_e2ee_chat_request(
     model: &E2eeModelKey,
 ) -> Result<PreparedE2eeChatRequest, InferenceError> {
     let mut value = decode_request(&request)?;
-    encrypt_request(&mut value, model)?;
     let (key, public) = ResponseKey::generate(model.signing_algo);
+    let aad = request_aad(model.signing_algo, &public)?;
+    encrypt_request(&mut value, model, &aad)?;
     let headers = request.headers_mut();
     for name in [
         "content-length",
@@ -366,12 +443,10 @@ pub fn prepare_e2ee_chat_request(
             value.parse().map_err(|_| invalid())?,
         );
     }
-    if model.signing_algo == SigningAlgo::Ed25519 {
-        headers.insert(
-            "x-encryption-version",
-            reqwest::header::HeaderValue::from_static("2"),
-        );
-    }
+    headers.insert(
+        "x-encryption-version",
+        reqwest::header::HeaderValue::from_static("3"),
+    );
     *request.body_mut() = Some(value.to_string().into());
     Ok(PreparedE2eeChatRequest { request, key })
 }
@@ -464,26 +539,30 @@ mod tests {
         for algo in [SigningAlgo::Ed25519, SigningAlgo::Ecdsa] {
             let (key, model) = fixed_key(algo);
             let mut body = json!({"model":"vendor/model","messages":[{"role":"user","name":"Alice","content":[{"type":"text","text":"secret"}],"reasoning":"thought","tool_calls":[{"id":"call-1","function":{"name":"run","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"run","description":"desc","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"run"}},"temperature":0.5});
-            encrypt_request(&mut body, &model).unwrap();
+            let aad = request_aad(algo, &model.public_key).unwrap();
+            encrypt_request(&mut body, &model, &aad).unwrap();
             assert_eq!(body["model"], "vendor/model");
             assert_eq!(body["temperature"], 0.5);
             assert_eq!(body["messages"][0]["role"], "user");
             assert_eq!(
-                key.decrypt(body["messages"][0]["name"].as_str().unwrap())
+                key.decrypt_with_aad(body["messages"][0]["name"].as_str().unwrap(), &aad)
                     .unwrap(),
                 "Alice"
             );
             assert_eq!(
                 serde_json::from_str::<Value>(
-                    &key.decrypt(body["messages"][0]["content"].as_str().unwrap())
+                    &key.decrypt_with_aad(body["messages"][0]["content"].as_str().unwrap(), &aad)
                         .unwrap()
                 )
                 .unwrap(),
                 json!([{"type":"text","text":"secret"}])
             );
             assert_eq!(
-                key.decrypt(body["tools"][0]["function"]["parameters"].as_str().unwrap())
-                    .unwrap(),
+                key.decrypt_with_aad(
+                    body["tools"][0]["function"]["parameters"].as_str().unwrap(),
+                    &aad
+                )
+                .unwrap(),
                 "{\"type\":\"object\"}"
             );
             assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
@@ -537,10 +616,7 @@ mod tests {
             );
             assert!(!a.request.headers().contains_key("digest"));
             assert!(!a.request.headers().contains_key("content-length"));
-            assert_eq!(
-                a.request.headers().contains_key("x-encryption-version"),
-                algo == SigningAlgo::Ed25519
-            );
+            assert_eq!(a.request.headers()["x-encryption-version"], "3");
         }
     }
     #[tokio::test]
@@ -569,5 +645,62 @@ mod tests {
         assert!(output.starts_with(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: "));
         assert!(output.contains("🌍"));
         assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\n: tail"));
+    }
+    #[test]
+    fn v3_shared_vectors_and_strict_responses() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../test-fixtures/e2ee-v3.json")).unwrap();
+        for vector in fixture["vectors"].as_array().unwrap() {
+            let algo = if vector["signing_algo"] == "ecdsa" {
+                SigningAlgo::Ecdsa
+            } else {
+                SigningAlgo::Ed25519
+            };
+            let seed = hex::decode(vector["model_secret"].as_str().unwrap()).unwrap();
+            let key = match algo {
+                SigningAlgo::Ecdsa => {
+                    ResponseKey::Ecdsa(k256::SecretKey::from_slice(&seed).unwrap())
+                }
+                SigningAlgo::Ed25519 => {
+                    let hash = Sha512::digest(&seed);
+                    ResponseKey::Ed25519(x25519_dalek::StaticSecret::from(
+                        <[u8; 32]>::try_from(&hash[..32]).unwrap(),
+                    ))
+                }
+            };
+            let public = vector["reply_public"].as_str().unwrap();
+            let aad = request_aad(algo, public).unwrap();
+            assert_eq!(hex::encode(&aad), vector["aad"]);
+            let cipher = vector["ciphertext"].as_str().unwrap();
+            assert_eq!(
+                key.decrypt_with_aad(cipher, &aad).unwrap(),
+                vector["plaintext"]
+            );
+            if algo == SigningAlgo::Ecdsa {
+                assert_eq!(request_aad(algo, &public[2..]).unwrap(), aad);
+            }
+            let model = E2eeModelKey {
+                signing_algo: algo,
+                public_key: vector["model_public"].as_str().unwrap().into(),
+            };
+            let encrypted =
+                encrypt_with_aad(vector["plaintext"].as_str().unwrap(), &model, &aad).unwrap();
+            assert_eq!(
+                key.decrypt_with_aad(&encrypted, &aad).unwrap(),
+                vector["plaintext"]
+            );
+            let mut suite = aad.clone();
+            suite[22] = 255;
+            for wrong in [vec![], suite, request_aad(algo, &model.public_key).unwrap()] {
+                assert!(key.decrypt_with_aad(cipher, &wrong).is_err());
+            }
+            for mut body in [
+                json!({"choices":[{"message":{},"logprobs":{"content":[{"bytes":[115]}]}}]}),
+                json!({"choices":[{"message":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}),
+                json!({"choices":[{"message":{"tool_calls":[{"function":{"arguments":{"secret":true}}}]}}]}),
+            ] {
+                assert!(decrypt_response(&mut body, &key, false).is_err());
+            }
+        }
     }
 }

@@ -1,5 +1,4 @@
 import * as v from 'valibot';
-import type { E2eeModelKey } from '../types/e2ee';
 import {
   SecureChatCompletionResponseSchema,
   SecureChatCompletionStreamChunkSchema,
@@ -22,10 +21,11 @@ import {
   splitSseLines,
   takeCompleteSseRecords,
 } from '../utils/sse';
+import type { E2eeEncryptionKey } from './e2ee';
 import {
   decryptE2eeText,
-  encryptE2eeText,
   type E2eeClientKeyPair,
+  encryptE2eeText,
 } from './e2ee';
 
 export type ParseE2eeChatResponseParams = {
@@ -38,7 +38,7 @@ export type ParseE2eeChatStreamChunkParams = {
 
 export type EncryptE2eeChatRequestParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 export type EncryptedE2eeChatRequest = {
@@ -206,7 +206,7 @@ export function createE2eeChatSseTransform({
 
 type EncryptRequestBodyParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptRequestBody({
@@ -254,7 +254,7 @@ function encryptRequestBody({
 
 type EncryptRequestMessageParams = {
   readonly message: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptRequestMessage({
@@ -325,7 +325,7 @@ function encryptRequestMessage({
 
 type EncryptAudioParams = {
   readonly audio: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptAudio({
@@ -344,7 +344,7 @@ function encryptAudio({
 
 type EncryptToolsParams = {
   readonly tools: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
@@ -382,7 +382,7 @@ function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
 
 type EncryptToolChoiceParams = {
   readonly toolChoice: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptToolChoice({
@@ -405,7 +405,7 @@ function encryptToolChoice({
 
 type EncryptFunctionToolCallsParams = {
   readonly toolCalls: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptFunctionToolCalls({
@@ -431,7 +431,7 @@ function encryptFunctionToolCalls({
 
 type EncryptFunctionCallParams = {
   readonly functionCall: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
   readonly encryptArguments: boolean;
 };
 
@@ -462,7 +462,7 @@ type EncryptStringFieldParams = {
   readonly source: SecureChatJsonObject;
   readonly target: SecureChatJsonObject;
   readonly field: string;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptStringField({
@@ -479,7 +479,7 @@ function encryptStringField({
 
 type EncryptTextParams = {
   readonly plaintext: string;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptText({ plaintext, modelKey }: EncryptTextParams): string {
@@ -583,6 +583,11 @@ function decryptResponseMessage({
       parts: content,
       clientKeyPair,
       path: `${path}.content`,
+    });
+  } else if (content !== undefined && content !== null) {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.content` },
     });
   }
   decryptStringField({
@@ -852,6 +857,12 @@ function decryptStringField({
   path,
 }: DecryptStringFieldParams): void {
   const value = source[field];
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.${field}` },
+    });
+  }
   if (typeof value === 'string') {
     target[field] = decryptText({
       ciphertext: value,
@@ -877,8 +888,12 @@ function decryptJsonField({
   path,
 }: DecryptJsonFieldParams): void {
   const value = source[field];
+  if (value === undefined || value === null) return;
   if (typeof value !== 'string') {
-    return;
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.${field}` },
+    });
   }
   const fieldPath = `${path}.${field}`;
   const plaintext = decryptText({
