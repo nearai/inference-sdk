@@ -310,7 +310,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         request_limit = self._max_body_bytes
         # E2EE reserializes JSON; receipt capacity applies to its wire body below.
         if self._response_ttl != 0 and not self._e2ee:
-            request_limit = min(request_limit, self._max_receipt_cache_bytes)
+            # Retained plaintext receipts also need space for a nonempty response.
+            request_limit = min(request_limit, self._max_receipt_cache_bytes - 1)
         body = await read_bounded_request_body(request, request_limit)
         request = httpx.Request(
             request.method,

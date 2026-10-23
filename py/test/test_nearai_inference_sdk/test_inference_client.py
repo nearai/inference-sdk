@@ -1010,19 +1010,27 @@ async def test_e2ee_receipt_budget_counts_wire_bytes_not_input_whitespace(
 
 
 @pytest.mark.parametrize(
-    'limits', [{'max_body_bytes': 10}, {'max_receipt_cache_bytes': 10}]
+    ('field', 'spare_bytes'),
+    [
+        ('max_body_bytes', -1),
+        ('max_receipt_cache_bytes', -1),
+        ('max_receipt_cache_bytes', 0),
+    ],
 )
-async def test_large_request_fails_before_preflight(monkeypatch, gateway, limits):
+async def test_large_request_fails_before_preflight(
+    monkeypatch, gateway, field, spare_bytes
+):
     gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False, **limits) as client:
+    request = httpx.Request(
+        'POST',
+        BASE_URL + 'chat/completions',
+        json={'model': MODEL, 'messages': MESSAGES},
+    )
+    async with gateway.client(
+        e2ee=False, **{field: len(request.content) + spare_bytes}
+    ) as client:
         with pytest.raises(ApiError, match='api.body_too_large'):
-            await client.send(
-                httpx.Request(
-                    'POST',
-                    BASE_URL + 'chat/completions',
-                    json={'model': MODEL, 'messages': MESSAGES},
-                )
-            )
+            await client.send(request)
     assert gateway.gateway_requests == 0
     assert not gateway.completion_requests
 
