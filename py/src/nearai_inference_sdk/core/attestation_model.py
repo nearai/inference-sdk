@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Literal
 
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -24,6 +25,7 @@ from ..utils.errors import (
 from ..utils.nvidia import decode_nvidia_payload_nonce, verify_nvidia_nras
 from .attestation_common import verify_report_data_binding, verify_reported_nonce
 from .compose_manager_attestation import verify_compose_manager_attestation
+from .deployment_verifier import run_deployment_verifier
 from .dstack_attestation import (
     VerifiedDstackQuote,
     verify_dstack_deployment,
@@ -100,8 +102,18 @@ async def verify_model_deployment(
             policy,
             None if verifiers is None else verifiers.tdx_quote,
         )
-    return await verify_dstack_deployment(
-        verified_quote, None if verifiers is None else verifiers.deployment, manager
+    deployment = await verify_dstack_deployment(verified_quote)
+    if manager is not None:
+        deployment = replace(deployment, compose_manager=manager)
+    provenance = await run_deployment_verifier(
+        deployment, None if verifiers is None else verifiers.deployment
+    )
+    return VerifiedAttestationEvidence(
+        signer=verified_quote.signer,
+        tcb_status=verified_quote.quote.tcb_status,
+        advisory_ids=tuple(verified_quote.quote.advisory_ids),
+        deployment=deployment,
+        deployment_provenance=provenance,
     )
 
 

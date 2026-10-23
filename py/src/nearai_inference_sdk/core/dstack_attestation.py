@@ -10,14 +10,11 @@ from ..types.attestation_common import (
     SigningIdentity,
     TcbStatus,
 )
-from ..types.compose_manager import VerifiedComposeManagerAttestation
 from ..types.verification import (
     AttestationPolicy,
-    DeploymentVerifier,
     MeasuredDeployment,
     TdxQuoteVerificationResult,
     TdxQuoteVerifier,
-    VerifiedAttestationEvidence,
 )
 from ..utils.common import maybe_await, require_byte_length
 from ..utils.errors import (
@@ -101,40 +98,16 @@ async def verify_tdx_quote(
 
 async def verify_dstack_deployment(
     verified_quote: VerifiedDstackQuote,
-    deployment_verifier: DeploymentVerifier | None,
-    compose_manager: VerifiedComposeManagerAttestation | None = None,
-) -> VerifiedAttestationEvidence:
+) -> MeasuredDeployment:
     runtime_measurements = verify_and_replay_rtmr3(
         verified_quote.attestation.event_log, verified_quote.quote.rt_mr3
     )
     verify_app_compose_mrconfig_binding(
         verified_quote.attestation.app_compose, verified_quote.quote.mr_config_id
     )
-    deployment = MeasuredDeployment(
+    return MeasuredDeployment(
         app_compose=verified_quote.attestation.app_compose,
         runtime_measurements=runtime_measurements,
-        compose_manager=compose_manager,
-    )
-
-    provenance = 'not_checked'
-    if deployment_verifier is not None:
-        try:
-            await maybe_await(deployment_verifier(deployment))
-        except VerificationError:
-            raise
-        except Exception as error:
-            raise verification_failure(
-                'provenance.verification_failed',
-                cause=error,
-            ) from error
-        provenance = 'verified'
-
-    return VerifiedAttestationEvidence(
-        signer=verified_quote.signer,
-        tcb_status=verified_quote.quote.tcb_status,
-        advisory_ids=tuple(verified_quote.quote.advisory_ids),
-        deployment=deployment,
-        deployment_provenance=provenance,
     )
 
 
