@@ -141,7 +141,10 @@ async function captureSystemOne({
     contentType !== 'application/json'
   )
     throw invalidInput('an uncompressed JSON System One request');
-  const requestBody = new Uint8Array(await request.arrayBuffer());
+  const body = request.body?.pipeThrough(new TransformStream(), {
+    signal: request.signal,
+  });
+  const requestBody = new Uint8Array(await new Response(body).arrayBuffer());
   let parsed: unknown;
   try {
     parsed = JSON.parse(

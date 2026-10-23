@@ -3762,6 +3762,46 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(1);
   });
 
+  test('cancels a stalled System One request body before preflight', async () => {
+    const fixture = decisionGateway();
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const controller = new AbortController();
+    const reason = new Error('caller cancelled request body');
+    let ready!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const cancel = jest.fn();
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      signal: controller.signal,
+      duplex: 'half',
+      body: new ReadableStream<Uint8Array>({
+        start(stream) {
+          stream.enqueue(
+            new TextEncoder().encode(JSON.stringify(decisionRequest)),
+          );
+        },
+        pull: ready,
+        cancel,
+      }),
+    };
+    const pending = client.fetch(new Request(`${baseUrl}systemone`, init));
+    const rejected = expect(pending).rejects.toBe(reason);
+    await reading;
+    controller.abort(reason);
+    await rejected;
+    expect(cancel).toHaveBeenCalledWith(reason);
+    expect(fetch).not.toHaveBeenCalled();
+  }, 2000);
+
   test.each(['fetch', 'body'])(
     'preserves a caller abort reason during decision %s',
     async (phase) => {
