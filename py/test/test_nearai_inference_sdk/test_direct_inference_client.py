@@ -80,6 +80,7 @@ class DirectEndpoint(Gateway):
         )
 
 
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
 @pytest.mark.parametrize(
     ('signing_algo', 'e2ee', 'ohttp'),
     [
@@ -90,7 +91,7 @@ class DirectEndpoint(Gateway):
     ],
 )
 async def test_direct_chat_and_stream_verify_the_selected_signer_group(
-    monkeypatch, signing_algo, e2ee, ohttp
+    monkeypatch, signing_algo, e2ee, ohttp, adapter_name
 ):
     endpoint = DirectEndpoint(signing_algo)
     endpoint.install(monkeypatch)
@@ -118,7 +119,9 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
         assert result.attestations == attestations.attestations
 
         openai = AsyncOpenAI(
-            api_key='unused', base_url=BASE_URL, http_client=client.http_client
+            api_key='unused',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
         )
         stream = await openai.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
@@ -164,4 +167,31 @@ async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypat
                 )
             )
         assert raised.value.failure.code == 'policy.debug_enabled'
+    assert endpoint.completion_requests == []
+
+
+async def test_deployment_verifier_blocks_chat(monkeypatch):
+    endpoint = DirectEndpoint()
+    endpoint.install(monkeypatch)
+
+    def reject(_deployment):
+        raise ValueError('Unapproved deployment')
+
+    async with DirectInferenceClient(
+        BASE_URL,
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(
+                tdx_quote=endpoint.quotes.__getitem__, deployment=reject
+            ),
+        ),
+    ) as client:
+        with pytest.raises(VerificationError) as raised:
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert raised.value.failure.code == 'provenance.verification_failed'
     assert endpoint.completion_requests == []

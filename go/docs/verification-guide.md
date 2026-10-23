@@ -165,8 +165,9 @@ func complete(ctx context.Context, client *nearai.InferenceClient, apiKey, model
 ```
 
 Use the configured `BaseURL` and HTTP client together. Disable OpenAI automatic
-retries to avoid replaying completion requests. This adapter supports Chat
-Completions only; use `AttestationClient` for evidence and metadata.
+retries to avoid replaying inference requests. This adapter supports Chat
+Completions and Gateway [Responses creation](#responses-api); use
+`AttestationClient` for evidence and metadata.
 
 ## Streaming
 
@@ -239,6 +240,44 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [decision example](../../examples/example-go/README.md#system-one-decisions).
 
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```go
+body, err := client.CreateResponse(ctx, map[string]any{
+    "model": "z-ai/glm-5.3-flash", "input": "Reply with the word ok.", "store": false,
+})
+if err != nil { return err }
+var response struct { ID string `json:"id"` }
+if err := json.Unmarshal(body, &response); err != nil { return err }
+receipt, err := client.VerifyResponse(ctx, response.ID)
+```
+
+For typed JSON or SSE, use the official OpenAI Go client with
+`option.WithHTTPClient(client.HTTPClient())` and
+`option.WithBaseURL(client.BaseURL())`. Call `Responses.New` or
+`Responses.NewStreaming`; finish iteration and check `stream.Err()` before
+verifying `event.Response.ID` from a response lifecycle event.
+
 ## Configure verification and deployment policies
 
 The default policy accepts `UpToDate` and `OutOfDate` TCB statuses, rejects debug
@@ -309,6 +348,63 @@ Configure the two callbacks with separate model and Gateway image policies.
 Custom quote, GPU, and deployment verifiers are trusted application code. They
 must authenticate evidence, rather than merely parse it.
 
+## Images deployed by Compose Manager
+
+Use a model deployment callback to require authenticated deployment actions and
+published-image provenance. The compose file and manager have independent policies:
+
+```go
+modelImages := map[string]nearai.ImageProvenancePolicy{
+    "nearaidev/vllm-proxy-rs": {
+        Repository: "nearai/inference-proxy", Workflow: ".github/workflows/build.yml",
+    },
+}
+check := func(ctx context.Context, deployment nearai.MeasuredDeployment) error {
+    return nearai.VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, modelImages,
+        nearai.ComposeManagerDeploymentImageProvenanceOptions{
+            ComposeManagerImagePolicy: nearai.ComposeManagerImagePolicy{
+                ImageRepository: "nearaidev/compose-manager",
+                Build: nearai.ImageProvenancePolicy{
+                    Repository: "nearai/compose-manager", Workflow: ".github/workflows/build.yml",
+                },
+            },
+        })
+}
+// Gateway and Direct: ModelVerification: nearai.VerificationOptions{DeploymentVerifier: check}
+```
+
+The policy runs for every model report and requires Compose Manager evidence in
+each one. Pin source commits or refs according to your release policy. The evidence
+covers recorded deployment actions and image builds. Current runtime state
+requires separate evidence. See the [API reference](./api-reference.md#compose-manager-deployment-provenance)
+for file selection and GitHub access.
+
+## Configure attestation service URLs
+
+The built-in verifiers use these defaults:
+
+| Service | URL |
+| --- | --- |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+To use your own services, configure the verifier callbacks:
+
+```go
+verifiers := nearai.VerificationOptions{
+    QuoteVerifier: nearai.CreateTDXQuoteVerifier("https://attestation.example.com/pccs"),
+    GPUVerifier: nearai.CreateGPUEvidenceVerifier(nearai.GPUVerifierOptions{
+        NRASURL: "https://attestation.example.com/nras/v3/attest/gpu",
+    }),
+}
+```
+
+Pass these options to model verification; Gateway verification uses the same
+quote callback. DCAP builds the SGX and TDX collateral paths beneath the PCCS
+base URL. `NRASURL` is the complete GPU evidence POST URL. Signing keys come
+from NVIDIA; set `JWKSURL` separately to use another trusted key source.
+
 ## Encryption and TLS binding
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.
@@ -325,7 +421,8 @@ application proxy; consider that changed trust boundary before using it.
 
 ## Experimental direct endpoints
 
-Direct clients require an explicit model endpoint URL and default E2EE to on:
+Direct clients require an explicit model endpoint URL. E2EE is disabled by
+default; this example enables it:
 
 ```go
 client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
@@ -334,6 +431,7 @@ client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
 			APIKey:  apiKey,
 			BaseURL: directBaseURL,
 		},
+		E2EE: true,
 	},
 })
 if err != nil {
@@ -343,7 +441,7 @@ defer client.Close()
 ```
 
 The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Set `DisableE2EE: true` only when deliberately opting out. Direct clients omit
+Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
 Gateway verification and do not bind TLS identity to attestation; normal HTTPS
 validation still applies. They are experimental and not recommended for
 production. Use Gateway clients for production integrations.

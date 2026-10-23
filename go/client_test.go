@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,6 +90,17 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"event_log":          f.a.EventLog,
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
+		}
+		if f.a.ComposeManagerAttestation != nil && (f.direct || r.URL.Query().Get("model") != "") {
+			manager := *f.a.ComposeManagerAttestation
+			manager.Nonce = n
+			managerQuote := q
+			managerQuote.ReportData = bytes.Clone(report)
+			actionsHash, _ := hex.DecodeString(manager.ActionsHash)
+			copy(managerQuote.ReportData, actionsHash)
+			managerQuoteBytes, _ := json.Marshal(managerQuote)
+			manager.IntelQuote = string(managerQuoteBytes)
+			a["compose_manager_attestation"] = manager
 		}
 		if f.direct {
 			a["model_name"] = "canonical/model"
@@ -301,6 +313,83 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+func TestProviderReceiptManagerEvidenceDoesNotAliasCachedResults(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee = true
+	f.q.AdvisoryIDs = []string{"original-advisory"}
+	fixture := loadManagerFixture(t)
+	f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
+	client, _ := fakeClient(t, f, nil)
+	ctx := context.Background()
+	if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := first.Attestation.Deployment.ComposeManager
+	manager.Actions[0]["tag"] = "mutated"
+	manager.Actions[0]["services"].([]string)[0] = "mutated"
+	manager.AdvisoryIDs[0] = "mutated"
+	manager.RuntimeMeasurements.ComposeHash = "mutated"
+	second, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := before.Models[0].Deployment.ComposeManager
+	if !reflect.DeepEqual(second.Attestation.Deployment.ComposeManager, want) || !reflect.DeepEqual(after.Models[0].Deployment.ComposeManager, want) {
+		t.Fatal("mutating a receipt changed cached manager evidence")
+	}
+	if f.signatureCalls.Load() != 1 || f.attestations.Load() != 2 {
+		t.Fatal("expected cached receipt and session results")
+	}
+}
+
+func TestClientDeploymentPoliciesReceiveManagerEvidence(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee = true
+	fixture := loadManagerFixture(t)
+	f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
+	var calls []string
+	check := func(name string, deployment MeasuredDeployment) {
+		t.Helper()
+		if deployment.ComposeManager == nil || !reflect.DeepEqual(deployment.ComposeManager.Actions, fixture.Actions) {
+			t.Error("callback did not receive authenticated manager actions")
+		}
+		calls = append(calls, name)
+	}
+	client, _ := fakeClient(t, f, func(opts *InferenceOptions) {
+		opts.ModelVerification.DeploymentVerifier = func(_ context.Context, deployment MeasuredDeployment) error {
+			check("verifier", deployment)
+			return nil
+		}
+		opts.DeploymentPolicy = func(_ context.Context, model string, deployment MeasuredDeployment) error {
+			if model != "canonical/model" {
+				t.Error("wrong policy model")
+			}
+			check("policy", deployment)
+			return nil
+		}
+	})
+	result, err := client.Verify(context.Background(), "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"verifier", "policy"}) || result.Models[0].DeploymentProvenance != "verified" {
+		t.Fatal("deployment policy order or result changed", calls)
+	}
+}
+
 func TestClientRejectsTamperingAndUnsupportedPrivacy(t *testing.T) {
 	t.Run("tampered reply", func(t *testing.T) {
 		f := newFakeCloud(t)
@@ -540,36 +629,36 @@ func TestReceiptCacheBudgetAndEviction(t *testing.T) {
 	}
 	defer c.Close()
 	request, response := []byte("req"), []byte("res")
-	if err = c.register("first", request, response, nil); err != nil {
+	if err = c.register("first", request, response, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	request[0], response[0] = 'X', 'X'
 	if string(c.responses["first"].request) != "req" || string(c.responses["first"].response) != "res" {
 		t.Fatal("caller mutated retained receipt")
 	}
-	if err = c.register("second", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("second", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	// An oversized new receipt must not evict either retained receipt.
-	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil), "api.body_too_large")
+	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil, false), "api.body_too_large")
 	if len(c.responses) != 2 {
 		t.Fatal("oversized receipt evicted records")
 	}
-	if err = c.register("third", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("third", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if c.responses["first"] != nil || len(c.responses) != 2 {
 		t.Fatal("oldest receipt was not evicted")
 	}
 	// Count alone is insufficient: this receipt fills the entire byte budget.
-	if err = c.register("full", []byte("123456"), []byte("123456"), nil); err != nil {
+	if err = c.register("full", []byte("123456"), []byte("123456"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.responses) != 1 || c.responses["full"] == nil {
 		t.Fatal("combined byte budget exceeded")
 	}
 	c.responses["full"].expires = time.Now().Add(-time.Second)
-	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.responses) != 1 {

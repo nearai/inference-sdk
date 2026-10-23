@@ -11,6 +11,35 @@ verify_release_tag() {
   fi
 }
 
+create_release_tag() {
+  if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+    gh api --method POST "repos/$GH_REPO/git/refs" \
+      -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" >/dev/null || return $?
+  fi
+  verify_release_tag
+}
+
+create_github_release() {
+  local release notes="$RUNNER_TEMP/release-notes.md"
+  create_release_tag || return $?
+  if release=$(gh release view "$RELEASE_TAG" --json isDraft 2>/dev/null); then
+    if [ "$(jq -r .isDraft <<< "$release")" != true ]; then
+      printf 'GitHub Release %s is already published.\n' "$RELEASE_TAG" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  {
+    printf '## SDK versions\n\n| SDK | Package version |\n| --- | --- |\n'
+    jq -r 'to_entries[] | "| \(.key) | `\(.value.version)` |"' <<< "$RELEASE_PACKAGES"
+    printf '\nSource: [%s](https://github.com/%s/commit/%s)\n' \
+      "$GITHUB_SHA" "$GH_REPO" "$GITHUB_SHA"
+  } > "$notes"
+  gh release create "$RELEASE_TAG" --draft --generate-notes --notes-file "$notes" \
+    --title "$RELEASE_TAG" --verify-tag --prerelease="$PRERELEASE"
+}
+
 verify_npm_channel() {
   local status current_version
   status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -36,4 +65,29 @@ verify_npm_channel() {
       "$RELEASE_VERSION" "$current_version" "$NPM_TAG" >&2
     return 1
   fi
+}
+
+publish_github_release() {
+  local language result release complete=true
+  printf '| SDK | Package publication |\n| --- | --- |\n' >> "$GITHUB_STEP_SUMMARY"
+  for language in javascript python rust go; do
+    result=$(jq -r --arg language "$language" '.[$language]' <<< "$PUBLISH_RESULTS") || return $?
+    printf '| %s | %s |\n' "$language" "$result" >> "$GITHUB_STEP_SUMMARY"
+    if [ "$result" != success ]; then
+      complete=false
+    fi
+  done
+  if [ "$complete" != true ]; then
+    printf '\nRelease %s remains a draft until all packages succeed.\n' \
+      "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
+    return 0
+  fi
+
+  verify_release_tag || return $?
+  RELEASE_TAG="go/$RELEASE_TAG" verify_release_tag || return $?
+  release=$(gh release view "$RELEASE_TAG" --json isDraft) || return $?
+  if [ "$(jq -r .isDraft <<< "$release")" = true ]; then
+    gh release edit "$RELEASE_TAG" --draft=false || return $?
+  fi
+  printf '\nRelease %s is published.\n' "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
 }

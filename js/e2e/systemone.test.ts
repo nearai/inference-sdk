@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { TypeSafeClient, choice, noul, score } from '@typesafe-ai/sdk';
 import { InferenceClient as GenericInferenceClient } from '../dist/index.js';
 import {
   AttestationClient,
@@ -16,7 +17,9 @@ import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
 const BASE_URL = `${requiredEnv('NEARAI_BASE_URL').replace(/\/+$/, '')}/`;
 const API_KEY = requiredEnv('NEARAI_API_KEY');
 // The selector chooses a hosted Jev deployment, which has Gateway receipts.
-const MODEL = selectedModels('systemone')[0]?.id;
+const MODEL = selectedModels('systemone').find(
+  (entry) => entry.provider === 'external',
+)?.id;
 assert.ok(MODEL, 'Expected a hosted Jev model for System One tests');
 const REQUEST = {
   model: MODEL,
@@ -150,5 +153,90 @@ function assertAnswers(response: SystemOneResponse): void {
   // Validate the response contract, not the model's probabilistic decision.
   if (response.answers.team.type === 'choice') {
     assert.ok(['billing', 'support'].includes(response.answers.team.choice));
+  }
+}
+
+for (const kind of ['gateway', 'provider_tee'] as const) {
+  for (const signingAlgo of ['ed25519', 'ecdsa'] as const) {
+    const model = selectedModels('systemone').find(
+      (entry) =>
+        entry.provider === (kind === 'provider_tee' ? 'near' : 'external'),
+    )?.id;
+    const skip =
+      kind === 'provider_tee' && !model
+        ? 'No self-hosted System One model selected; requires cloud-api#1285'
+        : false;
+
+    test(`official Jev SDK verifies ${kind} receipts with ${signingAlgo}`, {
+      skip,
+      timeout: 180_000,
+    }, async () => {
+      assert.ok(model, 'Expected a selected System One model');
+
+      const apiKey = requiredEnv('NEARAI_API_KEY');
+      const inference = new InferenceClient({
+        apiKey,
+        baseUrl: requiredEnv('NEARAI_BASE_URL'),
+        signingAlgo,
+        e2ee: false,
+        ohttp: false,
+      });
+      const preflight = await inference.verify(model);
+      const selected = preflight.models.find(
+        (report) =>
+          report.signer.signingAlgo === signingAlgo && report.signingPublicKey,
+      );
+      if (kind === 'provider_tee') assert.ok(selected?.signingPublicKey);
+      else assert.equal(preflight.models.length, 0);
+
+      let inferenceRequests = 0;
+      const jev = new TypeSafeClient({
+        apiKey,
+        baseURL: new URL('../', inference.getBaseUrl()).toString(),
+        fetch: (input, init) => {
+          inferenceRequests += 1;
+          return inference.fetch(input, init);
+        },
+        compression: false,
+        retry: { maxRetries: 0 },
+        timeout: 60_000,
+      });
+      const { data, response } = await jev
+        .systemOne({
+          model,
+          state: { message: 'I was charged twice. Please help.' },
+          questions: {
+            billing: noul('Is this about billing?'),
+            team: choice('Choose a team.', {
+              billing: 'Payments',
+              support: 'Other',
+            }),
+            urgency: score('Rate urgency.', ['Routine', 'Urgent']),
+          },
+        })
+        .withResponse();
+
+      const id = response.headers.get('x-generation-id');
+      assert.ok(id, 'Expected the NEAR receipt ID');
+      const verified = await retryReceipt(() => inference.verifyResponse(id));
+      assert.equal(verified.id, id);
+      assert.equal(verified.signatureKind, kind);
+      assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
+      if (kind === 'provider_tee') {
+        assert.equal(
+          verified.attestation.signer.signingAddress,
+          selected?.signer.signingAddress,
+        );
+      }
+      assert.equal(
+        inferenceRequests,
+        1,
+        'Receipt retries must not repeat inference',
+      );
+      assert.equal(data.answers.billing.type, 'noul');
+      assert.equal(data.answers.team.type, 'choice');
+      assert.equal(data.answers.urgency.type, 'score');
+      assert.ok(['billing', 'support'].includes(data.answers.team.choice));
+    });
   }
 }

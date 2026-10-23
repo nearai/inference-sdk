@@ -151,54 +151,9 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if e != nil {
 		return v, e
 	}
-	verifier := o.QuoteVerifier
-	if verifier == nil {
-		verifier = CreateTDXQuoteVerifier("")
-	}
-	q, e := verifier(ctx, a.IntelQuote)
+	q, e := verifyQuote(ctx, a.IntelQuote, o)
 	if e != nil {
-		var sdk *Error
-		if errors.As(e, &sdk) {
-			return v, e
-		}
-		return v, failure("quote.verification_failed", e)
-	}
-	if len(q.ReportData) != 64 || len(q.MRConfigID) != 48 || len(q.RTMR3) != 48 {
-		return v, failure("quote.invalid_result", nil)
-	}
-	validStatus := false
-	for _, status := range []string{
-		"Unknown",
-		"UpToDate",
-		"OutOfDate",
-		"Revoked",
-		"ConfigurationNeeded",
-		"SWHardeningNeeded",
-		"ConfigurationAndSWHardeningNeeded",
-		"OutOfDateConfigurationNeeded",
-	} {
-		if q.TCBStatus == status {
-			validStatus = true
-		}
-	}
-	if !validStatus {
-		return v, failure("quote.invalid_result", nil)
-	}
-	if q.DebugEnabled {
-		return v, failure("policy.debug_enabled", nil)
-	}
-	statuses := o.Policy.AcceptedTCBStatuses
-	if statuses == nil {
-		statuses = []string{"UpToDate", "OutOfDate"}
-	}
-	allowed := false
-	for _, s := range statuses {
-		if s == q.TCBStatus {
-			allowed = true
-		}
-	}
-	if !allowed {
-		return v, detail("policy.tcb_status_not_allowed", "actual", q.TCBStatus)
+		return v, e
 	}
 	if !bytes.Equal(nonce, q.ReportData[32:]) {
 		return v, failure("binding.nonce_mismatch", nil)
@@ -222,11 +177,7 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if !bytes.Equal(binding, q.ReportData[:32]) {
 		return v, failure("binding.report_data_mismatch", nil)
 	}
-	compose := sha256.Sum256([]byte(a.AppCompose))
-	if q.MRConfigID[0] != 1 || !bytes.Equal(q.MRConfigID[1:33], compose[:]) {
-		return v, failure("measurement.app_compose_mrconfigid_mismatch", nil)
-	}
-	measurements, e := replayEvents(a.EventLog, q.RTMR3)
+	deployment, e := verifyDstackDeployment(a, q)
 	if e != nil {
 		return v, e
 	}
@@ -234,64 +185,101 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		Signer:               a.Signer,
 		TCBStatus:            q.TCBStatus,
 		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
-		Deployment:           MeasuredDeployment{a.AppCompose, measurements},
+		Deployment:           deployment,
 		DeploymentProvenance: "not_checked",
 		SPKIFingerprint:      a.SPKIFingerprint,
 		ModelName:            a.ModelName,
 		InstanceID:           a.InstanceID,
 	}
-	if o.DeploymentVerifier != nil {
-		if e = o.DeploymentVerifier(ctx, v.Deployment); e != nil {
-			return VerifiedAttestation{}, failure("provenance.verification_failed", e)
-		}
-		v.DeploymentProvenance = "verified"
-	}
 	if !gateway {
-		v.GPUEvidence = "not_provided"
-		if a.NvidiaPayload == nil {
-			if o.Policy.RequireGPUEvidence {
-				return VerifiedAttestation{}, failure("policy.gpu_evidence_required", nil)
-			}
-		} else {
-			var p struct {
-				Nonce string `json:"nonce"`
-			}
-			if json.Unmarshal([]byte(*a.NvidiaPayload), &p) != nil || !sameHex(p.Nonce, b.Nonce) {
-				return VerifiedAttestation{}, failure("binding.nonce_mismatch", nil)
-			}
-			gpu := o.GPUVerifier
-			if gpu == nil {
-				gpu = CreateGPUEvidenceVerifier(GPUVerifierOptions{})
-			}
-			if e = gpu(ctx, *a.NvidiaPayload); e != nil {
-				return VerifiedAttestation{}, e
-			}
-			v.GPUEvidence = "verified"
-		}
-		if a.SigningPublicKey != "" {
-			pub, e := unhex(a.SigningPublicKey)
-			if e != nil {
-				return VerifiedAttestation{}, e
-			}
-			switch a.Signer.SigningAlgo {
-			case Ed25519:
-				if !bytes.Equal(pub, signer) {
-					return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", nil)
-				}
-			case ECDSA:
-				if len(pub) == 64 {
-					pub = append([]byte{4}, pub...)
-				}
-				parsed, e := secp.ParsePubKey(pub)
-				if e != nil || len(pub) != 65 || !bytes.Equal(keccak(parsed.SerializeUncompressed()[1:])[12:], signer) {
-					return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", e)
-				}
-				pub = pub[1:]
-			}
-			v.SigningPublicKey = hex.EncodeToString(pub)
-		}
+		return verifyModelEvidence(ctx, a, b, o, v, signer)
+	}
+	v.DeploymentProvenance, e = runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
+	if e != nil {
+		return VerifiedAttestation{}, e
 	}
 	return v, ctx.Err()
+}
+
+func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, v VerifiedAttestation, signer []byte) (VerifiedAttestation, error) {
+	if a.ComposeManagerAttestation != nil {
+		manager, err := verifyComposeManager(ctx, *a.ComposeManagerAttestation, a.AppCompose, b.Nonce, o)
+		if err != nil {
+			return VerifiedAttestation{}, err
+		}
+		v.Deployment.ComposeManager = manager
+	}
+	provenance, e := runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
+	if e != nil {
+		return VerifiedAttestation{}, e
+	}
+	v.DeploymentProvenance = provenance
+	v.GPUEvidence = "not_provided"
+	if a.NvidiaPayload == nil {
+		if o.Policy.RequireGPUEvidence {
+			return VerifiedAttestation{}, failure("policy.gpu_evidence_required", nil)
+		}
+	} else {
+		var p struct {
+			Nonce string `json:"nonce"`
+		}
+		if json.Unmarshal([]byte(*a.NvidiaPayload), &p) != nil || !sameHex(p.Nonce, b.Nonce) {
+			return VerifiedAttestation{}, failure("binding.nonce_mismatch", nil)
+		}
+		gpu := o.GPUVerifier
+		if gpu == nil {
+			gpu = CreateGPUEvidenceVerifier(GPUVerifierOptions{})
+		}
+		if e = gpu(ctx, *a.NvidiaPayload); e != nil {
+			return VerifiedAttestation{}, e
+		}
+		v.GPUEvidence = "verified"
+	}
+	if a.SigningPublicKey != "" {
+		pub, e := unhex(a.SigningPublicKey)
+		if e != nil {
+			return VerifiedAttestation{}, e
+		}
+		switch a.Signer.SigningAlgo {
+		case Ed25519:
+			if !bytes.Equal(pub, signer) {
+				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", nil)
+			}
+		case ECDSA:
+			if len(pub) == 64 {
+				pub = append([]byte{4}, pub...)
+			}
+			parsed, e := secp.ParsePubKey(pub)
+			if e != nil || len(pub) != 65 || !bytes.Equal(keccak(parsed.SerializeUncompressed()[1:])[12:], signer) {
+				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", e)
+			}
+			pub = pub[1:]
+		}
+		v.SigningPublicKey = hex.EncodeToString(pub)
+	}
+	return v, ctx.Err()
+}
+
+func verifyDstackDeployment(a Attestation, q QuoteVerificationResult) (MeasuredDeployment, error) {
+	compose := sha256.Sum256([]byte(a.AppCompose))
+	if q.MRConfigID[0] != 1 || !bytes.Equal(q.MRConfigID[1:33], compose[:]) {
+		return MeasuredDeployment{}, failure("measurement.app_compose_mrconfigid_mismatch", nil)
+	}
+	measurements, err := replayEvents(a.EventLog, q.RTMR3)
+	if err != nil {
+		return MeasuredDeployment{}, err
+	}
+	return MeasuredDeployment{AppCompose: a.AppCompose, RuntimeMeasurements: measurements}, nil
+}
+
+func runDeploymentVerifier(ctx context.Context, deployment MeasuredDeployment, verifier DeploymentVerifier) (string, error) {
+	if verifier == nil {
+		return "not_checked", nil
+	}
+	if err := verifier(ctx, deployment); err != nil {
+		return "", failure("provenance.verification_failed", err)
+	}
+	return "verified", nil
 }
 
 func replayEvents(raw json.RawMessage, expected []byte) (RuntimeMeasurements, error) {
@@ -378,4 +366,58 @@ func VerifyOHTTPKeyConfig(a OHTTPAttestation, signer SigningIdentity) ([]byte, e
 		return nil, failure("ohttp.signature_invalid", e)
 	}
 	return config, nil
+}
+
+func verifyQuote(ctx context.Context, intelQuote string, o VerificationOptions) (QuoteVerificationResult, error) {
+	verifier := o.QuoteVerifier
+	if verifier == nil {
+		verifier = CreateTDXQuoteVerifier("")
+	}
+	q, e := verifier(ctx, intelQuote)
+	if e != nil {
+		var sdk *Error
+		if errors.As(e, &sdk) {
+			return QuoteVerificationResult{}, e
+		}
+		return QuoteVerificationResult{}, failure("quote.verification_failed", e)
+	}
+	if len(q.ReportData) != 64 || len(q.MRConfigID) != 48 || len(q.RTMR3) != 48 {
+		return QuoteVerificationResult{}, failure("quote.invalid_result", nil)
+	}
+	validStatus := false
+	for _, status := range []string{
+		"Unknown",
+		"UpToDate",
+		"OutOfDate",
+		"Revoked",
+		"ConfigurationNeeded",
+		"SWHardeningNeeded",
+		"ConfigurationAndSWHardeningNeeded",
+		"OutOfDateConfigurationNeeded",
+	} {
+		if q.TCBStatus == status {
+			validStatus = true
+		}
+	}
+	if !validStatus {
+		return QuoteVerificationResult{}, failure("quote.invalid_result", nil)
+	}
+	if q.DebugEnabled {
+		return QuoteVerificationResult{}, failure("policy.debug_enabled", nil)
+	}
+	statuses := o.Policy.AcceptedTCBStatuses
+	if statuses == nil {
+		statuses = []string{"UpToDate", "OutOfDate"}
+	}
+	allowed := false
+	for _, s := range statuses {
+		if s == q.TCBStatus {
+			allowed = true
+		}
+	}
+	if !allowed {
+		return QuoteVerificationResult{}, detail("policy.tcb_status_not_allowed", "actual", q.TCBStatus)
+	}
+
+	return q, nil
 }

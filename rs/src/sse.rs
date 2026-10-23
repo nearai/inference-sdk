@@ -108,6 +108,7 @@ pub(crate) fn transform(
     record: &[u8],
     key: Option<&ResponseKey>,
     id: &mut Option<String>,
+    responses: bool,
 ) -> Result<Vec<u8>, InferenceError> {
     let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
     let lines = lines(text);
@@ -128,7 +129,9 @@ pub(crate) fn transform(
         Err(_) if key.is_none() => return Ok(record.to_vec()),
         Err(_) => return Err(invalid_response().into()),
     };
-    if let Some(value) = body
+    // Responses lifecycle events nest the receipt ID; item IDs are unrelated.
+    let receipt = if responses { &body["response"] } else { &body };
+    if let Some(value) = receipt
         .get("id")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())

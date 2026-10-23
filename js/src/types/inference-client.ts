@@ -139,10 +139,9 @@ export type AttestationVerificationResult = {
 
 /** A response signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionResult = {
-  /** Receipt lookup ID, retained for compatibility with Chat consumers. */
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
-  /** Alias populated by SDK clients; optional for existing custom verifiers. */
-  readonly id?: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
   /** Representative matching report; a shared signing key does not identify one CVM. */
@@ -153,10 +152,9 @@ export type VerifiedModelCompletionResult = {
 
 /** A response signature verified against the Gateway evidence used for the request. */
 export type VerifiedGatewayCompletionResult = {
-  /** Receipt lookup ID, retained for compatibility with Chat consumers. */
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
-  /** Alias populated by SDK clients; optional for existing custom verifiers. */
-  readonly id?: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
   readonly attestation: VerifiedGatewayAttestation;
@@ -174,3 +172,6 @@ export type InferenceChat = {
 
 /** Standard Chat Completions operations. */
 export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
+
+/** Gateway Responses creation with the official OpenAI request and event types. */
+export type InferenceResponses = Pick<OpenAI.Responses, 'create'>;

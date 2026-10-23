@@ -2,7 +2,7 @@
 
 Use this SDK to verify NEAR AI Cloud deployments before requesting inference,
 then verify the receipt returned for a particular completion. Use `InferenceClient`
-for integrated verified Chat, or retain exact bytes yourself when using the
+for integrated verified inference, or retain exact bytes yourself when using the
 standalone verification functions.
 
 ## Integrated Chat client
@@ -10,7 +10,8 @@ standalone verification functions.
 The [README example](../README.md#send-and-verify-a-chat-completion) sends encrypted Chat and verifies
 its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
 `InferenceClientOptions` for a custom base URL, headers, encryption, policies,
-and cache settings. Only Chat Completions are accepted by `send`.
+and cache settings. `send` accepts Chat Completions and Gateway
+[Responses creation](#responses-api).
 The client owns authentication and forces `Accept-Encoding: identity` so captured
 bytes match the completion receipt, including when adapting an existing request.
 
@@ -61,7 +62,7 @@ Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP fina
 chunk authentication are part of verification. Dropping a partial stream leaves
 no verifiable receipt. Content delivered before `verify_response` succeeds is
 not yet signature-verified. `bytes()` and `json()` fully consume the body; use
-`json()` only for non-streaming Chat. Unlike an OpenAI SDK transport adapter,
+`json()` for JSON responses. Unlike an OpenAI SDK transport adapter,
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 
@@ -179,6 +180,40 @@ External models use Gateway signatures.
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [Rust decision example](../../examples/README.md#rust).
+
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```rust
+let response = client.create_response(serde_json::json!({
+    "model": "z-ai/glm-5.3-flash", "input": "Reply with the word ok.", "store": false
+})).await?;
+let id = response["id"].as_str().ok_or("missing response ID")?;
+let receipt = client.verify_response(id).await?;
+```
+
+For SSE, build `response_request(json!({ ... , "stream": true }))`, pass it to
+`send`, and consume `InferenceResponse.body` to EOF. It contains original SSE
+bytes; an application SSE decoder can read the nested response ID.
 
 ## Recommended flow
 
@@ -363,14 +398,17 @@ JWKS, issuer, expiration, not-before and issued-at times, and signed `eat_nonce`
 The overall verdict must be `true`; detached per-device claims are not consumed.
 See [NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
 
-### Use a PCCS or NRAS proxy
+### Configure attestation service URLs
 
-The default Intel collateral base URL is
-`https://api.trustedservices.intel.com`; the default NVIDIA
-submission URL is `https://nras.attestation.nvidia.com/v3/attest/gpu`, with keys
-fetched from `https://nras.attestation.nvidia.com/.well-known/jwks.json`. To route
-these requests through your own services, construct the built-in verifiers
-with custom URLs and pass them through the existing verifier options:
+The built-in verifiers use these defaults:
+
+| Service | URL |
+| --- | --- |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+To use your own services, construct verifiers with custom URLs:
 
 ```rust,no_run
 use nearai_inference_sdk::{
@@ -383,11 +421,10 @@ async fn verify_with_proxies(
     attestation: &ModelAttestation,
     binding: &ModelClientBinding,
 ) -> Result<VerifiedModelAttestation, VerificationError> {
-    let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/intel");
+    let tdx_quote = DefaultTdxQuoteVerifier::new("https://attestation.example.com/pccs");
     let gpu_evidence = NrasGpuEvidenceVerifier::new(
-        "https://attestation.example.com/nvidia/v3/attest/gpu",
-    )
-    .with_jwks_url("https://attestation.example.com/nvidia/.well-known/jwks.json");
+        "https://attestation.example.com/nras/v3/attest/gpu",
+    );
     verify_model_attestation(
         attestation,
         binding,
@@ -404,26 +441,11 @@ async fn verify_with_proxies(
 
 Pass the same `tdx_quote` verifier as `AttestationVerifiers { tdx_quote: Some(&tdx_quote),
 ..Default::default() }` for Gateway verification. Leave either verifier as
-`None` to use its official default service.
+`None` to use the defaults above.
 
-The Intel URL is a PCCS-compatible base, not an endpoint that returns a verdict.
-The `dcap-qvl` adapter appends `/sgx/certification/v4/...` and
-`/tdx/certification/v4/...` beneath this base; a supplied certification-v4
-suffix is normalized automatically. Preserve Intel's JSON bodies and
-URL-encoded issuer-chain headers. The proxy's SGX `rootcacrl` endpoint must
-return the CRL as hex text, while `pckcrl?encoding=der` returns DER bytes.
-If `rootcacrl` is unavailable, the adapter may fetch the root CRL directly
-from its certificate distribution URL.
-
-The NVIDIA URL is the complete POST endpoint. It receives the original JSON
-payload and must return NVIDIA's signed NRAS response. The JWKS URL is a separate
-GET endpoint and defaults to NVIDIA's official URL when `with_jwks_url` is omitted.
-Use only a trusted JWKS proxy: its keys authenticate the signed verdict. The SDK
-still requires issuer `https://nras.attestation.nvidia.com`, an ES384 signature,
-valid timestamps, the matching signed nonce, and a true overall verdict.
-A malformed payload nonce is rejected before submission. Model verification also
-checks that nonce against the client challenge before calling any GPU verifier,
-including overrides.
+DCAP builds the SGX and TDX collateral paths beneath the PCCS base URL.
+`NrasGpuEvidenceVerifier` accepts the complete GPU evidence POST URL. Signing
+keys come from NVIDIA; call `with_jwks_url` to use another trusted key source.
 
 ## Verify an image's build provenance
 
@@ -508,6 +530,48 @@ include a SHA-256 digest (a tag alongside the digest is allowed). Unlisted
 literal images are ignored; any unresolved `$` image reference is rejected,
 including defaults. This checks only images in the measured Compose, not model
 runtime images loaded later by a launcher or another service.
+
+### Model images deployed by Compose Manager
+
+Use a model deployment callback to require the model-serving images and
+manager startup image to come from approved builds:
+
+```rust,no_run
+use std::collections::BTreeMap;
+use async_trait::async_trait;
+use nearai_inference_sdk::{
+    verify_compose_manager_deployment_image_provenance, DeploymentVerifier,
+    ComposeManagerImagePolicy, ImageProvenancePolicy, MeasuredDeployment, VerificationError,
+};
+
+struct ModelImages {
+    images: BTreeMap<String, ImageProvenancePolicy>,
+    manager: ComposeManagerImagePolicy,
+}
+
+#[async_trait]
+impl DeploymentVerifier for ModelImages {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        verify_compose_manager_deployment_image_provenance(
+            deployment, &self.images, &self.manager, Default::default(),
+        ).await
+    }
+}
+```
+
+For example, require `nearaidev/vllm-proxy-rs` from `nearai/inference-proxy` and
+`nearaidev/compose-manager` from `nearai/compose-manager`, both using
+`.github/workflows/build.yml`. Pass the verifier as
+`ModelAttestationVerifiers.deployment`. Keep the manager repository and build
+identity in `ComposeManagerImagePolicy`, separate from the compose image map.
+
+On Gateway or Direct inference clients, set `model_verification.deployment`.
+The policy runs for every model report and requires Compose Manager evidence in
+each one. See the [API reference](./api-reference.md#compose-manager-deployment-images)
+for file selection, GitHub access, and standalone verification options.
+
+The evidence covers recorded deployment actions and the configured image builds.
+Current runtime state requires separate evidence.
 
 ## Handle errors
 

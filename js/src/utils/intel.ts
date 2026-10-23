@@ -12,12 +12,13 @@ import type {
   VerifiedTdxQuote,
 } from '../types/verification';
 import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
-import { getIntelPccsApiUrl, hexToBuffer } from './common';
+import { hexToBuffer } from './common';
+import { INTEL_PCCS_API_URL } from './consts';
 import { isVerificationError, VerificationError } from './errors';
 
 /** Use Intel DCAP verification with collateral fetched from the selected service. */
 export function createTdxQuoteVerifier({
-  pccsUrl = getIntelPccsApiUrl(),
+  pccsUrl = INTEL_PCCS_API_URL,
 }: CreateTdxQuoteVerifierParams = {}): TdxQuoteVerifier {
   return (quote) => verifyDcapQuote(quote, pccsUrl);
 }
@@ -28,7 +29,7 @@ export function createTdxQuoteVerifier({
  */
 export async function verifyDcapQuote(
   quote: string,
-  pccsUrl = getIntelPccsApiUrl(),
+  pccsUrl = INTEL_PCCS_API_URL,
 ): Promise<VerifiedTdxQuote> {
   let quoteBytes: Uint8Array;
   try {
