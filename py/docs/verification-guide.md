@@ -513,7 +513,7 @@ Chat. `find_model_attestation_for_signature` is used later, when the response
 signature is available; it is not the encryption-key selector.
 
 ```python
-import httpx
+import httpx2
 from nearai_inference_sdk import E2eeModelKey, prepare_e2ee_chat_request
 
 model = next(item for item in verified_models if item.signing_public_key is not None)
@@ -521,7 +521,7 @@ model_key = E2eeModelKey(
     signing_algo=model.signer.signing_algo,
     public_key=model.signing_public_key,
 )
-request = httpx.Request(
+request = httpx2.Request(
     'POST',
     'https://cloud-api.near.ai/v1/chat/completions',
     headers={'Authorization': f'Bearer {api_key}', 'Accept-Encoding': 'identity'},
@@ -532,7 +532,7 @@ request_body = prepared.request.content
 ```
 
 `prepared.request` contains the encrypted fields and E2EE/routing headers.
-Send it using `httpx.AsyncClient`; when Gateway TLS verification is enabled, use
+Send it using `httpx2.AsyncClient`; when Gateway TLS verification is enabled, use
 `create_pinned_tls_client(verified_gateway.tls_binding.spki_fingerprint)` instead.
 Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
 decryption. Retain the original encrypted response bytes separately for step 3.

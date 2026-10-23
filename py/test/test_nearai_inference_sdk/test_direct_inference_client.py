@@ -1,6 +1,6 @@
 import json
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -51,12 +51,12 @@ class DirectEndpoint(Gateway):
                     'key_config': config.hex(),
                     'signature': self.key.sign(config).signature.hex(),
                 }
-            return httpx.Response(200, json=body)
+            return httpx2.Response(200, json=body)
         response = await super().handle(request)
         if request.url.path.startswith('/v1/signature/'):
             signature = response.json()
             signature.pop('signature_kind')
-            return httpx.Response(200, json=signature)
+            return httpx2.Response(200, json=signature)
         return response
 
     def install(self, monkeypatch):
@@ -64,8 +64,8 @@ class DirectEndpoint(Gateway):
         monkeypatch.setattr(
             DirectInferenceClient,
             '_create_direct_client',
-            lambda _client, _fingerprints: httpx.AsyncClient(
-                transport=httpx.MockTransport(self.handle)
+            lambda _client, _fingerprints: httpx2.AsyncClient(
+                transport=httpx2.MockTransport(self.handle)
             ),
         )
 
@@ -118,7 +118,10 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
         assert result.attestations == attestations.attestations
 
         openai = AsyncOpenAI(
-            api_key='unused', base_url=BASE_URL, http_client=client.http_client
+            api_key='unused',
+            base_url=BASE_URL,
+            http_client=client.http_client,
+            timeout=httpx2.Timeout(30, read=5),
         )
         stream = await openai.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
@@ -157,7 +160,7 @@ async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypat
     async with endpoint.client() as client:
         with pytest.raises(VerificationError) as raised:
             await client.send(
-                httpx.Request(
+                httpx2.Request(
                     'POST',
                     BASE_URL + 'chat/completions',
                     json={'model': MODEL, 'messages': MESSAGES},

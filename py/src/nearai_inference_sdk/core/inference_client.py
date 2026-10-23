@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from time import monotonic, time
 from typing import Self
 
-import httpx
+import httpx2
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -73,7 +73,7 @@ _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
 @dataclass(frozen=True)
 class _VerifiedSession[Result, AttestationResult]:
     model_key: E2eeModelKey | None
-    http_client: httpx.AsyncClient
+    http_client: httpx2.AsyncClient
     attestation_client: _ApiClient
     verify_response: Callable[[str, bytes, bytes, CompletionSignature], Result]
     attestation_result: AttestationResult
@@ -93,7 +93,7 @@ class _SessionAttestationClient(AttestationClient):
 
     def __init__(
         self,
-        http_client: httpx.AsyncClient,
+        http_client: httpx2.AsyncClient,
         *,
         api_key: str | None,
         base_url: str,
@@ -113,11 +113,11 @@ class _SessionAttestationClient(AttestationClient):
         )
 
 
-class _InferenceTransport(httpx.AsyncBaseTransport):
+class _InferenceTransport(httpx2.AsyncBaseTransport):
     def __init__(self, client: _VerifiedInferenceClient) -> None:
         self._client = client
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         return await self._client.send(request)
 
 
@@ -156,7 +156,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             )
         self.base_url = _validate_base_url(base_url).rstrip('/') + '/'
         self._api_key = api_key
-        self._headers = httpx.Headers(headers)
+        self._headers = httpx2.Headers(headers)
         if api_key is not None:
             self._headers['authorization'] = f'Bearer {api_key}'
             self._headers.pop('api-key', None)
@@ -175,10 +175,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             str,
             asyncio.Task[_VerifiedSession[Result, AttestationResult]],
         ] = {}
-        self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
+        self._http_clients: dict[str | tuple[str, ...] | None, httpx2.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
         self._drains: set[asyncio.Task[None]] = set()
-        self._chat_client = httpx.AsyncClient(
+        self._chat_client = httpx2.AsyncClient(
             transport=_InferenceTransport(self), timeout=None
         )
         # The wrapper requires a key even when an aggregator uses custom
@@ -191,13 +191,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self.chat = self._openai.chat
 
     @property
-    def http_client(self) -> httpx.AsyncClient:
-        """Return a non-owning HTTPX adapter for an external OpenAI client.
+    def http_client(self) -> httpx2.AsyncClient:
+        """Return a non-owning HTTPX2 adapter for an external OpenAI client.
 
         Each adapter may be closed independently; the inference client owns
         the connections, sessions, and response-verification records.
         """
-        return httpx.AsyncClient(transport=_InferenceTransport(self), timeout=None)
+        return httpx2.AsyncClient(transport=_InferenceTransport(self), timeout=None)
 
     async def __aenter__(self) -> Self:
         return self
@@ -250,14 +250,14 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         session = await self._start_verification(model)
         return session.attestation_result
 
-    async def send(self, request: httpx.Request) -> httpx.Response:
+    async def send(self, request: httpx2.Request) -> httpx2.Response:
         """Send a Chat request; the returned body can be read or streamed.
 
         This is the low-level counterpart of ``http_client.send``. Consume or
         close its response, and finish a stream before calling verify_response.
         """
 
-        expected = httpx.URL(self.base_url).join('chat/completions')
+        expected = httpx2.URL(self.base_url).join('chat/completions')
         if request.method != 'POST' or request.url.copy_with(query=None) != expected:
             raise api_failure(
                 'api.invalid_input',
@@ -271,10 +271,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         body = request.content
         headers = self._request_headers(request.headers)
         session = await self._start_verification(parsed['model'])
-        # The async request body has been buffered; HTTPX sets Content-Length.
+        # The async request body has been buffered; HTTPX2 sets Content-Length.
         headers.pop('transfer-encoding', None)
         headers.pop('trailer', None)
-        prepared_request = httpx.Request(
+        prepared_request = httpx2.Request(
             request.method,
             request.url,
             headers=headers,
@@ -300,7 +300,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             response = await session.http_client.send(prepared_request, stream=True)
         except (ApiError, VerificationError):
             raise
-        except httpx.HTTPError as error:
+        except httpx2.HTTPError as error:
             raise api_failure(
                 'api.transport_failed',
                 {'resource': 'completion', 'reason': 'request'},
@@ -316,7 +316,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         def register(completion_id: str) -> None:
             self._register_response(completion_id, request_body, response_body, session)
 
-        captured = httpx.Response(
+        captured = httpx2.Response(
             response.status_code,
             headers=_decoded_headers(response.headers),
             stream=_CapturedResponseStream(response, response_body, register, self),
@@ -327,8 +327,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             return await prepared.decrypt_response(captured)
         return captured
 
-    def _request_headers(self, request_headers: Mapping[str, str]) -> httpx.Headers:
-        headers = httpx.Headers(self._headers)
+    def _request_headers(self, request_headers: Mapping[str, str]) -> httpx2.Headers:
+        headers = httpx2.Headers(self._headers)
         try:
             headers.update(request_headers)
         except UnicodeError:
@@ -344,7 +344,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             headers.pop('authorization', None)
         if self._api_key is not None:
             headers.pop('api-key', None)
-        # HTTPX stores headers without checking the syntax sent on the wire.
+        # HTTPX2 stores headers without checking the syntax sent on the wire.
         for name, value in headers.raw:
             if (
                 not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
@@ -449,8 +449,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         )
 
     def _completion_client(
-        self, client: httpx.AsyncClient, key_config: bytes | None
-    ) -> httpx.AsyncClient:
+        self, client: httpx2.AsyncClient, key_config: bytes | None
+    ) -> httpx2.AsyncClient:
         if key_config is None:
             return client
         # The wrapper borrows this client's connections. Its session/response
@@ -670,18 +670,18 @@ class InferenceClient(
 
     def _create_gateway_client(
         self, peer_spki_fingerprint: str | None
-    ) -> httpx.AsyncClient:
+    ) -> httpx2.AsyncClient:
         if peer_spki_fingerprint is not None:
             return create_pinned_tls_client(peer_spki_fingerprint)
-        return httpx.AsyncClient(timeout=None)
+        return httpx2.AsyncClient(timeout=None)
 
 
-class _CapturedResponseStream(httpx.AsyncByteStream):
+class _CapturedResponseStream(httpx2.AsyncByteStream):
     """Capture wire bytes under consumer backpressure, before E2EE decryption."""
 
     def __init__(
         self,
-        response: httpx.Response,
+        response: httpx2.Response,
         response_body: asyncio.Future[bytes],
         register: Callable[[str], None],
         client: _VerifiedInferenceClient,
@@ -827,8 +827,8 @@ def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:
     )
 
 
-def _decoded_headers(headers: httpx.Headers) -> httpx.Headers:
-    result = httpx.Headers(headers)
+def _decoded_headers(headers: httpx2.Headers) -> httpx2.Headers:
+    result = httpx2.Headers(headers)
     result.pop('content-encoding', None)
     result.pop('content-length', None)
     return result

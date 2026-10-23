@@ -1,6 +1,6 @@
 """Incognito verifies the Gateway, without claiming model execution in a TEE."""
 
-import httpx
+import httpx2
 import pytest
 
 from nearai_inference_sdk import (
@@ -61,7 +61,7 @@ async def test_model_requirements_stop_incognito_before_chat(monkeypatch, option
     async with gateway.client(**options) as client:
         with pytest.raises(VerificationError) as raised:
             await client.send(
-                httpx.Request(
+                httpx2.Request(
                     'POST',
                     BASE_URL + 'chat/completions',
                     json={'model': MODEL, 'messages': MESSAGES},
@@ -78,7 +78,7 @@ async def test_invalid_metadata_does_not_fall_back_to_incognito(monkeypatch):
     async with gateway.client(e2ee=False) as client:
         with pytest.raises(ApiError) as raised:
             await client.send(
-                httpx.Request(
+                httpx2.Request(
                     'POST',
                     BASE_URL + 'chat/completions',
                     json={'model': MODEL, 'messages': MESSAGES},
@@ -99,7 +99,7 @@ async def test_mismatched_gateway_algorithm_stops_incognito_before_chat(
     async with gateway.client(e2ee=False, signing_algo=signing_algo) as client:
         with pytest.raises(VerificationError) as raised:
             await client.send(
-                httpx.Request(
+                httpx2.Request(
                     'POST',
                     BASE_URL + 'chat/completions',
                     json={'model': MODEL, 'messages': MESSAGES},

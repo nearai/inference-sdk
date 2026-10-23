@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 
-import httpx
+import httpx2
 import pytest
 from eth_account.messages import encode_defunct
 from nacl.signing import SigningKey
@@ -91,17 +91,17 @@ class DecisionGateway(Gateway):
                     )
                     alternate.pop('signing_public_key')
                     body['model_attestations'].append(alternate)
-                return httpx.Response(200, json=body)
+                return httpx2.Response(200, json=body)
             return response
         self.headers.append(request.headers)
         self.requests.append(request)
         decision_id = self.decision_id or f'systemone-{len(self.requests)}'
         if self.response_fault == 'status':
-            return httpx.Response(
+            return httpx2.Response(
                 503, text='private state must not be included in errors'
             )
         if json.loads(request.content)['questions'] == {}:
-            return httpx.Response(422)
+            return httpx2.Response(422)
         body = {
             'model': MODEL,
             'answers': {
@@ -166,7 +166,7 @@ class DecisionGateway(Gateway):
         }
         if self.response_fault == 'tamper':
             response_body = response_body.replace(b'0.9', b'0.5')
-        return httpx.Response(
+        return httpx2.Response(
             200,
             content=response_body,
             headers={
@@ -372,17 +372,17 @@ async def test_decision_transport_failure_is_not_retryable(monkeypatch, reason):
     gateway = DecisionGateway()
     original = gateway.handle
 
-    class BrokenBody(httpx.AsyncByteStream):
+    class BrokenBody(httpx2.AsyncByteStream):
         async def __aiter__(self):
-            raise httpx.ReadError('connection lost')
+            raise httpx2.ReadError('connection lost')
             yield  # Make this an async iterator.
 
     async def respond(request):
         response = await original(request)
         if request.url.path == '/v1/systemone':
             if reason == 'request':
-                raise httpx.ReadError('connection lost')
-            return httpx.Response(200, headers=response.headers, stream=BrokenBody())
+                raise httpx2.ReadError('connection lost')
+            return httpx2.Response(200, headers=response.headers, stream=BrokenBody())
         return response
 
     monkeypatch.setattr(gateway, 'handle', respond)
@@ -408,19 +408,19 @@ async def test_response_cleanup_preserves_the_primary_error(monkeypatch, fault, 
     handle = gateway.handle
     closed = False
 
-    class FailingCloseStream(httpx.AsyncByteStream):
+    class FailingCloseStream(httpx2.AsyncByteStream):
         async def __aiter__(self):
             yield b''
 
         async def aclose(self):
             nonlocal closed
             closed = True
-            raise httpx.ReadError('cleanup failed')
+            raise httpx2.ReadError('cleanup failed')
 
     async def respond(request):
         response = await handle(request)
         if request.url.path == '/v1/systemone':
-            return httpx.Response(
+            return httpx2.Response(
                 response.status_code,
                 headers=response.headers,
                 stream=FailingCloseStream(),
@@ -623,13 +623,13 @@ async def test_a_decision_body_finishing_after_close_cannot_repopulate_the_cache
         if request.url.path != '/v1/systemone':
             return response
 
-        class PendingBody(httpx.AsyncByteStream):
+        class PendingBody(httpx2.AsyncByteStream):
             async def __aiter__(self):
                 started.set()
                 await release.wait()
                 yield response.content
 
-        return httpx.Response(200, headers=response.headers, stream=PendingBody())
+        return httpx2.Response(200, headers=response.headers, stream=PendingBody())
 
     monkeypatch.setattr(gateway, 'handle', respond)
     gateway.install(monkeypatch)

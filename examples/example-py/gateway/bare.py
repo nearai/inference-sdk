@@ -3,7 +3,7 @@ import json
 import os
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 from nearai_inference_sdk import (
     AttestationClient,
     AttestationVerifiers,
@@ -54,10 +54,10 @@ class E2eeRecipient:
     key: E2eeModelKey
 
 
-class RecordingStream(httpx.AsyncByteStream):
+class RecordingStream(httpx2.AsyncByteStream):
     """Keep ciphertext while the E2EE decryptor consumes the response stream."""
 
-    def __init__(self, source: httpx.AsyncByteStream) -> None:
+    def __init__(self, source: httpx2.AsyncByteStream) -> None:
         self.source = source
         self.chunks: list[bytes] = []
 
@@ -127,9 +127,9 @@ def find_e2ee_recipient(
 
 
 async def send_completion(
-    client: httpx.AsyncClient, api_key: str, recipient: E2eeRecipient, *, stream: bool
+    client: httpx2.AsyncClient, api_key: str, recipient: E2eeRecipient, *, stream: bool
 ) -> Completion:
-    request = httpx.Request(
+    request = httpx2.Request(
         'POST',
         BASE_URL + 'chat/completions',
         headers={'Authorization': f'Bearer {api_key}', 'Accept-Encoding': 'identity'},

@@ -7,7 +7,7 @@ import hashlib
 import json
 from dataclasses import replace
 
-import httpx
+import httpx2
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -43,7 +43,7 @@ MODEL = 'test-model'
 MESSAGES = [{'role': 'user', 'content': 'Hello'}]
 
 
-class ChunkStream(httpx.AsyncByteStream):
+class ChunkStream(httpx2.AsyncByteStream):
     def __init__(self, chunks: list[bytes], tail_gate: asyncio.Event | None = None):
         self.chunks = chunks
         self.tail_gate = tail_gate
@@ -63,10 +63,10 @@ class Gateway:
         self.kind = kind
         self.gateway_requests = 0
         self.model_requests: list[str] = []
-        self.completion_requests: list[httpx.Request] = []
+        self.completion_requests: list[httpx2.Request] = []
         self.signature_requests = 0
         self.plaintexts: list[str] = []
-        self.headers: list[httpx.Headers] = []
+        self.headers: list[httpx2.Headers] = []
         self.pins: list[str | None] = []
         self.peer_spki_fingerprint: str | None = TLS_FINGERPRINT
         self.quotes = {}
@@ -128,10 +128,10 @@ class Gateway:
             'info': {'tcb_info': {'app_compose': APP_COMPOSE}},
         }
 
-    async def handle(self, request: httpx.Request) -> httpx.Response:
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.headers.append(request.headers)
         if request.url.path.startswith('/v1/model/'):
-            return httpx.Response(200, json={'metadata': self.metadata})
+            return httpx2.Response(200, json={'metadata': self.metadata})
         if request.url.path == '/v1/attestation/report':
             await asyncio.sleep(
                 0
@@ -145,7 +145,7 @@ class Gateway:
                 if self.additional_model_is_invalid:
                     self.bad_quote = True
                     attestations.append(self.attestation(nonce))
-                return httpx.Response(200, json={'model_attestations': attestations})
+                return httpx2.Response(200, json={'model_attestations': attestations})
             self.gateway_requests += 1
             report = self.attestation(nonce)
             if request.url.params['include_tls_fingerprint'] == 'true':
@@ -160,11 +160,11 @@ class Gateway:
                 self.quotes[report['intel_quote']] = quote
                 report['report_data'] = quote.report_data.hex()
                 report['tls_cert_fingerprint'] = TLS_FINGERPRINT
-            return httpx.Response(200, json={'gateway_attestation': report})
+            return httpx2.Response(200, json={'gateway_attestation': report})
 
         if request.url.path.startswith('/v1/signature/'):
             self.signature_requests += 1
-            return httpx.Response(
+            return httpx2.Response(
                 200,
                 json=self.signatures[request.url.path.removeprefix('/v1/signature/')],
             )
@@ -245,7 +245,7 @@ class Gateway:
             done, tail = chunks[-1].split(b': signed trailing bytes')
             chunks[-1] = done
             chunks.append(b': signed trailing bytes' + tail)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             stream=ChunkStream(chunks, self.tail_gate),
             headers={'content-type': content_type},
@@ -253,7 +253,7 @@ class Gateway:
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
         async def fetch(url, *, headers=None, **kwargs):
-            response = await self.handle(httpx.Request('GET', url, headers=headers))
+            response = await self.handle(httpx2.Request('GET', url, headers=headers))
             return FetchResponse(
                 status=response.status_code,
                 body=response.content,
@@ -264,7 +264,7 @@ class Gateway:
 
         def create_client(_client, fingerprint):
             self.pins.append(fingerprint)
-            return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
+            return httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
 
         monkeypatch.setattr(InferenceClient, '_create_gateway_client', create_client)
 
@@ -343,7 +343,10 @@ async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch, g
 
     async with gateway.client() as client:
         openai = AsyncOpenAI(
-            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=client.http_client,
+            timeout=httpx2.Timeout(30, read=5),
         )
         first, second = await asyncio.gather(
             openai.chat.completions.create(model=MODEL, messages=MESSAGES),
@@ -598,7 +601,7 @@ async def test_unverified_tls_peer_never_allows_chat(monkeypatch, peer_fingerpri
     ) as client:
         with pytest.raises(VerificationError) as raised:
             await client.send(
-                httpx.Request(
+                httpx2.Request(
                     'POST',
                     BASE_URL + 'chat/completions',
                     json={'model': MODEL, 'messages': MESSAGES},
@@ -669,7 +672,7 @@ async def test_failed_preflight_never_sends_the_chat_request(monkeypatch, failur
         else {}
     )
     async with gateway.client(**options) as client:
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST',
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},
@@ -709,7 +712,7 @@ async def test_every_returned_model_report_must_pass_preflight(monkeypatch):
             verifiers=ModelAttestationVerifiers(tdx_quote=verify_quote)
         )
     ) as client:
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST',
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},
@@ -777,7 +780,7 @@ async def test_async_request_body_is_sent_with_buffered_framing(
     body = json.dumps({'model': MODEL, 'messages': MESSAGES}).encode()
 
     async with gateway.client(e2ee=e2ee) as client:
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST',
             BASE_URL + 'chat/completions',
             content=ChunkStream([body[:10], body[10:]]),

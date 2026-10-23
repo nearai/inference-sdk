@@ -3,7 +3,7 @@
 import gzip
 import json
 
-import httpx
+import httpx2
 import pytest
 
 from nearai_inference_sdk.core.e2ee import (
@@ -25,7 +25,7 @@ def signing_algo(request):
     return request.param
 
 
-class ByteStream(httpx.AsyncByteStream):
+class ByteStream(httpx2.AsyncByteStream):
     def __init__(self, content: bytes):
         self.content = content
         self.closed = False
@@ -84,7 +84,7 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         'function_call': {'name': 'legacy'},
         'future_option': {'enabled': True},
     }
-    original = httpx.Request(
+    original = httpx2.Request(
         'POST',
         ENDPOINT,
         json=body,
@@ -160,7 +160,7 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
 @pytest.mark.asyncio
 async def test_encrypts_async_request_body_with_buffered_framing():
     model_key, pair = model_keys('ed25519')
-    request = httpx.Request(
+    request = httpx2.Request(
         'POST',
         ENDPOINT,
         content=ByteStream(json.dumps(PROMPT).encode()),
@@ -185,7 +185,7 @@ async def test_encrypts_async_request_body_with_buffered_framing():
 async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     model_key, _ = model_keys(signing_algo)
     prepared = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     client_key = response_key(prepared, signing_algo)
 
@@ -233,7 +233,7 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     }
     # Source decoding removes gzip once. The transformed response must not
     # advertise gzip and attempt to decompress its already-decrypted JSON.
-    source = httpx.Response(
+    source = httpx2.Response(
         201,
         content=gzip.compress(json.dumps(body).encode()),
         headers={
@@ -291,7 +291,7 @@ async def test_decrypts_multiline_sse_across_split_bytes(
 ):
     model_key, _ = model_keys(signing_algo)
     prepared = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json={**PROMPT, 'stream': True}), model_key
+        httpx2.Request('POST', ENDPOINT, json={**PROMPT, 'stream': True}), model_key
     )
     client_key = response_key(prepared, signing_algo)
     delta = {
@@ -303,7 +303,7 @@ async def test_decrypts_multiline_sse_across_split_bytes(
     suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\n'
     source = ByteStream((prefix + data + separator + suffix).encode())
     response = await prepared.decrypt_response(
-        httpx.Response(
+        httpx2.Response(
             200,
             stream=source,
             headers={
@@ -345,21 +345,21 @@ async def test_decrypts_multiline_sse_across_split_bytes(
 async def test_rejects_ciphertext_for_a_different_request_key(signing_algo):
     model_key, _ = model_keys(signing_algo)
     first = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     second = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     ciphertext = encrypt_e2ee_text(
         'only for first request', response_key(first, signing_algo)
     )
     body = {'choices': [{'message': {'content': ciphertext}}]}
-    decrypted = await first.decrypt_response(httpx.Response(200, json=body))
+    decrypted = await first.decrypt_response(httpx2.Response(200, json=body))
     assert (
         decrypted.json()['choices'][0]['message']['content'] == 'only for first request'
     )
     with pytest.raises(VerificationError) as error:
-        await second.decrypt_response(httpx.Response(200, json=body))
+        await second.decrypt_response(httpx2.Response(200, json=body))
     assert error.value.failure.code == 'e2ee.decryption_failed'
     assert error.value.failure.details == {'field': 'choices[0].message.content'}
 
@@ -368,11 +368,11 @@ async def test_rejects_ciphertext_for_a_different_request_key(signing_algo):
 async def test_closing_a_decrypted_stream_closes_its_source():
     model_key, _ = model_keys('ed25519')
     prepared = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     source = ByteStream(b'data: [DONE]\n\n')
     response = await prepared.decrypt_response(
-        httpx.Response(
+        httpx2.Response(
             200, stream=source, headers={'content-type': 'text/event-stream'}
         )
     )
@@ -398,11 +398,11 @@ async def test_stream_failure_closes_source_and_reports_the_failed_boundary(
 ):
     model_key, _ = model_keys('ed25519')
     prepared = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     source = ByteStream(content)
     response = await prepared.decrypt_response(
-        httpx.Response(
+        httpx2.Response(
             200, stream=source, headers={'content-type': 'text/event-stream'}
         )
     )
@@ -417,14 +417,14 @@ async def test_rejects_invalid_http_bodies_without_leaking_schema_errors():
     model_key, _ = model_keys('ed25519')
     with pytest.raises(ApiError) as error:
         await prepare_e2ee_chat_request(
-            httpx.Request('POST', ENDPOINT, json={'model': 123}), model_key
+            httpx2.Request('POST', ENDPOINT, json={'model': 123}), model_key
         )
     assert error.value.failure.code == 'api.invalid_input'
     prepared = await prepare_e2ee_chat_request(
-        httpx.Request('POST', ENDPOINT, json=PROMPT), model_key
+        httpx2.Request('POST', ENDPOINT, json=PROMPT), model_key
     )
     with pytest.raises(ApiError) as error:
-        await prepared.decrypt_response(httpx.Response(200, json=[]))
+        await prepared.decrypt_response(httpx2.Response(200, json=[]))
     assert error.value.failure.code == 'api.invalid_response'
-    upstream_error = httpx.Response(429, text='retry later')
+    upstream_error = httpx2.Response(429, text='retry later')
     assert await prepared.decrypt_response(upstream_error) is upstream_error

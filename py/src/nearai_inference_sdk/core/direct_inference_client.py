@@ -3,7 +3,7 @@
 from collections.abc import Mapping, Sequence
 from time import time
 
-import httpx
+import httpx2
 
 from ..types.attestation_common import SigningAlgo
 from ..types.chat import CompletionSignature
@@ -32,7 +32,7 @@ from .pinned_tls import create_pinned_tls_client
 class _DirectSessionAttestationClient(DirectAttestationClient):
     def __init__(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         base_url: str,
         api_key: str | None,
         headers: Mapping[str, str],
@@ -185,11 +185,13 @@ class DirectInferenceClient(
             ),
         )
 
-    def _create_direct_client(self, fingerprints: tuple[str, ...]) -> httpx.AsyncClient:
+    def _create_direct_client(
+        self, fingerprints: tuple[str, ...]
+    ) -> httpx2.AsyncClient:
         return (
             create_pinned_tls_client(fingerprints)
             if fingerprints
-            else httpx.AsyncClient(timeout=None)
+            else httpx2.AsyncClient(timeout=None)
         )
 
 

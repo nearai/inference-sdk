@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 
 from .attestation_common import SigningAlgo
 
@@ -22,5 +22,5 @@ class E2eeModelKey:
 class PreparedE2eeChatRequest:
     """An encrypted request and the matching JSON/SSE response decryptor."""
 
-    request: httpx.Request
-    decrypt_response: Callable[[httpx.Response], Awaitable[httpx.Response]]
+    request: httpx2.Request
+    decrypt_response: Callable[[httpx2.Response], Awaitable[httpx2.Response]]

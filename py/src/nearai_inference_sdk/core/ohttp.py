@@ -1,4 +1,4 @@
-"""HTTPX transport for RFC 9292 BHTTP and draft-08 chunked OHTTP.
+"""HTTPX2 transport for RFC 9292 BHTTP and draft-08 chunked OHTTP.
 
 HPKE and its KDF/AEAD operations are provided by PyHPKE. This module only
 implements message framing. A successfully consumed response authenticates
@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 from pyhpke import AEADId, CipherSuite, ContextInterface, KDFId, KEMId, KEMKeyInterface
 
 from ..utils.errors import (
@@ -54,9 +54,9 @@ def create_ohttp_client(
     key_config: bytes,
     *,
     base_url: str,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx2.AsyncClient | None = None,
     forwarded_headers: Sequence[str] = (),
-) -> httpx.AsyncClient:
+) -> httpx2.AsyncClient:
     """Create an encrypted client from a caller-authenticated key configuration.
 
     Requests to the configured origin are sent to its ``/ohttp`` endpoint.
@@ -72,10 +72,10 @@ def create_ohttp_client(
     except Exception as cause:
         raise verification_failure('ohttp.key_config_invalid', cause=cause) from cause
     try:
-        url = httpx.URL(base_url)
+        url = httpx2.URL(base_url)
         if url.scheme not in ('https', 'http') or not url.host:
             raise ValueError('Expected an absolute HTTP(S) URL')
-    except (httpx.InvalidURL, ValueError) as cause:
+    except (httpx2.InvalidURL, ValueError) as cause:
         raise api_failure(
             'api.invalid_input',
             {
@@ -86,7 +86,7 @@ def create_ohttp_client(
             cause=cause,
         ) from cause
     transport = _OhttpTransport(config, url, http_client, forwarded_headers)
-    return httpx.AsyncClient(transport=transport, base_url=base_url, timeout=None)
+    return httpx2.AsyncClient(transport=transport, base_url=base_url, timeout=None)
 
 
 @dataclass(frozen=True)
@@ -110,24 +110,26 @@ class _KeyConfig:
         return cls(data[:1] + _SUITE_IDS, _SUITE.kem.deserialize_public_key(data[3:35]))
 
 
-class _OhttpTransport(httpx.AsyncBaseTransport):
+class _OhttpTransport(httpx2.AsyncBaseTransport):
     def __init__(
         self,
         config: _KeyConfig,
-        base_url: httpx.URL,
-        client: httpx.AsyncClient | None,
+        base_url: httpx2.URL,
+        client: httpx2.AsyncClient | None,
         forwarded_headers: Sequence[str],
     ) -> None:
         self._config = config
         self._relay = base_url.copy_with(path='/ohttp', query=None, fragment=None)
-        self._client = client if client is not None else httpx.AsyncClient(timeout=None)
+        self._client = (
+            client if client is not None else httpx2.AsyncClient(timeout=None)
+        )
         self._owns_client = client is None
         self._forwarded_headers = {
             'authorization',
             *(name.lower() for name in forwarded_headers),
         }
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if (request.url.scheme, request.url.host, request.url.port) != (
             self._relay.scheme,
             self._relay.host,
@@ -167,7 +169,7 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
             and name.decode('ascii').lower() not in _INNER_HEADERS
         ]
         headers.append((b'content-type', b'message/ohttp-chunked-req'))
-        outer_request = httpx.Request(
+        outer_request = httpx2.Request(
             'POST',
             self._relay,
             headers=headers,
@@ -222,8 +224,8 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
             if request.method == 'HEAD' or status in (204, 205, 304):
                 async for _ in stream:
                     pass
-                return httpx.Response(status, headers=response_headers, content=b'')
-            return httpx.Response(status, headers=response_headers, stream=stream)
+                return httpx2.Response(status, headers=response_headers, content=b'')
+            return httpx2.Response(status, headers=response_headers, stream=stream)
         except BaseException as cause:
             await outer.aclose()
             if not isinstance(cause, Exception):
@@ -248,7 +250,7 @@ def _vector(value: bytes) -> bytes:
     return _varint(len(value)) + value
 
 
-def _encode_request(request: httpx.Request, body: bytes) -> bytes:
+def _encode_request(request: httpx2.Request, body: bytes) -> bytes:
     excluded = _HOP_BY_HOP | {
         name.strip().lower().encode('ascii')
         for name in request.headers.get('connection', '').split(',')
@@ -363,7 +365,7 @@ async def _read_fields(
 
 
 async def _decrypt_response(
-    response: httpx.Response,
+    response: httpx2.Response,
     context: ContextInterface,
     enc: bytes,
 ) -> AsyncIterator[bytes]:
@@ -431,12 +433,12 @@ def _response_content_length(
     return length
 
 
-class _ResponseBody(httpx.AsyncByteStream):
+class _ResponseBody(httpx2.AsyncByteStream):
     def __init__(
         self,
         reader: _Reader,
         known_length: bool,
-        outer: httpx.Response,
+        outer: httpx2.Response,
         expected_length: int | None,
     ) -> None:
         self._reader = reader

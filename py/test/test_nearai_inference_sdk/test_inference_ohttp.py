@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-import httpx
+import httpx2
 import pytest
 from nacl.signing import SigningKey
 
@@ -15,8 +15,8 @@ from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MESSAGES, MODEL, Gateway
 
 
-class _RecordedStream(httpx.AsyncByteStream):
-    def __init__(self, stream: httpx.AsyncByteStream, chunks: list[bytes]):
+class _RecordedStream(httpx2.AsyncByteStream):
+    def __init__(self, stream: httpx2.AsyncByteStream, chunks: list[bytes]):
         self.stream = stream
         self.chunks = chunks
 
@@ -35,12 +35,12 @@ class ObliviousGateway(Gateway):
     def __init__(self, kind: str = 'provider_tee'):
         super().__init__(kind=kind)
         self.ohttp_gateway = OhttpGateway(handler=self.handle_inner)
-        self.outer_requests: list[httpx.Request] = []
+        self.outer_requests: list[httpx2.Request] = []
         self.transport_paths: list[str] = []
         self.response_chunks: list[list[bytes]] = []
         self.proof_failure: str | None = None
 
-    async def handle_inner(self, request: httpx.Request) -> httpx.Response:
+    async def handle_inner(self, request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == '/v1/chat/completions'
         response = await super().handle(request)
         chunks: list[bytes] = []
@@ -48,7 +48,7 @@ class ObliviousGateway(Gateway):
         response.stream = _RecordedStream(response.stream, chunks)
         return response
 
-    async def handle(self, request: httpx.Request) -> httpx.Response:
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.transport_paths.append(request.url.path)
         if request.url.path == '/ohttp':
             self.outer_requests.append(request)
@@ -77,7 +77,7 @@ class ObliviousGateway(Gateway):
                     else key.sign(config).signature.hex()
                 ),
             }
-            return httpx.Response(200, json=payload)
+            return httpx2.Response(200, json=payload)
         return response
 
     def client(self, **options) -> InferenceClient:
@@ -170,7 +170,7 @@ async def test_untrusted_ohttp_proof_blocks_inference(monkeypatch, failure, code
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
-        request = httpx.Request(
+        request = httpx2.Request(
             'POST',
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},

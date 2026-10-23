@@ -6,7 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-import httpx
+import httpx2
 from pydantic import ValidationError
 
 from ..schemas import ChatCompletionRequestSchema
@@ -35,7 +35,7 @@ _REPLACED_BODY_HEADERS = (
 
 
 async def prepare_e2ee_chat_request(
-    request: httpx.Request, model_key: E2eeModelKey
+    request: httpx2.Request, model_key: E2eeModelKey
 ) -> PreparedE2eeChatRequest:
     """Encrypt Chat fields for an already-verified key; perform no network I/O.
 
@@ -57,7 +57,7 @@ async def prepare_e2ee_chat_request(
     body = await decode_chat_request(request)
     client_key_pair = create_e2ee_client_key_pair(model_key.signing_algo)
     encrypted = encrypt_e2ee_chat_request(body, model_key)
-    headers = httpx.Headers(request.headers)
+    headers = httpx2.Headers(request.headers)
     for name in _REPLACED_BODY_HEADERS:
         headers.pop(name, None)
     headers['content-type'] = 'application/json'
@@ -70,11 +70,11 @@ async def prepare_e2ee_chat_request(
     headers['x-no-aliasing'] = 'true'
     headers['x-encrypt-all-fields'] = 'true'
 
-    async def decrypt_response(response: httpx.Response) -> httpx.Response:
+    async def decrypt_response(response: httpx2.Response) -> httpx2.Response:
         return await _decrypt_response(response, client_key_pair)
 
     return PreparedE2eeChatRequest(
-        request=httpx.Request(
+        request=httpx2.Request(
             request.method,
             request.url,
             headers=headers,
@@ -85,7 +85,7 @@ async def prepare_e2ee_chat_request(
     )
 
 
-async def decode_chat_request(request: httpx.Request) -> dict[str, Any]:
+async def decode_chat_request(request: httpx2.Request) -> dict[str, Any]:
     """Read and validate the external HTTP request's minimal Chat boundary."""
 
     try:
@@ -110,13 +110,13 @@ async def decode_chat_request(request: httpx.Request) -> dict[str, Any]:
         ) from cause
 
 
-def is_server_sent_event_response(response: httpx.Response) -> bool:
+def is_server_sent_event_response(response: httpx2.Response) -> bool:
     return (
         response.headers.get('content-type', '').lower().startswith('text/event-stream')
     )
 
 
-def remove_e2ee_headers(headers: httpx.Headers) -> None:
+def remove_e2ee_headers(headers: httpx2.Headers) -> None:
     for name in (
         'x-signing-algo',
         'x-client-pub-key',
@@ -128,12 +128,12 @@ def remove_e2ee_headers(headers: httpx.Headers) -> None:
 
 
 async def _decrypt_response(
-    response: httpx.Response, client_key_pair: E2eeClientKeyPair
-) -> httpx.Response:
+    response: httpx2.Response, client_key_pair: E2eeClientKeyPair
+) -> httpx2.Response:
     if not response.is_success:
         return response
-    headers = httpx.Headers(response.headers)
-    # Decryption invalidates body metadata and cache validators. HTTPX already
+    headers = httpx2.Headers(response.headers)
+    # Decryption invalidates body metadata and cache validators. HTTPX2 already
     # decompresses source bytes, so the transformed body must not be decoded again.
     for name in _REPLACED_BODY_HEADERS:
         headers.pop(name, None)
@@ -142,7 +142,7 @@ async def _decrypt_response(
     except RuntimeError:
         request = None
     if is_server_sent_event_response(response):
-        return httpx.Response(
+        return httpx2.Response(
             status_code=response.status_code,
             headers=headers,
             extensions=dict(response.extensions),
@@ -151,7 +151,7 @@ async def _decrypt_response(
         )
     try:
         raw = await response.aread()
-    except httpx.HTTPError as cause:
+    except httpx2.HTTPError as cause:
         raise api_failure(
             'api.transport_failed',
             {'resource': 'completion', 'reason': 'response_body'},
@@ -175,7 +175,7 @@ async def _decrypt_response(
     parsed = parse_e2ee_chat_response(body)
     decrypted = decrypt_e2ee_chat_response(parsed, client_key_pair)
     headers['content-type'] = 'application/json'
-    return httpx.Response(
+    return httpx2.Response(
         status_code=response.status_code,
         headers=headers,
         extensions=dict(response.extensions),
@@ -184,8 +184,8 @@ async def _decrypt_response(
     )
 
 
-class _DecryptedSseStream(httpx.AsyncByteStream):
-    def __init__(self, response: httpx.Response, client_key_pair: E2eeClientKeyPair):
+class _DecryptedSseStream(httpx2.AsyncByteStream):
+    def __init__(self, response: httpx2.Response, client_key_pair: E2eeClientKeyPair):
         self.response = response
         self.client_key_pair = client_key_pair
 

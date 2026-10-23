@@ -27,7 +27,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | --- | --- | --- | --- |
 | `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
-| `inference_client.send` | `(request)` | `httpx.Response` | The same verified Chat path using HTTP messages directly. |
+| `inference_client.send` | `(request)` | `httpx2.Response` | The same verified Chat path using HTTP messages directly. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
@@ -37,9 +37,9 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
 | `verify_direct_model_response` | `(request_body, response_body, signature, attestations)` | `tuple[VerifiedDirectModelAttestation, ...]` | Verifies exact bytes against all reports sharing the response signer. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
-| `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
+| `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx2.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
 | `verify_ohttp_key_config` | `(ohttp_attestation, signer)` | `bytes` | Authenticates the advertised OHTTP key configuration against a verified Ed25519 signer. |
-| `create_ohttp_client` | `(key_config, *, base_url, http_client=None, forwarded_headers=())` | `httpx.AsyncClient` | Encapsulates HTTP requests with OHTTP and returns decoded inner responses. |
+| `create_ohttp_client` | `(key_config, *, base_url, http_client=None, forwarded_headers=())` | `httpx2.AsyncClient` | Encapsulates HTTP requests with OHTTP and returns decoded inner responses. |
 | `AttestationClient` | `(api_key=None, *, base_url=..., headers=None)` | client | Owns Gateway credentials and retrieves deployment evidence and completion signatures. |
 | `client.fetch_completion_signature` | `(completion_id, *, signing_algo=None)` | `CompletionSignature` | Fetches one completion signature after a completion. |
 | `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Reads catalog capabilities, without cryptographic verification. |
@@ -107,11 +107,20 @@ pass. Cache hits return the original result without changing `verified_at`.
 
 ### HTTP integration and receipt results
 
-`http_client` returns a new, non-owning `httpx.AsyncClient` adapter accepted by
+`http_client` returns a new, non-owning `httpx2.AsyncClient` adapter accepted by
 `openai.AsyncOpenAI`. It uses the same verification, encryption, cache, and receipt
 capture as the built-in Chat interface. Closing an adapter or an external OpenAI
 client does not close the owning `InferenceClient` or discard its receipts. Keep
 the owner open while sending requests and verifying responses.
+
+All public HTTP request, response, timeout, stream, and transport types come from
+`httpx2`. When updating an existing integration, replace its `import httpx` with
+`import httpx2` and construct the corresponding HTTPX2 objects. HTTPX and HTTPX2
+objects are distinct types. OpenAI 2.x integrations require version 2.54 or later.
+
+HTTPX2 uses the operating system trust store for normal certificate verification;
+`SSL_CERT_FILE` and `SSL_CERT_DIR` can configure custom trust roots. Gateway SPKI
+pinning remains an additional check before HTTP headers or bodies are sent.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -219,15 +228,15 @@ signature, and a sequence of verified direct reports.
 
 | `prepare_e2ee_chat_request` parameter | Type | Description |
 | --- | --- | --- |
-| `request` | `httpx.Request` | JSON Chat Completions request; the helper does not send it. |
+| `request` | `httpx2.Request` | JSON Chat Completions request; the helper does not send it. |
 | `model_key` | `E2eeModelKey` | Public key extracted from verified model evidence. |
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `E2eeModelKey` | `signing_algo` | `SigningAlgo` | Selects Ed25519-v2 or legacy ECDSA encryption. |
 | | `public_key` | `str` | Hexadecimal model encryption public key, not an ECDSA address. |
-| `PreparedE2eeChatRequest` | `request` | `httpx.Request` | Encrypted request with model-routing and encryption headers. |
-| | `decrypt_response` | asynchronous `(httpx.Response) -> httpx.Response` | Decrypts JSON or streaming SSE using this request's response key. |
+| `PreparedE2eeChatRequest` | `request` | `httpx2.Request` | Encrypted request with model-routing and encryption headers. |
+| | `decrypt_response` | asynchronous `(httpx2.Response) -> httpx2.Response` | Decrypts JSON or streaming SSE using this request's response key. |
 
 The E2EE helper does not verify attestations or response signatures. Retain the
 encrypted request and response bytes for standalone response verification.
@@ -251,7 +260,7 @@ bytes to `create_ohttp_client`.
 |  | `signer` | `SigningIdentity` | Previously verified Ed25519 Gateway identity. Must match the configuration's signing key. |
 | `create_ohttp_client` | `key_config` | `bytes` | Authenticated raw configuration returned by `verify_ohttp_key_config`. |
 |  | `base_url` | `str` | Endpoint whose origin serves `/ohttp`. Inner requests must use the same origin. |
-|  | `http_client` | `httpx.AsyncClient \| None` | Outer transport. Pass a pinned client to preserve TLS binding. If omitted, creates and owns a normal HTTP client. |
+|  | `http_client` | `httpx2.AsyncClient \| None` | Outer transport. Pass a pinned client to preserve TLS binding. If omitted, creates and owns a normal HTTP client. |
 |  | `forwarded_headers` | `Sequence[str]` | Additional inner header names to expose on the outer request. Authorization is forwarded automatically; content and encryption-protocol headers stay inner-only. |
 
 | `OhttpAttestation` field | Type | Description |

@@ -1,4 +1,4 @@
-"""HTTPX-compatible HTTPS transport pinned to supplied SPKI fingerprints."""
+"""HTTPX2-compatible HTTPS transport pinned to supplied SPKI fingerprints."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Sequence
 from typing import Any
 
-import httpx
+import httpx2
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
@@ -16,7 +16,7 @@ from ..utils.errors import verification_failure
 
 def create_pinned_tls_client(
     spki_fingerprint: str | Sequence[str],
-) -> httpx.AsyncClient:
+) -> httpx2.AsyncClient:
     """Create an HTTP client with HTTPS connections pinned to the supplied SPKIs.
 
     Normal certificate-chain and hostname verification remain enabled. Use the
@@ -33,15 +33,15 @@ def create_pinned_tls_client(
     expected = frozenset(
         require_byte_length(value, 32, 'spki_fingerprint') for value in fingerprints
     )
-    return httpx.AsyncClient(transport=_PinnedTlsTransport(expected), timeout=None)
+    return httpx2.AsyncClient(transport=_PinnedTlsTransport(expected), timeout=None)
 
 
-class _PinnedTlsTransport(httpx.AsyncHTTPTransport):
+class _PinnedTlsTransport(httpx2.AsyncHTTPTransport):
     def __init__(self, expected_spki_fingerprint: frozenset[bytes]) -> None:
         super().__init__()
         self._expected_spki_fingerprint = expected_spki_fingerprint
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.url.scheme != 'https':
             raise ValueError('Pinned TLS requests require an HTTPS URL')
         previous_trace = request.extensions.get('trace')
@@ -50,7 +50,7 @@ class _PinnedTlsTransport(httpx.AsyncHTTPTransport):
             if event == 'connection.start_tls.complete':
                 stream = info['return_value']
                 try:
-                    # This awaited httpcore event follows certificate/hostname
+                    # This awaited httpcore2 event follows certificate/hostname
                     # validation but precedes all HTTP writes. The pool belongs
                     # to this pin set, so reused connections are already checked.
                     ssl_object = stream.get_extra_info('ssl_object')

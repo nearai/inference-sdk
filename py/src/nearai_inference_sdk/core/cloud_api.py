@@ -94,7 +94,7 @@ class _ApiClient:
         query: dict[str, str] = {}
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
-        # urllib leaves dots unescaped; HTTPX normalizes bare '.' and '..'.
+        # urllib leaves dots unescaped; HTTPX2 normalizes bare '.' and '..'.
         signature_id = quote(completion_id, safe='').replace('.', '%2E')
         response = await self._get_json(
             _endpoint(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-import httpx
+import httpx2
 import pytest
 
 from nearai_inference_sdk.core.ohttp import create_ohttp_client
@@ -33,8 +33,8 @@ async def test_json_roundtrip_preserves_exact_bytes_status_headers_and_private_f
     gateway.response_framing = framing
     gateway.fragment_size = fragment_size
     body = b'{ "prompt": "private exact bytes", "padding": "' + b'x' * 33000 + b'" }'
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(gateway.handle)
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(gateway.handle)
     ) as outer:
         async with create_ohttp_client(
             gateway.key_config,
@@ -100,7 +100,7 @@ async def test_response_content_length_matches_decoded_body(
     gateway.response_framing = framing
     gateway.response_headers = {'Content-Length': content_length}
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -146,7 +146,7 @@ async def test_bodyless_response_length_semantics(
         {} if content_length is None else {'Content-Length': content_length}
     )
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -164,7 +164,7 @@ async def test_bodyless_response_length_semantics(
 async def test_custom_host_is_preserved_inside_the_encrypted_request() -> None:
     gateway = OhttpGateway()
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -193,7 +193,7 @@ async def test_sse_done_does_not_skip_final_chunk_authentication(damage: str) ->
     setattr(gateway, damage, True)
     seen = bytearray()
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -218,7 +218,7 @@ async def test_bodyless_responses_still_authenticate_final_chunk(
     gateway.response_body = b''
     gateway.corrupt_final_response = True
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -239,14 +239,14 @@ async def test_streaming_backpressure_early_close_and_cancellation() -> None:
 
     source = Chunks(body())
 
-    async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
+    async def handler(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
             200, headers={'content-type': 'text/event-stream'}, stream=source
         )
 
     gateway = OhttpGateway(handler)
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -284,7 +284,7 @@ async def test_key_config_can_advertise_additional_cipher_suites() -> None:
     gateway = OhttpGateway()
     config = gateway.key_config[:35] + b'\x00\x08\x00\x01\x00\x03\x00\x01\x00\x01'
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(config, base_url=BASE_URL, http_client=outer) as client,
     ):
         assert (await client.get('models')).status_code == 200
@@ -310,13 +310,13 @@ async def test_owned_underlying_transport_is_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     closed = []
-    original_close = httpx.AsyncHTTPTransport.aclose
+    original_close = httpx2.AsyncHTTPTransport.aclose
 
-    async def close(transport: httpx.AsyncHTTPTransport) -> None:
+    async def close(transport: httpx2.AsyncHTTPTransport) -> None:
         closed.append(transport)
         await original_close(transport)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, 'aclose', close)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, 'aclose', close)
     async with create_ohttp_client(OhttpGateway().key_config, base_url=BASE_URL):
         pass
     assert closed
@@ -325,13 +325,13 @@ async def test_owned_underlying_transport_is_closed(
 async def test_outer_network_failure_is_retryable_and_cancellation_is_preserved() -> (
     None
 ):
-    failure: BaseException = httpx.ConnectError('network unavailable')
+    failure: BaseException = httpx2.ConnectError('network unavailable')
 
-    async def handle(_request: httpx.Request) -> httpx.Response:
+    async def handle(_request: httpx2.Request) -> httpx2.Response:
         raise failure
 
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as outer,
         create_ohttp_client(
             OhttpGateway().key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -351,7 +351,7 @@ async def test_cross_origin_and_unusable_key_fail_before_transport() -> None:
     gateway = OhttpGateway()
     config = gateway.key_config[:3] + bytes(32) + gateway.key_config[35:]
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(config, base_url=BASE_URL, http_client=outer) as client,
     ):
         with pytest.raises(ApiError) as invalid_url:
@@ -370,13 +370,15 @@ async def test_outer_http_status_is_structured(status: int, retryable: bool) -> 
     gateway = OhttpGateway()
     calls = []
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
-        return httpx.Response(status, headers={'location': 'https://elsewhere.example'})
+        return httpx2.Response(
+            status, headers={'location': 'https://elsewhere.example'}
+        )
 
     async with (
-        httpx.AsyncClient(
-            transport=httpx.MockTransport(handle), follow_redirects=True
+        httpx2.AsyncClient(
+            transport=httpx2.MockTransport(handle), follow_redirects=True
         ) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
@@ -397,18 +399,18 @@ async def test_transport_retains_timeouts_and_preserves_tls_verification_failure
     failure = verification_failure('binding.spki_fingerprint_mismatch')
     requests = []
 
-    async def handle(request: httpx.Request) -> httpx.Response:
+    async def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         raise failure
 
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
     ):
         with pytest.raises(VerificationError) as caught:
-            await client.get('models', timeout=httpx.Timeout(1, read=3))
+            await client.get('models', timeout=httpx2.Timeout(1, read=3))
     assert caught.value is failure
     assert requests[0].extensions['timeout']['read'] == 3
 
@@ -433,7 +435,7 @@ async def test_authenticated_but_malformed_bhttp_is_rejected(payload: bytes) -> 
     gateway = OhttpGateway()
     gateway.plaintext_response = payload
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,
@@ -448,7 +450,7 @@ async def test_informational_status_and_omitted_empty_sections(framing: int) -> 
     gateway = OhttpGateway()
     gateway.plaintext_response = bytes([framing]) + varint(103) + b'\0' + varint(200)
     async with (
-        httpx.AsyncClient(transport=httpx.MockTransport(gateway.handle)) as outer,
+        httpx2.AsyncClient(transport=httpx2.MockTransport(gateway.handle)) as outer,
         create_ohttp_client(
             gateway.key_config, base_url=BASE_URL, http_client=outer
         ) as client,

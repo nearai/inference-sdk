@@ -5,7 +5,7 @@ import codecs
 import json
 import os
 
-import httpx
+import httpx2
 from nearai_inference_sdk import (
     DirectAttestationClient,
     VerifiedDirectModelAttestations,
@@ -20,7 +20,7 @@ SIGNING_ALGO = 'ed25519'
 
 
 async def send_and_verify(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     attestation_client: DirectAttestationClient,
     verified: VerifiedDirectModelAttestations,
     *,
@@ -98,7 +98,7 @@ async def main() -> None:
         headers['Authorization'] = f'Bearer {api_key}'
     # Direct fetch currently requests no SPKI fingerprint, matching the JS client.
     # Normal HTTPS certificate validation still applies.
-    async with httpx.AsyncClient(headers=headers, timeout=None) as client:
+    async with httpx2.AsyncClient(headers=headers, timeout=None) as client:
         await run_non_streaming_example(client, attestation_client, verified)
         await run_streaming_example(client, attestation_client, verified)
 

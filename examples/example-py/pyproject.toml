@@ -3,8 +3,8 @@ name = "example-py"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.28.1,<0.29",
-    "openai>=2.0.0,<3",
+    "httpx2>=2.16.0,<3",
+    "openai[httpx2]>=2.54.0,<3",
     "nearai-inference-sdk",
 ]
 

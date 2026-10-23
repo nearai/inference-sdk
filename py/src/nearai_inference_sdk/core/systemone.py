@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
-import httpx
+import httpx2
 from pydantic import ValidationError
 
 from ..schemas import (
@@ -82,9 +82,9 @@ class InferenceSystemOne:
                 'accept-encoding': 'identity',
             }
         )
-        http_request = httpx.Request(
+        http_request = httpx2.Request(
             'POST',
-            httpx.URL(client.base_url).join('systemone'),
+            httpx2.URL(client.base_url).join('systemone'),
             headers=request_headers,
             content=request_body,
         )
@@ -95,7 +95,7 @@ class InferenceSystemOne:
             response = await session.http_client.send(http_request, stream=True)
         except (ApiError, VerificationError):
             raise
-        except httpx.HTTPError as error:
+        except httpx2.HTTPError as error:
             raise api_failure(
                 'api.transport_failed',
                 {'resource': 'systemone', 'reason': 'request'},
@@ -129,7 +129,7 @@ class InferenceSystemOne:
                 raise _invalid_response('System One X-Generation-Id') from None
             try:
                 response_body = await response.aread()
-            except httpx.HTTPError as error:
+            except httpx2.HTTPError as error:
                 raise api_failure(
                     'api.transport_failed',
                     {'resource': 'systemone', 'reason': 'response_body'},

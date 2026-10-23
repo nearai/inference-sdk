@@ -122,6 +122,10 @@ and verify replies through it. See the
 [OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/client_openai_sdk.py).
 Only Chat Completions are supported; the Responses API is not supported.
 
+The adapter and low-level HTTP APIs use `httpx2`. Use `httpx2.Request`,
+`httpx2.Timeout`, and HTTPX2 transports for custom HTTP integrations. OpenAI
+Python 2.54 or later in the 2.x series is required and installed by this package.
+
 ## Advanced APIs
 
 - **System One decisions:** send structured questions with `client.systemone.create()`
@@ -129,7 +133,7 @@ Only Chat Completions are supported; the Responses API is not supported.
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   With [standalone functions](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#standalone-workflow),
   your application verifies every model candidate and retains the exact wire bytes.
-- **Standalone E2EE:** `prepare_e2ee_chat_request()` encrypts a raw HTTPX Chat
+- **Standalone E2EE:** `prepare_e2ee_chat_request()` encrypts a raw HTTPX2 Chat
   request and supplies its JSON/SSE decryptor. Key verification and response
   signature verification remain the application's responsibility.
 - **Direct endpoints (experimental):** `DirectInferenceClient` and

@@ -6,7 +6,7 @@ import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from io import BytesIO
 
-import httpx
+import httpx2
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
@@ -56,7 +56,7 @@ def read_fields(data: BytesIO, known: bool) -> list[tuple[bytes, bytes]]:
     return fields
 
 
-class Chunks(httpx.AsyncByteStream):
+class Chunks(httpx2.AsyncByteStream):
     def __init__(self, chunks: AsyncIterator[bytes]) -> None:
         self.chunks = chunks
         self.closed = False
@@ -73,7 +73,7 @@ class Chunks(httpx.AsyncByteStream):
 class OhttpGateway:
     def __init__(
         self,
-        handler: Callable[[httpx.Request], Awaitable[httpx.Response]] | None = None,
+        handler: Callable[[httpx2.Request], Awaitable[httpx2.Response]] | None = None,
     ) -> None:
         self.suite = CipherSuite.new(
             KEMId.DHKEM_X25519_HKDF_SHA256, KDFId.HKDF_SHA256, AEADId.AES128_GCM
@@ -85,8 +85,8 @@ class OhttpGateway:
             + b'\x00\x04\x00\x01\x00\x01'
         )
         self.handler = handler
-        self.requests: list[httpx.Request] = []
-        self.outer_requests: list[httpx.Request] = []
+        self.requests: list[httpx2.Request] = []
+        self.outer_requests: list[httpx2.Request] = []
         self.streams: list[Chunks] = []
         self.response_status = 200
         self.response_headers = {'content-type': 'application/json'}
@@ -98,7 +98,7 @@ class OhttpGateway:
         self.response_framing = 3
         self.plaintext_response: bytes | None = None
 
-    async def handle(self, request: httpx.Request) -> httpx.Response:
+    async def handle(self, request: httpx2.Request) -> httpx2.Response:
         self.outer_requests.append(request)
         assert request.method == 'POST' and request.url.path == '/ohttp'
         assert request.headers['content-type'] == 'message/ohttp-chunked-req'
@@ -124,8 +124,8 @@ class OhttpGateway:
         assert read_fields(bhttp, framing == 0) == []
         assert not any(bhttp.read())
         if not authority:
-            authority = httpx.Headers(headers)['host'].encode('ascii')
-        inner = httpx.Request(
+            authority = httpx2.Headers(headers)['host'].encode('ascii')
+        inner = httpx2.Request(
             method.decode(),
             b''.join((scheme, b'://', authority, path)).decode(),
             headers=headers,
@@ -135,7 +135,7 @@ class OhttpGateway:
         response = (
             await self.handler(inner)
             if self.handler
-            else httpx.Response(
+            else httpx2.Response(
                 self.response_status,
                 headers=self.response_headers,
                 content=self.response_body,
@@ -143,7 +143,7 @@ class OhttpGateway:
         )
         stream = Chunks(self._response_chunks(response, context, enc))
         self.streams.append(stream)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             headers={'content-type': 'message/ohttp-chunked-res'},
             stream=stream,
@@ -151,7 +151,7 @@ class OhttpGateway:
 
     async def _response_chunks(
         self,
-        response: httpx.Response,
+        response: httpx2.Response,
         context: ContextInterface,
         enc: bytes,
     ) -> AsyncIterator[bytes]:

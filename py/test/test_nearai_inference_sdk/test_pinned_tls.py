@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 import pytest_asyncio
 from aiohttp import web
@@ -97,12 +97,12 @@ async def tls_server(tmp_path: Path) -> AsyncIterator[TlsServer]:
 
 
 def trust_test_certificate(monkeypatch: pytest.MonkeyPatch, server: TlsServer) -> None:
-    initialize_transport = httpx.AsyncHTTPTransport.__init__
+    initialize_transport = httpx2.AsyncHTTPTransport.__init__
 
-    def trusted_transport(transport: httpx.AsyncHTTPTransport) -> None:
+    def trusted_transport(transport: httpx2.AsyncHTTPTransport) -> None:
         initialize_transport(transport, verify=server.trusted_context)
 
-    monkeypatch.setattr(httpx.AsyncHTTPTransport, '__init__', trusted_transport)
+    monkeypatch.setattr(httpx2.AsyncHTTPTransport, '__init__', trusted_transport)
 
 
 @pytest.mark.parametrize('multiple_pins', [False, True])
@@ -154,12 +154,12 @@ async def test_pinned_client_honors_an_explicit_httpx_read_timeout(
         client.stream(
             'GET',
             f'{tls_server.url}/stream',
-            timeout=httpx.Timeout(None, read=0.01),
+            timeout=httpx2.Timeout(None, read=0.01),
         ) as response,
     ):
         chunks = response.aiter_bytes()
         assert await anext(chunks) == b'first'
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(httpx2.ReadTimeout):
             await anext(chunks)
 
 
@@ -193,7 +193,7 @@ async def test_spki_match_does_not_replace_certificate_or_hostname_verification(
         url = url.replace('localhost', '127.0.0.1')
 
     async with create_pinned_tls_client(tls_server.spki_fingerprint) as client:
-        with pytest.raises(httpx.TransportError):
+        with pytest.raises(httpx2.TransportError):
             await client.post(url, content=b'private prompt')
 
     assert tls_server.received_headers == []
