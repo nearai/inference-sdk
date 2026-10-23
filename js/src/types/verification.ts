@@ -45,12 +45,12 @@ export type TdxQuoteVerifier = (
 export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
 
 export type CreateTdxQuoteVerifierParams = {
-  /** Collateral base URL. Defaults to Phala PCCS in browsers and Intel in Node.js. */
+  /** Collateral base URL. Defaults to the NEAR AI proxy in browsers and Intel in Node.js. */
   readonly pccsUrl?: string;
 };
 
 export type CreateGpuEvidenceVerifierParams = {
-  /** GPU attestation POST URL. Defaults to NVIDIA NRAS. */
+  /** GPU attestation POST URL. Defaults to the NEAR AI proxy in browsers and NVIDIA NRAS in Node.js. */
   readonly nrasUrl?: string;
   /** Public-key GET URL. Defaults to NVIDIA's JWKS. Use only a trusted proxy. */
   readonly jwksUrl?: string;

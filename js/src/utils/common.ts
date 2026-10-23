@@ -1,5 +1,4 @@
 import { Buffer } from 'buffer';
-import { INTEL_PCCS_API_URL_BROWSER, INTEL_PCCS_API_URL_NODE } from './consts';
 import { inputError } from './errors';
 
 type RequireByteLengthParams = {
@@ -73,17 +72,4 @@ export function generateNonce(): string {
   const nonce = new Uint8Array(32);
   globalThis.crypto.getRandomValues(nonce);
   return Buffer.from(nonce).toString('hex');
-}
-
-export function getIntelPccsApiUrl(): string {
-  return hasNodeRuntime()
-    ? INTEL_PCCS_API_URL_NODE
-    : INTEL_PCCS_API_URL_BROWSER;
-}
-
-function hasNodeRuntime(): boolean {
-  const runtime = globalThis as typeof globalThis & {
-    process?: { versions?: { node?: unknown } };
-  };
-  return typeof runtime.process?.versions?.node === 'string';
 }

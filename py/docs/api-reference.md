@@ -541,21 +541,16 @@ Both factories are synchronous and return asynchronous verifier callbacks for
 the `verifiers.tdx_quote` and `verifiers.gpu_evidence` fields. Their optional
 arguments are independent of `AttestationClient.base_url`.
 
-| Factory | Argument | Default |
-| --- | --- | --- |
-| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
-| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
-| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+| Factory | Argument | Default | Description |
+| --- | --- | --- | --- |
+| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` | PCCS base URL. |
+| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Complete GPU evidence POST URL. |
+| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent signing-key URL. |
 
-`pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral
-paths. A proxy must preserve PCCS bodies and issuer-chain headers, and serve
-`/sgx/certification/v4/rootcacrl` to avoid a direct root-CRL fallback. See the
-[proxy configuration example](./verification-guide.md#configure-attestation-service-urls).
-
-`nras_url` receives the evidence POST; `jwks_url` supplies the trusted signing
-keys. Use only a trusted JWKS source: checking the fixed NVIDIA issuer does not
-authenticate an arbitrary JWKS endpoint. The full signature, issuer, time,
-nonce, and verdict checks remain enabled.
+DCAP constructs SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is
+used as the POST endpoint; `jwks_url` independently selects a trusted signing-key
+source. See the
+[configuration example](./verification-guide.md#configure-attestation-service-urls).
 
 Model verification checks the payload nonce against the client nonce before
 calling a NVIDIA verifier. The factory additionally requires a 32-byte
