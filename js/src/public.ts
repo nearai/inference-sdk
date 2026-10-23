@@ -82,6 +82,7 @@ export type {
   ComposeManagerAttestation,
   ComposeManagerDeploymentFailureReason,
   VerifiedComposeManagerAttestation,
+  VerifiedRecordedDeployment,
   VerifyComposeManagerDeploymentImageProvenanceParams,
 } from './types/compose-manager';
 export type {

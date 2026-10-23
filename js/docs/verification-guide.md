@@ -871,3 +871,26 @@ try {
   console.log(error.failure.code);
 }
 ```
+
+### Inspect recorded deployment verification
+
+After obtaining authenticated deployment evidence, retain the helper's result:
+
+```ts
+const report = await verifyComposeManagerDeploymentImageProvenance({
+  deployment,
+  imagePolicies: modelImagePolicies,
+  composeManagerImagePolicy,
+});
+console.log(report.scope, report.compose);
+for (const image of report.verifiedImages) {
+  console.log(image.service, image.digest, image.build.commit);
+}
+console.log(report.composeManagerImage);
+```
+
+The report contains the selections actually checked, without refetching evidence.
+`selectedServices` includes the effective service selection; `verifiedImages` only
+includes images covered by your policies. This is recorded provenance, not proof
+of current execution or a unique instance. A failed required check rejects instead
+of returning a partial successful report.

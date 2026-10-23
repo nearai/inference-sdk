@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 import type {
   ComposeManagerDeploymentFailureReason,
+  VerifiedRecordedDeployment,
   VerifyComposeManagerDeploymentImageProvenanceParams,
 } from '../types/compose-manager';
 import { sha256 } from '../utils/common';
@@ -34,7 +35,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
   composeFile,
   githubToken,
   githubApiUrl,
-}: VerifyComposeManagerDeploymentImageProvenanceParams): Promise<void> {
+}: VerifyComposeManagerDeploymentImageProvenanceParams): Promise<VerifiedRecordedDeployment> {
   if (Object.keys(imagePolicies).length === 0) {
     throw new VerificationError({
       code: 'provenance.deployment_images_invalid',
@@ -95,7 +96,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     githubApiUrl,
   });
 
-  await verifyComposeImageProvenance({
+  const images = await verifyComposeImageProvenance({
     dockerCompose,
     imagePolicies,
     githubToken,
@@ -103,7 +104,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     services: action.services,
   });
   // A stale compose reference cannot satisfy the current manager's policy.
-  await verifyRequiredImageProvenance(
+  const managerBuild = await verifyRequiredImageProvenance(
     {
       repository: managerRepository,
       digest: managerDigest,
@@ -111,6 +112,22 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     },
     { githubToken, githubApiUrl },
   );
+  return {
+    scope: 'recorded_deployment_provenance',
+    compose: {
+      repository: composeRepository,
+      commit,
+      file,
+      sha256: digest.toLowerCase(),
+      selectedServices: images.selectedServices,
+    },
+    verifiedImages: images.verifiedImages,
+    composeManagerImage: {
+      imageRepository: managerRepository,
+      digest: managerDigest,
+      build: managerBuild,
+    },
+  };
 }
 
 async function fetchComposeFile({

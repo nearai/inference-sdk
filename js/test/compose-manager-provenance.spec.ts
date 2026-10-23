@@ -598,7 +598,7 @@ describe('Compose Manager deployment image provenance', () => {
       .mockImplementation(async () =>
         Response.json({ attestations: [{ bundle: BUNDLE }] }),
       );
-    await verifyComposeManagerDeploymentImageProvenance({
+    const report = await verifyComposeManagerDeploymentImageProvenance({
       deployment,
       composeFile: 'prod/model.yaml',
       imagePolicies: IMAGE_POLICIES,
@@ -607,9 +607,82 @@ describe('Compose Manager deployment image provenance', () => {
         imageRepository: 'nearaidev/compose-manager',
       },
     });
+    expect(report.compose.file).toBe('prod/model.yaml');
+    expect(report.composeManagerImage.imageRepository).toBe(
+      'nearaidev/compose-manager',
+    );
     expect(fetch.mock.calls[0][0]).toContain('/contents/prod/model.yaml?');
     expect(fetch).toHaveBeenCalledTimes(3);
   });
+
+  test.each([undefined, [], ['model']])(
+    'reports effective services and only checked images for selection %j',
+    async (services) => {
+      const verified = await verifyManagerFixture();
+      const manager = verified.deployment.composeManager;
+      if (manager === undefined) throw new Error('Missing manager evidence');
+      const compose = `${COMPOSE}  sidecar:\n    image: example/unchecked:latest\n`;
+      const digest = sha256(compose).toString('hex');
+      const deployment = {
+        ...verified.deployment,
+        composeManager: {
+          ...manager,
+          actions: manager.actions.map((action) =>
+            action.action === 'compose_up'
+              ? {
+                  ...action,
+                  file_sha256: digest,
+                  ...(services === undefined ? { services: [] } : { services }),
+                }
+              : action,
+          ),
+        },
+      };
+      if (services === undefined) {
+        delete (deployment.composeManager.actions[0] as { services?: string[] })
+          .services;
+      }
+      jest
+        .spyOn(TrustedRootProvider.prototype, 'getTrustedRoot')
+        .mockResolvedValue(TRUSTED_ROOT);
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(compose))
+        .mockImplementation(async () =>
+          Response.json({ attestations: [{ bundle: BUNDLE }] }),
+        );
+
+      const report = await verifyComposeManagerDeploymentImageProvenance({
+        deployment,
+        imagePolicies: IMAGE_POLICIES,
+        composeManagerImagePolicy: MANAGER_POLICY,
+      });
+
+      expect(report.scope).toBe('recorded_deployment_provenance');
+      expect(report.compose).toEqual({
+        repository: 'nearai/cvm-compose-files',
+        commit: COMMIT,
+        file: 'prod/model.yaml',
+        sha256: digest,
+        selectedServices: services?.length ? ['model'] : ['model', 'sidecar'],
+      });
+      expect(report.verifiedImages).toHaveLength(1);
+      expect(report.verifiedImages[0]).toMatchObject({
+        service: 'model',
+        imageRepository: 'nearaidev/compose-manager-launcher',
+        digest: report.composeManagerImage.digest,
+        build: { repository: POLICY.repository, workflow: POLICY.workflow },
+      });
+      expect(report.verifiedImages[0].build.digest).toBe(
+        report.verifiedImages[0].digest,
+      );
+      expect(report.composeManagerImage).toMatchObject({
+        imageRepository: MANAGER_POLICY.imageRepository,
+        build: { repository: POLICY.repository, workflow: POLICY.workflow },
+      });
+      expect(fetch).toHaveBeenCalledTimes(3);
+    },
+  );
 
   test('rejects malformed manager evidence at the API boundary', () => {
     const decode = () =>
