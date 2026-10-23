@@ -132,7 +132,9 @@ and streaming Chat. Direct endpoints are experimental: they omit Gateway
 verification and do not bind direct TLS identity to attestation. Normal HTTPS
 validation remains enabled. Use Gateway clients for production.
 
-The adapter only accepts POSTs to its configured `chat/completions` endpoint.
+The Gateway adapter accepts POSTs to its configured `chat/completions` and
+`responses` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
+for JSON, SSE, and Gateway receipt verification.
 Use `AttestationClient` for metadata and evidence. Arbitrary/future Chat fields
 are preserved; the SDK encrypts only the documented protocol fields.
 

@@ -14,7 +14,7 @@ const model = (modelId, providerType, amount = 1, decisions = false) => ({
   outputCostPerToken: { amount, scale: 6 },
   metadata: {
     providerType,
-    ownedBy: decisions ? 'typesafe' : 'example',
+    ownedBy: decisions ? 'typesafe' : modelId === 'external/chat' ? 'openai' : 'example',
     attestationSupported: providerType === 'vllm',
     architecture: {
       inputModalities: ['text'],
@@ -57,29 +57,31 @@ async function runSelector(t, models = catalog, language = 'all', pageSize = 100
   return { result: JSON.parse(stdout), requests };
 }
 
-test('selects Chat and System One from one catalog request', async t => {
+test('selects Chat, Responses and System One from one catalog request', async t => {
   const { result, requests } = await runSelector(t);
   assert.deepEqual(result, [
     { id: 'near/a', provider: 'near', endpoint: 'chat' },
     { id: 'near/b', provider: 'near', endpoint: 'chat' },
     { id: 'chutes/a', provider: 'chutes', endpoint: 'chat' },
     { id: 'external/chat', provider: 'external', endpoint: 'chat' },
+    { id: 'near/a', provider: 'near', endpoint: 'responses' },
+    { id: 'external/chat', provider: 'external', endpoint: 'responses' },
     { id: 'typesafe/cheap', provider: 'external', endpoint: 'systemone' },
   ]);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].pathname, '/v1/model/list');
 });
 
-test('loads each catalog page once for both selections', async t => {
+test('loads each catalog page once for all selections', async t => {
   const { result, requests } = await runSelector(t, catalog, 'all', 2);
   assert.equal(result.find(model => model.endpoint === 'systemone').id, 'typesafe/cheap');
   assert.deepEqual(requests.map(url => url.searchParams.get('offset')), ['0', '2', '4']);
 });
 
-test('a language without System One tests needs only Chat models', async t => {
+test('a language without System One tests needs Chat and Responses models', async t => {
   const { result } = await runSelector(t, catalog.slice(0, 4), 'rust');
-  assert.equal(result.length, 4);
-  assert.ok(result.every(model => model.endpoint === 'chat'));
+  assert.equal(result.length, 6);
+  assert.ok(result.every(model => model.endpoint !== 'systemone'));
 });
 
 test('a language with System One tests requires a decision model', async t => {
@@ -104,3 +106,19 @@ for (const separator of ['\n', '\r', '\r\n']) {
     await assert.rejects(runSelector(t, models), /Model IDs must not contain line breaks/);
   });
 }
+
+test('Responses selects OpenAI even when another external provider is cheaper', async t => {
+  const { result } = await runSelector(t, [...catalog, model('other/cheap', 'external', 0)]);
+  assert.equal(result.find(m => m.endpoint === 'chat' && m.provider === 'external').id, 'other/cheap');
+  assert.deepEqual(result.filter(m => m.endpoint === 'responses'), [
+    { id: 'near/a', provider: 'near', endpoint: 'responses' },
+    { id: 'external/chat', provider: 'external', endpoint: 'responses' },
+  ]);
+});
+
+test('Responses requires OpenAI ownership rather than any external model', async t => {
+  const models = catalog.map(m => m.modelId === 'external/chat'
+    ? { ...m, metadata: { ...m.metadata, ownedBy: 'other' } }
+    : m);
+  await assert.rejects(runSelector(t, models), /Expected an OpenAI external text model for Responses/);
+});

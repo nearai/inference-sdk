@@ -1,6 +1,7 @@
 # NEAR AI Inference SDK for TypeScript
 
-`@nearai/inference-sdk` provides OpenAI-compatible Chat Completions with
+`@nearai/inference-sdk` provides OpenAI-compatible Chat Completions and
+[Responses](./docs/verification-guide.md#responses-api) with
 Gateway and model attestation verification, response signature verification,
 and optional encryption. Use `InferenceClient` to get started in Node.js or
 [browser applications](#browser-applications).
