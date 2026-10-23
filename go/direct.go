@@ -67,6 +67,7 @@ func VerifyDirectModelResponse(id string, request, response []byte, sig Completi
 		return VerifiedCompletionResult{}, e
 	}
 	return VerifiedCompletionResult{
+		ID:            id,
 		CompletionID:  id,
 		SignatureKind: sig.Kind,
 		Signature:     sig,

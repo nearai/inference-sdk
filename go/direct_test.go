@@ -139,6 +139,9 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	if result.ID != "chat" || result.CompletionID != result.ID {
+		t.Fatal("receipt ID alias mismatch")
+	}
 	if result.Attestation != nil || len(result.Attestations) != 2 {
 		t.Fatal("ambiguous instance attribution")
 	}

@@ -121,7 +121,7 @@ async def test_nras_factories_route_evidence_and_jwks_independently(
         ('https://second.example/attest', 'https://second.example/keys'),
         ('https://first.example/nras/v3/attest/gpu', 'https://first.example/keys'),
         (
-            'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
+            'https://nras.attestation.nvidia.com/v3/attest/gpu',
             'https://nras.attestation.nvidia.com/.well-known/jwks.json',
         ),
         (
@@ -129,7 +129,7 @@ async def test_nras_factories_route_evidence_and_jwks_independently(
             'https://nras.attestation.nvidia.com/.well-known/jwks.json',
         ),
         (
-            'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
+            'https://nras.attestation.nvidia.com/v3/attest/gpu',
             'https://first.example/keys',
         ),
     ):

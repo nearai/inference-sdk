@@ -142,3 +142,13 @@ export type {
   VerificationErrorJson,
   VerificationFailure,
 } from './utils/errors';
+
+export type {
+  InferenceSystemOne,
+  SystemOneRequest,
+  SystemOneQuestion,
+  SystemOneResponse,
+  SystemOneAnswer,
+  SystemOneRequestOptions,
+  SystemOneResult,
+} from './types/systemone';

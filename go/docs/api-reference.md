@@ -51,6 +51,31 @@ inference client when finished.
 Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
 for eviction, cancellation, and retention behavior.
 
+## System One decisions
+
+| Method | Result |
+| --- | --- |
+| `CreateSystemOne(ctx, request)` | `SystemOneResult{Data, DecisionID}` |
+| `CreateSystemOneWithHeaders(ctx, request, headers)` | Same result, with per-call headers. |
+| `VerifyResponse(ctx, result.DecisionID)` | Verified receipt for the captured request and response. |
+
+Use a Gateway client with E2EE and OHTTP disabled. Each create call verifies the
+required deployments and sends one nonstreaming request. `DecisionID` comes from
+`X-Generation-Id`. Verify the receipt before using `Data`.
+
+Requests accept `SystemOneRequest` or another JSON-serializable value. Each
+question requires `Instructions` as text, an object, or an array. Responses
+support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
+Structured legend numbers use `json.Number`, while score and probability fields
+use `float64`.
+
+System One shares Chat's per-model session and the client's
+body limits and receipt cache.
+Cancellation uses `ctx`, and `Close` cancels outstanding operations.
+
+Inference is sent once. Retry transient receipt lookups through the verification
+method while the response remains cached.
+
 ## Evidence retrieval
 
 Fetching reports does not verify them. Keep the returned `ClientBinding` with
@@ -102,8 +127,8 @@ when finished.
 
 | Factory | Parameter or field | Default | Description |
 | --- | --- | --- | --- |
-| `CreateTDXQuoteVerifier` | `pccsURL string` | `https://cloud.near.ai/api/proxy/pccs` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
-| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASURL string` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` | Complete GPU evidence POST URL. An empty string selects the default. |
+| `CreateTDXQuoteVerifier` | `pccsURL string` | `https://api.trustedservices.intel.com` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
+| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASURL string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Complete GPU evidence POST URL. An empty string selects the default. |
 | | `GPUVerifierOptions.JWKSURL string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent trusted signing-key URL. An empty string selects the default. |
 | | `GPUVerifierOptions.HTTPClient *http.Client` | Built-in HTTP client | Optional HTTP configuration for NRAS and JWKS requests. |
 
@@ -301,6 +326,8 @@ type AttestationVerificationResult struct {
 }
 
 type VerifiedCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature

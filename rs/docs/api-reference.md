@@ -48,6 +48,31 @@ An explicit model policy or deployment callback rejects Gateway-only models.
 `InferenceError` wraps `ApiError` and `VerificationError` and exposes `code()` and
 `retryable()`. Retryable receipt-fetch failures can be retried without replaying Chat.
 
+## System One decisions
+
+| Method | Result |
+| --- | --- |
+| `systemone_create(&request)` | `SystemOneResult { data, decision_id }` |
+| `systemone_create_with_headers(&request, headers)` | Same result, with per-call headers. |
+| `verify_response(&result.decision_id)` | Verified receipt for the captured request and response. |
+
+Use a Gateway client with E2EE and OHTTP disabled. Each create call verifies the
+required deployments and sends one nonstreaming request. `decision_id` comes
+from `X-Generation-Id`. Verify the receipt before using `data`.
+
+Requests accept `SystemOneRequest` or another serializable JSON value. Each
+question requires `instructions` as text, an object, or an array. Responses
+support `noul`, `choice`, and `score`, preserving unknown fields. Structured
+content preserves arbitrary-precision JSON numbers; scores and probabilities
+use finite `f64` values.
+
+System One shares Chat's per-model session and the client's
+body limits and receipt cache.
+Dropping the request future cancels the operation.
+
+Inference is sent once. Retry transient receipt lookups through the verification
+method while the response remains cached.
+
 ## Standalone transport and experimental direct APIs
 
 - `prepare_e2ee_chat_request(request, &E2eeModelKey)` returns
@@ -415,8 +440,8 @@ Gateway `reported_quote_data` is required.
 | `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
 | `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA verifier. Accepts a complete GPU evidence POST URL. `with_client` accepts a `reqwest::Client`. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
-| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://cloud.near.ai/api/proxy/pccs` |
-| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
+| `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | `DEFAULT_NVIDIA_JWKS_URL` | `&str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,

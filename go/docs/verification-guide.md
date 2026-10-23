@@ -108,8 +108,8 @@ for _, model := range evidence.Models {
 }
 ```
 
-`Verify` shares Chat's cache and in-flight work without sending an inference
-request. Cached evidence keeps its original verification timestamp. Every
+`Verify` shares Chat and System One's cache and in-flight work without sending
+an inference request. Cached evidence keeps its original verification timestamp. Every
 returned model report must pass; unsupported model providers use Gateway-only
 verification, which cannot satisfy E2EE or a model deployment policy.
 
@@ -225,6 +225,20 @@ until `VerifyResponse` succeeds. Close abandoned streams to cancel their request
 Incomplete or failed bodies cannot be verified later. With raw `net/http`, consume
 the response body through EOF and close it; SSE events may span multiple reads.
 
+## Verify System One decisions
+
+Create a Gateway client with E2EE and OHTTP disabled. Send structured questions
+with `client.CreateSystemOne(ctx, request)`, then call
+`client.VerifyResponse(ctx, result.DecisionID)` before using `result.Data.Answers`.
+
+Self-hosted models use `x-model-pub-key` routing and verify the response against
+the selected model signer, as Chat does. The endpoint must support this routing.
+External models use Gateway signatures.
+
+The [API reference](./api-reference.md#system-one-decisions) describes request
+and result types. To try a complete application, run the
+[decision example](../../examples/example-go/README.md#system-one-decisions).
+
 ## Configure verification and deployment policies
 
 The default policy accepts `UpToDate` and `OutOfDate` TCB statuses, rejects debug
@@ -332,8 +346,8 @@ The built-in verifiers use these defaults:
 
 | Service | URL |
 | --- | --- |
-| PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 To use your own services, configure the verifier callbacks:

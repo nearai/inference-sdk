@@ -110,6 +110,8 @@ type AttestationVerificationResult struct {
 	VerifiedAt time.Time
 }
 type VerifiedCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature

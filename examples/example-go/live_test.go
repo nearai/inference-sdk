@@ -18,7 +18,7 @@ func TestLiveOpenAI(t *testing.T) {
 			t.Fatalf("%s is required", name)
 		}
 	}
-	var models []struct{ ID, Provider string }
+	var models []struct{ ID, Provider, Endpoint string }
 	if err := json.Unmarshal([]byte(os.Getenv("NEARAI_E2E_MODELS")), &models); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestLiveOpenAI(t *testing.T) {
 	}
 	c.Model = ""
 	for _, m := range models {
-		if m.Provider == "near" {
+		if m.Endpoint == "chat" && m.Provider == "near" {
 			c.Model = m.ID
 			break
 		}

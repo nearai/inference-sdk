@@ -14,8 +14,8 @@ and cache settings. Only Chat Completions are accepted by `send`.
 The client owns authentication and forces `Accept-Encoding: identity` so captured
 bytes match the completion receipt, including when adapting an existing request.
 
-`verify(model)` and Chat share a per-model cache and in-flight work. Gateway and
-model checks run concurrently after obtaining Gateway TLS evidence. Every returned
+`verify(model)`, Chat, and System One share a per-model cache and in-flight work.
+Gateway and model checks run concurrently after obtaining Gateway TLS evidence. Every returned
 model candidate must pass; an empty set for an attestation-capable model is an
 error. The model key must match the quote-authenticated signer before it is used
 for encryption or routing. Receipt verification requires the selected model
@@ -165,6 +165,20 @@ literals for `ModelAttestation` and `VerifiedModelAttestation` now need
 adds `ohttp_attestation: None` for responses without OHTTP evidence. These are
 source changes for callers constructing those types directly. New error/resource
 enum variants also require updates to exhaustive matches.
+
+## Verify System One decisions
+
+Create a Gateway client with E2EE and OHTTP disabled. Send structured questions
+with `client.systemone_create(&request).await`, then call
+`client.verify_response(&result.decision_id).await` before using `result.data.answers`.
+
+Self-hosted models use `x-model-pub-key` routing and verify the response against
+the selected model signer, as Chat does. The endpoint must support this routing.
+External models use Gateway signatures.
+
+The [API reference](./api-reference.md#system-one-decisions) describes request
+and result types. To try a complete application, run the
+[Rust decision example](../../examples/README.md#rust).
 
 ## Recommended flow
 
@@ -355,8 +369,8 @@ The built-in verifiers use these defaults:
 
 | Service | URL |
 | --- | --- |
-| PCCS base | `https://cloud.near.ai/api/proxy/pccs` |
-| NRAS evidence | `https://cloud.near.ai/api/proxy/nras/v3/attest/gpu` |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
 | NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
 
 To use your own services, construct verifiers with custom URLs:

@@ -114,7 +114,7 @@ func TestGPUServiceURLs(t *testing.T) {
 	for _, tc := range []struct {
 		name, nrasURL, attestURL string
 	}{
-		{"defaults", "", "https://cloud.near.ai/api/proxy/nras/v3/attest/gpu"},
+		{"defaults", "", "https://nras.attestation.nvidia.com/v3/attest/gpu"},
 		{"custom endpoint", "https://attestation.example/attest", "https://attestation.example/attest"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

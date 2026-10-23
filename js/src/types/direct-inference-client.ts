@@ -47,6 +47,8 @@ export type DirectAttestationVerificationResult =
 
 /** A signed response associated with the preflight-verified signer group. */
 export type VerifiedDirectCompletionResult = {
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;

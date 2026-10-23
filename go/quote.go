@@ -8,11 +8,11 @@ import (
 )
 
 // CreateTDXQuoteVerifier uses DCAP QVL's Intel production root and fresh PCCS
-// collateral. An empty base URL selects https://cloud.near.ai/api/proxy/pccs.
+// collateral. An empty base URL selects Intel's official PCS endpoint.
 // Collateral requests honor context cancellation.
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 	if pccsURL == "" {
-		pccsURL = "https://cloud.near.ai/api/proxy/pccs"
+		pccsURL = dcap.IntelPCSURL
 	}
 	return func(ctx context.Context, encoded string) (QuoteVerificationResult, error) {
 		var result QuoteVerificationResult

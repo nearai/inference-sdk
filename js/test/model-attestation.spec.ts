@@ -569,7 +569,7 @@ describe('model attestation verification', () => {
       'https://nras.attestation.nvidia.com/.well-known/jwks.json',
     );
     expect(fetch).toHaveBeenCalledWith(
-      'https://cloud.near.ai/api/proxy/nras/v3/attest/gpu',
+      'https://nras.attestation.nvidia.com/v3/attest/gpu',
       expect.objectContaining({ method: 'POST', body: nvidiaPayload }),
     );
     jwks.resolve(new Response(JSON.stringify(NRAS_JWKS)));

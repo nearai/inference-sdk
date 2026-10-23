@@ -7,9 +7,9 @@ use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::verify;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const DEFAULT_INTEL_PCCS_URL: &str = "https://cloud.near.ai/api/proxy/pccs";
+pub const DEFAULT_INTEL_PCCS_URL: &str = "https://api.trustedservices.intel.com";
 
-/// Built-in Intel TDX quote verifier, using NEAR AI's PCCS proxy by default.
+/// Built-in Intel TDX quote verifier, using Intel's official PCS endpoint by default.
 #[derive(Clone, Debug)]
 pub struct DefaultTdxQuoteVerifier {
     pccs_url: String,
@@ -112,10 +112,10 @@ mod tests {
     };
 
     #[test]
-    fn uses_the_near_ai_pccs_proxy_by_default() {
+    fn uses_the_official_intel_endpoint_by_default() {
         assert_eq!(
             DefaultTdxQuoteVerifier::default().pccs_url,
-            "https://cloud.near.ai/api/proxy/pccs"
+            "https://api.trustedservices.intel.com"
         );
     }
 
