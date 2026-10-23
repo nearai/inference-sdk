@@ -33,7 +33,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
 | `verify_direct_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestation` | Verifies one direct model report and its optional quote-bound fingerprint. |
-| `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None, serving_deployment=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding, then runs the optional serving-only policy. |
+| `verify_direct_model_attestations` | `(fetched_attestations, *, policy=None, verifiers=None)` | `VerifiedDirectModelAttestations` | Verifies all supplied reports and the serving endpoint's TLS binding. |
 | `verify_direct_model_response` | `(request_body, response_body, signature, attestations)` | `tuple[VerifiedDirectModelAttestation, ...]` | Verifies exact bytes against all reports sharing the response signer. |
 | `prepare_e2ee_chat_request` | `(request, model_key)` | `PreparedE2eeChatRequest` | Encrypts supported Chat fields and returns the matching response decryptor. |
 | `create_pinned_tls_client` | `(spki_fingerprint)` | `httpx.AsyncClient` | Pins every HTTPS connection to a supplied SPKI before sending HTTP data; does not verify its attestation. |
@@ -130,7 +130,7 @@ same common options as `InferenceClient`, with the following differences:
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
-| `model_verification` | `DirectModelVerificationOptions`: per-report `policy` and `verifiers`. Optional `serving_deployment` checks the serving report and restricts Chat to its signer and TLS pin (when enabled). `ModelVerificationOptions` is also accepted for per-report checks. |
+| `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
 | `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
@@ -170,9 +170,6 @@ also occur in `all_attestations`, compared by content.
 the same policy/verifier options as `verify_model_attestation`.
 `verify_direct_model_attestations` accepts the fetched set and those options; a
 TLS-bound serving report requires an observed peer fingerprint.
-The optional `serving_deployment: DeploymentVerifier` runs after every report
-and the TLS binding pass. Use it for envelope-level Compose Manager evidence;
-only the serving result's `deployment_provenance` is marked verified by this check.
 `verify_direct_model_response` accepts exact request and response bytes, the
 signature, and a sequence of verified direct reports.
 

@@ -500,26 +500,12 @@ deployment record, including the manager's startup image.
 
 Use `compose_file` to select a project's file and `compose_repository` to change the
 trusted repository. Configure this callback as `model_verification.verifiers.deployment`
-on the inference client.
+on Gateway or Direct inference clients. The policy runs for every model report
+and requires Compose Manager evidence in each one.
 
 The evidence covers recorded deployment actions and the configured image builds;
-current runtime state requires separate evidence. For Direct clients, use
-`serving_deployment` so the policy applies to the serving report:
-
-```python
-from nearai_inference_sdk import verify_direct_model_attestations
-
-verified = await verify_direct_model_attestations(
-    fetched_direct,
-    serving_deployment=check_model_images,
-)
-```
-
-For `DirectInferenceClient`, pass
-`model_verification=DirectModelVerificationOptions(serving_deployment=check_model_images)`.
-This applies the policy to the serving report and uses its signer for Chat and
-receipt verification. With standalone calls, pass `(verified.serving_attestation,)`
-to `verify_direct_model_response`. See the [API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
+current runtime state requires separate evidence. See the
+[API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
 for options and evidence fields.
 
 #### GitHub API access

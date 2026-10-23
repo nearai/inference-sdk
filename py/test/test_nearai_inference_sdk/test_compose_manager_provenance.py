@@ -188,25 +188,24 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
     attestation = create_model_attestation(compose_manager_attestation=manager_report())
     if direct:
         serving = DirectModelAttestation(**vars(attestation), model_name='glm-5.2')
-        sibling = replace(serving, intel_quote='cc', compose_manager_attestation=None)
-        checked = []
-
-        def verify_quote(quote):
-            checked.append(quote)
-            return quote_verifier(quote)
-
-        result = await verify_direct_model_attestations(
-            FetchedDirectModelAttestations(
-                serving_attestation=serving,
-                attestations=(sibling, serving),
-                client_binding=DirectClientBinding(nonce=NONCE),
-            ),
-            verifiers=ModelAttestationVerifiers(tdx_quote=verify_quote),
-            serving_deployment=deployment_policy,
+        fetched = FetchedDirectModelAttestations(
+            serving_attestation=serving,
+            attestations=(serving,),
+            client_binding=DirectClientBinding(nonce=NONCE),
         )
-        assert sorted(checked) == ['aa', 'bb', 'cc']
-        assert result.attestations[0].deployment_provenance == 'not_checked'
-        assert result.serving_attestation is result.attestations[1]
+        verifiers = ModelAttestationVerifiers(
+            tdx_quote=quote_verifier, deployment=deployment_policy
+        )
+        result = await verify_direct_model_attestations(fetched, verifiers=verifiers)
+        sibling = replace(serving, intel_quote='cc', compose_manager_attestation=None)
+        with pytest.raises(VerificationError) as error:
+            await verify_direct_model_attestations(
+                replace(fetched, attestations=(sibling, serving)), verifiers=verifiers
+            )
+        assert (
+            error.value.failure.code == 'provenance.compose_manager_deployment_invalid'
+        )
+        assert error.value.failure.details['reason'] == 'attestation_missing'
         verified = result.serving_attestation
     else:
         verified = await verify_model_attestation(
