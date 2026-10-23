@@ -1010,15 +1010,17 @@ async def test_e2ee_receipt_budget_counts_wire_bytes_not_input_whitespace(
 
 
 @pytest.mark.parametrize(
-    ('field', 'spare_bytes'),
+    ('e2ee', 'field', 'spare_bytes'),
     [
-        ('max_body_bytes', -1),
-        ('max_receipt_cache_bytes', -1),
-        ('max_receipt_cache_bytes', 0),
+        (False, 'max_body_bytes', -1),
+        (False, 'max_receipt_cache_bytes', -1),
+        (False, 'max_receipt_cache_bytes', 0),
+        (True, 'max_body_bytes', 0),
+        (True, 'max_receipt_cache_bytes', 1),
     ],
 )
 async def test_large_request_fails_before_preflight(
-    monkeypatch, gateway, field, spare_bytes
+    monkeypatch, gateway, e2ee, field, spare_bytes
 ):
     gateway.install(monkeypatch)
     request = httpx.Request(
@@ -1027,7 +1029,7 @@ async def test_large_request_fails_before_preflight(
         json={'model': MODEL, 'messages': MESSAGES},
     )
     async with gateway.client(
-        e2ee=False, **{field: len(request.content) + spare_bytes}
+        e2ee=e2ee, **{field: len(request.content) + spare_bytes}
     ) as client:
         with pytest.raises(ApiError, match='api.body_too_large'):
             await client.send(request)

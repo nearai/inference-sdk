@@ -61,6 +61,7 @@ from .cloud_api import (
     _ApiClient,
     _validate_base_url,
 )
+from .e2ee_chat import measure_e2ee_chat_request_bytes
 from .e2ee_request import (
     decode_chat_request,
     prepare_e2ee_chat_request,
@@ -321,6 +322,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             extensions=request.extensions,
         )
         parsed = await decode_chat_request(request)
+        if self._e2ee:
+            self._response_byte_limit(
+                measure_e2ee_chat_request_bytes(parsed, self._signing_algo)
+            )
         headers = self._request_headers(request.headers)
         # Automatic decompression can allocate beyond the body budget before
         # aiter_bytes() yields. Require the signed, uncompressed representation.
