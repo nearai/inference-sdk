@@ -203,7 +203,7 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		v.Deployment.ComposeManager = manager
 	}
 	if o.DeploymentVerifier != nil {
-		if e = o.DeploymentVerifier(ctx, cloneDeployment(v.Deployment)); e != nil {
+		if e = o.DeploymentVerifier(ctx, v.Deployment); e != nil {
 			return VerifiedAttestation{}, failure("provenance.verification_failed", e)
 		}
 		v.DeploymentProvenance = "verified"

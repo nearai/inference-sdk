@@ -33,7 +33,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 		return VerifiedDirectModelAttestations{}, failure("binding.spki_fingerprint_mismatch", nil)
 	}
 	if o.ServingDeployment != nil {
-		if err := o.ServingDeployment(ctx, cloneDeployment(out.ServingAttestation.Deployment)); err != nil {
+		if err := o.ServingDeployment(ctx, out.ServingAttestation.Deployment); err != nil {
 			return VerifiedDirectModelAttestations{}, failure("provenance.verification_failed", err)
 		}
 		out.ServingAttestation.DeploymentProvenance = "verified"

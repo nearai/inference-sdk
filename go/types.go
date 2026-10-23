@@ -84,6 +84,8 @@ type AttestationPolicy struct {
 }
 type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
 type GPUEvidenceVerifier func(context.Context, string) error
+
+// DeploymentVerifier inspects read-only evidence and returns an error to reject it.
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
 	// ServingDeployment runs after all direct reports and TLS binding pass.

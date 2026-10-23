@@ -272,11 +272,11 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	if o.DeploymentPolicy != nil {
 		opts.DeploymentVerifier = func(ctx context.Context, d MeasuredDeployment) error {
 			if original != nil {
-				if e := original(ctx, cloneDeployment(d)); e != nil {
+				if e := original(ctx, d); e != nil {
 					return e
 				}
 			}
-			return o.DeploymentPolicy(ctx, model, cloneDeployment(d))
+			return o.DeploymentPolicy(ctx, model, d)
 		}
 	}
 	var models FetchedModelAttestations
@@ -395,7 +395,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, failure("api.invalid_response", nil)
 		}
 		serving := s.result.Models[servingIndex]
-		if err := opts.ServingDeployment(ctx, cloneDeployment(serving.Deployment)); err != nil {
+		if err := opts.ServingDeployment(ctx, serving.Deployment); err != nil {
 			return nil, failure("provenance.verification_failed", err)
 		}
 		serving.DeploymentProvenance = "verified"

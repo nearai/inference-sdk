@@ -33,7 +33,7 @@ type VerifiedComposeManagerAttestation struct {
 	RuntimeMeasurements RuntimeMeasurements
 }
 
-// cloneDeployment isolates verified manager evidence at callback and result boundaries.
+// cloneDeployment copies mutable manager fields for independent result values.
 func cloneDeployment(deployment MeasuredDeployment) MeasuredDeployment {
 	if deployment.ComposeManager != nil {
 		manager := *deployment.ComposeManager

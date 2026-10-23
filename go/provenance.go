@@ -505,7 +505,7 @@ func provenanceAPIBase(proxy string) (string, error) {
 		return "https://api.github.com", nil
 	}
 	value, err := url.Parse(proxy)
-	if err != nil || (value.Scheme != "http" && value.Scheme != "https") || value.Host == "" || value.User != nil || value.RawQuery != "" || value.Fragment != "" {
+	if err != nil || (value.Scheme != "http" && value.Scheme != "https") || value.Host == "" || value.User != nil || value.RawQuery != "" || value.ForceQuery || value.Fragment != "" {
 		return "", detail("api.invalid_input", "field", "github_proxy_url")
 	}
 	return strings.TrimRight(value.String(), "/"), nil
