@@ -5,6 +5,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx2
 from nearai_inference_sdk import InferenceClient
+from nearai_inference_sdk.integrations.jev import create_jev_http_client
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 
@@ -19,7 +20,7 @@ async def verified_jev_clients(api_key: str, *, base_url: str):
         AsyncTypeSafeClient(
             api_key=api_key,
             base_url=urljoin(inference.base_url, '../'),
-            http_client=inference.http_client,
+            http_client=create_jev_http_client(inference),
             compression=False,
             retry=RetryPolicy(max_retries=0),
             timeout=60,

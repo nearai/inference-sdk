@@ -126,9 +126,10 @@ Only Chat Completions are supported; the Responses API is not supported.
 
 - **System One decisions:** send structured questions with `client.systemone.create()`
   and verify the returned decision. See the [System One guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#system-one-decisions).
-- **Jev HTTPX2 adapter:** install `typesafe-sdk` and use
-  `create_jev_http_client()` from `nearai_inference_sdk.integrations.jev`.
-  See the [transport reference](https://github.com/nearai/inference-sdk/blob/main/py/docs/api-reference.md#jev-http-transport).
+- **Official Jev SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
+  then pass `create_jev_http_client(inference_client)` from
+  `nearai_inference_sdk.integrations.jev` to `AsyncTypeSafeClient`.
+  See the [Jev SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-jev-sdk).
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   With [standalone functions](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#standalone-workflow),
   your application verifies every model candidate and retains the exact wire bytes.

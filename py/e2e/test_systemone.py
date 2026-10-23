@@ -18,6 +18,7 @@ from nearai_inference_sdk import (
     verify_gateway_attestation,
     verify_gateway_response,
 )
+from nearai_inference_sdk.integrations.jev import create_jev_http_client
 
 
 def decision_request() -> SystemOneRequest:
@@ -179,7 +180,7 @@ async def test_official_jev_sdk_verifies_live_receipt(kind, signing_algo):
             nonlocal inference_requests
             inference_requests += 1
 
-        adapter = inference.http_client
+        adapter = create_jev_http_client(inference)
         adapter.event_hooks['request'].append(count_request)
         async with AsyncTypeSafeClient(
             api_key=required_env('NEARAI_API_KEY'),

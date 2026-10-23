@@ -133,7 +133,8 @@ Install `typesafe-sdk`, which includes HTTPX2, and import
 HTTPX2 adapter. `create_jev_http_client(inference_client)` returns a new
 `httpx2.AsyncClient` for Jev's `AsyncTypeSafeClient`. It accepts only uncompressed,
 nonstreaming JSON requests to the owner's configured `/v1/systemone` endpoint.
-Disable Jev compression and inference retries, and set its HTTPX2 timeout.
+Disable Jev compression and inference retries, and set its HTTPX2 timeout. See
+the [official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
 
 The adapter preserves request and response bytes and delegates network I/O,
 authentication, TLS pinning, preflight, and receipt capture to the owner's HTTPX

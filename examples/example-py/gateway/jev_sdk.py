@@ -1,4 +1,4 @@
-"""Use the official Jev SDK through NEAR's verified HTTPX2 transport."""
+"""Use the official Jev SDK through NEAR's verified Jev adapter."""
 
 import asyncio
 import os

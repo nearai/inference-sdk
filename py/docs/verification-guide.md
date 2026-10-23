@@ -237,12 +237,15 @@ lifecycle as Chat. If a receipt is temporarily unavailable, retry
 
 ### Use the official Jev SDK
 
-Install `typesafe-sdk` and give `AsyncTypeSafeClient` the Gateway client's
-`http_client`. Both use HTTPX2. The official SDK's API root excludes `/v1`, while
-the NEAR client's base URL includes `/v1/`.
+Install `nearai-inference-sdk[jev]` and `typesafe-sdk`. Pass
+`create_jev_http_client(inference)` to `AsyncTypeSafeClient` for the HTTPX2
+adapter; the NEAR client continues to use HTTPX for network I/O and verification.
+The official SDK's API root excludes `/v1`, while the NEAR client's base URL
+includes `/v1/`.
 
 ```python
 from nearai_inference_sdk import InferenceClient
+from nearai_inference_sdk.integrations.jev import create_jev_http_client
 from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
 
 
@@ -256,7 +259,7 @@ async def decide(api_key: str, model: str) -> None:
         async with AsyncTypeSafeClient(
             api_key=api_key,
             base_url='https://cloud-api.near.ai',
-            http_client=inference.http_client,
+            http_client=create_jev_http_client(inference),
             compression=False,
             retry=RetryPolicy(max_retries=0),
             timeout=60,

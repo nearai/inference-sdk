@@ -1,13 +1,13 @@
 """Exercise the published Jev SDK against the verified HTTPX2 adapter."""
 
 import asyncio
-import json
 
 import httpx2
 import pytest
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
 
 from nearai_inference_sdk import ApiError, VerificationError
+from nearai_inference_sdk.integrations.jev import create_jev_http_client
 
 from .test_inference_client import BASE_URL, MODEL
 from .test_systemone import REQUEST, DecisionGateway
@@ -17,7 +17,7 @@ def official_client(client):
     return AsyncTypeSafeClient(
         api_key='external-key',
         base_url=BASE_URL.removesuffix('v1/'),
-        http_client=client.http_client,
+        http_client=create_jev_http_client(client),
         model=MODEL,
         compression=False,
         retry=RetryPolicy(max_retries=0),
@@ -130,78 +130,3 @@ async def test_official_sdk_does_not_send_on_failed_preflight(monkeypatch):
             await decision(jev)
         assert raised.value.failure.code == 'e2ee.model_public_key_required'
     assert gateway.requests == []
-
-
-async def test_raw_systemone_keeps_request_bytes_and_query(monkeypatch):
-    gateway = DecisionGateway()
-    gateway.install(monkeypatch)
-    body = ('\n' + json.dumps(REQUEST, indent=2, ensure_ascii=False) + '\n').encode()
-    async with gateway.client(e2ee=False) as client:
-        response = await client.send(
-            httpx2.Request(
-                'POST',
-                BASE_URL + 'systemone?trace=test',
-                content=body,
-                headers={'content-type': 'application/json'},
-            )
-        )
-        await client.verify_response(response.headers['x-generation-id'])
-    assert gateway.requests[0].content == body
-    assert gateway.requests[0].url.params['trace'] == 'test'
-
-
-@pytest.mark.parametrize(
-    'method,url,headers,body',
-    [
-        ('GET', BASE_URL + 'systemone', {}, b'{}'),
-        ('POST', 'https://other.test/v1/systemone', {}, b'{}'),
-        ('POST', BASE_URL + 'responses', {}, b'{}'),
-        (
-            'POST',
-            BASE_URL + 'systemone',
-            {'content-type': 'multipart/form-data'},
-            b'{}',
-        ),
-        (
-            'POST',
-            BASE_URL + 'systemone',
-            {'content-type': 'application/json', 'content-encoding': 'zstd'},
-            b'compressed',
-        ),
-        ('POST', BASE_URL + 'systemone', {'content-type': 'application/json'}, b'{'),
-        (
-            'POST',
-            BASE_URL + 'systemone',
-            {'content-type': 'application/json'},
-            b'{"model":"test-model","stream":false}',
-        ),
-    ],
-)
-async def test_raw_systemone_rejects_unsupported_input_before_io(
-    monkeypatch, method, url, headers, body
-):
-    gateway = DecisionGateway()
-    gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client:
-        with pytest.raises(ApiError) as raised:
-            await client.send(
-                httpx2.Request(method, url, headers=headers, content=body)
-            )
-        assert raised.value.failure.code == 'api.invalid_input'
-    assert gateway.headers == []
-
-
-async def test_raw_systemone_rejects_configured_compression(monkeypatch):
-    gateway = DecisionGateway()
-    gateway.install(monkeypatch)
-
-    async with gateway.client(
-        e2ee=False, headers={'content-encoding': 'gzip'}
-    ) as client:
-        with pytest.raises(ApiError) as raised:
-            await client.send(
-                httpx2.Request('POST', BASE_URL + 'systemone', json=REQUEST)
-            )
-
-    assert raised.value.failure.code == 'api.invalid_input'
-    assert gateway.headers == []
