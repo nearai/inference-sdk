@@ -237,7 +237,8 @@ lifecycle as Chat. If a receipt is temporarily unavailable, retry
 
 ### Use the official Jev SDK
 
-Install `nearai-inference-sdk[jev]` and `typesafe-sdk`. Pass
+Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs
+HTTPX2 automatically. Pass
 `create_jev_http_client(inference)` to `AsyncTypeSafeClient` for the HTTPX2
 adapter; the NEAR client continues to use HTTPX for network I/O and verification.
 The official SDK's API root excludes `/v1`, while the NEAR client's base URL

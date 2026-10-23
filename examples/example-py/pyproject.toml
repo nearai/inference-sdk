@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1,<0.29",
     "openai>=2.0.0,<3",
-    "nearai-inference-sdk[jev]",
+    "nearai-inference-sdk",
     "typesafe-sdk==0.7.5",
 ]
 
