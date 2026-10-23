@@ -120,10 +120,6 @@ Gateway/model attestation and image-check failures block both Chat modes.
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
 
-These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image, or model-weight
-provenance.
-
 ## Python
 
 Uses `nearai-inference-sdk`, imported as `nearai_inference_sdk`.
@@ -251,3 +247,9 @@ go run ./gateway/openai
 The example module uses a local SDK replacement for this checkout; use the
 released module version when copying it outside this repository. Direct examples
 require a matching direct URL/model and retain the documented experimental limits.
+
+## Browser (Private TEE chat)
+
+[`example-browser`](example-browser/README.md) provides a chat UI with encrypted
+streaming, deployment evidence, and verified response receipts. Its README
+covers local setup and browser deployment requirements.
