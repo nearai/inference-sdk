@@ -797,8 +797,9 @@ inference.
 
 ## Set policy and trust roots
 
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses. GPU evidence
-is verified when present; require it when your application needs it:
+The default policy accepts `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised`
+TCB statuses. GPU evidence is verified when present; require it when your
+application needs it:
 
 ```python
 from nearai_inference_sdk import (

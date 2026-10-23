@@ -595,13 +595,14 @@ source checks.
 `SigningAlgo` is `Literal['ecdsa', 'ed25519']`. `AttestationEventLog` is
 `str | list[object]`. `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+`OutOfDateConfigurationNeeded`, `TDRelaunchAdvised`,
+`TDRelaunchAdvisedConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 ### Policies and verifier callbacks
 
 | Type | Field or signature | Default | Description |
 | --- | --- | --- | --- |
-| `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate` and `OutOfDate`. |
+| `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised`. |
 | `ModelAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. |
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
 | `AttestationVerifiers` | `tdx_quote` | built in | Optional replacement for the Intel DCAP quote verifier. |
