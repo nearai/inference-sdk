@@ -9,10 +9,7 @@ import type {
   RuntimeMeasurements,
   TcbStatus,
 } from './verification';
-import type {
-  ImageProvenancePolicy,
-  VerifiedImageProvenance,
-} from './provenance';
+import type { ImageProvenancePolicy } from './provenance';
 
 /** Signed action fields retain their wire names for canonical JSON hashing. */
 export type ComposeManagerAction = v.InferOutput<
@@ -67,27 +64,3 @@ export type ComposeManagerDeploymentFailureReason =
   | 'manager_image_mismatch'
   | 'invalid_file_reference'
   | 'compose_file_too_large';
-
-/** Verified recorded references, not proof of execution or a unique instance. */
-export type VerifiedRecordedDeployment = {
-  readonly scope: 'recorded_deployment_provenance';
-  readonly compose: {
-    readonly repository: string;
-    readonly commit: string;
-    readonly file: string;
-    readonly sha256: string;
-    readonly selectedServices: readonly string[];
-  };
-  /** Only policy-covered images; other selected services are not approved by this report. */
-  readonly verifiedImages: readonly {
-    readonly service: string;
-    readonly imageRepository: string;
-    readonly digest: string;
-    readonly build: VerifiedImageProvenance;
-  }[];
-  readonly composeManagerImage: {
-    readonly imageRepository: string;
-    readonly digest: string;
-    readonly build: VerifiedImageProvenance;
-  };
-};

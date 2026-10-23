@@ -50,7 +50,7 @@ the attestation socket to be reused.
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
-| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<VerifiedRecordedDeployment>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
+| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
 
 ## `InferenceClient`
 
@@ -533,7 +533,7 @@ preserve the `ApiError` cause and retryability.
 
 ### `verifyComposeManagerDeploymentImageProvenance`
 
-Use after model verification or in its deployment callback. Returns `Promise<VerifiedRecordedDeployment>`.
+Use after model verification or in its deployment callback. Returns `Promise<void>`.
 The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
 Image selection uses the action's named `services`. Independently, the latest
 manager-start action must name an image satisfying `composeManagerImagePolicy`.
@@ -734,7 +734,7 @@ for default URLs and custom configuration.
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
 |  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
 | `TdxQuoteVerifier` | `(quote: string) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
-| `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void> \| Awaitable<VerifiedRecordedDeployment>` | Resolves only for an accepted deployment. |
+| `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
 | `GpuEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
 
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
@@ -785,19 +785,3 @@ trust roots or another verification service.
 | `GatewayTlsBinding` | `{ kind: 'none' } \| { kind: 'attested'; spkiFingerprint: string }` |
 | `GpuEvidenceStatus` | `'not_provided' \| 'verified'` |
 | `DeploymentProvenanceStatus` | `'not_checked' \| 'verified'` |
-
-### `VerifiedRecordedDeployment`
-
-The Compose Manager helper returns this report only after every required check succeeds.
-Its `scope` is `recorded_deployment_provenance`: it does not establish successful or
-current container execution, a unique instance, or execution of a particular request.
-
-- `compose`: repository, commit, file, SHA-256, and effective `selectedServices`.
-- `verifiedImages`: service, image repository, digest, and `VerifiedImageProvenance`
-  build result for each policy-covered image. Other selected services are not approved.
-- `composeManagerImage`: independently checked Manager image repository, digest,
-  and `VerifiedImageProvenance` build result.
-
-Deployment callbacks may return this report directly; the policy runner discards
-it and treats successful completion as acceptance. Capture it in your callback
-if your application needs an audit record.

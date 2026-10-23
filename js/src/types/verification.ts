@@ -4,10 +4,7 @@ import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignature } from './chat';
 import type { SigningIdentity } from './attestation-common';
 import type { Awaitable } from './shared';
-import type {
-  VerifiedComposeManagerAttestation,
-  VerifiedRecordedDeployment,
-} from './compose-manager';
+import type { VerifiedComposeManagerAttestation } from './compose-manager';
 
 export type TcbStatus =
   | 'UpToDate'
@@ -61,7 +58,7 @@ export type CreateGpuEvidenceVerifierParams = {
 
 export type DeploymentVerifier = (
   deployment: MeasuredDeployment,
-) => Awaitable<void> | Awaitable<VerifiedRecordedDeployment>;
+) => Awaitable<void>;
 
 export type AttestationPolicy = {
   readonly acceptedTcbStatuses?: readonly TcbStatus[];

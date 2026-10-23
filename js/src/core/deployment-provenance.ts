@@ -1,6 +1,5 @@
 import * as v from 'valibot';
 import { parse } from 'yaml';
-import type { VerifiedRecordedDeployment } from '../types/compose-manager';
 import {
   DeploymentAppComposeSchema,
   DeploymentDockerComposeSchema,
@@ -9,7 +8,6 @@ import type {
   DeploymentAppCompose,
   DeploymentDockerCompose,
   ImageProvenancePolicy,
-  VerifiedImageProvenance,
   VerifyDeploymentImageProvenanceParams,
 } from '../types/provenance';
 import { ApiError, VerificationError } from '../utils/errors';
@@ -71,33 +69,23 @@ export async function verifyComposeImageProvenance({
   githubToken,
   githubApiUrl,
   services,
-}: VerifyComposeImageProvenanceParams): Promise<{
-  selectedServices: readonly string[];
-  verifiedImages: VerifiedRecordedDeployment['verifiedImages'];
-}> {
-  const { requiredImages, selectedServices } = selectRequiredImages({
+}: VerifyComposeImageProvenanceParams): Promise<void> {
+  const requiredImages = selectRequiredImages({
     dockerCompose,
     imagePolicies,
     services,
   });
-  const verifiedImages = await Promise.all(
-    requiredImages.map(async (image) => ({
-      service: image.service,
-      imageRepository: image.repository,
-      digest: image.digest,
-      build: await verifyRequiredImageProvenance(image, {
-        githubToken,
-        githubApiUrl,
-      }),
-    })),
+  await Promise.all(
+    requiredImages.map((image) =>
+      verifyRequiredImageProvenance(image, { githubToken, githubApiUrl }),
+    ),
   );
-  return { selectedServices, verifiedImages };
 }
 
 export async function verifyRequiredImageProvenance(
   { repository, digest, policy }: RequiredImage,
   access: { githubToken?: string; githubApiUrl?: string },
-): Promise<VerifiedImageProvenance> {
+): Promise<void> {
   let bundles: readonly string[];
   try {
     bundles = await fetchImageProvenance({
@@ -116,17 +104,14 @@ export async function verifyRequiredImageProvenance(
       { cause },
     );
   }
-  return verifyImageProvenance({ bundles, digest, policy });
+  await verifyImageProvenance({ bundles, digest, policy });
 }
 
 function selectRequiredImages({
   dockerCompose,
   imagePolicies,
   services,
-}: VerifyComposeImageProvenanceParams): {
-  requiredImages: (RequiredImage & { service: string })[];
-  selectedServices: string[];
-} {
+}: VerifyComposeImageProvenanceParams): RequiredImage[] {
   const policies = Object.entries(imagePolicies);
   requireImagePolicies(imagePolicies);
 
@@ -148,9 +133,7 @@ function selectRequiredImages({
   }
 
   const composeServices = new Map(Object.entries(compose.services));
-  const selectedServices = [
-    ...new Set(services?.length ? services : composeServices.keys()),
-  ];
+  const selectedServices = services?.length ? services : composeServices.keys();
   const images: ComposeImage[] = [];
   for (const service of selectedServices) {
     const config = composeServices.get(service);
@@ -174,7 +157,7 @@ function selectRequiredImages({
 
   // Finish selection before making any requests, including checking repeated
   // references so a pinned service cannot hide an unpinned one.
-  const requiredImages: (RequiredImage & { service: string })[] = [];
+  const requiredImages: RequiredImage[] = [];
   for (const [name, policy] of policies) {
     const repository = name.replace(/^docker\.io\//, '');
     const references = images.filter(
@@ -191,10 +174,10 @@ function selectRequiredImages({
     }
     for (const { service, image } of references) {
       const digest = requirePinnedImageDigest(image, repository, service);
-      requiredImages.push({ service, repository, digest, policy });
+      requiredImages.push({ repository, digest, policy });
     }
   }
-  return { requiredImages, selectedServices };
+  return requiredImages;
 }
 
 export function requirePinnedImageDigest(
