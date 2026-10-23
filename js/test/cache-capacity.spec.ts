@@ -284,13 +284,21 @@ describe('inference cache capacity', () => {
     },
   );
 
-  test('rejects an unretainable request before any preflight', async () => {
-    const client = new Client({ maxBodyBytes: 1024, maxReceiptCacheBytes: 10 });
-    await expect(client.send()).rejects.toMatchObject({
-      failure: { code: 'api.body_too_large' },
-    });
-    expect(client.verified).toEqual([]);
-  });
+  test.each([-1, 0])(
+    'rejects an unretainable request before any preflight (%i spare bytes)',
+    async (spareBytes) => {
+      const client = new Client({
+        maxBodyBytes: 1024,
+        maxReceiptCacheBytes:
+          new TextEncoder().encode(JSON.stringify({ model: 'm' })).byteLength +
+          spareBytes,
+      });
+      await expect(client.send()).rejects.toMatchObject({
+        failure: { code: 'api.body_too_large' },
+      });
+      expect(client.verified).toEqual([]);
+    },
+  );
 
   describe.each(['ed25519', 'ecdsa'] as const)(
     '%s encrypted request bounds',

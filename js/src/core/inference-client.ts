@@ -689,11 +689,12 @@ export abstract class VerifiedInferenceClientBase<
     this.requireSupportedEndpoint(original);
     let bytes: Uint8Array<ArrayBuffer>;
     try {
+      // Retained plaintext receipts also need space for a nonempty response.
       bytes = await readBoundedBody(
         original.body,
         this.e2eeEnabled || this.responseCacheTimeToLiveMs === 0
           ? this.maxBodyBytes
-          : Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes),
+          : Math.min(this.maxBodyBytes, this.maxReceiptCacheBytes - 1),
         original.signal,
       );
     } catch (cause) {
