@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
@@ -23,7 +23,11 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
-from .body_limit import read_bounded_body, require_identity_encoding
+from .body_limit import (
+    read_bounded_body,
+    read_bounded_request_body,
+    require_identity_encoding,
+)
 from .e2ee_request import remove_e2ee_headers
 
 if TYPE_CHECKING:
@@ -45,22 +49,9 @@ class InferenceSystemOne:
         if 'stream' in request:
             raise _invalid_input('System One does not support streaming')
         try:
-            model = CompletionRequestModelSchema.model_validate(request).model
-        except ValidationError as cause:
-            raise api_failure(
-                'api.invalid_input',
-                {
-                    'field': 'model',
-                    'reason': 'missing_model',
-                    'expected': 'a non-empty model ID',
-                },
-                cause=cause,
-            ) from cause
-        try:
             request_body = json.dumps(request, allow_nan=False).encode()
         except (ValueError, TypeError):
             raise _invalid_input('a JSON-serializable System One request') from None
-        response_limit = client._response_byte_limit(len(request_body))
         # Leave request business rules to the server and retain the exact bytes.
         request_headers = client._request_headers(headers or {})
         remove_e2ee_headers(request_headers)
@@ -89,6 +80,77 @@ class InferenceSystemOne:
             httpx.URL(client.base_url).join('systemone'),
             headers=request_headers,
             content=request_body,
+        )
+        response, register = await self._capture(http_request, request_headers)
+        try:
+            data = SystemOneResponseSchema.model_validate_json(response.content)
+        except ValidationError:
+            raise _invalid_response('System One response') from None
+        register()
+        return SystemOneResult(
+            data=cast(SystemOneResponse, data.model_dump(exclude_unset=True)),
+            decision_id=response.headers['x-generation-id'],
+        )
+
+    async def _send(self, request: httpx.Request) -> httpx.Response:
+        """Retain exact JSON bytes; the external SDK owns response parsing."""
+        headers = self._client._request_headers(request.headers)
+        response, register = await self._capture(request, headers)
+        register()
+        return response
+
+    async def _capture(
+        self, request: httpx.Request, headers: httpx.Headers
+    ) -> tuple[httpx.Response, Callable[[], None]]:
+        client = self._client
+        if client._e2ee or client._ohttp:
+            raise _invalid_input('System One requires e2ee=False and ohttp=False')
+        # Both entry points merge configured headers exactly once. Native create()
+        # also removes headers belonging to the body it replaces.
+        request_headers = httpx.Headers(headers)
+        encoding = request_headers.get('content-encoding', '').strip().lower()
+        content_type = request_headers.get('content-type', '').split(';')[0].strip()
+        if (
+            encoding not in ('', 'identity')
+            or content_type.lower() != 'application/json'
+        ):
+            raise _invalid_input('an uncompressed JSON System One request')
+        request_body = await read_bounded_request_body(
+            request, client._response_byte_limit(0)
+        )
+        response_limit = client._response_byte_limit(len(request_body))
+        try:
+            parsed = json.loads(request_body)
+        except ValueError as cause:
+            raise _invalid_input(
+                'a JSON System One request with a non-empty model'
+            ) from cause
+        try:
+            model = CompletionRequestModelSchema.model_validate(parsed).model
+        except ValidationError as cause:
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'model',
+                    'reason': 'missing_model',
+                    'expected': 'a non-empty model ID',
+                },
+                cause=cause,
+            ) from cause
+        if 'stream' in parsed:
+            raise _invalid_input('System One does not support streaming')
+        remove_e2ee_headers(request_headers)
+        for name in ('content-length', 'transfer-encoding', 'trailer'):
+            request_headers.pop(name, None)
+        request_headers[NO_ALIASING_HEADER] = 'true'
+        request_headers['accept'] = 'application/json'
+        request_headers['accept-encoding'] = 'identity'
+        http_request = httpx.Request(
+            request.method,
+            request.url,
+            headers=request_headers,
+            content=request_body,
+            extensions=request.extensions,
         )
         session = await client._start_verification(model)
         if session.model_key is not None:
@@ -130,18 +192,19 @@ class InferenceSystemOne:
         finally:
             with suppress(Exception):
                 await response.aclose()
-        try:
-            data = SystemOneResponseSchema.model_validate_json(response_body)
-        except ValidationError:
-            raise _invalid_response('System One response') from None
-        captured = asyncio.get_running_loop().create_future()
-        captured.set_result(response_body)
-        client._register_response(decision_id, request_body, captured, session)
 
-        return SystemOneResult(
-            data=cast(SystemOneResponse, data.model_dump(exclude_unset=True)),
-            decision_id=decision_id,
-        )
+        def register() -> None:
+            captured = asyncio.get_running_loop().create_future()
+            captured.set_result(response_body)
+            client._register_response(decision_id, request_body, captured, session)
+
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            content=response_body,
+            extensions=response.extensions,
+            request=http_request,
+        ), register
 
 
 def _invalid_input(expected: str) -> ApiError:

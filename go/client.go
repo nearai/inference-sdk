@@ -176,18 +176,20 @@ func (c *InferenceClient) Close() error {
 	return nil
 }
 
+func cloneAttestation(a VerifiedAttestation) VerifiedAttestation {
+	a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
+	a.Deployment = cloneDeployment(a.Deployment)
+	return a
+}
+
 func cloneResult(r AttestationVerificationResult) AttestationVerificationResult {
-	clone := func(a VerifiedAttestation) VerifiedAttestation {
-		a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
-		return a
-	}
 	if r.Gateway != nil {
-		v := clone(*r.Gateway)
+		v := cloneAttestation(*r.Gateway)
 		r.Gateway = &v
 	}
 	r.Models = append([]VerifiedAttestation(nil), r.Models...)
 	for i := range r.Models {
-		r.Models[i] = clone(r.Models[i])
+		r.Models[i] = cloneAttestation(r.Models[i])
 	}
 	return r
 }
@@ -721,8 +723,7 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 	case <-p.done:
 		result := p.value
 		if result.Attestation != nil {
-			a := *result.Attestation
-			a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
+			a := cloneAttestation(*result.Attestation)
 			result.Attestation = &a
 		}
 		result.Attestations = cloneResult(AttestationVerificationResult{Models: result.Attestations}).Models

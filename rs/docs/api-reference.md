@@ -242,6 +242,8 @@ the same signer. Select it from the verified preflight results with
 
 ## Image build provenance
 
+### Measured compose and individual image helpers
+
 These functions are asynchronous. The low-level functions separate retrieval
 from verification; the deployment helper combines them for required images.
 
@@ -266,8 +268,8 @@ service images are ignored. All Compose/reference checks finish before fetching.
 Malformed Compose or unsupported references return
 `provenance.deployment_images_invalid`, with a `DeploymentImagesFailureReason`
 (`empty_policy`, `invalid_app_compose`, `invalid_docker_compose`,
-`unresolved_image`, `image_missing`, or `image_not_pinned`) and optional image
-repository/service details. Fetch failures become
+`unresolved_image`, `service_missing`, `image_missing`, or `image_not_pinned`)
+and optional image repository/service details. Fetch failures become
 `provenance.image_request_failed`, preserving the `ApiError` source and its
 retryability. Cryptographic verification errors are returned unchanged.
 
@@ -308,6 +310,65 @@ authenticate `app_compose` themselves or run automatically during attestation
 verification. Call the deployment helper from a `DeploymentVerifier` so the SDK
 has already checked quote and measurement binding. No default image trust policy
 is supplied, and unlisted images are not approved by the helper.
+
+### Compose Manager deployment images
+
+`verify_compose_manager_deployment_image_provenance(deployment, image_policies, compose_manager_image_policy, options)`
+returns `Result<(), VerificationError>`. Use in a model deployment callback or
+after verification. It requires authenticated manager evidence, selects the latest
+matching `compose_up`, verifies the recorded file's exact hash, and checks the
+required images in the action's selected services. Independently, the latest
+manager-start image must satisfy the required `compose_manager_image_policy`.
+Compose files are limited to 8 MiB before hashing or parsing. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for usage
+and evidence scope.
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `deployment` | `&MeasuredDeployment` | Verified deployment containing `compose_manager`. |
+| `image_policies` | `&BTreeMap<String, ImageProvenancePolicy>` | Nonempty required image repositories and approved builds. |
+| `compose_manager_image_policy` | `&ComposeManagerImagePolicy` | Required `image_repository`, `build` policy, and optional `signer_identity` for the latest startup image. |
+| `options` | `ComposeManagerDeploymentImageProvenanceOptions<'_>` | File selection and GitHub access; accepts `Default::default()`. |
+
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `compose_repository` | `&str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `Option<&str>` | `None` | Exact file path to select; otherwise latest `compose_up` overall. |
+| `github_token` | `Option<&str>` | `None` | Token for the default GitHub API; ignored when `github_api_url` is set. |
+| `github_api_url` | `Option<&str>` | `None` | GitHub API base URL (default: `https://api.github.com`). Use a backend endpoint when a frontend cannot supply a GitHub token. |
+| `image_signer_identities` | `Option<&BTreeMap<String, String>>` | `None` | Reusable-workflow identities keyed by exact image-policy names. |
+
+`ModelAttestation.compose_manager_attestation` optionally contains raw
+`ComposeManagerAttestation`: `actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`. When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `Option<VerifiedComposeManagerAttestation>`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `Vec<ComposeManagerAction>` | Quote-authenticated actions; unknown string/string-array fields are retained in `extra`. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `Vec<String>` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+`fetch_image_provenance_with_options(repository, digest, ImageProvenanceFetchOptions)`
+also supports `github_token` and `github_api_url`.
+Provenance fetch limits:
+
+| Resource | Limit |
+| --- | --- |
+| Response page | 16 MiB and 100 attestations |
+| Entire fetch | 32 pages and 64 MiB |
+| Combined `Link` headers per page | 8 KiB |
+| Encoded `before`/`after` query | 4 KiB |
+
+Body limits apply while reading, including responses without `Content-Length`,
+and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
+Limit failures are non-retryable and return no partial bundles.
+
+`verify_deployment_image_provenance_with_options` accepts
+`DeploymentImageProvenanceOptions` with those fields and optional
+`image_signer_identities`. The token is omitted when `github_api_url` is set. Pagination must remain on the
+same API origin and artifact path. Redirects are rejected.
 
 ## Signatures and evidence
 
@@ -373,7 +434,7 @@ Gateway `reported_quote_data` is required.
 | --- | --- | --- |
 | `DefaultTdxQuoteVerifier` | `DefaultTdxQuoteVerifier::default()` or `DefaultTdxQuoteVerifier::new(pccs_url)` | Built-in Intel TDX quote verifier. Pass a custom PCCS base URL when needed. |
 | `verify_tdx_quote` | `async fn verify_tdx_quote(pccs_url: &str, intel_quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError>` | One-off TDX quote verification using the supplied PCCS URL. |
-| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA NRAS verifier. `with_client` accepts a `reqwest::Client` for caller-owned HTTP configuration. |
+| `NrasGpuEvidenceVerifier` | `NrasGpuEvidenceVerifier::default()`, `NrasGpuEvidenceVerifier::new(url)`, or `NrasGpuEvidenceVerifier::with_client(client, url)` | Built-in NVIDIA verifier. Accepts a complete GPU evidence POST URL. `with_client` accepts a `reqwest::Client`. |
 | `NrasGpuEvidenceVerifier::with_jwks_url` | `fn with_jwks_url(self, url: impl Into<String>) -> Self` | Set a separate trusted proxy URL for the JWT signing-key GET request. |
 | `DEFAULT_INTEL_PCCS_URL` | `&str` | `https://api.trustedservices.intel.com` |
 | `DEFAULT_NVIDIA_NRAS_URL` | `&str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
@@ -383,17 +444,14 @@ The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
 timestamps, signed nonce, and boolean verdict. A custom NRAS URL changes where
 evidence is submitted; `with_jwks_url` independently configures the signing-key
 source. Use only a trusted JWKS proxy, since those keys authenticate the verdict.
-Both URLs default to NVIDIA's official endpoints. The required NVIDIA issuer
+The required NVIDIA issuer
 (`https://nras.attestation.nvidia.com`) remains fixed. Payload nonces
 must decode to exactly 32 bytes of hexadecimal data, with an optional `0x` or
 `0X` prefix; invalid values fail before any request. Model verification checks
 the client challenge before invoking an override.
 
-Custom Intel URLs must provide PCCS-compatible certification-v4 endpoints
-for both SGX and TDX, including issuer-chain response headers and a hex-encoded
-SGX `rootcacrl` response. Local DCAP signature and trust-root checks remain in
-place. See [the proxy example](./verification-guide.md#use-a-pccs-or-nras-proxy)
-for construction and the required wire formats.
+DCAP constructs SGX and TDX collateral paths beneath the PCCS base URL. See
+[service URL configuration](./verification-guide.md#configure-attestation-service-urls).
 
 ### Quote and deployment values
 

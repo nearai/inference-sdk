@@ -692,6 +692,7 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     assert len(gateway.requests) == 1
 
 
+@pytest.mark.parametrize('adapter_name', ['native', 'http_client', 'httpx2_client'])
 @pytest.mark.parametrize(
     ('budget', 'sent'),
     [
@@ -701,11 +702,35 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     ],
 )
 async def test_decision_body_uses_configured_receipt_byte_limit(
-    monkeypatch, budget, sent
+    monkeypatch, budget, sent, adapter_name
 ):
     gateway = DecisionGateway()
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False, max_receipt_cache_bytes=budget) as client:
         with pytest.raises(ApiError, match='api.body_too_large'):
-            await client.systemone.create(REQUEST)
+            if adapter_name == 'native':
+                await client.systemone.create(REQUEST)
+            else:
+                async with getattr(client, adapter_name) as adapter:
+                    await adapter.post(
+                        client.base_url + 'systemone',
+                        content=json.dumps(REQUEST).encode(),
+                        headers={'content-type': 'application/json'},
+                    )
         assert len(gateway.requests) == sent
+
+
+@pytest.mark.parametrize(
+    'header',
+    ['content-encoding', 'content-md5', 'digest', 'content-digest', 'repr-digest'],
+)
+async def test_native_decisions_strip_configured_body_headers(monkeypatch, header):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    value = 'gzip' if header == 'content-encoding' else 'stale'
+
+    async with gateway.client(e2ee=False, headers={header: value}) as client:
+        result = await client.systemone.create(REQUEST)
+        await client.verify_response(result.decision_id)
+
+    assert header not in gateway.requests[0].headers

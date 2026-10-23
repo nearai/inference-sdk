@@ -27,7 +27,9 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | --- | --- | --- | --- |
 | `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
-| `inference_client.send` | `(request)` | `httpx.Response` | The same verified Chat path using HTTP messages directly. |
+| `inference_client.http_client` | property | `httpx.AsyncClient` | HTTPX adapter for external SDKs using the verified request pipeline. |
+| `inference_client.httpx2_client` | property | `httpx2.AsyncClient` | HTTPX2 adapter sharing the verified HTTPX pipeline, loaded on demand. |
+| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One at the configured Gateway, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
@@ -52,9 +54,10 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `verify_gateway_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `gateway` signature using preverified Gateway evidence. |
 | `create_tdx_quote_verifier` | `(pccs_url=...)` | `TdxQuoteVerifier` | Creates the built-in DCAP verifier with a configured collateral endpoint. |
 | `create_gpu_evidence_verifier` | `(nras_url=..., jwks_url=...)` | `GpuEvidenceVerifier` | Creates the built-in NVIDIA verifier with configured evidence and signing-key endpoints. |
-| `fetch_image_provenance` | `(repository, digest, github_token=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
+| `fetch_image_provenance` | `(repository, digest, github_token=None, *, github_api_url=None)` | `list[str]` | Retrieves all inline GitHub Sigstore bundles for an image digest. |
 | `verify_image_provenance` | `(bundles, digest, policy)` | `VerifiedImageProvenance` | Verifies an image digest against a caller-selected GitHub build identity. |
-| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
+| `verify_deployment_image_provenance` | `(app_compose, image_policies, github_token=None, *, github_api_url=None)` | `None` | Verifies configured, digest-pinned service images from measured app-compose JSON. |
+| `verify_compose_manager_deployment_image_provenance` | `(deployment, image_policies, *, compose_manager_image_policy, compose_repository='nearai/cvm-compose-files', compose_file=None, github_token=None, github_api_url=None)` | `None` | Verifies recorded deployment-file bytes and required image builds. |
 
 ## InferenceClient
 
@@ -128,11 +131,27 @@ pass. Cache hits return the original result without changing `verified_at`.
 
 ### HTTP integration and receipt results
 
-`http_client` returns a new, non-owning `httpx.AsyncClient` adapter accepted by
-`openai.AsyncOpenAI`. It uses the same verification, encryption, cache, and receipt
-capture as the built-in Chat interface. Closing an adapter or an external OpenAI
-client does not close the owning `InferenceClient` or discard its receipts. Keep
-the owner open while sending requests and verifying responses.
+Both adapters delegate to the same `send()` pipeline:
+
+| Property | Type | Supported requests |
+| --- | --- | --- |
+| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support System One. |
+| `httpx2_client` | `httpx2.AsyncClient` | The same requests, verification, and encryption settings. |
+
+They share authentication, preflight, TLS pinning, sessions, and receipt capture.
+HTTPX2 converts request/response types and forwards response streams on demand;
+network I/O remains with the owner's HTTPX clients. Both properties are also
+available on `DirectInferenceClient` for Chat.
+
+Install `httpx2` to use `httpx2_client`. It is loaded only when that property is
+accessed. For OpenAI, use a version supporting HTTPX2 and install `openai[httpx2]`;
+Jev's `typesafe-sdk` already depends on HTTPX2. Regular HTTPX consumers keep the
+existing dependencies. Standalone HTTP APIs continue to use HTTPX types.
+
+Each access returns a new, non-owning adapter. Closing an adapter or its external
+SDK client does not close the owner or discard receipts. Keep the owner open
+while sending requests and verifying responses, and consume streams completely
+before calling `verify_response()`.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -146,6 +165,17 @@ the owner open while sending requests and verifying responses.
 `inference_client.systemone.create(request, *, headers=None)` is asynchronous
 and available on Gateway clients. Use E2EE and OHTTP disabled for nonstreaming
 decision requests. The client verifies deployments before sending.
+
+### Official Jev SDK
+
+Use `inference_client.httpx2_client` with `AsyncTypeSafeClient`. Configure its API
+key, API root, timeout, and disabled compression/retries as shown in the
+[complete construction example](./verification-guide.md#use-the-official-jev-sdk).
+System One accepts uncompressed, nonstreaming JSON with E2EE/OHTTP disabled.
+Verify `raw_http_response.headers['x-generation-id']` through the owner before
+using the answers.
+
+### Request and result types
 
 | `SystemOneRequest` field | Type | Description |
 | --- | --- | --- |
@@ -194,7 +224,8 @@ same common options as `InferenceClient`, with the following differences:
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
 | `gateway_verification` | Not available; there is no Gateway workflow. |
-| `model_verification`, `deployment_policy` | Applied to every supplied direct model report. |
+| `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
+| `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
 | `verify_response(id)` | Returns `VerifiedDirectCompletionResult`. |
 
@@ -442,7 +473,8 @@ and every matching service image passes provenance verification. It parses
 | --- | --- | --- | --- |
 | `app_compose` | `str` | Yes | Measured app-compose JSON. |
 | `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Yes | Nonempty mapping from image repository to trusted GitHub build policy. |
-| `github_token` | `str \| None` | No | Optional GitHub authentication token. |
+| `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_api_url` is set. |
+| `github_api_url` | `str \| None` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Images must use `repository@sha256:<64 hex>` or
 `repository:tag@sha256:<64 hex>`. A leading `docker.io/` is normalized in policy
@@ -459,6 +491,43 @@ applicable. GitHub request errors are wrapped as `provenance.image_request_faile
 with `imageRepository`, `digest`, the original cause, and unchanged retryability.
 Image verification errors pass through unchanged.
 
+### `verify_compose_manager_deployment_image_provenance`
+
+Asynchronous. Use in a model deployment callback or after model verification.
+Selects the latest matching `compose_up`, verifies the recorded file's exact
+SHA-256, then checks the action's named `services` and the latest manager-start
+image. An omitted or empty service list selects all services in the file.
+Unknown service names fail with `provenance.deployment_images_invalid`
+(`reason='service_missing'`); images in unselected services cannot satisfy a policy.
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Required | Verified deployment with authenticated `compose_manager` actions. |
+| `image_policies` | `Mapping[str, ImageProvenancePolicy]` | Required | Nonempty required image repositories and build policies. |
+| `compose_manager_image_policy` | `ComposeManagerImagePolicy` | Required | Independent repository and build identity policy for the latest manager-start image. |
+| `compose_repository` | `str` | `nearai/cvm-compose-files` | Trusted GitHub compose repository. |
+| `compose_file` | `str \| None` | `None` | Exact file path to select; otherwise the latest `compose_up` overall. |
+| `github_token` | `str \| None` | `None` | GitHub token for direct requests; ignored when `github_api_url` is set. |
+| `github_api_url` | `str \| None` | `None` | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Compose files are limited to 8 MiB before hashing or parsing.
+
+Missing evidence, file/hash mismatches and image-policy failures raise
+`VerificationError`. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
+
+`ModelAttestation.compose_manager_attestation` optionally retains the raw
+`ComposeManagerAttestation` (`actions`, `actions_hash`, `nonce`, `intel_quote`,
+`event_log`, optional `reported_quote_data`). When present it is always verified.
+`MeasuredDeployment.compose_manager` contains `VerifiedComposeManagerAttestation`:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `actions` | `tuple[ComposeManagerAction, ...]` | Quote-authenticated wire-named action fields, including unknown string/string-array fields. |
+| `tcb_status` | `TcbStatus` | Accepted manager quote status. |
+| `advisory_ids` | `tuple[str, ...]` | Manager quote advisory IDs. |
+| `runtime_measurements` | `RuntimeMeasurements` | Measurements from its verified event log. |
+
 ### `fetch_image_provenance`
 
 Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
@@ -467,7 +536,13 @@ Asynchronously returns `list[str]` of inline Sigstore bundle JSON from GitHub.
 | --- | --- | --- | --- |
 | `repository` | `str` | Yes | GitHub repository in `owner/repo` form. |
 | `digest` | `str` | Yes | Image digest in `sha256:<64 hex characters>` form. |
-| `github_token` | `str \| None` | No | GitHub authentication token; defaults to no token. |
+| `github_token` | `str \| None` | No | GitHub token for direct requests; ignored when `github_api_url` is set. |
+| `github_api_url` | `str \| None` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub API access](verification-guide.md#github-api-access)
+for endpoint requirements.
 
 ### `verify_image_provenance`
 
@@ -562,21 +637,16 @@ Both factories are synchronous and return asynchronous verifier callbacks for
 the `verifiers.tdx_quote` and `verifiers.gpu_evidence` fields. Their optional
 arguments are independent of `AttestationClient.base_url`.
 
-| Factory | Argument | Default |
-| --- | --- | --- |
-| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` |
-| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
-| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+| Factory | Argument | Default | Description |
+| --- | --- | --- | --- |
+| `create_tdx_quote_verifier` | `pccs_url: str` | `https://api.trustedservices.intel.com` | PCCS base URL. |
+| `create_gpu_evidence_verifier` | `nras_url: str` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Complete GPU evidence POST URL. |
+| | `jwks_url: str` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent signing-key URL. |
 
-`pccs_url` is a base URL passed to `dcap-qvl`, which constructs the SGX and TDX collateral
-paths. A proxy must preserve PCCS bodies and issuer-chain headers, and serve
-`/sgx/certification/v4/rootcacrl` to avoid a direct root-CRL fallback. See the
-[proxy configuration example](./verification-guide.md#configure-attestation-service-urls).
-
-`nras_url` receives the evidence POST; `jwks_url` supplies the trusted signing
-keys. Use only a trusted JWKS source: checking the fixed NVIDIA issuer does not
-authenticate an arbitrary JWKS endpoint. The full signature, issuer, time,
-nonce, and verdict checks remain enabled.
+DCAP constructs SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is
+used as the POST endpoint; `jwks_url` independently selects a trusted signing-key
+source. See the
+[configuration example](./verification-guide.md#configure-attestation-service-urls).
 
 Model verification checks the payload nonce against the client nonce before
 calling a NVIDIA verifier. The factory additionally requires a 32-byte
