@@ -44,7 +44,7 @@ export type VerifyComposeManagerDeploymentImageProvenanceParams = {
   /** Required repositories in the selected services of the deployment file. */
   readonly imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
   /** Policy for the latest manager-start image, checked independently of compose images. */
-  readonly managerImagePolicy: ImageProvenancePolicy & {
+  readonly composeManagerImagePolicy: ImageProvenancePolicy & {
     readonly imageRepository: string;
   };
   /** Defaults to nearai/cvm-compose-files. */

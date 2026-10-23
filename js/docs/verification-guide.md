@@ -754,7 +754,7 @@ for (const attestation of fetchedModels.attestations) {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: modelImagePolicies,
-          managerImagePolicy: {
+          composeManagerImagePolicy: {
             imageRepository: 'nearaidev/compose-manager',
             repository: 'nearai/compose-manager',
             workflow: '.github/workflows/build.yml',
@@ -785,7 +785,7 @@ const verified = await verifyDirectModelAttestations({
     verifyComposeManagerDeploymentImageProvenance({
       deployment,
       imagePolicies: modelImagePolicies,
-      managerImagePolicy: {
+      composeManagerImagePolicy: {
         imageRepository: 'nearaidev/compose-manager',
         repository: 'nearai/compose-manager',
         workflow: '.github/workflows/build.yml',

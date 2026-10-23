@@ -106,7 +106,7 @@ describe('Compose Manager deployment image provenance', () => {
           verifyComposeManagerDeploymentImageProvenance({
             deployment: verified.deployment,
             imagePolicies: IMAGE_POLICIES,
-            managerImagePolicy: MANAGER_POLICY,
+            composeManagerImagePolicy: MANAGER_POLICY,
             githubProxyUrl,
           }),
       ]) {
@@ -147,7 +147,7 @@ describe('Compose Manager deployment image provenance', () => {
             },
           },
           imagePolicies: IMAGE_POLICIES,
-          managerImagePolicy: MANAGER_POLICY,
+          composeManagerImagePolicy: MANAGER_POLICY,
           githubToken: 'test-github-token',
         }),
       ).rejects.toMatchObject({
@@ -211,7 +211,7 @@ describe('Compose Manager deployment image provenance', () => {
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: IMAGE_POLICIES,
-              managerImagePolicy: MANAGER_POLICY,
+              composeManagerImagePolicy: MANAGER_POLICY,
               githubToken: 'test-github-token',
               githubProxyUrl,
             }),
@@ -309,7 +309,7 @@ describe('Compose Manager deployment image provenance', () => {
       verifyComposeManagerDeploymentImageProvenance({
         deployment: verified.deployment,
         imagePolicies: IMAGE_POLICIES,
-        managerImagePolicy: MANAGER_POLICY,
+        composeManagerImagePolicy: MANAGER_POLICY,
       }),
     ).rejects.toMatchObject({
       failure: { code: 'provenance.compose_file_hash_mismatch' },
@@ -338,7 +338,7 @@ describe('Compose Manager deployment image provenance', () => {
       verifyComposeManagerDeploymentImageProvenance({
         deployment: verified.deployment,
         imagePolicies: IMAGE_POLICIES,
-        managerImagePolicy: MANAGER_POLICY,
+        composeManagerImagePolicy: MANAGER_POLICY,
       }),
     ).rejects.toMatchObject({
       failure: {
@@ -362,7 +362,7 @@ describe('Compose Manager deployment image provenance', () => {
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: IMAGE_POLICIES,
-              managerImagePolicy: MANAGER_POLICY,
+              composeManagerImagePolicy: MANAGER_POLICY,
             }),
         },
       }),
@@ -456,7 +456,7 @@ describe('Compose Manager deployment image provenance', () => {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: IMAGE_POLICIES,
-          managerImagePolicy: MANAGER_POLICY,
+          composeManagerImagePolicy: MANAGER_POLICY,
         }),
       ).rejects.toMatchObject({
         failure: {
@@ -542,7 +542,7 @@ describe('Compose Manager deployment image provenance', () => {
         verifyComposeManagerDeploymentImageProvenance({
           deployment,
           imagePolicies: IMAGE_POLICIES,
-          managerImagePolicy: MANAGER_POLICY,
+          composeManagerImagePolicy: MANAGER_POLICY,
         }),
     });
 
@@ -593,7 +593,7 @@ describe('Compose Manager deployment image provenance', () => {
       deployment,
       composeFile: 'prod/model.yaml',
       imagePolicies: IMAGE_POLICIES,
-      managerImagePolicy: {
+      composeManagerImagePolicy: {
         ...POLICY,
         imageRepository: 'nearaidev/compose-manager',
       },

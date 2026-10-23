@@ -29,7 +29,7 @@ type FetchComposeFileParams = {
 export async function verifyComposeManagerDeploymentImageProvenance({
   deployment,
   imagePolicies,
-  managerImagePolicy,
+  composeManagerImagePolicy,
   composeRepository = 'nearai/cvm-compose-files',
   composeFile,
   githubToken,
@@ -55,7 +55,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
   );
   if (started?.image === undefined)
     throw invalidDeployment('manager_image_missing');
-  const managerRepository = managerImagePolicy.imageRepository.replace(
+  const managerRepository = composeManagerImagePolicy.imageRepository.replace(
     /^docker\.io\//,
     '',
   );
@@ -107,7 +107,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     {
       repository: managerRepository,
       digest: managerDigest,
-      policy: managerImagePolicy,
+      policy: composeManagerImagePolicy,
     },
     { githubToken, githubProxyUrl },
   );

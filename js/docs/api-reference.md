@@ -537,7 +537,7 @@ preserve the `ApiError` cause and retryability.
 Use after model verification or in its deployment callback. Returns `Promise<void>`.
 The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
 Image selection uses the action's named `services`. Independently, the latest
-manager-start action must name an image satisfying `managerImagePolicy`.
+manager-start action must name an image satisfying `composeManagerImagePolicy`.
 An omitted or empty service list selects all services in the file.
 Unknown service names fail with `provenance.deployment_images_invalid`
 (`reason: 'service_missing'`); images in unselected services cannot satisfy a policy.
@@ -546,7 +546,7 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | --- | --- | --- | --- | --- |
 | `deployment` | `MeasuredDeployment` | Yes | — | Verified deployment with authenticated `composeManager` actions. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
-| `managerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
+| `composeManagerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
 | `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
 | `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
 | `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |

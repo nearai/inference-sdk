@@ -62,7 +62,7 @@ test.each([undefined, 'unlisted/manager@sha256:' + 'bb'.repeat(32)])(
       verifyComposeManagerDeploymentImageProvenance({
         deployment: deployment(image),
         imagePolicies: policies,
-        managerImagePolicy: {
+        composeManagerImagePolicy: {
           ...policies['nearaidev/compose-manager'],
           imageRepository: 'nearaidev/compose-manager',
         },
@@ -90,7 +90,7 @@ test('rejects empty policy before fetching compose', async () => {
     verifyComposeManagerDeploymentImageProvenance({
       deployment: deployment(),
       imagePolicies: {},
-      managerImagePolicy: {
+      composeManagerImagePolicy: {
         ...policies['nearaidev/compose-manager'],
         imageRepository: 'nearaidev/compose-manager',
       },
@@ -144,7 +144,7 @@ test('a valid stale compose image cannot vouch for a different current manager d
     verifyComposeManagerDeploymentImageProvenance({
       deployment: deployment(`nearaidev/compose-manager@${digest}`),
       imagePolicies: policies,
-      managerImagePolicy: {
+      composeManagerImagePolicy: {
         ...policies['nearaidev/compose-manager'],
         imageRepository: 'nearaidev/compose-manager',
       },

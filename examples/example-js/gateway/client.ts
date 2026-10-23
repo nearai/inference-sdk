@@ -56,7 +56,7 @@ async function main(): Promise<void> {
           verifyComposeManagerDeploymentImageProvenance({
             deployment,
             imagePolicies: MODEL_IMAGE_POLICIES,
-            managerImagePolicy: {
+            composeManagerImagePolicy: {
               imageRepository: 'nearaidev/compose-manager',
               repository: 'nearai/compose-manager',
               workflow: '.github/workflows/build.yml',
