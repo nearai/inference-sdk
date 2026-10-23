@@ -519,8 +519,8 @@ against a quote itself.
 | --- | --- | --- | --- |
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
-| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | URL of a GitHub-compatible proxy on your backend. Omit to access GitHub directly. See the [proxy contract](verification-guide.md#github-authentication-and-proxies). |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -549,8 +549,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `composeManagerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
 | `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
 | `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
-| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | — | URL of your backend's GitHub-compatible proxy for compose files and image proofs. See the [proxy contract](verification-guide.md#github-authentication-and-proxies). |
+| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | — | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Compose files are limited to 8 MiB before hashing or parsing.
 
@@ -583,13 +583,13 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | --- | --- | --- | --- |
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
-| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubProxyUrl` is set. |
-| `githubProxyUrl` | `string` | No | URL of your backend's GitHub-compatible proxy. Repository API paths are appended to this prefix. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Proxy responses use the GitHub API format. Pagination stays on the configured
+Responses use the GitHub API format. Pagination stays on the configured
 base URL; redirects and returned bundle URLs are not followed. See
-[GitHub authentication and proxies](verification-guide.md#github-authentication-and-proxies)
-for the proxy contract.
+[GitHub API access](verification-guide.md#github-api-access)
+for endpoint requirements.
 
 ### `verifyImageProvenance`
 

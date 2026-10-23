@@ -18,7 +18,7 @@ type FetchComposeFileParams = {
   file: string;
   sha256: string;
   githubToken?: string;
-  githubProxyUrl?: string;
+  githubApiUrl?: string;
 };
 
 /**
@@ -33,7 +33,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
   composeRepository = 'nearai/cvm-compose-files',
   composeFile,
   githubToken,
-  githubProxyUrl,
+  githubApiUrl,
 }: VerifyComposeManagerDeploymentImageProvenanceParams): Promise<void> {
   if (Object.keys(imagePolicies).length === 0) {
     throw new VerificationError({
@@ -92,14 +92,14 @@ export async function verifyComposeManagerDeploymentImageProvenance({
     file,
     sha256: digest,
     githubToken,
-    githubProxyUrl,
+    githubApiUrl,
   });
 
   await verifyComposeImageProvenance({
     dockerCompose,
     imagePolicies,
     githubToken,
-    githubProxyUrl,
+    githubApiUrl,
     services: action.services,
   });
   // A stale compose reference cannot satisfy the current manager's policy.
@@ -109,7 +109,7 @@ export async function verifyComposeManagerDeploymentImageProvenance({
       digest: managerDigest,
       policy: composeManagerImagePolicy,
     },
-    { githubToken, githubProxyUrl },
+    { githubToken, githubApiUrl },
   );
 }
 
@@ -119,20 +119,20 @@ async function fetchComposeFile({
   file,
   sha256: expectedDigest,
   githubToken,
-  githubProxyUrl,
+  githubApiUrl,
 }: FetchComposeFileParams): Promise<string> {
   const repositoryPath = repository
     .split('/')
     .map(encodeURIComponent)
     .join('/');
   const filePath = file.split('/').map(encodeURIComponent).join('/');
-  const apiUrl = githubApiBaseUrl(githubProxyUrl);
+  const apiUrl = githubApiBaseUrl(githubApiUrl);
   const url = `${apiUrl}/repos/${repositoryPath}/contents/${filePath}?ref=${commit}`;
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github.raw+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
-  if (githubProxyUrl === undefined && githubToken !== undefined)
+  if (githubApiUrl === undefined && githubToken !== undefined)
     headers.Authorization = `Bearer ${githubToken}`;
   let response: Response;
   try {

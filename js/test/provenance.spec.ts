@@ -63,8 +63,8 @@ describe('image provenance verification', () => {
   afterEach(() => jest.restoreAllMocks());
 
   test.each([undefined, 'https://app.example/verification/github/'])(
-    'fetches bundles and verifies an approved GitHub build with proxy %s',
-    async (githubProxyUrl) => {
+    'fetches bundles and verifies an approved GitHub build with GitHub API URL %s',
+    async (githubApiUrl) => {
       const body = { attestations: [{ bundle: JSON.parse(BUNDLE) }] };
       const fetch = jest
         .spyOn(globalThis, 'fetch')
@@ -74,7 +74,7 @@ describe('image provenance verification', () => {
         repository: POLICY.repository,
         digest: DIGEST,
         githubToken: 'test-github-token',
-        githubProxyUrl,
+        githubApiUrl,
       });
       const verified = await verifyImageProvenance({
         bundles,
@@ -90,14 +90,14 @@ describe('image provenance verification', () => {
         issuer: 'https://token.actions.githubusercontent.com',
         predicateType: 'https://slsa.dev/provenance/v1',
       });
-      const baseUrl = githubProxyUrl ?? 'https://api.github.com/';
+      const baseUrl = githubApiUrl ?? 'https://api.github.com/';
       expect(fetch).toHaveBeenCalledWith(
         `${baseUrl}repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`,
         {
           headers: {
             Accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28',
-            ...(githubProxyUrl === undefined
+            ...(githubApiUrl === undefined
               ? { Authorization: 'Bearer test-github-token' }
               : {}),
           },
@@ -136,7 +136,7 @@ describe('image provenance verification', () => {
     await verifyDeploymentImageProvenance({
       appCompose,
       imagePolicies: { 'example/app': REUSABLE_POLICY },
-      githubProxyUrl: 'https://app.example/verification/github',
+      githubApiUrl: 'https://app.example/verification/github',
     });
 
     expect(fetch).toHaveBeenCalledWith(
@@ -535,7 +535,7 @@ services:
     const bundles = await fetchImageProvenance({
       repository: POLICY.repository,
       digest: DIGEST,
-      githubProxyUrl: 'https://app.example/verification/github',
+      githubApiUrl: 'https://app.example/verification/github',
     });
     const baseUrl = `https://app.example/verification/github/repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`;
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([

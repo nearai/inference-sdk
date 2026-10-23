@@ -51,10 +51,10 @@ export type VerifyComposeManagerDeploymentImageProvenanceParams = {
   readonly composeRepository?: string;
   /** Select the latest compose_up for this path; otherwise use the latest compose_up. */
   readonly composeFile?: string;
-  /** Optional GitHub token for direct requests; ignored when using a proxy. */
+  /** Optional token for the default GitHub API; ignored when githubApiUrl is set. */
   readonly githubToken?: string;
-  /** Absolute HTTP(S) GitHub proxy base URL for compose files and image proofs. */
-  readonly githubProxyUrl?: string;
+  /** GitHub API base URL. Use a backend endpoint when a frontend cannot supply a GitHub token. */
+  readonly githubApiUrl?: string;
 };
 
 export type ComposeManagerDeploymentFailureReason =

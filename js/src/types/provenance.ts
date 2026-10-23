@@ -24,10 +24,10 @@ export type FetchImageProvenanceParams = {
   readonly repository: string;
   /** Image manifest digest, including the `sha256:` prefix. */
   readonly digest: string;
-  /** Optional GitHub token for direct requests; ignored when using a proxy. */
+  /** Optional token for the default GitHub API; ignored when githubApiUrl is set. */
   readonly githubToken?: string;
-  /** Absolute HTTP(S) proxy base URL. Omit to access GitHub directly. */
-  readonly githubProxyUrl?: string;
+  /** GitHub API base URL. Use a backend endpoint when a frontend cannot supply a GitHub token. */
+  readonly githubApiUrl?: string;
 };
 
 export type VerifyImageProvenanceParams = {
@@ -42,10 +42,10 @@ export type VerifyDeploymentImageProvenanceParams = {
   readonly appCompose: string;
   /** Required container image repositories mapped to trusted GitHub builds. */
   readonly imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
-  /** Optional GitHub token for direct requests; ignored when using a proxy. */
+  /** Optional token for the default GitHub API; ignored when githubApiUrl is set. */
   readonly githubToken?: string;
-  /** Absolute HTTP(S) proxy base URL for GitHub API requests. */
-  readonly githubProxyUrl?: string;
+  /** GitHub API base URL. Use a backend endpoint when a frontend cannot supply a GitHub token. */
+  readonly githubApiUrl?: string;
 };
 
 export type DeploymentImagesFailureReason =

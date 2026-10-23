@@ -89,8 +89,8 @@ describe('Compose Manager deployment image provenance', () => {
     'https://proxy.example/github#',
     'https://proxy.example:99999/github',
   ])(
-    'rejects an invalid proxy before requesting compose files or proofs: %s',
-    async (githubProxyUrl) => {
+    'rejects an invalid GitHub API URL before requesting compose files or proofs: %s',
+    async (githubApiUrl) => {
       const verified = await verifyManagerFixture();
       const fetch = jest
         .spyOn(globalThis, 'fetch')
@@ -100,20 +100,20 @@ describe('Compose Manager deployment image provenance', () => {
           fetchImageProvenance({
             repository: POLICY.repository,
             digest: `sha256:${'aa'.repeat(32)}`,
-            githubProxyUrl,
+            githubApiUrl,
           }),
         () =>
           verifyComposeManagerDeploymentImageProvenance({
             deployment: verified.deployment,
             imagePolicies: IMAGE_POLICIES,
             composeManagerImagePolicy: MANAGER_POLICY,
-            githubProxyUrl,
+            githubApiUrl,
           }),
       ]) {
         await expect(operation()).rejects.toMatchObject({
           failure: {
             code: 'api.invalid_input',
-            details: { field: 'githubProxyUrl' },
+            details: { field: 'githubApiUrl' },
           },
         });
       }
@@ -165,8 +165,8 @@ describe('Compose Manager deployment image provenance', () => {
     'https://app.example/verification/github',
     'http://127.0.0.1:8080/github',
   ])(
-    'verifies the signed log, compose bytes and image build with proxy %s',
-    async (githubProxyUrl) => {
+    'verifies the signed log, compose bytes and image build with GitHub API URL %s',
+    async (githubApiUrl) => {
       const report = managerReport();
       // Wire key order is not part of the canonical action hash.
       const actions = report.actions;
@@ -213,7 +213,7 @@ describe('Compose Manager deployment image provenance', () => {
               imagePolicies: IMAGE_POLICIES,
               composeManagerImagePolicy: MANAGER_POLICY,
               githubToken: 'test-github-token',
-              githubProxyUrl,
+              githubApiUrl,
             }),
         },
       });
@@ -224,20 +224,20 @@ describe('Compose Manager deployment image provenance', () => {
       );
       expect(fetch).toHaveBeenNthCalledWith(
         1,
-        `${githubProxyUrl ?? 'https://api.github.com'}/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref=${COMMIT}`,
+        `${githubApiUrl ?? 'https://api.github.com'}/repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref=${COMMIT}`,
         expect.any(Object),
       );
       expect(fetch).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining(
-          `${githubProxyUrl ?? 'https://api.github.com'}/repos/${POLICY.repository}/attestations/`,
+          `${githubApiUrl ?? 'https://api.github.com'}/repos/${POLICY.repository}/attestations/`,
         ),
         expect.any(Object),
       );
       for (const [, options] of fetch.mock.calls) {
         const headers = new Headers(options?.headers);
         expect(headers.get('Authorization')).toBe(
-          githubProxyUrl === undefined ? 'Bearer test-github-token' : null,
+          githubApiUrl === undefined ? 'Bearer test-github-token' : null,
         );
       }
       expect(fetch).toHaveBeenCalledTimes(3);

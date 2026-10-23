@@ -25,7 +25,7 @@ type VerifyComposeImageProvenanceParams = {
   dockerCompose: string;
   imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
   githubToken?: string;
-  githubProxyUrl?: string;
+  githubApiUrl?: string;
   /** An explicit compose_up selection; omitted or empty selects the whole file. */
   services?: readonly string[];
 };
@@ -39,7 +39,7 @@ export async function verifyDeploymentImageProvenance({
   appCompose,
   imagePolicies,
   githubToken,
-  githubProxyUrl,
+  githubApiUrl,
 }: VerifyDeploymentImageProvenanceParams): Promise<void> {
   requireImagePolicies(imagePolicies);
   let configuration: DeploymentAppCompose;
@@ -58,7 +58,7 @@ export async function verifyDeploymentImageProvenance({
     dockerCompose: configuration.docker_compose_file,
     imagePolicies,
     githubToken,
-    githubProxyUrl,
+    githubApiUrl,
   });
 }
 
@@ -67,7 +67,7 @@ export async function verifyComposeImageProvenance({
   dockerCompose,
   imagePolicies,
   githubToken,
-  githubProxyUrl,
+  githubApiUrl,
   services,
 }: VerifyComposeImageProvenanceParams): Promise<void> {
   const requiredImages = selectRequiredImages({
@@ -77,14 +77,14 @@ export async function verifyComposeImageProvenance({
   });
   await Promise.all(
     requiredImages.map((image) =>
-      verifyRequiredImageProvenance(image, { githubToken, githubProxyUrl }),
+      verifyRequiredImageProvenance(image, { githubToken, githubApiUrl }),
     ),
   );
 }
 
 export async function verifyRequiredImageProvenance(
   { repository, digest, policy }: RequiredImage,
-  access: { githubToken?: string; githubProxyUrl?: string },
+  access: { githubToken?: string; githubApiUrl?: string },
 ): Promise<void> {
   let bundles: readonly string[];
   try {
