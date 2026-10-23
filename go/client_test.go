@@ -629,36 +629,36 @@ func TestReceiptCacheBudgetAndEviction(t *testing.T) {
 	}
 	defer c.Close()
 	request, response := []byte("req"), []byte("res")
-	if err = c.register("first", request, response, nil); err != nil {
+	if err = c.register("first", request, response, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	request[0], response[0] = 'X', 'X'
 	if string(c.responses["first"].request) != "req" || string(c.responses["first"].response) != "res" {
 		t.Fatal("caller mutated retained receipt")
 	}
-	if err = c.register("second", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("second", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	// An oversized new receipt must not evict either retained receipt.
-	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil), "api.body_too_large")
+	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil, false), "api.body_too_large")
 	if len(c.responses) != 2 {
 		t.Fatal("oversized receipt evicted records")
 	}
-	if err = c.register("third", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("third", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if c.responses["first"] != nil || len(c.responses) != 2 {
 		t.Fatal("oldest receipt was not evicted")
 	}
 	// Count alone is insufficient: this receipt fills the entire byte budget.
-	if err = c.register("full", []byte("123456"), []byte("123456"), nil); err != nil {
+	if err = c.register("full", []byte("123456"), []byte("123456"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.responses) != 1 || c.responses["full"] == nil {
 		t.Fatal("combined byte budget exceeded")
 	}
 	c.responses["full"].expires = time.Now().Add(-time.Second)
-	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil); err != nil {
+	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
 	if len(c.responses) != 1 {

@@ -32,8 +32,9 @@ retries with `option.WithMaxRetries(0)`.
 
 The example sends JSON and streaming Chat with E2EE. It consumes streams through
 EOF and calls `client.VerifyResponse(ctx, completionID)` before displaying the
-answer. Only Chat Completions are supported; this transport does not support the
-Responses API. Local integration tests and the live `TestLiveOpenAI` case cover
+answer. The Gateway transport also supports
+[Responses creation](../../go/docs/verification-guide.md#responses-api) with E2EE
+disabled. Local integration tests and the live `TestLiveOpenAI` case cover
 both JSON and streaming through the Gateway implementation. Local adapter tests
 also exercise direct JSON/SSE with signed provider receipts; the live suite does
 not test experimental direct endpoints.

@@ -165,8 +165,9 @@ func complete(ctx context.Context, client *nearai.InferenceClient, apiKey, model
 ```
 
 Use the configured `BaseURL` and HTTP client together. Disable OpenAI automatic
-retries to avoid replaying completion requests. This adapter supports Chat
-Completions only; use `AttestationClient` for evidence and metadata.
+retries to avoid replaying inference requests. This adapter supports Chat
+Completions and Gateway [Responses creation](#responses-api); use
+`AttestationClient` for evidence and metadata.
 
 ## Streaming
 
@@ -238,6 +239,44 @@ External models use Gateway signatures.
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [decision example](../../examples/example-go/README.md#system-one-decisions).
+
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```go
+body, err := client.CreateResponse(ctx, map[string]any{
+    "model": "z-ai/glm-5.3-flash", "input": "Reply with the word ok.", "store": false,
+})
+if err != nil { return err }
+var response struct { ID string `json:"id"` }
+if err := json.Unmarshal(body, &response); err != nil { return err }
+receipt, err := client.VerifyResponse(ctx, response.ID)
+```
+
+For typed JSON or SSE, use the official OpenAI Go client with
+`option.WithHTTPClient(client.HTTPClient())` and
+`option.WithBaseURL(client.BaseURL())`. Call `Responses.New` or
+`Responses.NewStreaming`; finish iteration and check `stream.Err()` before
+verifying `event.Response.ID` from a response lifecycle event.
 
 ## Configure verification and deployment policies
 

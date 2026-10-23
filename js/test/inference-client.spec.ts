@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
 import { TypeSafeClient, noul, choice, score } from '@typesafe-ai/sdk';
@@ -7,6 +9,7 @@ import nacl from 'tweetnacl';
 import {
   type AttestationVerificationResult,
   InferenceClient,
+  DirectInferenceClient,
   type InferenceClientOptions,
   type SystemOneRequest,
   type TdxQuoteVerificationResult,
@@ -2725,14 +2728,14 @@ describe('inference client', () => {
     });
   });
 
-  test('rejects non-Chat paths before it fetches attestation evidence', async () => {
+  test('rejects unsupported paths before it fetches attestation evidence', async () => {
     const gateway = createTestGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
     await expect(
       client.fetch(
-        `${baseUrl}responses`,
+        `${baseUrl}responses/resp_fixture`,
         chatRequest({ input: 'hello model' }),
       ),
     ).rejects.toMatchObject({
@@ -4577,5 +4580,297 @@ describe('System One decisions', () => {
     await client.verifyResponse(result.decisionId);
     expect(fixture.requests).toHaveLength(1);
     expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
+  });
+});
+
+describe('Responses API', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function responsesGateway({
+    streaming = false,
+    tamper = false,
+    providerReceipt = false,
+    missingId = false,
+    status = 200,
+    retrySignature = false,
+    tee = true,
+  } = {}) {
+    const gateway = createTestGateway({
+      providerType: tee ? 'vllm' : 'openai',
+      attestationSupported: tee,
+    });
+    const requests: Request[] = [];
+    let signatureCalls = 0;
+    let receipt: Record<string, string>;
+    const raw = readFileSync(
+      resolve(
+        __dirname,
+        '../../test-fixtures/responses',
+        streaming ? 'response.sse' : 'response.json',
+      ),
+    );
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (url.pathname === '/v1/responses') {
+        gateway.expectRequestHeader(request);
+        expect(gateway.state.gatewayAttestationRequests).toBeGreaterThan(0);
+        expect(request.headers.get('x-no-aliasing')).toBe('true');
+        expect(request.headers.has('x-client-pub-key')).toBe(false);
+        expect(request.headers.has('x-model-pub-key')).toBe(tee);
+        requests.push(request.clone());
+        const body = new Uint8Array(await request.arrayBuffer());
+        receipt = providerReceipt
+          ? gateway.createProviderSignature(body, raw)
+          : gateway.createGatewaySignature(body, raw);
+        const visible = missingId
+          ? Buffer.from(
+              streaming
+                ? 'event: response.output_item.added\ndata: {"id":"item-only","item":{"id":"msg_1"}}\n\n'
+                : '{"output":[]}',
+            )
+          : tamper
+            ? Buffer.from(raw.toString().replace('你好', '篡改'))
+            : raw;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              for (let i = 0; i < visible.length; i += 7)
+                controller.enqueue(visible.subarray(i, i + 7));
+              controller.close();
+            },
+          }),
+          {
+            status,
+            headers: {
+              'content-type': streaming
+                ? 'text/event-stream'
+                : 'application/json',
+            },
+          },
+        );
+      }
+      if (url.pathname === '/v1/signature/resp_fixture') {
+        signatureCalls++;
+        if (retrySignature && signatureCalls === 1)
+          return new Response('', { status: 503 });
+        return jsonResponse(receipt);
+      }
+      return gateway.fetch(request);
+    };
+    return {
+      gateway,
+      fetch,
+      requests,
+      raw,
+      signatureCalls: () => signatureCalls,
+    };
+  }
+
+  test.each([
+    { streaming: false, ohttp: false, external: false, tee: true },
+    { streaming: true, ohttp: false, external: true, tee: true },
+    { streaming: false, ohttp: true, external: true, tee: false },
+    { streaming: true, ohttp: true, external: false, tee: false },
+  ])('creates and verifies exact bytes: %j', async (scenario) => {
+    const fixture = responsesGateway(scenario);
+    const endpoint = scenario.ohttp
+      ? await createOhttpEndpoint({
+          fetch: fixture.fetch,
+          signingKey: keyPair(1),
+        })
+      : undefined;
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(endpoint?.fetch ?? fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+      ohttp: scenario.ohttp,
+      signingAlgo: 'ed25519',
+    });
+    const responses = scenario.external
+      ? new OpenAI({
+          apiKey: 'external',
+          baseURL: baseUrl,
+          fetch: client.fetch,
+        }).responses
+      : client.responses;
+    const input = [
+      {
+        type: 'function_call' as const,
+        call_id: 'prior',
+        name: 'weather',
+        arguments: '{}',
+      },
+      {
+        type: 'function_call_output' as const,
+        call_id: 'prior',
+        output: '{"temperature":20}',
+      },
+    ];
+    if (scenario.streaming) {
+      const events = [];
+      const stream = await responses.create({
+        model,
+        input,
+        store: false,
+        stream: true,
+      });
+      for await (const event of stream) events.push(event);
+      expect(events.map((event) => event.type)).toContain(
+        'response.function_call_arguments.delta',
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: 'response.completed',
+        response: { id: 'resp_fixture' },
+      });
+    } else {
+      const response = await responses.create({ model, input, store: false });
+      expect(response.id).toBe('resp_fixture');
+      expect(response.output[2]).toMatchObject({
+        type: 'function_call',
+        arguments: '{"city":"北京"}',
+      });
+    }
+    expect(await fixture.requests[0].json()).toMatchObject({
+      input,
+      store: false,
+    });
+    await expect(client.verifyResponse('resp_fixture')).resolves.toMatchObject({
+      id: 'resp_fixture',
+      signatureKind: 'gateway',
+    });
+    await expect(client.verifyResponse('msg_1')).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    expect(fixture.requests).toHaveLength(1);
+    if (endpoint)
+      expect(
+        endpoint.requests.some(
+          (request) => new URL(request.url).pathname === '/ohttp',
+        ),
+      ).toBe(true);
+  });
+
+  test('preserves Node TLS pinning for Responses', async () => {
+    const fixture = responsesGateway();
+    mockNodeGatewayAttestation({ gateway: fixture.gateway });
+    const client = new TestNodeInferenceClient(
+      { ...inferenceClientOptions(fixture.gateway), e2ee: false },
+      fixture.fetch,
+    );
+    const response = await client.responses.create({ model, input: 'Hello' });
+    await expect(client.verifyResponse(response.id)).resolves.toMatchObject({
+      signatureKind: 'gateway',
+    });
+    expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
+  });
+
+  test.each([false, true])(
+    'rejects tampered bytes (stream: %s)',
+    async (streaming) => {
+      const fixture = responsesGateway({ streaming, tamper: true });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const response = await client.fetch(
+        `${baseUrl}responses`,
+        chatRequest({ input: 'Hello', stream: streaming }),
+      );
+      await response.text();
+      await expect(client.verifyResponse('resp_fixture')).rejects.toMatchObject(
+        { failure: { code: 'signature.payload_mismatch' } },
+      );
+    },
+  );
+
+  test('requires a Gateway receipt even when model evidence was verified', async () => {
+    const fixture = responsesGateway({ providerReceipt: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    await client.responses.create({ model, input: 'Hello' });
+    await expect(client.verifyResponse('resp_fixture')).rejects.toMatchObject({
+      failure: { code: 'signature.kind_mismatch' },
+    });
+  });
+
+  test('retries signature lookup without repeating inference', async () => {
+    const fixture = responsesGateway({ retrySignature: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    await client.responses.create({ model, input: 'Hello' });
+    await expect(client.verifyResponse('resp_fixture')).rejects.toMatchObject({
+      failure: { code: 'api.http_status' },
+    });
+    await expect(client.verifyResponse('resp_fixture')).resolves.toMatchObject({
+      signatureKind: 'gateway',
+    });
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.signatureCalls()).toBe(2);
+  });
+
+  test.each([false, true])(
+    'rejects responses without a response ID (stream: %s)',
+    async (streaming) => {
+      const fixture = responsesGateway({ streaming, missingId: true });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const response = await client.fetch(
+        `${baseUrl}responses`,
+        chatRequest({ input: 'Hello', stream: streaming }),
+      );
+      await expect(response.text()).rejects.toMatchObject({
+        failure: { code: 'api.invalid_response' },
+      });
+    },
+  );
+
+  test('passes HTTP errors through without creating a receipt', async () => {
+    const fixture = responsesGateway({ status: 400 });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    await expect(
+      client.responses.create({ model, input: 'Hello' }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(client.verifyResponse('resp_fixture')).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+  });
+
+  test('rejects E2EE, Direct, history and foreign URLs before network I/O', async () => {
+    const fixture = responsesGateway();
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(fixture.fetch);
+    const options = inferenceClientOptions(fixture.gateway);
+    const plain = new InferenceClient({ ...options, e2ee: false });
+    const encrypted = new InferenceClient(options);
+    const direct = new DirectInferenceClient({ baseUrl, e2ee: false });
+    for (const [client, url] of [
+      [encrypted, `${baseUrl}responses`],
+      [direct, `${baseUrl}responses`],
+      [plain, `${baseUrl}responses/resp_fixture`],
+      [plain, 'https://other.test/v1/responses'],
+    ] as const) {
+      await expect(
+        client.fetch(url, chatRequest({ input: 'Hello' })),
+      ).rejects.toMatchObject({ failure: { code: 'api.invalid_input' } });
+    }
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

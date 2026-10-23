@@ -110,7 +110,7 @@ Use one reusable client for concurrent requests; each response is retained under
 its completion ID. `InferenceClient` owns and closes the shared HTTP connections.
 Closing the external OpenAI client only closes its adapter; receipts remain
 available until the owning inference client closes or their cache entries expire.
-Only Chat Completions are supported by this transport, not the Responses API.
+The Gateway transport supports Chat Completions and [Responses](#responses-api) creation.
 
 ### Verify before the first Chat request
 
@@ -161,7 +161,8 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
 
 OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
 The client verifies the advertised OHTTP configuration against the attested
-Gateway signer. Missing or invalid OHTTP evidence prevents Chat from being sent.
+Gateway signer. Missing or invalid OHTTP evidence prevents the inference request
+from being sent.
 The authenticated configuration is reused with the attestation cache.
 
 `e2ee` is independent and defaults to `False` for both clients.
@@ -173,8 +174,9 @@ JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
 `verify_response()` checks the inner request and response bodies before E2EE
 decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
 
-Only Chat uses OHTTP. Metadata, attestation, and signature requests keep their normal HTTP
-paths. The configured endpoint or proxy must serve `/ohttp` at its origin.
+Chat and Gateway Responses can use OHTTP. Metadata, attestation, and signature
+requests keep their normal HTTP paths. The configured endpoint or proxy must
+serve `/ohttp` at its origin.
 Authorization and explicitly configured custom headers are also sent on the
 outer request for authentication; OHTTP does not hide them or the client's
 network address from that endpoint.
@@ -201,8 +203,8 @@ async with InferenceClient(
     verified = await inference_client.verify_response(completion.id)
 ```
 
-Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`, and
-`/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`,
+`/v1/responses`, and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
 `X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
 bodies, model-key routing, and encryption headers. A browser-facing proxy must
 expose `X-Generation-Id` through CORS. The device verifies evidence and response
@@ -301,6 +303,41 @@ Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep th
 verified transport configuration and receipt-ID extraction together. See the
 [live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
 credential-gated validation against a deployed Gateway.
+
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store=False` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```python
+response = await client.responses.create(
+    model='z-ai/glm-5.3-flash',
+    input='Reply with the word ok.',
+    store=False,
+)
+receipt = await client.verify_response(response.id)
+print(receipt.signature_kind, response.output_text)
+```
+
+Set `stream=True` and use `async for` for typed Responses events. An external
+`AsyncOpenAI` client can use the same API through `http_client=client.http_client`.
 
 ## Direct model endpoints
 

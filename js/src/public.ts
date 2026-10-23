@@ -61,6 +61,7 @@ export type {
   ModelVerificationOptions,
   InferenceChat,
   InferenceChatCompletions,
+  InferenceResponses,
   InferenceClientOptions,
   VerifiedCompletionResult,
   AttestationVerificationResult,

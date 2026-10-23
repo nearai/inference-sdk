@@ -148,7 +148,7 @@ async fn verify_chat(
     Ok(())
 }
 
-async fn verify_receipt_with_retry(
+pub(super) async fn verify_receipt_with_retry(
     client: &InferenceClient,
     id: &str,
 ) -> Result<VerifiedCompletionResult, InferenceError> {
@@ -156,7 +156,9 @@ async fn verify_receipt_with_retry(
     // cryptographic check; the integrated client classifies those as permanent.
     for backoff_ms in [500, 1_000, 2_000, 4_000] {
         match client.verify_response(id).await {
-            Err(error) if error.retryable() => {
+            Err(error)
+                if error.retryable() || error.code() == "api.completion_signature_unavailable" =>
+            {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             result => return result,
