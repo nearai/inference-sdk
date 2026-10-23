@@ -128,12 +128,18 @@ without network access. Once credentials are supplied, a missing external model
 selection or a verification failure fails the tests. The ordinary unit suite
 still excludes live tests.
 
-Validation status (2026-10-23): local fixture tests and credential-free skip
-checks were run. **No live external or self-hosted case has been run during this
-local validation**, because live credentials were unavailable. Self-hosted live validation
-also requires the server routing dependency and a configured deployment. A skip
-is not a live pass; record the target environment and successful case names when
-running with credentials.
+Validation status (2026-10-23): [live CI run 39915153470](https://github.com/nearai/inference-sdk/actions/runs/39915153470)
+validated commit `7e3f5c8` against staging and production. Each JavaScript and
+Python job passed both external-model cases (Ed25519 and ECDSA), for **eight
+live passes** total. Every case sent a real official-SDK request and verified its
+Gateway receipt. The temporary PR-only workflow trigger was removed afterward;
+the tests remain part of the normal live workflow.
+
+The eight self-hosted cases explicitly skipped because no self-hosted model was
+configured. **Self-hosted live validation remains pending** deployment of the
+routing contract from cloud-api#1285 and configuration of a suitable model. A
+skip is not a live pass. Local validation also passed 484 JavaScript and 459
+Python unit tests, type checks, builds, and credential-free live-test skip checks.
 
 The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
 `examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
