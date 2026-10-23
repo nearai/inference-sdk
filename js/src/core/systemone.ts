@@ -61,6 +61,9 @@ export async function createSystemOne<
   const session = await getSession(request.model);
   options?.signal?.throwIfAborted();
   removeE2eeHeaders(headers);
+  if (session.modelKey !== undefined) {
+    headers.set('x-model-pub-key', session.modelKey.publicKey);
+  }
   // These headers must describe the generated JSON, not a caller's old body.
   for (const name of [
     'content-length',
@@ -90,8 +93,8 @@ export async function createSystemOne<
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'request' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'request' },
         retryable: false,
       },
       { cause },
@@ -102,7 +105,7 @@ export async function createSystemOne<
     await discardResponse(response);
     throw new ApiError({
       code: 'api.http_status',
-      details: { resource: 'completion', status: response.status },
+      details: { resource: 'systemone', status: response.status },
       retryable: false,
     });
   }
@@ -126,8 +129,8 @@ export async function createSystemOne<
     if (isApiError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'response_body' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'response_body' },
         retryable: false,
       },
       { cause },

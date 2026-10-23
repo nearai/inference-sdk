@@ -81,7 +81,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
 | `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for metadata, evidence, signature, and inference requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
-| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model and endpoint. Chat and System One keep separate sessions. Set `0` to check every request. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model across `verify()`, Chat, and System One. Set `0` to check every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
@@ -114,14 +114,14 @@ not retained.
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
+| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending inference. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat and System One. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
 | `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, checks model metadata and verifies the required evidence on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id, options?)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat or System One response. Calls without a signal share one operation; `{ signal }` performs an independently cancellable lookup. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
-| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the selected Chat signer or a System One fleet signer. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
+| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
@@ -129,7 +129,7 @@ not retained.
 | `models` | `readonly VerifiedModelAttestation[]` | Every verified model report, in response order. Empty for Gateway-only models. |
 | `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
 
-For Chat with attested models, every returned report must pass before the client
+For attested models, every returned report must pass before the client
 selects a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains the verified model
 signing key, without field-encryption headers. Incognito models make no
 model-attestation request and send no model routing key or field-encryption
@@ -204,13 +204,12 @@ annotate application types; `create()` also infers question and choice maps.
 | `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
 | `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
 
-Attestation sessions are cached per model and endpoint, separately from Chat.
+Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
-receipts expose every report matching the signer in `attestations`;
-`attestation` is the first matching report. The `attestations` property is optional
-in the public type for existing custom verifiers; SDK clients always populate it.
+receipts return the matching model report in `attestation`.
 
-Inference is sent once. Transport failures use `api.inference_transport_failed`.
+Inference is sent once. Its transport failures use `api.transport_failed` with
+`retryable: false`.
 Retry transient receipt lookups with `verifyResponse(result.decisionId)` while
 the response remains cached.
 
