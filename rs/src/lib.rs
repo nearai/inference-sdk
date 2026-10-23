@@ -12,6 +12,7 @@ mod cloud_api;
 mod compose_manager;
 mod compose_manager_provenance;
 mod deployment_provenance;
+mod deployment_verifier;
 mod errors;
 mod event_log;
 mod gateway;

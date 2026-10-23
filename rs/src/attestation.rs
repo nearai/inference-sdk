@@ -6,9 +6,8 @@ use crate::errors::VerificationError;
 use crate::event_log::verify_and_replay_rtmr3;
 use crate::quote::DefaultTdxQuoteVerifier;
 use crate::types::{
-    AttestationEvidence, AttestationPolicy, DeploymentProvenanceStatus, DeploymentVerifier,
-    MeasuredDeployment, SigningIdentity, TcbStatus, TdxQuoteVerificationResult, TdxQuoteVerifier,
-    VerifiedAttestationEvidence,
+    AttestationEvidence, AttestationPolicy, MeasuredDeployment, SigningIdentity, TcbStatus,
+    TdxQuoteVerificationResult, TdxQuoteVerifier,
 };
 
 const DEFAULT_ACCEPTED_TCB_STATUSES: [TcbStatus; 2] = [TcbStatus::UpToDate, TcbStatus::OutOfDate];
@@ -62,33 +61,18 @@ pub(crate) async fn verify_tdx_quote_policy(
     Ok(quote)
 }
 
-pub(crate) async fn verify_dstack_deployment(
+pub(crate) fn verify_dstack_deployment(
     verified: &VerifiedDstackQuote<'_>,
-    deployment_verifier: Option<&dyn DeploymentVerifier>,
-    compose_manager: Option<crate::VerifiedComposeManagerAttestation>,
-) -> Result<VerifiedAttestationEvidence, VerificationError> {
+) -> Result<MeasuredDeployment, VerificationError> {
     let runtime_measurements =
         verify_and_replay_rtmr3(&verified.attestation.event_log, &verified.quote.rt_mr3)?;
     verify_app_compose_mrconfigid_binding(
         &verified.attestation.app_compose,
         &verified.quote.mr_config_id,
     )?;
-    let deployment = MeasuredDeployment {
-        compose_manager,
+    Ok(MeasuredDeployment {
+        compose_manager: None,
         app_compose: verified.attestation.app_compose.clone(),
         runtime_measurements,
-    };
-    let deployment_provenance = if let Some(verifier) = deployment_verifier {
-        verifier.verify(&deployment).await?;
-        DeploymentProvenanceStatus::Verified
-    } else {
-        DeploymentProvenanceStatus::NotChecked
-    };
-    Ok(VerifiedAttestationEvidence {
-        signer: verified.signer.clone(),
-        tcb_status: verified.quote.tcb_status,
-        advisory_ids: verified.quote.advisory_ids.clone(),
-        deployment,
-        deployment_provenance,
     })
 }

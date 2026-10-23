@@ -3,8 +3,9 @@ mod support;
 use async_trait::async_trait;
 use nearai_inference_sdk::{
     verify_compose_manager_deployment_image_provenance, verify_model_attestation,
-    ComposeManagerAttestation, ModelAttestationVerifiers, ModelClientBinding, TcbStatus,
-    TdxQuoteVerificationResult, TdxQuoteVerifier, VerificationError,
+    ComposeManagerAttestation, DeploymentProvenanceStatus, DeploymentVerifier, MeasuredDeployment,
+    ModelAttestationVerifiers, ModelClientBinding, TcbStatus, TdxQuoteVerificationResult,
+    TdxQuoteVerifier, VerificationError,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -42,6 +43,18 @@ impl TdxQuoteVerifier for QuoteVerifier {
     }
 }
 
+struct ManagerDeploymentVerifier;
+
+#[async_trait]
+impl DeploymentVerifier for ManagerDeploymentVerifier {
+    async fn verify(&self, deployment: &MeasuredDeployment) -> Result<(), VerificationError> {
+        let manager = deployment.compose_manager.as_ref().unwrap();
+        assert_eq!(manager.actions, manager_report().actions);
+        assert_eq!(deployment.app_compose, support::APP_COMPOSE);
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn authenticates_the_shared_canonical_log_in_model_verification() {
     let mut attestation = model_attestation(None);
@@ -54,6 +67,7 @@ async fn authenticates_the_shared_canonical_log_in_model_verification() {
         None,
         ModelAttestationVerifiers {
             tdx_quote: Some(&QuoteVerifier),
+            deployment: Some(&ManagerDeploymentVerifier),
             ..Default::default()
         },
     )
@@ -62,6 +76,10 @@ async fn authenticates_the_shared_canonical_log_in_model_verification() {
     let manager = verified.evidence.deployment.compose_manager.unwrap();
     assert_eq!(manager.actions, manager_report().actions);
     assert_eq!(manager.tcb_status, TcbStatus::UpToDate);
+    assert_eq!(
+        verified.evidence.deployment_provenance,
+        DeploymentProvenanceStatus::Verified
+    );
 }
 
 #[tokio::test]

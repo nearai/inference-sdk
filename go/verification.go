@@ -177,11 +177,7 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 	if !bytes.Equal(binding, q.ReportData[:32]) {
 		return v, failure("binding.report_data_mismatch", nil)
 	}
-	compose := sha256.Sum256([]byte(a.AppCompose))
-	if q.MRConfigID[0] != 1 || !bytes.Equal(q.MRConfigID[1:33], compose[:]) {
-		return v, failure("measurement.app_compose_mrconfigid_mismatch", nil)
-	}
-	measurements, e := replayEvents(a.EventLog, q.RTMR3)
+	deployment, e := verifyDstackDeployment(a, q)
 	if e != nil {
 		return v, e
 	}
@@ -189,71 +185,101 @@ func verifyAttestation(ctx context.Context, a Attestation, b ClientBinding, o Ve
 		Signer:               a.Signer,
 		TCBStatus:            q.TCBStatus,
 		AdvisoryIDs:          append([]string(nil), q.AdvisoryIDs...),
-		Deployment:           MeasuredDeployment{AppCompose: a.AppCompose, RuntimeMeasurements: measurements},
+		Deployment:           deployment,
 		DeploymentProvenance: "not_checked",
 		SPKIFingerprint:      a.SPKIFingerprint,
 		ModelName:            a.ModelName,
 		InstanceID:           a.InstanceID,
 	}
-	if !gateway && a.ComposeManagerAttestation != nil {
+	if !gateway {
+		return verifyModelEvidence(ctx, a, b, o, v, signer)
+	}
+	v.DeploymentProvenance, e = runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
+	if e != nil {
+		return VerifiedAttestation{}, e
+	}
+	return v, ctx.Err()
+}
+
+func verifyModelEvidence(ctx context.Context, a Attestation, b ClientBinding, o VerificationOptions, v VerifiedAttestation, signer []byte) (VerifiedAttestation, error) {
+	if a.ComposeManagerAttestation != nil {
 		manager, err := verifyComposeManager(ctx, *a.ComposeManagerAttestation, a.AppCompose, b.Nonce, o)
 		if err != nil {
 			return VerifiedAttestation{}, err
 		}
 		v.Deployment.ComposeManager = manager
 	}
-	if o.DeploymentVerifier != nil {
-		if e = o.DeploymentVerifier(ctx, v.Deployment); e != nil {
-			return VerifiedAttestation{}, failure("provenance.verification_failed", e)
-		}
-		v.DeploymentProvenance = "verified"
+	provenance, e := runDeploymentVerifier(ctx, v.Deployment, o.DeploymentVerifier)
+	if e != nil {
+		return VerifiedAttestation{}, e
 	}
-	if !gateway {
-		v.GPUEvidence = "not_provided"
-		if a.NvidiaPayload == nil {
-			if o.Policy.RequireGPUEvidence {
-				return VerifiedAttestation{}, failure("policy.gpu_evidence_required", nil)
-			}
-		} else {
-			var p struct {
-				Nonce string `json:"nonce"`
-			}
-			if json.Unmarshal([]byte(*a.NvidiaPayload), &p) != nil || !sameHex(p.Nonce, b.Nonce) {
-				return VerifiedAttestation{}, failure("binding.nonce_mismatch", nil)
-			}
-			gpu := o.GPUVerifier
-			if gpu == nil {
-				gpu = CreateGPUEvidenceVerifier(GPUVerifierOptions{})
-			}
-			if e = gpu(ctx, *a.NvidiaPayload); e != nil {
-				return VerifiedAttestation{}, e
-			}
-			v.GPUEvidence = "verified"
+	v.DeploymentProvenance = provenance
+	v.GPUEvidence = "not_provided"
+	if a.NvidiaPayload == nil {
+		if o.Policy.RequireGPUEvidence {
+			return VerifiedAttestation{}, failure("policy.gpu_evidence_required", nil)
 		}
-		if a.SigningPublicKey != "" {
-			pub, e := unhex(a.SigningPublicKey)
-			if e != nil {
-				return VerifiedAttestation{}, e
-			}
-			switch a.Signer.SigningAlgo {
-			case Ed25519:
-				if !bytes.Equal(pub, signer) {
-					return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", nil)
-				}
-			case ECDSA:
-				if len(pub) == 64 {
-					pub = append([]byte{4}, pub...)
-				}
-				parsed, e := secp.ParsePubKey(pub)
-				if e != nil || len(pub) != 65 || !bytes.Equal(keccak(parsed.SerializeUncompressed()[1:])[12:], signer) {
-					return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", e)
-				}
-				pub = pub[1:]
-			}
-			v.SigningPublicKey = hex.EncodeToString(pub)
+	} else {
+		var p struct {
+			Nonce string `json:"nonce"`
 		}
+		if json.Unmarshal([]byte(*a.NvidiaPayload), &p) != nil || !sameHex(p.Nonce, b.Nonce) {
+			return VerifiedAttestation{}, failure("binding.nonce_mismatch", nil)
+		}
+		gpu := o.GPUVerifier
+		if gpu == nil {
+			gpu = CreateGPUEvidenceVerifier(GPUVerifierOptions{})
+		}
+		if e = gpu(ctx, *a.NvidiaPayload); e != nil {
+			return VerifiedAttestation{}, e
+		}
+		v.GPUEvidence = "verified"
+	}
+	if a.SigningPublicKey != "" {
+		pub, e := unhex(a.SigningPublicKey)
+		if e != nil {
+			return VerifiedAttestation{}, e
+		}
+		switch a.Signer.SigningAlgo {
+		case Ed25519:
+			if !bytes.Equal(pub, signer) {
+				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", nil)
+			}
+		case ECDSA:
+			if len(pub) == 64 {
+				pub = append([]byte{4}, pub...)
+			}
+			parsed, e := secp.ParsePubKey(pub)
+			if e != nil || len(pub) != 65 || !bytes.Equal(keccak(parsed.SerializeUncompressed()[1:])[12:], signer) {
+				return VerifiedAttestation{}, failure("binding.model_public_key_mismatch", e)
+			}
+			pub = pub[1:]
+		}
+		v.SigningPublicKey = hex.EncodeToString(pub)
 	}
 	return v, ctx.Err()
+}
+
+func verifyDstackDeployment(a Attestation, q QuoteVerificationResult) (MeasuredDeployment, error) {
+	compose := sha256.Sum256([]byte(a.AppCompose))
+	if q.MRConfigID[0] != 1 || !bytes.Equal(q.MRConfigID[1:33], compose[:]) {
+		return MeasuredDeployment{}, failure("measurement.app_compose_mrconfigid_mismatch", nil)
+	}
+	measurements, err := replayEvents(a.EventLog, q.RTMR3)
+	if err != nil {
+		return MeasuredDeployment{}, err
+	}
+	return MeasuredDeployment{AppCompose: a.AppCompose, RuntimeMeasurements: measurements}, nil
+}
+
+func runDeploymentVerifier(ctx context.Context, deployment MeasuredDeployment, verifier DeploymentVerifier) (string, error) {
+	if verifier == nil {
+		return "not_checked", nil
+	}
+	if err := verifier(ctx, deployment); err != nil {
+		return "", failure("provenance.verification_failed", err)
+	}
+	return "verified", nil
 }
 
 func replayEvents(raw json.RawMessage, expected []byte) (RuntimeMeasurements, error) {
