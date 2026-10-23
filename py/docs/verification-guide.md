@@ -522,24 +522,26 @@ receipt verification. With standalone calls, pass `(verified.serving_attestation
 to `verify_direct_model_response`. See the [API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
 for options and evidence fields.
 
-#### GitHub authentication and proxies
+#### GitHub API access
 
-Set `github_token` for authenticated GitHub requests, or `github_proxy_url` to retrieve
-evidence through your backend. When a proxy is configured, it supplies the
-GitHub credential and the SDK ignores `github_token`.
+Requests use `https://api.github.com` by default, with optional `github_token`
+authentication. When using a GitHub token in a frontend is impractical, set
+`github_api_url` to a GitHub-compatible endpoint on your backend. The backend
+supplies the GitHub credentials; the SDK ignores `github_token` when
+`github_api_url` is set.
 
-The proxy base URL must be absolute HTTP(S), without credentials, a query, or
+The API base URL must be absolute HTTP(S), without credentials, a query, or
 a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
 
-| Path after the proxy prefix | Response |
+| Path appended to the API URL | Response |
 | --- | --- |
 | `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
 | `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
 
 Preserve status codes and pagination cursors, and return content directly.
-All pages are fetched through the configured proxy. For browser callers, allow
+All pages are fetched through the configured endpoint. For browser callers, allow
 `Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
-Keep GitHub credentials on the server and restrict the proxy to the required
+Keep GitHub credentials on the server and restrict the backend to the required
 repositories and read-only routes. Bundle signatures, image policies, and file
 hashes are verified locally by the SDK.
 

@@ -27,7 +27,7 @@ async def verify_compose_manager_deployment_image_provenance(
     compose_repository: str = 'nearai/cvm-compose-files',
     compose_file: str | None = None,
     github_token: str | None = None,
-    github_proxy_url: str | None = None,
+    github_api_url: str | None = None,
 ) -> None:
     """Check the recorded compose file's hash, then its required image builds.
 
@@ -95,13 +95,13 @@ async def verify_compose_manager_deployment_image_provenance(
         quote(part, safe='') for part in compose_repository.split('/')
     )
     file_path = '/'.join(quote(part, safe='') for part in file.split('/'))
-    api_url = github_api_base_url(github_proxy_url)
+    api_url = github_api_base_url(github_api_url)
     url = f'{api_url}/repos/{repository_path}/contents/{file_path}?ref={commit}'
     headers = {
         'Accept': 'application/vnd.github.raw+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if github_proxy_url is None and github_token is not None:
+    if github_api_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
     try:
         response = await fetch(
@@ -138,7 +138,7 @@ async def verify_compose_manager_deployment_image_provenance(
         github_token,
         # The action boundary validates services separately from string fields.
         services=cast(list[str], action.get('services', [])),
-        github_proxy_url=github_proxy_url,
+        github_api_url=github_api_url,
     )
     # A stale compose reference cannot satisfy the current manager's policy.
     await verify_required_image_provenance(
@@ -146,7 +146,7 @@ async def verify_compose_manager_deployment_image_provenance(
         manager_digest,
         compose_manager_image_policy,
         github_token,
-        github_proxy_url=github_proxy_url,
+        github_api_url=github_api_url,
     )
 
 

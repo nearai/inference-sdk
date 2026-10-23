@@ -147,7 +147,7 @@ async def test_rejects_unpinned_manager_image_before_any_request(
 
 @pytest.mark.parametrize('direct', [False, True])
 @pytest.mark.parametrize(
-    'github_proxy_url',
+    'github_api_url',
     [
         None,
         'https://app.example/verification/github/',
@@ -157,7 +157,7 @@ async def test_rejects_unpinned_manager_image_before_any_request(
 async def test_verifies_recorded_compose_and_real_image_proof_through_deployment_policy(
     monkeypatch,
     direct,
-    github_proxy_url,
+    github_api_url,
 ):
     root = TrustedRoot.from_file(str(FIXTURES / 'provenance/trusted-root.json'))
     monkeypatch.setattr(Verifier, 'production', lambda: Verifier(trusted_root=root))
@@ -182,7 +182,7 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
             POLICIES,
             compose_manager_image_policy=MANAGER_POLICY,
             github_token='test-token',
-            github_proxy_url=github_proxy_url,
+            github_api_url=github_api_url,
         )
 
     attestation = create_model_attestation(compose_manager_attestation=manager_report())
@@ -219,9 +219,7 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
 
     assert verified.deployment_provenance == 'verified'
     assert verified.deployment.compose_manager.actions == manager_report().actions
-    api_url = (
-        'https://api.github.com/' if github_proxy_url is None else github_proxy_url
-    )
+    api_url = 'https://api.github.com/' if github_api_url is None else github_api_url
     assert compose_fetch.await_args.args[0] == (
         f'{api_url}repos/nearai/cvm-compose-files/contents/prod/model.yaml?ref='
         + '12' * 20
@@ -231,13 +229,13 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
     )
     for request in (compose_fetch, image_fetch):
         assert request.await_args.kwargs['headers'].get('Authorization') == (
-            'Bearer test-token' if github_proxy_url is None else None
+            'Bearer test-token' if github_api_url is None else None
         )
 
 
 @pytest.mark.parametrize('request_path', ['compose', 'image'])
 @pytest.mark.parametrize(
-    'github_proxy_url',
+    'github_api_url',
     [
         '',
         '/verification/github',
@@ -252,8 +250,8 @@ async def test_verifies_recorded_compose_and_real_image_proof_through_deployment
         'https://proxy.example/github#',
     ],
 )
-async def test_rejects_invalid_github_proxy_before_any_request(
-    monkeypatch, request_path, github_proxy_url, verified_deployment
+async def test_rejects_invalid_github_api_url_before_any_request(
+    monkeypatch, request_path, github_api_url, verified_deployment
 ):
     fetch = AsyncMock(side_effect=AssertionError('Unexpected network request'))
     monkeypatch.setattr(compose_manager_provenance, 'fetch', fetch)
@@ -264,16 +262,16 @@ async def test_rejects_invalid_github_proxy_before_any_request(
                 verified_deployment,
                 POLICIES,
                 compose_manager_image_policy=MANAGER_POLICY,
-                github_proxy_url=github_proxy_url,
+                github_api_url=github_api_url,
             )
         else:
             await provenance.fetch_image_provenance(
                 MANAGER_POLICY.repository,
                 'sha256:' + 'aa' * 32,
-                github_proxy_url=github_proxy_url,
+                github_api_url=github_api_url,
             )
     assert error.value.failure.code == 'api.invalid_input'
-    assert error.value.failure.details['field'] == 'github_proxy_url'
+    assert error.value.failure.details['field'] == 'github_api_url'
     fetch.assert_not_awaited()
 
 
@@ -357,7 +355,7 @@ async def test_rejects_changed_compose_before_image_proof_retrieval(
             verified_deployment,
             POLICIES,
             compose_manager_image_policy=MANAGER_POLICY,
-            github_proxy_url='https://app.example/verification/github',
+            github_api_url='https://app.example/verification/github',
         )
     assert raised.value.failure.code == 'provenance.compose_file_hash_mismatch'
     image_fetch.assert_not_awaited()
@@ -400,7 +398,7 @@ async def test_streamed_compose_file_is_bounded_before_hashing_or_image_fetch(
                 verified_deployment,
                 POLICIES,
                 compose_manager_image_policy=MANAGER_POLICY,
-                github_proxy_url=str(server.make_url('/')),
+                github_api_url=str(server.make_url('/')),
             )
     assert raised.value.failure.code == 'provenance.compose_manager_deployment_invalid'
     assert raised.value.failure.details['reason'] == 'compose_file_too_large'

@@ -28,11 +28,11 @@ def _compose(services: dict[str, object]) -> str:
 
 
 @pytest.mark.parametrize(
-    'github_proxy_url', [None, 'https://app.example/verification/github']
+    'github_api_url', [None, 'https://app.example/verification/github']
 )
 async def test_verifies_selected_images_with_yaml_12_names_and_docker_io(
     monkeypatch: pytest.MonkeyPatch,
-    github_proxy_url: str | None,
+    github_api_url: str | None,
 ) -> None:
     worker_digest = 'sha256:' + 'cd' * 32
     worker_policy = ImageProvenancePolicy(
@@ -64,18 +64,16 @@ services:
         app_compose,
         {IMAGE: POLICY, 'docker.io/registry.example/worker': worker_policy},
         'github-token',
-        github_proxy_url=github_proxy_url,
+        github_api_url=github_api_url,
     )
 
     assert fetch.await_args_list == [
-        call(
-            POLICY.repository, DIGEST, 'github-token', github_proxy_url=github_proxy_url
-        ),
+        call(POLICY.repository, DIGEST, 'github-token', github_api_url=github_api_url),
         call(
             worker_policy.repository,
             worker_digest,
             'github-token',
-            github_proxy_url=github_proxy_url,
+            github_api_url=github_api_url,
         ),
     ]
     assert verify.await_args_list == [

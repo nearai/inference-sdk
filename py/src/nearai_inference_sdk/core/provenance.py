@@ -57,7 +57,7 @@ async def verify_deployment_image_provenance(
     image_policies: Mapping[str, ImageProvenancePolicy],
     github_token: str | None = None,
     *,
-    github_proxy_url: str | None = None,
+    github_api_url: str | None = None,
 ) -> None:
     """Verify digest-pinned images selected from measured app-compose JSON.
 
@@ -76,7 +76,7 @@ async def verify_deployment_image_provenance(
         app.docker_compose_file,
         image_policies,
         github_token,
-        github_proxy_url=github_proxy_url,
+        github_api_url=github_api_url,
     )
 
 
@@ -86,7 +86,7 @@ async def verify_compose_image_provenance(
     github_token: str | None = None,
     *,
     services: Sequence[str] = (),
-    github_proxy_url: str | None = None,
+    github_api_url: str | None = None,
 ) -> None:
     """Shared image selection for authenticated compose sources."""
     if not image_policies:
@@ -129,7 +129,7 @@ async def verify_compose_image_provenance(
 
     for repository, digest, policy in selected:
         await verify_required_image_provenance(
-            repository, digest, policy, github_token, github_proxy_url=github_proxy_url
+            repository, digest, policy, github_token, github_api_url=github_api_url
         )
 
 
@@ -139,11 +139,11 @@ async def verify_required_image_provenance(
     policy: ImageProvenancePolicy,
     github_token: str | None = None,
     *,
-    github_proxy_url: str | None = None,
+    github_api_url: str | None = None,
 ) -> None:
     try:
         bundles = await fetch_image_provenance(
-            policy.repository, digest, github_token, github_proxy_url=github_proxy_url
+            policy.repository, digest, github_token, github_api_url=github_api_url
         )
     except ApiError as error:
         raise verification_failure(
@@ -181,32 +181,32 @@ def _deployment_images_failure(
     return verification_failure('provenance.deployment_images_invalid', details)
 
 
-def github_api_base_url(github_proxy_url: str | None) -> str:
-    if github_proxy_url is None:
+def github_api_base_url(github_api_url: str | None) -> str:
+    if github_api_url is None:
         return 'https://api.github.com'
     try:
-        parsed = urlsplit(github_proxy_url)
+        parsed = urlsplit(github_api_url)
         _ = parsed.port
         if (
             parsed.scheme not in {'http', 'https'}
             or not parsed.hostname
             or parsed.username is not None
-            or '?' in github_proxy_url
-            or '#' in github_proxy_url
+            or '?' in github_api_url
+            or '#' in github_api_url
         ):
             raise ValueError
     except (TypeError, ValueError):
         raise api_failure(
             'api.invalid_input',
             {
-                'field': 'github_proxy_url',
+                'field': 'github_api_url',
                 'reason': 'invalid_url',
                 'expected': (
                     'an absolute HTTP(S) URL without credentials, query, or fragment'
                 ),
             },
         ) from None
-    return github_proxy_url.rstrip('/')
+    return github_api_url.rstrip('/')
 
 
 async def fetch_image_provenance(
@@ -214,13 +214,14 @@ async def fetch_image_provenance(
     digest: str,
     github_token: str | None = None,
     *,
-    github_proxy_url: str | None = None,
+    github_api_url: str | None = None,
 ) -> list[str]:
     """Fetch inline Sigstore bundles for an image digest from a GitHub repository.
 
-    ``github_token`` is a GitHub token, not a Gateway API key. With
-    ``github_proxy_url``, requests use that absolute HTTP(S) base URL instead
-    and the token is omitted. Redirects and returned bundle URLs are not followed.
+    Requests use https://api.github.com by default. When a frontend cannot supply
+    a GitHub token, set ``github_api_url`` to a backend endpoint that handles
+    GitHub authentication. ``github_token`` is used only with the default API.
+    Redirects and returned bundle URLs are not followed.
     """
 
     if not _REPOSITORY_PATTERN.fullmatch(repository) or any(
@@ -247,10 +248,10 @@ async def fetch_image_provenance(
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    if github_proxy_url is None and github_token is not None:
+    if github_api_url is None and github_token is not None:
         headers['Authorization'] = f'Bearer {github_token}'
 
-    api_url = github_api_base_url(github_proxy_url)
+    api_url = github_api_base_url(github_api_url)
     base_url = (
         f'{api_url}/repos/{repository}/attestations/'
         f'{quote(digest.lower(), safe=":")}?per_page=100'
