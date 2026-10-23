@@ -49,7 +49,8 @@ the attestation socket to be reused.
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
-| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
+| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
+| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
 
 ## `InferenceClient`
 
@@ -111,7 +112,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Sends Chat or Gateway Responses creation requests after verifying the required evidence for the request's `model`. Returns JSON or SSE; field-level E2EE applies to Chat only. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for Chat Completions, Gateway Responses, and uncompressed JSON System One. Uses the same preflight and receipt capture as the built-in APIs; endpoint-specific encryption settings apply. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
 | `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
@@ -145,6 +146,12 @@ including after successful or failed verification. TTL starts at body completion
 
 Available on the generic and Node Gateway clients. Use `e2ee: false` and
 `ohttp: false` for nonstreaming decision requests.
+
+For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
+compression and inference retries. The official SDK parses the raw response;
+pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
+Chat's model session and selected-key routing. See the
+[official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
 
 | Method | Parameters | Returns |
 | --- | --- | --- |
@@ -521,7 +528,8 @@ against a quote itself.
 | --- | --- | --- | --- |
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
-| `githubToken` | `string` | No | GitHub authentication for fetching proofs. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -533,6 +541,49 @@ configuration, `provenance.image_request_failed` for proof retrieval errors, or
 `provenance.image_verification_failed` for rejected proofs. Retrieval errors
 preserve the `ApiError` cause and retryability.
 
+### `verifyComposeManagerDeploymentImageProvenance`
+
+Use after model verification or in its deployment callback. Returns `Promise<void>`.
+The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
+Image selection uses the action's named `services`. Independently, the latest
+manager-start action must name an image satisfying `composeManagerImagePolicy`.
+An omitted or empty service list selects all services in the file.
+Unknown service names fail with `provenance.deployment_images_invalid`
+(`reason: 'service_missing'`); images in unselected services cannot satisfy a policy.
+
+| `VerifyComposeManagerDeploymentImageProvenanceParams` field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Yes | — | Verified deployment with authenticated `composeManager` actions. |
+| `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
+| `composeManagerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
+| `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
+| `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
+| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | — | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Compose files are limited to 8 MiB before hashing or parsing.
+
+Fails with `VerificationError` if manager evidence or a matching action is missing,
+the file cannot be retrieved, its hash differs, or an image policy fails. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `ComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Raw signed action fields, retaining wire names and unknown string/string-array fields. |
+|  | `actionsHash` | `string` | Reported SHA-256 of canonical action JSON. |
+|  | `nonce` | `string` | Echoed challenge. |
+|  | `intelQuote` | `string` | TDX quote binding the action hash and nonce. |
+|  | `eventLog` | `AttestationEventLog` | Event log to replay against RTMR3. |
+|  | `reportedQuoteData?` | `string` | Optional copy checked against verified quote report data. |
+| `VerifiedComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Quote-authenticated action log. |
+|  | `tcbStatus` | `TcbStatus` | Accepted manager quote status. |
+|  | `advisoryIds` | `readonly string[]` | Manager quote advisory IDs. |
+|  | `runtimeMeasurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+Model reports retain optional `composeManagerAttestation`; successful model
+verification exposes its authenticated form as `deployment.composeManager`.
+When supplied, manager evidence is checked even without an image policy.
+
 ### `fetchImageProvenance`
 
 Returns all inline Sigstore bundles as JSON strings. Does not verify them.
@@ -541,9 +592,18 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | --- | --- | --- | --- |
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
-| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub API access](verification-guide.md#github-api-access)
+for endpoint requirements.
 
 ### `verifyImageProvenance`
+
+Verifies supplied Sigstore bundles against a digest and build policy. Both
+deployment helpers call this after selecting images and fetching their proofs.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
@@ -628,6 +688,7 @@ the provider signature no longer matches the client-visible bytes.
 | Type | Additional field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
+|  | `composeManagerAttestation?` | `ComposeManagerAttestation` | No | Deployment-control evidence, authenticated during model verification when present. |
 |  | `signingPublicKey?` | `string` | No | E2EE model public key supplied by the service. Verification binds an Ed25519 key directly, or derives an ECDSA signing address, from the quote-bound signer before returning it. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
@@ -638,8 +699,8 @@ the provider signature no longer matches the client-visible bytes.
 
 Both factories return callbacks for the existing `verifiers` parameter. They
 retain the built-in verification checks and accept custom service or proxy URLs.
-PCCS defaults to Phala in browsers and Intel in Node.js. NVIDIA defaults are
-the same in both runtimes.
+PCCS and NRAS default to NEAR AI's proxies in browsers and the official services
+in Node.js. NVIDIA signing keys use the official JWKS URL in both runtimes.
 
 | Function | Parameter type | Returns |
 | --- | --- | --- |
@@ -648,16 +709,16 @@ the same in both runtimes.
 
 | Parameter type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
-| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | NEAR AI proxy (browser); Intel PCS (Node.js) | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | NEAR AI proxy (browser); NVIDIA NRAS (Node.js) | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
 nonce. `verifyModelAttestation` additionally binds that nonce to
 `clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
 The expected NVIDIA issuer remains fixed when either URL changes.
-See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
-for routing and response-header requirements.
+See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
+for default URLs and custom configuration.
 
 ## Policies and verifier callbacks
 
@@ -705,6 +766,7 @@ trust roots or another verification service.
 |  | `rtMr3` | `Uint8Array` | Authenticated quote RTMR3. |
 | `MeasuredDeployment` | `readonly appCompose` | `string` | Configuration text bound to MRCONFIGID. |
 |  | `readonly runtimeMeasurements` | `RuntimeMeasurements` | Runtime measurements derived from verified event-log entries. |
+|  | `readonly composeManager?` | `VerifiedComposeManagerAttestation` | Optional authenticated model deployment-control evidence. |
 | `RuntimeMeasurements` | `readonly osImageHash?` | `string` | Optional measured OS image hash. |
 |  | `readonly composeHash?` | `string` | Optional measured compose hash. |
 

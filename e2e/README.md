@@ -22,6 +22,11 @@ one SDK's suites; the default selects all available suites.
 export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 ```
 
+Responses tests are opt-in: set `NEARAI_E2E_RESPONSES_MODEL` to a model supporting
+`POST /responses`. Set `NEARAI_E2E_RESPONSES_OHTTP=1` to also exercise OHTTP.
+They send `store: false` requests, consume JSON/SSE to EOF, and require a verified
+Gateway receipt within 15 seconds after inference. Field E2EE is unsupported.
+
 Run the selected SDK's command from the repository root:
 
 ```sh
@@ -60,10 +65,14 @@ without making live requests.
 
 Add `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` as repository Actions secrets.
 Both are required. Each test job receives only its environment's key.
+Enable Responses with the `NEARAI_STG_RESPONSES_MODEL` and/or
+`NEARAI_PRD_RESPONSES_MODEL` repository variables. The corresponding
+`NEARAI_STG_RESPONSES_OHTTP` / `NEARAI_PRD_RESPONSES_OHTTP` variables enable OHTTP
+when set to `1`.
 
 The [Live E2E workflow](../.github/workflows/e2e.yml) runs all four SDKs against
 both environments after pushes to `main`, daily at 03:00 UTC, and on manual
-dispatch from `main`. Releases test the selected SDK in both environments and
+dispatch from `main`. Releases test all four SDKs in both environments and
 block publication on failure.
 
 ## Coverage
@@ -93,3 +102,37 @@ finish with `stop`. Test failures and timeouts fail the workflow.
 Receipt lookups retry transient API failures up to five attempts within the
 model case's 180 second deadline. A receipt retry does not send another
 inference request.
+
+## Official Jev SDK integration
+
+`js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
+`@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
+send one real decision per case, parse the official response types, extract
+`X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
+retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
+Both Ed25519 and ECDSA are covered.
+
+The official-SDK cases are part of the existing System One live suites and run
+through the existing live commands and workflow. They use the same
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
+native cases. The catalog selector supplies an external Jev model; there are no
+separate Jev environment variables or CI steps.
+
+Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
+same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
+these cases requires the routing contract from
+[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
+self-hosted deployment. They preverify the selected model and require a provider
+receipt matching its attested signing identity. An external model is never
+substituted. The current catalog selector chooses only hosted Jev deployments.
+
+Like the existing live tests, these suites require explicit configuration and
+are excluded from ordinary unit-test runs. Missing required external-model
+configuration or verification failures fail the tests.
+
+The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
+`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+transport, disabled retries/compression, and receipt-ID extraction together.
+The official SDKs remain example/test dependencies only. Python uses
+`inference.httpx2_client` to bridge
+Jev's HTTPX2 client to the existing verified HTTPX transport.

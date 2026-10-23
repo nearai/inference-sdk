@@ -12,11 +12,9 @@ from ..types.attestation_common import (
 )
 from ..types.verification import (
     AttestationPolicy,
-    DeploymentVerifier,
     MeasuredDeployment,
     TdxQuoteVerificationResult,
     TdxQuoteVerifier,
-    VerifiedAttestationEvidence,
 )
 from ..utils.common import maybe_await, require_byte_length
 from ..utils.errors import (
@@ -57,13 +55,21 @@ async def verify_dstack_quote(
         'attestation.signer.signing_address',
     )
 
+    quote = await verify_tdx_quote(attestation.intel_quote, policy, tdx_quote_verifier)
+    verify_advertised_report_data(advertised_report_data, quote.report_data)
+    return VerifiedDstackQuote(attestation=attestation, quote=quote, signer=signer)
+
+
+async def verify_tdx_quote(
+    intel_quote: str,
+    policy: AttestationPolicy | None,
+    tdx_quote_verifier: TdxQuoteVerifier | None,
+) -> TdxQuoteVerificationResult:
     verifier: TdxQuoteVerifier = (
         verify_dcap_quote if tdx_quote_verifier is None else tdx_quote_verifier
     )
     try:
-        quote: TdxQuoteVerificationResult = await maybe_await(
-            verifier(attestation.intel_quote)
-        )
+        quote: TdxQuoteVerificationResult = await maybe_await(verifier(intel_quote))
     except VerificationError:
         raise
     except Exception as error:
@@ -74,7 +80,6 @@ async def verify_dstack_quote(
         ) from error
     _validate_quote_result(quote)
 
-    verify_advertised_report_data(advertised_report_data, quote.report_data)
     if quote.debug_enabled:
         raise verification_failure('policy.debug_enabled')
 
@@ -88,43 +93,21 @@ async def verify_dstack_quote(
                 'advisoryIds': list(quote.advisory_ids),
             },
         )
-    return VerifiedDstackQuote(attestation=attestation, quote=quote, signer=signer)
+    return quote
 
 
 async def verify_dstack_deployment(
     verified_quote: VerifiedDstackQuote,
-    deployment_verifier: DeploymentVerifier | None,
-) -> VerifiedAttestationEvidence:
+) -> MeasuredDeployment:
     runtime_measurements = verify_and_replay_rtmr3(
         verified_quote.attestation.event_log, verified_quote.quote.rt_mr3
     )
     verify_app_compose_mrconfig_binding(
         verified_quote.attestation.app_compose, verified_quote.quote.mr_config_id
     )
-    deployment = MeasuredDeployment(
+    return MeasuredDeployment(
         app_compose=verified_quote.attestation.app_compose,
         runtime_measurements=runtime_measurements,
-    )
-
-    provenance = 'not_checked'
-    if deployment_verifier is not None:
-        try:
-            await maybe_await(deployment_verifier(deployment))
-        except VerificationError:
-            raise
-        except Exception as error:
-            raise verification_failure(
-                'provenance.verification_failed',
-                cause=error,
-            ) from error
-        provenance = 'verified'
-
-    return VerifiedAttestationEvidence(
-        signer=verified_quote.signer,
-        tcb_status=verified_quote.quote.tcb_status,
-        advisory_ids=tuple(verified_quote.quote.advisory_ids),
-        deployment=deployment,
-        deployment_provenance=provenance,
     )
 
 

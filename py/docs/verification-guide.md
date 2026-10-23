@@ -94,6 +94,13 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
+To use HTTPX2 with an OpenAI version that supports it, install `openai[httpx2]`
+and replace `inference_client.http_client` with `inference_client.httpx2_client`.
+Both adapters share the same supported endpoints, streaming, encryption, and
+verification pipeline. The HTTPX2 adapter only converts types and stream
+interfaces; the owner retains its HTTPX connections. Other SDKs accepting an
+HTTPX2 client can use this property for the same supported endpoints.
+
 Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
 the authorization for evidence, Chat, and signature requests. An external
 `AsyncOpenAI` client's API key does not override it. With header-only authentication,
@@ -236,6 +243,66 @@ returns a complete JSON response and shares Chat's attestation session per model
 Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
+
+### Use the official Jev SDK
+
+Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs
+HTTPX2 automatically. Pass
+`inference.httpx2_client` to `AsyncTypeSafeClient` for the HTTPX2
+adapter; the NEAR client continues to use HTTPX for network I/O and verification.
+The official SDK's API root excludes `/v1`, while the NEAR client's base URL
+includes `/v1/`. Jev requires a non-empty `api_key` even with an injected client;
+for header-only authentication, pass a placeholder to Jev and configure the
+actual credentials on `InferenceClient`.
+
+```python
+from nearai_inference_sdk import InferenceClient
+from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
+
+
+async def decide(api_key: str, model: str) -> None:
+    async with InferenceClient(
+        api_key,
+        base_url='https://cloud-api.near.ai/v1/',
+        e2ee=False,
+        ohttp=False,
+    ) as inference:
+        async with AsyncTypeSafeClient(
+            api_key=api_key,
+            base_url='https://cloud-api.near.ai',
+            http_client=inference.httpx2_client,
+            compression=False,
+            retry=RetryPolicy(max_retries=0),
+            timeout=60,
+        ) as jev:
+            result = await jev.system_one(
+                model=model,
+                state='I was charged twice.',
+                questions={'billing': Noul(instructions='Is this about billing?')},
+            )
+        receipt_id = result.raw_http_response.headers['x-generation-id']
+        await inference.verify_response(receipt_id)
+        print(result.nouls['billing'].noul)
+```
+
+Use a canonical Jev model ID from your endpoint's catalog. System One accepts
+uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, compression
+and automatic inference retries disabled. Multipart uploads and other official
+SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
+receipt lookups through `verify_response(receipt_id)`.
+
+Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
+than the official SDK's upstream `request_id`. The official SDK parses the
+response; the NEAR client verifies the captured wire bytes. Self-hosted models
+route to the preselected attested public key, and external models use Gateway
+receipts. Closing the official client closes its borrowed adapter; keep the
+owning `InferenceClient` open until verification finishes.
+
+See the [runnable official SDK example](../../examples/example-py/gateway/jev_sdk.py).
+Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep the
+verified transport configuration and receipt-ID extraction together. See the
+[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+credential-gated validation against a deployed Gateway.
 
 ## Responses API
 
@@ -521,12 +588,90 @@ build provenance.
 The helpers are asynchronous. The deployment helper reports selection, request,
 and verification failures as `VerificationError`; wrapped request failures retain
 their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks. An optional GitHub
-token can be passed to either retrieval helper; do not use a Gateway API key for GitHub.
+Multiple bundles are tried until one satisfies all checks.
 
 This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides, inspect compose-manager,
+rebuild the image, resolve compose-variable overrides,
 or prove which containers are currently running.
+
+#### Model images deployed by Compose Manager
+
+A model's measured `app_compose` can describe the launcher rather than containers
+deployed later. Use the Compose Manager helper for the recorded model deployment:
+
+```python
+from nearai_inference_sdk import (
+    ComposeManagerImagePolicy,
+    ImageProvenancePolicy,
+    MeasuredDeployment,
+    ModelAttestationVerifiers,
+    verify_compose_manager_deployment_image_provenance,
+    verify_model_attestation,
+)
+
+model_image_policies = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy',
+        workflow='.github/workflows/build.yml',
+    ),
+}
+
+
+async def check_model_images(deployment: MeasuredDeployment) -> None:
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        model_image_policies,
+        compose_manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
+
+
+for attestation in fetched_models.attestations:
+    await verify_model_attestation(
+        attestation,
+        fetched_models.client_binding,
+        verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+    )
+```
+
+This callback requires the configured image builds in the authenticated
+deployment record, including the manager's startup image.
+
+Use `compose_file` to select a project's file and `compose_repository` to change the
+trusted repository. Configure this callback as `model_verification.verifiers.deployment`
+on Gateway or Direct inference clients. The policy runs for every model report
+and requires Compose Manager evidence in each one.
+
+The evidence covers recorded deployment actions and the configured image builds;
+current runtime state requires separate evidence. See the
+[API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
+for options and evidence fields.
+
+#### GitHub API access
+
+Requests use `https://api.github.com` by default, with optional `github_token`
+authentication. When using a GitHub token in a frontend is impractical, set
+`github_api_url` to a GitHub-compatible endpoint on your backend. The backend
+supplies the GitHub credentials; the SDK ignores `github_token` when
+`github_api_url` is set.
+
+The API base URL must be absolute HTTP(S), without credentials, a query, or
+a fragment. The SDK preserves its path prefix and appends these GitHub API routes:
+
+| Path appended to the API URL | Response |
+| --- | --- |
+| `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
+| `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
+
+Preserve status codes and pagination cursors, and return content directly.
+All pages are fetched through the configured endpoint. For browser callers, allow
+`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
+Keep GitHub credentials on the server and restrict the backend to the required
+repositories and read-only routes. Bundle signatures, image policies, and file
+hashes are verified locally by the SDK.
 
 ## 2. Send the completion and retain exact bytes
 
@@ -696,9 +841,15 @@ service. Every verifier callback must return only for evidence it accepts.
 
 ## Configure attestation service URLs
 
-The built-in verifiers use Intel's official PCS endpoint and NVIDIA's official
-NRAS and JWKS endpoints. To use proxies with the same verification checks,
-create verifier callbacks with the desired URLs:
+The built-in verifiers use these defaults:
+
+| Service | URL |
+| --- | --- |
+| PCCS base | `https://api.trustedservices.intel.com` |
+| NRAS evidence | `https://nras.attestation.nvidia.com/v3/attest/gpu` |
+| NVIDIA signing keys | `https://nras.attestation.nvidia.com/.well-known/jwks.json` |
+
+To use your own services, create verifier callbacks with custom URLs:
 
 ```python
 from nearai_inference_sdk import (
@@ -709,38 +860,20 @@ from nearai_inference_sdk import (
 
 verifiers = ModelAttestationVerifiers(
     tdx_quote=create_tdx_quote_verifier(
-        pccs_url='https://attestation.example.com',
+        pccs_url='https://attestation.example.com/pccs',
     ),
     gpu_evidence=create_gpu_evidence_verifier(
-        nras_url='https://attestation.example.com/v3/attest/gpu',
-        jwks_url='https://attestation.example.com/.well-known/jwks.json',
+        nras_url='https://attestation.example.com/nras/v3/attest/gpu',
     ),
 )
 ```
 
 Pass `verifiers` to `verify_model_attestation`; Gateway verification accepts the
-same quote callback through `AttestationVerifiers(tdx_quote=...)`. Each URL is
-optional and defaults to its official endpoint. Configuration belongs to the
-returned callback and does not change other verifiers.
+same quote callback through `AttestationVerifiers(tdx_quote=...)`.
 
-The PCCS proxy must serve compatible collateral bodies and issuer-chain headers
-under both `/sgx/certification/v4/...` and `/tdx/certification/v4/...`;
-`dcap-qvl` constructs these paths. Provide the PCCS-compatible, hex-encoded root
-CA CRL at `/sgx/certification/v4/rootcacrl` to avoid its fallback to the root
-certificate's CRL distribution URL. Quote signatures, certificate chains, and
-collateral are still verified locally.
-
-The NVIDIA adapter submits the unchanged evidence JSON to `nras_url` and obtains
-signing keys from `jwks_url`. A custom JWKS URL selects a trust source: use only
-a trusted proxy. The fixed NVIDIA issuer check does not authenticate arbitrary
-JWKS sources. ES384 signatures, issuer, timestamps, signed nonce, and the boolean
-verdict remain checked.
-
-`verify_model_attestation` checks the payload nonce against the matching client
-nonce before invoking any NVIDIA callback. The factory's callback also requires
-a 32-byte hexadecimal payload nonce and checks it against the signed JWT nonce.
-When calling that callback directly, the application must additionally bind the
-payload nonce to its own fresh request nonce.
+DCAP builds the SGX and TDX collateral paths beneath `pccs_url`. `nras_url` is the
+complete GPU evidence POST URL. Signing keys come from NVIDIA; set `jwks_url`
+separately to use another trusted key source.
 
 ## Handle retrieval and verification errors
 

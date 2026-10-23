@@ -32,9 +32,10 @@ project configuration. The Chat entry points include non-streaming and streaming
 
 | File | Usage | E2EE |
 | --- | --- | --- |
-| `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
-| `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
+| `gateway/bare.ts` | Verifies attestations and required Gateway/model image builds, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
+| `gateway/client.ts` | Configures Gateway/model image policies, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | [`gateway/jev.ts`](example-js/gateway/jev.ts) | Sends structured decisions and verifies the receipt before printing answers. | Disabled |
+| [`gateway/jev-sdk.ts`](example-js/gateway/jev-sdk.ts) | Injects the verified transport into the official Jev SDK and verifies `X-Generation-Id` before using answers. | Disabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct/client.ts` | Experimental: connects using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Experimental: passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
@@ -75,9 +76,12 @@ Requires Node.js 24 or later.
 
 For the decision example, set `NEARAI_MODEL` to a decision model from your
 endpoint's catalog, then run `pnpm --dir examples/example-js start:jev`.
-`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
-ECDSA or `NEARAI_EXPECT_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
-are Ed25519 and Gateway receipts. See the
+Run `pnpm --dir examples/example-js start:jev-sdk` for the official SDK
+version. Both take a `NEARAI_BASE_URL` ending in `/v1/`; the official example
+derives its SDK's API root from it and disables compression and inference retries.
+The native `jev.ts` example also accepts `NEARAI_SIGNING_ALGO=ecdsa` and
+`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`; its defaults are Ed25519 and
+Gateway receipts. See the
 [System One guide](../js/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ### Direct model endpoints
@@ -130,14 +134,21 @@ and unresolved `${VARIABLE:-default}` expressions are not.
 The policies belong to these examples, not an SDK default allowlist. Add `commit`
 to each policy to require a reviewed source commit.
 
+Both examples also use `verifyComposeManagerDeploymentImageProvenance` to require
+these images from the model's authenticated deployment-control evidence:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+See [model image policies](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
+
 Gateway/model attestation and image-check failures block both Chat modes.
 `client.ts` reuses successful checks through its 60-minute attestation cache;
 `bare.ts` verifies the deployments before sending either request. Run them with
 the `start:client` and `start:bare` commands above.
-
-These examples verify build provenance, not reproducible builds. They do not
-verify Compose Manager runtime state, GLM runtime-image, or model-weight
-provenance.
 
 ## Python
 
@@ -147,13 +158,14 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 
 | File | Usage |
 | --- | --- |
-| `gateway/bare.py` | Verifies attestations and Gateway image provenance, prepares E2EE requests, and verifies encrypted response bytes. |
-| `gateway/client.py` | Configures Gateway image provenance and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
+| `gateway/bare.py` | Verifies attestations and required Gateway/model image builds, prepares E2EE requests, and verifies encrypted response bytes. |
+| `gateway/client.py` | Configures Gateway/model image policies and uses `InferenceClient.chat.completions.create()` and `verify_response(id)`. |
 | `gateway/client_openai_sdk.py` | Shares `inference_client.http_client` with one reusable `openai.AsyncOpenAI` client. |
 | `direct/client.py` | Experimental direct client with E2EE and explicit response verification. |
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
 | `gateway/jev.py` | System One decisions; verifies the receipt before displaying answers. |
+| `gateway/jev_sdk.py` | Official Jev `AsyncTypeSafeClient` through the verified HTTPX2 adapter, with explicit receipt verification. |
 
 Gateway and direct Chat client examples explicitly enable E2EE; both clients default to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
@@ -161,7 +173,16 @@ Gateway and direct Chat client examples explicitly enable E2EE; both clients def
 client shares its 60-minute per-model attestation cache across `verify()`, Chat,
 and System One calls and retains response records for
 60 minutes after body completion. Both Gateway `bare.py` and `client.py` use the four
-Gateway image policies listed above; they do not check model runtime images.
+Gateway image policies listed above. Their model deployment callbacks also call
+`verify_compose_manager_deployment_image_provenance` to require these image builds:
+
+| Image | GitHub repository | Build workflow |
+| --- | --- | --- |
+| `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
+| `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
+
+See [model image policies](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager)
+to configure these checks for your deployment.
 
 ```sh
 cd examples/example-py
@@ -180,9 +201,12 @@ For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
 
 For the decision example, set `NEARAI_SYSTEMONE_MODEL` to a decision model
 from your endpoint's catalog, then run `uv run python gateway/jev.py`.
-`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
-ECDSA or `NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
-are Ed25519 and Gateway receipts. See the
+Run `uv run python gateway/jev_sdk.py` for the official SDK version.
+Both use a `NEARAI_BASE_URL` ending in `/v1/`; the official example derives the
+upstream SDK's API root and disables compression and inference retries.
+The native `jev.py` example also accepts `NEARAI_SIGNING_ALGO=ecdsa` and
+`NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee`; its defaults are Ed25519 and
+Gateway receipts. See the
 [System One guide](../py/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ## Rust

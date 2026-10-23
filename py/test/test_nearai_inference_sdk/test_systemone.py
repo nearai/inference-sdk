@@ -729,3 +729,19 @@ async def test_cancelling_one_decision_does_not_cancel_shared_preflight(monkeypa
     assert gateway.gateway_requests == 1
     assert gateway.model_requests == [MODEL]
     assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize(
+    'header',
+    ['content-encoding', 'content-md5', 'digest', 'content-digest', 'repr-digest'],
+)
+async def test_native_decisions_strip_configured_body_headers(monkeypatch, header):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    value = 'gzip' if header == 'content-encoding' else 'stale'
+
+    async with gateway.client(e2ee=False, headers={header: value}) as client:
+        result = await client.systemone.create(REQUEST)
+        await client.verify_response(result.decision_id)
+
+    assert header not in gateway.requests[0].headers

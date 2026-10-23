@@ -1,4 +1,5 @@
 mod integrated;
+mod responses;
 mod systemone;
 
 use std::{env, error::Error, io, time::Duration};

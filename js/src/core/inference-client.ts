@@ -1,17 +1,11 @@
 import OpenAI from 'openai';
-import { createSystemOne } from './systemone';
-import type { InferenceSystemOne } from '../types/systemone';
 import * as v from 'valibot';
 import {
   ChatCompletionRequestSchema,
   CompletionResponseIdSchema,
 } from '../schemas';
-import type {
-  ModelAttestationVerifiers,
-  VerifiedModelAttestation,
-} from '../types/verification';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { OhttpAttestation } from '../types/ohttp';
+import type { CompletionSignature } from '../types/chat';
 import type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
@@ -20,19 +14,25 @@ import type {
   FetchModelAttestationsParams,
   ModelMetadata,
 } from '../types/cloud-api';
-import type { CompletionSignature } from '../types/chat';
-import type {
-  NodeInferenceClientOptions,
-  InferenceChat,
-  InferenceResponses,
-  InferenceClientOptions,
-  VerifiedCompletionResult,
-  AttestationVerificationResult,
-  InferenceClientCommonOptions,
-  InferenceEncryptionOptions,
-} from '../types/inference-client';
-import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
+import type {
+  AttestationVerificationResult,
+  InferenceChat,
+  InferenceClientCommonOptions,
+  InferenceClientOptions,
+  InferenceEncryptionOptions,
+  InferenceResponses,
+  NodeInferenceClientOptions,
+  VerifiedCompletionResult,
+} from '../types/inference-client';
+import type { OhttpAttestation } from '../types/ohttp';
+import type { Awaitable } from '../types/shared';
+import type { InferenceSystemOne } from '../types/systemone';
+import type {
+  ModelAttestationVerifiers,
+  VerifiedModelAttestation,
+} from '../types/verification';
+import { hexToBuffer } from '../utils/common';
 import {
   ApiError,
   isApiError,
@@ -40,7 +40,10 @@ import {
   VerificationError,
 } from '../utils/errors';
 import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
-import { hexToBuffer } from '../utils/common';
+import { verifyGatewayAttestation } from './attestation-gateway';
+import { verifyModelAttestation } from './attestation-model';
+import { verifyGatewayResponse, verifyModelResponse } from './chat';
+import type { CloudApiRequestConfiguration } from './cloud-api';
 import {
   AttestationClient,
   CloudApiClient,
@@ -49,12 +52,6 @@ import {
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
-import type { CloudApiRequestConfiguration } from './cloud-api';
-import { verifyGatewayAttestation } from './attestation-gateway';
-import { verifyModelAttestation } from './attestation-model';
-import { verifyOhttpKeyConfig } from './ohttp-attestation';
-import { createOhttpFetch } from './ohttp-fetch';
-import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
   decodeChatRequest,
   isServerSentEventContentType,
@@ -62,6 +59,9 @@ import {
   prepareE2eeChatRequest,
   removeE2eeHeaders,
 } from './e2ee-request';
+import { verifyOhttpKeyConfig } from './ohttp-attestation';
+import { createOhttpFetch } from './ohttp-fetch';
+import { createSystemOne, sendSystemOne } from './systemone';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -338,18 +338,25 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions or Gateway Responses request.
-   *
+   * Send one verified Chat Completions, Gateway Responses, or Jev System One request.
    * Only POST requests to the configured creation endpoints are accepted.
-   * Responses uses Gateway receipts and does not support field-level E2EE.
    */
   readonly fetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
+    const request = createRequest(input, init);
+    const url = new URL(request.url);
+    const systemOneUrl = new URL('systemone', this.baseUrl);
+    if (
+      request.method === 'POST' &&
+      url.origin === systemOneUrl.origin &&
+      url.pathname === systemOneUrl.pathname
+    ) {
+      return this.sendSystemOneRequest(request);
+    }
     const completion = await this.sendSecureCompletion({
-      input,
-      init,
+      input: request,
     });
     const requestBody = await completion.requestBody;
     const responseBody = completion.responseBody;
@@ -371,6 +378,14 @@ export abstract class VerifiedInferenceClientBase<
     }
     return this.toClientResponse(completion);
   };
+
+  protected async sendSystemOneRequest(_request: Request): Promise<Response> {
+    throw invalidInput({
+      field: 'request',
+      reason: 'unsupported_value',
+      expected: 'a POST to the configured Chat Completions endpoint',
+    });
+  }
 
   /** Verify a captured response by ID. Consume streaming responses first. */
   verifyResponse(id: string): Promise<VerificationResult> {
@@ -696,6 +711,21 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   protected constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.gatewayOptions = options;
+  }
+
+  protected override sendSystemOneRequest(request: Request): Promise<Response> {
+    return sendSystemOne({
+      request,
+      encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
+      headers: this.createCompletionHeaders(request.headers),
+      // Official clients use Chat's selected-key routing contract for self-hosted models.
+      getSession: (model) =>
+        awaitWithAbort({
+          operation: this.startVerification(model),
+          signal: request.signal,
+        }),
+      registerResponse: (record) => this.registerResponse(record),
+    });
   }
 
   protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;

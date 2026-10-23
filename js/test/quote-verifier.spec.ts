@@ -31,7 +31,7 @@ describe('Intel quote verifier configuration', () => {
     } as unknown as ReturnType<typeof verify>);
   });
 
-  test('uses Intel collateral by default', async () => {
+  test('fetches collateral from Intel by default in Node.js', async () => {
     const verifyQuote = createTdxQuoteVerifier();
     const quote = await verifyQuote('abcd');
 

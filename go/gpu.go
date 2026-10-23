@@ -16,8 +16,12 @@ import (
 )
 
 type GPUVerifierOptions struct {
-	NRASURL, JWKSURL string
-	HTTPClient       *http.Client
+	// NRASURL is a complete GPU attestation POST URL.
+	// It defaults to https://nras.attestation.nvidia.com/v3/attest/gpu.
+	NRASURL string
+	// JWKSURL defaults to NVIDIA's official signing-key endpoint.
+	JWKSURL    string
+	HTTPClient *http.Client
 }
 
 // CreateGPUEvidenceVerifier authenticates NVIDIA's ES384 overall verdict, issuer,

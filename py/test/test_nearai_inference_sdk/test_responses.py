@@ -196,12 +196,20 @@ async def test_responses_require_gateway_receipt(monkeypatch):
             await client.verify_response('resp_fixture')
 
 
-async def test_responses_retry_receipt_only(monkeypatch):
+@pytest.mark.parametrize('httpx2', [False, True])
+async def test_responses_retry_receipt_only(monkeypatch, httpx2):
     gateway = ResponsesGateway()
     gateway.retry_signature = True
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
-        await client.responses.create(model=MODEL, input='Hi')
+        if httpx2:
+            async with client.httpx2_client as adapter:
+                response = await adapter.post(
+                    BASE_URL + 'responses', json={'model': MODEL, 'input': 'Hi'}
+                )
+            assert response.json()['id'] == 'resp_fixture'
+        else:
+            await client.responses.create(model=MODEL, input='Hi')
         with pytest.raises(ApiError, match='api.http_status'):
             await client.verify_response('resp_fixture')
         assert (

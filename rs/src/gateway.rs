@@ -2,10 +2,11 @@ use crate::attestation::{verify_dstack_deployment, verify_dstack_quote};
 use crate::bindings::{
     verify_report_data_binding, verify_report_data_binding_with_tls_fingerprint,
 };
+use crate::deployment_verifier::run_deployment_verifier;
 use crate::errors::VerificationError;
 use crate::types::{
     AttestationPolicy, AttestationVerifiers, GatewayAttestation, GatewayClientBinding,
-    VerifiedGatewayAttestation,
+    VerifiedAttestationEvidence, VerifiedGatewayAttestation,
 };
 
 /// Verify NEAR AI Cloud Gateway evidence.
@@ -48,7 +49,15 @@ pub async fn verify_gateway_attestation(
             )?;
             crate::types::GatewayTlsBinding::None
         };
-    let evidence = verify_dstack_deployment(&verified_quote, verifiers.deployment).await?;
+    let deployment = verify_dstack_deployment(&verified_quote)?;
+    let deployment_provenance = run_deployment_verifier(&deployment, verifiers.deployment).await?;
+    let evidence = VerifiedAttestationEvidence {
+        signer: verified_quote.signer,
+        tcb_status: verified_quote.quote.tcb_status,
+        advisory_ids: verified_quote.quote.advisory_ids,
+        deployment,
+        deployment_provenance,
+    };
     Ok(VerifiedGatewayAttestation {
         evidence,
         tls_binding,
