@@ -2,9 +2,75 @@ package nearai
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
+
+type receiptTransport func(*http.Request) (*http.Response, error)
+
+func (f receiptTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestReceiptVerificationWaitsForCancelledWorker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newFakeCloud(t)
+		started, cleaning, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		var attempts atomic.Int32
+		transport := receiptTransport(func(r *http.Request) (*http.Response, error) {
+			if strings.Contains(r.URL.Path, "/signature/") && attempts.Add(1) == 1 {
+				close(started)
+				<-r.Context().Done()
+				close(cleaning)
+				<-release
+				return nil, r.Context().Err()
+			}
+			w := httptest.NewRecorder()
+			f.ServeHTTP(w, r)
+			return w.Result(), nil
+		})
+		c, err := NewInferenceClient(InferenceOptions{
+			ClientOptions: ClientOptions{
+				APIKey: "test", BaseURL: "http://gateway.test/v1",
+				HTTPClient: &http.Client{Transport: transport},
+			},
+			DisableTLSBinding:   true,
+			GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+			MaxCacheEntries:     1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		if _, err := c.CreateChatCompletion(context.Background(), chatRequest()); err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		first, second := make(chan error, 1), make(chan error, 1)
+		go func() { _, err := c.VerifyResponse(ctx, "chat-1"); first <- err }()
+		<-started
+		cancel()
+		<-cleaning
+		go func() { _, err := c.VerifyResponse(context.Background(), "chat-1"); second <- err }()
+		synctest.Wait()
+		beforeCleanup := attempts.Load()
+		close(release)
+
+		if err := <-first; err != context.Canceled {
+			t.Fatal(err)
+		}
+		if err := <-second; err != nil {
+			t.Fatal(err)
+		}
+		if beforeCleanup != 1 || attempts.Load() != 2 {
+			t.Fatal("fresh verification must start only after cancellation cleanup")
+		}
+	})
+}
 
 func TestCancelledVerificationDoesNotReserveCapacity(t *testing.T) {
 	for _, when := range []string{"before_start", "after_start"} {

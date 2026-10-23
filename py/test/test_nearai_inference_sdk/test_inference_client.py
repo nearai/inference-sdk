@@ -1339,11 +1339,17 @@ async def test_receipt_cancellation_preserves_shared_waiters_and_releases_capaci
 ):
     original = gateway.handle
     started, release = asyncio.Event(), asyncio.Event()
+    cleaning, cleanup = asyncio.Event(), asyncio.Event()
 
     async def respond(request):
         if request.url.path.startswith('/v1/signature/') and not started.is_set():
             started.set()
-            await release.wait()
+            try:
+                await release.wait()
+            finally:
+                if cancel_all:
+                    cleaning.set()
+                    await cleanup.wait()
         return await original(request)
 
     monkeypatch.setattr(gateway, 'handle', respond)
@@ -1360,6 +1366,9 @@ async def test_receipt_cancellation_preserves_shared_waiters_and_releases_capaci
         try:
             if cancel_all:
                 continuing.cancel()
+                await cleaning.wait()
+                assert not continuing.done()
+                cleanup.set()
                 with pytest.raises(asyncio.CancelledError):
                     await continuing
                 next_completion = await client.chat.completions.create(
@@ -1373,6 +1382,7 @@ async def test_receipt_cancellation_preserves_shared_waiters_and_releases_capaci
                 assert (await continuing).id == first.id
         finally:
             release.set()
+            cleanup.set()
             await asyncio.gather(continuing, return_exceptions=True)
     assert gateway.signature_requests == 1
 

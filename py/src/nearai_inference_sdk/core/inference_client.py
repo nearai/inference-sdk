@@ -464,6 +464,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     record.verification = None
                 if not verification.task.cancelling():
                     verification.task.cancel()
+                await asyncio.gather(verification.task, return_exceptions=True)
 
     async def _verify_record(
         self, id: str, record: _ResponseRecord[Result, AttestationResult]

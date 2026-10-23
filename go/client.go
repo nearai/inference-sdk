@@ -639,16 +639,37 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
-	if err := ctx.Err(); err != nil {
-		return VerifiedCompletionResult{}, err
+	var record *responseRecord
+	var p *pendingResponse
+	for {
+		if err := ctx.Err(); err != nil {
+			return VerifiedCompletionResult{}, err
+		}
+		c.mu.Lock()
+		record = c.responses[id]
+		if record == nil || !time.Now().Before(record.expires) {
+			c.mu.Unlock()
+			return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
+		}
+		p = record.verifying
+		if p != nil && p.waiters == 0 {
+			select {
+			case <-p.done:
+			default:
+				// The last waiter cancelled this worker; wait for its capacity to be released.
+				c.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return VerifiedCompletionResult{}, ctx.Err()
+				case <-c.ctx.Done():
+					return VerifiedCompletionResult{}, failure("api.client_closed", nil)
+				case <-p.done:
+				}
+				continue
+			}
+		}
+		break
 	}
-	c.mu.Lock()
-	record := c.responses[id]
-	if record == nil || !time.Now().Before(record.expires) {
-		c.mu.Unlock()
-		return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
-	}
-	p := record.verifying
 	if p == nil {
 		if len(c.responseVerifications) >= c.options.MaxCacheEntries {
 			c.mu.Unlock()
