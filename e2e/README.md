@@ -93,3 +93,37 @@ finish with `stop`. Test failures and timeouts fail the workflow.
 Receipt lookups retry transient API failures up to five attempts within the
 model case's 180 second deadline. A receipt retry does not send another
 inference request.
+
+## Official Jev SDK integration
+
+`js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
+`@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
+send one real decision per case, parse the official response types, extract
+`X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
+retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
+Both Ed25519 and ECDSA are covered.
+
+The official-SDK cases are part of the existing System One live suites and run
+through the existing live commands and workflow. They use the same
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
+native cases. The catalog selector supplies an external Jev model; there are no
+separate Jev environment variables or CI steps.
+
+Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
+same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
+these cases requires the routing contract from
+[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
+self-hosted deployment. They preverify the selected model and require a provider
+receipt matching its attested signing identity. An external model is never
+substituted. The current catalog selector chooses only hosted Jev deployments.
+
+Like the existing live tests, these suites require explicit configuration and
+are excluded from ordinary unit-test runs. Missing required external-model
+configuration or verification failures fail the tests.
+
+The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
+`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+transport, disabled retries/compression, and receipt-ID extraction together.
+The official SDKs remain example/test dependencies only. Python uses
+`inference.httpx2_client` to bridge
+Jev's HTTPX2 client to the existing verified HTTPX transport.

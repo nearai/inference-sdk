@@ -195,12 +195,25 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 
     @property
     def http_client(self) -> httpx.AsyncClient:
-        """Return a non-owning HTTPX adapter for an external OpenAI client.
+        """Return a non-owning HTTPX adapter for an external SDK.
 
         Each adapter may be closed independently; the inference client owns
         the connections, sessions, and response-verification records.
         """
         return httpx.AsyncClient(transport=_InferenceTransport(self), timeout=None)
+
+    @property
+    def httpx2_client(self) -> httpx2.AsyncClient:
+        """Return a non-owning HTTPX2 adapter using the same request pipeline.
+
+        Install ``httpx2`` before accessing this property; it is loaded on demand.
+        The adapter shares this client's supported endpoints, verification,
+        encryption, and receipts. Each access returns a new adapter that may be
+        closed independently. Keep the owner open while sending and verifying.
+        """
+        from ..integrations.httpx2 import _create_httpx2_client
+
+        return _create_httpx2_client(self)
 
     async def __aenter__(self) -> Self:
         return self
@@ -539,19 +552,6 @@ class InferenceClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
-
-    @property
-    def jev_http_client(self) -> httpx2.AsyncClient:
-        """Return a new, non-owning HTTPX2 adapter for Jev System One.
-
-        Install ``typesafe-sdk`` before accessing this property; HTTPX2 is loaded
-        on demand. Disable Jev compression and retries, and keep this inference
-        client open while sending requests and verifying receipts. Closing the
-        adapter does not close this client or discard its receipts.
-        """
-        from ..integrations.jev import _create_jev_http_client
-
-        return _create_jev_http_client(self)
 
     async def send(self, request: httpx.Request) -> httpx.Response:
         """Send verified Chat or JSON System One through the configured Gateway."""
