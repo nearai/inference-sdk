@@ -2,16 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import OpenAI from 'openai';
 import { InferenceClient } from '../dist/node.js';
-import { requiredEnv, retryReceipt } from './helpers.ts';
+import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
 
-const model = process.env.NEARAI_E2E_RESPONSES_MODEL;
-const transports =
-  process.env.NEARAI_E2E_RESPONSES_OHTTP === '1' ? [false, true] : [false];
+const model = selectedModels('chat').find(
+  ({ provider }) => provider === 'near',
+)?.id;
+assert.ok(model, 'Expected a NEAR model from the shared Chat selection');
 
-for (const ohttp of transports) {
+for (const ohttp of [false, true]) {
   test(`Responses JSON and SSE receipts, OHTTP=${ohttp}`, {
-    skip:
-      !model && 'Set NEARAI_E2E_RESPONSES_MODEL to enable live Responses tests',
     timeout: 180_000,
   }, async (t) => {
     const apiKey = requiredEnv('NEARAI_API_KEY');
@@ -24,7 +23,7 @@ for (const ohttp of transports) {
       maxRetries: 0,
     });
     const request = {
-      model: requiredEnv('NEARAI_E2E_RESPONSES_MODEL'),
+      model,
       input: 'Reply with the word OK.',
       store: false,
       max_output_tokens: 1024,

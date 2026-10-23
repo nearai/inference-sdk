@@ -3,21 +3,15 @@ use serde_json::{json, Value};
 use std::{error::Error, time::Duration};
 
 #[tokio::test]
-#[ignore = "requires NEARAI_E2E_RESPONSES_MODEL, NEARAI_BASE_URL and NEARAI_API_KEY"]
+#[ignore = "requires NEARAI_BASE_URL, NEARAI_API_KEY and NEARAI_E2E_MODELS"]
 async fn verified_responses_json_and_sse() -> Result<(), Box<dyn Error>> {
-    let Some(model) = std::env::var("NEARAI_E2E_RESPONSES_MODEL")
-        .ok()
-        .filter(|value| !value.is_empty())
-    else {
-        println!("Skipping Responses: set NEARAI_E2E_RESPONSES_MODEL to enable");
-        return Ok(());
-    };
-    let transports = if std::env::var("NEARAI_E2E_RESPONSES_OHTTP").as_deref() == Ok("1") {
-        vec![false, true]
-    } else {
-        vec![false]
-    };
-    for ohttp in transports {
+    let models = super::select_models(&super::required_env("NEARAI_E2E_MODELS")?, "chat")?;
+    let model = &models
+        .iter()
+        .find(|m| m.provider == "near")
+        .ok_or("Expected a NEAR model from the shared Chat selection")?
+        .id;
+    for ohttp in [false, true] {
         tokio::time::timeout(Duration::from_secs(180), async {
             let client = InferenceClient::with_options(InferenceClientOptions {
                 api_key: Some(super::required_env("NEARAI_API_KEY")?),

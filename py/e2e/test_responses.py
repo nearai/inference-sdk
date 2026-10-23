@@ -1,24 +1,18 @@
 """Opt-in live Responses JSON/SSE and Gateway receipt verification."""
 
 import asyncio
-import os
 
 import pytest
 from openai import AsyncOpenAI
 
-from e2e.helpers import required_env, retry_receipt
+from e2e.helpers import required_env, retry_receipt, selected_models
 from nearai_inference_sdk import InferenceClient
-
-MODEL = os.environ.get('NEARAI_E2E_RESPONSES_MODEL')
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(not MODEL, reason='Set NEARAI_E2E_RESPONSES_MODEL to enable')
-@pytest.mark.parametrize(
-    'ohttp',
-    [False, True] if os.environ.get('NEARAI_E2E_RESPONSES_OHTTP') == '1' else [False],
-)
+@pytest.mark.parametrize('ohttp', [False, True])
 async def test_responses_json_and_sse(ohttp: bool) -> None:
+    model = selected_models('chat', 'near')[0]
     api_key = required_env('NEARAI_API_KEY')
     base_url = required_env('NEARAI_BASE_URL')
     async with (
@@ -32,7 +26,7 @@ async def test_responses_json_and_sse(ohttp: bool) -> None:
         ) as external,
     ):
         request = {
-            'model': MODEL,
+            'model': model,
             'input': 'Reply with the word OK.',
             'store': False,
             'max_output_tokens': 1024,

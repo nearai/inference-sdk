@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,15 +16,8 @@ import (
 )
 
 func TestResponsesJSONAndSSE(t *testing.T) {
-	model := os.Getenv("NEARAI_E2E_RESPONSES_MODEL")
-	if model == "" {
-		t.Skip("Set NEARAI_E2E_RESPONSES_MODEL to enable live Responses tests")
-	}
-	transports := []bool{false}
-	if os.Getenv("NEARAI_E2E_RESPONSES_OHTTP") == "1" {
-		transports = append(transports, true)
-	}
-	for _, ohttp := range transports {
+	model := models(t, true)[0].ID
+	for _, ohttp := range []bool{false, true} {
 		t.Run(fmt.Sprintf("ohttp=%t", ohttp), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 180*time.Second)
 			defer cancel()

@@ -22,11 +22,6 @@ one SDK's suites; the default selects all available suites.
 export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 ```
 
-Responses tests are opt-in: set `NEARAI_E2E_RESPONSES_MODEL` to a model supporting
-`POST /responses`. Set `NEARAI_E2E_RESPONSES_OHTTP=1` to also exercise OHTTP.
-They send `store: false` requests, consume JSON/SSE to EOF, and require a verified
-Gateway receipt within 15 seconds after inference. Field E2EE is unsupported.
-
 Run the selected SDK's command from the repository root:
 
 ```sh
@@ -65,10 +60,6 @@ without making live requests.
 
 Add `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` as repository Actions secrets.
 Both are required. Each test job receives only its environment's key.
-Enable Responses with the `NEARAI_STG_RESPONSES_MODEL` and/or
-`NEARAI_PRD_RESPONSES_MODEL` repository variables. The corresponding
-`NEARAI_STG_RESPONSES_OHTTP` / `NEARAI_PRD_RESPONSES_OHTTP` variables enable OHTTP
-when set to `1`.
 
 The [Live E2E workflow](../.github/workflows/e2e.yml) runs all four SDKs against
 both environments after pushes to `main`, daily at 03:00 UTC, and on manual
@@ -88,6 +79,7 @@ missing required category fails setup.
 | --- | --- |
 | Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
 | Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Responses | JSON and SSE with `store: false`, using the existing NEAR model selection; Gateway receipts over plain transport and OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
 | Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
 
