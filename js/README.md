@@ -1,6 +1,7 @@
 # NEAR AI Inference SDK for TypeScript
 
-`@nearai/inference-sdk` provides OpenAI-compatible Chat Completions with
+`@nearai/inference-sdk` provides OpenAI-compatible Chat Completions and
+[Responses](./docs/verification-guide.md#responses-api) with
 Gateway and model attestation verification, response signature verification,
 and optional encryption. Use `InferenceClient` to get started in Node.js or
 [browser applications](#browser-applications).
@@ -129,8 +130,17 @@ SDK, including streaming. Follow the
 [OpenAI SDK integration example](./docs/verification-guide.md#use-the-official-openai-sdk)
 to configure it and verify responses.
 
+## Use the Jev SDK
+
+Pass `InferenceClient.fetch` to `@typesafe-ai/sdk` for verified System One
+requests. The official SDK retains its question builders and response types.
+See the [Jev SDK guide](./docs/verification-guide.md#use-the-official-jev-sdk)
+for transport configuration and receipt verification.
+
 ## Advanced APIs
 
+- **System One decisions:** send structured questions with `client.systemone.create()`
+  and verify the returned decision. See the [System One guide](./docs/verification-guide.md#system-one-decisions).
 - **Manual verification:** `AttestationClient` fetches metadata, evidence, and
   signatures. Use the [standalone verification functions](./docs/verification-guide.md#verify-gateway-requests-manually)
   when your application needs to control each step.

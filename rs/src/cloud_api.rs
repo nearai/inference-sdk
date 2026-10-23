@@ -630,6 +630,7 @@ fn map_model_attestation(
     }
     Ok(ModelAttestation {
         signing_public_key: value.signing_public_key,
+        compose_manager_attestation: value.compose_manager_attestation,
         evidence,
         reported_quote_data,
         nvidia_payload: value.nvidia_payload,
@@ -746,6 +747,7 @@ struct WireGatewayAttestationResponse {
 #[derive(Deserialize)]
 struct WireModelAttestation {
     signing_public_key: Option<String>,
+    compose_manager_attestation: Option<crate::ComposeManagerAttestation>,
     #[serde(flatten)]
     attestation: WireAttestation,
     nvidia_payload: Option<String>,

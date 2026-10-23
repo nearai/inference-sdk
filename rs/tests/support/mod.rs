@@ -44,6 +44,7 @@ pub fn model_attestation(nvidia_payload: Option<&str>) -> ModelAttestation {
     let report_data = hex::encode(model_quote(TcbStatus::UpToDate).report_data);
     ModelAttestation {
         signing_public_key: None,
+        compose_manager_attestation: None,
         evidence: AttestationEvidence {
             nonce: NONCE.to_owned(),
             signer: SigningIdentity {
@@ -182,6 +183,7 @@ fn verified_evidence(signer: SigningIdentity) -> VerifiedAttestationEvidence {
         tcb_status: TcbStatus::UpToDate,
         advisory_ids: vec![],
         deployment: nearai_inference_sdk::MeasuredDeployment {
+            compose_manager: None,
             app_compose: APP_COMPOSE.to_owned(),
             runtime_measurements: Default::default(),
         },

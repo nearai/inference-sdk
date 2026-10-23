@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 
 // Shared by all SDK suites. Discovery uses only the public catalog, not API keys.
 async function main() {
+  const language = process.env.NEARAI_E2E_LANGUAGE || 'all';
+  const systemOneSuites = {
+    javascript: '../js/e2e/systemone.test.ts',
+    python: '../py/e2e/test_systemone.py',
+    rust: '../rs/e2e/systemone.rs',
+    go: '../go/e2e/systemone_test.go',
+  };
+  assert.ok(language === 'all' || Object.hasOwn(systemOneSuites, language), 'Unknown E2E language');
+  const needsSystemOne = Object.entries(systemOneSuites).some(
+    ([sdk, path]) => (language === 'all' || language === sdk) &&
+      existsSync(new URL(path, import.meta.url)),
+  );
   assert.ok(process.env.NEARAI_BASE_URL, 'NEARAI_BASE_URL is required');
   const baseUrl = `${process.env.NEARAI_BASE_URL.replace(/\/+$/, '')}/`;
   const models = [];
@@ -18,6 +31,27 @@ async function main() {
     offset += page.models.length;
     if (offset >= page.total) break;
     assert.ok(page.models.length > 0, 'Model catalog pagination made no progress');
+  }
+
+  const price = (model) =>
+    model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
+    model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
+
+  let systemoneModel = '';
+  if (needsSystemOne) {
+    // Hosted Jev cases verify Gateway receipts.
+    const decisions = models.filter(({ metadata }) =>
+      metadata.ownedBy === 'typesafe' &&
+      metadata.providerType === 'external' &&
+      !metadata.attestationSupported &&
+      metadata.architecture?.outputModalities?.includes('decisions'),
+    );
+    decisions.sort(
+      (a, b) => price(a) - price(b) || a.modelId.localeCompare(b.modelId),
+    );
+    assert.ok(decisions.length > 0, 'Expected a hosted Jev decision model');
+    systemoneModel = decisions[0].modelId;
+    assert.ok(!/[\r\n]/.test(systemoneModel), 'Model IDs must not contain line breaks');
   }
 
   const chatModels = models.filter(({ metadata }) => {
@@ -38,9 +72,6 @@ async function main() {
   // representatives. Canonical IDs break ties without depending on catalog order.
   const reasoning = (model) =>
     Number(model.metadata.supportedFeatures?.includes('reasoning') ?? false);
-  const price = (model) =>
-    model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
-    model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
   chatModels.sort(
     (a, b) =>
       reasoning(a) - reasoning(b) || price(a) - price(b) ||
@@ -62,8 +93,22 @@ async function main() {
       ...candidates.slice(0, count).map(({ modelId }) => ({
         id: modelId,
         provider,
+        endpoint: 'chat',
       })),
     );
+  }
+  const nearResponse = selected.find(({ provider }) => provider === 'near');
+  const openaiResponse = chatModels.find(({ metadata }) =>
+    metadata.providerType === 'external' && metadata.ownedBy === 'openai' &&
+    !metadata.attestationSupported,
+  );
+  assert.ok(openaiResponse, 'Expected an OpenAI external text model for Responses');
+  selected.push(
+    { ...nearResponse, endpoint: 'responses' },
+    { id: openaiResponse.modelId, provider: 'external', endpoint: 'responses' },
+  );
+  if (systemoneModel) {
+    selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
   }
   console.log(JSON.stringify(selected));
 }

@@ -122,7 +122,8 @@ Use `chat_completions()` for JSON or `chat_request()` and `send(reqwest::Request
 for streaming. Rust exposes its own reqwest transport API; it does not provide an
 adapter for a third-party OpenAI Rust crate. See the
 [runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust) for JSON and SSE workflows.
-Only Chat Completions are supported; the Responses API is not supported.
+Gateway clients also support [Responses](./docs/verification-guide.md#responses-api)
+through `create_response()` or `response_request()` and `send()`.
 
 ## Advanced APIs
 

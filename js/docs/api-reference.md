@@ -31,7 +31,7 @@ the attestation socket to be reused.
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `InferenceClient` | `new InferenceClient(options)` | Chat Completions with deployment verification, E2EE, and response verification. |
+| `InferenceClient` | `new InferenceClient(options)` | Chat Completions, Responses, and System One with deployment and response verification; optional Chat E2EE. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches model metadata, Gateway signatures, and attestation evidence. |
 | `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Not recommended for production. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
 | `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Not recommended for production. Fetches direct model attestations and signatures. |
@@ -49,16 +49,18 @@ the attestation socket to be reused.
 | `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
-| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies required image references in an authenticated deployment configuration. |
+| `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
+| `verifyComposeManagerDeploymentImageProvenance` | `(params: VerifyComposeManagerDeploymentImageProvenanceParams) => Promise<void>` | Verifies image builds selected from Compose Manager's authenticated action log and recorded compose file. |
 
 ## `InferenceClient`
 
-Provides `chat.completions.create()`, a reusable `fetch` adapter, and
-`verifyResponse(id)`. Supports streaming and non-streaming Chat Completions.
+Provides `chat.completions.create()`, `responses.create()`, a reusable `fetch`
+adapter, `systemone.create()`, and `verifyResponse(id)`. Chat and Responses
+support JSON and streaming; System One uses non-streaming decisions.
 On a cache miss, the client fetches Gateway evidence, then verifies it and any
 required OHTTP evidence concurrently with model metadata retrieval and model
 attestation verification. All required checks must pass before the session is
-cached or Chat is sent.
+cached or an inference request is sent.
 
 The client reads `metadata.providerType` and `metadata.attestationSupported` from
 `GET /v1/model/{model}`, with the model ID URL-encoded. A `vllm` provider with
@@ -69,6 +71,9 @@ Gateway-only mode.
 See the [guide](./verification-guide.md#e2ee-scope-and-response-handling)
 for supported encryption fields and protocols.
 
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+semantics, streaming, and supported privacy options.
+
 ### Constructor options
 
 `InferenceClientOptions` configures the client.
@@ -78,13 +83,13 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
-| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for metadata, evidence, signature, and Chat requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
+| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for metadata, evidence, signature, and inference requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
-| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session, including the model verification decision and verified evidence, for this many milliseconds for the same model. Set `0` to check every request. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model and endpoint. Chat and System One keep separate sessions. Set `0` to check every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
-| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
+| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat and Responses HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Requires model attestation. Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
 | `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. An explicit `policy` or `verifiers.deployment` requires model attestation; quote/GPU verifier overrides alone do not. |
@@ -92,7 +97,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | Type | Field or signature | Description |
 | --- | --- | --- |
 | `DeploymentPolicy` | `(params: DeploymentPolicyParams) => Awaitable<void>` | Resolves only for an accepted model deployment. |
-| `DeploymentPolicyParams` | `model: string` | Model passed to `verify(model)` or named by the current Chat request. |
+| `DeploymentPolicyParams` | `model: string` | Model passed to `verify(model)` or named by the current Chat or System One request. |
 |  | `deployment: MeasuredDeployment` | Authenticated deployment measurements to approve or reject. |
 | `GatewayVerificationOptions` | `policy?: AttestationPolicy` | Gateway TCB policy override. |
 |  | `verifiers?: AttestationVerifiers` | Gateway quote and deployment verifier overrides. |
@@ -107,11 +112,14 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Reads the Chat request's `model`, checks model metadata and verifies the required evidence on a cache miss, then sends the request. With E2EE enabled, encrypts supported fields and returns a decrypted JSON or SSE response. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for Chat Completions, Gateway Responses, and uncompressed JSON System One. Uses the same preflight and receipt capture as the built-in APIs; endpoint-specific encryption settings apply. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
-| `InferenceClient.verifyResponse(completionId)` | `Promise<VerifiedCompletionResult>` | Fetches and verifies the signature using the bytes and verified evidence retained for this ID. Concurrent calls share one operation. A retryable API failure allows a later call to retry; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `VerifiedCompletionResult.completionId` | `string` | Completion ID whose signature was verified. |
-| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | Trust boundary of the verified signature. `provider_tee` must match the model signer selected for the request; `gateway` uses Gateway evidence and is the only accepted kind for Incognito model sessions. |
+| `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
+| `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
+| `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat, Responses, or System One result. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, or System One decision ID whose signature was verified. |
+| `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
+| `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the selected Chat signer or a System One fleet signer. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
@@ -119,8 +127,8 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `models` | `readonly VerifiedModelAttestation[]` | Every verified model report, in response order. Empty for Gateway-only models. |
 | `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
 
-For attested models, every returned report must pass before the client selects
-a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains the verified model
+For Chat with attested models, every returned report must pass before the client
+selects a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains the verified model
 signing key, without field-encryption headers. Incognito models make no
 model-attestation request and send no model routing key or field-encryption
 headers. `e2ee: true`,
@@ -133,6 +141,73 @@ A verified Gateway signature does not establish model TEE execution.
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
 including after successful or failed verification. TTL starts at body completion.
+
+## System One decisions (`InferenceClient.systemone`)
+
+Available on the generic and Node Gateway clients. Use `e2ee: false` and
+`ohttp: false` for nonstreaming decision requests.
+
+For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
+compression and inference retries. The official SDK parses the raw response;
+pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
+Chat's model session and selected-key routing. See the
+[official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
+
+| Method | Parameters | Returns |
+| --- | --- | --- |
+| `client.systemone.create(request, options?)` | `SystemOneRequest`, optional `SystemOneRequestOptions` | `Promise<SystemOneResult>` |
+| `client.verifyResponse(id)` | `result.decisionId` from `X-Generation-Id` | `Promise<VerifiedCompletionResult>` |
+
+| `SystemOneRequest` field | Type | Description |
+| --- | --- | --- |
+| `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
+| `state` | Text, object, or array | Decision context forwarded as JSON. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+
+| Question `type` | Required `instructions` | `criteria` |
+| --- | --- | --- |
+| `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
+| `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
+| `score` | Text, object, or array | Ordered array of level descriptions. |
+
+Use `SystemOneRequest<MyQuestions>` and `SystemOneQuestion<MyChoices>` to
+annotate application types; `create()` also infers question and choice maps.
+
+| `SystemOneRequestOptions` field | Type | Description |
+| --- | --- | --- |
+| `headers?` | `HeadersInit` | Per-request headers, following the client's configured authorization rules. |
+| `signal?` | `AbortSignal` | Cancels this caller's preflight wait and inference fetch, without cancelling shared evidence work or later response verification. |
+
+| `SystemOneResult` field | Type | Description |
+| --- | --- | --- |
+| `data` | `SystemOneResponse` | Parsed output, unverified until `client.verifyResponse(id)` succeeds. |
+| `decisionId` | `string` | Decision ID from `X-Generation-Id`, used to retrieve and verify the signature. |
+
+| `SystemOneResponse` field | Type | Description |
+| --- | --- | --- |
+| `id?` | `string` | Optional upstream ID; JSON `null` is normalized to `undefined`. |
+| `model` | `string` | Reported model ID. |
+| `answers` | `Record<string, SystemOneAnswer>` | Named answers. |
+| `usage` | `{ input_tokens: number; output_tokens: number }` | Nonnegative integer token counts. |
+
+| Answer `type` | Fields |
+| --- | --- |
+| `noul` | `noul`: probability in `[0, 1]`. |
+| `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
+| `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
+
+Attestation sessions are cached per model and endpoint, separately from Chat.
+Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
+receipts expose every report matching the signer in `attestations`;
+`attestation` is the first matching report. The `attestations` property is optional
+in the public type for existing custom verifiers; SDK clients always populate it.
+
+Inference is sent once. Transport failures use `api.inference_transport_failed`.
+Retry transient receipt lookups with `verifyResponse(result.decisionId)` while
+the response remains cached.
+
+See the [guide](./verification-guide.md#system-one-decisions) for a complete call
+and the [Node examples](../../examples/README.md#javascript-nodejs) to run it.
 
 ## `DirectInferenceClient`
 
@@ -167,7 +242,7 @@ There is no `gatewayVerification` option.
 | `verify(model: string)` | `Promise<DirectAttestationVerificationResult>` | Returns all direct model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same checks and cache as Chat. |
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
-| `verifyResponse(completionId)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
+| `verifyResponse(id)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
 
 | `DirectAttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
@@ -179,7 +254,8 @@ There is no `gatewayVerification` option.
 
 | `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
-| `completionId` | `string` | Verified completion ID. |
+| `id` | `string` | Verified response ID. |
+| `completionId` | `string` | Deprecated alias of `id`. |
 | `signatureKind` | `'provider_tee'` | Direct responses use model signatures. |
 | `signature` | `CompletionSignature` | Verified signature record. |
 | `attestations` | `readonly VerifiedDirectModelAttestation[]` | All verified attestations sharing the selected model signer, which must match the response signature. |
@@ -452,7 +528,8 @@ against a quote itself.
 | --- | --- | --- | --- |
 | `appCompose` | `string` | Yes | Measurement-bound deployment configuration. |
 | `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | Nonempty map from container image repository to required GitHub build identity. |
-| `githubToken` | `string` | No | GitHub authentication for fetching proofs. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
 Every configured repository must appear in Compose `services`. Each matching
 reference must have a literal `sha256:` digest, optionally preceded by a tag.
@@ -464,6 +541,49 @@ configuration, `provenance.image_request_failed` for proof retrieval errors, or
 `provenance.image_verification_failed` for rejected proofs. Retrieval errors
 preserve the `ApiError` cause and retryability.
 
+### `verifyComposeManagerDeploymentImageProvenance`
+
+Use after model verification or in its deployment callback. Returns `Promise<void>`.
+The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
+Image selection uses the action's named `services`. Independently, the latest
+manager-start action must name an image satisfying `composeManagerImagePolicy`.
+An omitted or empty service list selects all services in the file.
+Unknown service names fail with `provenance.deployment_images_invalid`
+(`reason: 'service_missing'`); images in unselected services cannot satisfy a policy.
+
+| `VerifyComposeManagerDeploymentImageProvenanceParams` field | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `deployment` | `MeasuredDeployment` | Yes | — | Verified deployment with authenticated `composeManager` actions. |
+| `imagePolicies` | `Readonly<Record<string, ImageProvenancePolicy>>` | Yes | — | Nonempty map of required image repositories and approved build identities. |
+| `composeManagerImagePolicy` | `ImageProvenancePolicy & { imageRepository: string }` | Yes | — | Required image repository and build identity for the Compose Manager startup image. |
+| `composeRepository` | `string` | No | `nearai/cvm-compose-files` | GitHub repository holding the recorded compose file. |
+| `composeFile` | `string` | No | Latest `compose_up` | Restricts selection to the latest action for this exact file path. |
+| `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | — | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Compose files are limited to 8 MiB before hashing or parsing.
+
+Fails with `VerificationError` if manager evidence or a matching action is missing,
+the file cannot be retrieved, its hash differs, or an image policy fails. See the
+[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
+
+| Type | Field | Type | Description |
+| --- | --- | --- | --- |
+| `ComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Raw signed action fields, retaining wire names and unknown string/string-array fields. |
+|  | `actionsHash` | `string` | Reported SHA-256 of canonical action JSON. |
+|  | `nonce` | `string` | Echoed challenge. |
+|  | `intelQuote` | `string` | TDX quote binding the action hash and nonce. |
+|  | `eventLog` | `AttestationEventLog` | Event log to replay against RTMR3. |
+|  | `reportedQuoteData?` | `string` | Optional copy checked against verified quote report data. |
+| `VerifiedComposeManagerAttestation` | `actions` | `readonly ComposeManagerAction[]` | Quote-authenticated action log. |
+|  | `tcbStatus` | `TcbStatus` | Accepted manager quote status. |
+|  | `advisoryIds` | `readonly string[]` | Manager quote advisory IDs. |
+|  | `runtimeMeasurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
+
+Model reports retain optional `composeManagerAttestation`; successful model
+verification exposes its authenticated form as `deployment.composeManager`.
+When supplied, manager evidence is checked even without an image policy.
+
 ### `fetchImageProvenance`
 
 Returns all inline Sigstore bundles as JSON strings. Does not verify them.
@@ -472,9 +592,18 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | --- | --- | --- | --- |
 | `repository` | `string` | Yes | GitHub `owner/repo` publishing the proofs. |
 | `digest` | `string` | Yes | Image manifest digest in `sha256:<64 hex characters>` form. |
-| `githubToken` | `string` | No | GitHub authentication for API access and rate limits. |
+| `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
+| `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
+
+Responses use the GitHub API format. Pagination stays on the configured
+base URL; redirects and returned bundle URLs are not followed. See
+[GitHub API access](verification-guide.md#github-api-access)
+for endpoint requirements.
 
 ### `verifyImageProvenance`
+
+Verifies supplied Sigstore bundles against a digest and build policy. Both
+deployment helpers call this after selecting images and fetching their proofs.
 
 Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
 certificate, DSSE signature and transparency log before the SDK checks the
@@ -559,6 +688,7 @@ the provider signature no longer matches the client-visible bytes.
 | Type | Additional field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `ModelAttestation` | `reportedQuoteData?` | `string` | No | Optional report-data copy cross-checked against the authenticated quote. |
+|  | `composeManagerAttestation?` | `ComposeManagerAttestation` | No | Deployment-control evidence, authenticated during model verification when present. |
 |  | `signingPublicKey?` | `string` | No | E2EE model public key supplied by the service. Verification binds an Ed25519 key directly, or derives an ECDSA signing address, from the quote-bound signer before returning it. |
 |  | `nvidiaPayload?` | `string` | No | GPU attestation payload. |
 | `GatewayAttestation` | `spkiFingerprint?` | `string` | No | Gateway-reported TLS SPKI fingerprint. When present, it must match the client-observed fingerprint before verification returns an attested TLS binding. |
@@ -569,8 +699,8 @@ the provider signature no longer matches the client-visible bytes.
 
 Both factories return callbacks for the existing `verifiers` parameter. They
 retain the built-in verification checks and accept custom service or proxy URLs.
-PCCS defaults to Phala in browsers and Intel in Node.js. NVIDIA defaults are
-the same in both runtimes.
+PCCS and NRAS default to NEAR AI's proxies in browsers and the official services
+in Node.js. NVIDIA signing keys use the official JWKS URL in both runtimes.
 
 | Function | Parameter type | Returns |
 | --- | --- | --- |
@@ -579,16 +709,16 @@ the same in both runtimes.
 
 | Parameter type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | Browser: `https://pccs.phala.network`; Node.js: `https://api.trustedservices.intel.com` | Intel PCS or a PCCS-compatible proxy base URL. DCAP constructs the collateral paths below this base. |
-| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Full URL for the GPU evidence POST. |
+| `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | NEAR AI proxy (browser); Intel PCS (Node.js) | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
+| `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | NEAR AI proxy (browser); NVIDIA NRAS (Node.js) | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
 The NVIDIA callback verifies the signed JWT nonce against the submitted payload
 nonce. `verifyModelAttestation` additionally binds that nonce to
 `clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
 The expected NVIDIA issuer remains fixed when either URL changes.
-See the [proxy setup](./verification-guide.md#connect-through-an-application-proxy)
-for routing and response-header requirements.
+See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
+for default URLs and custom configuration.
 
 ## Policies and verifier callbacks
 
@@ -636,6 +766,7 @@ trust roots or another verification service.
 |  | `rtMr3` | `Uint8Array` | Authenticated quote RTMR3. |
 | `MeasuredDeployment` | `readonly appCompose` | `string` | Configuration text bound to MRCONFIGID. |
 |  | `readonly runtimeMeasurements` | `RuntimeMeasurements` | Runtime measurements derived from verified event-log entries. |
+|  | `readonly composeManager?` | `VerifiedComposeManagerAttestation` | Optional authenticated model deployment-control evidence. |
 | `RuntimeMeasurements` | `readonly osImageHash?` | `string` | Optional measured OS image hash. |
 |  | `readonly composeHash?` | `string` | Optional measured compose hash. |
 

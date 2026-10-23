@@ -27,9 +27,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0,<3",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.14.8",
+    "typesafe-sdk==0.7.5",
 ]
 
 [build-system]

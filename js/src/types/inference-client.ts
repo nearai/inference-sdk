@@ -77,8 +77,9 @@ export type ModelVerificationOptions = {
 export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model across verify() and Chat. Defaults to 60 minutes.
-   * Set `0` to verify every request.
+   * same model and endpoint. verify() and Chat share a session; System One
+   * uses a separate session.
+   * Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
   /** Retain response verification records for this long after the body finishes. Defaults to 60 minutes. */
@@ -93,7 +94,8 @@ export type InferenceClientCommonOptions = {
   readonly e2ee?: boolean;
   /**
    * Optional caller-owned allowlist for authenticated model measurements.
-   * It receives the model passed to verify() or named by each Chat request.
+   * It receives the model passed to verify() or named by each Chat or
+   * System One request.
    * Runs after `modelVerification.verifiers.deployment` when both are supplied.
    */
   readonly deploymentPolicy?: DeploymentPolicy;
@@ -135,16 +137,23 @@ export type AttestationVerificationResult = {
   readonly verifiedAt: number;
 };
 
-/** A completion signature verified against the model evidence used for the request. */
+/** A response signature verified against the model evidence used for the request. */
 export type VerifiedModelCompletionResult = {
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
+  /** Representative matching report; a shared signing key does not identify one CVM. */
   readonly attestation: VerifiedModelAttestation;
+  /** SDK clients populate every matching report; optional for existing custom verifiers. */
+  readonly attestations?: readonly VerifiedModelAttestation[];
 };
 
-/** A completion signature verified against the Gateway evidence used for the request. */
+/** A response signature verified against the Gateway evidence used for the request. */
 export type VerifiedGatewayCompletionResult = {
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
   readonly signatureKind: 'gateway';
   readonly signature: CompletionSignature;
@@ -163,3 +172,6 @@ export type InferenceChat = {
 
 /** Standard Chat Completions operations. */
 export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
+
+/** Gateway Responses creation with the official OpenAI request and event types. */
+export type InferenceResponses = Pick<OpenAI.Responses, 'create'>;

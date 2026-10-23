@@ -69,6 +69,7 @@
     "@types/ed2curve": "0.2.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.19.0",
+    "@typesafe-ai/sdk": "0.7.0",
     "esbuild": "^0.28.2",
     "jest": "^30.5.2",
     "ts-jest": "^29.4.14",

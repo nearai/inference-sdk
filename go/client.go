@@ -30,6 +30,7 @@ type responseRecord struct {
 	session           *session
 	expires           time.Time
 	verifying         *pendingResponse
+	gatewayOnly       bool
 }
 type pendingResponse struct {
 	done  chan struct{}
@@ -172,18 +173,20 @@ func (c *InferenceClient) Close() error {
 	return nil
 }
 
+func cloneAttestation(a VerifiedAttestation) VerifiedAttestation {
+	a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
+	a.Deployment = cloneDeployment(a.Deployment)
+	return a
+}
+
 func cloneResult(r AttestationVerificationResult) AttestationVerificationResult {
-	clone := func(a VerifiedAttestation) VerifiedAttestation {
-		a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
-		return a
-	}
 	if r.Gateway != nil {
-		v := clone(*r.Gateway)
+		v := cloneAttestation(*r.Gateway)
 		r.Gateway = &v
 	}
 	r.Models = append([]VerifiedAttestation(nil), r.Models...)
 	for i := range r.Models {
-		r.Models[i] = clone(r.Models[i])
+		r.Models[i] = cloneAttestation(r.Models[i])
 	}
 	return r
 }
@@ -197,6 +200,8 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 }
 
 func (c *InferenceClient) getSession(ctx context.Context, model string) (*session, error) {
+	key := model
+
 	if model == "" {
 		return nil, failure("api.invalid_input", nil)
 	}
@@ -208,14 +213,14 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 		c.mu.Unlock()
 		return nil, failure("api.client_closed", nil)
 	}
-	if s := c.sessions[model]; s != nil && time.Now().Before(s.expires) {
+	if s := c.sessions[key]; s != nil && time.Now().Before(s.expires) {
 		c.mu.Unlock()
 		return s, nil
 	}
-	p := c.pending[model]
+	p := c.pending[key]
 	if p == nil {
 		p = &pendingSession{done: make(chan struct{})}
-		c.pending[model] = p
+		c.pending[key] = p
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
@@ -225,7 +230,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 			c.mu.Lock()
 			defer c.mu.Unlock()
 			p.value, p.err = s, e
-			delete(c.pending, model)
+			delete(c.pending, key)
 			if e == nil && !c.closed && c.attestationTTL > 0 {
 				c.prune(time.Now())
 				for len(c.sessions) >= c.options.MaxCacheEntries {
@@ -239,7 +244,7 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 					delete(c.sessions, oldest)
 				}
 				s.expires = time.Now().Add(c.attestationTTL)
-				c.sessions[model] = s
+				c.sessions[key] = s
 			}
 			close(p.done)
 		}()
@@ -409,17 +414,23 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip only accepts POSTs to this client's configured Chat endpoint.
+// RoundTrip accepts POSTs to Chat Completions and Gateway Responses creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	expected := *c.api.base
 	expected.Path += "chat/completions"
+	responsesURL := *c.api.base
+	responsesURL.Path += "responses"
 	u := *req.URL
 	u.RawQuery = ""
 	u.ForceQuery = false
-	if req.Method != "POST" || u.String() != expected.String() || req.Body == nil {
+	responses := u.String() == responsesURL.String()
+	if req.Method != "POST" || (u.String() != expected.String() && !responses) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
+	if responses && (c.api.direct || c.options.E2EE) {
+		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
+	}
 	body, e := readBounded(req.Body, c.maxBody)
 	if e != nil {
 		return nil, e
@@ -518,7 +529,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s); e != nil {
+		if e = c.register(id, body, wire, s, responses); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -542,6 +553,11 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			if _, ok := obj["error"]; ok {
 				failed = true
 			}
+			if responses {
+				// Output item IDs are not response IDs. Lifecycle events carry
+				// the receipt ID inside their response object.
+				obj, _ = obj["response"].(map[string]any)
+			}
 			if candidate, ok := obj["id"].(string); ok && candidate != "" {
 				if id != "" && candidate != id {
 					return nil, failure("api.invalid_response", nil)
@@ -558,7 +574,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if failed || id == "" {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s)
+		return c.register(id, body, capture.body.Bytes(), s, responses)
 	}
 	response.Body = &sseReader{source: capture, reader: bufio.NewReader(capture), transform: transform, finish: finish, limit: c.maxBody}
 	removeBodyHeaders(response.Header)
@@ -574,7 +590,7 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
 
-func (c *InferenceClient) register(id string, request, response []byte, s *session) error {
+func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -610,10 +626,11 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 		delete(c.responses, oldest)
 	}
 	c.responses[id] = &responseRecord{
-		request:  append([]byte(nil), request...),
-		response: append([]byte(nil), response...),
-		session:  s,
-		expires:  time.Now().Add(c.responseTTL),
+		request:     append([]byte(nil), request...),
+		response:    append([]byte(nil), response...),
+		session:     s,
+		gatewayOnly: gatewayOnly,
+		expires:     time.Now().Add(c.responseTTL),
 	}
 	return nil
 }
@@ -657,8 +674,7 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 	case <-p.done:
 		result := p.value
 		if result.Attestation != nil {
-			a := *result.Attestation
-			a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
+			a := cloneAttestation(*result.Attestation)
 			result.Attestation = &a
 		}
 		result.Attestations = cloneResult(AttestationVerificationResult{Models: result.Attestations}).Models
@@ -673,6 +689,9 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 	}
 	if sig.Signer.SigningAlgo != c.options.SigningAlgo {
 		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
+	}
+	if r.gatewayOnly && sig.Kind != "gateway" {
+		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
 	}
 	var a *VerifiedAttestation
 	if sig.Kind == "gateway" {
@@ -696,17 +715,36 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
 	copy := *a
-	return VerifiedCompletionResult{CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
+	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.
 // For streaming or typed requests, use HTTPClient with the official Go OpenAI SDK.
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "chat/completions", request)
+}
+
+// CreateResponse sends a Gateway Responses request and retains its exact wire
+// bytes for VerifyResponse. Use HTTPClient with openai-go for typed SSE events.
+func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "responses", request)
+}
+
+func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
 	if e != nil {
 		return nil, e
 	}
-	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint("chat/completions", nil), bytes.NewReader(body))
+	if path == "responses" {
+		parsed, err := decodeObject(body)
+		if err != nil {
+			return nil, err
+		}
+		if parsed["stream"] == true {
+			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses")
+		}
+	}
+	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint(path, nil), bytes.NewReader(body))
 	if e != nil {
 		return nil, e
 	}

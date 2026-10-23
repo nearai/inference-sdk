@@ -30,10 +30,11 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - name: Typecheck live tests without contacting the service
+      - name: Check live tests without contacting the service
         run: |
           pnpm typecheck:e2e
-          node --check ../e2e/select-models.mjs
+          node --test e2e/*.spec.ts
+          node --test ../e2e/select-models.test.mjs
       - name: Check JavaScript example
         working-directory: examples/example-js
         run: |
@@ -59,7 +60,7 @@ jobs:
         working-directory: examples/example-py
         run: |
           uv sync --locked
-          uv run python -c "from gateway import bare, client, client_openai_sdk; from direct import bare, client, client_openai_sdk"
+          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
@@ -93,6 +94,8 @@ jobs:
           cache-dependency-path: |
             go/go.sum
             examples/example-go/go.sum
+      - name: Check shared System One response vectors
+        run: cmp rs/test-fixtures/systemone-responses.json go/testdata/systemone-responses.json
       - run: make -C go check
       - name: Verify consumer builds without CGO
         env:
@@ -101,9 +104,9 @@ jobs:
           go -C go test ./...
           go -C examples/example-go test ./...
           go -C examples/example-go build ./...
-      - name: Compile live Go tests without credentials
+      - name: Test live model selection without credentials
         working-directory: go
-        run: go test -tags=e2e ./e2e -run '^$'
+        run: go test -tags=e2e ./e2e -run '^TestSelectedModels$'
       - name: Check Go OpenAI integration example
         working-directory: examples/example-go
         run: |

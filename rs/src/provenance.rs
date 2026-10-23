@@ -17,6 +17,13 @@ use x509_cert::{
 };
 
 const RESOURCE: ApiResource = ApiResource::ImageProvenance;
+// Match the Go provenance page bound, including GitHub-compatible proxies.
+const MAX_PROVENANCE_PAGE_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PROVENANCE_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROVENANCE_PAGES: usize = 32;
+const MAX_PROVENANCE_PAGE_ENTRIES: usize = 100;
+const MAX_PROVENANCE_LINK_BYTES: usize = 8 * 1024;
+const MAX_PROVENANCE_CURSOR_BYTES: usize = 4 * 1024;
 const SLSA_V1: &str = "https://slsa.dev/provenance/v1";
 const SLSA_V02: &str = "https://slsa.dev/provenance/v0.2";
 const SOURCE_REPOSITORY_URI: ObjectIdentifier =
@@ -39,6 +46,30 @@ pub async fn fetch_image_provenance(
     digest: &str,
     github_token: Option<&str>,
 ) -> Result<Vec<String>, ApiError> {
+    fetch_image_provenance_with_options(
+        repository,
+        digest,
+        ImageProvenanceFetchOptions {
+            github_token,
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct ImageProvenanceFetchOptions<'a> {
+    pub github_token: Option<&'a str>,
+    /// GitHub API base URL, defaulting to https://api.github.com. Use a backend
+    /// endpoint when a frontend cannot supply a token; the backend handles authentication.
+    pub github_api_url: Option<&'a str>,
+}
+
+pub async fn fetch_image_provenance_with_options(
+    repository: &str,
+    digest: &str,
+    options: ImageProvenanceFetchOptions<'_>,
+) -> Result<Vec<String>, ApiError> {
     if !valid_repository(repository) {
         return Err(api_input("repository", "expected owner/repo"));
     }
@@ -48,11 +79,26 @@ pub async fn fetch_image_provenance(
             "expected sha256: followed by 64 hexadecimal digits",
         )
     })?;
+    let base = github_api_base(options.github_api_url)?;
     let url = Url::parse(&format!(
-        "https://api.github.com/repos/{repository}/attestations/sha256:{hash}?per_page=100"
+        "{}/repos/{repository}/attestations/sha256:{hash}?per_page=100",
+        base.as_str().trim_end_matches('/')
     ))
-    .expect("validated repository and digest form a valid GitHub URL");
-    fetch_image_provenance_pages(&Client::new(), url, github_token).await
+    .map_err(|_| api_input("github_api_url", "invalid URL"))?;
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| api_input("http_client", "could not build client"))?;
+    fetch_image_provenance_pages(
+        &client,
+        url,
+        if options.github_api_url.is_none() {
+            options.github_token
+        } else {
+            None
+        },
+    )
+    .await
 }
 
 async fn fetch_image_provenance_pages(
@@ -63,7 +109,14 @@ async fn fetch_image_provenance_pages(
     let mut bundles = Vec::new();
     let mut url = original_url.clone();
     let mut visited = HashSet::new();
+    let mut total_bytes = 0;
     loop {
+        if visited.len() >= MAX_PROVENANCE_PAGES {
+            return Err(pagination_error("provenance page limit exceeded"));
+        }
+        if total_bytes >= MAX_PROVENANCE_TOTAL_BYTES {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
         if !visited.insert(url.clone()) {
             return Err(pagination_error("repeated pagination cursor"));
         }
@@ -86,11 +139,10 @@ async fn fetch_image_provenance_pages(
             });
         }
         let next = next_attestation_page(&original_url, response.headers())?;
-        let text = response.text().await.map_err(|_| ApiError::Transport {
-            resource: RESOURCE,
-            reason: ApiTransportReason::ResponseBody,
-        })?;
-        let response: GitHubAttestations = serde_json::from_str(&text).map_err(|error| {
+        let limit = MAX_PROVENANCE_PAGE_BYTES.min(MAX_PROVENANCE_TOTAL_BYTES - total_bytes);
+        let bytes = read_provenance_body(response, limit).await?;
+        total_bytes += bytes.len();
+        let response: GitHubAttestations = serde_json::from_slice(&bytes).map_err(|error| {
             if error.is_syntax() || error.is_eof() {
                 ApiError::InvalidJson { resource: RESOURCE }
             } else {
@@ -114,7 +166,43 @@ async fn fetch_image_provenance_pages(
     }
 }
 
+async fn read_provenance_body(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, ApiError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+        resource: RESOURCE,
+        reason: ApiTransportReason::ResponseBody,
+    })? {
+        if chunk.len() > limit - bytes.len() {
+            return Err(ApiError::BodyTooLarge { resource: RESOURCE });
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
 fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Option<Url>, ApiError> {
+    // Check every field before parsing or returning the first next link.
+    let mut link_bytes = 0;
+    for (index, header) in headers.get_all(reqwest::header::LINK).iter().enumerate() {
+        if index > 0 {
+            link_bytes += 1; // Include separators, even between empty values.
+        }
+        if link_bytes > MAX_PROVENANCE_LINK_BYTES
+            || header.as_bytes().len() > MAX_PROVENANCE_LINK_BYTES - link_bytes
+        {
+            return Err(pagination_error("provenance Link header limit exceeded"));
+        }
+        link_bytes += header.as_bytes().len();
+    }
     for header in headers.get_all(reqwest::header::LINK) {
         let header = header
             .to_str()
@@ -153,11 +241,14 @@ fn next_attestation_page(original_url: &Url, headers: &HeaderMap) -> Result<Opti
             }
             // Retain the caller's validated GitHub origin and attestation path;
             // only the cursor is taken from the server-supplied URL.
+            let cursor = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair(&name, &value)
+                .finish();
+            if cursor.len() > MAX_PROVENANCE_CURSOR_BYTES {
+                return Err(pagination_error("provenance cursor limit exceeded"));
+            }
             let mut url = original_url.clone();
-            url.set_query(None);
-            url.query_pairs_mut()
-                .append_pair("per_page", "100")
-                .append_pair(&name, &value);
+            url.set_query(Some(&format!("per_page=100&{cursor}")));
             return Ok(Some(url));
         }
     }
@@ -539,7 +630,45 @@ fn provenance_error(digest: &str, reasons: Vec<Reason>) -> VerificationError {
 
 #[derive(Deserialize)]
 struct GitHubAttestations {
+    #[serde(deserialize_with = "deserialize_attestations")]
     attestations: Vec<GitHubAttestation>,
+}
+
+fn deserialize_attestations<'de, D>(deserializer: D) -> Result<Vec<GitHubAttestation>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct AttestationsVisitor;
+    impl<'de> serde::de::Visitor<'de> for AttestationsVisitor {
+        type Value = Vec<GitHubAttestation>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_PROVENANCE_PAGE_ENTRIES} attestations"
+            )
+        }
+
+        fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut entries = Vec::new();
+            for _ in 0..MAX_PROVENANCE_PAGE_ENTRIES {
+                match sequence.next_element()? {
+                    Some(entry) => entries.push(entry),
+                    None => return Ok(entries),
+                }
+            }
+            if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                return Err(serde::de::Error::custom(
+                    "provenance attestation count limit exceeded",
+                ));
+            }
+            Ok(entries)
+        }
+    }
+    deserializer.deserialize_seq(AttestationsVisitor)
 }
 
 #[derive(Deserialize)]
@@ -633,6 +762,24 @@ struct Material {
 struct SourceDigest {
     git_commit: Option<String>,
     sha1: Option<String>,
+}
+
+pub(crate) fn github_api_base(api_url: Option<&str>) -> Result<Url, ApiError> {
+    let url = Url::parse(api_url.unwrap_or("https://api.github.com"))
+        .map_err(|_| api_input("github_api_url", "expected absolute HTTP(S) URL"))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(api_input(
+            "github_api_url",
+            "expected HTTP(S) URL without credentials, query or fragment",
+        ));
+    }
+    Ok(url)
 }
 
 #[cfg(test)]
@@ -827,6 +974,206 @@ mod tests {
                     &certificate_commit
                 ),
                 Err(Reason::SourceMismatch)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_proxy_pages_before_json_parsing() {
+        for chunked in [false, true] {
+            let server = MockServer::start().await;
+            let mut response =
+                ResponseTemplate::new(200)
+                    .set_body_bytes(vec![b'x'; MAX_PROVENANCE_PAGE_BYTES + 1]);
+            if chunked {
+                response = response.insert_header("Transfer-Encoding", "chunked");
+            }
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let proxy = server.uri();
+            let error = fetch_image_provenance_with_options(
+                "nearai/compose-manager",
+                &format!("sha256:{}", "ab".repeat(32)),
+                ImageProvenanceFetchOptions {
+                    github_api_url: Some(&proxy),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                ApiError::BodyTooLarge {
+                    resource: ApiResource::ImageProvenance
+                }
+            ));
+            assert_eq!(error.code(), "api.body_too_large");
+            assert!(!error.retryable());
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_provenance_page_at_the_exact_byte_limit() {
+        let server = MockServer::start().await;
+        let mut body = br#"{"attestations":[{"bundle":{"at_limit":true}}]}"#.to_vec();
+        body.resize(MAX_PROVENANCE_PAGE_BYTES, b' ');
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::builder().no_proxy().build().unwrap();
+        let bundles =
+            fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                .await
+                .unwrap();
+        assert_eq!(bundles, vec![r#"{"at_limit":true}"#]);
+    }
+
+    #[tokio::test]
+    async fn bounds_attestation_count_per_page() {
+        for count in [100, 101] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "attestations": vec![json!({"bundle": {}}); count]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = Client::builder().no_proxy().build().unwrap();
+            let result =
+                fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                    .await;
+            if count == 100 {
+                assert_eq!(result.unwrap().len(), count);
+            } else {
+                assert_eq!(result.unwrap_err().code(), "api.invalid_response");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bounds_entire_provenance_pagination() {
+        // Finite servers ensure the regression also terminates without limits.
+        for (pages, page_bytes, expected_calls, error_code) in [
+            (32, 128, 32, None),
+            (33, 128, 32, Some("api.invalid_response")),
+            (4, 16 * 1024 * 1024, 4, None),
+            (5, 13 * 1024 * 1024, 5, Some("api.body_too_large")),
+        ] {
+            for chunked in [false, true] {
+                let server = MockServer::start().await;
+                let base = server.uri();
+                Mock::given(method("GET"))
+                    .respond_with(move |request: &wiremock::Request| {
+                        let page = request
+                            .url
+                            .query_pairs()
+                            .find(|(key, _)| key == "after")
+                            .map(|(_, value)| value.parse::<usize>().unwrap())
+                            .unwrap_or(1);
+                        let mut body = br#"{"attestations":[{"bundle":{"ok":true}}]}"#.to_vec();
+                        body.resize(page_bytes, b' ');
+                        let mut response = ResponseTemplate::new(200).set_body_bytes(body);
+                        if page < pages {
+                            response = response.insert_header(
+                                "Link",
+                                format!("<{}?after={}>; rel=\"next\"", base, page + 1),
+                            );
+                        }
+                        if chunked {
+                            response = response.insert_header("Transfer-Encoding", "chunked");
+                        }
+                        response
+                    })
+                    .expect(expected_calls)
+                    .mount(&server)
+                    .await;
+                let client = Client::builder().no_proxy().build().unwrap();
+                let result =
+                    fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                        .await;
+                if let Some(code) = error_code {
+                    let error = result.unwrap_err();
+                    assert_eq!(error.code(), code);
+                    assert!(!error.retryable());
+                } else {
+                    assert_eq!(result.unwrap().len(), pages);
+                }
+                assert_eq!(
+                    server.received_requests().await.unwrap().len(),
+                    expected_calls as usize
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bounds_pagination_link_headers_and_reencoded_cursors() {
+        let link = |query: &str| format!("<https://example.test/?{query}>; rel=\"next\"");
+        let next = link("after=next");
+        for (links, valid) in [
+            (
+                vec![format!(
+                    "{}; title=\"{}\"",
+                    next,
+                    "x".repeat(8192 - next.len() - 10)
+                )],
+                true,
+            ),
+            (
+                vec![format!(
+                    "{}; title=\"{}\"",
+                    next,
+                    "x".repeat(8193 - next.len() - 10)
+                )],
+                false,
+            ),
+            (vec![next.clone(), "x".repeat(8192 - next.len() - 1)], true),
+            (vec![next.clone(), "x".repeat(8193 - next.len() - 1)], false),
+            (vec![link(&format!("after={}", "x".repeat(4096 - 6)))], true),
+            (
+                vec![link(&format!("after={}", "x".repeat(4097 - 6)))],
+                false,
+            ),
+            (vec![link(&format!("after={}x", "!".repeat(1363)))], true),
+            (vec![link(&format!("after={}", "!".repeat(1364)))], false),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .respond_with(move |request: &wiremock::Request| {
+                    let mut response = ResponseTemplate::new(200).set_body_raw(
+                        r#"{"attestations":[{"bundle":{"ok":true}}]}"#,
+                        "application/json",
+                    );
+                    if !request.url.query_pairs().any(|(name, _)| name == "after") {
+                        for value in &links {
+                            response = response.append_header("Link", value);
+                        }
+                    }
+                    response
+                })
+                .expect(if valid { 2 } else { 1 })
+                .mount(&server)
+                .await;
+            let client = Client::builder().no_proxy().build().unwrap();
+            let result =
+                fetch_image_provenance_pages(&client, Url::parse(&server.uri()).unwrap(), None)
+                    .await;
+            if valid {
+                assert_eq!(result.unwrap().len(), 2);
+            } else {
+                assert!(
+                    matches!(result, Err(ApiError::InvalidResponse { path, .. }) if path == "Link")
+                );
+            }
+            assert_eq!(
+                server.received_requests().await.unwrap().len(),
+                if valid { 2 } else { 1 }
             );
         }
     }

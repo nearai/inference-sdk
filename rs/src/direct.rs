@@ -88,10 +88,27 @@ impl DirectAttestationClient {
             .and_then(serde_json::Value::as_array)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| invalid("all_attestations"))?;
-        let attestations = reports.iter().map(decode).collect::<Result<Vec<_>, _>>()?;
-        if !attestations.contains(&serving) {
-            return Err(invalid("serving_attestation"));
-        }
+        let mut attestations = reports
+            .iter()
+            .map(|value| {
+                // Only the serving envelope supplies manager evidence. Ignore
+                // nested payloads before decoding even if their shape is unknown.
+                let mut value = value.clone();
+                value
+                    .as_object_mut()
+                    .ok_or_else(|| invalid("all_attestations"))?
+                    .remove("compose_manager_attestation");
+                decode(&value)
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+        let mut bare = serving.clone();
+        bare.attestation.compose_manager_attestation = None;
+        let index = attestations
+            .iter()
+            .position(|report| report == &bare)
+            .ok_or_else(|| invalid("serving_attestation"))?;
+        attestations[index].attestation.compose_manager_attestation =
+            serving.attestation.compose_manager_attestation.clone();
         for item in &attestations {
             if item.spki_fingerprint.is_some() {
                 return Err(invalid("tls_cert_fingerprint"));

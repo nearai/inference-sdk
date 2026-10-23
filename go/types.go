@@ -24,17 +24,18 @@ type SigningIdentity struct {
 	SigningAddress string      `json:"signingAddress"`
 }
 type Attestation struct {
-	Nonce             string
-	Signer            SigningIdentity
-	IntelQuote        string
-	EventLog          json.RawMessage
-	AppCompose        string
-	ReportedQuoteData string
-	SigningPublicKey  string
-	NvidiaPayload     *string
-	SPKIFingerprint   string
-	ModelName         string
-	InstanceID        string
+	ComposeManagerAttestation *ComposeManagerAttestation
+	Nonce                     string
+	Signer                    SigningIdentity
+	IntelQuote                string
+	EventLog                  json.RawMessage
+	AppCompose                string
+	ReportedQuoteData         string
+	SigningPublicKey          string
+	NvidiaPayload             *string
+	SPKIFingerprint           string
+	ModelName                 string
+	InstanceID                string
 }
 type ClientBinding struct{ Nonce, SPKIFingerprint string }
 type OHTTPAttestation struct {
@@ -73,6 +74,7 @@ type QuoteVerificationResult struct {
 }
 type RuntimeMeasurements struct{ OSImageHash, ComposeHash string }
 type MeasuredDeployment struct {
+	ComposeManager      *VerifiedComposeManagerAttestation
 	AppCompose          string
 	RuntimeMeasurements RuntimeMeasurements
 }
@@ -82,6 +84,8 @@ type AttestationPolicy struct {
 }
 type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
 type GPUEvidenceVerifier func(context.Context, string) error
+
+// DeploymentVerifier inspects read-only evidence and returns an error to reject it.
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
 	Policy             AttestationPolicy
@@ -106,6 +110,8 @@ type AttestationVerificationResult struct {
 	VerifiedAt time.Time
 }
 type VerifiedCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature

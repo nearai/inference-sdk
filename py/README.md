@@ -78,7 +78,8 @@ Chat request and shares Chat's verification cache and in-flight work. It returns
 verified Gateway and model evidence with the verification time, preserved on
 cache hits. It raises if verification fails and does not verify a particular reply.
 
-Successful deployment verification is cached for 60 minutes per model by default.
+Successful deployment verification is cached for 60 minutes per model and shared
+by `verify()`, Chat, and System One calls on the same client.
 Set `attestation_cache_time_to_live_ms=0` to verify before every request. Response
 records have a separate 60-minute lifetime starting when the body finishes;
 verify replies before records expire and before closing the client. See
@@ -119,10 +120,20 @@ Pass `inference_client.http_client` to `openai.AsyncOpenAI` to use the same veri
 transport for JSON and streaming Chat. Configure credentials on `InferenceClient`
 and verify replies through it. See the
 [OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/client_openai_sdk.py).
-Only Chat Completions are supported; the Responses API is not supported.
+For an OpenAI version that supports HTTPX2, install `openai[httpx2]` and pass
+`inference_client.httpx2_client` instead. Both adapters share the same Chat,
+streaming, encryption, and receipt-verification pipeline. Existing HTTPX users
+can keep their current dependencies and calls.
 
 ## Advanced APIs
 
+- **Responses:** create JSON or streaming responses and verify Gateway receipts.
+  See [Responses API](./docs/verification-guide.md#responses-api).
+- **System One decisions:** send structured questions with `client.systemone.create()`
+  and verify the returned decision. See the [System One guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#system-one-decisions).
+- **Official Jev SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
+  then pass `inference_client.httpx2_client` to `AsyncTypeSafeClient`.
+  See the [Jev SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-jev-sdk).
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   With [standalone functions](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#standalone-workflow),
   your application verifies every model candidate and retains the exact wire bytes.

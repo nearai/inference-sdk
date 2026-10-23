@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -128,11 +128,36 @@ class CloudAttestationSchema(ApiSchema):
     tls_cert_fingerprint: StrictStr | None = None
 
 
+class ComposeManagerActionSchema(RootModel[dict[str, StrictStr | list[StrictStr]]]):
+    @model_validator(mode='after')
+    def validate_action_fields(self) -> ComposeManagerActionSchema:
+        for key in ('action', 'timestamp'):
+            if not isinstance(self.root.get(key), str):
+                # Pydantic converts ValueError (not TypeError) to ValidationError.
+                raise ValueError(f'{key} must be a string')  # noqa: TRY004
+        for key in ('commit', 'file', 'file_sha256', 'image'):
+            if key in self.root and not isinstance(self.root[key], str):
+                raise ValueError(f'{key} must be a string')
+        if 'services' in self.root and not isinstance(self.root['services'], list):
+            raise ValueError('services must be a list of strings')
+        return self
+
+
+class ComposeManagerAttestationSchema(ApiSchema):
+    actions: list[ComposeManagerActionSchema]
+    actions_hash: StrictStr
+    nonce: StrictStr
+    quote: StrictStr
+    event_log: StrictStr | list[Any]
+    report_data: StrictStr | None = None
+
+
 class CloudModelAttestationSchema(CloudAttestationSchema):
     info: CloudInfoSchema
     report_data: StrictStr | None = None
     nvidia_payload: StrictStr | None = None
     signing_public_key: StrictStr | None = None
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
 
 
 class CloudGatewayAttestationSchema(CloudAttestationSchema):
@@ -190,6 +215,7 @@ class DirectModelAttestationSchema(CloudAttestationSchema):
 
 
 class DirectAttestationReportSchema(DirectModelAttestationSchema):
+    compose_manager_attestation: ComposeManagerAttestationSchema | None = None
     all_attestations: list[DirectModelAttestationSchema] = Field(min_length=1)
     ohttp_attestation: OhttpAttestationSchema | None = None
 
@@ -209,6 +235,13 @@ class CompletionRequestModelSchema(ApiSchema):
 
     model: StrictStr = Field(min_length=1)
 
+    @field_validator('model')
+    @classmethod
+    def reject_dot_segments(cls, value: str) -> str:
+        if value in ('.', '..'):
+            raise ValueError('Model ID cannot be a dot path segment')
+        return value
+
 
 class ChatCompletionRequestSchema(CompletionRequestModelSchema):
     """Only identify the model; leave Chat field validation to the server."""
@@ -222,6 +255,55 @@ class ChatCompletionResponseSchema(RootModel[dict[str, Any]]):
 
 class CompletionResponseIdSchema(ApiSchema):
     id: StrictStr = Field(min_length=1)
+
+
+SystemOneContent = str | dict[str, Any] | list[Any]
+SystemOneProbability = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
+
+
+class SystemOneNoulAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['noul']
+    noul: SystemOneProbability
+
+
+class SystemOneChoiceAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['choice']
+    choice: StrictStr
+    confidence: SystemOneProbability
+    probabilities: dict[str, SystemOneProbability]
+
+
+class SystemOneScoreAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['score']
+    score: float = Field(allow_inf_nan=False)
+    confidence: SystemOneProbability
+    probabilities: dict[str, SystemOneProbability]
+    legend: dict[str, SystemOneContent]
+
+
+class SystemOneUsageSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    input_tokens: StrictInt = Field(ge=0)
+    output_tokens: StrictInt = Field(ge=0)
+
+
+class SystemOneResponseSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    id: StrictStr | None = None
+    model: StrictStr = Field(min_length=1)
+    answers: dict[
+        str,
+        Annotated[
+            SystemOneNoulAnswerSchema
+            | SystemOneChoiceAnswerSchema
+            | SystemOneScoreAnswerSchema,
+            Field(discriminator='type'),
+        ],
+    ]
+    usage: SystemOneUsageSchema
 
 
 class NvidiaPayloadNonceSchema(ApiSchema):

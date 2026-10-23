@@ -19,6 +19,17 @@ type RequiredImage = {
   policy: ImageProvenancePolicy;
 };
 
+type ComposeImage = { service: string; image: string };
+
+type VerifyComposeImageProvenanceParams = {
+  dockerCompose: string;
+  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>;
+  githubToken?: string;
+  githubApiUrl?: string;
+  /** An explicit compose_up selection; omitted or empty selects the whole file. */
+  services?: readonly string[];
+};
+
 /**
  * Check the build provenance of every configured image repository in appCompose.
  * Use in a deployment verifier, after attestation verification has authenticated
@@ -28,45 +39,9 @@ export async function verifyDeploymentImageProvenance({
   appCompose,
   imagePolicies,
   githubToken,
+  githubApiUrl,
 }: VerifyDeploymentImageProvenanceParams): Promise<void> {
-  const requiredImages = selectRequiredImages(appCompose, imagePolicies);
-  await Promise.all(
-    requiredImages.map(async ({ repository, digest, policy }) => {
-      let bundles: readonly string[];
-      try {
-        bundles = await fetchImageProvenance({
-          repository: policy.repository,
-          digest,
-          githubToken,
-        });
-      } catch (cause) {
-        if (!(cause instanceof ApiError)) throw cause;
-        throw new VerificationError(
-          {
-            code: 'provenance.image_request_failed',
-            details: { imageRepository: repository, digest },
-            retryable: cause.retryable,
-          },
-          { cause },
-        );
-      }
-      await verifyImageProvenance({ bundles, digest, policy });
-    }),
-  );
-}
-
-function selectRequiredImages(
-  appCompose: string,
-  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>,
-): RequiredImage[] {
-  const policies = Object.entries(imagePolicies);
-  if (policies.length === 0) {
-    throw new VerificationError({
-      code: 'provenance.deployment_images_invalid',
-      details: { reason: 'empty_policy' },
-    });
-  }
-
+  requireImagePolicies(imagePolicies);
   let configuration: DeploymentAppCompose;
   try {
     configuration = v.parse(DeploymentAppComposeSchema, JSON.parse(appCompose));
@@ -79,10 +54,70 @@ function selectRequiredImages(
       { cause },
     );
   }
+  await verifyComposeImageProvenance({
+    dockerCompose: configuration.docker_compose_file,
+    imagePolicies,
+    githubToken,
+    githubApiUrl,
+  });
+}
+
+/** Shared image selection and Sigstore checks for authenticated compose sources. */
+export async function verifyComposeImageProvenance({
+  dockerCompose,
+  imagePolicies,
+  githubToken,
+  githubApiUrl,
+  services,
+}: VerifyComposeImageProvenanceParams): Promise<void> {
+  const requiredImages = selectRequiredImages({
+    dockerCompose,
+    imagePolicies,
+    services,
+  });
+  await Promise.all(
+    requiredImages.map((image) =>
+      verifyRequiredImageProvenance(image, { githubToken, githubApiUrl }),
+    ),
+  );
+}
+
+export async function verifyRequiredImageProvenance(
+  { repository, digest, policy }: RequiredImage,
+  access: { githubToken?: string; githubApiUrl?: string },
+): Promise<void> {
+  let bundles: readonly string[];
+  try {
+    bundles = await fetchImageProvenance({
+      repository: policy.repository,
+      digest,
+      ...access,
+    });
+  } catch (cause) {
+    if (!(cause instanceof ApiError)) throw cause;
+    throw new VerificationError(
+      {
+        code: 'provenance.image_request_failed',
+        details: { imageRepository: repository, digest },
+        retryable: cause.retryable,
+      },
+      { cause },
+    );
+  }
+  await verifyImageProvenance({ bundles, digest, policy });
+}
+
+function selectRequiredImages({
+  dockerCompose,
+  imagePolicies,
+  services,
+}: VerifyComposeImageProvenanceParams): RequiredImage[] {
+  const policies = Object.entries(imagePolicies);
+  requireImagePolicies(imagePolicies);
 
   let compose: DeploymentDockerCompose;
   try {
-    const raw: unknown = parse(configuration.docker_compose_file, {
+    const raw: unknown = parse(dockerCompose, {
       merge: true,
       logLevel: 'error',
     });
@@ -97,8 +132,18 @@ function selectRequiredImages(
     );
   }
 
-  const images: { service: string; image: string }[] = [];
-  for (const [service, { image }] of Object.entries(compose.services)) {
+  const composeServices = new Map(Object.entries(compose.services));
+  const selectedServices = services?.length ? services : composeServices.keys();
+  const images: ComposeImage[] = [];
+  for (const service of selectedServices) {
+    const config = composeServices.get(service);
+    if (config === undefined) {
+      throw new VerificationError({
+        code: 'provenance.deployment_images_invalid',
+        details: { reason: 'service_missing', service },
+      });
+    }
+    const { image } = config;
     if (image === undefined) continue;
     // A variable's default is not evidence of its resolved deployment value.
     if (image.includes('$')) {
@@ -128,22 +173,42 @@ function selectRequiredImages(
       });
     }
     for (const { service, image } of references) {
-      const suffix = image.slice(repository.length);
-      const digest = /^(?::\w[\w.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$/.exec(
-        suffix,
-      )?.[1];
-      if (digest === undefined) {
-        throw new VerificationError({
-          code: 'provenance.deployment_images_invalid',
-          details: {
-            reason: 'image_not_pinned',
-            imageRepository: repository,
-            service,
-          },
-        });
-      }
-      requiredImages.push({ repository, digest: digest.toLowerCase(), policy });
+      const digest = requirePinnedImageDigest(image, repository, service);
+      requiredImages.push({ repository, digest, policy });
     }
   }
   return requiredImages;
+}
+
+export function requirePinnedImageDigest(
+  image: string,
+  repository: string,
+  service: string,
+): string {
+  const suffix = image.slice(repository.length);
+  const digest = /^(?::\w[\w.-]{0,127})?@(sha256:[0-9a-fA-F]{64})$/.exec(
+    suffix,
+  )?.[1];
+  if (digest === undefined) {
+    throw new VerificationError({
+      code: 'provenance.deployment_images_invalid',
+      details: {
+        reason: 'image_not_pinned',
+        imageRepository: repository,
+        service,
+      },
+    });
+  }
+  return digest.toLowerCase();
+}
+
+function requireImagePolicies(
+  imagePolicies: Readonly<Record<string, ImageProvenancePolicy>>,
+): void {
+  if (Object.keys(imagePolicies).length === 0) {
+    throw new VerificationError({
+      code: 'provenance.deployment_images_invalid',
+      details: { reason: 'empty_policy' },
+    });
+  }
 }
