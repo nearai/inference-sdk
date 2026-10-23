@@ -284,7 +284,7 @@ route to the preselected attested public key, and external models use Gateway
 receipts. Closing the official client closes its borrowed adapter; keep the
 owning `InferenceClient` open until verification finishes.
 
-See the [runnable official SDK example](../../examples/example-py/gateway/jev_official_sdk.py).
+See the [runnable official SDK example](../../examples/example-py/gateway/jev_sdk.py).
 
 ## Direct model endpoints
 

@@ -249,7 +249,7 @@ Self-hosted requests route with the preselected attested `x-model-pub-key`.
 Provider receipts must match that identity; external models use Gateway receipts. The Node transport
 also pins Gateway TLS, as it does for Chat.
 
-See the [runnable official SDK example](../../examples/example-js/gateway/jev-official-sdk.ts).
+See the [runnable official SDK example](../../examples/example-js/gateway/jev-sdk.ts).
 
 ## Connect through an application proxy
 

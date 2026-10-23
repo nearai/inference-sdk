@@ -15,7 +15,7 @@
     "start:direct-bare": "node direct/bare.ts",
     "start:client-openai-sdk": "node gateway/client-openai-sdk.ts",
     "start:jev": "node gateway/jev.ts",
-    "start:jev-official-sdk": "node gateway/jev-official-sdk.ts"
+    "start:jev-sdk": "node gateway/jev-sdk.ts"
   },
   "dependencies": {
     "@nearai/inference-sdk": "link:../../js",
