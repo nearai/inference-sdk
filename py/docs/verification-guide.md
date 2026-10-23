@@ -235,6 +235,57 @@ Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
 
+### Use the official Jev SDK
+
+Install `typesafe-sdk` and give `AsyncTypeSafeClient` the Gateway client's
+`http_client`. Both use HTTPX2. The official SDK's API root excludes `/v1`, while
+the NEAR client's base URL includes `/v1/`.
+
+```python
+from nearai_inference_sdk import InferenceClient
+from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
+
+
+async def decide(api_key: str, model: str) -> None:
+    async with InferenceClient(
+        api_key,
+        base_url='https://cloud-api.near.ai/v1/',
+        e2ee=False,
+        ohttp=False,
+    ) as inference:
+        async with AsyncTypeSafeClient(
+            api_key=api_key,
+            base_url='https://cloud-api.near.ai',
+            http_client=inference.http_client,
+            compression=False,
+            retry=RetryPolicy(max_retries=0),
+            timeout=60,
+        ) as jev:
+            result = await jev.system_one(
+                model=model,
+                state='I was charged twice.',
+                questions={'billing': Noul(instructions='Is this about billing?')},
+            )
+        receipt_id = result.raw_http_response.headers['x-generation-id']
+        await inference.verify_response(receipt_id)
+        print(result.nouls['billing'].noul)
+```
+
+Use a canonical Jev model ID from your endpoint's catalog. The adapter accepts
+uncompressed, nonstreaming JSON System One requests; keep E2EE, OHTTP, compression
+and automatic inference retries disabled. Multipart uploads and other official
+SDK endpoints are outside this adapter's scope. Retry transient receipt lookups
+through `verify_response(receipt_id)`.
+
+Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
+than the official SDK's upstream `request_id`. The official SDK parses the
+response; the NEAR client verifies the captured wire bytes. Self-hosted models
+route to the preselected attested public key, and external models use Gateway
+receipts. Closing the official client closes its borrowed adapter; keep the
+owning `InferenceClient` open until verification finishes.
+
+See the [runnable official SDK example](../../examples/example-py/gateway/jev_official_sdk.py).
+
 ## Direct model endpoints
 
 Direct clients are experimental and not recommended for production. They use a

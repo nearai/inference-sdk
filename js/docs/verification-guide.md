@@ -203,6 +203,54 @@ Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
 Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
+### Use the official Jev SDK
+
+Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to
+`TypeSafeClient`. Its API root excludes `/v1`; the NEAR client includes `/v1/`.
+Use a canonical Jev model ID from your endpoint's catalog.
+
+```ts
+import { InferenceClient } from '@nearai/inference-sdk/node';
+import { TypeSafeClient, noul } from '@typesafe-ai/sdk';
+
+const inference = new InferenceClient({
+  apiKey,
+  baseUrl: 'https://cloud-api.near.ai/v1/',
+  e2ee: false,
+  ohttp: false,
+});
+const jev = new TypeSafeClient({
+  apiKey,
+  baseURL: 'https://cloud-api.near.ai',
+  fetch: inference.fetch,
+  compression: false,
+  retry: { maxRetries: 0 },
+  timeout: 60_000,
+});
+const { data, response } = await jev.systemOne({
+  model,
+  state: 'I was charged twice.',
+  questions: { billing: noul('Is this about billing?') },
+}).withResponse();
+const id = response.headers.get('x-generation-id');
+if (!id) throw new Error('Missing System One receipt ID');
+await inference.verifyResponse(id);
+console.log(data.answers.billing.noul);
+```
+
+The adapter accepts uncompressed, nonstreaming JSON at the configured System One
+endpoint. Keep E2EE, OHTTP, compression and automatic inference retries disabled;
+multipart uploads and other official SDK endpoints are outside this adapter's
+scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+
+`X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
+identifies the upstream request. Verification uses the exact captured bytes.
+Self-hosted models route with the preselected attested `x-model-pub-key` and must
+sign with that identity. External models use Gateway receipts. The Node transport
+also pins Gateway TLS, as it does for Chat.
+
+See the [runnable official SDK example](../../examples/example-js/gateway/jev-official-sdk.ts).
+
 ## Connect through an application proxy
 
 A proxy lets your backend keep the NEAR AI API key while users' devices verify

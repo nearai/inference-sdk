@@ -20,6 +20,7 @@ project configuration. The Chat entry points include non-streaming and streaming
 | `gateway/bare.ts` | Verifies attestations and Gateway image provenance, uses `prepareE2eeChatRequest` for JSON/SSE, and verifies ciphertext signatures. | Enabled |
 | `gateway/client.ts` | Configures Gateway image provenance, then uses `InferenceClient.chat.completions.create()` and `verifyResponse(id)`. | Enabled |
 | [`gateway/jev.ts`](example-js/gateway/jev.ts) | Sends structured decisions and verifies the receipt before printing answers. | Disabled |
+| [`gateway/jev-official-sdk.ts`](example-js/gateway/jev-official-sdk.ts) | Injects the verified transport into the official Jev SDK and verifies `X-Generation-Id` before using answers. | Disabled |
 | `gateway/client-openai-sdk.ts` | Passes `inferenceClient.fetch` to one reusable OpenAI client, then calls `inferenceClient.verifyResponse(id)`. | Enabled |
 | `direct/client.ts` | Experimental: connects using `DirectInferenceClient`, verifies every returned model attestation, then verifies responses by ID. | Enabled |
 | `direct/client-openai-sdk.ts` | Experimental: passes `directClient.fetch` to the official OpenAI SDK, then verifies responses by ID. | Enabled |
@@ -60,9 +61,12 @@ Requires Node.js 24 or later.
 
 For the decision example, set `NEARAI_MODEL` to a decision model from your
 endpoint's catalog, then run `pnpm --dir examples/example-js start:jev`.
-`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
-ECDSA or `NEARAI_EXPECT_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
-are Ed25519 and Gateway receipts. See the
+Run `pnpm --dir examples/example-js start:jev-official-sdk` for the official SDK
+version. Both take a `NEARAI_BASE_URL` ending in `/v1/`; the official example
+derives its SDK's API root from it and disables compression and inference retries.
+The native `jev.ts` example also accepts `NEARAI_SIGNING_ALGO=ecdsa` and
+`NEARAI_EXPECT_SIGNATURE_KIND=provider_tee`; its defaults are Ed25519 and
+Gateway receipts. See the
 [System One guide](../js/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ### Direct model endpoints
@@ -139,6 +143,7 @@ Gateway and direct Chat entry points include non-streaming and streaming calls:
 | `direct/client_openai_sdk.py` | Experimental direct transport shared with `AsyncOpenAI`. |
 | `direct/bare.py` | Experimental standalone report-set and response verification; sends plaintext over HTTPS. |
 | `gateway/jev.py` | System One decisions; verifies the receipt before displaying answers. |
+| `gateway/jev_official_sdk.py` | Official Jev `AsyncTypeSafeClient` through the verified HTTPX2 adapter, with explicit receipt verification. |
 
 Gateway and direct Chat client examples explicitly enable E2EE; both clients default to
 `e2ee=False`. Gateway TLS verification is enabled by default. Change `SIGNING_ALGO` from
@@ -165,9 +170,12 @@ For OHTTP, add `ohttp=True` to either inference client and retain Ed25519.
 
 For the decision example, set `NEARAI_SYSTEMONE_MODEL` to a decision model
 from your endpoint's catalog, then run `uv run python gateway/jev.py`.
-`NEARAI_BASE_URL` selects the endpoint. Set `NEARAI_SIGNING_ALGO=ecdsa` to use
-ECDSA or `NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee` for a TEE model; the defaults
-are Ed25519 and Gateway receipts. See the
+Run `uv run python gateway/jev_official_sdk.py` for the official SDK version.
+Both use a `NEARAI_BASE_URL` ending in `/v1/`; the official example derives the
+upstream SDK's API root and disables compression and inference retries.
+The native `jev.py` example also accepts `NEARAI_SIGNING_ALGO=ecdsa` and
+`NEARAI_EXPECTED_SIGNATURE_KIND=provider_tee`; its defaults are Ed25519 and
+Gateway receipts. See the
 [System One guide](../py/docs/verification-guide.md#system-one-decisions) for API usage.
 
 ## Rust
