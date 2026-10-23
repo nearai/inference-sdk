@@ -726,13 +726,14 @@ for default URLs and custom configuration.
 
 | Type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
-| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
+| `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate', 'TDRelaunchAdvised']` | TCB statuses accepted by verification. |
+| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate', 'TDRelaunchAdvised']` | TCB statuses accepted by verification. |
 |  | `gpuEvidence?` | `'if-present' \| 'required'` | `'if-present'` | Whether a model report without GPU evidence is accepted. |
 
 `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+`OutOfDateConfigurationNeeded`, `TDRelaunchAdvised`,
+`TDRelaunchAdvisedConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 ### Verifier bags and callbacks
 
