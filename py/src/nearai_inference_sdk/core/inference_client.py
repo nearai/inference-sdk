@@ -451,6 +451,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         record = self._responses.get(id)
         if record is None:
             raise api_failure('api.completion_not_found')
+        while record.verification is not None and record.verification.task.cancelling():
+            verification = record.verification
+            await asyncio.shield(
+                asyncio.gather(verification.task, return_exceptions=True)
+            )
+            if record.verification is verification:
+                record.verification = None
         if record.verification is None:
             if (
                 sum(not task.done() for task in self._response_verifications)
@@ -476,11 +483,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         finally:
             verification.waiters -= 1
             if verification.waiters == 0 and not verification.task.done():
-                if record.verification is verification:
-                    record.verification = None
                 if not verification.task.cancelling():
                     verification.task.cancel()
-                await asyncio.gather(verification.task, return_exceptions=True)
+                await asyncio.shield(
+                    asyncio.gather(verification.task, return_exceptions=True)
+                )
+                if record.verification is verification:
+                    record.verification = None
 
     async def _verify_record(
         self, id: str, record: _ResponseRecord[Result, AttestationResult]

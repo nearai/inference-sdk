@@ -1399,14 +1399,20 @@ async def test_receipt_cancellation_preserves_shared_waiters_and_releases_capaci
         cancelled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await cancelled
+        pending = [continuing]
         try:
             if cancel_all:
                 continuing.cancel()
                 await cleaning.wait()
                 assert not continuing.done()
+                replacement = asyncio.create_task(client.verify_response(first.id))
+                pending.append(replacement)
+                await asyncio.sleep(0)
+                assert not replacement.done()
                 cleanup.set()
                 with pytest.raises(asyncio.CancelledError):
                     await continuing
+                assert (await replacement).id == first.id
                 next_completion = await client.chat.completions.create(
                     model=MODEL, messages=MESSAGES
                 )
@@ -1419,8 +1425,8 @@ async def test_receipt_cancellation_preserves_shared_waiters_and_releases_capaci
         finally:
             release.set()
             cleanup.set()
-            await asyncio.gather(continuing, return_exceptions=True)
-    assert gateway.signature_requests == 1
+            await asyncio.gather(*pending, return_exceptions=True)
+    assert gateway.signature_requests == (2 if cancel_all else 1)
 
 
 @pytest.mark.parametrize('eviction', ['count', 'bytes', 'expiry'])
