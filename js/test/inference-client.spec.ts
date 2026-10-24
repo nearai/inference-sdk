@@ -2,14 +2,14 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
-import { TypeSafeClient, noul, choice, score } from '@typesafe-ai/sdk';
 import nacl from 'tweetnacl';
 import {
   type AttestationVerificationResult,
-  InferenceClient,
   DirectInferenceClient,
+  InferenceClient,
   type InferenceClientOptions,
   type SystemOneRequest,
   type TdxQuoteVerificationResult,
@@ -17,6 +17,7 @@ import {
 } from '../src';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
+  buildE2eeRequestAad,
   decryptE2eeText as decryptE2eeValue,
   encryptE2eeText as encryptE2eeValue,
 } from '../src/core/e2ee';
@@ -167,6 +168,7 @@ function encryptE2eeText({
 }
 
 type DecryptEd25519TextParams = {
+  readonly replyPublicKey: string;
   readonly ciphertext: string;
   readonly recipientSecretKey: Uint8Array;
   readonly field: string;
@@ -176,10 +178,15 @@ type DecryptEd25519TextParams = {
 function decryptE2eeText({
   ciphertext,
   recipientSecretKey,
+  replyPublicKey,
   field,
 }: DecryptEd25519TextParams): string {
   return decryptE2eeValue({
     ciphertext,
+    associatedData: buildE2eeRequestAad({
+      signingAlgo: 'ed25519',
+      publicKey: replyPublicKey,
+    }),
     clientKeyPair: {
       signingAlgo: 'ed25519',
       publicKey: '',
@@ -402,6 +409,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.content,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].content`,
           }),
         );
@@ -411,6 +419,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.reasoning_content,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].reasoning_content`,
           }),
         );
@@ -420,6 +429,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.reasoning,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].reasoning`,
           }),
         );
@@ -429,6 +439,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.audio.data,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].audio.data`,
           }),
         );
@@ -441,11 +452,13 @@ function createTestGateway({
           name: decryptE2eeText({
             ciphertext: toolCall.function.name,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].tool_calls.function.name`,
           }),
           arguments: decryptE2eeText({
             ciphertext: toolCall.function.arguments,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].tool_calls.function.arguments`,
           }),
         });
@@ -464,6 +477,7 @@ function createTestGateway({
         name: decryptE2eeText({
           ciphertext: functionTool.name,
           recipientSecretKey: modelX25519SecretKey,
+          replyPublicKey: clientPublicKey,
           field: 'tools[0].function.name',
         }),
         ...(functionTool.description === undefined
@@ -472,12 +486,14 @@ function createTestGateway({
               description: decryptE2eeText({
                 ciphertext: functionTool.description,
                 recipientSecretKey: modelX25519SecretKey,
+                replyPublicKey: clientPublicKey,
                 field: 'tools[0].function.description',
               }),
             }),
         parameters: decryptE2eeText({
           ciphertext: functionTool.parameters,
           recipientSecretKey: modelX25519SecretKey,
+          replyPublicKey: clientPublicKey,
           field: 'tools[0].function.parameters',
         }),
       };
@@ -493,6 +509,7 @@ function createTestGateway({
       state.decryptedNamedToolChoice = decryptE2eeText({
         ciphertext: requestedToolChoice.function.name,
         recipientSecretKey: modelX25519SecretKey,
+        replyPublicKey: clientPublicKey,
         field: 'tool_choice.function.name',
       });
     }

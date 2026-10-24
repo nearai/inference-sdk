@@ -67,7 +67,40 @@ func deriveKey(shared []byte, algo SigningAlgo) ([]byte, error) {
 	return key, e
 }
 
+func requestAAD(algo SigningAlgo, replyPublic string) ([]byte, error) {
+	public, err := unhex(replyPublic)
+	if err != nil {
+		return nil, err
+	}
+	suite := byte(2)
+	switch algo {
+	case ECDSA:
+		suite = 1
+		if len(public) == 64 {
+			public = append([]byte{4}, public...)
+		}
+		if len(public) != 65 || public[0] != 4 {
+			return nil, failure("e2ee.model_public_key_invalid", nil)
+		}
+		if _, err = secp.ParsePubKey(public); err != nil {
+			return nil, err
+		}
+	case Ed25519:
+		if _, err = new(edwards25519.Point).SetBytes(public); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, failure("e2ee.model_public_key_invalid", nil)
+	}
+	aad := append([]byte("nearai-e2ee-request-v3"), suite)
+	return append(aad, public...), nil
+}
+
 func encryptText(text string, key E2EEModelKey) (string, error) {
+	return encryptTextWithAAD(text, key, nil)
+}
+
+func encryptTextWithAAD(text string, key E2EEModelKey, aad []byte) (string, error) {
 	pub, e := unhex(key.PublicKey)
 	if e != nil {
 		return "", failure("e2ee.model_public_key_invalid", e)
@@ -135,11 +168,15 @@ func encryptText(text string, key E2EEModelKey) (string, error) {
 		return "", e
 	}
 	out := append(prefix, n...)
-	out = aead.Seal(out, n, []byte(text), nil)
+	out = aead.Seal(out, n, []byte(text), aad)
 	return hex.EncodeToString(out), nil
 }
 
 func decryptText(text string, key e2eeKey) (string, error) {
+	return decryptTextWithAAD(text, key, nil)
+}
+
+func decryptTextWithAAD(text string, key e2eeKey, aad []byte) (string, error) {
 	if text == "" {
 		return "", nil
 	}
@@ -199,7 +236,7 @@ func decryptText(text string, key e2eeKey) (string, error) {
 			return "", e
 		}
 	}
-	plaintext, e := aead.Open(nil, raw[prefix:prefix+nonceSize], raw[prefix+nonceSize:], nil)
+	plaintext, e := aead.Open(nil, raw[prefix:prefix+nonceSize], raw[prefix+nonceSize:], aad)
 	if e != nil || !utf8.Valid(plaintext) {
 		return "", failure("e2ee.decryption_failed", e)
 	}
@@ -228,13 +265,15 @@ func transformFields(target map[string]any, transform func(string) (string, erro
 				return e
 			}
 			target[field] = v
+		} else if target[field] != nil {
+			return failure("e2ee.decryption_failed", nil)
 		}
 	}
 	return nil
 }
 
-func encryptChat(body map[string]any, key E2EEModelKey) error {
-	f := func(s string) (string, error) { return encryptText(s, key) }
+func encryptChat(body map[string]any, key E2EEModelKey, aad []byte) error {
+	f := func(s string) (string, error) { return encryptTextWithAAD(s, key, aad) }
 	for _, m := range objects(body["messages"]) {
 		if list, ok := m["content"].([]any); ok {
 			encoded, e := json.Marshal(list)
@@ -288,11 +327,21 @@ func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 	}
 	for _, choice := range objects(body["choices"]) {
 		m := object(choice[field])
-		if e := transformFields(m, f, "content", "reasoning_content", "reasoning", "refusal"); e != nil {
+		if e := transformFields(m, f, "reasoning_content", "reasoning", "refusal"); e != nil {
 			return e
 		}
-		for _, part := range objects(m["content"]) {
-			if e := transformFields(part, f, "text"); e != nil {
+		if parts, ok := m["content"].([]any); ok {
+			for _, part := range parts {
+				obj, ok := part.(map[string]any)
+				if !ok {
+					return failure("e2ee.decryption_failed", nil)
+				}
+				if e := transformFields(obj, f, "text"); e != nil {
+					return e
+				}
+			}
+		} else {
+			if e := transformFields(m, f, "content"); e != nil {
 				return e
 			}
 		}
@@ -336,6 +385,8 @@ func decryptLogprobs(value any, f func(string) (string, error)) error {
 				return failure("e2ee.decryption_failed", e)
 			}
 			entry["bytes"] = v
+		} else if entry["bytes"] != nil {
+			return failure("e2ee.decryption_failed", nil)
 		}
 		if e := decryptLogprobs(entry["top_logprobs"], f); e != nil {
 			return e
@@ -400,7 +451,11 @@ func prepareE2EEChatRequest(req *http.Request, key E2EEModelKey, limit int64) (*
 	if e != nil {
 		return nil, e
 	}
-	if e = encryptChat(body, key); e != nil {
+	aad, e := requestAAD(key.SigningAlgo, clientKey.public)
+	if e != nil {
+		return nil, e
+	}
+	if e = encryptChat(body, key, aad); e != nil {
 		return nil, e
 	}
 	encoded, e := json.Marshal(body)
@@ -425,9 +480,7 @@ func prepareE2EEChatRequest(req *http.Request, key E2EEModelKey, limit int64) (*
 	r.Header.Set("X-Model-Pub-Key", key.PublicKey)
 	r.Header.Set("X-Encrypt-All-Fields", "true")
 	r.Header.Set(NoAliasingHeader, "true")
-	if key.SigningAlgo == Ed25519 {
-		r.Header.Set("X-Encryption-Version", "2")
-	}
+	r.Header.Set("X-Encryption-Version", "3")
 	return &PreparedE2EEChatRequest{r, clientKey}, nil
 }
 

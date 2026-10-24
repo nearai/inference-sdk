@@ -386,10 +386,17 @@ Field-level E2EE supports `POST /v1/chat/completions` with a model public key bo
 to verified attestation. [Responses](#responses-api) supports OHTTP but rejects
 field-level E2EE.
 
-Ed25519 uses version 2 field encryption. ECDSA uses the legacy secp256k1 ECDH
-and AES-GCM format and omits `X-Encryption-Version: 2`, which selects the
-Ed25519 format. Both send `X-Encrypt-All-Fields: true` to enable encryption
-of the supported fields below. Other fields are forwarded unchanged.
+Both algorithms use `X-Encryption-Version: 3`. Every encrypted request field
+binds the fresh reply public key through AEAD associated data (AAD). V3 requires
+all supported fields below to be encrypted and rejects failed decryption; the
+optional `X-Encrypt-All-Fields` header cannot disable that policy. Other fields
+are forwarded unchanged. The gateway and model proxy must support v3; the SDK
+does not downgrade on failure.
+
+Ed25519 uses X25519, HKDF-SHA256, and XChaCha20-Poly1305. ECDSA uses secp256k1
+ECDH, HKDF-SHA256, and AES-256-GCM. Response envelopes are unchanged. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding and compatibility.
 
 | Capability | E2EE behavior |
 | --- | --- |

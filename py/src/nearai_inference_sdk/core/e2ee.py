@@ -1,4 +1,4 @@
-"""Field encryption for the Gateway's Ed25519-v2 and legacy ECDSA protocols."""
+"""Field encryption and reply-key binding for the Gateway E2EE protocols."""
 
 from __future__ import annotations
 
@@ -54,7 +54,23 @@ def create_e2ee_client_key_pair(
     )
 
 
-def encrypt_e2ee_text(plaintext: str, model_key: E2eeModelKey) -> str:
+def build_e2ee_request_aad(reply_key: E2eeModelKey) -> bytes:
+    """Build v3 request AAD from the canonical reply public key."""
+    public = hex_to_bytes(reply_key.public_key, 'replyPublicKey')
+    if reply_key.signing_algo == 'ecdsa':
+        if len(public) == 64:
+            public = b'\x04' + public
+        if len(public) != 65 or public[0] != 4:
+            raise verification_failure('e2ee.model_public_key_invalid')
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), public)
+        suite = 1
+    else:
+        bindings.crypto_sign_ed25519_pk_to_curve25519(public)
+        suite = 2
+    return b'nearai-e2ee-request-v3' + bytes([suite]) + public
+
+
+def encrypt_e2ee_text(plaintext: str, model_key: E2eeModelKey, aad: bytes = b'') -> str:
     """Encrypt a UTF-8 field for a quote-bound model public key."""
 
     public_key = hex_to_bytes(model_key.public_key, 'modelSigningPublicKey')
@@ -73,7 +89,7 @@ def encrypt_e2ee_text(plaintext: str, model_key: E2eeModelKey) -> str:
         # ECDH returns the shared point's X coordinate, as in the server protocol.
         key = _derive_key(ephemeral.exchange(ec.ECDH(), recipient), b'ecdsa_encryption')
         nonce = secrets.token_bytes(12)
-        ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode(), None)
+        ciphertext = AESGCM(key).encrypt(nonce, plaintext.encode(), aad)
         return (_ecdsa_public_bytes(ephemeral) + nonce + ciphertext).hex()
 
     try:
@@ -87,13 +103,13 @@ def encrypt_e2ee_text(plaintext: str, model_key: E2eeModelKey) -> str:
     )
     nonce = secrets.token_bytes(24)
     ciphertext = bindings.crypto_aead_xchacha20poly1305_ietf_encrypt(
-        plaintext.encode(), None, nonce, key
+        plaintext.encode(), aad, nonce, key
     )
     return (ephemeral_public + nonce + ciphertext).hex()
 
 
 def decrypt_e2ee_text(
-    ciphertext: str, client_key_pair: E2eeClientKeyPair, field: str
+    ciphertext: str, client_key_pair: E2eeClientKeyPair, field: str, aad: bytes = b''
 ) -> str:
     """Decrypt a server field, reporting which field failed authentication."""
 
@@ -112,7 +128,7 @@ def decrypt_e2ee_text(
                 client_key_pair.private_key.exchange(ec.ECDH(), ephemeral),
                 b'ecdsa_encryption',
             )
-            plaintext = AESGCM(key).decrypt(envelope[65:77], envelope[77:], None)
+            plaintext = AESGCM(key).decrypt(envelope[65:77], envelope[77:], aad)
         else:
             if len(envelope) < 32 + 24 + 16:
                 raise ValueError('Invalid Ed25519 envelope')
@@ -123,7 +139,7 @@ def decrypt_e2ee_text(
                 b'ed25519_encryption',
             )
             plaintext = bindings.crypto_aead_xchacha20poly1305_ietf_decrypt(
-                envelope[56:], None, envelope[32:56], key
+                envelope[56:], aad, envelope[32:56], key
             )
         return plaintext.decode('utf-8')
     except Exception as cause:
