@@ -193,6 +193,7 @@ struct Record {
     request: Arc<[u8]>,
     response: Arc<[u8]>,
     session: Arc<Session>,
+    gateway_only: bool,
     finished: Instant,
     verification: Mutex<Option<ReceiptVerification>>,
 }
@@ -452,7 +453,7 @@ impl InferenceClient {
             bytes.extend_from_slice(&chunk);
         }
         let data = crate::systemone::decode_response(&bytes)?;
-        self.register(decision_id.clone(), body, bytes, session)
+        self.register(decision_id.clone(), body, bytes, session, false)
             .await?;
         Ok(crate::SystemOneResult { data, decision_id })
     }
@@ -473,8 +474,31 @@ impl InferenceClient {
         response.json().await
     }
     pub fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("chat/completions", body)
+    }
+    /// Create a Gateway Response and retain its bytes for `verify_response`.
+    /// Use `response_request` and `send` for streaming responses.
+    pub async fn create_response(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Responses").into());
+        }
+        let response = self.send(self.response_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Responses creation request. `send` performs preflight and capture.
+    pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("responses", body)
+    }
+    fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
-            .join("chat/completions")
+            .join(path)
             .map_err(|_| input("base_url", "invalid URL"))?;
         let mut request = reqwest::Request::new(reqwest::Method::POST, url);
         *request.body_mut() = Some(body.to_string().into());
@@ -483,7 +507,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for buffered reqwest Chat requests. Request authentication
+    /// Transport adapter for buffered Chat and Gateway Responses requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -494,8 +518,23 @@ impl InferenceClient {
         let expected = crate::cloud_api::parse_base_url(self.base_url())?
             .join("chat/completions")
             .map_err(|_| input("base_url", "invalid URL"))?;
-        if actual != expected {
-            return Err(input("request.url", "expected configured Chat endpoint").into());
+        let responses = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("responses")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        if actual != expected && !responses {
+            return Err(input(
+                "request.url",
+                "expected configured inference creation endpoint",
+            )
+            .into());
+        }
+        if responses && (self.inner.direct || self.inner.options.e2ee) {
+            return Err(input(
+                "request",
+                "Responses requires a Gateway client with field-level E2EE disabled",
+            )
+            .into());
         }
         let parsed = decode_request(&request)?;
         let session = self
@@ -607,18 +646,18 @@ impl InferenceClient {
                 wire.extend_from_slice(&chunk);
                 if streaming {
                     for record in decoder.push(&chunk, false)? {
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
+                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
                         yield bytes::Bytes::from(transformed);
                     }
                 }
             }
             if streaming {
                 for record in decoder.push(&[], true)? {
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
+                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
                     yield bytes::Bytes::from(transformed);
                 }
                 let id = id.ok_or_else(invalid_response)?;
-                owner.register(id, request_body, wire, session).await?;
+                owner.register(id, request_body, wire, session, responses).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -635,7 +674,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session).await?;
+                owner.register(id, request_body, wire, session, responses).await?;
                 yield bytes::Bytes::from(body);
             }
         };
@@ -651,6 +690,7 @@ impl InferenceClient {
         request: Vec<u8>,
         response: Vec<u8>,
         session: Arc<Session>,
+        gateway_only: bool,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
         if options.response_cache_ttl.is_zero() {
@@ -714,6 +754,7 @@ impl InferenceClient {
                 request: request.into(),
                 response: response.into(),
                 session,
+                gateway_only,
                 finished: Instant::now(),
                 verification: Mutex::new(None),
             }),
@@ -751,12 +792,20 @@ impl InferenceClient {
                     let request = record.request.clone();
                     let response = record.response.clone();
                     let session = record.session.clone();
+                    let gateway_only = record.gateway_only;
                     let id = id.to_owned();
                     let algo = self.inner.options.signing_algo;
                     let future = async move {
                         let signature = session.api.signature(&id, algo).await?;
                         if signature.signer.signing_algo != algo {
                             return Err(VerificationError::SignatureSignerMismatch.into());
+                        }
+                        if gateway_only && signature.kind != CompletionSignatureKind::Gateway {
+                            return Err(VerificationError::SignatureKindMismatch {
+                                expected: CompletionSignatureKind::Gateway,
+                                actual: signature.kind,
+                            }
+                            .into());
                         }
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {

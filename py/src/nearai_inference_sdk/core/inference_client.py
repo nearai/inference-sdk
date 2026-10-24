@@ -99,6 +99,7 @@ class _ResponseRecord[Result, AttestationResult]:
     request_body: bytes
     response_body: asyncio.Future[bytes]
     session: _VerifiedSession[Result, AttestationResult]
+    gateway_only: bool = False
     verification: _ReceiptVerification[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
     retained_bytes: int | None = None
@@ -146,6 +147,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     transport. Both paths retain encrypted wire bytes for ``verify_response``.
     Use ``async with`` or call ``aclose`` to release connections and caches.
     """
+
+    _supports_responses = False
 
     def __init__(
         self,
@@ -308,20 +311,33 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         return session.attestation_result
 
     async def send(self, request: httpx.Request) -> httpx.Response:
-        """Send a Chat request; the returned body can be read or streamed.
+        """Send a Chat or Gateway Responses request; read or stream the body.
 
         This is the low-level counterpart of ``http_client.send``. Consume or
         close its response, and finish a stream before calling verify_response.
         """
 
         expected = httpx.URL(self.base_url).join('chat/completions')
-        if request.method != 'POST' or request.url.copy_with(query=None) != expected:
+        actual = request.url.copy_with(query=None)
+        responses = actual == httpx.URL(self.base_url).join('responses')
+        if request.method != 'POST' or (
+            actual != expected and not (responses and self._supports_responses)
+        ):
             raise api_failure(
                 'api.invalid_input',
                 {
                     'field': 'request',
                     'reason': 'unsupported_value',
-                    'expected': 'a POST to the configured Chat Completions endpoint',
+                    'expected': 'a POST to a supported inference creation endpoint',
+                },
+            )
+        if responses and self._e2ee:
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'e2ee',
+                    'reason': 'unsupported_value',
+                    'expected': 'field-level E2EE disabled for Responses',
                 },
             )
         request_limit = self._max_body_bytes
@@ -402,12 +418,20 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         request_body = await prepared_request.aread()
 
         def register(completion_id: str) -> None:
-            self._register_response(completion_id, request_body, response_body, session)
+            self._register_response(
+                completion_id,
+                request_body,
+                response_body,
+                session,
+                gateway_only=responses,
+            )
 
         captured = BufferedResponse(
             response.status_code,
             headers=_decoded_headers(response.headers),
-            stream=_CapturedResponseStream(response, response_body, register, self),
+            stream=_CapturedResponseStream(
+                response, response_body, register, self, responses=responses
+            ),
             extensions=response.extensions,
             request=prepared_request,
         )
@@ -504,6 +528,11 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             )
             if signature.signer.signing_algo != self._signing_algo:
                 raise verification_failure('signature.signer_mismatch')
+            if record.gateway_only and signature.kind != 'gateway':
+                raise verification_failure(
+                    'signature.kind_mismatch',
+                    {'expected': 'gateway', 'actual': signature.kind},
+                )
             return record.session.verify_response(
                 id, record.request_body, body, signature
             )
@@ -637,13 +666,17 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         request_body: bytes,
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result, AttestationResult],
+        *,
+        gateway_only: bool = False,
     ) -> None:
         """Retain completed wire bytes under FIFO count/byte limits and expiry."""
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
         if self._response_ttl == 0:
             return
-        record = _ResponseRecord(request_body, response_body, session)
+        record = _ResponseRecord(
+            request_body, response_body, session, gateway_only=gateway_only
+        )
         self._evict_response(id)
         self._responses[id] = record
 
@@ -710,6 +743,8 @@ class InferenceClient(
     verify only the Gateway. All calls share the configured authentication.
     """
 
+    _supports_responses = True
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -744,13 +779,14 @@ class InferenceClient(
             deployment_policy=deployment_policy,
         )
         self._gateway_options = gateway_verification or GatewayVerificationOptions()
+        self.responses = self._openai.responses
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
 
     async def send(self, request: httpx.Request) -> httpx.Response:
-        """Send verified Chat or JSON System One through the configured Gateway."""
+        """Send verified Chat, Responses, or System One through the Gateway."""
         if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
             self.base_url
         ).join('systemone'):
@@ -940,11 +976,14 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         response_body: asyncio.Future[bytes],
         register: Callable[[str], None],
         client: _VerifiedInferenceClient,
+        *,
+        responses: bool = False,
     ) -> None:
         self._response = response
         self._response_body = response_body
         self._register = register
         self._client = client
+        self._responses = responses
         self._body = bytearray()
         self._limit = client._response_byte_limit(len(response.request.content))
         self._reader = response.aiter_bytes()
@@ -997,10 +1036,17 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
                     self._done = True
                 elif data and not self._registered:
                     try:
-                        completion_id = CompletionResponseIdSchema.model_validate_json(
-                            data
+                        value = json.loads(data)
+                        if self._responses:
+                            value = (
+                                value.get('response')
+                                if isinstance(value, dict)
+                                else None
+                            )
+                        completion_id = CompletionResponseIdSchema.model_validate(
+                            value
                         ).id
-                    except ValidationError:
+                    except (ValueError, ValidationError):
                         continue
                     self._register(completion_id)
                     self._registered = True
@@ -1012,7 +1058,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         if not self._registered:
             # Complete SSE events were already parsed while capturing the body.
             pending = self._decoder.finish().encode() if self._streaming else body
-            self._register(_completion_id(pending, self._content_type))
+            self._register(_completion_id(pending, self._content_type, self._responses))
             self._registered = True
         self._response_body.set_result(body)
         # Apply completion limits before exposing EOF to the caller. Future done
@@ -1067,12 +1113,16 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             await self._response.aclose()
 
 
-def _completion_id(body: bytes, content_type: str) -> str:
+def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
     try:
         if content_type.lower().startswith('text/event-stream'):
             for data in get_sse_data_records(body.decode('utf-8')):
                 if data and data != '[DONE]':
                     value = json.loads(data)
+                    if responses:
+                        value = (
+                            value.get('response') if isinstance(value, dict) else None
+                        )
                     try:
                         return CompletionResponseIdSchema.model_validate(value).id
                     except ValidationError:

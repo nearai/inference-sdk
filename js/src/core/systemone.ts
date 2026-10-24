@@ -206,15 +206,6 @@ async function captureSystemOne({
       retryable: false,
     });
   }
-  if (
-    response.headers
-      .get('content-encoding')
-      ?.split(',')
-      .some((value) => !['', 'identity'].includes(value.trim().toLowerCase()))
-  ) {
-    await discardResponse(response);
-    throw invalidResponse('System One response content-encoding');
-  }
   const parsedId = v.safeParse(CompletionResponseIdSchema, {
     id: response.headers.get('x-generation-id'),
   });
@@ -242,11 +233,15 @@ async function captureSystemOne({
       { cause },
     );
   }
+  // Fetch may retain compression headers after decoding the body.
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.delete('content-encoding');
+  responseHeaders.delete('content-length');
   return {
     response: new Response(responseBody, {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
+      headers: responseHeaders,
     }),
     record: {
       id: decisionId,

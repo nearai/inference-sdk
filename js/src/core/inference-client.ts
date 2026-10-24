@@ -21,6 +21,7 @@ import type {
   InferenceClientCommonOptions,
   InferenceClientOptions,
   InferenceEncryptionOptions,
+  InferenceResponses,
   NodeInferenceClientOptions,
   VerifiedCompletionResult,
 } from '../types/inference-client';
@@ -122,6 +123,7 @@ type ResponseRecord<VerificationResult> =
 type ParsedSecureRequest = {
   readonly model: string;
   readonly request: Request;
+  readonly responses: boolean;
 };
 
 type PreparePlaintextRequestParams = {
@@ -136,6 +138,7 @@ type SendSecureCompletionParams = {
 
 type SentSecureCompletion<VerificationResult> = {
   response: Response;
+  readonly responses: boolean;
   readonly session: InferenceSession<VerificationResult>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
@@ -156,6 +159,7 @@ export type VerifyCapturedResponseParams<VerificationResult> = {
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
   readonly session: InferenceSession<VerificationResult>;
+  readonly gatewayOnly?: boolean;
 };
 
 type SendCompletionRequestParams = {
@@ -248,7 +252,7 @@ export abstract class VerifiedInferenceClientBase<
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly responses = new Map<
+  private readonly responseRecords = new Map<
     string,
     ResponseRecord<VerificationResult>
   >();
@@ -257,6 +261,8 @@ export abstract class VerifiedInferenceClientBase<
     ResponseRecord<VerificationResult>
   >();
   readonly chat: InferenceChat;
+  protected readonly openai: OpenAI;
+  protected readonly supportsResponses: boolean = false;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;
@@ -298,11 +304,12 @@ export abstract class VerifiedInferenceClientBase<
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
       options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
-    this.chat = createOpenAiClient({
+    this.openai = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
       requestConfiguration: this.requestConfiguration,
-    }).chat;
+    });
+    this.chat = this.openai.chat;
   }
 
   /** Verify every required report before creating a session. */
@@ -362,10 +369,8 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions or Jev System One request.
-   *
-   * Only POST requests to this client's configured inference endpoints
-   * are accepted. Other API paths, including Responses, are rejected locally.
+   * Send one verified Chat Completions, Gateway Responses, or Jev System One request.
+   * Only POST requests to the configured creation endpoints are accepted.
    */
   readonly fetch = async (
     input: RequestInfo | URL,
@@ -391,12 +396,14 @@ export abstract class VerifiedInferenceClientBase<
       // Register before exposing the response, including its first SSE event.
       completion.response = registerCompletionResponse({
         response: completion.response,
+        responses: completion.responses,
         register: (completionId) =>
           this.registerResponse({
             id: completionId,
             requestBody,
             responseBody,
             session: completion.session,
+            gatewayOnly: completion.responses,
           }),
       });
     }
@@ -417,7 +424,7 @@ export abstract class VerifiedInferenceClientBase<
     { signal }: { readonly signal?: AbortSignal } = {},
   ): Promise<VerificationResult> {
     if (signal?.aborted) return Promise.reject(signal.reason);
-    const record = this.responses.get(id);
+    const record = this.responseRecords.get(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
@@ -456,21 +463,21 @@ export abstract class VerifiedInferenceClientBase<
   protected registerResponse(params: ResponseRecord<VerificationResult>): void {
     if (this.responseCacheTimeToLiveMs === 0) return;
     const id = params.id;
-    const previous = this.responses.get(id);
+    const previous = this.responseRecords.get(id);
     if (previous?.expiry !== undefined) clearTimeout(previous.expiry);
     const record: ResponseRecord<VerificationResult> = { ...params };
-    this.responses.set(id, record);
+    this.responseRecords.set(id, record);
     // Streaming placeholders permit verifyResponse before EOF. Only completed
     // records consume the retained-byte/count budgets; active streams are body-bounded.
     void record.responseBody.then(
       (bytes) => {
         record.retainedBytes = record.requestBody.byteLength + bytes.byteLength;
-        if (this.responses.get(id) === record) {
+        if (this.responseRecords.get(id) === record) {
           // Completion order determines FIFO, regardless of stream start time.
-          this.responses.delete(id);
-          this.responses.set(id, record);
+          this.responseRecords.delete(id);
+          this.responseRecords.set(id, record);
         }
-        const completed = [...this.responses].filter(
+        const completed = [...this.responseRecords].filter(
           ([, entry]) => entry.retainedBytes !== undefined,
         );
         const activeRecords = new Set(this.responseVerifications.values());
@@ -492,16 +499,18 @@ export abstract class VerifiedInferenceClientBase<
             retained -= oldest[1].retainedBytes ?? 0;
           }
           if (oldest[1].expiry !== undefined) clearTimeout(oldest[1].expiry);
-          this.responses.delete(oldest[0]);
+          this.responseRecords.delete(oldest[0]);
         }
-        if (this.responses.get(id) !== record) return;
+        if (this.responseRecords.get(id) !== record) return;
         record.expiry = setTimeout(() => {
-          if (this.responses.get(id) === record) this.responses.delete(id);
+          if (this.responseRecords.get(id) === record)
+            this.responseRecords.delete(id);
         }, this.responseCacheTimeToLiveMs);
         record.expiry.unref?.();
       },
       () => {
-        if (this.responses.get(id) === record) this.responses.delete(id);
+        if (this.responseRecords.get(id) === record)
+          this.responseRecords.delete(id);
       },
     );
   }
@@ -564,6 +573,7 @@ export abstract class VerifiedInferenceClientBase<
     );
     return {
       response: capturedResponse.response,
+      responses: parsed.responses,
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
@@ -584,6 +594,7 @@ export abstract class VerifiedInferenceClientBase<
       requestBody,
       responseBody,
       session,
+      gatewayOnly,
     }: VerifyCapturedResponseParams<VerificationResult>,
     signal?: AbortSignal,
   ): Promise<VerificationResult> {
@@ -599,6 +610,12 @@ export abstract class VerifiedInferenceClientBase<
 
     if (signature.signer.signingAlgo !== this.signingAlgo) {
       throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
+    if (gatewayOnly && signature.kind !== 'gateway') {
+      throw new VerificationError({
+        code: 'signature.kind_mismatch',
+        details: { expected: 'gateway', actual: signature.kind },
+      });
     }
 
     return session.verifyResponse({
@@ -696,7 +713,7 @@ export abstract class VerifiedInferenceClientBase<
     init: RequestInit | undefined,
   ): Promise<ParsedSecureRequest> {
     const original = createRequest(input, init);
-    this.requireSupportedEndpoint(original);
+    const responses = this.requireSupportedEndpoint(original);
     let bytes: Uint8Array<ArrayBuffer>;
     try {
       // Retained plaintext receipts also need space for a nonempty response.
@@ -714,7 +731,7 @@ export abstract class VerifiedInferenceClientBase<
         {
           field: 'request body',
           reason: 'invalid_json',
-          expected: 'a JSON Chat Completions request',
+          expected: 'a JSON inference request',
         },
         cause,
       );
@@ -726,7 +743,7 @@ export abstract class VerifiedInferenceClientBase<
       throw invalidInput({
         field: 'request body',
         reason: 'unsupported_value',
-        expected: 'a JSON Chat Completions request with a string model',
+        expected: 'a JSON inference request with a string model',
       });
     }
     if (this.e2eeEnabled) {
@@ -735,25 +752,35 @@ export abstract class VerifiedInferenceClientBase<
       );
     }
     const model = generic.output.model;
-    return { model, request };
+    return { model, request, responses };
   }
 
-  private requireSupportedEndpoint(request: Request): void {
+  private requireSupportedEndpoint(request: Request): boolean {
     const url = new URL(request.url);
     const baseUrl = new URL(this.baseUrl);
     const chatPath = new URL('chat/completions', this.baseUrl).pathname;
+    const responses =
+      url.pathname === new URL('responses', this.baseUrl).pathname;
     if (
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
-      url.pathname !== chatPath
+      (url.pathname !== chatPath && !(responses && this.supportsResponses))
     ) {
       throw invalidInput({
         field: 'request',
         reason: 'unsupported_value',
-        expected: 'a POST to the configured Chat Completions endpoint',
+        expected: 'a POST to a supported inference creation endpoint',
         actual: `${request.method} ${url.pathname}`,
       });
     }
+    if (responses && this.e2eeEnabled) {
+      throw invalidInput({
+        field: 'e2ee',
+        reason: 'unsupported_value',
+        expected: 'field-level E2EE disabled for Responses',
+      });
+    }
+    return responses;
   }
 
   private preparePlaintextRequest({
@@ -807,6 +834,12 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   AttestationVerificationResult
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
+  protected override readonly supportsResponses = true;
+
+  /** Create a Response, then verify its top-level ID with verifyResponse(). */
+  get responses(): InferenceResponses {
+    return this.openai.responses;
+  }
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
@@ -1120,12 +1153,14 @@ function createRequest(
 
 type RegisterCompletionResponseParams = {
   readonly response: Response;
+  readonly responses: boolean;
   readonly register: (id: string) => void;
 };
 
 /** Register IDs before forwarding their bytes; streaming follows consumer backpressure. */
 function registerCompletionResponse({
   response,
+  responses,
   register,
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
@@ -1144,7 +1179,7 @@ function registerCompletionResponse({
             for (const record of complete.records) {
               let id: string;
               try {
-                id = getSseCompletionId(record.value);
+                id = getSseCompletionId(record.value, responses);
               } catch {
                 continue;
               }
@@ -1163,7 +1198,7 @@ function registerCompletionResponse({
           let id: string;
           try {
             id = streaming
-              ? getSseCompletionId(pending)
+              ? getSseCompletionId(pending, responses)
               : parseCompletionId(JSON.parse(pending));
           } catch (cause) {
             throw invalidCompletionId(cause);
@@ -1275,7 +1310,7 @@ function captureResponseEntityBody(
   };
 }
 
-function getSseCompletionId(text: string): string {
+function getSseCompletionId(text: string, responses: boolean): string {
   for (const data of getSseDataRecords(text)) {
     if (data === '' || data === '[DONE]') {
       continue;
@@ -1285,6 +1320,12 @@ function getSseCompletionId(text: string): string {
       value = JSON.parse(data);
     } catch (cause) {
       throw invalidCompletionId(cause);
+    }
+    if (responses) {
+      value =
+        value !== null && typeof value === 'object' && 'response' in value
+          ? value.response
+          : undefined;
     }
     const parsed = v.safeParse(CompletionResponseIdSchema, value);
     if (parsed.success) {

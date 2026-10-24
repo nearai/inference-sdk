@@ -62,8 +62,12 @@ are asynchronous. Standalone response-signature verification is synchronous.
 ## InferenceClient
 
 Use in an `asyncio` event loop as an asynchronous context manager, or call `await client.aclose()` when
-finished. Chat Completions and System One are supported. `chat.completions.create` does not
-automatically verify the response signature; use `verify_response` afterwards.
+finished. Chat Completions, Responses creation, and System One are supported.
+`chat.completions.create` and `responses.create` support JSON and SSE. Use
+`verify_response` after consuming the result to verify its signature.
+
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+semantics, streaming, and supported privacy options.
 
 ### Constructor
 
@@ -74,8 +78,8 @@ automatically verify the response signature; use `verify_response` afterwards.
 | `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
-| `ohttp` | `bool` | `False` | Encapsulate Chat requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
-| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, and System One for this long; `0` verifies each request. |
+| `ohttp` | `bool` | `False` | Encapsulate Chat and Responses requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
+| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, and System One for this long; `0` verifies each request. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
 | `max_body_bytes` | `int` | 64 MiB | Maximum bytes in each request or response body. |
 | `max_cache_entries` | `int` | 128 | Completed entries per cache, distinct pending preflights and active receipt verifications. |
@@ -135,7 +139,7 @@ Both adapters delegate to the same `send()` pipeline:
 
 | Property | Type | Supported requests |
 | --- | --- | --- |
-| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support System One. |
+| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support Responses JSON/SSE and System One. |
 | `httpx2_client` | `httpx2.AsyncClient` | The same requests, verification, and encryption settings. |
 
 They share authentication, preflight, TLS pinning, sessions, and receipt capture.
@@ -155,7 +159,7 @@ before calling `verify_response()`.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
-| `id` | `str` | ID supplied to `verify_response`, from Chat's `completion.id` or System One's `result.decision_id`. |
+| `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, or System One decision ID. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
@@ -612,13 +616,14 @@ source checks.
 `SigningAlgo` is `Literal['ecdsa', 'ed25519']`. `AttestationEventLog` is
 `str | list[object]`. `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+`OutOfDateConfigurationNeeded`, `TDRelaunchAdvised`,
+`TDRelaunchAdvisedConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 ### Policies and verifier callbacks
 
 | Type | Field or signature | Default | Description |
 | --- | --- | --- | --- |
-| `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate` and `OutOfDate`. |
+| `AttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Optional accepted TCB statuses. The default accepts `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised`. |
 | `ModelAttestationPolicy` | `accepted_tcb_statuses` | default accepted statuses | Inherited TCB policy. |
 |  | `gpu_evidence` | `'if-present'` | Requires GPU evidence only when set to `'required'`. |
 | `AttestationVerifiers` | `tdx_quote` | built in | Optional replacement for the Intel DCAP quote verifier. |

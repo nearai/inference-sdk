@@ -31,7 +31,7 @@ the attestation socket to be reused.
 
 | Export | Signature or value | Purpose |
 | --- | --- | --- |
-| `InferenceClient` | `new InferenceClient(options)` | Chat Completions and System One with deployment and response verification; optional Chat E2EE. |
+| `InferenceClient` | `new InferenceClient(options)` | Chat Completions, Responses, and System One with deployment and response verification; optional Chat E2EE. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches model metadata, Gateway signatures, and attestation evidence. |
 | `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Not recommended for production. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
 | `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Not recommended for production. Fetches direct model attestations and signatures. |
@@ -54,9 +54,9 @@ the attestation socket to be reused.
 
 ## `InferenceClient`
 
-Provides `chat.completions.create()`, a reusable Chat `fetch` adapter,
-`systemone.create()`, and `verifyResponse(id)`. Supports streaming and
-non-streaming Chat Completions and non-streaming System One decisions.
+Provides `chat.completions.create()`, `responses.create()`, a reusable `fetch`
+adapter, `systemone.create()`, and `verifyResponse(id)`. Chat and Responses
+support JSON and streaming; System One uses non-streaming decisions.
 On a cache miss, the client fetches Gateway evidence, then verifies it and any
 required OHTTP evidence concurrently with model metadata retrieval and model
 attestation verification. All required checks must pass before the session is
@@ -70,6 +70,9 @@ and failed model verification reject the request without falling back to
 Gateway-only mode.
 See the [guide](./verification-guide.md#e2ee-scope-and-response-handling)
 for supported encryption fields and protocols.
+
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+semantics, streaming, and supported privacy options.
 
 ### Constructor options
 
@@ -86,7 +89,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
-| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
+| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat and Responses HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
 | `deploymentPolicy?` | `DeploymentPolicy` | No | — | Requires model attestation. Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
 | `maxBodyBytes?` | `number` | No | 64 MiB | Maximum bytes in each request or response body. |
 | `maxCacheEntries?` | `number` | No | 128 | Completed entries per cache, distinct pending preflights, and active receipt verifications. |
@@ -115,12 +118,13 @@ not retained.
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending inference. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat and System One. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for POST Chat Completions and uncompressed JSON System One at the configured Gateway. Reads `model` for preflight and retains exact bytes for receipt verification. Chat supports optional E2EE and streaming; System One requires E2EE and OHTTP disabled. |
+| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending inference. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat, Responses, and System One. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for Chat Completions, Gateway Responses, and uncompressed JSON System One requests. Uses the same preflight and receipt capture as the built-in APIs; endpoint-specific encryption settings apply. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
+| `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
-| `InferenceClient.verifyResponse(id, options?)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat or System One response. Calls without a signal share one operation; `{ signal }` performs an independently cancellable lookup. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `VerifiedCompletionResult.id` | `string` | Chat completion ID or System One decision ID whose signature was verified. |
+| `InferenceClient.verifyResponse(id, options?)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat, Responses, or System One result. Calls without a signal share one operation; `{ signal }` performs an independently cancellable lookup. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
@@ -142,7 +146,7 @@ OHTTP also supports Incognito models, protecting the exchange to the Gateway.
 A verified Gateway signature does not establish model TEE execution.
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
-Records retain complete request and response bodies until their TTL expires,
+Records retain complete request and response bodies until expiry or eviction,
 including after successful or failed verification. TTL starts at body completion.
 
 ### Body and cache limits
@@ -163,7 +167,7 @@ Available on the generic and Node Gateway clients. Use `e2ee: false` and
 `ohttp: false` for nonstreaming decision requests.
 
 For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
-compression and inference retries. The official SDK parses the raw response;
+request compression and inference retries. The official SDK parses the response;
 pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
 Chat's model session and selected-key routing. See the
 [official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
@@ -741,13 +745,14 @@ for default URLs and custom configuration.
 
 | Type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
-| `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
-| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate']` | TCB statuses accepted by verification. |
+| `AttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate', 'TDRelaunchAdvised']` | TCB statuses accepted by verification. |
+| `ModelAttestationPolicy` | `acceptedTcbStatuses?` | `readonly TcbStatus[]` | `['UpToDate', 'OutOfDate', 'TDRelaunchAdvised']` | TCB statuses accepted by verification. |
 |  | `gpuEvidence?` | `'if-present' \| 'required'` | `'if-present'` | Whether a model report without GPU evidence is accepted. |
 
 `TcbStatus` is one of `UpToDate`, `SWHardeningNeeded`,
 `ConfigurationNeeded`, `ConfigurationAndSWHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+`OutOfDateConfigurationNeeded`, `TDRelaunchAdvised`,
+`TDRelaunchAdvisedConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 ### Verifier bags and callbacks
 

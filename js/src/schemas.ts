@@ -11,6 +11,8 @@ const TcbStatusValues = [
   'ConfigurationAndSWHardeningNeeded',
   'OutOfDate',
   'OutOfDateConfigurationNeeded',
+  'TDRelaunchAdvised',
+  'TDRelaunchAdvisedConfigurationNeeded',
   'Revoked',
   'Unknown',
 ] as const;

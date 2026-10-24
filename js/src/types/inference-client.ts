@@ -175,3 +175,6 @@ export type InferenceChat = {
 
 /** Standard Chat Completions operations. */
 export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
+
+/** Gateway Responses creation with the official OpenAI request and event types. */
+export type InferenceResponses = Pick<OpenAI.Responses, 'create'>;

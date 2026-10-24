@@ -124,10 +124,11 @@ For an OpenAI version that supports HTTPX2, install `openai[httpx2]` and pass
 `inference_client.httpx2_client` instead. Both adapters share the same Chat,
 streaming, encryption, and receipt-verification pipeline. Existing HTTPX users
 can keep their current dependencies and calls.
-Only Chat Completions are supported; the Responses API is not supported.
 
 ## Advanced APIs
 
+- **Responses:** create JSON or streaming responses and verify Gateway receipts.
+  See [Responses API](./docs/verification-guide.md#responses-api).
 - **System One decisions:** send structured questions with `client.systemone.create()`
   and verify the returned decision. See the [System One guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#system-one-decisions).
 - **Official Jev SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,

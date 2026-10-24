@@ -7,6 +7,7 @@ import {
 } from '../src/core/inference-client';
 
 class Client extends VerifiedInferenceClientBase<string, string> {
+  protected override readonly supportsResponses = true;
   readonly verified: string[] = [];
   next = 0;
   response: (() => Response) | undefined;
@@ -47,8 +48,8 @@ class Client extends VerifiedInferenceClientBase<string, string> {
     };
   }
 
-  send(model = 'm'): Promise<Response> {
-    return this.fetch('https://example.test/v1/chat/completions', {
+  send(model = 'm', endpoint = 'chat/completions'): Promise<Response> {
+    return this.fetch(`https://example.test/v1/${endpoint}`, {
       method: 'POST',
       body: JSON.stringify({ model }),
     });
@@ -69,27 +70,38 @@ describe('inference cache capacity', () => {
     },
   );
 
-  test('evicts completed sessions and receipts at the entry bound', async () => {
-    const client = new Client({ maxCacheEntries: 1 });
-    const first = await (await client.send('one')).json();
-    const second = await (await client.send('two')).json();
-    await expect(client.verifyResponse(first.id)).rejects.toMatchObject({
-      failure: { code: 'api.completion_not_found' },
-    });
-    await expect(client.verifyResponse(second.id)).resolves.toBe(second.id);
-    await client.verify('one');
-    expect(client.verified).toEqual(['one', 'two', 'one']);
-  });
+  test.each(['chat/completions', 'responses'])(
+    '%s evicts completed sessions and receipts at the entry bound',
+    async (endpoint) => {
+      const client = new Client({ maxCacheEntries: 1 });
+      const first = await (await client.send('one', endpoint)).json();
+      const second = await (await client.send('two', endpoint)).json();
+      await expect(client.verifyResponse(first.id)).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+      await expect(client.verifyResponse(second.id)).resolves.toBe(second.id);
+      await client.verify('one');
+      expect(client.verified).toEqual(['one', 'two', 'one']);
+    },
+  );
 
-  test('applies the byte budget and preserves a receipt when a new body is oversized', async () => {
+  test('bounds decoded responses and preserves a receipt when a new body is oversized', async () => {
     const client = new Client({ maxReceiptCacheBytes: 80 });
+    client.response = () =>
+      Response.json(
+        { id: `id-${++client.next}`, text: 'answer' },
+        { headers: { 'content-encoding': 'br' } },
+      );
     const first = await (await client.send()).json();
     const second = await (await client.send()).json();
     await expect(client.verifyResponse(first.id)).rejects.toMatchObject({
       failure: { code: 'api.completion_not_found' },
     });
     client.response = () =>
-      Response.json({ id: 'large', text: 'x'.repeat(100) });
+      Response.json(
+        { id: 'large', text: 'x'.repeat(100) },
+        { headers: { 'content-encoding': 'br' } },
+      );
     await expect((await client.send()).text()).rejects.toMatchObject({
       failure: { code: 'api.body_too_large' },
     });
@@ -172,29 +184,36 @@ describe('inference cache capacity', () => {
     },
   );
 
-  test('rejects a large request before preflight and bounds an unknown-length response', async () => {
-    const client = new Client({ maxBodyBytes: 40 });
-    await expect(client.send('x'.repeat(100))).rejects.toMatchObject({
-      failure: { code: 'api.body_too_large' },
-    });
-    expect(client.verified).toHaveLength(0);
-    let cancelled = false;
-    client.response = () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(new TextEncoder().encode('x'.repeat(100)));
-          },
-          cancel() {
-            cancelled = true;
-          },
-        }),
-      );
-    await expect((await client.send()).text()).rejects.toMatchObject({
-      failure: { code: 'api.body_too_large' },
-    });
-    expect(cancelled).toBe(true);
-  });
+  test.each(['chat/completions', 'responses'])(
+    '%s rejects oversized requests and unknown-length responses',
+    async (endpoint) => {
+      const client = new Client({ maxBodyBytes: 40 });
+      await expect(
+        client.send('x'.repeat(100), endpoint),
+      ).rejects.toMatchObject({
+        failure: { code: 'api.body_too_large' },
+      });
+      expect(client.verified).toHaveLength(0);
+      let cancelled = false;
+      client.response = () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('x'.repeat(100)));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        );
+      await expect(
+        (await client.send('m', endpoint)).text(),
+      ).rejects.toMatchObject({
+        failure: { code: 'api.body_too_large' },
+      });
+      expect(cancelled).toBe(true);
+    },
+  );
 
   test.each([
     ['capacity', false],

@@ -2,7 +2,7 @@
 
 Use this SDK to verify NEAR AI Cloud deployments before requesting inference,
 then verify the receipt returned for a particular completion. Use `InferenceClient`
-for integrated verified Chat, or retain exact bytes yourself when using the
+for integrated verified inference, or retain exact bytes yourself when using the
 standalone verification functions.
 
 ## Integrated Chat client
@@ -10,7 +10,8 @@ standalone verification functions.
 The [README example](../README.md#send-and-verify-a-chat-completion) sends encrypted Chat and verifies
 its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
 `InferenceClientOptions` for a custom base URL, headers, encryption, policies,
-and cache settings. Only Chat Completions are accepted by `send`.
+and cache settings. `send` accepts Chat Completions and Gateway
+[Responses creation](#responses-api).
 The client owns authentication and forces `Accept-Encoding: identity` so captured
 bytes match the completion receipt, including when adapting an existing request.
 
@@ -61,7 +62,7 @@ Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP fina
 chunk authentication are part of verification. Dropping a partial stream leaves
 no verifiable receipt. Content delivered before `verify_response` succeeds is
 not yet signature-verified. `bytes()` and `json()` fully consume the body; use
-`json()` only for non-streaming Chat. Unlike an OpenAI SDK transport adapter,
+`json()` for JSON responses. Unlike an OpenAI SDK transport adapter,
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 
@@ -180,6 +181,40 @@ External models use Gateway signatures.
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [Rust decision example](../../examples/README.md#rust).
+
+## Responses API
+
+The Gateway client supports `POST /v1/responses` with the same authentication,
+attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
+input items, function tools, reasoning fields, and output events. The SDK forwards
+`store: false` unchanged; stateless behavior is provided by the server. For
+client-managed context, replay function calls with their matching outputs in
+subsequent requests. Available features depend on the server and model.
+
+Responses receipts must have `signature_kind: gateway`: they authenticate the
+Gateway's exact request/response bytes, not a model signature over the final
+Responses object. Receipt persistence is best-effort. A successful inference can
+still have an unavailable receipt; retry receipt lookup when appropriate without
+repeating inference. Consume the entire SSE stream before verifying its nested
+`event.response.id`; output item IDs are not receipt IDs.
+
+Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
+supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
+as opaque data and is separate from NEAR field encryption. Only creation is
+supported; response retrieval, cancellation, deletion, and history endpoints are
+outside this transport.
+
+```rust
+let response = client.create_response(serde_json::json!({
+    "model": "z-ai/glm-5.3-flash", "input": "Reply with the word ok.", "store": false
+})).await?;
+let id = response["id"].as_str().ok_or("missing response ID")?;
+let receipt = client.verify_response(id).await?;
+```
+
+For SSE, build `response_request(json!({ ... , "stream": true }))`, pass it to
+`send`, and consume `InferenceResponse.body` to EOF. It contains original SSE
+bytes; an application SSE decoder can read the nested response ID.
 
 ## Recommended flow
 

@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { Quote, getCollateral, verify } from '@phala/dcap-qvl';
 import { createTdxQuoteVerifier } from '../src';
+import { verifyTdxQuote } from '../src/core/dstack-attestation';
 import { createModelQuote } from './fixtures';
 
 jest.mock('@phala/dcap-qvl', () => ({
@@ -11,12 +12,13 @@ jest.mock('@phala/dcap-qvl', () => ({
 
 describe('Intel quote verifier configuration', () => {
   const collateral = {} as Awaited<ReturnType<typeof getCollateral>>;
+  let verifiedReport: ReturnType<typeof verify>;
 
   beforeEach(() => {
     jest.resetAllMocks();
     jest.mocked(getCollateral).mockResolvedValue(collateral);
     const quote = createModelQuote();
-    jest.mocked(verify).mockReturnValue({
+    verifiedReport = {
       status: quote.tcbStatus,
       advisory_ids: [...quote.advisoryIds],
       ppid: Buffer.alloc(0),
@@ -28,7 +30,34 @@ describe('Intel quote verifier configuration', () => {
           tdAttributes: new Uint8Array(8),
         }),
       },
-    } as unknown as ReturnType<typeof verify>);
+    } as unknown as ReturnType<typeof verify>;
+    jest.mocked(verify).mockReturnValue(verifiedReport);
+  });
+
+  test.each([
+    ['TDRelaunchAdvised', true],
+    ['TDRelaunchAdvisedConfigurationNeeded', false],
+  ] as const)('applies TCB policy to %s', async (status, acceptedByDefault) => {
+    jest.mocked(verify).mockReturnValue({ ...verifiedReport, status });
+    const params = {
+      intelQuote: 'abcd',
+      verifier: createTdxQuoteVerifier(),
+    };
+    if (acceptedByDefault) {
+      await expect(verifyTdxQuote(params)).resolves.toMatchObject({
+        tcbStatus: status,
+      });
+    } else {
+      await expect(verifyTdxQuote(params)).rejects.toMatchObject({
+        failure: {
+          code: 'policy.tcb_status_not_allowed',
+          details: { actual: status },
+        },
+      });
+    }
+    await expect(
+      verifyTdxQuote({ ...params, policy: { acceptedTcbStatuses: [status] } }),
+    ).resolves.toMatchObject({ tcbStatus: status });
   });
 
   test('fetches collateral from Intel by default in Node.js', async () => {
