@@ -8,7 +8,11 @@ import {
   type E2eeClientKeyPair,
   encryptE2eeText,
 } from '../src/core/e2ee';
-import { decryptE2eeChatResponse } from '../src/core/e2ee-chat';
+import {
+  decryptE2eeChatResponse,
+  decryptE2eeChatStreamChunk,
+} from '../src/core/e2ee-chat';
+import { VerificationError } from '../src/utils/errors';
 
 type Vector = {
   signing_algo: 'ecdsa' | 'ed25519';
@@ -114,4 +118,35 @@ describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
       ).toThrow();
     }
   });
+  test.each([false, true])(
+    'validates rich content parts (streaming=%s)',
+    (streaming) => {
+      const field = streaming ? 'delta' : 'message';
+      const ciphertext = encryptE2eeText({
+        plaintext: 'answer',
+        modelKey: {
+          signingAlgo: vector.signing_algo,
+          publicKey: vector.model_public,
+        },
+      });
+      const part = { type: 'text', text: ciphertext };
+      const decrypt = (content: unknown[]) => {
+        const body = { id: 'chat-v3', choices: [{ [field]: { content } }] };
+        return streaming
+          ? decryptE2eeChatStreamChunk({ chunk: body, clientKeyPair })
+          : decryptE2eeChatResponse({ body, clientKeyPair });
+      };
+      expect(decrypt([part])).toEqual({
+        id: 'chat-v3',
+        choices: [{ [field]: { content: [{ type: 'text', text: 'answer' }] } }],
+      });
+      expect(decrypt([])).toEqual({
+        id: 'chat-v3',
+        choices: [{ [field]: { content: [] } }],
+      });
+      for (const invalid of ['plaintext', 0, true, null, ['nested']]) {
+        expect(() => decrypt([part, invalid])).toThrow(VerificationError);
+      }
+    },
+  );
 });

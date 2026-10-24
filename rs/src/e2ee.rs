@@ -301,11 +301,18 @@ pub(crate) fn decrypt_response(
                 &["reasoning_content", "reasoning", "refusal"],
                 &transform,
             )?;
-            if !message.get("content").is_some_and(Value::is_array) {
+            if let Some(parts) = message.get_mut("content").and_then(Value::as_array_mut) {
+                for part in parts {
+                    if !part.is_object() {
+                        return Err(protocol(
+                            "e2ee.decryption_failed",
+                            "expected a content part object",
+                        ));
+                    }
+                    fields(part, &["text"], &transform)?;
+                }
+            } else {
                 fields(message, &["content"], &transform)?;
-            }
-            for part in objects(message.get_mut("content")) {
-                fields(part, &["text"], &transform)?;
             }
             if let Some(audio) = message.get_mut("audio") {
                 fields(audio, &["data"], &transform)?;
@@ -700,6 +707,41 @@ mod tests {
                 json!({"choices":[{"message":{"tool_calls":[{"function":{"arguments":{"secret":true}}}]}}]}),
             ] {
                 assert!(decrypt_response(&mut body, &key, false).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn v3_validates_rich_content_parts() {
+        for algo in [SigningAlgo::Ecdsa, SigningAlgo::Ed25519] {
+            let (key, model) = fixed_key(algo);
+            let part = json!({"type": "text", "text": encrypt("answer", &model).unwrap()});
+            for streaming in [false, true] {
+                let field = if streaming { "delta" } else { "message" };
+                let mut body = json!({"choices": [{field: {"content": [part]}}]});
+                decrypt_response(&mut body, &key, streaming).unwrap();
+                assert_eq!(
+                    body["choices"][0][field]["content"],
+                    json!([{"type":"text","text":"answer"}])
+                );
+                let mut empty = json!({"choices": [{field: {"content": []}}]});
+                decrypt_response(&mut empty, &key, streaming).unwrap();
+                assert_eq!(empty["choices"][0][field]["content"], json!([]));
+                for invalid in [
+                    json!("plaintext"),
+                    json!(0),
+                    json!(true),
+                    Value::Null,
+                    json!(["nested"]),
+                ] {
+                    let mut body = json!({"choices": [{field: {"content": [part, invalid]}}]});
+                    assert_eq!(
+                        decrypt_response(&mut body, &key, streaming)
+                            .unwrap_err()
+                            .code(),
+                        "e2ee.decryption_failed"
+                    );
+                }
             }
         }
     }

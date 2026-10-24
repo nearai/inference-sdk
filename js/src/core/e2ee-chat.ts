@@ -680,7 +680,10 @@ function decryptContentParts({
   return parts.map((part, index) => {
     const record = asJsonObject(part);
     if (record === undefined) {
-      return part;
+      throw new VerificationError({
+        code: 'e2ee.decryption_failed',
+        details: { field: `${path}[${index}]` },
+      });
     }
     const decrypted: SecureChatJsonObject = { ...record };
     decryptStringField({

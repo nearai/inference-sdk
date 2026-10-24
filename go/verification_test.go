@@ -343,6 +343,45 @@ func TestE2EEConfiguredBodyLimit(t *testing.T) {
 	}
 }
 
+func TestE2EEV3RichContentParts(t *testing.T) {
+	for _, algo := range []SigningAlgo{ECDSA, Ed25519} {
+		t.Run(string(algo), func(t *testing.T) {
+			key, err := newE2EEKey(algo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cipher, err := encryptText("answer", E2EEModelKey{algo, key.public})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for field, streaming := range map[string]bool{"message": false, "delta": true} {
+				t.Run(field, func(t *testing.T) {
+					makeBody := func(parts []any) (map[string]any, map[string]any) {
+						message := map[string]any{"content": parts}
+						return map[string]any{"choices": []any{map[string]any{field: message}}}, message
+					}
+					part := func() map[string]any { return map[string]any{"type": "text", "text": cipher} }
+					body, message := makeBody([]any{part()})
+					if err := decryptChat(body, key, streaming); err != nil {
+						t.Fatal(err)
+					}
+					if objects(message["content"])[0]["text"] != "answer" {
+						t.Fatal("rich text was not decrypted")
+					}
+					empty, _ := makeBody([]any{})
+					if err := decryptChat(empty, key, streaming); err != nil {
+						t.Fatal(err)
+					}
+					for _, invalid := range []any{"plaintext", 0, true, nil, []any{"nested"}} {
+						body, _ := makeBody([]any{part(), invalid})
+						requireCode(t, decryptChat(body, key, streaming), "e2ee.decryption_failed")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestE2EEV3SharedVectors(t *testing.T) {
 	raw, err := os.ReadFile("../test-fixtures/e2ee-v3.json")
 	if err != nil {

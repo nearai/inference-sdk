@@ -330,13 +330,18 @@ func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 		if e := transformFields(m, f, "reasoning_content", "reasoning", "refusal"); e != nil {
 			return e
 		}
-		if _, ok := m["content"].([]any); !ok {
-			if e := transformFields(m, f, "content"); e != nil {
-				return e
+		if parts, ok := m["content"].([]any); ok {
+			for _, part := range parts {
+				obj, ok := part.(map[string]any)
+				if !ok {
+					return failure("e2ee.decryption_failed", nil)
+				}
+				if e := transformFields(obj, f, "text"); e != nil {
+					return e
+				}
 			}
-		}
-		for _, part := range objects(m["content"]) {
-			if e := transformFields(part, f, "text"); e != nil {
+		} else {
+			if e := transformFields(m, f, "content"); e != nil {
 				return e
 			}
 		}

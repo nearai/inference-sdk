@@ -173,10 +173,13 @@ def _decrypt_message(
         _decrypt_fields(message, ('content',), client_key_pair, path)
     if isinstance(content, list):
         for index, part in enumerate(content):
-            if isinstance(part, dict):
-                _decrypt_fields(
-                    part, ('text',), client_key_pair, f'{path}.content[{index}]'
+            if not isinstance(part, dict):
+                raise verification_failure(
+                    'e2ee.decryption_failed', {'field': f'{path}.content[{index}]'}
                 )
+            _decrypt_fields(
+                part, ('text',), client_key_pair, f'{path}.content[{index}]'
+            )
     if isinstance(message.get('audio'), dict):
         _decrypt_fields(message['audio'], ('data',), client_key_pair, f'{path}.audio')
     calls = message.get('tool_calls')
