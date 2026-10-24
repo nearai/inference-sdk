@@ -171,6 +171,22 @@ async def test_responses_wire_receipts(
 
 
 @pytest.mark.parametrize('streaming', [False, True])
+@pytest.mark.parametrize('limit', ['max_body_bytes', 'max_receipt_cache_bytes'])
+async def test_responses_capacity_limits(monkeypatch, streaming, limit):
+    gateway = ResponsesGateway(streaming=streaming)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, **{limit: 512}) as client:
+        response = await client.send(
+            httpx.Request(
+                'POST', BASE_URL + 'responses', json={'model': MODEL, 'input': 'Hi'}
+            )
+        )
+        with pytest.raises(ApiError, match='api.body_too_large'):
+            await response.aread()
+    assert len(gateway.completion_requests) == 1
+
+
+@pytest.mark.parametrize('streaming', [False, True])
 async def test_responses_tamper(monkeypatch, streaming):
     gateway = ResponsesGateway(streaming=streaming)
     gateway.tamper = True

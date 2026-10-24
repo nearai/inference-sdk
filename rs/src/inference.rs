@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
@@ -107,7 +107,7 @@ impl Default for InferenceClientOptions {
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
             max_response_bytes: 64 * 1024 * 1024,
-            max_cache_entries: 1024,
+            max_cache_entries: 128,
             max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
@@ -174,19 +174,35 @@ impl Session {
 }
 type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, InferenceError>>>;
 type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
+type WeakReceiptFuture =
+    WeakShared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
+type PendingReceipt = (Weak<Record>, WeakReceiptFuture);
+enum ReceiptVerification {
+    Pending(WeakReceiptFuture),
+    Complete(ReceiptFuture),
+}
+impl ReceiptVerification {
+    fn future(&self) -> Option<ReceiptFuture> {
+        match self {
+            Self::Pending(future) => future.upgrade(),
+            Self::Complete(future) => Some(future.clone()),
+        }
+    }
+}
 struct Record {
     request: Arc<[u8]>,
     response: Arc<[u8]>,
     session: Arc<Session>,
     gateway_only: bool,
     finished: Instant,
-    verification: Mutex<Option<ReceiptFuture>>,
+    verification: Mutex<Option<ReceiptVerification>>,
 }
 #[derive(Default)]
 struct State {
     sessions: HashMap<String, (Instant, Arc<Session>)>,
     pending: HashMap<String, PendingSession>,
     responses: HashMap<String, Arc<Record>>,
+    receipt_verifications: Vec<PendingReceipt>,
 }
 struct Inner {
     options: InferenceClientOptions,
@@ -346,6 +362,9 @@ impl InferenceClient {
             serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
         if body.len() > options.max_response_bytes {
             return Err(input("body", "request exceeds configured byte limit").into());
+        }
+        if !options.response_cache_ttl.is_zero() && body.len() >= options.max_receipt_cache_bytes {
+            return Err(input("body", "receipt cache has no space for the response").into());
         }
         let value: Value = serde_json::from_slice(&body)
             .map_err(|_| input("systemone", "expected JSON object"))?;
@@ -674,6 +693,9 @@ impl InferenceClient {
         gateway_only: bool,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
+        if options.response_cache_ttl.is_zero() {
+            return Ok(());
+        }
         let mut state = self.inner.state.lock().await;
         state
             .responses
@@ -689,13 +711,26 @@ impl InferenceClient {
         if size > options.max_receipt_cache_bytes {
             return Err(input("response", "receipt exceeds configured cache byte limit").into());
         }
-        let mut retained: usize = state
-            .responses
-            .values()
+        let active: Vec<_> = state
+            .receipt_verifications
+            .iter()
+            .filter_map(|(record, verification)| {
+                let verification = verification.upgrade()?;
+                if verification.peek().is_some() {
+                    return None;
+                }
+                record.upgrade()
+            })
+            .collect();
+        let is_active = |record: &Arc<Record>| active.iter().any(|r| Arc::ptr_eq(r, record));
+        let mut retained: usize = active
+            .iter()
+            .chain(state.responses.values().filter(|r| !is_active(r)))
             .map(|r| r.request.len() + r.response.len())
             .sum();
-        while state.responses.len() >= options.max_cache_entries
-            || retained > options.max_receipt_cache_bytes - size
+        while !state.responses.is_empty()
+            && (state.responses.len() >= options.max_cache_entries
+                || retained > options.max_receipt_cache_bytes - size)
         {
             if let Some(key) = state
                 .responses
@@ -704,9 +739,14 @@ impl InferenceClient {
                 .map(|(k, _)| k.clone())
             {
                 if let Some(record) = state.responses.remove(&key) {
-                    retained -= record.request.len() + record.response.len();
+                    if !is_active(&record) {
+                        retained -= record.request.len() + record.response.len();
+                    }
                 }
             }
+        }
+        if retained > options.max_receipt_cache_bytes - size {
+            return Ok(());
         }
         state.responses.insert(
             id,
@@ -725,29 +765,37 @@ impl InferenceClient {
         &self,
         id: &str,
     ) -> Result<VerifiedCompletionResult, InferenceError> {
-        let record = {
+        let (record, future) = {
             let mut state = self.inner.state.lock().await;
             state
                 .responses
                 .retain(|_, r| r.finished.elapsed() < self.inner.options.response_cache_ttl);
-            state
+            let record = state
                 .responses
                 .get(id)
                 .cloned()
-                .ok_or(ApiError::CompletionNotFound)?
-        };
-        let future = {
+                .ok_or(ApiError::CompletionNotFound)?;
             let mut pending = record.verification.lock().await;
-            if pending.is_none() {
-                // Do not capture Record itself: the cached future must not form an Arc cycle.
-                let request = record.request.clone();
-                let response = record.response.clone();
-                let session = record.session.clone();
-                let gateway_only = record.gateway_only;
-                let id = id.to_owned();
-                let algo = self.inner.options.signing_algo;
-                *pending = Some(
-                    async move {
+            let future =
+                if let Some(future) = pending.as_ref().and_then(ReceiptVerification::future) {
+                    future
+                } else {
+                    state.receipt_verifications.retain(|(_, verification)| {
+                        verification
+                            .upgrade()
+                            .is_some_and(|future| future.peek().is_none())
+                    });
+                    if state.receipt_verifications.len() >= self.inner.options.max_cache_entries {
+                        return Err(input("id", "fewer concurrent receipt verifications").into());
+                    }
+                    // Do not capture Record itself: the cached future must not form an Arc cycle.
+                    let request = record.request.clone();
+                    let response = record.response.clone();
+                    let session = record.session.clone();
+                    let gateway_only = record.gateway_only;
+                    let id = id.to_owned();
+                    let algo = self.inner.options.signing_algo;
+                    let future = async move {
                         let signature = session.api.signature(&id, algo).await?;
                         if signature.signer.signing_algo != algo {
                             return Err(VerificationError::SignatureSignerMismatch.into());
@@ -803,21 +851,33 @@ impl InferenceClient {
                         })
                     }
                     .boxed()
-                    .shared(),
-                );
-            }
-            pending.as_ref().expect("initialized future").clone()
+                    .shared();
+                    let weak = future.downgrade().expect("live future");
+                    *pending = Some(ReceiptVerification::Pending(weak.clone()));
+                    state
+                        .receipt_verifications
+                        .push((Arc::downgrade(&record), weak));
+                    future
+                };
+            drop(pending);
+            (record, future)
         };
         let result = future.clone().await;
-        if result
+        let retryable = result
             .as_ref()
             .err()
-            .is_some_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable")
+            .is_some_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable");
+        let mut pending = record.verification.lock().await;
+        if pending
+            .as_ref()
+            .and_then(ReceiptVerification::future)
+            .is_some_and(|f| f.ptr_eq(&future))
         {
-            let mut pending = record.verification.lock().await;
-            if pending.as_ref().is_some_and(|f| f.ptr_eq(&future)) {
-                *pending = None;
-            }
+            *pending = if retryable {
+                None
+            } else {
+                Some(ReceiptVerification::Complete(future))
+            };
         }
         result
     }

@@ -11,6 +11,7 @@ from nearai_inference_sdk.core.e2ee import (
     decrypt_e2ee_text,
     encrypt_e2ee_text,
 )
+from nearai_inference_sdk.core.e2ee_chat import measure_e2ee_chat_request_bytes
 from nearai_inference_sdk.core.e2ee_request import prepare_e2ee_chat_request
 from nearai_inference_sdk.types.e2ee import E2eeModelKey
 from nearai_inference_sdk.utils.errors import ApiError, VerificationError
@@ -101,6 +102,9 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         extensions={'timeout': {'read': None}},
     )
     prepared = await prepare_e2ee_chat_request(original, model_key)
+    assert measure_e2ee_chat_request_bytes(body, signing_algo) == len(
+        prepared.request.content
+    )
     headers = prepared.request.headers
     assert headers['authorization'] == 'Bearer caller-owned'
     assert headers['x-signing-algo'] == signing_algo

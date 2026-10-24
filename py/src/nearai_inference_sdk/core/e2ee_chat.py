@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
-import codecs
 import json
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from copy import deepcopy
+from io import StringIO
 from typing import Any
 
 from pydantic import ValidationError
 
 from ..schemas import ChatCompletionResponseSchema
+from ..types.attestation_common import SigningAlgo
 from ..types.e2ee import E2eeModelKey
 from ..utils.errors import ApiError, api_failure, verification_failure
-from ..utils.sse import get_sse_data, split_sse_lines, take_complete_sse_records
+from ..utils.sse import (
+    SseDecoder,
+    get_sse_data,
+    get_sse_record_data,
+    iter_sse_lines,
+)
 from .e2ee import E2eeClientKeyPair, decrypt_e2ee_text, encrypt_e2ee_text
 
 
@@ -31,40 +37,62 @@ def encrypt_e2ee_chat_request(
 ) -> dict[str, Any]:
     """Encrypt only protocol-supported fields, leaving ordinary Chat JSON alone."""
 
+    return _transform_request(body, lambda value: encrypt_e2ee_text(value, model_key))
+
+
+def measure_e2ee_chat_request_bytes(
+    body: dict[str, Any], signing_algo: SigningAlgo
+) -> int:
+    """Measure wire JSON using the encryption traversal, without keys or ciphertext."""
+
+    envelope_bytes = 65 + 12 + 16 if signing_algo == 'ecdsa' else 32 + 24 + 16
+    ciphertext_bytes = 0
+
+    def measure(value: str) -> str:
+        nonlocal ciphertext_bytes
+        ciphertext_bytes += 2 * (len(value.encode('utf-8')) + envelope_bytes)
+        return ''
+
+    skeleton = _transform_request(body, measure)
+    # Hex needs no JSON escaping; empty placeholders preserve quotes and punctuation.
+    return len(_json(skeleton).encode('utf-8')) + ciphertext_bytes
+
+
+def _transform_request(
+    body: dict[str, Any], encrypt: Callable[[str], str]
+) -> dict[str, Any]:
     encrypted = deepcopy(body)
     for message in _objects(encrypted.get('messages')):
         content = message.get('content')
         if isinstance(content, str):
-            message['content'] = encrypt_e2ee_text(content, model_key)
+            message['content'] = encrypt(content)
         elif isinstance(content, list):
-            message['content'] = encrypt_e2ee_text(_json(content), model_key)
+            message['content'] = encrypt(_json(content))
         _encrypt_fields(
             message,
             ('reasoning_content', 'reasoning', 'name', 'refusal'),
-            model_key,
+            encrypt,
         )
         if isinstance(message.get('audio'), dict):
-            _encrypt_fields(message['audio'], ('data',), model_key)
+            _encrypt_fields(message['audio'], ('data',), encrypt)
         for tool_call in _objects(message.get('tool_calls')):
             if isinstance(tool_call.get('function'), dict):
-                _encrypt_fields(tool_call['function'], ('name', 'arguments'), model_key)
+                _encrypt_fields(tool_call['function'], ('name', 'arguments'), encrypt)
         if isinstance(message.get('function_call'), dict):
-            _encrypt_fields(message['function_call'], ('name', 'arguments'), model_key)
+            _encrypt_fields(message['function_call'], ('name', 'arguments'), encrypt)
 
     for tool in _objects(encrypted.get('tools')):
         function = tool.get('function')
         if not isinstance(function, dict):
             continue
-        _encrypt_fields(function, ('name', 'description'), model_key)
+        _encrypt_fields(function, ('name', 'description'), encrypt)
         if 'parameters' in function:
-            function['parameters'] = encrypt_e2ee_text(
-                _json(function['parameters']), model_key
-            )
+            function['parameters'] = encrypt(_json(function['parameters']))
     tool_choice = encrypted.get('tool_choice')
     if isinstance(tool_choice, dict) and isinstance(tool_choice.get('function'), dict):
-        _encrypt_fields(tool_choice['function'], ('name',), model_key)
+        _encrypt_fields(tool_choice['function'], ('name',), encrypt)
     if isinstance(encrypted.get('function_call'), dict):
-        _encrypt_fields(encrypted['function_call'], ('name',), model_key)
+        _encrypt_fields(encrypted['function_call'], ('name',), encrypt)
     return encrypted
 
 
@@ -108,18 +136,22 @@ async def decrypt_e2ee_chat_sse(
 ) -> AsyncIterator[bytes]:
     """Preserve SSE controls and boundaries, even across split UTF-8 or CRLF."""
 
-    decoder = codecs.getincrementaldecoder('utf-8')()
-    pending = ''
+    decoder = SseDecoder()
     try:
         async for chunk in source:
-            pending += decoder.decode(chunk)
-            complete = take_complete_sse_records(pending)
-            pending = complete.pending
-            for record in complete.records:
-                yield _transform_sse_record(
-                    record.value, record.separator, client_key_pair
-                ).encode()
-        pending += decoder.decode(b'', final=True)
+            buffered = bytearray()
+            for record in decoder.feed(chunk):
+                buffered.extend(
+                    _transform_sse_record(
+                        record.value, record.separator, client_key_pair
+                    ).encode()
+                )
+                if len(buffered) >= 64 * 1024:
+                    yield bytes(buffered)
+                    buffered.clear()
+            if buffered:
+                yield bytes(buffered)
+        pending = decoder.finish()
         if pending:
             yield _transform_sse_record(pending, '', client_key_pair).encode()
     except UnicodeDecodeError as cause:
@@ -127,12 +159,12 @@ async def decrypt_e2ee_chat_sse(
 
 
 def _encrypt_fields(
-    target: dict[str, Any], fields: tuple[str, ...], model_key: E2eeModelKey
+    target: dict[str, Any], fields: tuple[str, ...], encrypt: Callable[[str], str]
 ) -> None:
     for field in fields:
         value = target.get(field)
         if isinstance(value, str):
-            target[field] = encrypt_e2ee_text(value, model_key)
+            target[field] = encrypt(value)
 
 
 def _decrypt_fields(
@@ -212,22 +244,19 @@ def _decrypt_logprobs(
 def _transform_sse_record(
     record: str, separator: str, client_key_pair: E2eeClientKeyPair
 ) -> str:
-    lines = split_sse_lines(record)
-    data_lines = [
-        data for line in lines if (data := get_sse_data(line.content)) is not None
-    ]
-    if not data_lines:
+    data = get_sse_record_data(record)
+    if data in ('', '[DONE]'):
         return record + separator
-    data = '\n'.join(data_lines)
     event = None
-    for line in lines:
-        if line.content == 'event':
+    remaining = 0
+    for line in iter_sse_lines(record):
+        if get_sse_data(line.content) is not None:
+            remaining += 1
+        if event is None and line.content == 'event':
             event = ''
-            break
-        if line.content.startswith('event:'):
+        elif event is None and line.content.startswith('event:'):
             event = line.content[len('event:') :].removeprefix(' ')
-            break
-    if data in ('', '[DONE]') or event == 'error':
+    if event == 'error':
         return record + separator
     try:
         body = json.loads(data)
@@ -237,18 +266,17 @@ def _transform_sse_record(
     if 'choices' not in chunk:
         return record + separator
     decrypted = decrypt_e2ee_chat_response(chunk, client_key_pair, streaming=True)
-    remaining = len(data_lines)
-    output = []
-    for line in lines:
+    output = StringIO()
+    for line in iter_sse_lines(record):
         if get_sse_data(line.content) is None:
-            output.append(line.content + line.ending)
+            output.write(line.content + line.ending)
         else:
             remaining -= 1
             # Preserve the last data line's ending so mixed CR/LF cannot merge
             # into a single CRLF and erase the terminating blank line.
             if remaining == 0:
-                output.append(f'data: {_json(decrypted)}{line.ending}')
-    return ''.join(output) + separator
+                output.write(f'data: {_json(decrypted)}{line.ending}')
+    return output.getvalue() + separator
 
 
 def _objects(value: object) -> list[dict[str, Any]]:

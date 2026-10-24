@@ -20,28 +20,30 @@ import (
 )
 
 type fakeCloud struct {
-	expectedHost    string
-	encrypt         bool
-	streamBody      string
-	t               *testing.T
-	a               Attestation
-	q               QuoteVerificationResult
-	priv            ed25519.PrivateKey
-	mu              sync.Mutex
-	signatureStatus atomic.Int32
-	signatureCalls  atomic.Int32
-	signatures      map[string]CompletionSignature
-	next            int
-	attestations    atomic.Int32
-	chats           atomic.Int32
-	extraModel      bool
-	missingModelKey bool
-	tee             bool
-	direct          bool
-	stream          bool
-	tamper          bool
-	badModel        bool
-	slow            <-chan struct{}
+	signatureStarted chan struct{}
+	signatureRelease <-chan struct{}
+	expectedHost     string
+	encrypt          bool
+	streamBody       string
+	t                *testing.T
+	a                Attestation
+	q                QuoteVerificationResult
+	priv             ed25519.PrivateKey
+	mu               sync.Mutex
+	signatureStatus  atomic.Int32
+	signatureCalls   atomic.Int32
+	signatures       map[string]CompletionSignature
+	next             int
+	attestations     atomic.Int32
+	chats            atomic.Int32
+	tee              bool
+	direct           bool
+	stream           bool
+	tamper           bool
+	badModel         bool
+	slow             <-chan struct{}
+	extraModel       bool
+	missingModelKey  bool
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
@@ -202,6 +204,14 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		io.WriteString(w, reply)
 	case strings.Contains(r.URL.Path, "/signature/"):
+		if strings.HasSuffix(r.URL.Path, "/chat-1") && f.signatureStarted != nil {
+			close(f.signatureStarted)
+			select {
+			case <-f.signatureRelease:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		f.signatureCalls.Add(1)
 		if status := f.signatureStatus.Load(); status != 0 {
 			w.WriteHeader(int(status))
@@ -684,5 +694,36 @@ func TestRequestAuthorityUsesConfiguredEndpoint(t *testing.T) {
 	res.Body.Close()
 	if f.chats.Load() != original+1 {
 		t.Fatal("request not served")
+	}
+}
+
+func TestPendingPreflightsRespectEntryCapacity(t *testing.T) {
+	gate := make(chan struct{})
+	f := newFakeCloud(t)
+	f.slow = gate
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.MaxCacheEntries = 1 })
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 2)
+	go func() { _, err := c.Verify(ctx, "canonical/model"); done <- err }()
+	for f.attestations.Load() == 0 {
+		select {
+		case <-ctx.Done():
+			close(gate)
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	go func() { _, err := c.Verify(ctx, "canonical/model"); done <- err }()
+	_, err := c.Verify(ctx, "other/model")
+	close(gate)
+	requireCode(t, err, "api.invalid_input")
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.attestations.Load() != 1 {
+		t.Fatal("same-model preflight was not shared")
 	}
 }

@@ -136,39 +136,41 @@ async def test_stream_failure_closes_source_and_cannot_verify(
 
 
 @pytest.mark.parametrize('buffered', [False, True])
-async def test_error_response_preserves_status_headers_and_decodes_once(
-    monkeypatch, buffered
+@pytest.mark.parametrize('compressed', [False, True])
+async def test_error_responses_preserve_headers_and_reject_compression(
+    monkeypatch, buffered, compressed
 ):
     gateway = Gateway()
     handle = gateway.handle
     payload = b'{"error":{"message":"busy","type":"overloaded"}}'
-    compressed = gzip.compress(payload)
+    wire = gzip.compress(payload) if compressed else payload
 
     async def reject_chat(request):
         if request.url.path.endswith('/chat/completions'):
             return httpx.Response(
                 429,
                 headers=[
-                    ('content-encoding', 'gzip'),
+                    ('content-encoding', 'gzip' if compressed else 'identity'),
                     ('content-type', 'application/json'),
                     ('retry-after', '3'),
                     ('x-probe', 'a'),
                     ('x-probe', 'b'),
                 ],
-                **(
-                    {'content': compressed}
-                    if buffered
-                    else {'stream': ChunkStream([compressed])}
-                ),
+                **({'content': wire} if buffered else {'stream': ChunkStream([wire])}),
             )
         return await handle(request)
 
     monkeypatch.setattr(gateway, 'handle', reject_chat)
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as owner, owner.httpx2_client as adapter:
-        response = await adapter.post(
+        pending = adapter.post(
             BASE_URL + 'chat/completions', json={'model': MODEL, 'messages': MESSAGES}
         )
+        if compressed:
+            with pytest.raises(ApiError, match='content-encoding'):
+                await pending
+            return
+        response = await pending
         assert response.status_code == 429
         assert response.content == payload
         assert response.headers['retry-after'] == '3'

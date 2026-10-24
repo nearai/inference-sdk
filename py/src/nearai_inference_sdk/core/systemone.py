@@ -23,6 +23,11 @@ from ..utils.errors import (
     VerificationError,
     api_failure,
 )
+from .body_limit import (
+    read_bounded_body,
+    read_bounded_request_body,
+    require_identity_encoding,
+)
 from .e2ee_request import remove_e2ee_headers
 
 if TYPE_CHECKING:
@@ -110,7 +115,10 @@ class InferenceSystemOne:
             or content_type.lower() != 'application/json'
         ):
             raise _invalid_input('an uncompressed JSON System One request')
-        request_body = await request.aread()
+        request_body = await read_bounded_request_body(
+            request, client._response_byte_limit(0)
+        )
+        response_limit = client._response_byte_limit(len(request_body))
         try:
             parsed = json.loads(request_body)
         except ValueError as cause:
@@ -164,19 +172,7 @@ class InferenceSystemOne:
                     'api.http_status',
                     {'resource': 'systemone', 'status': response.status_code},
                 )
-            encoding = response.headers.get('content-encoding', '')
-            if any(
-                value.strip().lower() not in ('', 'identity')
-                for value in encoding.split(',')
-            ):
-                raise api_failure(
-                    'api.invalid_response',
-                    {
-                        'path': 'response.headers.content-encoding',
-                        'expected': 'identity encoding',
-                        'actual': encoding,
-                    },
-                )
+            require_identity_encoding(response)
             try:
                 decision_id = CompletionResponseIdSchema.model_validate(
                     {'id': response.headers.get('x-generation-id')}
@@ -184,7 +180,9 @@ class InferenceSystemOne:
             except ValidationError:
                 raise _invalid_response('System One X-Generation-Id') from None
             try:
-                response_body = await response.aread()
+                response_body = await read_bounded_body(
+                    response.aiter_bytes(), response_limit
+                )
             except httpx.HTTPError as error:
                 raise api_failure(
                     'api.transport_failed',

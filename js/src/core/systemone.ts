@@ -13,6 +13,7 @@ import type {
   SystemOneResult,
 } from '../types/systemone';
 import { ApiError, isApiError, isVerificationError } from '../utils/errors';
+import { readBoundedBody } from './body-limit';
 import { NO_ALIASING_HEADER } from './cloud-api';
 import { removeE2eeHeaders } from './e2ee-request';
 import type {
@@ -27,6 +28,7 @@ type CreateSystemOneParams<
   readonly options?: SystemOneRequestOptions;
   readonly baseUrl: string;
   readonly encryptionEnabled: boolean;
+  readonly responseByteLimit: (requestSize: number) => number;
   readonly headers: Headers;
   readonly getSession: (
     model: string,
@@ -38,6 +40,7 @@ type CreateSystemOneParams<
 
 type SendSystemOneParams = {
   readonly request: Request;
+  readonly responseByteLimit: (requestSize: number) => number;
   readonly encryptionEnabled: boolean;
   readonly headers: Headers;
   readonly getSession: (
@@ -65,6 +68,7 @@ export async function createSystemOne<
   options,
   baseUrl,
   encryptionEnabled,
+  responseByteLimit,
   headers,
   getSession,
   registerResponse,
@@ -96,6 +100,7 @@ export async function createSystemOne<
   });
   const captured = await captureSystemOne({
     request: httpRequest,
+    responseByteLimit,
     encryptionEnabled,
     headers,
     getSession,
@@ -120,6 +125,7 @@ export async function createSystemOne<
 
 async function captureSystemOne({
   request,
+  responseByteLimit,
   encryptionEnabled,
   headers,
   getSession,
@@ -141,10 +147,12 @@ async function captureSystemOne({
     contentType !== 'application/json'
   )
     throw invalidInput('an uncompressed JSON System One request');
-  const body = request.body?.pipeThrough(new TransformStream(), {
-    signal: request.signal,
-  });
-  const requestBody = new Uint8Array(await new Response(body).arrayBuffer());
+  const requestBody = await readBoundedBody(
+    request.body,
+    responseByteLimit(0),
+    request.signal,
+  );
+  const responseLimit = responseByteLimit(requestBody.byteLength);
   let parsed: unknown;
   try {
     parsed = JSON.parse(
@@ -182,8 +190,8 @@ async function captureSystemOne({
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'request' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'request' },
         retryable: false,
       },
       { cause },
@@ -194,18 +202,9 @@ async function captureSystemOne({
     await discardResponse(response);
     throw new ApiError({
       code: 'api.http_status',
-      details: { resource: 'completion', status: response.status },
+      details: { resource: 'systemone', status: response.status },
       retryable: false,
     });
-  }
-  if (
-    response.headers
-      .get('content-encoding')
-      ?.split(',')
-      .some((value) => !['', 'identity'].includes(value.trim().toLowerCase()))
-  ) {
-    await discardResponse(response);
-    throw invalidResponse('System One response content-encoding');
   }
   const parsedId = v.safeParse(CompletionResponseIdSchema, {
     id: response.headers.get('x-generation-id'),
@@ -217,23 +216,32 @@ async function captureSystemOne({
   const decisionId = parsedId.output.id;
   let responseBody: Uint8Array<ArrayBuffer>;
   try {
-    responseBody = new Uint8Array(await response.arrayBuffer());
+    responseBody = await readBoundedBody(
+      response.body,
+      responseLimit,
+      request.signal,
+    );
   } catch (cause) {
     request.signal.throwIfAborted();
+    if (isApiError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'response_body' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'response_body' },
         retryable: false,
       },
       { cause },
     );
   }
+  // Fetch may retain compression headers after decoding the body.
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.delete('content-encoding');
+  responseHeaders.delete('content-length');
   return {
     response: new Response(responseBody, {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
+      headers: responseHeaders,
     }),
     record: {
       id: decisionId,

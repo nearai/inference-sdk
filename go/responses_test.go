@@ -140,6 +140,27 @@ func TestResponsesExactGatewayReceipts(t *testing.T) {
 		})
 	}
 }
+func TestResponsesBodyAndReceiptLimits(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, receiptLimit := range []bool{false, true} {
+			c, f := responsesClient(t, streaming, func(o *InferenceOptions) {
+				if receiptLimit {
+					o.MaxReceiptCacheBytes = 512
+				} else {
+					o.MaxBodyBytes = 512
+				}
+			})
+			_, err := sendResponse(t, c, streaming)
+			requireCode(t, err, "api.body_too_large")
+			_, err = c.VerifyResponse(context.Background(), "resp_fixture")
+			requireCode(t, err, "api.completion_not_found")
+			if f.cloud.chats.Load() != 1 {
+				t.Fatal("expected one inference request")
+			}
+		}
+	}
+}
+
 func TestResponsesTamperingAndProviderReceipts(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		for _, provider := range []bool{false, true} {

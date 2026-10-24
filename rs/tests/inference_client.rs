@@ -41,6 +41,7 @@ struct Fixture {
     systemone_tamper: bool,
 
     signatures: AtomicUsize,
+    signature_started: tokio::sync::Notify,
     receipts: Mutex<std::collections::HashMap<String, ReceiptBytes>>,
     metadata: Mutex<Option<Value>>,
     empty: bool,
@@ -340,6 +341,7 @@ impl Respond for Fixture {
                 if self.retry_signature && n == 0 {
                     return ResponseTemplate::new(404).set_delay(Duration::from_millis(20));
                 }
+                self.signature_started.notify_one();
                 let receipts = self.receipts.lock().unwrap();
                 let (req, res, kind) = receipts.get(path.rsplit('/').next().unwrap()).unwrap();
                 let text = if kind == "gateway" {
@@ -1010,6 +1012,87 @@ async fn receipt_cache_bounds_combined_request_and_response_bytes() {
     assert!(DirectInferenceClient::with_options(options.into()).is_err());
 }
 
+#[tokio::test]
+async fn canceled_receipt_verification_releases_byte_capacity() {
+    let (_server, f, mut options) = setup(Fixture::default()).await;
+    let probe = InferenceClient::with_options(options.clone()).unwrap();
+    probe.chat_completions(body()).await.unwrap();
+    {
+        let receipts = f.receipts.lock().unwrap();
+        let (request, response, _) = &receipts["chat-0"];
+        options.max_receipt_cache_bytes = request.len() + response.len();
+    }
+    let client = InferenceClient::with_options(options).unwrap();
+    client.chat_completions(body()).await.unwrap();
+    {
+        let verification = client.verify_response("chat-1");
+        tokio::pin!(verification);
+        tokio::select! {
+            result = &mut verification => panic!("verification finished before cancellation: {result:?}"),
+            _ = f.signature_started.notified() => {},
+        }
+    }
+    client.chat_completions(body()).await.unwrap();
+    assert_eq!(client.verify_response("chat-2").await.unwrap().id, "chat-2");
+}
+
+#[tokio::test]
+async fn evicted_verification_keeps_capacity() {
+    for eviction in ["count", "bytes", "expiry"] {
+        let (_server, f, mut options) = setup(Fixture::default()).await;
+        let probe = InferenceClient::with_options(options.clone()).unwrap();
+        probe.chat_completions(body()).await.unwrap();
+        if eviction == "bytes" {
+            let receipts = f.receipts.lock().unwrap();
+            let (request, response, _) = &receipts["chat-0"];
+            options.max_receipt_cache_bytes = request.len() + response.len();
+        }
+        if eviction == "count" {
+            options.max_cache_entries = 1;
+        }
+        if eviction == "expiry" {
+            options.response_cache_ttl = Duration::from_millis(20);
+        }
+        let client = InferenceClient::with_options(options).unwrap();
+        client.chat_completions(body()).await.unwrap();
+        let verification = client.verify_response("chat-1");
+        tokio::pin!(verification);
+        tokio::select! {
+            result = &mut verification => panic!("verification finished before eviction: {result:?}"),
+            _ = f.signature_started.notified() => {},
+        }
+        if eviction == "expiry" {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        } else {
+            client.chat_completions(body()).await.unwrap();
+            assert_eq!(
+                client.verify_response("chat-2").await.unwrap_err().code(),
+                if eviction == "count" {
+                    "api.invalid_input"
+                } else {
+                    "api.completion_not_found"
+                }
+            );
+        }
+        assert_eq!(
+            client.verify_response("chat-1").await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+        assert_eq!(verification.await.unwrap().id, "chat-1");
+        if eviction != "count" {
+            client.chat_completions(body()).await.unwrap();
+        }
+        client
+            .verify_response(if eviction == "bytes" {
+                "chat-3"
+            } else {
+                "chat-2"
+            })
+            .await
+            .unwrap();
+    }
+}
+
 fn systemone_request() -> Value {
     json!({
         "model": "vendor/model",
@@ -1307,11 +1390,25 @@ async fn systemone_retained_receipts_follow_size_and_count_limits() {
 
     client.verify_response(&second.decision_id).await.unwrap();
 
-    let (_server, _, mut options) = setup(Fixture::default()).await;
-    options.max_receipt_cache_bytes = 10;
-    let client = InferenceClient::with_options(options).unwrap();
+    let (_server, f, mut options) = setup(Fixture::default()).await;
+    options.max_receipt_cache_bytes = serde_json::to_vec(&systemone_request()).unwrap().len();
+    let client = InferenceClient::with_options(options.clone()).unwrap();
 
     assert!(client.systemone_create(&systemone_request()).await.is_err());
+    assert_eq!(f.systemone.load(Ordering::SeqCst), 0);
+
+    options.response_cache_ttl = Duration::ZERO;
+    let client = InferenceClient::with_options(options).unwrap();
+    let result = client.systemone_create(&systemone_request()).await.unwrap();
+    assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        client
+            .verify_response(&result.decision_id)
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
 }
 
 fn response_request_body(streaming: bool) -> Value {
@@ -1384,6 +1481,42 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                 client.verify_response("msg_1").await.unwrap_err().code(),
                 "api.completion_not_found"
             );
+        }
+    }
+}
+
+#[tokio::test]
+async fn responses_enforce_body_and_receipt_limits() {
+    for streaming in [false, true] {
+        for receipt_limit in [false, true] {
+            let (_server, f, mut options) = setup(Fixture::default()).await;
+            if receipt_limit {
+                options.max_receipt_cache_bytes = 512;
+            } else {
+                options.max_response_bytes = 512;
+            }
+            let client = InferenceClient::with_options(options).unwrap();
+            let response = client
+                .send(
+                    client
+                        .response_request(response_request_body(streaming))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.bytes().await.unwrap_err().code(),
+                "api.invalid_input"
+            );
+            assert_eq!(
+                client
+                    .verify_response("resp_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found"
+            );
+            assert_eq!(f.chat.load(Ordering::SeqCst), 1);
         }
     }
 }

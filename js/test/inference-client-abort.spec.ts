@@ -35,6 +35,7 @@ test('aborts while a streamed request body is stalled before any network request
   };
   const request = new Request(`${baseUrl}chat/completions`, options);
   const reason = new Error('Chat cancelled during upload');
+  const uploadClosed = expect(writer.closed).rejects.toBe(reason);
 
   const response = client.fetch(request);
   await writer.write(new TextEncoder().encode('{"model":'));
@@ -42,9 +43,10 @@ test('aborts while a streamed request body is stalled before any network request
 
   try {
     await expect(response).rejects.toBe(reason);
+    await uploadClosed;
     expect(fetch).not.toHaveBeenCalled();
   } finally {
-    await writer.close();
+    writer.releaseLock();
   }
 });
 

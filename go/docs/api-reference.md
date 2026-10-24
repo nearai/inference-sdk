@@ -49,7 +49,7 @@ semantics, streaming, and supported privacy options.
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
 | `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
-| `MaxCacheEntries` | Zero selects 128 entries for each cache. |
+| `MaxCacheEntries` | Zero selects 128 completed entries per cache, distinct pending preflights, and active receipt verifications. |
 | `MaxReceiptCacheBytes` | Zero selects 64 MiB combined retained request/response bytes. |
 
 Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
@@ -369,7 +369,7 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
 	MaxBodyBytes int64
-	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
+	// MaxCacheEntries bounds retained sessions/receipts, pending preflights, and active receipt verifications. Defaults to 128.
 	MaxCacheEntries int
 	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
 	MaxReceiptCacheBytes int64
@@ -424,7 +424,9 @@ bytes across retained receipts. `MaxCacheEntries` defaults to 128 for both
 completed preflight sessions and receipts. Oldest entries are evicted to admit
 new ones; evicted receipt IDs cannot be verified later. A single receipt exceeding
 the byte budget fails with `api.body_too_large` before any existing receipt is evicted.
-These cache limits do not bound concurrent requests or records held by active callers.
+Verification already in progress continues after eviction and keeps its capacity
+reservation until it finishes. If those bytes fill the budget, new receipts are
+not retained.
 Select shorter retention and smaller limits for memory-constrained services.
 Successful verification does not automatically discard its retained record.
 

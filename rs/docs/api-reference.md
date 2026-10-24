@@ -45,7 +45,11 @@ semantics, streaming, and supported privacy options.
 | `deployment_policy` | No model-aware callback. |
 | `max_response_bytes` | 64 MiB per captured response. |
 | `max_receipt_cache_bytes` | 64 MiB total retained request/response bytes; oldest receipts are evicted to fit. |
-| `max_cache_entries` | 1024 per completed cache and for pending preverification. |
+| `max_cache_entries` | 128 per completed cache, pending preverification, and active receipt verification. |
+
+Verification already in progress continues after eviction and keeps its capacity
+reservation until it finishes. If those bytes fill the budget, new receipts are
+not retained.
 
 Verification options own optional verifiers through `Arc<dyn ...>`. The
 `DeploymentPolicy` async trait receives `(model: &str, deployment: &MeasuredDeployment)`.

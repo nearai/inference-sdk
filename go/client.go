@@ -33,9 +33,11 @@ type responseRecord struct {
 	gatewayOnly       bool
 }
 type pendingResponse struct {
-	done  chan struct{}
-	value VerifiedCompletionResult
-	err   error
+	done    chan struct{}
+	value   VerifiedCompletionResult
+	err     error
+	waiters int
+	cancel  context.CancelFunc
 }
 
 // InferenceClient implements http.RoundTripper for OpenAI-compatible Chat
@@ -50,6 +52,7 @@ type InferenceClient struct {
 	sessions                    map[string]*session
 	pending                     map[string]*pendingSession
 	responses                   map[string]*responseRecord
+	responseVerifications       map[*responseRecord]struct{}
 	transports                  map[string]*http.Transport
 	wg                          sync.WaitGroup
 	closed                      bool
@@ -102,17 +105,18 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &InferenceClient{
-		options:        o,
-		api:            a,
-		ctx:            ctx,
-		cancel:         cancel,
-		sessions:       map[string]*session{},
-		pending:        map[string]*pendingSession{},
-		responses:      map[string]*responseRecord{},
-		transports:     map[string]*http.Transport{},
-		attestationTTL: at,
-		responseTTL:    rt,
-		maxBody:        o.MaxBodyBytes,
+		options:               o,
+		api:                   a,
+		ctx:                   ctx,
+		cancel:                cancel,
+		sessions:              map[string]*session{},
+		pending:               map[string]*pendingSession{},
+		responses:             map[string]*responseRecord{},
+		responseVerifications: map[*responseRecord]struct{}{},
+		transports:            map[string]*http.Transport{},
+		attestationTTL:        at,
+		responseTTL:           rt,
+		maxBody:               o.MaxBodyBytes,
 	}
 	// Expiry also runs while idle so sensitive retained bodies do not linger.
 	c.wg.Add(1)
@@ -219,6 +223,10 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 	}
 	p := c.pending[key]
 	if p == nil {
+		if len(c.pending) >= c.options.MaxCacheEntries {
+			c.mu.Unlock()
+			return nil, detail("api.invalid_input", "reason", "too many concurrent verification operations")
+		}
 		p = &pendingSession{done: make(chan struct{})}
 		c.pending[key] = p
 		c.wg.Add(1)
@@ -610,10 +618,15 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	c.prune(time.Now())
 	size := int64(len(request)) + int64(len(response))
 	var retained int64
-	for _, record := range c.responses {
+	for record := range c.responseVerifications {
 		retained += int64(len(record.request)) + int64(len(record.response))
 	}
-	for len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size {
+	for _, record := range c.responses {
+		if _, active := c.responseVerifications[record]; !active {
+			retained += int64(len(record.request)) + int64(len(record.response))
+		}
+	}
+	for len(c.responses) > 0 && (len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size) {
 		var oldest string
 		var expires time.Time
 		for key, record := range c.responses {
@@ -622,8 +635,13 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 			}
 		}
 		record := c.responses[oldest]
-		retained -= int64(len(record.request)) + int64(len(record.response))
+		if _, active := c.responseVerifications[record]; !active {
+			retained -= int64(len(record.request)) + int64(len(record.response))
+		}
 		delete(c.responses, oldest)
+	}
+	if retained > budget-size {
+		return nil
 	}
 	c.responses[id] = &responseRecord{
 		request:     append([]byte(nil), request...),
@@ -636,24 +654,54 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
-	c.mu.Lock()
-	record := c.responses[id]
-	if record == nil || !time.Now().Before(record.expires) {
-		c.mu.Unlock()
-		return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
+	var record *responseRecord
+	var p *pendingResponse
+	for {
+		if err := ctx.Err(); err != nil {
+			return VerifiedCompletionResult{}, err
+		}
+		c.mu.Lock()
+		record = c.responses[id]
+		if record == nil || !time.Now().Before(record.expires) {
+			c.mu.Unlock()
+			return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
+		}
+		p = record.verifying
+		if p != nil && p.waiters == 0 {
+			select {
+			case <-p.done:
+			default:
+				// The last waiter cancelled this worker; wait for its capacity to be released.
+				c.mu.Unlock()
+				select {
+				case <-ctx.Done():
+					return VerifiedCompletionResult{}, ctx.Err()
+				case <-c.ctx.Done():
+					return VerifiedCompletionResult{}, failure("api.client_closed", nil)
+				case <-p.done:
+				}
+				continue
+			}
+		}
+		break
 	}
-	p := record.verifying
 	if p == nil {
-		p = &pendingResponse{done: make(chan struct{})}
+		if len(c.responseVerifications) >= c.options.MaxCacheEntries {
+			c.mu.Unlock()
+			return VerifiedCompletionResult{}, detail("api.invalid_input", "expected", "fewer concurrent receipt verifications")
+		}
+		c.responseVerifications[record] = struct{}{}
+		verificationCtx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
+		p = &pendingResponse{done: make(chan struct{}), cancel: cancel}
 		record.verifying = p
 		c.wg.Add(1)
 		go func() {
 			defer c.wg.Done()
-			ctx, cancel := context.WithTimeout(c.ctx, 2*time.Minute)
 			defer cancel()
-			value, e := c.verifyRecord(ctx, id, record)
+			value, e := c.verifyRecord(verificationCtx, id, record)
 			c.mu.Lock()
 			defer c.mu.Unlock()
+			delete(c.responseVerifications, record)
 			p.value, p.err = value, e
 			var sdk *Error
 			if e != nil &&
@@ -665,7 +713,21 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 			close(p.done)
 		}()
 	}
+	p.waiters++
 	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		p.waiters--
+		last := p.waiters == 0
+		if last {
+			p.cancel()
+		}
+		c.mu.Unlock()
+		if last {
+			// Release the worker's capacity reservation before its last caller returns.
+			<-p.done
+		}
+	}()
 	select {
 	case <-ctx.Done():
 		return VerifiedCompletionResult{}, ctx.Err()

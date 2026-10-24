@@ -322,9 +322,29 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 	}
 }
 func TestSystemOneUsesResponseCacheBoundsAndCancellation(t *testing.T) {
-	c, _ := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) { o.MaxReceiptCacheBytes = 10 })
-	_, err := c.CreateSystemOne(context.Background(), systemOneRequest())
-	requireCode(t, err, "api.body_too_large")
+	body, err := json.Marshal(systemOneRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []int64{int64(len(body)) - 1, int64(len(body))} {
+		c, f := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) { o.MaxReceiptCacheBytes = budget })
+		_, err := c.CreateSystemOne(context.Background(), systemOneRequest())
+		requireCode(t, err, "api.body_too_large")
+		if f.calls.Load() != 0 {
+			t.Fatalf("sent a decision with no response space in a %d-byte receipt cache", budget)
+		}
+	}
+	zero := time.Duration(0)
+	c, f := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) {
+		o.MaxReceiptCacheBytes = 10
+		o.ResponseTTL = &zero
+	})
+	if _, err := c.CreateSystemOne(context.Background(), systemOneRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if f.calls.Load() != 1 {
+		t.Fatal("receipt budget restricted a client with retention disabled")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err = c.CreateSystemOne(ctx, systemOneRequest())

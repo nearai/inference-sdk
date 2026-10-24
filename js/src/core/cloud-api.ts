@@ -42,6 +42,7 @@ type GetCloudApiJsonParams = {
   readonly url: URL;
   readonly resource: ApiResource;
   readonly extraHeaders?: HeadersInit;
+  readonly signal?: AbortSignal;
 };
 type GetGatewayAttestationJsonParams = {
   readonly url: URL;
@@ -65,6 +66,7 @@ export type GatewayAttestationHttpResponse = {
 type CreateCloudApiRequestParams = {
   readonly url: URL;
   readonly extraHeaders?: HeadersInit;
+  readonly signal?: AbortSignal;
 };
 type MergeCloudApiRequestHeadersParams = {
   readonly configuration: CloudApiRequestConfiguration;
@@ -272,6 +274,7 @@ export class CloudApiClient {
   async fetchCompletionSignature({
     completionId,
     signingAlgo,
+    signal,
   }: FetchCompletionSignatureParams): Promise<CompletionSignature> {
     const url = new URL(
       `signature/${encodeURIComponent(completionId)}`,
@@ -284,6 +287,7 @@ export class CloudApiClient {
       await this.getCloudApiJson({
         url,
         resource: 'completion_signature',
+        signal,
       }),
     );
   }
@@ -308,8 +312,9 @@ export class CloudApiClient {
     url,
     resource,
     extraHeaders = {},
+    signal,
   }: GetCloudApiJsonParams): Promise<unknown> {
-    const request = this.createCloudApiRequest({ url, extraHeaders });
+    const request = this.createCloudApiRequest({ url, extraHeaders, signal });
     let response: Response;
     try {
       response = await this.requestCloudApi(request);
@@ -364,12 +369,13 @@ export class CloudApiClient {
   private createCloudApiRequest({
     url,
     extraHeaders = {},
+    signal,
   }: CreateCloudApiRequestParams): Request {
     const headers = mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
       requestHeaders: extraHeaders,
     });
-    return new Request(url, { headers });
+    return new Request(url, { headers, signal });
   }
 }
 

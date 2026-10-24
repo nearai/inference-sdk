@@ -1,9 +1,10 @@
 import * as v from 'valibot';
-import type { E2eeModelKey } from '../types/e2ee';
 import {
   SecureChatCompletionResponseSchema,
   SecureChatCompletionStreamChunkSchema,
 } from '../schemas';
+import type { SigningAlgo } from '../types/attestation-common';
+import type { E2eeModelKey } from '../types/e2ee';
 import type {
   SecureChatCompletionRequest,
   SecureChatCompletionResponse,
@@ -24,8 +25,9 @@ import {
 } from '../utils/sse';
 import {
   decryptE2eeText,
-  encryptE2eeText,
   type E2eeClientKeyPair,
+  e2eeCiphertextLength,
+  encryptE2eeText,
 } from './e2ee';
 
 export type ParseE2eeChatResponseParams = {
@@ -102,8 +104,32 @@ export function encryptE2eeChatRequest({
   modelKey,
 }: EncryptE2eeChatRequestParams): EncryptedE2eeChatRequest {
   return {
-    body: encryptRequestBody({ body, modelKey }),
+    body: encryptRequestBody({
+      body,
+      encrypt: (plaintext) => encryptE2eeText({ plaintext, modelKey }),
+    }),
   };
+}
+
+/** Measure the wire JSON without keys, crypto or allocating the ciphertext. */
+export function measureE2eeChatRequestBytes(
+  body: SecureChatCompletionRequest,
+  signingAlgo: SigningAlgo,
+): number {
+  let ciphertextBytes = 0;
+  const skeleton = encryptRequestBody({
+    body,
+    encrypt: (plaintext) => {
+      ciphertextBytes += e2eeCiphertextLength(plaintext, signingAlgo);
+      return '';
+    },
+  });
+  // Hex has no JSON escaping. Empty placeholders retain the JSON quotes and
+  // punctuation while the shared traversal selects exactly the encrypted fields.
+  return (
+    new TextEncoder().encode(JSON.stringify(skeleton)).byteLength +
+    ciphertextBytes
+  );
 }
 
 /** Decrypt a parsed, complete Chat Completions response. */
@@ -206,12 +232,12 @@ export function createE2eeChatSseTransform({
 
 type EncryptRequestBodyParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptRequestBody({
   body,
-  modelKey,
+  encrypt,
 }: EncryptRequestBodyParams): SecureChatCompletionRequest {
   const encrypted: SecureChatJsonObject = { ...body };
   const messages = asJsonArray(body.messages);
@@ -222,21 +248,21 @@ function encryptRequestBody({
         ? message
         : encryptRequestMessage({
             message: record,
-            modelKey,
+            encrypt,
           });
     });
   }
 
   const tools = asJsonArray(body.tools);
   if (tools !== undefined) {
-    encrypted.tools = encryptTools({ tools, modelKey });
+    encrypted.tools = encryptTools({ tools, encrypt });
   }
 
   const toolChoice = asJsonObject(body.tool_choice);
   if (toolChoice !== undefined) {
     encrypted.tool_choice = encryptToolChoice({
       toolChoice,
-      modelKey,
+      encrypt,
     });
   }
 
@@ -244,7 +270,7 @@ function encryptRequestBody({
   if (functionCall !== undefined) {
     encrypted.function_call = encryptFunctionCall({
       functionCall,
-      modelKey,
+      encrypt,
       encryptArguments: false,
     });
   }
@@ -254,61 +280,55 @@ function encryptRequestBody({
 
 type EncryptRequestMessageParams = {
   readonly message: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptRequestMessage({
   message,
-  modelKey,
+  encrypt,
 }: EncryptRequestMessageParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...message };
   const content = message.content;
   if (typeof content === 'string') {
-    encrypted.content = encryptText({
-      plaintext: content,
-      modelKey,
-    });
+    encrypted.content = encrypt(content);
   } else if (Array.isArray(content)) {
-    encrypted.content = encryptText({
-      plaintext: JSON.stringify(content),
-      modelKey,
-    });
+    encrypted.content = encrypt(JSON.stringify(content));
   }
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'reasoning_content',
-    modelKey,
+    encrypt,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'reasoning',
-    modelKey,
+    encrypt,
   });
 
   const audio = asJsonObject(message.audio);
   if (audio !== undefined) {
-    encrypted.audio = encryptAudio({ audio, modelKey });
+    encrypted.audio = encryptAudio({ audio, encrypt });
   }
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'name',
-    modelKey,
+    encrypt,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'refusal',
-    modelKey,
+    encrypt,
   });
 
   const toolCalls = asJsonArray(message.tool_calls);
   if (toolCalls !== undefined) {
     encrypted.tool_calls = encryptFunctionToolCalls({
       toolCalls,
-      modelKey,
+      encrypt,
     });
   }
 
@@ -316,7 +336,7 @@ function encryptRequestMessage({
   if (functionCall !== undefined) {
     encrypted.function_call = encryptFunctionCall({
       functionCall,
-      modelKey,
+      encrypt,
       encryptArguments: true,
     });
   }
@@ -325,29 +345,29 @@ function encryptRequestMessage({
 
 type EncryptAudioParams = {
   readonly audio: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptAudio({
   audio,
-  modelKey,
+  encrypt,
 }: EncryptAudioParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...audio };
   encryptStringField({
     source: audio,
     target: encrypted,
     field: 'data',
-    modelKey,
+    encrypt,
   });
   return encrypted;
 }
 
 type EncryptToolsParams = {
   readonly tools: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
-function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
+function encryptTools({ tools, encrypt }: EncryptToolsParams): unknown[] {
   return tools.map((tool) => {
     const record = asJsonObject(tool);
     if (record === undefined) {
@@ -362,19 +382,18 @@ function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
       source: functionDefinition,
       target: encryptedFunction,
       field: 'name',
-      modelKey,
+      encrypt,
     });
     encryptStringField({
       source: functionDefinition,
       target: encryptedFunction,
       field: 'description',
-      modelKey,
+      encrypt,
     });
     if (functionDefinition.parameters !== undefined) {
-      encryptedFunction.parameters = encryptText({
-        plaintext: JSON.stringify(functionDefinition.parameters),
-        modelKey,
-      });
+      encryptedFunction.parameters = encrypt(
+        JSON.stringify(functionDefinition.parameters),
+      );
     }
     return { ...record, function: encryptedFunction };
   });
@@ -382,12 +401,12 @@ function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
 
 type EncryptToolChoiceParams = {
   readonly toolChoice: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptToolChoice({
   toolChoice,
-  modelKey,
+  encrypt,
 }: EncryptToolChoiceParams): SecureChatJsonObject {
   const functionDefinition = asJsonObject(toolChoice.function);
   if (functionDefinition === undefined) {
@@ -398,19 +417,19 @@ function encryptToolChoice({
     source: functionDefinition,
     target: encryptedFunction,
     field: 'name',
-    modelKey,
+    encrypt,
   });
   return { ...toolChoice, function: encryptedFunction };
 }
 
 type EncryptFunctionToolCallsParams = {
   readonly toolCalls: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptFunctionToolCalls({
   toolCalls,
-  modelKey,
+  encrypt,
 }: EncryptFunctionToolCallsParams): unknown[] {
   return toolCalls.map((toolCall) => {
     const record = asJsonObject(toolCall);
@@ -422,7 +441,7 @@ function encryptFunctionToolCalls({
       ...record,
       function: encryptFunctionCall({
         functionCall,
-        modelKey,
+        encrypt,
         encryptArguments: true,
       }),
     };
@@ -431,13 +450,13 @@ function encryptFunctionToolCalls({
 
 type EncryptFunctionCallParams = {
   readonly functionCall: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
   readonly encryptArguments: boolean;
 };
 
 function encryptFunctionCall({
   functionCall,
-  modelKey,
+  encrypt,
   encryptArguments,
 }: EncryptFunctionCallParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...functionCall };
@@ -445,14 +464,14 @@ function encryptFunctionCall({
     source: functionCall,
     target: encrypted,
     field: 'name',
-    modelKey,
+    encrypt,
   });
   if (encryptArguments) {
     encryptStringField({
       source: functionCall,
       target: encrypted,
       field: 'arguments',
-      modelKey,
+      encrypt,
     });
   }
   return encrypted;
@@ -462,31 +481,19 @@ type EncryptStringFieldParams = {
   readonly source: SecureChatJsonObject;
   readonly target: SecureChatJsonObject;
   readonly field: string;
-  readonly modelKey: E2eeModelKey;
+  readonly encrypt: (plaintext: string) => string;
 };
 
 function encryptStringField({
   source,
   target,
   field,
-  modelKey,
+  encrypt,
 }: EncryptStringFieldParams): void {
   const value = source[field];
   if (typeof value === 'string') {
-    target[field] = encryptText({ plaintext: value, modelKey });
+    target[field] = encrypt(value);
   }
-}
-
-type EncryptTextParams = {
-  readonly plaintext: string;
-  readonly modelKey: E2eeModelKey;
-};
-
-function encryptText({ plaintext, modelKey }: EncryptTextParams): string {
-  return encryptE2eeText({
-    plaintext,
-    modelKey,
-  });
 }
 
 type DecryptResponseChoiceParams = {
