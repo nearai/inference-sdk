@@ -7,7 +7,7 @@ signature verification.
 
 ## Build and install
 
-Requires Go **1.25.8+**. The module includes the pinned DCAP verifier as an
+Requires Go **1.26.10+**. The module includes the pinned DCAP verifier as an
 embedded WebAssembly artifact, executed locally with wazero. Users do not need
 Rust, CGO, a C compiler, a native library, or linker environment variables.
 There is no Node.js or Python runtime dependency. `CGO_ENABLED=0` and ordinary

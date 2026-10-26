@@ -411,7 +411,8 @@ names, timestamps, signing algorithms, or the signature kind.
 
 ## Policy and trust roots
 
-The default policy accepts `TcbStatus::UpToDate` and `TcbStatus::OutOfDate`.
+The default policy accepts `TcbStatus::UpToDate`, `TcbStatus::OutOfDate`, and
+`TcbStatus::TdRelaunchAdvised`.
 Model GPU evidence is verified when supplied; reports without it are accepted
 by default. Set `ModelAttestationPolicy { gpu_evidence:
 GpuEvidenceRequirement::Required, ..Default::default() }` when GPU evidence is

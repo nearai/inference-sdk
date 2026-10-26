@@ -166,6 +166,10 @@ pub enum TcbStatus {
     OutOfDate,
     #[serde(rename = "OutOfDateConfigurationNeeded")]
     OutOfDateConfigurationNeeded,
+    #[serde(rename = "TDRelaunchAdvised")]
+    TdRelaunchAdvised,
+    #[serde(rename = "TDRelaunchAdvisedConfigurationNeeded")]
+    TdRelaunchAdvisedConfigurationNeeded,
     #[serde(rename = "Revoked")]
     Revoked,
     #[serde(rename = "Unknown")]
@@ -211,7 +215,7 @@ pub trait DeploymentVerifier: Send + Sync {
 /// TCB statuses accepted during attestation verification.
 #[derive(Clone, Debug, Default)]
 pub struct AttestationPolicy {
-    /// Defaults to `UpToDate` and `OutOfDate` when omitted.
+    /// Defaults to `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised` when omitted.
     pub accepted_tcb_statuses: Option<Vec<TcbStatus>>,
 }
 
