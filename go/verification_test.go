@@ -294,18 +294,38 @@ func TestDefaultQuoteVerifierRejectsMalformedQuote(t *testing.T) {
 	requireCode(t, e, "quote.verification_failed")
 }
 
-func TestUnknownTCBRequiresExplicitAcceptance(t *testing.T) {
-	a, q, _ := attestationFixture(t, Ed25519)
-	q.TCBStatus = "Unknown"
-	options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-	binding := ClientBinding{Nonce: a.Nonce}
+func TestTCBPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		status            string
+		acceptedByDefault bool
+	}{
+		{"OutOfDate", true},
+		{"TDRelaunchAdvised", true},
+		{"TDRelaunchAdvisedConfigurationNeeded", false},
+		{"Unknown", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			a, q, _ := attestationFixture(t, Ed25519)
+			q.TCBStatus = tc.status
+			options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
+			binding := ClientBinding{Nonce: a.Nonce}
 
-	_, err := VerifyModelAttestation(context.Background(), a, binding, options)
-	requireCode(t, err, "policy.tcb_status_not_allowed")
-
-	options.Policy.AcceptedTCBStatuses = []string{"Unknown"}
-	if _, err := VerifyModelAttestation(context.Background(), a, binding, options); err != nil {
-		t.Fatal(err)
+			_, err := VerifyModelAttestation(context.Background(), a, binding, options)
+			if tc.acceptedByDefault {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				requireCode(t, err, "policy.tcb_status_not_allowed")
+			}
+			options.Policy.AcceptedTCBStatuses = []string{tc.status}
+			if _, err := VerifyModelAttestation(context.Background(), a, binding, options); err != nil {
+				t.Fatal(err)
+			}
+			options.Policy.AcceptedTCBStatuses = []string{"UpToDate"}
+			_, err = VerifyModelAttestation(context.Background(), a, binding, options)
+			requireCode(t, err, "policy.tcb_status_not_allowed")
+		})
 	}
 }
 

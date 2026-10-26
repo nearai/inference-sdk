@@ -10,7 +10,11 @@ use crate::types::{
     TdxQuoteVerificationResult, TdxQuoteVerifier,
 };
 
-const DEFAULT_ACCEPTED_TCB_STATUSES: [TcbStatus; 2] = [TcbStatus::UpToDate, TcbStatus::OutOfDate];
+const DEFAULT_ACCEPTED_TCB_STATUSES: [TcbStatus; 3] = [
+    TcbStatus::UpToDate,
+    TcbStatus::OutOfDate,
+    TcbStatus::TdRelaunchAdvised,
+];
 
 pub(crate) struct VerifiedDstackQuote<'a> {
     pub attestation: &'a AttestationEvidence,

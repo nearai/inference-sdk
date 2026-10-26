@@ -96,11 +96,11 @@ fn accepts_an_ethereum_personal_signature() {
         format!("\x19Ethereum Signed Message:\n{}", signed_text.len()).into_bytes();
     personal_message.extend_from_slice(signed_text.as_bytes());
     let digest = sha3::Keccak256::digest(personal_message);
-    let (signature, recovery_id) = signing_key.sign_prehash_recoverable(&digest).unwrap();
+    let (signature, recovery_id) = signing_key.sign_prehash_recoverable(&digest);
     let mut signature_bytes = signature.to_bytes().to_vec();
     signature_bytes.push(u8::from(recovery_id) + 27);
 
-    let public_key = signing_key.verifying_key().to_encoded_point(false);
+    let public_key = signing_key.verifying_key().to_sec1_point(false);
     let public_key_hash = sha3::Keccak256::digest(&public_key.as_bytes()[1..]);
     let signer = SigningIdentity {
         signing_algo: SigningAlgo::Ecdsa,

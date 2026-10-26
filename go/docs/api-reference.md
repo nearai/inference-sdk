@@ -431,7 +431,7 @@ Successful verification does not automatically discard its retained record.
 ## Verification guarantees
 
 All returned model reports must verify, including instances sharing a signer.
-By default, only `UpToDate` and `OutOfDate` TCB states are accepted. An explicitly
+By default, `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised` TCB states are accepted. An explicitly
 empty `AcceptedTCBStatuses` rejects all states. Debug-enabled quotes are rejected.
 Quote report data binds the client nonce and signer, plus the Gateway's SPKI
 fingerprint when requested. The SDK replays RTMR3 events and checks the hash of
