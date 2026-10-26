@@ -2,6 +2,7 @@ package nearai
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,6 +18,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 // AttestationClient fetches evidence without making any claim that it is verified.
@@ -90,6 +93,39 @@ func readBounded(r io.Reader, limit int64) ([]byte, error) {
 	return b, e
 }
 
+// Decode before capturing signed bytes or applying response size limits.
+func decodeResponse(res *http.Response) error {
+	var reader io.Reader
+	switch strings.ToLower(strings.TrimSpace(res.Header.Get("Content-Encoding"))) {
+	case "gzip":
+		var err error
+		reader, err = gzip.NewReader(res.Body)
+		if err != nil {
+			return err
+		}
+	case "br":
+		reader = brotli.NewReader(res.Body)
+	default:
+		return nil
+	}
+	res.Body = struct {
+		io.Reader
+		io.Closer
+	}{reader, res.Body}
+	res.Header.Del("Content-Encoding")
+	res.Header.Del("Content-Length")
+	res.ContentLength = -1
+	res.Uncompressed = true
+	return nil
+}
+
+func readResponseBounded(res *http.Response, limit int64) ([]byte, error) {
+	if err := decodeResponse(res); err != nil {
+		return nil, err
+	}
+	return readBounded(res.Body, limit)
+}
+
 func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
@@ -113,7 +149,7 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 			Retryable: res.StatusCode == 408 || res.StatusCode == 425 || res.StatusCode == 429 || res.StatusCode >= 500,
 		}
 	}
-	b, e := readBounded(res.Body, 16<<20)
+	b, e := readResponseBounded(res, 16<<20)
 	if e != nil {
 		return nil, "", e
 	}

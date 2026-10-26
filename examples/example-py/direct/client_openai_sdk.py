@@ -17,7 +17,7 @@ async def run_non_streaming_example(
     completion = await openai_client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
     )
     print(completion.choices[0].message.content or '')
     verified = await direct_client.verify_response(completion.id)
@@ -30,7 +30,7 @@ async def run_streaming_example(
     stream = await openai_client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
         stream=True,
     )
     completion_id = None

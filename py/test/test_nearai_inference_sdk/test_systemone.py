@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 
+import brotli
 import httpx
 import pytest
 from eth_account.messages import encode_defunct
@@ -69,7 +70,7 @@ class DecisionGateway(Gateway):
         }
         self.requests = []
         self.response_fault = None
-        self.negotiate_compression = False
+        self.response_encoding = None
         self.decision_id = None
         self.body_id = None
         self.answers = None
@@ -151,12 +152,6 @@ class DecisionGateway(Gateway):
         response_body = json.dumps(body).encode()
         if self.response_fault == 'json':
             response_body = b'not JSON'
-        compressed = self.response_fault == 'encoding' or (
-            self.negotiate_compression
-            and request.headers.get('accept-encoding') != 'identity'
-        )
-        if compressed:
-            response_body = gzip.compress(response_body)
         signed_text = (
             hashlib.sha256(request.content).hexdigest()
             + ':'
@@ -184,11 +179,19 @@ class DecisionGateway(Gateway):
         }
         if self.response_fault == 'tamper':
             response_body = response_body.replace(b'0.9', b'0.5')
+        if self.response_encoding == 'gzip':
+            response_body = gzip.compress(response_body)
+        elif self.response_encoding == 'br':
+            response_body = brotli.compress(response_body)
         return httpx.Response(
             200,
             content=response_body,
             headers={
-                **({'content-encoding': 'gzip'} if compressed else {}),
+                **(
+                    {'content-encoding': self.response_encoding}
+                    if self.response_encoding
+                    else {}
+                ),
                 'x-signature-id'
                 if self.response_fault == 'id'
                 else 'x-generation-id': decision_id,
@@ -334,14 +337,16 @@ async def test_decisions_verify_exact_bytes_with_the_selected_signer(
         assert name not in sent.headers
 
 
-async def test_forces_identity_encoding_to_preserve_signed_response_bytes(monkeypatch):
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
+async def test_decoded_response_verifies_exact_json_bytes(monkeypatch, encoding):
     gateway = DecisionGateway()
-    gateway.negotiate_compression = True
+    gateway.response_encoding = encoding
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
         result = await client.systemone.create(
             REQUEST, headers={'Accept-Encoding': 'gzip'}
         )
+        assert result.data['answers']['useful']['noul'] == 0.9
         receipt = await client.verify_response(result.decision_id)
         assert receipt.id == result.decision_id
     assert gateway.requests[0].headers['accept-encoding'] == 'identity'
@@ -365,21 +370,6 @@ async def test_receipt_can_retry_without_repeating_inference(monkeypatch):
         assert verified.signature_kind == 'gateway'
     assert len(gateway.requests) == 1
     assert gateway.signature_requests == 2
-
-
-async def test_rejects_compression_when_identity_was_requested(monkeypatch):
-    gateway = DecisionGateway()
-    gateway.response_fault = 'encoding'
-    gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client:
-        with pytest.raises(ApiError, match='api.invalid_response') as raised:
-            await client.systemone.create(REQUEST)
-        assert (
-            raised.value.failure.details['path'] == 'response.headers.content-encoding'
-        )
-        with pytest.raises(ApiError, match='api.completion_not_found'):
-            await client.verify_response('systemone-1')
-    assert len(gateway.requests) == 1
 
 
 async def test_cancelled_waiter_does_not_stick_a_retryable_receipt_failure(monkeypatch):
@@ -504,8 +494,12 @@ async def test_response_cleanup_preserves_the_primary_error(monkeypatch, fault, 
     assert len(gateway.requests) == 1
 
 
-async def test_tampered_decision_response_fails_receipt_verification(monkeypatch):
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
+async def test_tampered_decision_response_fails_receipt_verification(
+    monkeypatch, encoding
+):
     gateway = DecisionGateway()
+    gateway.response_encoding = encoding
     gateway.response_fault = 'tamper'
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:

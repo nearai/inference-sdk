@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -23,6 +24,7 @@ type fakeCloud struct {
 	expectedHost    string
 	encrypt         bool
 	streamBody      string
+	encoding        string
 	t               *testing.T
 	a               Attestation
 	q               QuoteVerificationResult
@@ -200,7 +202,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.tamper {
 			reply = strings.ReplaceAll(reply, "answer", "altered")
 		}
-		io.WriteString(w, reply)
+		writeEncodedResponse(f.t, w, []byte(reply), f.encoding)
 	case strings.Contains(r.URL.Path, "/signature/"):
 		f.signatureCalls.Add(1)
 		if status := f.signatureStatus.Load(); status != 0 {
@@ -307,6 +309,34 @@ func TestClientPreflightAndSignature(t *testing.T) {
 		}
 	}
 }
+func TestClientCompressedResponses(t *testing.T) {
+	for _, encoding := range []string{"gzip", "br"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(encoding+"/stream="+fmt.Sprint(stream), func(t *testing.T) {
+				f := newFakeCloud(t)
+				f.encoding, f.stream = encoding, stream
+				c, _ := fakeClient(t, f, nil)
+				body, _ := json.Marshal(chatRequest())
+				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+				res, err := c.HTTPClient().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer res.Body.Close()
+				if _, err = io.ReadAll(res.Body); err != nil {
+					t.Fatal(err)
+				}
+				if res.Header.Get("Content-Encoding") != "" || res.Header.Get("Content-Length") != "" {
+					t.Fatal("decoded response retained compressed headers")
+				}
+				if _, err = c.VerifyResponse(context.Background(), "chat-1"); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
@@ -493,18 +523,22 @@ func TestPinnedTLSRejectsBeforeSending(t *testing.T) {
 	}
 }
 func TestUnconsumedStreamCannotVerify(t *testing.T) {
-	f := newFakeCloud(t)
-	f.stream = true
-	c, _ := fakeClient(t, f, nil)
-	body, _ := json.Marshal(chatRequest())
-	req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
-	res, e := c.HTTPClient().Do(req)
-	if e != nil {
-		t.Fatal(e)
+	for _, encoding := range []string{"", "gzip", "br"} {
+		t.Run(encoding, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.stream, f.encoding = true, encoding
+			c, _ := fakeClient(t, f, nil)
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+			res, e := c.HTTPClient().Do(req)
+			if e != nil {
+				t.Fatal(e)
+			}
+			res.Body.Close()
+			_, e = c.VerifyResponse(context.Background(), "chat-1")
+			requireCode(t, e, "api.completion_not_found")
+		})
 	}
-	res.Body.Close()
-	_, e = c.VerifyResponse(context.Background(), "chat-1")
-	requireCode(t, e, "api.completion_not_found")
 }
 
 func TestSuccessfulE2EEInference(t *testing.T) {

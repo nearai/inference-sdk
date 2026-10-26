@@ -317,14 +317,14 @@ async def decide(api_key: str, model: str) -> None:
 ```
 
 Use a canonical Jev model ID from your endpoint's catalog. System One accepts
-uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, compression
+uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, request compression
 and automatic inference retries disabled. Multipart uploads and other official
 SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
 receipt lookups through `verify_response(receipt_id)`.
 
 Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
 than the official SDK's upstream `request_id`. The official SDK parses the
-response; the NEAR client verifies the captured wire bytes. Self-hosted models
+response; the NEAR client verifies the captured JSON bytes. Self-hosted models
 route to the preselected attested public key, and external models use Gateway
 receipts. Closing the official client closes its borrowed adapter; keep the
 owning `InferenceClient` open until verification finishes.

@@ -66,10 +66,12 @@ async def test_official_box_with_openrouter_image_parts(monkeypatch):
 
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
 async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
-    monkeypatch, kind, signing_algo
+    monkeypatch, kind, signing_algo, encoding
 ):
     gateway = DecisionGateway(signing_algo, kind)
+    gateway.response_encoding = encoding
     gateway.body_id = 'not-the-receipt-id'
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
@@ -80,7 +82,10 @@ async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
             assert first.scores['quality'].score == 1
             first.answers.clear()  # Parsed data is separate from signed bytes.
         for result in (first, second):
-            receipt_id = result.raw_http_response.headers['x-generation-id']
+            response = result.raw_http_response
+            assert 'content-encoding' not in response.headers
+            assert int(response.headers['content-length']) == len(response.content)
+            receipt_id = response.headers['x-generation-id']
             verified = await client.verify_response(receipt_id)
             assert verified.id == receipt_id
             assert verified.signature_kind == kind
@@ -106,6 +111,7 @@ async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
     monkeypatch, fault
 ):
     gateway = DecisionGateway(kind='provider_tee')
+    gateway.response_encoding = 'br'
     gateway.response_fault = 'tamper' if fault == 'tamper' else None
     gateway.use_alternate_signer = fault == 'signer'
     gateway.install(monkeypatch)
@@ -118,7 +124,7 @@ async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
     assert len(gateway.requests) == 1
 
 
-@pytest.mark.parametrize('fault', ['status', 'id', 'encoding'])
+@pytest.mark.parametrize('fault', ['status', 'id'])
 async def test_official_sdk_does_not_retry_failed_decisions(monkeypatch, fault):
     gateway = DecisionGateway()
     gateway.response_fault = fault
