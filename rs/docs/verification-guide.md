@@ -66,7 +66,7 @@ not yet signature-verified. `bytes()` and `json()` fully consume the body; use
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 
-### Cache lifetime and limits
+### Cache lifetime
 
 Both caches default to 60 minutes. `attestation_cache_ttl = Duration::ZERO`
 disables reuse of completed deployment checks. `verify()` results contain Unix
@@ -75,18 +75,16 @@ retain their original evidence even if the deployment cache expires or refreshes
 
 The response TTL begins after successful full-body consumption. Receipt lookups
 and new records prune expired entries; dropping all client clones and responses
-releases state. `max_cache_entries` defaults to 1024 for each completed cache
-and also bounds concurrent preverification. At capacity, completed caches evict
-the oldest entry. `max_response_bytes` defaults to 64 MiB; exceeding it fails
-closed. `max_receipt_cache_bytes` defaults to 64 MiB total for retained request
-and response bytes, for both Gateway and direct clients. Oldest receipts are
-evicted until a new receipt fits; a single receipt exceeding this budget fails
-body consumption. Verification shares these byte buffers rather than copying them.
-This budget covers cached payloads, not in-flight requests/responses, active
-verification holding an evicted receipt, or evidence/metadata overhead.
-Set suitable limits for your workload. A missing, expired, evicted, or
-incomplete completion yields `api.completion_not_found`. A duplicate retained
-completion ID is rejected instead of replacing its original bytes.
+releases state. Verification shares the retained byte buffers rather than copying
+them. Cache memory grows with the responses retained during the TTL; choose a
+retention period appropriate for your workload.
+
+`max_response_bytes` defaults to 64 MiB per captured response; exceeding it fails
+closed.
+
+A missing, expired, or incomplete completion yields `api.completion_not_found`.
+A duplicate retained completion ID is rejected instead of replacing its original
+bytes.
 
 ### Verification policies and TLS
 

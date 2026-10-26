@@ -589,9 +589,8 @@ caller-supplied HTTP clients and transports remain caller-owned.
 Attestation reuse and response retention default to one hour. Set `AttestationTTL`
 or `ResponseTTL` to a duration pointer to customize them. Pointer-to-zero disables
 the corresponding cache; disabling response retention prevents later receipt
-verification. Expired or evicted receipts cannot be verified. Check the
-[cache limits](./api-reference.md#clients-and-lifecycle) when sizing services that
-retain large or streaming completions.
+verification. Expired receipts cannot be verified. See
+[client lifecycle](./api-reference.md#clients-and-lifecycle) for retention behavior.
 
 ## Handle errors
 

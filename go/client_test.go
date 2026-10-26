@@ -482,7 +482,7 @@ func TestSharedVerificationCancellation(t *testing.T) {
 func TestZeroTTLAndResponseExpiry(t *testing.T) {
 	f := newFakeCloud(t)
 	zero := time.Duration(0)
-	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero; o.MaxReceiptCacheBytes = 1 })
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero })
 	for i := 0; i < 2; i++ {
 		if _, e := c.Verify(context.Background(), "canonical/model"); e != nil {
 			t.Fatal(e)
@@ -656,8 +656,8 @@ func TestVerificationRetriesTransientSignatureStatus(t *testing.T) {
 	}
 }
 
-func TestReceiptCacheBudgetAndEviction(t *testing.T) {
-	c, err := NewInferenceClient(InferenceOptions{MaxCacheEntries: 2, MaxReceiptCacheBytes: 12})
+func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
+	c, err := NewInferenceClient(InferenceOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,35 +667,34 @@ func TestReceiptCacheBudgetAndEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 	request[0], response[0] = 'X', 'X'
-	if string(c.responses["first"].request) != "req" || string(c.responses["first"].response) != "res" {
+	c.mu.Lock()
+	first := c.responses["first"]
+	c.mu.Unlock()
+	if string(first.request) != "req" || string(first.response) != "res" {
 		t.Fatal("caller mutated retained receipt")
 	}
-	if err = c.register("second", []byte("req"), []byte("res"), nil, false); err != nil {
-		t.Fatal(err)
+	// New completions keep earlier receipts available until their TTL expires.
+	for i := 0; i < 128; i++ {
+		if err = c.register(fmt.Sprint(i), []byte("req"), []byte("res"), nil, false); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// An oversized new receipt must not evict either retained receipt.
-	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil, false), "api.body_too_large")
-	if len(c.responses) != 2 {
-		t.Fatal("oversized receipt evicted records")
+	c.mu.Lock()
+	retained := c.responses["first"] != nil && len(c.responses) == 129
+	for _, record := range c.responses {
+		record.expires = time.Now().Add(-time.Second)
 	}
-	if err = c.register("third", []byte("req"), []byte("res"), nil, false); err != nil {
-		t.Fatal(err)
+	c.mu.Unlock()
+	if !retained {
+		t.Fatal("unexpired receipts were discarded")
 	}
-	if c.responses["first"] != nil || len(c.responses) != 2 {
-		t.Fatal("oldest receipt was not evicted")
-	}
-	// Count alone is insufficient: this receipt fills the entire byte budget.
-	if err = c.register("full", []byte("123456"), []byte("123456"), nil, false); err != nil {
-		t.Fatal(err)
-	}
-	if len(c.responses) != 1 || c.responses["full"] == nil {
-		t.Fatal("combined byte budget exceeded")
-	}
-	c.responses["full"].expires = time.Now().Add(-time.Second)
 	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(c.responses) != 1 {
+	c.mu.Lock()
+	remaining := len(c.responses)
+	c.mu.Unlock()
+	if remaining != 1 {
 		t.Fatal("expired receipt retained")
 	}
 }

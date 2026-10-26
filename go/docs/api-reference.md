@@ -55,11 +55,9 @@ semantics, streaming, and supported privacy options.
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
 | `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
-| `MaxCacheEntries` | Zero selects 128 entries for each cache. |
-| `MaxReceiptCacheBytes` | Zero selects 64 MiB combined retained request/response bytes. |
 
-Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
-for eviction, cancellation, and retention behavior.
+Negative body size limits are invalid. See [lifecycle](#clients-and-lifecycle)
+for cancellation and retention behavior.
 
 ## System One decisions
 
@@ -375,10 +373,6 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
 	MaxBodyBytes int64
-	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
-	MaxCacheEntries int
-	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
-	MaxReceiptCacheBytes int64
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
@@ -425,13 +419,8 @@ without replaying the completion.
 
 `MaxBodyBytes` defaults to 64 MiB for each buffered Chat request/response. Streaming
 is incremental, but signature verification requires retaining the wire body.
-`MaxReceiptCacheBytes` defaults to 64 MiB for the combined request and response
-bytes across retained receipts. `MaxCacheEntries` defaults to 128 for both
-completed preflight sessions and receipts. Oldest entries are evicted to admit
-new ones; evicted receipt IDs cannot be verified later. A single receipt exceeding
-the byte budget fails with `api.body_too_large` before any existing receipt is evicted.
-These cache limits do not bound concurrent requests or records held by active callers.
-Select shorter retention and smaller limits for memory-constrained services.
+Cache memory grows with the responses retained during the TTL. Select shorter
+retention for services that process many or large completions.
 Successful verification does not automatically discard its retained record.
 
 ## Verification guarantees
