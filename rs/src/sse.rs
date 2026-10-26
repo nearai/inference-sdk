@@ -104,6 +104,19 @@ fn data(line: &str) -> Option<&str> {
             .map(|s| s.strip_prefix(' ').unwrap_or(s))
     }
 }
+fn event_name<'a>(lines: &[(&'a str, &str)]) -> Option<&'a str> {
+    lines
+        .iter()
+        .filter_map(|(line, _)| {
+            if *line == "event" {
+                Some("")
+            } else {
+                line.strip_prefix("event:")
+                    .map(|name| name.strip_prefix(' ').unwrap_or(name))
+            }
+        })
+        .next_back()
+}
 pub(crate) fn transform(
     record: &[u8],
     key: Option<&ResponseKey>,
@@ -118,10 +131,7 @@ pub(crate) fn transform(
     if values.is_empty()
         || joined.is_empty()
         || joined == "[DONE]"
-        || lines.iter().any(|(s, _)| {
-            s.strip_prefix("event:")
-                .is_some_and(|e| e.trim() == "error")
-        })
+        || event_name(&lines) == Some("error")
     {
         return Ok(record.to_vec());
     }
@@ -198,6 +208,10 @@ impl MessageStreamState {
             .filter_map(|(line, _)| data(line))
             .collect::<Vec<_>>()
             .join("\n");
+        let name = event_name(&lines);
+        if name == Some("error") {
+            return Err(invalid_response().into());
+        }
         if joined.is_empty() {
             return Ok(());
         }
@@ -205,10 +219,8 @@ impl MessageStreamState {
         let kind = event["type"].as_str();
         if self.stopped
             || kind == Some("error")
-            || lines.iter().any(|(line, _)| {
-                line.strip_prefix("event:")
-                    .is_some_and(|name| Some(name.trim()) != kind)
-            })
+            || kind.is_none_or(str::is_empty)
+            || name.is_some_and(|name| Some(name) != kind)
         {
             return Err(invalid_response().into());
         }

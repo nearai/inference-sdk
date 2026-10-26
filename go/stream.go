@@ -56,19 +56,27 @@ func (s *sseReader) record() ([]byte, error) {
 }
 
 func sseData(record []byte) (string, string) {
+	data, event, _ := sseFields(record)
+	return data, event
+}
+
+func sseFields(record []byte) (string, string, bool) {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(record), "\r\n", "\n"), "\r", "\n")
 	var data []string
 	event := ""
+	hasEvent := false
 	for _, line := range strings.Split(text, "\n") {
 		if line == "data" {
 			data = append(data, "")
 		} else if strings.HasPrefix(line, "data:") {
 			data = append(data, strings.TrimPrefix(line[5:], " "))
+		} else if line == "event" {
+			event, hasEvent = "", true
 		} else if strings.HasPrefix(line, "event:") {
-			event = strings.TrimPrefix(line[6:], " ")
+			event, hasEvent = strings.TrimPrefix(line[6:], " "), true
 		}
 	}
-	return strings.Join(data, "\n"), event
+	return strings.Join(data, "\n"), event, hasEvent
 }
 
 func completeSSERecord(record []byte) bool {
@@ -103,7 +111,34 @@ func (s *sseReader) Read(p []byte) (int, error) {
 				return 0, e
 			}
 		}
-		if data == "[DONE]" || (s.terminal != nil && s.terminal(record)) {
+		if s.terminal != nil && s.terminal(record) {
+			// Messages clients may stop reading at message_stop. Validate all
+			// remaining records and OHTTP frames before exposing that event.
+			for {
+				tail, err := s.record()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					s.ended = true
+					return 0, err
+				}
+				if s.transform != nil {
+					tail, err = s.transform(tail)
+					if err != nil {
+						s.ended = true
+						return 0, err
+					}
+				}
+				record = append(record, tail...)
+			}
+			s.ended = true
+			if s.finish != nil {
+				if err := s.finish(); err != nil {
+					return 0, err
+				}
+			}
+		} else if data == "[DONE]" {
 			// Authenticate trailing OHTTP frames before exposing completion.
 			if _, e = io.Copy(io.Discard, s.reader); e == nil && s.finish != nil {
 				e = s.finish()

@@ -1974,3 +1974,44 @@ async fn messages_dropped_stream_has_no_receipt() {
     );
     assert_eq!(f.chat.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn messages_stream_contract() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../test-fixtures/messages/streams.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let raw = case["body"].as_str().unwrap().as_bytes().to_vec();
+        let (_server, fixture, options) = setup(Fixture {
+            response_body: Some(raw.clone()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let response = client
+            .send(client.message_request(message_request_body(true)).unwrap())
+            .await
+            .unwrap();
+        let body = response.bytes().await;
+        if case["valid"].as_bool().unwrap() {
+            assert_eq!(body.unwrap(), raw, "{}", case["name"]);
+            client.verify_response("msg_fixture").await.unwrap();
+        } else {
+            assert_eq!(
+                body.unwrap_err().code(),
+                "api.invalid_response",
+                "{}",
+                case["name"]
+            );
+            assert_eq!(
+                client
+                    .verify_response("msg_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found"
+            );
+            assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+        }
+        assert_eq!(fixture.chat.load(Ordering::SeqCst), 1);
+    }
+}

@@ -256,3 +256,46 @@ func TestMessagesCloseBeforeCompletion(t *testing.T) {
 		t.Fatal("inference replayed")
 	}
 }
+
+// Exercise signed fixtures through the public transport and receipt API.
+func TestMessagesStreamContract(t *testing.T) {
+	raw, err := os.ReadFile("testdata/messages/streams.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name, Body string
+		Valid      bool
+	}
+	if err = json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range cases {
+		t.Run(scenario.Name, func(t *testing.T) {
+			client, fixture := messagesClient(t, true, nil)
+			fixture.raw = []byte(scenario.Body)
+			body, err := sendMessage(t, client, true)
+			if scenario.Valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(body, fixture.raw) {
+					t.Fatal("response bytes changed")
+				}
+				if _, err = client.VerifyResponse(context.Background(), "msg_fixture"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				requireCode(t, err, "api.invalid_response")
+				_, err = client.VerifyResponse(context.Background(), "msg_fixture")
+				requireCode(t, err, "api.completion_not_found")
+				if fixture.cloud.signatureCalls.Load() != 0 {
+					t.Fatal("invalid stream fetched a receipt")
+				}
+			}
+			if fixture.cloud.chats.Load() != 1 {
+				t.Fatal("inference replayed")
+			}
+		})
+	}
+}

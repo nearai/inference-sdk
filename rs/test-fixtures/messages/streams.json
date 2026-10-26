@@ -1,0 +1,167 @@
+[
+  {
+    "name": "standard",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "no_event_headers",
+    "body": "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "last_event_wins",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: ping\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "one_optional_space",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent:message_stop\ndata:{\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "multiline_data",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\ndata: \"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "crlf",
+    "body": "event: message_start\r\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\r\n\r\nevent: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n",
+    "valid": true
+  },
+  {
+    "name": "lone_cr",
+    "body": "event: message_start\rdata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\r\revent: message_stop\rdata: {\"type\":\"message_stop\"}\r\r",
+    "valid": true
+  },
+  {
+    "name": "trailing_comment",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n: heartbeat 🌍\n\n",
+    "valid": true
+  },
+  {
+    "name": "empty_event",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent:\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "bare_event_override",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\nevent\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "trailing_event_space",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop \ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "extra_event_space",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent:  message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "mismatched_event",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: ping\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "header_only_error",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: error\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "error_after_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\nevent: error\ndata: {\"type\":\"error\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "malformed_after_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\ndata: not-json\n\n",
+    "valid": false
+  },
+  {
+    "name": "data_after_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\ndata: {\"type\":\"ping\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "done_is_not_a_message",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: [DONE]\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "truncated_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}",
+    "valid": false
+  },
+  {
+    "name": "unterminated_record",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n",
+    "valid": false
+  },
+  {
+    "name": "truncated_tail",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n: tail",
+    "valid": false
+  },
+  {
+    "name": "missing_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\n",
+    "valid": false
+  },
+  {
+    "name": "missing_start",
+    "body": "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "duplicate_start",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "missing_id",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "missing_type",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: {}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "non_object",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: null\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "header_only_error_after_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\nevent: error\n\n",
+    "valid": false
+  },
+  {
+    "name": "empty_data_error_after_stop",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\nevent: error\ndata:\n\n",
+    "valid": false
+  },
+  {
+    "name": "empty_events_start_and_stop",
+    "body": "event:\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent:\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "bare_events_start_and_stop",
+    "body": "event\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "last_event_overrides_error",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: error\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "last_event_is_error",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\nevent: error\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  }
+]

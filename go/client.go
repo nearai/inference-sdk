@@ -559,7 +559,10 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	failed := false
 	messageStarted, messageStopped := false, false
 	transform := func(record []byte) ([]byte, error) {
-		data, event := sseData(record)
+		data, event, hasEvent := sseFields(record)
+		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
+			return nil, failure("api.invalid_response", nil)
+		}
 		if event == "error" {
 			failed = true
 		}
@@ -573,7 +576,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			if messages {
 				kind, _ := obj["type"].(string)
-				if (event != "" && event != kind) || messageStopped || !completeSSERecord(record) {
+				if kind == "" || (hasEvent && event != kind) || messageStopped {
 					return nil, failure("api.invalid_response", nil)
 				}
 				if kind == "error" {
