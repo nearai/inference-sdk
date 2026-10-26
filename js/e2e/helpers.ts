@@ -41,10 +41,12 @@ export async function retryReceipt<T>(
   return lookup();
 }
 
-export function selectedModels(endpoint: 'chat' | 'systemone' | 'responses'): {
+export function selectedModels(
+  endpoint: 'chat' | 'systemone' | 'responses' | 'messages',
+): {
   id: string;
   provider: 'near' | 'chutes' | 'external';
-  endpoint: 'chat' | 'systemone' | 'responses';
+  endpoint: 'chat' | 'systemone' | 'responses' | 'messages';
 }[] {
   const models = JSON.parse(requiredEnv('NEARAI_E2E_MODELS'));
   return models.filter(

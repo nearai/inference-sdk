@@ -1,4 +1,5 @@
 mod integrated;
+mod messages;
 mod responses;
 mod systemone;
 
@@ -50,9 +51,14 @@ fn select_models(json: &str, endpoint: &str) -> Result<Vec<LiveModel>, serde_jso
 fn selects_models_by_endpoint() {
     let json = r#"[
         {"id":"near/chat","provider":"near","endpoint":"chat"},
-        {"id":"typesafe/decision","provider":"external","endpoint":"systemone"}
+        {"id":"typesafe/decision","provider":"external","endpoint":"systemone"},
+        {"id":"anthropic/text","provider":"external","endpoint":"messages"}
     ]"#;
-    for (endpoint, id) in [("chat", "near/chat"), ("systemone", "typesafe/decision")] {
+    for (endpoint, id) in [
+        ("chat", "near/chat"),
+        ("systemone", "typesafe/decision"),
+        ("messages", "anthropic/text"),
+    ] {
         let models = select_models(json, endpoint).unwrap();
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, id);
