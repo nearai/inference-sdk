@@ -37,7 +37,7 @@ async function runNonStreamingExample(
   const completion = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 128,
+    max_completion_tokens: 1024,
   });
   console.log(completion.choices[0]?.message.content ?? '');
 
@@ -54,7 +54,7 @@ async function runStreamingExample(
   const stream = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 128,
+    max_completion_tokens: 1024,
     stream: true,
   });
 

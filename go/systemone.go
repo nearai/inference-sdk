@@ -240,7 +240,7 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if id == "" {
 		return result, detail("api.invalid_response", "resource", "systemone.x-generation-id")
 	}
-	wire, err := readBounded(res.Body, c.maxBody)
+	wire, err := readResponseBounded(res, c.maxBody)
 	if err != nil {
 		var sdk *Error
 		if errors.As(err, &sdk) {

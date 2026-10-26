@@ -260,6 +260,9 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if strings.ToLower(strings.TrimSpace(strings.Split(res.Header.Get("Content-Type"), ";")[0])) != "message/ohttp-chunked-res" {
 		return fail(fmt.Errorf("invalid content type"))
 	}
+	if e = decodeResponse(res); e != nil {
+		return fail(e)
+	}
 	encrypted := bufio.NewReader(res.Body)
 	responseNonce, e := exact(encrypted, 16, 16)
 	if e != nil {
