@@ -1,6 +1,8 @@
 package nearai
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"io"
@@ -9,7 +11,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/andybalholm/brotli"
 )
+
+func writeEncodedResponse(t *testing.T, w http.ResponseWriter, body []byte, encoding string) {
+	t.Helper()
+	if encoding != "" {
+		var compressed bytes.Buffer
+		var writer io.WriteCloser
+		if encoding == "gzip" {
+			writer = gzip.NewWriter(&compressed)
+		} else {
+			writer = brotli.NewWriter(&compressed)
+		}
+		if _, err := writer.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		body = compressed.Bytes()
+		w.Header().Set("Content-Encoding", encoding)
+		w.Header().Set("Content-Length", itoa(len(body)))
+	}
+	_, _ = w.Write(body)
+}
 
 func TestSignatureAPIErrorBoundaries(t *testing.T) {
 	for _, tt := range []struct{ body, code string }{

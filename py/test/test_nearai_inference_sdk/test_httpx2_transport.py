@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 
+import brotli
 import httpx
 import httpx2
 import pytest
@@ -136,41 +137,42 @@ async def test_stream_failure_closes_source_and_cannot_verify(
 
 
 @pytest.mark.parametrize('buffered', [False, True])
-@pytest.mark.parametrize('compressed', [False, True])
-async def test_error_responses_preserve_headers_and_reject_compression(
-    monkeypatch, buffered, compressed
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
+async def test_error_response_preserves_status_headers_and_decodes_once(
+    monkeypatch, buffered, encoding
 ):
     gateway = Gateway()
     handle = gateway.handle
     payload = b'{"error":{"message":"busy","type":"overloaded"}}'
-    wire = gzip.compress(payload) if compressed else payload
+    compressed = (
+        gzip.compress(payload) if encoding == 'gzip' else brotli.compress(payload)
+    )
 
     async def reject_chat(request):
         if request.url.path.endswith('/chat/completions'):
             return httpx.Response(
                 429,
                 headers=[
-                    ('content-encoding', 'gzip' if compressed else 'identity'),
+                    ('content-encoding', encoding),
                     ('content-type', 'application/json'),
                     ('retry-after', '3'),
                     ('x-probe', 'a'),
                     ('x-probe', 'b'),
                 ],
-                **({'content': wire} if buffered else {'stream': ChunkStream([wire])}),
+                **(
+                    {'content': compressed}
+                    if buffered
+                    else {'stream': ChunkStream([compressed])}
+                ),
             )
         return await handle(request)
 
     monkeypatch.setattr(gateway, 'handle', reject_chat)
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as owner, owner.httpx2_client as adapter:
-        pending = adapter.post(
+        response = await adapter.post(
             BASE_URL + 'chat/completions', json={'model': MODEL, 'messages': MESSAGES}
         )
-        if compressed:
-            with pytest.raises(ApiError, match='content-encoding'):
-                await pending
-            return
-        response = await pending
         assert response.status_code == 429
         assert response.content == payload
         assert response.headers['retry-after'] == '3'
@@ -317,7 +319,7 @@ async def test_raw_systemone_rejects_configured_compression(monkeypatch):
     assert gateway.headers == []
 
 
-@pytest.mark.parametrize('fault', ['status', 'id', 'encoding'])
+@pytest.mark.parametrize('fault', ['status', 'id'])
 async def test_bridge_propagates_failure_without_retry(monkeypatch, fault):
     gateway = DecisionGateway()
     gateway.response_fault = fault

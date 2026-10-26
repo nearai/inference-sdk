@@ -53,7 +53,6 @@ from .body_limit import (
     BufferedResponse,
     read_bounded_request_body,
     require_body_size,
-    require_identity_encoding,
 )
 from .chat import verify_gateway_response, verify_model_response
 from .cloud_api import (
@@ -359,8 +358,6 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 measure_e2ee_chat_request_bytes(parsed, self._signing_algo)
             )
         headers = self._request_headers(request.headers)
-        # Automatic decompression can allocate beyond the body budget before
-        # aiter_bytes() yields. Require the signed, uncompressed representation.
         headers['accept-encoding'] = 'identity'
         session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
@@ -400,11 +397,6 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 retryable=True,
                 cause=error,
             ) from error
-        try:
-            require_identity_encoding(response)
-        except ApiError:
-            await response.aclose()
-            raise
         if not response.is_success:
             return httpx.Response(
                 response.status_code,

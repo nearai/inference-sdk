@@ -29,6 +29,7 @@ impl TdxQuoteVerifier for Quote {
 type ReceiptBytes = (Vec<u8>, Vec<u8>, String);
 #[derive(Default)]
 struct Fixture {
+    response_encoding: Option<&'static str>,
     gateway: AtomicUsize,
     model: AtomicUsize,
     chat: AtomicUsize,
@@ -70,6 +71,28 @@ fn report(nonce: &str, seed: u8) -> Value {
     json!({"request_nonce":nonce,"signing_algo":"ed25519","signing_address":public,"signing_public_key":public,"intel_quote":report_data,"report_data":report_data,"event_log":[{"digest":"00".repeat(48),"imr":3}],"info":{"tcb_info":{"app_compose":APP_COMPOSE}},"model_name":"vendor/model"})
 }
 impl Fixture {
+    fn response(&self, mut response: ResponseTemplate, mut body: Vec<u8>) -> ResponseTemplate {
+        if let Some(encoding) = self.response_encoding {
+            body = match encoding {
+                "gzip" => {
+                    let mut encoder =
+                        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                    std::io::Write::write_all(&mut encoder, &body).unwrap();
+                    encoder.finish().unwrap()
+                }
+                "br" => {
+                    let mut encoded = Vec::new();
+                    brotli::BrotliCompress(&mut body.as_slice(), &mut encoded, &Default::default())
+                        .unwrap();
+                    encoded
+                }
+                _ => unreachable!(),
+            };
+            response = response.insert_header("content-encoding", encoding);
+        }
+        response.set_body_bytes(body)
+    }
+
     fn report(&self, nonce: &str, seed: u8) -> Value {
         let mut value = report(nonce, seed);
         if self.ecdsa {
@@ -227,9 +250,10 @@ impl Respond for Fixture {
                 if self.systemone_tamper {
                     wire.push(b' ');
                 }
-                ResponseTemplate::new(200)
-                    .insert_header("x-generation-id", id)
-                    .set_body_bytes(wire)
+                self.response(
+                    ResponseTemplate::new(200).insert_header("x-generation-id", id),
+                    wire,
+                )
             }
             "/v1/responses" => {
                 self.chat.fetch_add(1, Ordering::SeqCst);
@@ -325,16 +349,17 @@ impl Respond for Fixture {
                     .lock()
                     .unwrap()
                     .insert(id, (r.body.clone(), response.clone(), kind.into()));
-                ResponseTemplate::new(200)
-                    .insert_header(
+                self.response(
+                    ResponseTemplate::new(200).insert_header(
                         "content-type",
                         if body["stream"] == true {
                             "text/event-stream"
                         } else {
                             "application/json"
                         },
-                    )
-                    .set_body_bytes(response)
+                    ),
+                    response,
+                )
             }
             path if path.starts_with("/v1/signature/") => {
                 let n = self.signatures.fetch_add(1, Ordering::SeqCst);
@@ -658,6 +683,30 @@ async fn streaming_retains_tail_and_does_not_verify_partial_responses() {
         "api.completion_not_found"
     );
 }
+#[tokio::test]
+async fn compressed_chat_responses_keep_receipts() {
+    for encoding in ["gzip", "br"] {
+        for streaming in [false, true] {
+            let (_server, _, options) = setup(Fixture {
+                response_encoding: Some(encoding),
+                ..Default::default()
+            })
+            .await;
+            let client = InferenceClient::with_options(options).unwrap();
+            let mut request = body();
+            request["stream"] = json!(streaming);
+            let response = client
+                .send(client.chat_request(request).unwrap())
+                .await
+                .unwrap();
+            assert!(!response.headers.contains_key("content-encoding"));
+            assert!(!response.headers.contains_key("content-length"));
+            response.bytes().await.unwrap();
+            client.verify_response("chat-0").await.unwrap();
+        }
+    }
+}
+
 #[tokio::test]
 async fn owns_authentication_and_rejects_other_endpoints() {
     let (_server, f, options) = setup(Fixture::default()).await;
@@ -1162,6 +1211,37 @@ async fn systemone_plaintext_key_routing_and_receipts() {
 
             client.verify_response(&result.decision_id).await.unwrap();
             assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+            assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn systemone_compressed_responses() {
+    for encoding in ["gzip", "br"] {
+        for mode in ["receipt", "tamper", "limit"] {
+            let (_server, f, mut options) = setup(Fixture {
+                response_encoding: Some(encoding),
+                systemone_tamper: mode == "tamper",
+                systemone_body: (mode == "limit").then(|| format!("{{}}{}", " ".repeat(4096))),
+                ..Default::default()
+            })
+            .await;
+            if mode == "limit" {
+                options.max_response_bytes = 2048;
+            }
+            let client = InferenceClient::with_options(options).unwrap();
+            let result = client.systemone_create(&systemone_request()).await;
+            if mode == "limit" {
+                assert_eq!(result.unwrap_err().code(), "api.invalid_input");
+            } else {
+                let receipt = client.verify_response(&result.unwrap().decision_id).await;
+                if mode == "tamper" {
+                    assert_eq!(receipt.unwrap_err().code(), "signature.payload_mismatch");
+                } else {
+                    receipt.unwrap();
+                }
+            }
             assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
         }
     }

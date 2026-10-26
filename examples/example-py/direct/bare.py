@@ -32,7 +32,7 @@ async def send_and_verify(
         json={
             'model': MODEL,
             'messages': [{'role': 'user', 'content': 'Reply with the word ok.'}],
-            'max_completion_tokens': 8,
+            'max_completion_tokens': 1024,
             'stream': stream,
         },
     )

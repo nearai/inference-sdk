@@ -26,7 +26,6 @@ from ..utils.errors import (
 from .body_limit import (
     read_bounded_body,
     read_bounded_request_body,
-    require_identity_encoding,
 )
 from .e2ee_request import remove_e2ee_headers
 
@@ -71,7 +70,6 @@ class InferenceSystemOne:
                 NO_ALIASING_HEADER: 'true',
                 'content-type': 'application/json',
                 'accept': 'application/json',
-                # Capture the signed response representation without decompression.
                 'accept-encoding': 'identity',
             }
         )
@@ -172,7 +170,6 @@ class InferenceSystemOne:
                     'api.http_status',
                     {'resource': 'systemone', 'status': response.status_code},
                 )
-            require_identity_encoding(response)
             try:
                 decision_id = CompletionResponseIdSchema.model_validate(
                     {'id': response.headers.get('x-generation-id')}
@@ -198,9 +195,13 @@ class InferenceSystemOne:
             captured.set_result(response_body)
             client._register_response(decision_id, request_body, captured, session)
 
+        # HTTPX decodes the body but retains the original compression headers.
+        response_headers = response.headers.copy()
+        response_headers.pop('content-encoding', None)
+        response_headers.pop('content-length', None)
         return httpx.Response(
             response.status_code,
-            headers=response.headers,
+            headers=response_headers,
             content=response_body,
             extensions=response.extensions,
             request=http_request,

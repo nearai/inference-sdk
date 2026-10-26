@@ -19,7 +19,6 @@ from ..utils.errors import (
     api_failure,
     verification_failure,
 )
-from .body_limit import require_identity_encoding
 
 _REQUEST_LABEL = b'message/bhttp chunked request'
 _RESPONSE_LABEL = b'message/bhttp chunked response'
@@ -198,12 +197,6 @@ class _OhttpTransport(httpx.AsyncBaseTransport):
                 {'resource': 'ohttp', 'status': outer.status_code},
                 retryable=outer.status_code == 429 or outer.status_code >= 500,
             )
-
-        try:
-            require_identity_encoding(outer)
-        except ApiError:
-            await outer.aclose()
-            raise
 
         try:
             if (

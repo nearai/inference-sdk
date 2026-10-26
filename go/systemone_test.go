@@ -147,10 +147,11 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.truncateBody {
 		w.Header().Set("Content-Length", itoa(len(f.body)+1))
 	}
-	_, _ = io.WriteString(w, f.body)
+	wire := f.body
 	if f.tamper {
-		_, _ = io.WriteString(w, " ")
+		wire += " "
 	}
+	writeEncodedResponse(f.f.t, w, []byte(wire), f.f.encoding)
 }
 func systemOneClient(t *testing.T, tee bool, algo SigningAlgo, modify func(*systemOneCloud, *InferenceOptions)) (*InferenceClient, *systemOneCloud) {
 	t.Helper()
@@ -222,6 +223,40 @@ func TestSystemOneRejectsAnotherVerifiedSigner(t *testing.T) {
 	}
 	_, err = c.VerifyResponse(context.Background(), result.DecisionID)
 	requireCode(t, err, "signature.signer_mismatch")
+}
+
+func TestSystemOneCompressedResponses(t *testing.T) {
+	for _, encoding := range []string{"gzip", "br"} {
+		for _, mode := range []string{"receipt", "tamper", "limit"} {
+			t.Run(encoding+"/"+mode, func(t *testing.T) {
+				c, f := systemOneClient(t, true, Ed25519, func(f *systemOneCloud, o *InferenceOptions) {
+					f.f.encoding = encoding
+					f.tamper = mode == "tamper"
+					if mode == "limit" {
+						f.body += strings.Repeat(" ", 4096)
+						o.MaxBodyBytes = 2048
+					}
+				})
+				result, err := c.CreateSystemOne(context.Background(), systemOneRequest())
+				if mode == "limit" {
+					requireCode(t, err, "api.body_too_large")
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = c.VerifyResponse(context.Background(), result.DecisionID)
+					if mode == "tamper" {
+						requireCode(t, err, "signature.payload_mismatch")
+					} else if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if f.calls.Load() != 1 {
+					t.Fatal("compressed response repeated inference")
+				}
+			})
+		}
+	}
 }
 
 func TestSystemOneSharesChatSession(t *testing.T) {
