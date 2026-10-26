@@ -4600,6 +4600,49 @@ describe('System One decisions', () => {
   });
 });
 
+describe('native inference retry policy', () => {
+  afterEach(() => jest.restoreAllMocks());
+  test.each(['chat/completions', 'responses', 'messages'])(
+    'does not replay a failed %s request',
+    async (endpoint) => {
+      const gateway = createTestGateway();
+      let inferenceRequests = 0;
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname === `/v1/${endpoint}`) {
+            inferenceRequests++;
+            return new Response('{"error":{"message":"fixture failure"}}', {
+              status: 500,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return gateway.fetch(request);
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: false,
+      });
+      const call =
+        endpoint === 'messages'
+          ? client.messages.create({
+              model,
+              messages: [{ role: 'user', content: 'Hello' }],
+              max_tokens: 128,
+            })
+          : endpoint === 'responses'
+            ? client.responses.create({ model, input: 'Hello' })
+            : client.chat.completions.create({
+                model,
+                messages: [{ role: 'user', content: 'Hello' }],
+              });
+      await expect(call).rejects.toMatchObject({ status: 500 });
+      expect(inferenceRequests).toBe(1);
+    },
+  );
+});
+
 describe('Responses API', () => {
   afterEach(() => jest.restoreAllMocks());
 

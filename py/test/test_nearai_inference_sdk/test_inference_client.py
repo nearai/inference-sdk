@@ -867,3 +867,30 @@ async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
             assert verified.signature_kind == 'provider_tee'
         finally:
             gateway.tail_gate.set()
+
+
+@pytest.mark.parametrize('endpoint', ['chat/completions', 'responses', 'messages'])
+async def test_native_inference_does_not_replay_server_errors(monkeypatch, endpoint):
+    class FailingGateway(Gateway):
+        async def handle(self, request):
+            if request.url.path == '/v1/' + endpoint:
+                self.completion_requests.append(request)
+                return httpx.Response(
+                    500, json={'error': {'message': 'fixture failure'}}
+                )
+            return await super().handle(request)
+
+    gateway = FailingGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(Exception) as caught:
+            if endpoint == 'messages':
+                await client.messages.create(
+                    model=MODEL, messages=MESSAGES, max_tokens=128
+                )
+            elif endpoint == 'responses':
+                await client.responses.create(model=MODEL, input='Hello')
+            else:
+                await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        assert caught.value.status_code == 500
+        assert len(gateway.completion_requests) == 1

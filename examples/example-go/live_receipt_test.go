@@ -5,8 +5,9 @@ package main
 import (
 	"context"
 	"errors"
-	nearai "github.com/nearai/inference-sdk/go"
 	"time"
+
+	nearai "github.com/nearai/inference-sdk/go"
 )
 
 // Retry receipt propagation only; never replay Chat or retry cryptographic failures.
