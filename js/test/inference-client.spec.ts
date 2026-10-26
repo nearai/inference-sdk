@@ -4961,7 +4961,7 @@ describe('Messages API', () => {
                 : '{"output":[]}',
             )
           : tamper
-            ? Buffer.from(raw.toString().replace('你好', '篡改'))
+            ? Buffer.from(raw.toString().replace('Hello', 'Altered'))
             : raw;
         return new Response(
           new ReadableStream({
@@ -5021,7 +5021,7 @@ describe('Messages API', () => {
         `${baseUrl}messages`,
         chatRequest({ stream: true }),
       );
-      body = await response.text();
+      body = Buffer.from(await response.arrayBuffer()).toString('utf8');
     } catch (error) {
       if (scenario.valid) throw error;
       expect(error).toBeInstanceOf(ApiError);
@@ -5108,7 +5108,7 @@ describe('Messages API', () => {
       expect(response.id).toBe('msg_fixture');
       expect(response.content[1]).toMatchObject({
         type: 'tool_use',
-        input: { city: '北京' },
+        input: { city: 'Beijing' },
       });
     }
     expect(await fixture.requests[0].json()).toMatchObject({

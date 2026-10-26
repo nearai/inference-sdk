@@ -558,8 +558,14 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	id := ""
 	failed := false
 	messageStarted, messageStopped := false, false
+	firstRecord := true
 	transform := func(record []byte) ([]byte, error) {
-		data, event, hasEvent := sseFields(record)
+		parsed := record
+		if firstRecord {
+			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))
+			firstRecord = false
+		}
+		data, event, hasEvent := sseFields(parsed)
 		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
 			return nil, failure("api.invalid_response", nil)
 		}
@@ -608,7 +614,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 		if prepared != nil {
-			return prepared.transformSSE(record)
+			return prepared.transformSSE(parsed)
 		}
 		return record, nil
 	}

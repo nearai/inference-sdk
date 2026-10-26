@@ -81,11 +81,7 @@ class MessagesGateway(Gateway):
             'signing_address': self.address,
             'signature_kind': self.kind,
         }
-        visible = (
-            self.raw.replace('你好'.encode(), '篡改'.encode())
-            if self.tamper
-            else self.raw
-        )
+        visible = self.raw.replace(b'Hello', b'Altered') if self.tamper else self.raw
         if self.missing_id:
             visible = (
                 b'data: {"id":"item-only","item":{"id":"msg_1"}}\n\n'
@@ -162,7 +158,7 @@ async def test_messages_wire_receipts(
                 assert any(event.type == 'content_block_delta' for event in events)
             else:
                 assert result.id == 'msg_fixture'
-                assert result.content[1].input == {'city': '北京'}
+                assert result.content[1].input == {'city': 'Beijing'}
             receipt = await client.verify_response('msg_fixture')
             assert receipt.signature_kind == 'gateway'
             assert receipt.signature.signed_text.endswith(

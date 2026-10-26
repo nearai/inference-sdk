@@ -335,7 +335,7 @@ impl Respond for Fixture {
                 let visible = if self.response_tamper {
                     String::from_utf8(raw)
                         .unwrap()
-                        .replace("你好", "篡改")
+                        .replace("Hello", "Altered")
                         .into_bytes()
                 } else {
                     raw
@@ -1742,7 +1742,7 @@ async fn messages_json_and_sse_retain_exact_gateway_receipts() {
             } else {
                 let response = client.create_message(body).await.unwrap();
                 assert_eq!(response["id"], "msg_fixture");
-                assert_eq!(response["content"][1]["input"]["city"], "北京");
+                assert_eq!(response["content"][1]["input"]["city"], "Beijing");
             }
 
             let receipt = client.verify_response("msg_fixture").await.unwrap();

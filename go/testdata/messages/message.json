@@ -6,14 +6,14 @@
   "content": [
     {
       "type": "text",
-      "text": "你好 🌍"
+      "text": "Hello 🌍"
     },
     {
       "type": "tool_use",
       "id": "toolu_fixture",
       "name": "weather",
       "input": {
-        "city": "北京"
+        "city": "Beijing"
       }
     }
   ],

@@ -654,6 +654,18 @@ impl InferenceClient {
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
             let mut message_state = crate::sse::MessageStreamState::default();
+            let mut first_record = true;
+            let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
+                let parsed = if std::mem::replace(&mut first_record, false) {
+                    record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+                } else {
+                    &record
+                };
+                if messages { message_state.observe(parsed)?; }
+                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
+                // The retained signature payload and plaintext output keep the BOM.
+                Ok(if key.is_some() { transformed } else { record })
+            };
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
                 if chunk.len() > limit.saturating_sub(wire.len()) {
@@ -662,17 +674,13 @@ impl InferenceClient {
                 wire.extend_from_slice(&chunk);
                 if streaming {
                     for record in decoder.push(&chunk, false)? {
-                        if messages { message_state.observe(&record)?; }
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses, messages)?;
-                        yield bytes::Bytes::from(transformed);
+                        yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
                 for record in decoder.push(&[], true)? {
-                    if messages { message_state.observe(&record)?; }
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses, messages)?;
-                    yield bytes::Bytes::from(transformed);
+                    yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;
                 if messages { message_state.finish()?; }

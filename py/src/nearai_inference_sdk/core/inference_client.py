@@ -799,7 +799,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
         self._streaming = self._content_type.lower().startswith('text/event-stream')
-        self._decoder = codecs.getincrementaldecoder('utf-8')()
+        self._decoder = codecs.getincrementaldecoder('utf-8-sig')()
         self._pending = ''
         self._registered = False
         self._done = False
@@ -932,7 +932,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
 def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
     try:
         if content_type.lower().startswith('text/event-stream'):
-            for data in get_sse_data_records(body.decode('utf-8')):
+            for data in get_sse_data_records(body.decode('utf-8-sig')):
                 if data and data != '[DONE]':
                     value = json.loads(data)
                     if responses:
@@ -952,7 +952,7 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
 
 def _validate_message_stream(body: bytes) -> None:
     """Only a complete message_start/message_stop sequence can have a receipt."""
-    parsed = take_complete_sse_records(body.decode('utf-8'), eof=True)
+    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
     started = False
     stopped = False
     if parsed.pending:

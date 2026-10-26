@@ -178,5 +178,35 @@
     "name": "last_event_is_error",
     "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\nevent: error\ndata: {\"type\":\"message_stop\"}\n\n",
     "valid": false
+  },
+  {
+    "name": "leading_bom_event",
+    "body": "﻿event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "leading_bom_data",
+    "body": "﻿data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "leading_bom_error_header",
+    "body": "﻿event: error\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "leading_bom_mismatched_header",
+    "body": "﻿event: ping\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "later_bom_is_field_content",
+    "body": ": heartbeat\n\n﻿event: error\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
+  },
+  {
+    "name": "only_one_leading_bom_removed",
+    "body": "﻿﻿event: error\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": true
   }
 ]
