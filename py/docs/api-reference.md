@@ -62,12 +62,16 @@ are asynchronous. Standalone response-signature verification is synchronous.
 ## InferenceClient
 
 Use in an `asyncio` event loop as an asynchronous context manager, or call `await client.aclose()` when
-finished. Chat Completions, Responses creation, and System One are supported.
-`chat.completions.create` and `responses.create` support JSON and SSE. Use
+finished. Chat Completions, Responses creation, Messages, and System One are supported.
+`chat.completions.create`, `responses.create`, and `messages.create` support JSON and SSE. Use
 `verify_response` after consuming the result to verify its signature.
 
-See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+See [Messages API](./verification-guide.md#messages-api) and
+[Responses API](./verification-guide.md#responses-api) for Gateway receipt
 semantics, streaming, and supported privacy options.
+
+`messages.create` uses official Anthropic request and response types. Consume its
+stream before passing `message_start.message.id` to `verify_response`.
 
 ### Constructor
 
@@ -78,7 +82,7 @@ semantics, streaming, and supported privacy options.
 | `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
-| `ohttp` | `bool` | `False` | Encapsulate Chat and Responses requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
+| `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
 | `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, and System One for this long; `0` verifies each request. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
@@ -118,7 +122,7 @@ Both adapters delegate to the same `send()` pipeline:
 
 | Property | Type | Supported requests |
 | --- | --- | --- |
-| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support Responses JSON/SSE and System One. |
+| `http_client` | `httpx.AsyncClient` | Chat JSON/SSE; Gateway clients also support Responses and Messages JSON/SSE and System One. |
 | `httpx2_client` | `httpx2.AsyncClient` | The same requests, verification, and encryption settings. |
 
 They share authentication, preflight, TLS pinning, sessions, and receipt capture.
@@ -138,7 +142,7 @@ before calling `verify_response()`.
 
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
-| `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, or System One decision ID. |
+| `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, Messages ID, or System One decision ID. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |

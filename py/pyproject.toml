@@ -25,6 +25,7 @@ dependencies = [
     "ruamel.yaml>=0.19.1,<0.20",
     "sigstore>=4.5.0,<5",
     "PyJWT[crypto]==2.15.1",
+    "anthropic>=0.75,<1",
 ]
 
 [dependency-groups]

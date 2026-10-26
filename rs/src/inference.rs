@@ -477,6 +477,26 @@ impl InferenceClient {
     pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
         self.json_request("responses", body)
     }
+    /// Create an Anthropic Message and retain its bytes for `verify_response`.
+    /// Use `message_request` and `send` for streaming events.
+    pub async fn create_message(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Messages").into());
+        }
+        let response = self.send(self.message_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Messages creation request. `send` performs preflight and capture.
+    pub fn message_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("messages", body)
+    }
     fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
             .join(path)
@@ -488,7 +508,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for buffered Chat and Gateway Responses requests. Authentication
+    /// Transport adapter for Chat, Responses, and Messages requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -503,17 +523,22 @@ impl InferenceClient {
             == crate::cloud_api::parse_base_url(self.base_url())?
                 .join("responses")
                 .map_err(|_| input("base_url", "invalid URL"))?;
-        if actual != expected && !responses {
+        let messages = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("messages")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        let gateway_only = responses || messages;
+        if actual != expected && !gateway_only {
             return Err(input(
                 "request.url",
                 "expected configured inference creation endpoint",
             )
             .into());
         }
-        if responses && (self.inner.direct || self.inner.options.e2ee) {
+        if gateway_only && (self.inner.direct || self.inner.options.e2ee) {
             return Err(input(
                 "request",
-                "Responses requires a Gateway client with field-level E2EE disabled",
+                "Responses and Messages require a Gateway client with field-level E2EE disabled",
             )
             .into());
         }
@@ -536,6 +561,15 @@ impl InferenceClient {
         if let Some(value) = options.headers.get("api-key") {
             headers.insert("api-key", value.clone());
         }
+        if messages {
+            headers.remove("x-api-key");
+            if let Some(value) = options.headers.get("x-api-key") {
+                headers.insert("x-api-key", value.clone());
+            }
+            headers
+                .entry("anthropic-version")
+                .or_insert(HeaderValue::from_static("2023-06-01"));
+        }
         headers.insert("accept-encoding", HeaderValue::from_static("identity"));
         headers.remove("host");
         headers.remove("transfer-encoding");
@@ -556,7 +590,7 @@ impl InferenceClient {
             request
                 .headers_mut()
                 .insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
-            if let Some(model) = session.model_key() {
+            if let Some(model) = session.model_key().filter(|_| !messages) {
                 request.headers_mut().insert(
                     "x-model-pub-key",
                     HeaderValue::from_str(&model.public_key)
@@ -619,6 +653,19 @@ impl InferenceClient {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut message_state = crate::sse::MessageStreamState::default();
+            let mut first_record = true;
+            let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
+                let parsed = if std::mem::replace(&mut first_record, false) {
+                    record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+                } else {
+                    &record
+                };
+                if messages { message_state.observe(parsed)?; }
+                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
+                // The retained signature payload and plaintext output keep the BOM.
+                Ok(if key.is_some() { transformed } else { record })
+            };
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
                 if chunk.len() > limit.saturating_sub(wire.len()) {
@@ -627,18 +674,17 @@ impl InferenceClient {
                 wire.extend_from_slice(&chunk);
                 if streaming {
                     for record in decoder.push(&chunk, false)? {
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
-                        yield bytes::Bytes::from(transformed);
+                        yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
                 for record in decoder.push(&[], true)? {
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
-                    yield bytes::Bytes::from(transformed);
+                    yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;
-                owner.register(id, request_body, wire, session, responses).await?;
+                if messages { message_state.finish()?; }
+                owner.register(id, request_body, wire, session, gateway_only).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -655,7 +701,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session, responses).await?;
+                owner.register(id, request_body, wire, session, gateway_only).await?;
                 yield bytes::Bytes::from(body);
             }
         };

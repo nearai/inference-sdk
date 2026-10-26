@@ -1,0 +1,82 @@
+"""Live Messages JSON/SSE through native and official Anthropic clients."""
+
+import asyncio
+
+import pytest
+from anthropic import AsyncAnthropic
+
+from e2e.helpers import required_env, retry_receipt, selected_models
+from nearai_inference_sdk import InferenceClient
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'signing_algo,ohttp', [('ed25519', False), ('ecdsa', False), ('ed25519', True)]
+)
+@pytest.mark.parametrize('external', [False, True])
+async def test_messages_json_and_sse(
+    signing_algo: str, ohttp: bool, external: bool
+) -> None:
+    models = selected_models('messages', 'external')
+    assert len(models) == 1, 'Expected one Anthropic Messages model'
+    api_key = required_env('NEARAI_API_KEY')
+    async with (
+        asyncio.timeout(180),
+        InferenceClient(
+            api_key,
+            base_url=required_env('NEARAI_BASE_URL'),
+            signing_algo=signing_algo,
+            e2ee=False,
+            ohttp=ohttp,
+        ) as client,
+        AsyncAnthropic(
+            api_key=api_key,
+            base_url=client.base_url.removesuffix('v1/'),
+            default_headers={'anthropic-version': '2023-06-01'},
+            http_client=client.http_client,
+            max_retries=0,
+        ) as anthropic,
+    ):
+        messages = anthropic.messages if external else client.messages
+        request = {
+            'model': models[0],
+            'messages': [{'role': 'user', 'content': 'Reply with the word OK.'}],
+            'max_tokens': 128,
+        }
+        for stream in (False, True):
+            text = ''
+            if stream:
+                events = await messages.create(**request, stream=True)
+                message_id, stop_reason, stopped = None, None, False
+                async with events:
+                    async for event in events:
+                        if event.type == 'message_start':
+                            message_id = event.message.id
+                        if (
+                            event.type == 'content_block_delta'
+                            and event.delta.type == 'text_delta'
+                        ):
+                            text += event.delta.text
+                        if event.type == 'message_delta':
+                            stop_reason = event.delta.stop_reason
+                        if event.type == 'message_stop':
+                            stopped = True
+                assert message_id and stopped, 'SSE must reach message_stop and EOF'
+                assert stop_reason == 'end_turn'
+            else:
+                message = await messages.create(**request)
+                assert message.type == 'message'
+                assert message.stop_reason == 'end_turn'
+                message_id = message.id
+                text = ''.join(
+                    block.text for block in message.content if block.type == 'text'
+                )
+            assert message_id and text.strip(), (
+                'Expected a nonempty complete Messages answer'
+            )
+            async with asyncio.timeout(15):
+                receipt = await retry_receipt(
+                    lambda message_id=message_id: client.verify_response(message_id)
+                )
+            assert receipt.id == message_id
+            assert receipt.signature_kind == 'gateway'

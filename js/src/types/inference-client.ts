@@ -1,3 +1,4 @@
+import type Anthropic from '@anthropic-ai/sdk';
 import type OpenAI from 'openai';
 import type * as v from 'valibot';
 import type { ChatCompletionRequestSchema } from '../schemas';
@@ -175,3 +176,6 @@ export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
 
 /** Gateway Responses creation with the official OpenAI request and event types. */
 export type InferenceResponses = Pick<OpenAI.Responses, 'create'>;
+
+/** Gateway Messages creation with the official Anthropic request and event types. */
+export type InferenceMessages = Pick<Anthropic.Messages, 'create'>;

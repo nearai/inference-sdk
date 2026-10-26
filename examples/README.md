@@ -3,6 +3,29 @@
 These projects verify deployment evidence before sending inference requests,
 then verify the response signature.
 
+## Messages API
+
+Gateway Messages examples cover Anthropic JSON/SSE and exact-byte Gateway receipt
+verification. Set `NEARAI_API_KEY` and use a model available on your Gateway.
+Field-level E2EE is disabled; OHTTP may be enabled independently with Ed25519.
+
+| Language | Example | Run from the language example directory |
+| --- | --- | --- |
+| JavaScript | [messages.ts](example-js/gateway/messages.ts) | `node gateway/messages.ts` |
+| Official Anthropic JS SDK | [messages-anthropic-sdk.ts](example-js/gateway/messages-anthropic-sdk.ts) | `node gateway/messages-anthropic-sdk.ts` |
+| Python | [messages.py](example-py/gateway/messages.py) | `uv run python gateway/messages.py` |
+| Official Anthropic Python SDK | [messages_anthropic_sdk.py](example-py/gateway/messages_anthropic_sdk.py) | `uv run python gateway/messages_anthropic_sdk.py` |
+| Rust | [messages.rs](example-rs/src/bin/messages.rs) | `cargo run --bin messages` |
+| Go | [messages/main.go](example-go/gateway/messages/main.go) | `go run ./gateway/messages` |
+| Official Anthropic Go SDK | [anthropic/main.go](example-go/gateway/anthropic/main.go) | `go run ./gateway/anthropic` |
+
+The official SDK examples cover JSON and streaming, pass the inference client's
+verified transport to the Anthropic client, and verify receipts before printing
+answers. They disable automatic inference retries. Set `NEARAI_BASE_URL` to your
+Gateway's `/v1/` URL, `NEARAI_MODEL` to select a model, or `NEARAI_OHTTP=true` to
+enable OHTTP. Defaults are `https://cloud-api.near.ai/v1/`,
+`anthropic/claude-haiku-4-5`, and OHTTP disabled.
+
 ## Responses API
 
 Gateway examples send JSON and SSE requests, then verify their Gateway receipts:

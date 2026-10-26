@@ -16,7 +16,10 @@ type CompleteSseRecords = {
 };
 
 /** Split complete events without treating the CR and LF in CRLF as two lines. */
-export function takeCompleteSseRecords(value: string): CompleteSseRecords {
+export function takeCompleteSseRecords(
+  value: string,
+  eof = false,
+): CompleteSseRecords {
   const records: CompleteSseRecord[] = [];
   let recordStart = 0;
   let lineStart = 0;
@@ -27,7 +30,7 @@ export function takeCompleteSseRecords(value: string): CompleteSseRecords {
       continue;
     }
     // A trailing CR may be the first half of a CRLF split across chunks.
-    if (value[index] === '\r' && index + 1 === value.length) break;
+    if (!eof && value[index] === '\r' && index + 1 === value.length) break;
     const lineEnd = index;
     index += value[index] === '\r' && value[index + 1] === '\n' ? 2 : 1;
     if (lineEnd === lineStart) {
@@ -64,6 +67,19 @@ export function getSseData(line: string): string | undefined {
   if (!line.startsWith('data:')) return undefined;
   const value = line.slice('data:'.length);
   return value.startsWith(' ') ? value.slice(1) : value;
+}
+
+/** Read the event name; the last event field in a record takes precedence. */
+export function getSseEvent(record: string): string | undefined {
+  let event: string | undefined;
+  for (const { content } of splitSseLines(record)) {
+    if (content === 'event') event = '';
+    else if (content.startsWith('event:')) {
+      const value = content.slice('event:'.length);
+      event = value.startsWith(' ') ? value.slice(1) : value;
+    }
+  }
+  return event;
 }
 
 /** Read event payloads from a complete response body, joining its data lines. */

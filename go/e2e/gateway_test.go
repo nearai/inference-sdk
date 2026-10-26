@@ -67,9 +67,10 @@ func models(t *testing.T, encryption bool) []liveModel {
 func TestSelectedModels(t *testing.T) {
 	t.Setenv("NEARAI_E2E_MODELS", `[
 		{"id":"near/chat","provider":"near","endpoint":"chat"},
-		{"id":"typesafe/decision","provider":"external","endpoint":"systemone"}
+		{"id":"typesafe/decision","provider":"external","endpoint":"systemone"},
+		{"id":"anthropic/text","provider":"external","endpoint":"messages"}
 	]`)
-	for endpoint, id := range map[string]string{"chat": "near/chat", "systemone": "typesafe/decision"} {
+	for endpoint, id := range map[string]string{"chat": "near/chat", "systemone": "typesafe/decision", "messages": "anthropic/text"} {
 		selected := selectedModels(t, endpoint)
 		if len(selected) != 1 || selected[0].ID != id {
 			t.Fatalf("%s selected wrong models: %v", endpoint, selected)

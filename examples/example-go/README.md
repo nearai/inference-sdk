@@ -8,6 +8,8 @@ Run from this directory:
 | Command | Demonstrates |
 | --- | --- |
 | `go run ./gateway/openai` | [Official OpenAI Go SDK](https://github.com/openai/openai-go), JSON and streaming, E2EE, verified transport and receipts |
+| `go run ./gateway/anthropic` | Official Anthropic Go SDK, Messages JSON/SSE, verified transport and Gateway receipts |
+| `go run ./gateway/messages` | Native Messages JSON/SSE and Gateway receipts |
 | `go run ./gateway/systemone` | Structured decisions with verified receipts |
 | `go run ./gateway/client` | Integrated Gateway preflight, E2EE, JSON/SSE, image provenance and receipts |
 | `go run ./gateway/bare` | Standalone Gateway/model verification, pinned TLS, E2EE, ciphertext capture/decryption and receipts |
@@ -21,6 +23,15 @@ Set `NEARAI_SYSTEMONE_MODEL` to a decision model from your endpoint's catalog.
 `NEARAI_API_KEY` supplies the credential and `NEARAI_BASE_URL` selects the endpoint.
 Run `go run ./gateway/systemone` to send a question and print its verified answer.
 See the [guide](../../go/docs/verification-guide.md#verify-system-one-decisions) for API usage.
+
+## Official Anthropic Go client
+
+The [Messages example](./gateway/anthropic/main.go) injects
+`inference.HTTPClient()` into the official client and disables automatic inference
+retries. It sends JSON and SSE requests and verifies Gateway receipts before
+printing either answer. `NEARAI_BASE_URL` selects the Gateway's `/v1/` URL,
+`NEARAI_MODEL` defaults to `anthropic/claude-haiku-4-5`, and `NEARAI_OHTTP=true`
+enables OHTTP with Ed25519. See the [Messages guide](../../go/docs/verification-guide.md#messages-api).
 
 ## Official OpenAI Go client
 

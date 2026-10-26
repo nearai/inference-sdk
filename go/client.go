@@ -414,22 +414,26 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip accepts POSTs to Chat Completions and Gateway Responses creation.
+// RoundTrip accepts POSTs to Chat Completions, Responses, and Messages creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	expected := *c.api.base
 	expected.Path += "chat/completions"
 	responsesURL := *c.api.base
 	responsesURL.Path += "responses"
+	messagesURL := *c.api.base
+	messagesURL.Path += "messages"
 	u := *req.URL
 	u.RawQuery = ""
 	u.ForceQuery = false
 	responses := u.String() == responsesURL.String()
-	if req.Method != "POST" || (u.String() != expected.String() && !responses) || req.Body == nil {
+	messages := u.String() == messagesURL.String()
+	gatewayOnly := responses || messages
+	if req.Method != "POST" || (u.String() != expected.String() && !gatewayOnly) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
-	if responses && (c.api.direct || c.options.E2EE) {
-		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
+	if gatewayOnly && (c.api.direct || c.options.E2EE) {
+		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
 	body, e := readBounded(req.Body, c.maxBody)
 	if e != nil {
@@ -464,6 +468,15 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		r.Header.Del("Api-Key")
 	}
 	removeE2EEHeaders(r.Header)
+	if messages {
+		r.Header.Del("X-Api-Key")
+		if key := c.api.headers.Get("X-Api-Key"); key != "" {
+			r.Header.Set("X-Api-Key", key)
+		}
+		if r.Header.Get("Anthropic-Version") == "" {
+			r.Header.Set("Anthropic-Version", "2023-06-01")
+		}
+	}
 	removeBodyHeaders(r.Header)
 	r.Header.Set("Accept-Encoding", "identity")
 	r.Header.Set("Content-Type", "application/json")
@@ -493,7 +506,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			return nil, e
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-	} else if s.selected != nil {
+	} else if s.selected != nil && !messages {
 		r.Header.Set("X-Model-Pub-Key", s.selected.SigningPublicKey)
 	}
 	response, e := s.transport.RoundTrip(r)
@@ -533,7 +546,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s, responses); e != nil {
+		if e = c.register(id, body, wire, s, gatewayOnly); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -544,8 +557,18 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	capture := &captureReader{ReadCloser: source, limit: c.maxBody}
 	id := ""
 	failed := false
+	messageStarted, messageStopped := false, false
+	firstRecord := true
 	transform := func(record []byte) ([]byte, error) {
-		data, event := sseData(record)
+		parsed := record
+		if firstRecord {
+			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))
+			firstRecord = false
+		}
+		data, event, hasEvent := sseFields(parsed)
+		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
+			return nil, failure("api.invalid_response", nil)
+		}
 		if event == "error" {
 			failed = true
 		}
@@ -556,6 +579,27 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			if _, ok := obj["error"]; ok {
 				failed = true
+			}
+			if messages {
+				kind, _ := obj["type"].(string)
+				if kind == "" || (hasEvent && event != kind) || messageStopped {
+					return nil, failure("api.invalid_response", nil)
+				}
+				if kind == "error" {
+					failed = true
+				}
+				if kind == "message_stop" {
+					messageStopped = true
+				}
+				if kind == "message_start" {
+					if messageStarted {
+						return nil, failure("api.invalid_response", nil)
+					}
+					messageStarted = true
+					obj, _ = obj["message"].(map[string]any)
+				} else {
+					obj = nil
+				}
 			}
 			if responses {
 				// Output item IDs are not response IDs. Lifecycle events carry
@@ -570,17 +614,21 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 		if prepared != nil {
-			return prepared.transformSSE(record)
+			return prepared.transformSSE(parsed)
 		}
 		return record, nil
 	}
 	finish := func() error {
-		if failed || id == "" {
+		if failed || id == "" || (messages && !messageStopped) {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s, responses)
+		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly)
 	}
-	response.Body = &sseReader{source: capture, reader: bufio.NewReader(capture), transform: transform, finish: finish, limit: c.maxBody}
+	response.Body = &sseReader{
+		source: capture, reader: bufio.NewReader(capture), transform: transform,
+		terminal: func([]byte) bool { return messages && messageStopped },
+		finish:   finish, limit: c.maxBody,
+	}
 	removeBodyHeaders(response.Header)
 	response.ContentLength = -1
 	return response, nil
@@ -734,18 +782,24 @@ func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json
 	return c.createJSON(ctx, "responses", request)
 }
 
+// CreateMessage sends an Anthropic Messages request and captures a Gateway receipt.
+// For streaming, send POST messages with HTTPClient and consume the full body.
+func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "messages", request)
+}
+
 func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
 	if e != nil {
 		return nil, e
 	}
-	if path == "responses" {
+	if path == "responses" || path == "messages" {
 		parsed, err := decodeObject(body)
 		if err != nil {
 			return nil, err
 		}
 		if parsed["stream"] == true {
-			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses")
+			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses or Messages")
 		}
 	}
 	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint(path, nil), bytes.NewReader(body))

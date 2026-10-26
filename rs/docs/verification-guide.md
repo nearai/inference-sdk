@@ -181,6 +181,41 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [Rust decision example](../../examples/README.md#rust).
 
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```rust
+let message = client.create_message(serde_json::json!({
+    "model": "anthropic/claude-haiku-4-5",
+    "max_tokens": 128,
+    "messages": [{"role": "user", "content": "Hello"}]
+})).await?;
+let id = message["id"].as_str().ok_or("missing message ID")?;
+client.verify_response(id).await?;
+```
+
+For streaming, use `message_request(body)` with `"stream": true`, then `send()`
+and consume `response.body` to completion. Set custom Anthropic headers on the
+request before sending. See the [example](../../examples/example-rs/src/bin/messages.rs).
+
 ## Responses API
 
 The Gateway client supports `POST /v1/responses` with the same authentication,

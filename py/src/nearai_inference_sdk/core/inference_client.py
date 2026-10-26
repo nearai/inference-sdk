@@ -12,6 +12,7 @@ from time import monotonic, time
 from typing import TYPE_CHECKING, Self
 
 import httpx
+from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -47,7 +48,7 @@ from ..utils.errors import (
     verification_failure,
 )
 from ..utils.fetch import FetchResponse
-from ..utils.sse import get_sse_data_records, take_complete_sse_records
+from ..utils.sse import get_sse_data_records, get_sse_event, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
 from .chat import verify_gateway_response, verify_model_response
@@ -118,10 +119,19 @@ class _SessionAttestationClient(AttestationClient):
 
 
 class _InferenceTransport(httpx.AsyncBaseTransport):
-    def __init__(self, client: _VerifiedInferenceClient) -> None:
+    def __init__(
+        self, client: _VerifiedInferenceClient, *, anthropic: bool = False
+    ) -> None:
         self._client = client
+        self._anthropic = anthropic
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self._anthropic:
+            base = httpx.URL(self._client.base_url)
+            if request.url.copy_with(query=None) == base.join('v1/messages'):
+                request.url = base.join('messages').copy_with(
+                    query=request.url.query or None
+                )
         return await self._client.send(request)
 
 
@@ -134,7 +144,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     Use ``async with`` or call ``aclose`` to release connections and caches.
     """
 
-    _supports_responses = False
+    _supports_gateway_endpoints = False
 
     def __init__(
         self,
@@ -279,8 +289,10 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         expected = httpx.URL(self.base_url).join('chat/completions')
         actual = request.url.copy_with(query=None)
         responses = actual == httpx.URL(self.base_url).join('responses')
+        messages = actual == httpx.URL(self.base_url).join('messages')
         if request.method != 'POST' or (
-            actual != expected and not (responses and self._supports_responses)
+            actual != expected
+            and not ((responses or messages) and self._supports_gateway_endpoints)
         ):
             raise api_failure(
                 'api.invalid_input',
@@ -290,18 +302,23 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                     'expected': 'a POST to a supported inference creation endpoint',
                 },
             )
-        if responses and self._e2ee:
+        if (responses or messages) and self._e2ee:
             raise api_failure(
                 'api.invalid_input',
                 {
                     'field': 'e2ee',
                     'reason': 'unsupported_value',
-                    'expected': 'field-level E2EE disabled for Responses',
+                    'expected': 'field-level E2EE disabled for Responses and Messages',
                 },
             )
         parsed = await decode_chat_request(request)
         body = request.content
         headers = self._request_headers(request.headers)
+        if messages:
+            headers.pop('x-api-key', None)
+            if 'x-api-key' in self._headers:
+                headers['x-api-key'] = self._headers['x-api-key']
+            headers.setdefault('anthropic-version', '2023-06-01')
         session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
         headers.pop('transfer-encoding', None)
@@ -324,7 +341,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         else:
             remove_e2ee_headers(prepared_request.headers)
             prepared_request.headers[NO_ALIASING_HEADER] = 'true'
-            if session.model_key is not None:
+            if session.model_key is not None and not messages:
                 prepared_request.headers['x-model-pub-key'] = (
                     session.model_key.public_key
                 )
@@ -351,14 +368,19 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 request_body,
                 response_body,
                 session,
-                gateway_only=responses,
+                gateway_only=responses or messages,
             )
 
         captured = httpx.Response(
             response.status_code,
             headers=_decoded_headers(response.headers),
             stream=_CapturedResponseStream(
-                response, response_body, register, self, responses=responses
+                response,
+                response_body,
+                register,
+                self,
+                responses=responses,
+                messages=messages,
             ),
             extensions=response.extensions,
             request=prepared_request,
@@ -553,7 +575,7 @@ class InferenceClient(
     verify only the Gateway. All calls share the configured authentication.
     """
 
-    _supports_responses = True
+    _supports_gateway_endpoints = True
 
     def __init__(
         self,
@@ -584,13 +606,31 @@ class InferenceClient(
         )
         self._gateway_options = gateway_verification or GatewayVerificationOptions()
         self.responses = self._openai.responses
+        self._anthropic = AsyncAnthropic(
+            api_key='@nearai/inference-sdk-internal',
+            base_url=self.base_url,
+            default_headers={
+                'anthropic-version': self._headers.get(
+                    'anthropic-version', '2023-06-01'
+                ),
+            },
+            max_retries=0,
+            http_client=httpx.AsyncClient(
+                transport=_InferenceTransport(self, anthropic=True), timeout=None
+            ),
+        )
+        self.messages = self._anthropic.messages
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
 
+    async def aclose(self) -> None:
+        await self._anthropic.close()
+        await super().aclose()
+
     async def send(self, request: httpx.Request) -> httpx.Response:
-        """Send verified Chat, Responses, or System One through the Gateway."""
+        """Send verified Chat, Responses, Messages, or System One through the Gateway."""
         if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
             self.base_url
         ).join('systemone'):
@@ -747,17 +787,19 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         client: _VerifiedInferenceClient,
         *,
         responses: bool = False,
+        messages: bool = False,
     ) -> None:
         self._response = response
         self._response_body = response_body
         self._register = register
         self._client = client
         self._responses = responses
+        self._messages = messages
         self._chunks: list[bytes] = []
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
         self._streaming = self._content_type.lower().startswith('text/event-stream')
-        self._decoder = codecs.getincrementaldecoder('utf-8')()
+        self._decoder = codecs.getincrementaldecoder('utf-8-sig')()
         self._pending = ''
         self._registered = False
         self._done = False
@@ -796,6 +838,23 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             for data in get_sse_data_records(record.value):
                 if data == '[DONE]':
                     self._done = True
+                elif self._messages and data:
+                    try:
+                        value = json.loads(data)
+                        if value.get('type') == 'message_stop':
+                            self._done = True
+                        if (
+                            value.get('type') == 'message_start'
+                            and not self._registered
+                        ):
+                            self._register(
+                                CompletionResponseIdSchema.model_validate(
+                                    value.get('message')
+                                ).id
+                            )
+                            self._registered = True
+                    except (ValueError, ValidationError, AttributeError):
+                        continue
                 elif data and not self._registered:
                     try:
                         value = json.loads(data)
@@ -817,6 +876,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         if self._response_body.done():
             return
         body = b''.join(self._chunks)
+        if self._messages and self._streaming:
+            _validate_message_stream(body)
         if not self._registered:
             self._register(_completion_id(body, self._content_type, self._responses))
             self._registered = True
@@ -871,7 +932,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
 def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
     try:
         if content_type.lower().startswith('text/event-stream'):
-            for data in get_sse_data_records(body.decode('utf-8')):
+            for data in get_sse_data_records(body.decode('utf-8-sig')):
                 if data and data != '[DONE]':
                     value = json.loads(data)
                     if responses:
@@ -887,6 +948,44 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
     except (ValueError, UnicodeDecodeError) as error:
         raise _invalid_completion_id(error) from error
     raise _invalid_completion_id()
+
+
+def _validate_message_stream(body: bytes) -> None:
+    """Only a complete message_start/message_stop sequence can have a receipt."""
+    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
+    started = False
+    stopped = False
+    if parsed.pending:
+        raise _invalid_completion_id()
+    for record in parsed.records:
+        event_name = get_sse_event(record.value)
+        if event_name == 'error':
+            raise _invalid_completion_id()
+        for data in get_sse_data_records(record.value):
+            if not data:
+                continue
+            try:
+                event = json.loads(data)
+                kind = event.get('type')
+                if (
+                    not isinstance(kind, str)
+                    or not kind
+                    or kind == 'error'
+                    or stopped
+                    or (event_name is not None and event_name != kind)
+                ):
+                    raise _invalid_completion_id()
+                if kind == 'message_start':
+                    if started:
+                        raise _invalid_completion_id()
+                    CompletionResponseIdSchema.model_validate(event.get('message'))
+                    started = True
+                if kind == 'message_stop':
+                    stopped = True
+            except (ValueError, AttributeError) as error:
+                raise _invalid_completion_id(error) from error
+    if not started or not stopped:
+        raise _invalid_completion_id()
 
 
 def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:
