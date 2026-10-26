@@ -238,7 +238,7 @@ External models use Gateway signatures.
 
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
-[decision example](../../examples/example-go/README.md#system-one-decisions).
+[decision example](../../examples/example-go/gateway/systemone/main.go).
 
 ## Messages API
 

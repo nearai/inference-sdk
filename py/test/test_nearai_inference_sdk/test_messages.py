@@ -11,7 +11,12 @@ import pytest
 from anthropic import APIStatusError, AsyncAnthropic
 from eth_account.messages import encode_defunct
 
-from nearai_inference_sdk import ApiError, DirectInferenceClient, VerificationError
+from nearai_inference_sdk import (
+    ApiError,
+    DirectInferenceClient,
+    InferenceClient,
+    VerificationError,
+)
 
 from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
@@ -432,3 +437,79 @@ async def test_messages_wrapped_sdk_error_without_io(monkeypatch):
         assert get_sdk_error(caught.value).failure.code == 'api.invalid_input'
     assert gateway.gateway_requests == 0
     assert not gateway.completion_requests
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_duplicate_id_preserves_original_receipt(monkeypatch, streaming):
+    gateway = MessagesGateway(streaming=streaming)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+
+        async def consume():
+            response = await client.send(
+                httpx.Request('POST', BASE_URL + 'messages', json={'model': MODEL})
+            )
+            return await response.aread()
+
+        await consume()
+        verified = await client.verify_response('msg_fixture')
+        with pytest.raises(ApiError) as caught:
+            await consume()
+        assert caught.value.failure.code == 'api.duplicate_completion_id'
+        assert await client.verify_response('msg_fixture') is verified
+        assert gateway.signature_requests == 1
+        assert len(gateway.completion_requests) == 2
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_zero_response_ttl_disables_retention(monkeypatch, streaming):
+    gateway = MessagesGateway(streaming=streaming)
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False, response_cache_time_to_live_ms=0) as client:
+        for _ in range(2):
+            response = await client.send(
+                httpx.Request('POST', BASE_URL + 'messages', json={'model': MODEL})
+            )
+            await response.aread()
+            with pytest.raises(ApiError) as caught:
+                await client.verify_response('msg_fixture')
+            assert caught.value.failure.code == 'api.completion_not_found'
+        assert not gateway.signature_requests
+
+
+@pytest.mark.parametrize(
+    'field', ['attestation_cache_time_to_live_ms', 'response_cache_time_to_live_ms']
+)
+def test_invalid_ttl_is_rejected(field):
+    for value in [-1, float('nan'), float('inf'), -float('inf')]:
+        with pytest.raises(ApiError) as caught:
+            InferenceClient(**{field: value})
+        assert caught.value.failure.code == 'api.invalid_input'
+        assert caught.value.failure.details['field'] == field
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_expired_id_can_be_reused_before_cleanup(monkeypatch, streaming):
+    from nearai_inference_sdk.core import inference_client
+
+    gateway = MessagesGateway(streaming=streaming)
+    gateway.install(monkeypatch)
+    now = 1.0
+    monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
+    async with gateway.client(e2ee=False, response_cache_time_to_live_ms=100) as client:
+
+        async def consume():
+            response = await client.send(
+                httpx.Request('POST', BASE_URL + 'messages', json={'model': MODEL})
+            )
+            await response.aread()
+
+        await consume()
+        await client.verify_response('msg_fixture')
+        now = 1.1
+        with pytest.raises(ApiError) as caught:
+            await client.verify_response('msg_fixture')
+        assert caught.value.failure.code == 'api.completion_not_found'
+        await consume()
+        await client.verify_response('msg_fixture')
+        assert gateway.signature_requests == 2

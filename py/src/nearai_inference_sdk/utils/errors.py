@@ -192,6 +192,10 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'
+        case 'api.duplicate_completion_id':
+            return (
+                f'[{code}] A response with this ID is already retained by this client'
+            )
         case 'api.completion_not_found':
             return f'[{code}] Completion is not retained by this client'
         case 'quote.verification_failed':

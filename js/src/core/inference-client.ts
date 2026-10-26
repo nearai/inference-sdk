@@ -118,6 +118,7 @@ type CompletionProtocol = 'chat' | 'responses' | 'messages';
 type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
+    expiresAt?: number;
   };
 
 type ParsedSecureRequest = {
@@ -278,6 +279,18 @@ export abstract class VerifiedInferenceClientBase<
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
       options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
+    for (const [field, value] of [
+      ['attestationCacheTimeToLiveMs', this.attestationCacheTimeToLiveMs],
+      ['responseCacheTimeToLiveMs', this.responseCacheTimeToLiveMs],
+    ] as const) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw invalidInput({
+          field,
+          reason: 'unsupported_value',
+          expected: 'a finite non-negative duration in milliseconds',
+        });
+      }
+    }
     this.openai = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
@@ -394,7 +407,7 @@ export abstract class VerifiedInferenceClientBase<
 
   /** Verify a captured response by ID. Consume streaming responses first. */
   verifyResponse(id: string): Promise<VerificationResult> {
-    const record = this.responseRecords.get(id);
+    const record = this.getResponseRecord(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
@@ -414,18 +427,42 @@ export abstract class VerifiedInferenceClientBase<
     return record.verification;
   }
 
-  /** Both endpoints share byte retention, expiry, and verification retries. */
+  /** All supported endpoints share byte retention, expiry, and verification retries. */
   protected registerResponse(record: ResponseRecord<VerificationResult>): void {
+    if (this.responseCacheTimeToLiveMs === 0) return;
     const id = record.id;
+    if (this.getResponseRecord(id) !== undefined) {
+      throw new ApiError({ code: 'api.duplicate_completion_id' });
+    }
     this.responseRecords.set(id, record);
     const expire = (): void => {
-      const timer = setTimeout(() => {
-        if (this.responseRecords.get(id) === record)
+      const expiresAt = Date.now() + this.responseCacheTimeToLiveMs;
+      record.expiresAt = expiresAt;
+      const release = (): void => {
+        if (this.responseRecords.get(id) !== record) return;
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
           this.responseRecords.delete(id);
-      }, this.responseCacheTimeToLiveMs);
-      timer.unref?.();
+          return;
+        }
+        // JavaScript timers accept at most a signed 32-bit delay.
+        const timer = setTimeout(release, Math.min(remaining, 2 ** 31 - 1));
+        timer.unref?.();
+      };
+      release();
     };
     void record.responseBody.then(expire, expire);
+  }
+
+  private getResponseRecord(
+    id: string,
+  ): ResponseRecord<VerificationResult> | undefined {
+    const record = this.responseRecords.get(id);
+    if (record?.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+      this.responseRecords.delete(id);
+      return undefined;
+    }
+    return record;
   }
 
   private async sendSecureCompletion({

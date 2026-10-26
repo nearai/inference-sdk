@@ -142,7 +142,12 @@ A verified Gateway signature does not establish model TEE execution.
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
 Records retain complete request and response bodies until their TTL expires,
-including after successful or failed verification. TTL starts at body completion.
+including after successful or failed verification. TTL starts at body completion;
+`responseCacheTimeToLiveMs: 0` disables retention. Both TTL options accept finite,
+non-negative durations. Expired records are unavailable immediately; timers release
+retained bodies while idle. A duplicate retained ID fails with
+`api.duplicate_completion_id` and preserves the original receipt. An expired ID
+can be reused.
 
 ### Errors wrapped by official SDKs
 
@@ -229,7 +234,7 @@ Retry transient receipt lookups with `verifyResponse(result.decisionId)` while
 the response remains cached.
 
 See the [guide](./verification-guide.md#system-one-decisions) for a complete call
-and the [Node examples](../../examples/README.md#javascript-nodejs) to run it.
+and the [Node examples](../../examples/README.md#javascript-setup) to run it.
 
 ## `DirectInferenceClient`
 

@@ -24,6 +24,7 @@ type ApiResource =
  */
 export type ApiFailure =
   | { code: 'api.completion_not_found' }
+  | { code: 'api.duplicate_completion_id' }
   | {
       /** A value supplied to a Cloud API helper is not usable for that call. */
       code: 'api.invalid_input';
@@ -515,6 +516,8 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] OHTTP response could not be authenticated and decoded`;
     case 'api.completion_not_found':
       return 'Completion was not captured by this client or its retention period has expired';
+    case 'api.duplicate_completion_id':
+      return 'A response with this ID is already retained by this client';
     case 'api.invalid_input':
       return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':

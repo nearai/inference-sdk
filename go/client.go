@@ -54,7 +54,6 @@ type InferenceClient struct {
 	wg                          sync.WaitGroup
 	closed                      bool
 	attestationTTL, responseTTL time.Duration
-	maxBody                     int64
 }
 
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
@@ -88,11 +87,8 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	if o.ResponseTTL != nil {
 		rt = *o.ResponseTTL
 	}
-	if at < 0 || rt < 0 || o.MaxBodyBytes < 0 {
+	if at < 0 || rt < 0 {
 		return nil, failure("api.invalid_input", nil)
-	}
-	if o.MaxBodyBytes == 0 {
-		o.MaxBodyBytes = 64 << 20
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &InferenceClient{
@@ -106,7 +102,6 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 		transports:     map[string]*http.Transport{},
 		attestationTTL: at,
 		responseTTL:    rt,
-		maxBody:        o.MaxBodyBytes,
 	}
 	// Expiry also runs while idle so sensitive retained bodies do not linger.
 	c.wg.Add(1)
@@ -381,7 +376,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		if e != nil {
 			return nil, e
 		}
-		s.transport, e = newOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers), c.maxBody)
+		s.transport, e = NewOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers))
 		if e != nil {
 			return nil, e
 		}
@@ -419,7 +414,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	if gatewayOnly && (c.api.direct || c.options.E2EE) {
 		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
-	body, e := readBounded(req.Body, c.maxBody)
+	body, e := io.ReadAll(req.Body)
 	if e != nil {
 		return nil, e
 	}
@@ -476,14 +471,14 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			cancel()
 			return nil, failure("policy.model_attestation_required", nil)
 		}
-		prepared, e = prepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey}, c.maxBody)
+		prepared, e = PrepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey})
 		if e != nil {
 			stop()
 			cancel()
 			return nil, e
 		}
 		r = prepared.Request
-		body, e = readBounded(r.Body, c.maxBody)
+		body, e = io.ReadAll(r.Body)
 		if e != nil {
 			stop()
 			cancel()
@@ -511,7 +506,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	streaming := strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
 	if !streaming {
 		defer source.Close()
-		wire, e := readBounded(source, c.maxBody)
+		wire, e := io.ReadAll(source)
 		if e != nil {
 			return nil, e
 		}
@@ -538,7 +533,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		response.ContentLength = int64(len(visible))
 		return response, nil
 	}
-	capture := &captureReader{ReadCloser: source, limit: c.maxBody}
+	capture := &captureReader{ReadCloser: source}
 	id := ""
 	failed := false
 	messageStarted, messageStopped := false, false
@@ -611,7 +606,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	response.Body = &sseReader{
 		source: capture, reader: bufio.NewReader(capture), transform: transform,
 		terminal: func([]byte) bool { return messages && messageStopped },
-		finish:   finish, limit: c.maxBody,
+		finish:   finish,
 	}
 	removeBodyHeaders(response.Header)
 	response.ContentLength = -1
@@ -776,5 +771,5 @@ func (c *InferenceClient) createJSON(ctx context.Context, path string, request a
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, detail("api.http_status", "status", res.StatusCode)
 	}
-	return readBounded(res.Body, c.maxBody)
+	return io.ReadAll(res.Body)
 }

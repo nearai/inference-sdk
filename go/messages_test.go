@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 type messagesFixture struct {
@@ -265,6 +267,30 @@ func TestMessagesCloseBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestMessagesDuplicateIDPreservesOriginalReceipt(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			client, fixture := messagesClient(t, streaming, nil)
+			if _, err := sendMessage(t, client, streaming); err != nil {
+				t.Fatal(err)
+			}
+			original, err := client.VerifyResponse(context.Background(), "msg_fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = sendMessage(t, client, streaming)
+			requireCode(t, err, "api.duplicate_completion_id")
+			verified, err := client.VerifyResponse(context.Background(), "msg_fixture")
+			if err != nil || verified.ID != original.ID {
+				t.Fatal(verified, err)
+			}
+			if fixture.cloud.signatureCalls.Load() != 1 || fixture.cloud.chats.Load() != 2 {
+				t.Fatal("duplicate ID replaced the original receipt")
+			}
+		})
+	}
+}
+
 // Exercise signed fixtures through the public transport and receipt API.
 func TestMessagesStreamContract(t *testing.T) {
 	raw, err := os.ReadFile("testdata/messages/streams.json")
@@ -336,6 +362,27 @@ func TestMessagesECDSA(t *testing.T) {
 			}
 			if receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != ECDSA {
 				t.Fatal("wrong receipt")
+			}
+		})
+	}
+}
+
+func TestMessagesZeroResponseTTL(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			client, fixture := messagesClient(t, streaming, func(o *InferenceOptions) {
+				zero := time.Duration(0)
+				o.ResponseTTL = &zero
+			})
+			for range 2 {
+				if _, err := sendMessage(t, client, streaming); err != nil {
+					t.Fatal(err)
+				}
+				_, err := client.VerifyResponse(context.Background(), "msg_fixture")
+				requireCode(t, err, "api.completion_not_found")
+			}
+			if fixture.cloud.signatureCalls.Load() != 0 {
+				t.Fatal("zero TTL fetched a receipt")
 			}
 		})
 	}

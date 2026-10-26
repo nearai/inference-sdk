@@ -147,8 +147,6 @@ type InferenceOptions struct {
 	GatewayVerification VerificationOptions
 	ModelVerification   VerificationOptions
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
-	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
-	MaxBodyBytes int64
 }
 
 // DirectInferenceOptions uses the same E2EE opt-in as InferenceOptions.

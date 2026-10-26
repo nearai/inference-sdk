@@ -26,9 +26,15 @@ and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 
 The integrated clients share attestation verification per model across `verify()`,
 Chat, Responses, Messages, and System One. The default attestation lifetime is
-60 minutes; response records remain available for 60 minutes after body completion.
+60 minutes.
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
+
+Receipt retention defaults to one hour from body completion; zero disables
+retention. Expired IDs are unavailable, and duplicate retained IDs fail with
+`api.duplicate_completion_id` without replacing the original receipt. Cleanup uses
+JavaScript/Python timers, a Go periodic sweep, and Rust access-time pruning;
+dropping or closing the owning client also releases its state where supported.
 
 ## Entry points
 

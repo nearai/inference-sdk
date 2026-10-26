@@ -147,6 +147,14 @@ before calling `verify_response()`.
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
 
+Response retention starts at body completion and lasts for the configured TTL,
+including after successful or failed verification. Set
+`response_cache_time_to_live_ms=0` to disable retention. Both TTL options accept
+finite, non-negative durations. Expired records are unavailable immediately;
+timers release retained bodies while idle. A duplicate retained ID fails with
+`api.duplicate_completion_id` and preserves the original receipt. An expired ID
+can be reused. Closing the client releases retained records.
+
 ### Errors wrapped by official SDKs
 
 The OpenAI and Anthropic clients can wrap transport errors. Use

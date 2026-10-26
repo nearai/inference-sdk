@@ -73,18 +73,16 @@ disables reuse of completed deployment checks. `verify()` results contain Unix
 milliseconds in `verified_at`; cache hits preserve that time. Completion records
 retain their original evidence even if the deployment cache expires or refreshes.
 
-The response TTL begins after successful full-body consumption. Receipt lookups
+The response TTL begins after successful full-body consumption;
+`response_cache_ttl = Duration::ZERO` disables retention. Receipt lookups
 and new records prune expired entries; dropping all client clones and responses
 releases state. Verification shares the retained byte buffers rather than copying
 them. Cache memory grows with the responses retained during the TTL; choose a
 retention period appropriate for your workload.
 
-`max_response_bytes` defaults to 64 MiB per captured response; exceeding it fails
-closed.
-
 A missing, expired, or incomplete completion yields `api.completion_not_found`.
-A duplicate retained completion ID is rejected instead of replacing its original
-bytes.
+A duplicate retained completion ID fails with `api.duplicate_completion_id` and
+preserves the original receipt. An expired ID can be reused.
 
 ### Verification policies and TLS
 
@@ -177,7 +175,7 @@ External models use Gateway signatures.
 
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
-[Rust decision example](../../examples/README.md#rust).
+[Rust decision example](../../examples/README.md#rust-setup).
 
 ## Messages API
 
