@@ -60,7 +60,7 @@ jobs:
         working-directory: examples/example-py
         run: |
           uv sync --locked
-          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, messages; from direct import bare, client, client_openai_sdk"
+          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, messages, messages_anthropic_sdk; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
@@ -112,7 +112,7 @@ jobs:
       - name: Test live model selection without credentials
         working-directory: go
         run: go test -tags=e2e ./e2e -run '^TestSelectedModels$'
-      - name: Check Go OpenAI integration example
+      - name: Check Go SDK integration examples
         working-directory: examples/example-go
         run: |
           go vet ./...

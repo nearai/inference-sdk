@@ -210,7 +210,8 @@ official `create` overloads. An external `@anthropic-ai/sdk` client can use
 inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport uses
 the inference client's configured authentication for both inference and evidence.
 See the [native example](../../examples/example-js/gateway/messages.ts) and
-[official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts).
+[official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
+for JSON and streaming calls with receipt verification.
 
 ## Responses API
 

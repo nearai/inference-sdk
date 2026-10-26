@@ -276,7 +276,14 @@ _, err = client.VerifyResponse(ctx, message.ID)
 For streaming, POST to `client.BaseURL()+"messages"` through `client.HTTPClient()`
 with `"stream": true`. Consume and close the body before verification. Configure
 custom Anthropic headers on the request or in `ClientOptions.Headers`.
-See the [example](../../examples/example-go/gateway/messages/main.go).
+See the [native example](../../examples/example-go/gateway/messages/main.go).
+
+The official Anthropic Go SDK can use
+`option.WithHTTPClient(client.HTTPClient())` and `option.WithMaxRetries(0)`.
+Set its base URL to the API root, such as `https://cloud-api.near.ai`, because it
+appends `/v1/messages`. The inference client's base URL includes `/v1/`.
+The [official SDK example](../../examples/example-go/gateway/anthropic/main.go)
+covers JSON and streaming, then verifies each response before printing it.
 
 ## Responses API
 

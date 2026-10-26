@@ -998,6 +998,7 @@ name = "example-py"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "anthropic" },
     { name = "httpx" },
     { name = "nearai-inference-sdk" },
     { name = "openai" },
@@ -1006,6 +1007,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", specifier = ">=0.75,<1" },
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "nearai-inference-sdk", editable = "../../py" },
     { name = "openai", specifier = ">=2.0.0,<3" },

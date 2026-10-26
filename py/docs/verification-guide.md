@@ -339,7 +339,9 @@ Set `stream=True` for typed Anthropic events. An external `AsyncAnthropic` can u
 `http_client=client.http_client`, `base_url='https://cloud-api.near.ai'`, and
 `max_retries=0`; the inference client's base URL includes `/v1/`. Its configured
 authentication governs inference and evidence requests.
-See the [JSON and streaming example](../../examples/example-py/gateway/messages.py).
+See the [native example](../../examples/example-py/gateway/messages.py) and
+[official SDK example](../../examples/example-py/gateway/messages_anthropic_sdk.py)
+for JSON and streaming calls with receipt verification.
 
 ## Responses API
 
