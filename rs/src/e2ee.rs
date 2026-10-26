@@ -7,7 +7,7 @@ use aes_gcm::{
     Aes256Gcm,
 };
 use chacha20poly1305::XChaCha20Poly1305;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::elliptic_curve::{sec1::ToSec1Point, Generate};
 use rand::{rngs::OsRng, RngCore};
 use serde_json::Value;
 use sha2::{Digest, Sha256, Sha512};
@@ -55,9 +55,8 @@ impl ResponseKey {
                 )
             }
             SigningAlgo::Ecdsa => {
-                let secret = k256::SecretKey::random(&mut OsRng);
-                let public =
-                    hex::encode(&secret.public_key().to_encoded_point(false).as_bytes()[1..]);
+                let secret = k256::SecretKey::generate();
+                let public = hex::encode(&secret.public_key().to_sec1_point(false).as_bytes()[1..]);
                 (Self::Ecdsa(secret), public)
             }
         }
@@ -174,15 +173,11 @@ fn encrypt_with_aad(
                 return Err(invalid());
             }
             let recipient = k256::PublicKey::from_sec1_bytes(&encoded).map_err(|_| invalid())?;
-            let secret = k256::SecretKey::random(&mut OsRng);
+            let secret = k256::SecretKey::generate();
             let shared =
                 k256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), recipient.as_affine());
             (
-                secret
-                    .public_key()
-                    .to_encoded_point(false)
-                    .as_bytes()
-                    .to_vec(),
+                secret.public_key().to_sec1_point(false).as_bytes().to_vec(),
                 derive(shared.raw_secret_bytes(), model.signing_algo)?,
                 12,
             )
@@ -503,7 +498,7 @@ mod tests {
             SigningAlgo::Ecdsa => {
                 let secret = k256::SecretKey::from_slice(&seed).unwrap();
                 let public_key =
-                    hex::encode(&secret.public_key().to_encoded_point(false).as_bytes()[1..]);
+                    hex::encode(&secret.public_key().to_sec1_point(false).as_bytes()[1..]);
                 (
                     ResponseKey::Ecdsa(secret),
                     E2eeModelKey {

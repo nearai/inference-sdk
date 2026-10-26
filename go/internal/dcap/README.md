@@ -12,8 +12,8 @@ The original binding source is pinned to
 Our default backend replaces the upstream native-library integration with
 embedded WASM; the upstream MIT license is retained in [LICENSE](./LICENSE).
 
-The artifact uses [DCAP QVL 0.6.5, revision
-884e22ce767f31fd5d5a6672511519fc7975cde0](https://github.com/Phala-Network/dcap-qvl/tree/884e22ce767f31fd5d5a6672511519fc7975cde0)
+The artifact uses [DCAP QVL 0.7.0, revision
+94208e2753a854191759e493ca5892be482ad453](https://github.com/Phala-Network/dcap-qvl/tree/94208e2753a854191759e493ca5892be482ad453)
 with the RustCrypto backend and Intel production root. The wrapper and flattened
 JSON serialization live in `wasm-src/`; the serialization is adapted from that
 revision's MIT-licensed FFI, under the accompanying upstream LICENSE. No quote
@@ -56,7 +56,7 @@ callback fix needed by race/checkptr instrumentation.
 
 With stripped builds of the same OpenAI example on macOS arm64, the embedded
 backend produced a 28.6 MB executable versus 24.6 MB for native DCAP (decimal MB).
-The embedded artifact itself is about 620 KiB. A ten-iteration offline signed-quote
+The embedded artifact itself is about 630 KiB. A ten-iteration offline signed-quote
 benchmark measured about 109 ms per verification versus 0.7 ms for native DCAP;
 the embedded backend allocated about 23.5 MB per operation, not retained heap.
 These are local measurements, not cross-platform performance guarantees.

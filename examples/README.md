@@ -72,7 +72,7 @@ pnpm --dir examples/example-js start:bare
 pnpm --dir examples/example-js start:client-openai-sdk
 ```
 
-Requires Node.js 24 or later.
+Requires Node.js 24.22.1 or later.
 
 For the decision example, set `NEARAI_MODEL` to a decision model from your
 endpoint's catalog, then run `pnpm --dir examples/example-js start:jev`.
@@ -267,7 +267,7 @@ using these examples outside this repository.
 
 The [Go examples](./example-go/README.md) cover Gateway/direct standalone and
 integrated JSON/SSE, Gateway image provenance, and the official OpenAI Go client.
-Requires Go 1.25.8+; the DCAP verifier is embedded, so no native-library build is
+Requires Go 1.26.10+; the DCAP verifier is embedded, so no native-library build is
 needed. See [Go setup](../go/README.md#build-and-install).
 
 | Command | Usage |
