@@ -236,6 +236,8 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	outer.Header.Set("Content-Type", "message/ohttp-chunked-req")
 	outer.Header.Set("Incremental", "?1")
+	// Encapsulation must not make an inference request replayable.
+	outer.GetBody = nil
 	res, e := t.base.RoundTrip(outer)
 	if e != nil {
 		return nil, e

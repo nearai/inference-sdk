@@ -488,6 +488,8 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	} else if s.selected != nil && !messages {
 		r.Header.Set("X-Model-Pub-Key", s.selected.SigningPublicKey)
 	}
+	// Prevent transport retries after a connection failure, even with an idempotency key.
+	r.GetBody = nil
 	response, e := s.transport.RoundTrip(r)
 	if e != nil {
 		stop()
