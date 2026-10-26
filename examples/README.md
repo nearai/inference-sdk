@@ -96,8 +96,8 @@ and integrated Chat. The Rust client exposes its reqwest transport directly.
 
 ### Go setup
 
-Requires Go 1.26.10+. The DCAP verifier is embedded; no native-library build is
-needed. The example module replaces the SDK dependency with the sibling source.
+Requires Go 1.26.10+. The SDK embeds the DCAP verifier. The example module
+replaces the SDK dependency with the sibling source.
 
 ```sh
 cd examples/example-go
@@ -143,8 +143,7 @@ output for receipt verification. Integrated clients capture those bytes internal
 ## Direct endpoints
 
 Direct clients are experimental. Use Gateway clients for production and an
-endpoint-accepted credential for direct inference. A Gateway key may not work
-at a direct endpoint.
+endpoint-accepted credential for direct inference.
 
 All direct examples verify every returned model attestation; an endpoint may
 omit other serving instances. Standard HTTPS certificate validation applies,

@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     { signal: AbortSignal.timeout(120_000) },
   );
 
-  // decisionId comes from X-Generation-Id, including when the body has no id.
+  // decisionId comes from X-Generation-Id.
   // Verification hashes the exact bytes sent/received. Wait before acting on answers.
   const verified = await client.verifyResponse(result.decisionId);
   if (verified.signatureKind !== expectedKind) {

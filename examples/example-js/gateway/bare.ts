@@ -21,13 +21,15 @@ import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
-const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
+const BASE_URL = `${(
+  process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/'
+).replace(/\/+$/, '')}/`;
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
 
-// These policies require GitHub build provenance for four Gateway images,
-// not model runtime images. Add a reviewed `commit` to pin a specific build.
+// Require GitHub build provenance for these Gateway images. Add a reviewed
+// `commit` to pin a specific build.
 const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
   'nearaidev/cloud-api': {
     repository: 'nearai/cloud-api',
@@ -81,8 +83,7 @@ async function main(): Promise<void> {
   // browser APIs do not expose the TLS peer certificate needed for this check.
   const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
 
-  // Non-streaming: decrypt and display the JSON response, then verify its signature.
-  // To display only verified output, defer rendering until verification succeeds.
+  // Non-streaming: decrypt the JSON response, verify its signature, then display it.
   const nonStreamingCompletion = await runNonStreamingExample({
     apiKey,
     pinnedTlsFetch,

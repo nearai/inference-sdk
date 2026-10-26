@@ -1,7 +1,7 @@
 # Go examples
 
-Use Go 1.26.10+; the DCAP verifier is embedded, so no native-library build is
-required. Set `NEARAI_API_KEY` and run from this directory. The
+Use Go 1.26.10+; the SDK embeds the DCAP verifier.
+Set `NEARAI_API_KEY` and run from this directory. The
 [shared example guide](../README.md) describes configuration, verification order,
 image policies, and the matching JavaScript, Python, and Rust examples.
 
@@ -34,8 +34,8 @@ Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
 Native and standalone Gateway Chat apply both Gateway and Compose Manager model
 image policies. Add commit pins in `internal/demo.GatewayImages` and
 `internal/demo.ModelImages` for stricter admission. `GITHUB_TOKEN` may be used
-for GitHub provenance requests. Direct clients retain the experimental limits
-documented in the shared guide, including disabled attested TLS binding.
+for GitHub provenance requests. See the shared guide for
+[direct endpoint verification](../README.md#direct-endpoints).
 
 ```sh
 go vet ./...

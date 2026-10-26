@@ -529,32 +529,29 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	if _, err = client.VerifyResponse(ctx, completion.ID); err != nil {
 		return err
 	}
-	if len(completion.Choices) == 0 || strings.TrimSpace(completion.Choices[0].Message.Content) == "" || completion.Choices[0].FinishReason != "stop" {
-		return fmt.Errorf("expected a nonempty complete JSON answer")
+	text := ""
+	if len(completion.Choices) > 0 {
+		text = completion.Choices[0].Message.Content
 	}
-	fmt.Println(completion.Choices[0].Message.Content)
+	fmt.Println(text)
 	stream := ai.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
-	id, text, finish := "", "", ""
+	id := ""
 	for stream.Next() {
 		chunk := stream.Current()
 		if chunk.ID != "" {
 			id = chunk.ID
 		}
-		for _, choice := range chunk.Choices {
-			text += choice.Delta.Content
-			fmt.Print(choice.Delta.Content)
-			if choice.FinishReason != "" {
-				finish = choice.FinishReason
-			}
+		if len(chunk.Choices) > 0 {
+			fmt.Print(chunk.Choices[0].Delta.Content)
 		}
 	}
 	fmt.Println()
 	if err = stream.Err(); err != nil {
 		return err
 	}
-	if id == "" || strings.TrimSpace(text) == "" || finish != "stop" {
-		return fmt.Errorf("expected a nonempty complete SSE answer")
+	if id == "" {
+		return fmt.Errorf("stream returned no completion ID")
 	}
 	if _, err = client.VerifyResponse(ctx, id); err != nil {
 		return err

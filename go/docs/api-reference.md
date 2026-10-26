@@ -416,7 +416,7 @@ without replaying the completion.
 Streaming is incremental, but signature verification requires retaining the wire body.
 Cache memory grows with the responses retained during the TTL. Select shorter
 retention for services that process many or large completions.
-Successful verification does not automatically discard its retained record. A duplicate
+Verified records remain available until their TTL expires. A duplicate
 retained ID fails with `api.duplicate_completion_id` and preserves the original
 receipt. An expired ID can be reused.
 

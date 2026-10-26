@@ -12,8 +12,11 @@ from nearai_inference_sdk import (
     verify_direct_model_response,
 )
 
-BASE_URL = os.environ.get(
-    'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
+BASE_URL = (
+    os.environ.get(
+        'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
+    ).rstrip('/')
+    + '/'
 )
 MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')

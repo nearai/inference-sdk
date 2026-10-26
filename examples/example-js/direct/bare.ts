@@ -9,11 +9,11 @@ import {
 } from '@nearai/inference-sdk/node';
 import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
 
-// Standalone verification. This example sends plaintext Chat
-// bodies over HTTPS; it does not implement E2EE. See client.ts for E2EE.
-const BASE_URL =
-  process.env.NEARAI_BASE_URL ??
-  'https://glm-5-3-flash.completions.near.ai/v1/';
+// Standalone verification of plaintext Chat bodies over HTTPS.
+// See client.ts for E2EE.
+const BASE_URL = `${(
+  process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1/'
+).replace(/\/+$/, '')}/`;
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
   'ed25519') as SigningAlgo;
