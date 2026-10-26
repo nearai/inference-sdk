@@ -33,7 +33,7 @@ for (const separator of ['\n', '\r\n', '\r']) {
   });
 }
 
-test('removes only the initial BOM across chunks', () => {
+test('removes only the initial BOM across chunks', async () => {
   const event =
     'data: {"id":"chat-fixture","choices":[{"delta":{"content":"Hello 🌍"}}]}\n\n';
   for (const prefix of [
@@ -51,5 +51,20 @@ test('removes only the initial BOM across chunks', () => {
       assert.equal(output.id, 'chat-fixture');
       assert.equal(output.done, false);
     }
+    const source = new ReadableStream<BufferSource>({
+      start(controller) {
+        for (const byte of new TextEncoder().encode(record))
+          controller.enqueue(new Uint8Array([byte]));
+        controller.close();
+      },
+    });
+    const output = new ChatStreamOutput();
+    let text = '';
+    for await (const chunk of source.pipeThrough(
+      new TextDecoderStream('utf-8', { ignoreBOM: true }),
+    ))
+      text += output.push(chunk);
+    assert.equal(text + output.push('', true), 'Hello 🌍');
+    assert.equal(output.id, 'chat-fixture');
   }
 });

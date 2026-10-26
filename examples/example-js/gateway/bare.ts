@@ -284,14 +284,16 @@ async function readDecryptedCompletion({
   if (response.body === null) {
     throw new Error('Streaming Chat response has no body');
   }
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = response.body
+    .pipeThrough(new TextDecoderStream('utf-8', { ignoreBOM: true }))
+    .getReader();
   let responseText = '';
   const output = new ChatStreamOutput();
   try {
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      // Retain visible content for display after signature verification.
+      // Retain content for ID lookup while displaying each delta immediately.
       responseText += chunk.value;
       process.stdout.write(output.push(chunk.value));
     }

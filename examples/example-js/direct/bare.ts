@@ -71,9 +71,11 @@ async function runStreamingExample(
   });
   if (response.body === null) throw new Error('Streaming response has no body');
 
-  // Capture exact bytes and retain visible content until verification succeeds.
+  // Capture exact bytes while displaying text as it arrives.
   const responseBytesPromise = response.clone().arrayBuffer();
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = response.body
+    .pipeThrough(new TextDecoderStream('utf-8', { ignoreBOM: true }))
+    .getReader();
   let responseText = '';
   const output = new ChatStreamOutput();
   try {
