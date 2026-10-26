@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +14,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type messagesFixture struct {

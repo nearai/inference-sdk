@@ -11,7 +11,12 @@ async fn run() -> Result<()> {
         ..Default::default()
     })?;
     let model = std::env::var("NEARAI_MODEL").unwrap_or_else(|_| "z-ai/glm-5.3-flash".into());
-    let mut request = json!({"model": model, "input":"Reply with the word ok.", "max_output_tokens": 1024, "store": false});
+    let mut request = json!({
+        "model": model,
+        "input": "Reply with the word ok.",
+        "max_output_tokens": 1024,
+        "store": false,
+    });
     let response = client.create_response(request.clone()).await?;
     let id = response["id"].as_str().ok_or("missing response ID")?;
     let receipt = client.verify_response(id).await?;

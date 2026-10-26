@@ -1966,26 +1966,25 @@ async fn messages_duplicate_id_preserves_original_receipt() {
     for streaming in [false, true] {
         let (_server, fixture, options) = setup(Fixture::default()).await;
         let client = InferenceClient::with_options(options).unwrap();
-        for duplicate in [false, true] {
-            let response = client
-                .send(
-                    client
-                        .message_request(message_request_body(streaming))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            let body = response.bytes().await;
-            if duplicate {
-                assert_eq!(body.unwrap_err().code(), "api.duplicate_completion_id");
-            } else {
-                body.unwrap();
-            }
-            assert_eq!(
-                client.verify_response("msg_fixture").await.unwrap().id,
-                "msg_fixture"
-            );
-        }
+        let request = client
+            .message_request(message_request_body(streaming))
+            .unwrap();
+
+        let response = client.send(request).await.unwrap();
+        response.bytes().await.unwrap();
+        let receipt = client.verify_response("msg_fixture").await.unwrap();
+        assert_eq!(receipt.id, "msg_fixture");
+
+        let duplicate = client
+            .message_request(message_request_body(streaming))
+            .unwrap();
+        let response = client.send(duplicate).await.unwrap();
+        let error = response.bytes().await.unwrap_err();
+        assert_eq!(error.code(), "api.duplicate_completion_id");
+        assert_eq!(
+            client.verify_response("msg_fixture").await.unwrap().id,
+            receipt.id
+        );
         assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
         assert_eq!(fixture.chat.load(Ordering::SeqCst), 2);
     }
@@ -1997,24 +1996,16 @@ async fn messages_zero_response_ttl_disables_retention() {
         let (_server, fixture, mut options) = setup(Fixture::default()).await;
         options.response_cache_ttl = Duration::ZERO;
         let client = InferenceClient::with_options(options).unwrap();
+
         for _ in 0..2 {
-            let response = client
-                .send(
-                    client
-                        .message_request(message_request_body(streaming))
-                        .unwrap(),
-                )
-                .await
+            let request = client
+                .message_request(message_request_body(streaming))
                 .unwrap();
+            let response = client.send(request).await.unwrap();
             response.bytes().await.unwrap();
-            assert_eq!(
-                client
-                    .verify_response("msg_fixture")
-                    .await
-                    .unwrap_err()
-                    .code(),
-                "api.completion_not_found"
-            );
+
+            let error = client.verify_response("msg_fixture").await.unwrap_err();
+            assert_eq!(error.code(), "api.completion_not_found");
         }
         assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
     }

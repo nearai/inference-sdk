@@ -6,14 +6,15 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
-	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type responsesFixture struct {

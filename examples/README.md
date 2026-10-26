@@ -24,17 +24,8 @@ use a NEAR TEE model for those examples. Responses, Messages, and System One kee
 E2EE disabled. OHTTP is independent of E2EE and requires signed key configuration
 and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 
-The integrated clients share attestation verification per model across `verify()`,
-Chat, Responses, Messages, and System One. The default attestation lifetime is
-60 minutes.
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
-
-Receipt retention defaults to one hour from body completion; zero disables
-retention. Expired IDs are unavailable, and duplicate retained IDs fail with
-`api.duplicate_completion_id` without replacing the original receipt. Cleanup uses
-JavaScript/Python timers, a Go periodic sweep, and Rust access-time pruning;
-dropping or closing the owning client also releases its state where supported.
 
 ## Entry points
 
@@ -72,7 +63,6 @@ Requires Node.js 24.22.1+. Build the local SDK before running examples:
 pnpm --dir js install --frozen-lockfile
 pnpm --dir js build
 pnpm --dir examples/example-js install --frozen-lockfile
-pnpm --dir examples/example-js check
 cd examples/example-js
 node gateway/client.ts
 ```
@@ -163,11 +153,5 @@ clients use E2EE and require response signatures from the selected model signer.
 Standalone direct examples send plaintext over HTTPS and verify exact response
 bytes against the matching attestation group.
 
-## Checks
-
-CI checks each example project's formatting, compilation or imports, and stream
-handling. Signed local fixtures cover native and supported official SDK adapters;
-all four SDKs consume the shared Messages stream corpus. Live suites cover the
-available native/official Chat, Responses, Messages, and System One paths, including
-Ed25519, ECDSA, and supported OHTTP combinations. See the [live E2E guide](../e2e/README.md)
-for credentials, model selection, and opt-in execution.
+See the [live E2E guide](../e2e/README.md) to run the integration tests with your
+endpoint credentials and selected models.

@@ -73,7 +73,7 @@ func verifyLiveReceipt(t *testing.T, ctx context.Context, owner *nearai.Inferenc
 		t.Fatal(err)
 	}
 }
-func TestLiveOpenAI(t *testing.T) {
+func TestLiveOpenAIChat(t *testing.T) {
 	for _, model := range liveModels(t, "chat") {
 		modes := []liveMode{{nearai.Ed25519, false, false}}
 		if model.Provider == "near" {

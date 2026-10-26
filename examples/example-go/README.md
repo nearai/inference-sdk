@@ -40,7 +40,7 @@ documented in the shared guide, including disabled attested TLS binding.
 ```sh
 go vet ./...
 go test -race ./...
-go test -tags=e2e -run '^TestLive(OpenAI|OpenAIResponses|Anthropic)$' -v .
+go test -tags=e2e -run '^TestLive' -v .
 ```
 
 The last command requires the shared [live configuration](../../e2e/README.md).
