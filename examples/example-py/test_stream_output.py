@@ -18,7 +18,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         record = separator.join(
             [
                 'data: {"id":"chat-fixture",',
-                'data: "choices":[{"delta":{"content":"你好 🌍"}}]}',
+                'data: "choices":[{"delta":{"content":"Hello 🌍"}}]}',
                 '',
                 '',
             ]
@@ -31,7 +31,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                 # Disambiguate a trailing CR before checking incremental output.
                 for byte in record + b':':
                     yield bytes([byte])
-                test.assertEqual(output.getvalue(), '你好 🌍')
+                test.assertEqual(output.getvalue(), 'Hello 🌍')
                 yield (separator * 2 + 'data: [DONE]' + separator * 2).encode()
 
         with contextlib.redirect_stdout(output):
@@ -41,7 +41,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await response.aclose()
         self.assertEqual(values[0]['id'], 'chat-fixture')
-        self.assertEqual(output.getvalue(), '你好 🌍\n')
+        self.assertEqual(output.getvalue(), 'Hello 🌍\n')
 
     async def test_truncated_stream_is_an_error(self):
         for read_stream in (read_direct, read_gateway):

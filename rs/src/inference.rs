@@ -633,13 +633,13 @@ impl InferenceClient {
                 let chunk = chunk?;
                 wire.extend_from_slice(&chunk);
                 if streaming {
-                    for record in decoder.push(&chunk, false)? {
+                    for record in decoder.push(&chunk, false) {
                         yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
-                for record in decoder.push(&[], true)? {
+                for record in decoder.push(&[], true) {
                     yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;

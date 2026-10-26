@@ -7,7 +7,7 @@ import (
 
 func TestIncrementalOutput(t *testing.T) {
 	for _, separator := range []string{"\n", "\r\n", "\r"} {
-		event := strings.ReplaceAll("data: {\"id\":\"chat-1\",\ndata: \"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\n", "\n", separator)
+		event := strings.ReplaceAll("data: {\"id\":\"chat-1\",\ndata: \"choices\":[{\"delta\":{\"content\":\"Hello 🌍\"}}]}\n\n", "\n", separator)
 		for split := 0; split <= len(event); split++ {
 			decoder := new(EventDecoder)
 			first, err := decoder.Push([]byte(event[:split]), false)
@@ -24,7 +24,7 @@ func TestIncrementalOutput(t *testing.T) {
 				t.Fatal(err)
 			}
 			values := append(append(first, second...), last...)
-			if len(values) != 1 || textDelta(values[0]) != "你好" || decoder.Done {
+			if len(values) != 1 || textDelta(values[0]) != "Hello 🌍" || decoder.Done {
 				t.Fatalf("text was not emitted before DONE at split %d: %v", split, values)
 			}
 		}

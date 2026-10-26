@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn decodes_text_before_done_across_byte_boundaries() {
         for separator in ["\n", "\r\n", "\r"] {
-            let event = "data: {\"id\":\"chat-1\",\ndata: \"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\n".replace('\n', separator);
+            let event = "data: {\"id\":\"chat-1\",\ndata: \"choices\":[{\"delta\":{\"content\":\"Hello 🌍\"}}]}\n\n".replace('\n', separator);
             for split in 0..=event.len() {
                 let mut decoder = EventDecoder::default();
                 let mut values = decoder.push(&event.as_bytes()[..split], false).unwrap();
@@ -271,7 +271,7 @@ mod tests {
                 // A lone CR needs the next byte to distinguish it from CRLF.
                 values.extend(decoder.push(b":", false).unwrap());
                 assert_eq!(values.len(), 1);
-                assert_eq!(delta(&values[0]), "你好");
+                assert_eq!(delta(&values[0]), "Hello 🌍");
                 assert!(!decoder.done);
             }
             let body = format!("{event}data: [DONE]{separator}{separator}");

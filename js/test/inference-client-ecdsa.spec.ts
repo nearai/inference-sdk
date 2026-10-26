@@ -452,7 +452,7 @@ describe('ECDSA Gateway endpoint adapters', () => {
                 )
                   text += event.delta.text;
               }
-              expect(text).toContain('你好');
+              expect(text).toContain('Hello');
             } else expect(result.id).toBe(id);
           } else {
             const api = official

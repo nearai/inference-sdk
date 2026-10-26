@@ -499,8 +499,8 @@ const completion = await client.chat.completions.create({
   model,
   messages: [{ role: 'user', content: 'Hello' }],
 });
-render(completion.choices[0]?.message.content);
 const verified = await client.verifyResponse(completion.id);
+render(completion.choices[0]?.message.content);
 console.log(verified.signatureKind);
 ```
 
@@ -545,7 +545,7 @@ successful Gateway verification does not imply that the model runs in a TEE.
 ### Use the official OpenAI SDK
 
 Create both clients once. The same Fetch adapter supports sequential and
-concurrent requests, with the standard OpenAI retry behavior:
+concurrent requests. Disable automatic inference retries:
 
 ```ts
 import OpenAI from 'openai';
@@ -554,13 +554,14 @@ const openai = new OpenAI({
   apiKey,
   baseURL: client.getBaseUrl(),
   fetch: client.fetch,
+  maxRetries: 0,
 });
 const completion = await openai.chat.completions.create({
   model,
   messages: [{ role: 'user', content: 'Hello' }],
 });
-render(completion.choices[0]?.message.content);
 const verified = await client.verifyResponse(completion.id);
+render(completion.choices[0]?.message.content);
 ```
 
 Streaming uses the same ID-based verification as the built-in client.

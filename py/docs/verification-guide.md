@@ -41,7 +41,7 @@ response signatures. ECDSA uses the legacy AES-GCM protocol and omits
 `X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
 
 Successful attestation checks are reused for 60 minutes per model across
-`verify()`, Chat, and System One calls on the same client.
+`verify()`, Chat, Responses, Messages, and System One calls on the same client.
 Set `attestation_cache_time_to_live_ms=0` to check every request.
 `response_cache_time_to_live_ms` separately controls how long exact response
 bytes remain available after completion; its default is also 60 minutes.
@@ -84,8 +84,9 @@ from openai import AsyncOpenAI
 async with InferenceClient(api_key, e2ee=True) as inference_client:
     async with AsyncOpenAI(
         api_key=api_key,
-        base_url='https://cloud-api.near.ai/v1/',
+        base_url=inference_client.base_url,
         http_client=inference_client.http_client,
+        max_retries=0,
     ) as openai_client:
         completion = await openai_client.chat.completions.create(
             model='z-ai/glm-5.3-flash',
@@ -143,7 +144,7 @@ time. With a cache TTL of zero, the later Chat verifies again.
 set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
 result. In both workflows, response signatures are still checked separately
 with `verify_response(id)` after Chat.
-Chat and System One share the session warmed by `verify(model)`.
+Chat, Responses, Messages, and System One share the session warmed by `verify(model)`.
 
 ### Use OHTTP
 
