@@ -2,7 +2,7 @@ use crate::errors::VerificationError;
 use crate::types::{TcbStatus, TdxQuoteVerificationResult, TdxQuoteVerifier};
 use crate::util::decode_hex;
 use async_trait::async_trait;
-use dcap_qvl::collateral::get_collateral;
+use dcap_qvl::collateral::CollateralClient;
 use dcap_qvl::quote::Quote;
 use dcap_qvl::verify::verify;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -58,7 +58,9 @@ pub async fn verify_tdx_quote(
         reason: "invalid_quote",
     })?;
 
-    let collateral = get_collateral(pccs_url, &quote_bytes)
+    let collateral = CollateralClient::with_default_http(pccs_url)
+        .map_err(|_| VerificationError::QuoteCollateralUnavailable)?
+        .fetch(&quote_bytes)
         .await
         .map_err(|_| VerificationError::QuoteCollateralUnavailable)?;
     let current_time = SystemTime::now()
@@ -95,6 +97,10 @@ fn parse_tcb_status(status: &str) -> Result<TcbStatus, VerificationError> {
         "ConfigurationAndSWHardeningNeeded" => Ok(TcbStatus::ConfigurationAndSwHardeningNeeded),
         "OutOfDate" => Ok(TcbStatus::OutOfDate),
         "OutOfDateConfigurationNeeded" => Ok(TcbStatus::OutOfDateConfigurationNeeded),
+        "TDRelaunchAdvised" => Ok(TcbStatus::TdRelaunchAdvised),
+        "TDRelaunchAdvisedConfigurationNeeded" => {
+            Ok(TcbStatus::TdRelaunchAdvisedConfigurationNeeded)
+        }
         "Revoked" => Ok(TcbStatus::Revoked),
         "Unknown" => Ok(TcbStatus::Unknown),
         _ => Err(VerificationError::QuoteInvalidResult {

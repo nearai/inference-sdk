@@ -38,7 +38,7 @@ func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 			return result, failure("quote.verification_failed", e)
 		}
 		report := verified.Report
-		if (report.Type != "TD10" && report.Type != "TD15") || len(report.TdAttributes) != 8 {
+		if (report.Type != "TD10" && report.Type != "TD15" && report.Type != "TD15Ex") || len(report.TdAttributes) != 8 {
 			return result, failure("quote.unsupported_report_type", nil)
 		}
 		return QuoteVerificationResult{

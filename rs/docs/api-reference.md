@@ -417,9 +417,9 @@ Gateway `reported_quote_data` is required.
 
 | Type | Field | Default | Description |
 | --- | --- | --- | --- |
-| `ModelAttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | Model TCB statuses accepted by verification. |
+| `ModelAttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate`, `TdRelaunchAdvised` | Model TCB statuses accepted by verification. |
 |  | `gpu_evidence: GpuEvidenceRequirement` | `IfPresent` | `IfPresent` verifies supplied GPU evidence and accepts an absent payload; `Required` rejects absent evidence. |
-| `AttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate` | TCB statuses accepted by verification. |
+| `AttestationPolicy` | `accepted_tcb_statuses: Option<Vec<TcbStatus>>` | `UpToDate`, `OutOfDate`, `TdRelaunchAdvised` | TCB statuses accepted by verification. |
 | `AttestationVerifiers<'a>` | `tdx_quote`, `deployment` | `None` | Optional `TdxQuoteVerifier` and `DeploymentVerifier` overrides. |
 | `ModelAttestationVerifiers<'a>` | `tdx_quote`, `deployment`, `gpu_evidence` | `None` | Optional `TdxQuoteVerifier`, `DeploymentVerifier`, and `GpuEvidenceVerifier` overrides. |
 
@@ -431,7 +431,8 @@ Gateway `reported_quote_data` is required.
 
 `TcbStatus` is one of `UpToDate`, `SwHardeningNeeded`, `ConfigurationNeeded`,
 `ConfigurationAndSwHardeningNeeded`, `OutOfDate`,
-`OutOfDateConfigurationNeeded`, `Revoked`, or `Unknown`.
+`OutOfDateConfigurationNeeded`, `TdRelaunchAdvised`,
+`TdRelaunchAdvisedConfigurationNeeded`, `Revoked`, or `Unknown`.
 
 ### Built-in verifier helpers
 

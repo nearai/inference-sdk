@@ -8,7 +8,7 @@ for signatures, options, and result fields.
 
 ## Install
 
-Requires Go 1.25.8 or later. In your Go module:
+Requires Go 1.26.10 or later. In your Go module:
 
 ```sh
 go get github.com/nearai/inference-sdk/go@v0.1.0
@@ -280,9 +280,10 @@ verifying `event.Response.ID` from a response lifecycle event.
 
 ## Configure verification and deployment policies
 
-The default policy accepts `UpToDate` and `OutOfDate` TCB statuses, rejects debug
-quotes, and verifies GPU evidence when present. Require stricter status and GPU
-policies through `ModelVerification` (or `GatewayVerification` where appropriate):
+The default policy accepts `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised` TCB
+statuses, rejects debug quotes, and verifies GPU evidence when present. Require
+stricter status and GPU policies through `ModelVerification` (or
+`GatewayVerification` where appropriate):
 
 ```go
 options := nearai.InferenceOptions{
