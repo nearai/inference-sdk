@@ -1,14 +1,67 @@
 import contextlib
+import gzip
 import io
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
+from direct import bare as direct
 from direct.bare import read_stream as read_direct
+from gateway import bare as gateway
 from gateway.bare import read_stream as read_gateway
 
 
 class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
+    async def test_receipt_capture_uses_decoded_http_body(self):
+        async def prepare(request, _key):
+            async def decrypt(response):
+                return response
+
+            return SimpleNamespace(request=request, decrypt_response=decrypt)
+
+        for streaming in (False, True):
+            body = (
+                b'data: {"id":"chat-fixture","choices":[{"delta":{"content":"ok"}}]}\n\n'
+                b'data: [DONE]\n\n'
+                if streaming
+                else b'{"id":"chat-fixture","choices":[{"message":{"content":"ok"}}]}'
+            )
+
+            def respond(request, body=body, streaming=streaming):
+                return httpx.Response(
+                    200,
+                    headers={
+                        'content-encoding': 'gzip',
+                        'content-type': 'text/event-stream'
+                        if streaming
+                        else 'application/json',
+                    },
+                    stream=httpx.ByteStream(gzip.compress(body)),
+                )
+
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(respond)
+            ) as client:
+                with (
+                    contextlib.redirect_stdout(io.StringIO()),
+                    patch.object(direct, 'verify_direct_model_response') as verify,
+                    patch.object(gateway, 'prepare_e2ee_chat_request', prepare),
+                ):
+                    await direct.send_and_verify(
+                        client,
+                        AsyncMock(),
+                        SimpleNamespace(attestations=[]),
+                        stream=streaming,
+                    )
+                    self.assertEqual(verify.call_args.args[1], body)
+
+                    completion = await gateway.send_completion(
+                        client, 'test', SimpleNamespace(key=None), stream=streaming
+                    )
+                    self.assertEqual(completion.response_body, body)
+
     async def test_displays_before_done_and_handles_split_utf8(self):
         for read_stream in (read_direct, read_gateway):
             for separator in ('\n', '\r\n', '\r'):

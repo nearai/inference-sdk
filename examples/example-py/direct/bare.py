@@ -20,17 +20,19 @@ SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 
 
 class RecordingStream(httpx.AsyncByteStream):
-    def __init__(self, source: httpx.AsyncByteStream) -> None:
-        self.source = source
+    """Keep the decoded HTTP body before parsing it for display."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
         self.chunks: list[bytes] = []
 
     async def __aiter__(self):
-        async for chunk in self.source:
+        async for chunk in self.response.aiter_bytes():
             self.chunks.append(chunk)
             yield chunk
 
     async def aclose(self) -> None:
-        await self.source.aclose()
+        await self.response.aclose()
 
 
 async def send_and_verify(
@@ -51,8 +53,13 @@ async def send_and_verify(
         },
     )
     response = await client.send(request, stream=True)
-    recording = RecordingStream(response.stream)
-    response.stream = recording
+    recording = RecordingStream(response)
+    response = httpx.Response(
+        response.status_code,
+        headers={'Content-Type': response.headers.get('content-type', '')},
+        stream=recording,
+        request=request,
+    )
     try:
         response.raise_for_status()
         values = (

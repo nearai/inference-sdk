@@ -78,19 +78,19 @@ class E2eeRecipient:
 
 
 class RecordingStream(httpx.AsyncByteStream):
-    """Keep ciphertext while the E2EE decryptor consumes the response stream."""
+    """Keep the decoded HTTP body before the E2EE decryptor consumes it."""
 
-    def __init__(self, source: httpx.AsyncByteStream) -> None:
-        self.source = source
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
         self.chunks: list[bytes] = []
 
     async def __aiter__(self):
-        async for chunk in self.source:
+        async for chunk in self.response.aiter_bytes():
             self.chunks.append(chunk)
             yield chunk
 
     async def aclose(self) -> None:
-        await self.source.aclose()
+        await self.response.aclose()
 
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
@@ -172,16 +172,24 @@ async def send_completion(
     prepared = await prepare_e2ee_chat_request(request, recipient.key)
     request_body = prepared.request.content
     response = await client.send(prepared.request, stream=True)
-    response.raise_for_status()
-    recording = RecordingStream(response.stream)
-    response.stream = recording
-    decrypted = await prepared.decrypt_response(response)
+    recording = RecordingStream(response)
+    response = httpx.Response(
+        response.status_code,
+        headers={'Content-Type': response.headers.get('content-type', '')},
+        stream=recording,
+        request=prepared.request,
+    )
     try:
-        values = (
-            await read_stream(decrypted)
-            if stream
-            else [json.loads(await decrypted.aread())]
-        )
+        response.raise_for_status()
+        decrypted = await prepared.decrypt_response(response)
+        try:
+            values = (
+                await read_stream(decrypted)
+                if stream
+                else [json.loads(await decrypted.aread())]
+            )
+        finally:
+            await decrypted.aclose()
         completion_id = next((value['id'] for value in values if value.get('id')), None)
         text = ''.join(
             choice.get('delta' if stream else 'message', {}).get('content') or ''
@@ -189,7 +197,6 @@ async def send_completion(
             for choice in value.get('choices', [])[:1]
         )
     finally:
-        await decrypted.aclose()
         await response.aclose()
     if completion_id is None:
         raise RuntimeError('Completion response did not contain an ID')
