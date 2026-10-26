@@ -66,7 +66,7 @@ not yet signature-verified. `bytes()` and `json()` fully consume the body; use
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 
-### Cache lifetime and limits
+### Cache lifetime
 
 Both caches default to 60 minutes. `attestation_cache_ttl = Duration::ZERO`
 disables reuse of completed deployment checks. `verify()` results contain Unix

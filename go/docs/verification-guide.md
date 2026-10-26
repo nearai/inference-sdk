@@ -590,8 +590,7 @@ Attestation reuse and response retention default to one hour. Set `AttestationTT
 or `ResponseTTL` to a duration pointer to customize them. Pointer-to-zero disables
 the corresponding cache; disabling response retention prevents later receipt
 verification. Expired receipts cannot be verified. See
-[client lifecycle](./api-reference.md#clients-and-lifecycle) for retention behavior
-and the per-request/response size limit.
+[client lifecycle](./api-reference.md#clients-and-lifecycle) for retention behavior.
 
 ## Handle errors
 

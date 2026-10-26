@@ -87,8 +87,8 @@ Successful deployment verification is cached for 60 minutes by default. Set
 `attestation_cache_ttl: Duration::ZERO` (from `std::time`) to verify before every
 request. Response records have a separate 60-minute lifetime starting after full
 body consumption. Verify responses before their records expire.
-See [cache lifetime and limits](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#cache-lifetime-and-limits)
-for retention behavior and the per-response size limit.
+See [cache lifetime](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#cache-lifetime)
+for retention behavior.
 
 ## Verification and encryption
 
