@@ -8,6 +8,8 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
+    "certifi>=2026.10.19",
+    "multidict>=6.9.1",
     "httpx>=0.28.1,<0.29",
     # TLS pinning uses this version's documented handshake trace event.
     "httpcore==1.0.9",
@@ -16,13 +18,13 @@ dependencies = [
     "pyhpke==0.6.5",
     "eth-account>=0.10.0",
     "eth-utils>=2.0.0",
-    "dcap-qvl>=0.3.9",
+    "dcap-qvl>=0.7.0",
     "pynacl>=1.5.0",
     "pydantic>=2.12.5",
     "pyasn1>=0.6.4,<0.7",
     "ruamel.yaml>=0.19.1,<0.20",
     "sigstore>=4.5.0,<5",
-    "PyJWT[crypto]==2.14.0",
+    "PyJWT[crypto]==2.15.1",
 ]
 
 [dependency-groups]

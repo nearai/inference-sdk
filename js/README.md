@@ -8,7 +8,7 @@ and optional encryption. Use `InferenceClient` to get started in Node.js or
 
 ## Install
 
-Requires Node.js 24 or later for Node usage. The package publishes ESM.
+Requires Node.js 24.22.1 or later for Node usage. The package publishes ESM.
 Install with npm:
 
 ```sh

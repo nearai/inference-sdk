@@ -14,7 +14,7 @@ Set `NEARAI_API_KEY` through your local secret manager or shell and set
 | Staging | `https://cloud-stg-api.near.ai/v1` |
 | Production | `https://cloud-api.near.ai/v1` |
 
-Install Node.js 24, then discover models once from the repository root.
+Install Node.js 24.22.1 or later, then discover models once from the repository root.
 Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` to select
 one SDK's suites; the default selects all available suites.
 
@@ -25,7 +25,7 @@ export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 Run the selected SDK's command from the repository root:
 
 ```sh
-# Node.js 24
+# Node.js 24.22.1+
 cd js
 pnpm install --frozen-lockfile
 pnpm build
@@ -47,7 +47,7 @@ cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
 ```sh
-# Go 1.25.8+
+# Go 1.26.10+
 export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
 go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
