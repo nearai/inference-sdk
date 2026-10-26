@@ -72,20 +72,17 @@ Each environment selects representative models from its public `/model/list`
 catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
 external model; all SDKs use the same selection. The same list includes a hosted
 Jev model when the selected SDK has a System One suite. Each entry carries an
-`endpoint` (`chat`, `responses`, `messages`, or `systemone`), and each suite uses only its
+`endpoint` (`chat`, `responses`, or `systemone`), and each suite uses only its
 endpoint. A missing required category fails setup. Responses has its own `responses` entries:
 one of the selected NEAR TEE models and one OpenAI-owned external text model.
 The OpenAI model uses the same non-reasoning, price, and ID ordering as Chat;
 a cheaper external model from another owner cannot replace it.
-Messages selects one external Anthropic text model, preferring non-reasoning
-models and then lower prices. A missing Anthropic model fails setup.
 
 | Area | Live checks |
 | --- | --- |
 | Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
 | Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
 | Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
-| Messages | JSON and SSE on an Anthropic model, through all four native clients and the official Anthropic JS/Python/Go clients. Ed25519 and ECDSA use plain transport; Ed25519 also uses OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
 | Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
 
@@ -100,13 +97,6 @@ finish with `stop`. Test failures and timeouts fail the workflow.
 Receipt lookups retry transient API failures up to five attempts within the
 model case's 180 second deadline. A receipt retry does not send another
 inference request.
-
-Messages adds 42 inference requests per environment, with at most 128 output
-tokens each. Every path requires nonempty text, `end_turn`, and a matching
-Gateway receipt. Streams must reach `message_stop` and EOF. Receipt lookup has
-a 15 second deadline; automatic inference retries are disabled. Ordinary PR CI
-checks the live test sources without credentials; the live workflow runs them
-against STG and PRD, including through the release gate.
 
 ## Official Jev SDK integration
 

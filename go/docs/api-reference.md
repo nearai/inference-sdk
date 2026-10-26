@@ -13,7 +13,6 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error)
-func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
 func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
@@ -21,9 +20,9 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
 func (c *InferenceClient) Close() error
 ```
 
-`CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send non-streaming JSON requests.
+`CreateChatCompletion` and `CreateResponse` send non-streaming JSON requests.
 Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accepts
-POST requests at the configured Chat Completions, Gateway Responses, and Messages creation
+POST requests at the configured Chat Completions and Gateway Responses creation
 endpoints. It verifies deployments before transmission and retains the exact wire
 bytes after complete body consumption. It does not automatically verify receipts.
 
@@ -31,12 +30,7 @@ bytes after complete body consumption. It does not automatically verify receipts
 matching API URL for OpenAI client configuration. Close response bodies and the
 inference client when finished.
 
-`CreateMessage(ctx, request)` returns Anthropic JSON as `json.RawMessage`. Use
-`HTTPClient()` for streaming Messages. Both require a Gateway client with
-field-level E2EE disabled.
-
-See [Messages API](./verification-guide.md#messages-api) and
-[Responses API](./verification-guide.md#responses-api) for Gateway receipt
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
 semantics, streaming, and supported privacy options.
 
 ### Options and defaults

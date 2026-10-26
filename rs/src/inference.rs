@@ -441,6 +441,7 @@ impl InferenceClient {
     pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
         self.json_request("responses", body)
     }
+    /* Messages support is deferred until a later release.
     /// Create an Anthropic Message and retain its bytes for `verify_response`.
     /// Use `message_request` and `send` for streaming events.
     pub async fn create_message(&self, body: Value) -> Result<Value, InferenceError> {
@@ -461,6 +462,7 @@ impl InferenceClient {
     pub fn message_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
         self.json_request("messages", body)
     }
+    */
     fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
             .join(path)
@@ -472,7 +474,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for Chat, Responses, and Messages requests. Authentication
+    /// Transport adapter for Chat and Responses requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -491,7 +493,9 @@ impl InferenceClient {
             == crate::cloud_api::parse_base_url(self.base_url())?
                 .join("messages")
                 .map_err(|_| input("base_url", "invalid URL"))?;
-        let gateway_only = responses || messages;
+        // Messages support is deferred until a later release.
+        // let gateway_only = responses || messages;
+        let gateway_only = responses;
         if actual != expected && !gateway_only {
             return Err(input(
                 "request.url",
@@ -502,7 +506,7 @@ impl InferenceClient {
         if gateway_only && (self.inner.direct || self.inner.options.e2ee) {
             return Err(input(
                 "request",
-                "Responses and Messages require a Gateway client with field-level E2EE disabled",
+                "Responses require a Gateway client with field-level E2EE disabled",
             )
             .into());
         }

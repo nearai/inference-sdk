@@ -133,8 +133,7 @@ verification and do not bind direct TLS identity to attestation. Normal HTTPS
 validation remains enabled. Use Gateway clients for production.
 
 The Gateway adapter accepts POSTs to its configured `chat/completions` and
-`responses` and `messages` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
-and [Messages](./docs/verification-guide.md#messages-api)
+`responses` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
 for JSON, SSE, and Gateway receipt verification.
 Use `AttestationClient` for metadata and evidence. Arbitrary/future Chat fields
 are preserved; the SDK encrypts only the documented protocol fields.
