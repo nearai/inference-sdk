@@ -22,13 +22,16 @@ func TestResponsesJSONAndSSE(t *testing.T) {
 	}
 	for _, selectedModel := range selected {
 		model := selectedModel.ID
-		for _, ohttp := range []bool{false, true} {
-			t.Run(fmt.Sprintf("model=%s/ohttp=%t", model, ohttp), func(t *testing.T) {
+		for _, mode := range []struct {
+			algo  nearai.SigningAlgo
+			ohttp bool
+		}{{nearai.Ed25519, false}, {nearai.ECDSA, false}, {nearai.Ed25519, true}} {
+			t.Run(fmt.Sprintf("model=%s/algo=%s/ohttp=%t", model, mode.algo, mode.ohttp), func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 180*time.Second)
 				defer cancel()
 				client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
 					ClientOptions: nearai.ClientOptions{APIKey: required(t, "NEARAI_API_KEY"), BaseURL: required(t, "NEARAI_BASE_URL")},
-					OHTTP:         ohttp,
+					OHTTP:         mode.ohttp, SigningAlgo: mode.algo,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -60,9 +63,8 @@ func TestResponsesJSONAndSSE(t *testing.T) {
 						}
 						raw := readResponse(t, res)
 						createdID, completed := "", false
-						for _, line := range strings.Split(string(raw), "\n") {
-							data, ok := strings.CutPrefix(line, "data:")
-							if !ok || strings.TrimSpace(data) == "[DONE]" {
+						for _, data := range sseData(raw) {
+							if data == "[DONE]" {
 								continue
 							}
 							var event struct {
@@ -106,7 +108,7 @@ func TestResponsesJSONAndSSE(t *testing.T) {
 					receiptCtx, receiptCancel := context.WithTimeout(ctx, 15*time.Second)
 					err = retry(receiptCtx, func() error {
 						receipt, err := client.VerifyResponse(receiptCtx, result.ID)
-						if err == nil && (receipt.ID != result.ID || receipt.SignatureKind != "gateway") {
+						if err == nil && (receipt.ID != result.ID || receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != mode.algo) {
 							t.Fatal("expected matching Gateway receipt")
 						}
 						return err

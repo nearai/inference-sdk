@@ -2,49 +2,69 @@ package main
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	nearai "github.com/nearai/inference-sdk/go"
 	"log"
 	"os"
 	"time"
+
+	"example.com/nearai-inference-example/internal/demo"
+	nearai "github.com/nearai/inference-sdk/go"
 )
 
 func run() error {
-	key, model := os.Getenv("NEARAI_API_KEY"), os.Getenv("NEARAI_SYSTEMONE_MODEL")
-	if key == "" || model == "" {
-		return errors.New("NEARAI_API_KEY and NEARAI_SYSTEMONE_MODEL are required")
+	c, err := demo.ConfigurationForModel(false, "")
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	if c.Model == "" {
+		return fmt.Errorf("NEARAI_MODEL is required")
+	}
+	expected := os.Getenv("NEARAI_EXPECT_SIGNATURE_KIND")
+	if expected == "" {
+		expected = "gateway"
+	}
+	if expected != "gateway" && expected != "provider_tee" {
+		return fmt.Errorf("NEARAI_EXPECT_SIGNATURE_KIND must be gateway or provider_tee")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: key, BaseURL: os.Getenv("NEARAI_BASE_URL")}})
+	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}, SigningAlgo: c.Algo})
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	result, err := client.CreateSystemOne(ctx, nearai.SystemOneRequest{Model: model, State: map[string]string{"message": "I was charged twice for my subscription."}, Questions: map[string]nearai.SystemOneQuestion{"billing": {Type: "noul", Instructions: "Is this about billing?"}}})
+	if expected == "provider_tee" {
+		verified, err := client.Verify(ctx, c.Model)
+		if err != nil {
+			return err
+		}
+		if len(verified.Models) == 0 {
+			return fmt.Errorf("model evidence is required")
+		}
+	}
+	request := nearai.SystemOneRequest{Model: c.Model, State: map[string]string{"message": "I was charged twice for my subscription. Please help."}, Questions: map[string]nearai.SystemOneQuestion{
+		"billing": {Type: "noul", Instructions: "Is this about billing?"},
+		"team":    {Type: "choice", Instructions: "Which team should handle this?", Criteria: map[string]string{"billing": "Payments and subscriptions", "support": "Technical issues"}},
+		"urgency": {Type: "score", Instructions: "How urgent is this request?", Criteria: []string{"Routine", "Needs prompt attention", "Critical"}},
+	}}
+	result, err := client.CreateSystemOne(ctx, request)
 	if err != nil {
 		return err
 	}
-	var receipt nearai.VerifiedCompletionResult
-	for _, delay := range []time.Duration{0, 500 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second} {
-		if delay > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(delay):
-			}
-		}
-		receipt, err = client.VerifyResponse(ctx, result.DecisionID)
-		var sdk *nearai.Error
-		if err == nil || !errors.As(err, &sdk) || (!sdk.Retryable && sdk.Code != "api.completion_signature_unavailable") {
-			break
-		}
-	}
+	receipt, err := client.VerifyResponse(ctx, result.DecisionID)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Verified %s receipt: %+v\n", receipt.SignatureKind, result.Data.Answers)
+	if receipt.SignatureKind != expected {
+		return fmt.Errorf("expected %s, got %s", expected, receipt.SignatureKind)
+	}
+	fmt.Printf("Verified %s receipt %s.\n", receipt.SignatureKind, result.DecisionID)
+	output, err := json.MarshalIndent(map[string]any{"answers": result.Data.Answers, "usage": result.Data.Usage}, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(output))
 	return nil
 }
 func main() {

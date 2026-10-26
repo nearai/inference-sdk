@@ -24,9 +24,9 @@ from nearai_inference_sdk import (
     verify_model_response,
 )
 
-BASE_URL = 'https://cloud-api.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ed25519'
+BASE_URL = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 GATEWAY_IMAGE_POLICIES = {
     'nearaidev/cloud-api': ImageProvenancePolicy(
         repository='nearai/cloud-api', workflow='.github/workflows/build.yml'
@@ -68,6 +68,7 @@ class Completion:
     id: str
     request_body: bytes
     response_body: bytes
+    text: str | None
 
 
 @dataclass(frozen=True)
@@ -175,39 +176,29 @@ async def send_completion(
     recording = RecordingStream(response.stream)
     response.stream = recording
     decrypted = await prepared.decrypt_response(response)
-    completion_id = None
-    stream_complete = False
     try:
-        if stream:
-            async for line in decrypted.aiter_lines():
-                if not line.startswith('data:'):
-                    continue
-                data = line.removeprefix('data:').strip()
-                if data == '[DONE]':
-                    stream_complete = True
-                    continue
-                chunk = json.loads(data)
-                completion_id = chunk.get('id', completion_id)
-                for choice in chunk.get('choices', []):
-                    print(
-                        choice.get('delta', {}).get('content') or '', end='', flush=True
-                    )
-            print()
-        else:
-            await decrypted.aread()
-            body = decrypted.json()
-            completion_id = body['id']
-            print(body['choices'][0]['message'].get('content') or '')
+        values = (
+            await read_stream(decrypted)
+            if stream
+            else [json.loads(await decrypted.aread())]
+        )
+        completion_id = next((value['id'] for value in values if value.get('id')), None)
+        text = ''.join(
+            choice.get('delta' if stream else 'message', {}).get('content') or ''
+            for value in values
+            for choice in value.get('choices', [])[:1]
+        )
     finally:
         await decrypted.aclose()
         await response.aclose()
-
     if completion_id is None:
         raise RuntimeError('Completion response did not contain an ID')
-    if stream and not stream_complete:
-        raise RuntimeError('Streaming completion ended before [DONE]')
-    # Signatures cover the encrypted HTTP bytes, not the displayed plaintext.
-    return Completion(completion_id, request_body, b''.join(recording.chunks))
+    return Completion(
+        completion_id,
+        request_body,
+        b''.join(recording.chunks),
+        None if stream else text,
+    )
 
 
 async def run_non_streaming_example(client, api_key, recipient) -> Completion:
@@ -241,6 +232,36 @@ async def verify_completion_receipt(
             completion.request_body, completion.response_body, signature, gateway
         )
     print(f'Verified {signature.kind} response.')
+    if completion.text is not None:
+        print(completion.text)
+
+
+async def read_stream(response: httpx.Response) -> list[dict]:
+    values, data = [], []
+    done = False
+    async for line in response.aiter_lines():
+        if line == 'data':
+            data.append('')
+        elif line.startswith('data:'):
+            data.append(line[5:].removeprefix(' '))
+        elif not line:
+            payload = '\n'.join(data)
+            data = []
+            if payload == '[DONE]':
+                done = True
+            elif payload:
+                value = json.loads(payload)
+                if value.get('error'):
+                    raise RuntimeError('Stream returned an error')
+                values.append(value)
+                for choice in value.get('choices', [])[:1]:
+                    print(
+                        choice.get('delta', {}).get('content') or '', end='', flush=True
+                    )
+    print()
+    if not done:
+        raise RuntimeError('Stream ended without [DONE]')
+    return values
 
 
 async def main() -> None:

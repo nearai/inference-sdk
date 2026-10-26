@@ -58,9 +58,8 @@ func TestMessagesJSONAndSSE(t *testing.T) {
 					}
 					raw := readResponse(t, res)
 					stopped, stopReason := false, ""
-					for _, line := range strings.Split(string(raw), "\n") {
-						data, ok := strings.CutPrefix(line, "data:")
-						if !ok {
+					for _, data := range sseData(raw) {
+						if data == "[DONE]" {
 							continue
 						}
 						var event struct {
@@ -119,7 +118,7 @@ func TestMessagesJSONAndSSE(t *testing.T) {
 				receiptCtx, receiptCancel := context.WithTimeout(ctx, 15*time.Second)
 				err = retry(receiptCtx, func() error {
 					receipt, err := client.VerifyResponse(receiptCtx, id)
-					if err == nil && (receipt.ID != id || receipt.SignatureKind != "gateway") {
+					if err == nil && (receipt.ID != id || receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != scenario.algo) {
 						t.Fatal("expected matching Gateway receipt")
 					}
 					return err

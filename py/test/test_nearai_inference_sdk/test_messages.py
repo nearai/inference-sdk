@@ -102,10 +102,10 @@ class MessagesGateway(Gateway):
 @pytest.mark.parametrize(
     'streaming,ohttp,external,signing_algo',
     [
-        (False, False, False, 'ed25519'),
-        (True, False, True, 'ecdsa'),
-        (False, True, True, 'ed25519'),
-        (True, True, False, 'ed25519'),
+        (streaming, ohttp, external, algo)
+        for streaming in (False, True)
+        for external in (False, True)
+        for algo, ohttp in (('ed25519', False), ('ecdsa', False), ('ed25519', True))
     ],
 )
 async def test_messages_wire_receipts(
@@ -419,3 +419,16 @@ async def test_messages_stream_contract(monkeypatch, case):
                 await client.verify_response('msg_fixture')
             assert not gateway.signature_requests
     assert len(gateway.completion_requests) == 1
+
+
+async def test_messages_wrapped_sdk_error_without_io(monkeypatch):
+    from nearai_inference_sdk import get_sdk_error
+
+    gateway = MessagesGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=True) as client:
+        with pytest.raises(Exception) as caught:
+            await client.messages.create(model=MODEL, messages=[], max_tokens=1)
+        assert get_sdk_error(caught.value).failure.code == 'api.invalid_input'
+    assert gateway.gateway_requests == 0
+    assert not gateway.completion_requests

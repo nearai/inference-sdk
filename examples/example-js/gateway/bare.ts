@@ -1,27 +1,30 @@
+import type {
+  E2eeModelKey,
+  GatewayTlsBinding,
+  ImageProvenancePolicy,
+  SigningAlgo,
+  VerifiedGatewayAttestation,
+  VerifiedModelAttestation,
+} from '@nearai/inference-sdk/node';
 import {
   AttestationClient,
   createPinnedTlsFetch,
   prepareE2eeChatRequest,
-  verifyDeploymentImageProvenance,
   verifyComposeManagerDeploymentImageProvenance,
+  verifyDeploymentImageProvenance,
   verifyGatewayAttestation,
   verifyGatewayResponse,
   verifyModelAttestation,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
-import type {
-  E2eeModelKey,
-  GatewayTlsBinding,
-  ImageProvenancePolicy,
-  VerifiedGatewayAttestation,
-  VerifiedModelAttestation,
-} from '@nearai/inference-sdk/node';
+import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.
-const BASE_URL = 'https://cloud-api.near.ai/v1/';
-const MODEL = 'z-ai/glm-5.3-flash';
-const SIGNING_ALGO = 'ed25519';
+const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
+const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
+const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
+  'ed25519') as SigningAlgo;
 
 // These policies require GitHub build provenance for four Gateway images,
 // not model runtime images. Add a reviewed `commit` to pin a specific build.
@@ -253,7 +256,7 @@ async function sendCompletion({
     );
   }
   // Keep an encrypted copy for verification; decrypt the other branch for display.
-  // For SSE, consume both branches concurrently so output remains streaming.
+  // Consume both branches before verifying and displaying the output.
   const encryptedResponse = response.clone();
   const decryptedResponse = await prepared.decryptResponse(response);
   const [responseBytes, plaintextBody] = await Promise.all([
@@ -266,6 +269,7 @@ async function sendCompletion({
     label: stream ? 'Streaming completion' : 'Completion',
     requestBody,
     responseBody: new Uint8Array(responseBytes),
+    text: stream ? undefined : chatOutput(plaintextBody, false).text,
   };
 }
 
@@ -275,7 +279,6 @@ async function readDecryptedCompletion({
 }: ReadDecryptedCompletionParams): Promise<string> {
   if (!stream) {
     const responseText = await response.text();
-    console.log(responseText);
     return responseText;
   }
   if (response.body === null) {
@@ -283,16 +286,18 @@ async function readDecryptedCompletion({
   }
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let responseText = '';
+  const output = new ChatStreamOutput();
   try {
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      // Print raw decrypted SSE for this example; a UI would parse its data events.
-      // Retain the text only to extract the completion ID, not for signature checks.
-      process.stdout.write(chunk.value);
+      // Retain visible content for display after signature verification.
       responseText += chunk.value;
+      process.stdout.write(output.push(chunk.value));
     }
   } finally {
+    process.stdout.write(output.push('', true));
+    process.stdout.write('\n');
     reader.releaseLock();
   }
   return responseText;
@@ -342,41 +347,14 @@ async function verifyCompletionResponse({
     });
     console.log(`${completion.label}: verified Gateway response signature.`);
   }
+  if (completion.text !== undefined) console.log(completion.text);
 }
 
 function readCompletionId({
   responseText,
   stream,
 }: ReadCompletionIdParams): string {
-  if (!stream) {
-    return readJsonCompletionId(responseText);
-  }
-
-  for (const line of responseText.split(/\r\n|\n|\r/)) {
-    if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-      continue;
-    }
-    try {
-      return readJsonCompletionId(line.slice('data: '.length));
-    } catch {
-      // Later events may contain the completion ID.
-    }
-  }
-  throw new Error('Streaming Chat response did not contain an id');
-}
-
-function readJsonCompletionId(text: string): string {
-  const response: unknown = JSON.parse(text);
-  if (
-    typeof response !== 'object' ||
-    response === null ||
-    !('id' in response) ||
-    typeof response.id !== 'string' ||
-    response.id.length === 0
-  ) {
-    throw new Error('Chat response did not contain an id');
-  }
-  return response.id;
+  return chatOutput(responseText, stream).id;
 }
 
 type Completion = {
@@ -385,6 +363,7 @@ type Completion = {
   // Exact encrypted HTTP body bytes retained for response signature verification.
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
+  readonly text?: string;
 };
 
 type CompletionExampleParams = {

@@ -6,17 +6,22 @@ use std::sync::Arc;
 async fn main() -> Result<()> {
     let client = InferenceClient::with_options(InferenceClientOptions {
         api_key: Some(api_key()?),
-        base_url: GATEWAY.into(),
-        signing_algo: ALGO,
+        base_url: gateway(),
+        signing_algo: algo()?,
         e2ee: true,
+        ohttp: ohttp(),
         // Optional: set ohttp: true with Ed25519; both Chat modes stay the same.
+        model_verification: ModelVerificationOptions {
+            deployment: Some(Arc::new(ModelImages)),
+            ..Default::default()
+        },
         gateway_verification: GatewayVerificationOptions {
             deployment: Some(Arc::new(GatewayImages)),
             ..Default::default()
         },
         ..Default::default()
     })?;
-    let verified = client.verify(MODEL).await?;
+    let verified = client.verify(&model()).await?;
     println!(
         "Gateway/model deployments and Gateway images verified at {}",
         verified.verified_at
@@ -28,7 +33,7 @@ async fn main() -> Result<()> {
                 return Err(format!("Chat failed: {}", response.status).into());
             }
             // Consume EOF even after [DONE], so the exact receipt is retained.
-            response.bytes().await?
+            read_stream(response.body).await?
         } else {
             serde_json::to_vec(&client.chat_completions(body(false)).await?)?
         };

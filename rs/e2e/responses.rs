@@ -1,4 +1,6 @@
-use nearai_inference_sdk::{CompletionSignatureKind, InferenceClient, InferenceClientOptions};
+use nearai_inference_sdk::{
+    CompletionSignatureKind, InferenceClient, InferenceClientOptions, SigningAlgo,
+};
 use serde_json::{json, Value};
 use std::{error::Error, time::Duration};
 
@@ -9,20 +11,32 @@ async fn verified_responses_json_and_sse() -> Result<(), Box<dyn Error>> {
     assert_eq!(models.len(), 2, "Expected NEAR and OpenAI Responses models");
 
     for model in models {
-        for ohttp in [false, true] {
-            tokio::time::timeout(Duration::from_secs(180), verify_responses(&model.id, ohttp))
-                .await??;
+        for (algo, ohttp) in [
+            (SigningAlgo::Ed25519, false),
+            (SigningAlgo::Ecdsa, false),
+            (SigningAlgo::Ed25519, true),
+        ] {
+            tokio::time::timeout(
+                Duration::from_secs(180),
+                verify_responses(&model.id, algo, ohttp),
+            )
+            .await??;
         }
     }
 
     Ok(())
 }
 
-async fn verify_responses(model: &str, ohttp: bool) -> Result<(), Box<dyn Error>> {
+async fn verify_responses(
+    model: &str,
+    signing_algo: SigningAlgo,
+    ohttp: bool,
+) -> Result<(), Box<dyn Error>> {
     let client = InferenceClient::with_options(InferenceClientOptions {
         api_key: Some(super::required_env("NEARAI_API_KEY")?),
         base_url: super::required_env("NEARAI_BASE_URL")?,
         ohttp,
+        signing_algo,
         ..Default::default()
     })?;
 
@@ -39,11 +53,10 @@ async fn verify_responses(model: &str, ohttp: bool) -> Result<(), Box<dyn Error>
             let response = client.send(client.response_request(request)?).await?;
             assert!(response.status.is_success());
             let bytes = response.bytes().await?;
-            let events: Vec<Value> = std::str::from_utf8(&bytes)?
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:"))
-                .filter(|data| data.trim() != "[DONE]")
-                .map(serde_json::from_str)
+            let events: Vec<Value> = super::sse_data(&bytes)?
+                .into_iter()
+                .filter(|data| data != "[DONE]")
+                .map(|data| serde_json::from_str(&data))
                 .collect::<Result<_, _>>()?;
             let created = events
                 .iter()
@@ -73,6 +86,7 @@ async fn verify_responses(model: &str, ohttp: bool) -> Result<(), Box<dyn Error>
         .await??;
 
         assert_eq!(receipt.id, id);
+        assert_eq!(receipt.signature.signer.signing_algo, signing_algo);
         assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
         println!(
             "Responses model={model}, stream={stream}, ohttp={ohttp}: verified Gateway receipt"

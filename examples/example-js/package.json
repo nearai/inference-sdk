@@ -7,7 +7,7 @@
     "node": ">=24.22.1"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "biome check . && tsc --noEmit && node --test chat-output.test.ts",
     "start:bare": "node gateway/bare.ts",
     "start:client": "node gateway/client.ts",
     "start:direct-client": "node direct/client.ts",
@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "24.19.2",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "@biomejs/biome": "2.5.15"
   }
 }

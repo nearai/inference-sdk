@@ -44,10 +44,10 @@ async fn verify_messages(
             let response = client.send(client.message_request(request)?).await?;
             assert!(response.status.is_success());
             let bytes = response.bytes().await?;
-            let events: Vec<Value> = std::str::from_utf8(&bytes)?
-                .lines()
-                .filter_map(|line| line.strip_prefix("data:"))
-                .map(serde_json::from_str)
+            let events: Vec<Value> = super::sse_data(&bytes)?
+                .into_iter()
+                .filter(|data| data != "[DONE]")
+                .map(|data| serde_json::from_str(&data))
                 .collect::<Result<_, _>>()?;
             let start = events
                 .iter()
@@ -98,6 +98,7 @@ async fn verify_messages(
         )
         .await??;
         assert_eq!(receipt.id, id);
+        assert_eq!(receipt.signature.signer.signing_algo, signing_algo);
         assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
         println!("Messages model={model}, stream={stream}, signing_algo={signing_algo}, ohttp={ohttp}: verified Gateway receipt");
     }

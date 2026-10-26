@@ -140,6 +140,7 @@ export type {
 export {
   ApiError,
   isApiError,
+  getSdkError,
   isVerificationError,
   VerificationError,
 } from './utils/errors';

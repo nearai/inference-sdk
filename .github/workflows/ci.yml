@@ -60,7 +60,10 @@ jobs:
         working-directory: examples/example-py
         run: |
           uv sync --locked
-          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, messages, messages_anthropic_sdk; from direct import bare, client, client_openai_sdk"
+          ../../py/.venv/bin/ruff format --check .
+          ../../py/.venv/bin/ruff check .
+          uv run python -m unittest test_stream_output
+          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, responses_openai_sdk, messages, messages_anthropic_sdk; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
@@ -116,6 +119,7 @@ jobs:
       - name: Check Go SDK integration examples
         working-directory: examples/example-go
         run: |
+          test -z "$(gofmt -l .)"
           go vet ./...
           go test -race ./...
           go test -tags=e2e -run '^$' .

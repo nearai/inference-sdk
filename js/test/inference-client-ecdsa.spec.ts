@@ -1,6 +1,10 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import Anthropic from '@anthropic-ai/sdk';
 import { ethers } from 'ethers';
+import OpenAI from 'openai';
 import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
 import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
@@ -184,6 +188,32 @@ function createEcdsaGateway({
       return response;
     }
 
+    if (url.pathname === '/v1/messages' || url.pathname === '/v1/responses') {
+      const requestBody = new Uint8Array(await request.arrayBuffer());
+      const { stream } = JSON.parse(new TextDecoder().decode(requestBody));
+      const messages = url.pathname.endsWith('/messages');
+      const endpoint = messages ? 'messages' : 'responses';
+      const file = messages ? 'message' : 'response';
+      const responseBody = readFileSync(
+        resolve(
+          __dirname,
+          `../../test-fixtures/${endpoint}/${file}.${stream ? 'sse' : 'json'}`,
+        ),
+      );
+      const text = `${sha256(requestBody)}:${sha256(responseBody)}`;
+      signatures.set(messages ? 'msg_fixture' : 'resp_fixture', {
+        text,
+        signature: await gatewayKey.signMessage(text),
+        kind: 'gateway',
+        signer: gatewayKey,
+      });
+      return new Response(responseBody, {
+        headers: {
+          'content-type': stream ? 'text/event-stream' : 'application/json',
+        },
+      });
+    }
+
     if (url.pathname !== '/v1/chat/completions') {
       throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
     }
@@ -364,12 +394,98 @@ describe('ECDSA inference client', () => {
       ).resolves.toMatchObject({ signatureKind });
       expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
       expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
-      expect(
-        gateway.state.completionHeaders[0].get('x-model-pub-key'),
-      ).toBeNull();
+      expect(gateway.state.completionHeaders[0].get('x-model-pub-key')).toBe(
+        modelPublicKey,
+      );
       expect(
         gateway.state.completionHeaders[0].get('x-signing-algo'),
       ).toBeNull();
     },
   );
+});
+
+describe('ECDSA Gateway endpoint adapters', () => {
+  afterEach(() => jest.restoreAllMocks());
+  for (const endpoint of ['messages', 'responses'] as const) {
+    for (const official of [false, true]) {
+      for (const stream of [false, true] as const) {
+        test(`ECDSA ${endpoint}, official=${official}, stream=${stream}`, async () => {
+          const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
+          const fetchSpy = jest
+            .spyOn(globalThis, 'fetch')
+            .mockImplementation(gateway.fetch);
+          const client = new InferenceClient({
+            apiKey: 'key',
+            baseUrl,
+            signingAlgo: 'ecdsa',
+            gatewayVerification: {
+              verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+            },
+            modelVerification: {
+              verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+            },
+          });
+          const id = endpoint === 'messages' ? 'msg_fixture' : 'resp_fixture';
+          if (endpoint === 'messages') {
+            const api = official
+              ? new Anthropic({
+                  apiKey: 'key',
+                  baseURL: 'https://gateway.test',
+                  fetch: client.fetch,
+                  maxRetries: 0,
+                })
+              : client;
+            const result = await api.messages.create({
+              model,
+              max_tokens: 128,
+              messages: [{ role: 'user', content: 'Hello' }],
+              stream,
+            });
+            if (Symbol.asyncIterator in result) {
+              let text = '';
+              for await (const event of result) {
+                if (event.type === 'message_start')
+                  expect(event.message.id).toBe(id);
+                if (
+                  event.type === 'content_block_delta' &&
+                  event.delta.type === 'text_delta'
+                )
+                  text += event.delta.text;
+              }
+              expect(text).toContain('你好');
+            } else expect(result.id).toBe(id);
+          } else {
+            const api = official
+              ? new OpenAI({
+                  apiKey: 'key',
+                  baseURL: baseUrl,
+                  fetch: client.fetch,
+                  maxRetries: 0,
+                })
+              : client;
+            const result = await api.responses.create({
+              model,
+              input: 'Hello',
+              store: false,
+              stream,
+            });
+            if (Symbol.asyncIterator in result) {
+              let text = '';
+              for await (const event of result) {
+                if (event.type === 'response.created')
+                  expect(event.response.id).toBe(id);
+                if (event.type === 'response.output_text.delta')
+                  text += event.delta;
+              }
+              expect(text).toContain('你好');
+            } else expect(result.id).toBe(id);
+          }
+          const receipt = await client.verifyResponse(id);
+          expect(receipt.signatureKind).toBe('gateway');
+          expect(receipt.signature.signer.signingAlgo).toBe('ecdsa');
+          fetchSpy.mockRestore();
+        });
+      }
+    }
+  }
 });

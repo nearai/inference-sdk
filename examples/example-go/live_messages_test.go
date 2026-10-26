@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"example.com/nearai-inference-example/internal/demo"
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
 	nearai "github.com/nearai/inference-sdk/go"
@@ -105,7 +104,7 @@ func TestLiveAnthropic(t *testing.T) {
 					t.Fatal("expected a nonempty complete Messages answer")
 				}
 				receiptCtx, receiptCancel := context.WithTimeout(ctx, 15*time.Second)
-				err = demo.Retry(receiptCtx, func() error {
+				err = retryReceipt(receiptCtx, func() error {
 					receipt, err := inference.VerifyResponse(receiptCtx, message.ID)
 					if err == nil && (receipt.ID != message.ID || receipt.SignatureKind != "gateway") {
 						t.Fatal("expected matching Gateway receipt")

@@ -51,7 +51,7 @@ const result = await client.systemone.create(
       },
     },
   },
-  { signal: AbortSignal.timeout(60_000) },
+  { signal: AbortSignal.timeout(120_000) },
 );
 
 // decisionId comes from X-Generation-Id, including when the body has no id.

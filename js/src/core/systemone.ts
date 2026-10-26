@@ -182,8 +182,8 @@ async function captureSystemOne({
     if (isApiError(cause) || isVerificationError(cause)) throw cause;
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'request' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'request' },
         retryable: false,
       },
       { cause },
@@ -194,7 +194,7 @@ async function captureSystemOne({
     await discardResponse(response);
     throw new ApiError({
       code: 'api.http_status',
-      details: { resource: 'completion', status: response.status },
+      details: { resource: 'systemone', status: response.status },
       retryable: false,
     });
   }
@@ -213,8 +213,8 @@ async function captureSystemOne({
     request.signal.throwIfAborted();
     throw new ApiError(
       {
-        code: 'api.inference_transport_failed',
-        details: { resource: 'completion', reason: 'response_body' },
+        code: 'api.transport_failed',
+        details: { resource: 'systemone', reason: 'response_body' },
         retryable: false,
       },
       { cause },

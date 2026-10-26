@@ -203,6 +203,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
             http_client=self._chat_client,
+            max_retries=0,
         )
         self.chat = self._openai.chat
 
@@ -992,8 +993,8 @@ def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:
     return api_failure(
         'api.invalid_response',
         {
-            'path': 'Chat Completions response.id',
-            'expected': 'a non-empty completion ID',
+            'path': 'completion response ID or SSE lifecycle',
+            'expected': 'a non-empty ID and a complete valid stream',
             'actual': 'missing or invalid',
         },
         cause=cause,

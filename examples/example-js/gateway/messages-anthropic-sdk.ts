@@ -1,76 +1,80 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { InferenceClient } from '@nearai/inference-sdk/node';
+import { InferenceClient, type SigningAlgo } from '@nearai/inference-sdk/node';
+import { transportOptions } from '../transport-options.ts';
 
 const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
 const MODEL = process.env.NEARAI_MODEL ?? 'anthropic/claude-haiku-4-5';
-const SIGNING_ALGO = 'ed25519';
+const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
+  'ed25519') as SigningAlgo;
+const signal = AbortSignal.timeout(120_000);
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
-
   const inferenceClient = new InferenceClient({
     apiKey,
     baseUrl: BASE_URL,
-    signingAlgo: SIGNING_ALGO,
-    ohttp: process.env.NEARAI_OHTTP === 'true',
+    ...transportOptions(SIGNING_ALGO),
   });
-
-  const anthropic = new Anthropic({
+  const api = new Anthropic({
     apiKey,
-    // The official SDK appends /v1/messages to this API root.
     baseURL: inferenceClient.getBaseUrl().replace(/v1\/$/, ''),
     fetch: inferenceClient.fetch,
     maxRetries: 0,
   });
-
-  await runNonStreamingExample(anthropic, inferenceClient);
-  await runStreamingExample(anthropic, inferenceClient);
+  await runNonStreamingExample(api, inferenceClient);
+  await runStreamingExample(api, inferenceClient);
 }
 
 async function runNonStreamingExample(
-  anthropic: Anthropic,
+  api: Anthropic,
   inferenceClient: InferenceClient,
 ): Promise<void> {
-  const message = await anthropic.messages.create({
-    model: MODEL,
-    messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_tokens: 128,
-  });
-  const verified = await inferenceClient.verifyResponse(message.id);
+  const response = await api.messages.create(
+    {
+      model: MODEL,
+      messages: [{ role: 'user', content: 'Reply with the word ok.' }],
+      max_tokens: 128,
+    },
+    { signal },
+  );
+  const verified = await inferenceClient.verifyResponse(response.id);
   console.log(`Verified ${verified.signatureKind} response.`);
-  for (const block of message.content) {
-    if (block.type === 'text') console.log(block.text);
-  }
+  console.log(
+    response.content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text)
+      .join(''),
+  );
 }
 
 async function runStreamingExample(
-  anthropic: Anthropic,
+  api: Anthropic,
   inferenceClient: InferenceClient,
 ): Promise<void> {
-  const stream = await anthropic.messages.create({
-    model: MODEL,
-    messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_tokens: 128,
-    stream: true,
-  });
-
-  let messageId: string | undefined;
-  let text = '';
-  // Retain streamed text until the complete response has been verified.
+  const stream = await api.messages.create(
+    {
+      model: MODEL,
+      messages: [{ role: 'user', content: 'Reply with the word ok.' }],
+      max_tokens: 128,
+      stream: true,
+    },
+    { signal },
+  );
+  let id: string | undefined;
+  // Stream text as it arrives; verify the receipt after full consumption.
   for await (const event of stream) {
-    if (event.type === 'message_start') messageId = event.message.id;
+    if (event.type === 'message_start') id = event.message.id;
     if (
       event.type === 'content_block_delta' &&
       event.delta.type === 'text_delta'
     )
-      text += event.delta.text;
+      process.stdout.write(event.delta.text);
   }
-
-  if (messageId === undefined) throw new Error('Stream returned no message ID');
-  const verified = await inferenceClient.verifyResponse(messageId);
+  process.stdout.write('\n');
+  if (id === undefined) throw new Error('Stream returned no response ID');
+  const verified = await inferenceClient.verifyResponse(id);
   console.log(`Verified ${verified.signatureKind} streaming response.`);
-  console.log(text);
 }
 
 await main();

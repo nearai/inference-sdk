@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { TypeSafeClient, choice, noul, score } from '@typesafe-ai/sdk';
+import { choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import { InferenceClient as GenericInferenceClient } from '../dist/index.js';
 import {
   AttestationClient,
@@ -204,14 +204,17 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
       const { data, response } = await jev
         .systemOne({
           model,
-          state: { message: 'I was charged twice. Please help.' },
+          state: REQUEST.state,
           questions: {
             billing: noul('Is this about billing?'),
-            team: choice('Choose a team.', {
-              billing: 'Payments',
-              support: 'Other',
-            }),
-            urgency: score('Rate urgency.', ['Routine', 'Urgent']),
+            team: choice(
+              REQUEST.questions.team.instructions,
+              REQUEST.questions.team.criteria,
+            ),
+            urgency: score(
+              REQUEST.questions.urgency.instructions,
+              REQUEST.questions.urgency.criteria,
+            ),
           },
         })
         .withResponse();
@@ -232,6 +235,10 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
         inferenceRequests,
         1,
         'Receipt retries must not repeat inference',
+      );
+      assert.ok(data.model);
+      assert.ok(
+        data.usage.input_tokens !== null && data.usage.input_tokens > 0,
       );
       assert.equal(data.answers.billing.type, 'noul');
       assert.equal(data.answers.team.type, 'choice');

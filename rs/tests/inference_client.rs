@@ -1656,8 +1656,9 @@ fn message_request_body(streaming: bool) -> Value {
 #[tokio::test]
 async fn messages_json_and_sse_retain_exact_gateway_receipts() {
     for streaming in [false, true] {
-        for oblivious in [false, true] {
+        for (oblivious, ecdsa) in [(false, false), (false, true), (true, false)] {
             let fixture = Fixture {
+                ecdsa,
                 ohttp: oblivious.then(|| {
                     ohttp::KeyConfig::new(
                         1,
@@ -1673,6 +1674,9 @@ async fn messages_json_and_sse_retain_exact_gateway_receipts() {
             };
             let (_server, f, mut options) = setup(fixture).await;
             options.ohttp = oblivious;
+            if ecdsa {
+                options.signing_algo = SigningAlgo::Ecdsa;
+            }
             let client = InferenceClient::with_options(options).unwrap();
             let body = message_request_body(streaming);
 
