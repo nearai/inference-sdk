@@ -2,7 +2,7 @@ import type { Buffer } from 'node:buffer';
 import { createHash, X509Certificate } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import * as https from 'node:https';
-import { Readable } from 'node:stream';
+import { pipeline, Readable } from 'node:stream';
 import {
   checkServerIdentity,
   type PeerCertificate,
@@ -139,7 +139,10 @@ export function requestHttps({
               ? undefined
               : spkiFingerprintForCertificate(certificate).toString('hex');
           const headers = responseHeaders(incoming.headers);
-          const body = responseBody(incoming.statusCode, incoming, headers);
+          const body =
+            request.method === 'HEAD'
+              ? null
+              : responseBody(incoming.statusCode, incoming, headers);
           resolve({
             response: new Response(body, {
               status: incoming.statusCode ?? 500,
@@ -232,8 +235,9 @@ function responseBody(
     return Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
   headers.delete('content-encoding');
   headers.delete('content-length');
+  // Readable.toWeb delivers pipeline errors through the response body.
   return Readable.toWeb(
-    incoming.compose(decoder),
+    pipeline(incoming, decoder, () => {}),
   ) as ReadableStream<Uint8Array>;
 }
 

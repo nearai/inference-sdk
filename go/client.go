@@ -502,14 +502,12 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		cancel()
 		return nil, e
 	}
+	response.Body = &cancelBody{ReadCloser: response.Body, cancel: func() { stop(); cancel() }}
 	if e = decodeResponse(response); e != nil {
 		response.Body.Close()
-		stop()
-		cancel()
 		return nil, e
 	}
-	source := &cancelBody{ReadCloser: response.Body, cancel: func() { stop(); cancel() }}
-	response.Body = source
+	source := response.Body
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return response, nil
 	}

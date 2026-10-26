@@ -523,18 +523,22 @@ func TestPinnedTLSRejectsBeforeSending(t *testing.T) {
 	}
 }
 func TestUnconsumedStreamCannotVerify(t *testing.T) {
-	f := newFakeCloud(t)
-	f.stream = true
-	c, _ := fakeClient(t, f, nil)
-	body, _ := json.Marshal(chatRequest())
-	req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
-	res, e := c.HTTPClient().Do(req)
-	if e != nil {
-		t.Fatal(e)
+	for _, encoding := range []string{"", "gzip", "br"} {
+		t.Run(encoding, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.stream, f.encoding = true, encoding
+			c, _ := fakeClient(t, f, nil)
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+			res, e := c.HTTPClient().Do(req)
+			if e != nil {
+				t.Fatal(e)
+			}
+			res.Body.Close()
+			_, e = c.VerifyResponse(context.Background(), "chat-1")
+			requireCode(t, e, "api.completion_not_found")
+		})
 	}
-	res.Body.Close()
-	_, e = c.VerifyResponse(context.Background(), "chat-1")
-	requireCode(t, e, "api.completion_not_found")
 }
 
 func TestSuccessfulE2EEInference(t *testing.T) {

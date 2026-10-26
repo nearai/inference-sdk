@@ -5,7 +5,7 @@ import * as https from 'node:https';
 import { Readable } from 'node:stream';
 import type { DetailedPeerCertificate } from 'node:tls';
 import * as tls from 'node:tls';
-import { brotliCompressSync, gzipSync } from 'node:zlib';
+import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 import { createPinnedTlsFetch } from '../src/node';
 
 jest.mock('node:crypto', () => {
@@ -214,11 +214,17 @@ describe('createPinnedTlsFetch', () => {
     },
   );
 
-  test.each(['gzip', 'br'])(
-    'propagates %s decoding errors',
-    async (encoding) => {
+  test.each([
+    ['gzip', gzipSync],
+    ['br', brotliCompressSync],
+  ] as const)('propagates %s decoding errors', async (encoding, compress) => {
+    for (const wire of [
+      Buffer.from('not compressed'),
+      Buffer.alloc(0),
+      compress(Buffer.from('{"ok":true}')).subarray(0, -1),
+    ]) {
       const spki = Buffer.from('matching-spki');
-      const incoming = incomingResponse('not compressed');
+      const incoming = incomingResponse(wire);
       incoming.headers['content-encoding'] = encoding;
       installHttpsRequests({ peerCertificates: [spki], response: incoming });
 
@@ -226,25 +232,64 @@ describe('createPinnedTlsFetch', () => {
         'https://gateway.test/v1/systemone',
       );
       await expect(response.arrayBuffer()).rejects.toThrow();
+    }
+  });
+
+  test.each([
+    [
+      'gzip',
+      (body: Buffer) => gzipSync(body, { finishFlush: constants.Z_SYNC_FLUSH }),
+    ],
+    [
+      'br',
+      (body: Buffer) =>
+        brotliCompressSync(body, {
+          finishFlush: constants.BROTLI_OPERATION_FLUSH,
+        }),
+    ],
+  ] as const)(
+    'streams %s before EOF and closes the source on cancel',
+    async (encoding, compress) => {
+      const spki = Buffer.from('matching-spki');
+      const incoming = Object.assign(new Readable({ read() {} }), {
+        statusCode: 200,
+        headers: { 'content-encoding': encoding },
+      }) as IncomingMessage;
+      const firstEvent = Buffer.from('data: {"id":"chat-1"}\n\n');
+      incoming.push(compress(firstEvent));
+      installHttpsRequests({ peerCertificates: [spki], response: incoming });
+      const response = await createPinnedTlsFetch(spkiFingerprint(spki))(
+        'https://gateway.test/v1/chat/completions',
+      );
+      const reader = response.body?.getReader();
+      expect(await reader?.read()).toEqual({
+        value: new Uint8Array(firstEvent),
+        done: false,
+      });
+      const closed = new Promise<void>((resolve) =>
+        incoming.once('close', resolve),
+      );
+      await reader?.cancel();
+      await closed;
+      expect(incoming.destroyed).toBe(true);
     },
   );
 
-  test('cancelling a decoded body closes the HTTPS response', async () => {
+  test('preserves compressed representation headers on a bodyless HEAD response', async () => {
     const spki = Buffer.from('matching-spki');
-    const incoming = Object.assign(new Readable({ read() {} }), {
-      statusCode: 200,
-      headers: { 'content-encoding': 'br' },
-    }) as IncomingMessage;
+    const incoming = incomingResponse('');
+    incoming.headers['content-encoding'] = 'gzip';
+    incoming.headers['content-length'] = '100';
     installHttpsRequests({ peerCertificates: [spki], response: incoming });
+
     const response = await createPinnedTlsFetch(spkiFingerprint(spki))(
-      'https://gateway.test/v1/chat/completions',
+      'https://gateway.test/v1/model/example',
+      { method: 'HEAD' },
     );
-    const closed = new Promise<void>((resolve) =>
-      incoming.once('close', resolve),
-    );
-    await response.body?.cancel();
-    await closed;
-    expect(incoming.destroyed).toBe(true);
+    await expect(response.text()).resolves.toBe('');
+    expect(response.body).toBeNull();
+    expect(response.headers.get('content-encoding')).toBe('gzip');
+    expect(response.headers.get('content-length')).toBe('100');
   });
 
   test('accepts every verified peer fingerprint and rejects an unknown peer', async () => {
