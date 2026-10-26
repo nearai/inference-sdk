@@ -3525,6 +3525,37 @@ describe('System One decisions', () => {
     },
   };
 
+  test.each(['native', 'official'])(
+    '%s Jev client verifies a response decoded by Fetch',
+    async (api) => {
+      const fixture = decisionGateway({ encoding: 'br' });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      let id: string;
+      if (api === 'native') {
+        const result = await client.systemone.create(decisionRequest);
+        expect(result.data).toEqual(decisionResponse);
+        id = result.decisionId;
+      } else {
+        const { data, response } = await officialClient(client)
+          .systemOne(officialRequest)
+          .withResponse();
+        expect(data.answers.billing.noul).toBe(0.98);
+        expect(response.headers.has('content-encoding')).toBe(false);
+        id = response.headers.get('x-generation-id') ?? '';
+      }
+      expect(id).toBe('decision-receipt');
+      await expect(client.verifyResponse(id)).resolves.toMatchObject({
+        id,
+        signatureKind: 'gateway',
+      });
+      expect(fixture.requests).toHaveLength(1);
+    },
+  );
+
   test.each([false, true])(
     'official Jev SDK uses the pinned transport and header receipt (provider TEE: %s)',
     async (tee) => {
@@ -3592,6 +3623,7 @@ describe('System One decisions', () => {
         includeModelPublicKey: true,
         tamper: fault === 'tamper',
         secondSigner: fault === 'signer',
+        encoding: 'br',
       });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
       const client = new InferenceClient({
@@ -3610,13 +3642,12 @@ describe('System One decisions', () => {
     },
   );
 
-  test.each(['status', 'id', 'encoding'])(
+  test.each(['status', 'id'])(
     'official Jev SDK surfaces %s failures without retries',
     async (fault) => {
       const fixture = decisionGateway({
         status: fault === 'status' ? 503 : 200,
         missingId: fault === 'id',
-        encoding: fault === 'encoding' ? 'gzip' : undefined,
       });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
       const client = new InferenceClient({
@@ -4052,7 +4083,7 @@ describe('System One decisions', () => {
   test.each([false, true])(
     'rejects tampering (provider TEE: %s)',
     async (tee) => {
-      const fixture = decisionGateway({ tee, tamper: true });
+      const fixture = decisionGateway({ tee, tamper: true, encoding: 'br' });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
       const client = new InferenceClient({
         ...inferenceClientOptions(fixture.gateway),

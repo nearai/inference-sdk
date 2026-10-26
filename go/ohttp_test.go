@@ -62,6 +62,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 	for _, framing := range []byte{1, 3} {
 		for _, scenario := range []struct {
 			name, method  string
+			encoding      string
 			path          string
 			status        int
 			length        string
@@ -69,6 +70,8 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 			informational int
 		}{
 			{name: "stream", method: "POST", status: 200},
+			{name: "gzip", method: "POST", status: 200, encoding: "gzip"},
+			{name: "brotli", method: "POST", status: 200, encoding: "br"},
 			{name: "responses", method: "POST", status: 200, path: "/v1/responses"},
 			{name: "fixed-length", method: "POST", status: 200, length: "48"},
 			{name: "32 informational", method: "POST", status: 200, informational: 32},
@@ -81,6 +84,9 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 			{name: "empty-without-content-length", method: "GET", status: 200, empty: true},
 		} {
 			for _, variant := range []string{"ok", "corrupt final", "omit final", "truncate", "wrong length", "bad padding"} {
+				if scenario.encoding != "" && variant != "ok" {
+					continue
+				}
 				if scenario.informational > 0 && variant != "ok" {
 					continue
 				}
@@ -237,7 +243,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 							response = response[:len(response)-1]
 						}
 						w.Header().Set("Content-Type", "message/ohttp-chunked-res")
-						w.Write(response)
+						writeEncodedResponse(t, w, response, scenario.encoding)
 					}))
 					defer server.Close()
 					transport, e := NewOHTTPTransport(config, server.URL, nil, []string{"X-Client-Pub-Key"})

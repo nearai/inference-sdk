@@ -65,7 +65,7 @@ async def run_non_streaming_example(client: InferenceClient) -> None:
     completion = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
     )
     verified = await client.verify_response(completion.id)
     print(f'Verified {verified.signature_kind} response.')
@@ -76,7 +76,7 @@ async def run_streaming_example(client: InferenceClient) -> None:
     stream = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
         stream=True,
     )
     completion_id = None
