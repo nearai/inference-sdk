@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 
+import brotli
 import httpx
 import pytest
 from eth_account.messages import encode_defunct
@@ -51,7 +52,7 @@ class DecisionGateway(Gateway):
         }
         self.requests = []
         self.response_fault = None
-        self.compress_response = False
+        self.response_encoding = None
         self.decision_id = None
         self.body_id = None
         self.answers = None
@@ -160,13 +161,19 @@ class DecisionGateway(Gateway):
         }
         if self.response_fault == 'tamper':
             response_body = response_body.replace(b'0.9', b'0.5')
-        if self.compress_response:
+        if self.response_encoding == 'gzip':
             response_body = gzip.compress(response_body)
+        elif self.response_encoding == 'br':
+            response_body = brotli.compress(response_body)
         return httpx.Response(
             200,
             content=response_body,
             headers={
-                **({'content-encoding': 'gzip'} if self.compress_response else {}),
+                **(
+                    {'content-encoding': self.response_encoding}
+                    if self.response_encoding
+                    else {}
+                ),
                 'x-signature-id'
                 if self.response_fault == 'id'
                 else 'x-generation-id': decision_id,
@@ -263,9 +270,10 @@ async def test_decisions_verify_exact_bytes_with_the_selected_signer(
         assert name not in sent.headers
 
 
-async def test_decoded_response_verifies_exact_json_bytes(monkeypatch):
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
+async def test_decoded_response_verifies_exact_json_bytes(monkeypatch, encoding):
     gateway = DecisionGateway()
-    gateway.compress_response = True
+    gateway.response_encoding = encoding
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
         result = await client.systemone.create(
@@ -419,9 +427,12 @@ async def test_response_cleanup_preserves_the_primary_error(monkeypatch, fault, 
     assert len(gateway.requests) == 1
 
 
-async def test_tampered_decision_response_fails_receipt_verification(monkeypatch):
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
+async def test_tampered_decision_response_fails_receipt_verification(
+    monkeypatch, encoding
+):
     gateway = DecisionGateway()
-    gateway.compress_response = True
+    gateway.response_encoding = encoding
     gateway.response_fault = 'tamper'
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:

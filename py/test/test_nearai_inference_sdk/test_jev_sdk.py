@@ -41,11 +41,12 @@ def decision(jev):
 
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
 async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
-    monkeypatch, kind, signing_algo
+    monkeypatch, kind, signing_algo, encoding
 ):
     gateway = DecisionGateway(signing_algo, kind)
-    gateway.compress_response = True
+    gateway.response_encoding = encoding
     gateway.body_id = 'not-the-receipt-id'
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
@@ -85,7 +86,7 @@ async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
     monkeypatch, fault
 ):
     gateway = DecisionGateway(kind='provider_tee')
-    gateway.compress_response = True
+    gateway.response_encoding = 'br'
     gateway.response_fault = 'tamper' if fault == 'tamper' else None
     gateway.use_alternate_signer = fault == 'signer'
     gateway.install(monkeypatch)

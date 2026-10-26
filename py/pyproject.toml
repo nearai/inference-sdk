@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
-    "httpx>=0.28.1,<0.29",
+    "httpx[brotli]>=0.28.1,<0.29",
     # TLS pinning uses this version's documented handshake trace event.
     "httpcore==1.0.9",
     "openai>=2.0.0,<3",

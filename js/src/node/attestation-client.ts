@@ -8,6 +8,7 @@ import {
   type PeerCertificate,
   type TLSSocket,
 } from 'node:tls';
+import { createBrotliDecompress, createGunzip } from 'node:zlib';
 import {
   CloudApiClient,
   type GatewayAttestationHttpResponse,
@@ -137,12 +138,13 @@ export function requestHttps({
             certificate === undefined
               ? undefined
               : spkiFingerprintForCertificate(certificate).toString('hex');
-          const body = responseBody(incoming.statusCode, incoming);
+          const headers = responseHeaders(incoming.headers);
+          const body = responseBody(incoming.statusCode, incoming, headers);
           resolve({
             response: new Response(body, {
               status: incoming.statusCode ?? 500,
               statusText: incoming.statusMessage,
-              headers: responseHeaders(incoming.headers),
+              headers,
             }),
             ...(peerSpkiFingerprint === undefined
               ? {}
@@ -214,11 +216,25 @@ function spkiFingerprintForCertificate(certificate: X509Certificate): Buffer {
 function responseBody(
   statusCode: number | undefined,
   incoming: Readable,
+  headers: Headers,
 ): ReadableStream<Uint8Array> | null {
   if (statusCode === 204 || statusCode === 205 || statusCode === 304) {
     return null;
   }
-  return Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+  const encoding = headers.get('content-encoding')?.trim().toLowerCase();
+  const decoder =
+    encoding === 'gzip'
+      ? createGunzip()
+      : encoding === 'br'
+        ? createBrotliDecompress()
+        : undefined;
+  if (decoder === undefined)
+    return Readable.toWeb(incoming) as ReadableStream<Uint8Array>;
+  headers.delete('content-encoding');
+  headers.delete('content-length');
+  return Readable.toWeb(
+    incoming.compose(decoder),
+  ) as ReadableStream<Uint8Array>;
 }
 
 function responseHeaders(headers: IncomingHttpHeaders): Headers {

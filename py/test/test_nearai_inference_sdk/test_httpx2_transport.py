@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 
+import brotli
 import httpx
 import httpx2
 import pytest
@@ -136,20 +137,23 @@ async def test_stream_failure_closes_source_and_cannot_verify(
 
 
 @pytest.mark.parametrize('buffered', [False, True])
+@pytest.mark.parametrize('encoding', ['gzip', 'br'])
 async def test_error_response_preserves_status_headers_and_decodes_once(
-    monkeypatch, buffered
+    monkeypatch, buffered, encoding
 ):
     gateway = Gateway()
     handle = gateway.handle
     payload = b'{"error":{"message":"busy","type":"overloaded"}}'
-    compressed = gzip.compress(payload)
+    compressed = (
+        gzip.compress(payload) if encoding == 'gzip' else brotli.compress(payload)
+    )
 
     async def reject_chat(request):
         if request.url.path.endswith('/chat/completions'):
             return httpx.Response(
                 429,
                 headers=[
-                    ('content-encoding', 'gzip'),
+                    ('content-encoding', encoding),
                     ('content-type', 'application/json'),
                     ('retry-after', '3'),
                     ('x-probe', 'a'),
