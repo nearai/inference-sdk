@@ -53,13 +53,18 @@ func selectedModels(t *testing.T, endpoint string) []liveModel {
 func models(t *testing.T, encryption bool) []liveModel {
 	t.Helper()
 	all := selectedModels(t, "chat")
+
 	if encryption {
+		var selected []liveModel
 		for _, m := range all {
 			if m.Provider == "near" {
-				return []liveModel{m}
+				selected = append(selected, m)
 			}
 		}
-		t.Fatal("expected a NEAR model for encryption coverage")
+		if len(selected) == 0 {
+			t.Fatal("expected a NEAR model for encryption coverage")
+		}
+		return selected
 	}
 	return all
 }
@@ -131,14 +136,7 @@ func completionID(t *testing.T, raw []byte, stream bool) string {
 	}
 	id, text, finish := "", "", ""
 	done := false
-	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r", ""), "\n") {
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(line[5:])
-		if data == "" {
-			continue
-		}
+	for _, data := range sseData(raw) {
 		if data == "[DONE]" {
 			done = true
 			continue
@@ -207,12 +205,9 @@ func readResponse(t *testing.T, res *http.Response) []byte {
 		t.Fatalf("Chat HTTP %d", res.StatusCode)
 	}
 	// Consume actual EOF, including after SSE [DONE] and OHTTP final authentication.
-	raw, err := io.ReadAll(io.LimitReader(res.Body, (64<<20)+1))
+	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(raw) > 64<<20 {
-		t.Fatal("Chat body too large")
 	}
 	return raw
 }
@@ -390,4 +385,25 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 			}
 		})
 	}
+}
+
+// Parse complete SSE records, including multiline data and all line endings.
+func sseData(raw []byte) []string {
+	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	records := strings.Split(text, "\n\n")
+	var result []string
+	for _, record := range records[:len(records)-1] {
+		var data []string
+		for _, line := range strings.Split(record, "\n") {
+			if line == "data" {
+				data = append(data, "")
+			} else if value, ok := strings.CutPrefix(line, "data:"); ok {
+				data = append(data, strings.TrimPrefix(value, " "))
+			}
+		}
+		if value := strings.Join(data, "\n"); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }

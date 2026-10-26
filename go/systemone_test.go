@@ -227,29 +227,24 @@ func TestSystemOneRejectsAnotherVerifiedSigner(t *testing.T) {
 
 func TestSystemOneCompressedResponses(t *testing.T) {
 	for _, encoding := range []string{"gzip", "br"} {
-		for _, mode := range []string{"receipt", "tamper", "limit"} {
+		for _, mode := range []string{"receipt", "tamper", "padded"} {
 			t.Run(encoding+"/"+mode, func(t *testing.T) {
 				c, f := systemOneClient(t, true, Ed25519, func(f *systemOneCloud, o *InferenceOptions) {
 					f.f.encoding = encoding
 					f.tamper = mode == "tamper"
-					if mode == "limit" {
+					if mode == "padded" {
 						f.body += strings.Repeat(" ", 4096)
-						o.MaxBodyBytes = 2048
 					}
 				})
 				result, err := c.CreateSystemOne(context.Background(), systemOneRequest())
-				if mode == "limit" {
-					requireCode(t, err, "api.body_too_large")
-				} else {
-					if err != nil {
-						t.Fatal(err)
-					}
-					_, err = c.VerifyResponse(context.Background(), result.DecisionID)
-					if mode == "tamper" {
-						requireCode(t, err, "signature.payload_mismatch")
-					} else if err != nil {
-						t.Fatal(err)
-					}
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = c.VerifyResponse(context.Background(), result.DecisionID)
+				if mode == "tamper" {
+					requireCode(t, err, "signature.payload_mismatch")
+				} else if err != nil {
+					t.Fatal(err)
 				}
 				if f.calls.Load() != 1 {
 					t.Fatal("compressed response repeated inference")

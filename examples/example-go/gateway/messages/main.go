@@ -1,4 +1,3 @@
-// Anthropic Messages JSON/SSE with explicit Gateway receipt verification.
 package main
 
 import (
@@ -6,23 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
+	"example.com/nearai-inference-example/internal/demo"
 	nearai "github.com/nearai/inference-sdk/go"
 )
 
 func run() error {
-	key := os.Getenv("NEARAI_API_KEY")
-	if key == "" {
-		return fmt.Errorf("set NEARAI_API_KEY")
+	c, err := demo.ConfigurationForModel(false, "anthropic/claude-haiku-4-5")
+	if err != nil {
+		return err
 	}
 	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{APIKey: key},
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		SigningAlgo:   c.Algo,
+		OHTTP:         c.OHTTP,
 	})
 	if err != nil {
 		return err
@@ -30,31 +29,38 @@ func run() error {
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+
 	request := map[string]any{
-		"model": "anthropic/claude-haiku-4-5", "max_tokens": 128,
-		"messages": []map[string]string{{"role": "user", "content": "Reply with the word ok."}},
+		"model":      c.Model,
+		"messages":   []map[string]string{{"role": "user", "content": "Reply with the word ok."}},
+		"max_tokens": 128,
 	}
 	raw, err := client.CreateMessage(ctx, request)
 	if err != nil {
 		return err
 	}
-	var message struct {
-		ID string `json:"id"`
+	var result struct {
+		ID      string
+		Content []struct{ Text string }
 	}
-	if err = json.Unmarshal(raw, &message); err != nil {
+	if err = json.Unmarshal(raw, &result); err != nil {
 		return err
 	}
-	if _, err = client.VerifyResponse(ctx, message.ID); err != nil {
+	receipt, err := client.VerifyResponse(ctx, result.ID)
+	if err != nil {
 		return err
 	}
-	fmt.Println(string(raw))
+	fmt.Printf("Verified %s JSON response.\n", receipt.SignatureKind)
+	for _, block := range result.Content {
+		fmt.Println(block.Text)
+	}
 
 	request["stream"] = true
 	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", client.BaseURL()+"messages", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL()+"messages", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -64,41 +70,32 @@ func run() error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Messages HTTP status: %s", response.Status)
+		return fmt.Errorf("messages HTTP status: %d", response.StatusCode)
 	}
-	// Applications may parse events incrementally. This example buffers to EOF
-	// before reading message_start.message.id and verifying the complete stream.
-	raw, err = io.ReadAll(response.Body)
+	// ReadBody displays text as it arrives and retains events for the receipt ID.
+	raw, err = demo.ReadBody(response.Body, true)
+	if err != nil {
+		return err
+	}
+	events, err := demo.Events(raw)
 	if err != nil {
 		return err
 	}
 	id := ""
-	text := strings.TrimPrefix(string(raw), "\ufeff")
-	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	for _, record := range strings.Split(text, "\n\n") {
-		var data []string
-		for _, line := range strings.Split(record, "\n") {
-			if strings.HasPrefix(line, "data:") {
-				data = append(data, strings.TrimPrefix(line[5:], " "))
-			}
-		}
-		var event struct {
-			Type    string `json:"type"`
-			Message struct {
-				ID string `json:"id"`
-			} `json:"message"`
-		}
-		if json.Unmarshal([]byte(strings.Join(data, "\n")), &event) == nil && event.Type == "message_start" {
-			id = event.Message.ID
+	for _, event := range events {
+		if event["type"] == "message_start" {
+			value, _ := event["message"].(map[string]any)
+			id, _ = value["id"].(string)
 		}
 	}
 	if id == "" {
-		return fmt.Errorf("stream returned no message ID")
+		return fmt.Errorf("stream returned no response ID")
 	}
-	if _, err = client.VerifyResponse(ctx, id); err != nil {
+	receipt, err = client.VerifyResponse(ctx, id)
+	if err != nil {
 		return err
 	}
-	fmt.Println(string(raw))
+	fmt.Printf("Verified %s streaming response.\n", receipt.SignatureKind)
 	return nil
 }
 

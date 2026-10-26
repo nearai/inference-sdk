@@ -378,14 +378,10 @@ func decodeObject(b []byte) (map[string]any, error) {
 }
 
 func PrepareE2EEChatRequest(req *http.Request, key E2EEModelKey) (*PreparedE2EEChatRequest, error) {
-	return prepareE2EEChatRequest(req, key, 64<<20)
-}
-
-func prepareE2EEChatRequest(req *http.Request, key E2EEModelKey, limit int64) (*PreparedE2EEChatRequest, error) {
 	if req.Method != "POST" || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
-	b, e := readBounded(req.Body, limit)
+	b, e := io.ReadAll(req.Body)
 	if e != nil {
 		return nil, e
 	}

@@ -2,10 +2,10 @@ import type Anthropic from '@anthropic-ai/sdk';
 import type OpenAI from 'openai';
 import type * as v from 'valibot';
 import type { ChatCompletionRequestSchema } from '../schemas';
-import type { AttestationClientOptions } from './cloud-api';
-import type { CompletionSignature } from './chat';
-import type { Awaitable } from './shared';
 import type { SigningAlgo } from './attestation-common';
+import type { CompletionSignature } from './chat';
+import type { AttestationClientOptions } from './cloud-api';
+import type { Awaitable } from './shared';
 import type {
   AttestationPolicy,
   AttestationVerifiers,
@@ -78,8 +78,7 @@ export type ModelVerificationOptions = {
 export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model and endpoint. verify() and Chat share a session; System One
-   * uses a separate session.
+   * same model across verify(), Chat, Responses, Messages, and System One.
    * Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
@@ -145,10 +144,7 @@ export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** Representative matching report; a shared signing key does not identify one CVM. */
   readonly attestation: VerifiedModelAttestation;
-  /** SDK clients populate every matching report; optional for existing custom verifiers. */
-  readonly attestations?: readonly VerifiedModelAttestation[];
 };
 
 /** A response signature verified against the Gateway evidence used for the request. */

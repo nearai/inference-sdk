@@ -20,7 +20,6 @@ type sseReader struct {
 	pending   []byte
 	ended     bool
 	closeOnce sync.Once
-	limit     int64
 }
 
 func (s *sseReader) record() ([]byte, error) {
@@ -35,9 +34,6 @@ func (s *sseReader) record() ([]byte, error) {
 			return nil, e
 		}
 		raw.WriteByte(b)
-		if int64(raw.Len()) > s.limit {
-			return nil, failure("api.body_too_large", nil)
-		}
 		if b == '\r' || b == '\n' {
 			if b == '\r' {
 				if next, e := s.reader.Peek(1); e == nil && next[0] == '\n' {
@@ -222,20 +218,16 @@ func (p *PreparedE2EEChatRequest) transformSSE(record []byte) ([]byte, error) {
 
 // DecryptSSE streams protocol fields while retaining SSE controls. It owns source.
 func (p *PreparedE2EEChatRequest) DecryptSSE(source io.ReadCloser) io.ReadCloser {
-	return &sseReader{source: source, reader: bufio.NewReader(source), transform: p.transformSSE, limit: 64 << 20}
+	return &sseReader{source: source, reader: bufio.NewReader(source), transform: p.transformSSE}
 }
 
 type captureReader struct {
 	io.ReadCloser
-	body  bytes.Buffer
-	limit int64
+	body bytes.Buffer
 }
 
 func (c *captureReader) Read(p []byte) (int, error) {
 	n, e := c.ReadCloser.Read(p)
-	if int64(c.body.Len()+n) > c.limit {
-		return 0, failure("api.body_too_large", nil)
-	}
 	c.body.Write(p[:n])
 	return n, e
 }

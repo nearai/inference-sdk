@@ -82,6 +82,17 @@ class VerificationError(Exception):
         }
 
 
+def get_sdk_error(error: BaseException) -> ApiError | VerificationError | None:
+    """Find an SDK failure through an official client's exception cause chain."""
+    seen: set[int] = set()
+    while isinstance(error, BaseException) and id(error) not in seen:
+        if isinstance(error, (ApiError, VerificationError)):
+            return error
+        seen.add(id(error))
+        error = error.__cause__ or getattr(error, 'cause', None)
+    return None
+
+
 def api_failure(
     code: str,
     details: ErrorDetails | None = None,
@@ -181,6 +192,10 @@ def _format_failure(failure: ApiFailure | VerificationFailure) -> str:
             )
         case 'quote.collateral_unavailable':
             return f'[{code}] Intel quote collateral is unavailable'
+        case 'api.duplicate_completion_id':
+            return (
+                f'[{code}] A response with this ID is already retained by this client'
+            )
         case 'api.completion_not_found':
             return f'[{code}] Completion is not retained by this client'
         case 'quote.verification_failed':

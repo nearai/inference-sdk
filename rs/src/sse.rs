@@ -4,42 +4,34 @@ use crate::{
 };
 use serde_json::Value;
 
-/// Incremental scanner: never rescan an unfinished line and bound each record.
+/// Incremental scanner: never rescan an unfinished line.
 #[derive(Default)]
 pub(crate) struct SseDecoder {
     pending: Vec<u8>,
     scan: usize,
     line: usize,
 }
-const MAX_RECORD_BYTES: usize = 1024 * 1024;
 impl SseDecoder {
-    pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Result<Vec<Vec<u8>>, InferenceError> {
+    pub(crate) fn push(&mut self, bytes: &[u8], eof: bool) -> Vec<Vec<u8>> {
         let mut records = Vec::new();
         for part in bytes.chunks(8192) {
             self.pending.extend_from_slice(part);
-            self.scan_records(false, &mut records)?;
+            self.scan_records(false, &mut records);
         }
         if eof {
-            self.scan_records(true, &mut records)?;
+            self.scan_records(true, &mut records);
             if !self.pending.is_empty() {
                 records.push(std::mem::take(&mut self.pending));
             }
             self.scan = 0;
             self.line = 0;
         }
-        Ok(records)
+        records
     }
-    fn scan_records(
-        &mut self,
-        eof: bool,
-        records: &mut Vec<Vec<u8>>,
-    ) -> Result<(), InferenceError> {
+    fn scan_records(&mut self, eof: bool, records: &mut Vec<Vec<u8>>) {
         let mut start = 0;
         while self.scan < self.pending.len() {
             let i = self.scan;
-            if i - start >= MAX_RECORD_BYTES {
-                return Err(invalid_response().into());
-            }
             let byte = self.pending[i];
             if byte != b'\r' && byte != b'\n' {
                 self.scan += 1;
@@ -53,9 +45,6 @@ impl SseDecoder {
             } else {
                 1
             };
-            if end - start > MAX_RECORD_BYTES {
-                return Err(invalid_response().into());
-            }
             if i == self.line {
                 records.push(self.pending[start..end].to_vec());
                 start = end;
@@ -66,10 +55,6 @@ impl SseDecoder {
         self.pending.drain(..start);
         self.scan -= start;
         self.line -= start;
-        if self.pending.len() > MAX_RECORD_BYTES {
-            return Err(invalid_response().into());
-        }
-        Ok(())
     }
 }
 fn lines(record: &str) -> Vec<(&str, &str)> {
@@ -258,8 +243,8 @@ mod tests {
         let input = records.concat().into_bytes();
         for split in 0..=input.len() {
             let mut decoder = SseDecoder::default();
-            let mut got = decoder.push(&input[..split], false).unwrap();
-            got.extend(decoder.push(&input[split..], true).unwrap());
+            let mut got = decoder.push(&input[..split], false);
+            got.extend(decoder.push(&input[split..], true));
             assert_eq!(
                 got,
                 records
@@ -270,16 +255,14 @@ mod tests {
         }
     }
     #[test]
-    fn incomplete_records_advance_once_and_are_bounded() {
+    fn large_records_preserve_payload_across_chunks() {
+        let input = format!("data: {}\n\n", "x".repeat(1024 * 1024 + 1));
         let mut decoder = SseDecoder::default();
-        for count in 1..=MAX_RECORD_BYTES {
-            assert!(decoder.push(b"x", false).unwrap().is_empty());
-            assert_eq!(decoder.scan, count);
+        let mut records = Vec::new();
+        for chunk in input.as_bytes().chunks(17) {
+            records.extend(decoder.push(chunk, false));
         }
-        assert!(decoder.push(b"x", false).is_err());
-        let mut decoder = SseDecoder::default();
-        assert!(decoder
-            .push(&vec![b'x'; MAX_RECORD_BYTES + 1], true)
-            .is_err());
+        records.extend(decoder.push(&[], true));
+        assert_eq!(records, vec![input.into_bytes()]);
     }
 }

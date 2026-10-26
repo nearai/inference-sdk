@@ -230,13 +230,9 @@ fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<
         return completion_id(&completion);
     }
 
-    let events: Vec<_> = std::str::from_utf8(response_body)?
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim)
-        .collect();
+    let events = sse_data(response_body)?;
     assert_eq!(
-        events.last().copied(),
+        events.last().map(String::as_str),
         Some("[DONE]"),
         "Expected a complete SSE response"
     );
@@ -244,7 +240,7 @@ fn read_completion_id(response_body: &[u8], stream: bool) -> Result<String, Box<
     let mut content = String::new();
     let mut finish_reason = None;
     for event in events.into_iter().filter(|event| *event != "[DONE]") {
-        let chunk: Value = serde_json::from_str(event)?;
+        let chunk: Value = serde_json::from_str(&event)?;
         let chunk_id = completion_id(&chunk)?;
         if let Some(id) = &id {
             assert_eq!(id, &chunk_id);
@@ -285,4 +281,33 @@ fn required_env(name: &str) -> Result<String, io::Error> {
         .ok()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| io::Error::other(format!("{name} is required for live E2E tests")))
+}
+
+fn sse_data(bytes: &[u8]) -> Result<Vec<String>, std::str::Utf8Error> {
+    let text = std::str::from_utf8(bytes)?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let records: Vec<_> = text.split("\n\n").collect();
+    Ok(records[..records.len() - 1]
+        .iter()
+        .filter_map(|record| {
+            let data = record
+                .split('\n')
+                .filter_map(|line| {
+                    if line == "data" {
+                        Some("")
+                    } else {
+                        line.strip_prefix("data:")
+                            .map(|value| value.strip_prefix(' ').unwrap_or(value))
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if data.is_empty() {
+                None
+            } else {
+                Some(data)
+            }
+        })
+        .collect())
 }

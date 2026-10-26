@@ -1,17 +1,22 @@
+import type { SigningAlgo } from '@nearai/inference-sdk/node';
 // Experimental direct-endpoint example. Use the Gateway examples for production.
 import {
   DirectAttestationClient,
   NO_ALIASING_HEADER,
+  type VerifiedDirectModelAttestation,
   verifyDirectModelAttestations,
   verifyDirectModelResponse,
-  type VerifiedDirectModelAttestation,
 } from '@nearai/inference-sdk/node';
+import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
 
-// Standalone verification. This example sends plaintext Chat
-// bodies over HTTPS; it does not implement E2EE. See client.ts for E2EE.
-const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/';
-const MODEL = 'z-ai/glm-5.3-flash';
-const SIGNING_ALGO = 'ed25519';
+// Standalone verification of plaintext Chat bodies over HTTPS.
+// See client.ts for E2EE.
+const BASE_URL = `${(
+  process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1/'
+).replace(/\/+$/, '')}/`;
+const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
+const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
+  'ed25519') as SigningAlgo;
 
 async function main(): Promise<void> {
   // Direct endpoint credentials may differ from Gateway API keys.
@@ -47,7 +52,6 @@ async function runNonStreamingExample(
   const responseBody = new Uint8Array(responseBytes);
   const responseText = new TextDecoder().decode(responseBody);
   const completion = JSON.parse(responseText);
-  console.log(completion.choices[0]?.message.content ?? '');
 
   await verifyResponse({
     ...params,
@@ -55,6 +59,7 @@ async function runNonStreamingExample(
     requestBody,
     responseBody,
   });
+  console.log(completion.choices[0]?.message.content ?? '');
 }
 
 async function runStreamingExample(
@@ -66,23 +71,28 @@ async function runStreamingExample(
   });
   if (response.body === null) throw new Error('Streaming response has no body');
 
-  // Read one copy for exact-byte verification while displaying the SSE stream.
+  // Capture exact bytes while displaying text as it arrives.
   const responseBytesPromise = response.clone().arrayBuffer();
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = response.body
+    .pipeThrough(new TextDecoderStream('utf-8', { ignoreBOM: true }))
+    .getReader();
   let responseText = '';
+  const output = new ChatStreamOutput();
   try {
     while (true) {
       const chunk = await reader.read();
       if (chunk.done) break;
-      process.stdout.write(chunk.value);
       responseText += chunk.value;
+      process.stdout.write(output.push(chunk.value));
     }
   } finally {
+    process.stdout.write(output.push('', true));
+    process.stdout.write('\n');
     reader.releaseLock();
   }
   const responseBytes = await responseBytesPromise;
   const responseBody = new Uint8Array(responseBytes);
-  const completionId = readStreamCompletionId(responseText);
+  const completionId = chatOutput(responseText, true).id;
   await verifyResponse({ ...params, completionId, requestBody, responseBody });
 }
 
@@ -135,17 +145,6 @@ async function verifyResponse({
   console.log(
     `Verified model response against ${matching.length} matching attestations.`,
   );
-}
-
-function readStreamCompletionId(responseText: string): string {
-  for (const line of responseText.split(/\r\n|\n|\r/)) {
-    if (!line.startsWith('data:')) continue;
-    const data = line.slice('data:'.length).trim();
-    if (data === '[DONE]') continue;
-    const chunk = JSON.parse(data);
-    if (typeof chunk.id === 'string') return chunk.id;
-  }
-  throw new Error('Stream returned no completion ID');
 }
 
 type CompletionExampleParams = {

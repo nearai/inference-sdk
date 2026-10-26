@@ -85,8 +85,6 @@ pub struct InferenceClientOptions {
     pub gateway_verification: GatewayVerificationOptions,
     pub model_verification: ModelVerificationOptions,
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-    /// Exact bytes retained for a single response; larger responses fail closed.
-    pub max_response_bytes: usize,
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
@@ -102,7 +100,6 @@ impl Default for InferenceClientOptions {
             gateway_verification: GatewayVerificationOptions::default(),
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
-            max_response_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -208,9 +205,6 @@ impl InferenceClient {
         options.base_url = crate::cloud_api::parse_base_url(&options.base_url)?.to_string();
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
-        }
-        if options.max_response_bytes == 0 {
-            return Err(input("cache_limits", "must be positive").into());
         }
         if let Some(key) = &options.api_key {
             options.headers.insert(
@@ -320,9 +314,6 @@ impl InferenceClient {
         }
         let body =
             serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
-        if body.len() > options.max_response_bytes {
-            return Err(input("body", "request exceeds configured byte limit").into());
-        }
         let value: Value = serde_json::from_slice(&body)
             .map_err(|_| input("systemone", "expected JSON object"))?;
         if !value.is_object() || value.get("stream").is_some() {
@@ -404,9 +395,6 @@ impl InferenceClient {
             resource: ApiResource::SystemOne,
             reason: ApiTransportReason::ResponseBody,
         })? {
-            if chunk.len() > options.max_response_bytes.saturating_sub(bytes.len()) {
-                return Err(input("response", "body exceeds configured byte limit").into());
-            }
             bytes.extend_from_slice(&chunk);
         }
         let data = crate::systemone::decode_response(&bytes)?;
@@ -624,7 +612,6 @@ impl InferenceClient {
         }
         let mut source = response.body;
         let owner = self.clone();
-        let limit = options.max_response_bytes;
         let stream = async_stream::try_stream! {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
@@ -644,18 +631,15 @@ impl InferenceClient {
             };
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
-                if chunk.len() > limit.saturating_sub(wire.len()) {
-                    Err(input("response", "response exceeds configured byte limit"))?;
-                }
                 wire.extend_from_slice(&chunk);
                 if streaming {
-                    for record in decoder.push(&chunk, false)? {
+                    for record in decoder.push(&chunk, false) {
                         yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
-                for record in decoder.push(&[], true)? {
+                for record in decoder.push(&[], true) {
                     yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;
@@ -700,9 +684,12 @@ impl InferenceClient {
         state
             .responses
             .retain(|_, r| r.finished.elapsed() < options.response_cache_ttl);
+        if options.response_cache_ttl.is_zero() {
+            return Ok(());
+        }
         // Never let a repeated ID replace the evidence/bytes of another completion.
         if state.responses.contains_key(&id) {
-            return Err(input("response.id", "duplicate completion ID").into());
+            return Err(ApiError::DuplicateCompletionId.into());
         }
         state.responses.insert(
             id,

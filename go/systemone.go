@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"math"
 	"net/http"
 	"unicode/utf8"
@@ -181,9 +182,6 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, failure("api.invalid_input", err)
 	}
-	if int64(len(body)) > c.maxBody {
-		return result, failure("api.body_too_large", nil)
-	}
 	parsed, err := decodeObject(body)
 	if err != nil {
 		return result, failure("api.invalid_input", err)
@@ -240,7 +238,10 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if id == "" {
 		return result, detail("api.invalid_response", "resource", "systemone.x-generation-id")
 	}
-	wire, err := readResponseBounded(res, c.maxBody)
+	if err := decodeResponse(res); err != nil {
+		return result, &Error{Code: "api.transport_failed", Details: map[string]any{"resource": "systemone", "reason": "response_body"}, Cause: err}
+	}
+	wire, err := io.ReadAll(res.Body)
 	if err != nil {
 		var sdk *Error
 		if errors.As(err, &sdk) {

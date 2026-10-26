@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"reflect"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type fakeCloud struct {
 	next            int
 	attestations    atomic.Int32
 	chats           atomic.Int32
+	dropChatAt      int32
 	extraModel      bool
 	missingModelKey bool
 	tee             bool
@@ -143,7 +145,16 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": a})
 		}
 	case strings.HasSuffix(r.URL.Path, "/chat/completions"):
-		f.chats.Add(1)
+		if f.chats.Add(1) == f.dropChatAt {
+			_, _ = io.Copy(io.Discard, r.Body)
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				f.t.Error(err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
 		if f.encrypt {
 			if r.Header.Get("X-Signing-Algo") != "ed25519" {
 				f.t.Error("missing E2EE signing algorithm")
@@ -251,6 +262,46 @@ func fakeClient(t *testing.T, f *fakeCloud, modify func(*InferenceOptions)) (*In
 func chatRequest() map[string]any {
 	return map[string]any{"model": "canonical/model", "messages": []any{map[string]any{"role": "user", "content": "review"}}}
 }
+
+func TestClientDoesNotReplayAfterConnectionFailure(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		for _, header := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
+			t.Run(fmt.Sprintf("encrypted=%t/%s", encrypted, header), func(t *testing.T) {
+				transport := &http.Transport{}
+				t.Cleanup(transport.CloseIdleConnections)
+				f := newFakeCloud(t)
+				f.tee, f.encrypt, f.dropChatAt = encrypted, encrypted, 2
+				client, _ := fakeClient(t, f, func(o *InferenceOptions) {
+					o.E2EE = encrypted
+					o.HTTPClient = &http.Client{Transport: transport}
+					o.Headers = http.Header{header: {"completion-key"}}
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+					t.Fatal(err)
+				}
+
+				var reused atomic.Bool
+				ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+					GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+				})
+				_, err := client.CreateChatCompletion(ctx, chatRequest())
+
+				if !reused.Load() {
+					t.Fatal("did not exercise a reused connection")
+				}
+				if err == nil {
+					t.Fatal("connection failure was not propagated")
+				}
+				if f.chats.Load() != 2 {
+					t.Fatalf("completion was replayed: %d requests, want warmup + one failed request", f.chats.Load())
+				}
+			})
+		}
+	}
+}
+
 func TestClientPreflightAndSignature(t *testing.T) {
 	for _, tee := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {

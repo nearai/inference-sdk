@@ -54,10 +54,8 @@ semantics, streaming, and supported privacy options.
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
-| `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
 
-Negative body size limits are invalid. See [lifecycle](#clients-and-lifecycle)
-for cancellation and retention behavior.
+See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
 ## System One decisions
 
@@ -78,7 +76,7 @@ Structured legend numbers use `json.Number`, while score and probability fields
 use `float64`.
 
 System One shares Chat's per-model session and the client's
-body limits and receipt cache.
+receipt retention and verification.
 Cancellation uses `ctx`, and `Close` cancels outstanding operations.
 
 Inference is sent once. Retry transient receipt lookups through the verification
@@ -371,8 +369,6 @@ type InferenceOptions struct {
 	GatewayVerification VerificationOptions
 	ModelVerification   VerificationOptions
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
-	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
-	MaxBodyBytes int64
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
@@ -417,11 +413,12 @@ waiters intact; shared verification is limited to two minutes. Failed preflight
 is not cached. Retryable signature retrieval failures can be attempted again
 without replaying the completion.
 
-`MaxBodyBytes` defaults to 64 MiB for each buffered Chat request/response. Streaming
-is incremental, but signature verification requires retaining the wire body.
+Streaming is incremental, but signature verification requires retaining the wire body.
 Cache memory grows with the responses retained during the TTL. Select shorter
 retention for services that process many or large completions.
-Successful verification does not automatically discard its retained record.
+Verified records remain available until their TTL expires. A duplicate
+retained ID fails with `api.duplicate_completion_id` and preserves the original
+receipt. An expired ID can be reused.
 
 ## Verification guarantees
 

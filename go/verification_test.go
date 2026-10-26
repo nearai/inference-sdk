@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -339,25 +338,5 @@ func TestQuoteVerifierPreservesSDKError(t *testing.T) {
 	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
 	if err != original {
 		t.Fatalf("quote error changed: %v", err)
-	}
-}
-
-func TestE2EEConfiguredBodyLimit(t *testing.T) {
-	key, err := newE2EEKey(Ed25519)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := `{"model":"test","messages":[{"role":"user","content":"hello"}]}`
-	for _, limit := range []int64{int64(len(payload) - 1), int64(len(payload))} {
-		req, err := http.NewRequest("POST", "https://example.com/chat/completions", strings.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = prepareE2EEChatRequest(req, E2EEModelKey{Ed25519, key.public}, limit)
-		if limit < int64(len(payload)) {
-			requireCode(t, err, "api.body_too_large")
-		} else if err != nil {
-			t.Fatal(err)
-		}
 	}
 }

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import math
 import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -91,6 +92,7 @@ class _ResponseRecord[Result, AttestationResult]:
     gateway_only: bool = False
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
+    expires_at: float | None = None
 
 
 class _SessionAttestationClient(AttestationClient):
@@ -160,6 +162,19 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
+        for field, value in (
+            ('attestation_cache_time_to_live_ms', attestation_cache_time_to_live_ms),
+            ('response_cache_time_to_live_ms', response_cache_time_to_live_ms),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise api_failure(
+                    'api.invalid_input',
+                    {
+                        'field': field,
+                        'reason': 'unsupported_value',
+                        'expected': 'a finite non-negative duration in milliseconds',
+                    },
+                )
         if ohttp and signing_algo != 'ed25519':
             raise api_failure(
                 'api.invalid_input',
@@ -203,6 +218,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
             http_client=self._chat_client,
+            max_retries=0,
         )
         self.chat = self._openai.chat
 
@@ -422,13 +438,28 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     async def verify_response(self, id: str) -> Result:
         """Verify a retained response against the evidence used before sending."""
 
-        record = self._responses.get(id)
+        record = self._get_response_record(id)
         if record is None:
             raise api_failure('api.completion_not_found')
         if record.verification is None:
             record.verification = asyncio.create_task(self._verify_record(id, record))
             record.verification.add_done_callback(_observe_exception)
         return await asyncio.shield(record.verification)
+
+    def _get_response_record(
+        self, id: str
+    ) -> _ResponseRecord[Result, AttestationResult] | None:
+        record = self._responses.get(id)
+        if (
+            record is not None
+            and record.expires_at is not None
+            and record.expires_at <= monotonic()
+        ):
+            del self._responses[id]
+            if record.expiry is not None:
+                record.expiry.cancel()
+            return None
+        return record
 
     async def _verify_record(
         self, id: str, record: _ResponseRecord[Result, AttestationResult]
@@ -542,12 +573,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
+        if self._response_ttl == 0:
+            return
+        if self._get_response_record(id) is not None:
+            raise api_failure('api.duplicate_completion_id')
         record = _ResponseRecord(
             request_body, response_body, session, gateway_only=gateway_only
         )
-        previous = self._responses.get(id)
-        if previous is not None and previous.expiry is not None:
-            previous.expiry.cancel()
         self._responses[id] = record
 
         def settled(_future: asyncio.Future[bytes]) -> None:
@@ -559,6 +591,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 if self._responses.get(id) is record:
                     del self._responses[id]
 
+            record.expires_at = monotonic() + self._response_ttl
             record.expiry = asyncio.get_running_loop().call_later(
                 self._response_ttl, expire
             )
@@ -992,8 +1025,8 @@ def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:
     return api_failure(
         'api.invalid_response',
         {
-            'path': 'Chat Completions response.id',
-            'expected': 'a non-empty completion ID',
+            'path': 'completion response ID or SSE lifecycle',
+            'expected': 'a non-empty ID and a complete valid stream',
             'actual': 'missing or invalid',
         },
         cause=cause,

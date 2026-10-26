@@ -25,13 +25,13 @@ are asynchronous. Standalone response-signature verification is synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
-| `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat with optional encryption and System One decisions. |
+| `InferenceClient` | `(api_key=None, *, base_url=..., ...)` | client | Verified Chat, Responses, Messages, and System One; optional Chat encryption. |
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
 | `inference_client.http_client` | property | `httpx.AsyncClient` | HTTPX adapter for external SDKs using the verified request pipeline. |
 | `inference_client.httpx2_client` | property | `httpx2.AsyncClient` | HTTPX2 adapter sharing the verified HTTPX pipeline, loaded on demand. |
-| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One requests at the configured Gateway, with exact bytes retained for receipts. |
-| `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
-| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained bytes. |
+| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat, Responses, Messages, or uncompressed JSON System One requests, with exact bytes retained for receipts. |
+| `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat, Responses, Messages, and System One. |
+| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a response signature over retained bytes. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -83,7 +83,7 @@ stream before passing `message_start.message.id` to `verify_response`.
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
-| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, and System One for this long; `0` verifies each request. |
+| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, Messages, and System One for this long; `0` verifies each request. |
 | `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
@@ -146,6 +146,38 @@ before calling `verify_response()`.
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
+
+Response retention starts at body completion and lasts for the configured TTL,
+including after successful or failed verification. Set
+`response_cache_time_to_live_ms=0` to disable retention. Both TTL options accept
+finite, non-negative durations. Expired records are unavailable immediately;
+timers release retained bodies while idle. A duplicate retained ID fails with
+`api.duplicate_completion_id` and preserves the original receipt. An expired ID
+can be reused. Closing the client releases retained records.
+
+### Errors wrapped by official SDKs
+
+The OpenAI and Anthropic clients can wrap transport errors. Use
+`get_sdk_error(error)` to retrieve an `ApiError` or `VerificationError` from the
+exception cause chain; it returns `None` when no SDK error is present. This also
+works with the native Chat, Responses, and Messages facades, which use official
+SDK clients internally. Inference retries are disabled; callers choose whether
+to retry after inspecting the error.
+
+```python
+from nearai_inference_sdk import get_sdk_error
+
+try:
+    response = await client.messages.create(
+        model=model, max_tokens=128, messages=messages
+    )
+except Exception as error:
+    sdk_error = get_sdk_error(error)
+    if sdk_error is not None:
+        print(sdk_error.failure.code)
+    raise
+```
+
 
 ## System One
 

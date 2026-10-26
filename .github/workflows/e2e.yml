@@ -187,4 +187,4 @@ jobs:
           NEARAI_E2E_MODELS: ${{ matrix.environment == 'STG' && needs.configuration.outputs.stg-models || needs.configuration.outputs.prd-models }}
         run: |
           "$RUNNER_TEMP/e2e-go.test" -test.v -test.timeout=15m
-          "$RUNNER_TEMP/e2e-go-official.test" -test.run '^TestLive(OpenAI|Anthropic)$' -test.v -test.timeout=15m
+          "$RUNNER_TEMP/e2e-go-official.test" -test.run '^TestLive' -test.v -test.timeout=15m

@@ -1,17 +1,18 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import Anthropic from '@anthropic-ai/sdk';
+import { choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
-import { TypeSafeClient, noul, choice, score } from '@typesafe-ai/sdk';
 import nacl from 'tweetnacl';
 import {
   ApiError,
   type AttestationVerificationResult,
-  InferenceClient,
   DirectInferenceClient,
+  getSdkError,
+  InferenceClient,
   type InferenceClientOptions,
   type SystemOneRequest,
   type TdxQuoteVerificationResult,
@@ -195,6 +196,10 @@ function hashBytes(value: Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function fixtureId(id: string, requestNumber: number): string {
+  return requestNumber === 1 ? id : `${id}-${requestNumber}`;
+}
+
 function streamResponse(events: readonly string[]): Response {
   const encoder = new TextEncoder();
   let index = 0;
@@ -210,7 +215,11 @@ function streamResponse(events: readonly string[]): Response {
     },
   });
   return new Response(body, {
-    headers: { 'content-type': 'text/event-stream' },
+    headers: {
+      'content-type': 'text/event-stream',
+      'x-test-completion-id':
+        events.join('').match(/"id":"([^"]+)"/)?.[1] ?? '',
+    },
   });
 }
 
@@ -358,6 +367,7 @@ function createTestGateway({
     }
 
     state.completionRequests += 1;
+    const requestNumber = state.completionRequests;
     const body = JSON.parse(await request.text()) as Record<string, unknown>;
     state.completionRequestsSeen.push({ body, headers: request.headers });
 
@@ -366,7 +376,7 @@ function createTestGateway({
       if (body.stream === true) {
         return streamResponse([
           `data: ${JSON.stringify({
-            id: 'chatcmpl-stream',
+            id: fixtureId('chatcmpl-stream', requestNumber),
             object: 'chat.completion.chunk',
             created: 0,
             model,
@@ -383,7 +393,7 @@ function createTestGateway({
         ]);
       }
       return jsonResponse({
-        id: 'chatcmpl-plaintext',
+        id: fixtureId('chatcmpl-plaintext', requestNumber),
         object: 'chat.completion',
         created: 0,
         model,
@@ -502,7 +512,7 @@ function createTestGateway({
     if (body.stream === true) {
       if (usesWebContextSearch) {
         const toolCallChunk = {
-          id: 'chatcmpl-web-context-search',
+          id: fixtureId('chatcmpl-web-context-search', requestNumber),
           object: 'chat.completion.chunk',
           created: 0,
           model,
@@ -533,7 +543,7 @@ function createTestGateway({
           ],
         };
         const toolResultChunk = {
-          id: 'chatcmpl-web-context-search',
+          id: fixtureId('chatcmpl-web-context-search', requestNumber),
           object: 'chat.completion.chunk',
           created: 0,
           model,
@@ -563,7 +573,7 @@ function createTestGateway({
       }
       if (functionTool !== undefined) {
         const toolCallChunk = {
-          id: 'chatcmpl-tool-stream',
+          id: fixtureId('chatcmpl-tool-stream', requestNumber),
           object: 'chat.completion.chunk',
           created: 0,
           model,
@@ -599,7 +609,7 @@ function createTestGateway({
         ]);
       }
       const firstChunk = {
-        id: 'chatcmpl-stream',
+        id: fixtureId('chatcmpl-stream', requestNumber),
         object: 'chat.completion.chunk',
         created: 0,
         model,
@@ -617,7 +627,7 @@ function createTestGateway({
         ],
       };
       const secondChunk = {
-        id: 'chatcmpl-stream',
+        id: fixtureId('chatcmpl-stream', requestNumber),
         object: 'chat.completion.chunk',
         created: 0,
         model,
@@ -697,7 +707,7 @@ function createTestGateway({
           }),
     };
     return jsonResponse({
-      id: 'chatcmpl-test',
+      id: fixtureId('chatcmpl-test', requestNumber),
       object: 'chat.completion',
       created: 0,
       model,
@@ -852,7 +862,7 @@ function createSignatureFetch(
     const response = await gateway.fetch(request);
     const completionId =
       body.stream === true
-        ? 'chatcmpl-stream'
+        ? (response.headers.get('x-test-completion-id') ?? '')
         : (await response.clone().json()).id;
     signatures.set(
       completionId,
@@ -1092,6 +1102,7 @@ describe('inference client', () => {
   test.each([
     ['default', undefined, 60 * 60 * 1000],
     ['custom', 1000, 1000],
+    ['long', 2 ** 31, 2 ** 31],
   ] as const)(
     'expires response records at the %s TTL independently of the attestation cache',
     async (_label, responseCacheTimeToLiveMs, expectedTtl) => {
@@ -1119,6 +1130,34 @@ describe('inference client', () => {
       await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
         failure: { code: 'api.completion_not_found' },
       });
+    },
+  );
+
+  test.each([
+    'attestationCacheTimeToLiveMs',
+    'responseCacheTimeToLiveMs',
+  ] as const)(
+    'rejects invalid durations for %s before network access',
+    (field) => {
+      const network = jest.spyOn(globalThis, 'fetch');
+      for (const value of [
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+      ]) {
+        expect(
+          () => new InferenceClient({ apiKey: directApiKey, [field]: value }),
+        ).toThrow(
+          expect.objectContaining({
+            failure: expect.objectContaining({
+              code: 'api.invalid_input',
+              details: expect.objectContaining({ field }),
+            }),
+          }),
+        );
+      }
+      expect(network).not.toHaveBeenCalled();
     },
   );
 
@@ -3415,7 +3454,7 @@ describe('System One decisions', () => {
     unavailableSignatureOnce = false,
     omitBodyId = false,
     unknownSigner = false,
-    includeModelPublicKey = false,
+    includeModelPublicKey = true,
     response = decisionResponse,
   }: DecisionGatewayParams = {}) {
     const gateway = createTestGateway({
@@ -3427,17 +3466,18 @@ describe('System One decisions', () => {
     const chatFetch = createSignatureFetch(gateway);
     const requests: Request[] = [];
     const signaturePaths: string[] = [];
-    let receipt: Record<string, string>;
+    const receipts = new Map<string, Record<string, string>>();
     const fetch: typeof globalThis.fetch = async (input, init) => {
       const request = new Request(input, init);
       const url = new URL(request.url);
       if (url.pathname === '/v1/systemone') {
         gateway.expectRequestHeader(request);
         requests.push(request.clone());
+        const id = fixtureId(decisionId, requests.length);
         const requestBytes = new Uint8Array(await request.arrayBuffer());
         const responseText = `${JSON.stringify({ ...response, ...(omitBodyId ? { id: undefined } : {}) }, null, 2)}\n`;
         const responseBytes = new TextEncoder().encode(responseText);
-        receipt = tee
+        let receipt = tee
           ? gateway.createProviderSignature(requestBytes, responseBytes)
           : gateway.createGatewaySignature(requestBytes, responseBytes);
         if (secondSigner || unknownSigner) {
@@ -3452,6 +3492,7 @@ describe('System One decisions', () => {
             ),
           };
         }
+        receipts.set(id, receipt);
         return new Response(
           malformed
             ? '{}'
@@ -3463,12 +3504,15 @@ describe('System One decisions', () => {
             headers: {
               'content-type': 'application/json',
               ...(encoding ? { 'content-encoding': encoding } : {}),
-              ...(missingId ? {} : { 'x-generation-id': decisionId }),
+              ...(missingId ? {} : { 'x-generation-id': id }),
             },
           },
         );
       }
-      if (url.pathname === `/v1/signature/${encodeURIComponent(decisionId)}`) {
+      const receipt = receipts.get(
+        decodeURIComponent(url.pathname.slice('/v1/signature/'.length)),
+      );
+      if (url.pathname.startsWith('/v1/signature/') && receipt !== undefined) {
         gateway.expectRequestHeader(request);
         expect(url.searchParams.get('signing_algo')).toBe('ed25519');
         signaturePaths.push(url.pathname);
@@ -3660,7 +3704,10 @@ describe('System One decisions', () => {
   );
 
   test('official Jev SDK fails before inference when model key verification fails', async () => {
-    const fixture = decisionGateway({ tee: true });
+    const fixture = decisionGateway({
+      tee: true,
+      includeModelPublicKey: false,
+    });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
@@ -3764,40 +3811,6 @@ describe('System One decisions', () => {
     },
   );
 
-  test('retains every verified report sharing the decision receipt signer', async () => {
-    const fixture = decisionGateway({ tee: true, secondSigner: true });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const request = new Request(input, init);
-      const response = await fixture.fetch(request);
-      const url = new URL(request.url);
-      if (
-        url.pathname === '/v1/attestation/report' &&
-        url.searchParams.has('model')
-      ) {
-        const body = await response.json();
-        body.model_attestations.push({ ...body.model_attestations.at(-1) });
-        return jsonResponse(body);
-      }
-      return response;
-    });
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      e2ee: false,
-    });
-    const result = await client.systemone.create(decisionRequest);
-    const verified = await client.verifyResponse(result.decisionId);
-    if (verified.signatureKind !== 'provider_tee')
-      throw new Error('wrong signature kind');
-    if (verified.attestations === undefined)
-      throw new Error('missing signer group');
-    expect(verified.attestations).toHaveLength(2);
-    for (const report of verified.attestations) {
-      expect(report.signer.signingAddress).toBe(keyHex(keyPair(3).publicKey));
-    }
-    expect(verified.attestation).toBe(verified.attestations[0]);
-    expect(fixture.requests).toHaveLength(1);
-  });
-
   test('cancels a stalled System One request body before preflight', async () => {
     const fixture = decisionGateway();
     const fetch = jest
@@ -3892,10 +3905,59 @@ describe('System One decisions', () => {
     },
   );
 
+  test('verifies a decision when multiple reports share the selected signer', async () => {
+    const fixture = decisionGateway({ tee: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await fixture.fetch(request);
+      const url = new URL(request.url);
+      if (
+        url.pathname === '/v1/attestation/report' &&
+        url.searchParams.has('model')
+      ) {
+        const body = await response.json();
+        body.model_attestations.push({ ...body.model_attestations[0] });
+        return jsonResponse(body);
+      }
+      return response;
+    });
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const preflight = await client.verify(model);
+    expect(preflight.models).toHaveLength(2);
+    const result = await client.systemone.create(decisionRequest);
+    const verified = await client.verifyResponse(result.decisionId);
+    expect(verified.attestation).toBe(preflight.models[0]);
+    expect(fixture.requests[0].headers.get('x-model-pub-key')).toBe(
+      preflight.models[0].signingPublicKey,
+    );
+  });
+
+  test('rejects a decision signed by another preflight-verified model key', async () => {
+    const fixture = decisionGateway({
+      tee: true,
+      secondSigner: true,
+      includeModelPublicKey: true,
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const result = await client.systemone.create(decisionRequest);
+    await expect(
+      client.verifyResponse(result.decisionId),
+    ).rejects.toMatchObject({
+      failure: { code: 'signature.signer_mismatch' },
+    });
+  });
+
   test.each([false, true])(
     'verifies exact response bytes (provider TEE: %s) through pinned Node transport',
     async (tee) => {
-      const fixture = decisionGateway({ tee, secondSigner: tee });
+      const fixture = decisionGateway({ tee });
       mockNodeGatewayAttestation({ gateway: fixture.gateway });
       const unpinned = jest
         .spyOn(globalThis, 'fetch')
@@ -3934,7 +3996,7 @@ describe('System One decisions', () => {
       expect(verified.completionId).toBe(result.decisionId);
       expect(verified.signatureKind).toBe(tee ? 'provider_tee' : 'gateway');
       expect(verified.attestation.signer.signingAddress).toBe(
-        keyHex(keyPair(tee ? 3 : 1).publicKey),
+        keyHex(keyPair(tee ? 2 : 1).publicKey),
       );
       expect(await client.verifyResponse(result.decisionId)).toBe(verified);
       expect(fixture.signaturePaths).toEqual([
@@ -3945,7 +4007,6 @@ describe('System One decisions', () => {
         decisionRequest,
       );
       for (const name of [
-        'x-model-pub-key',
         'x-signing-algo',
         'x-client-pub-key',
         'x-encryption-version',
@@ -3958,67 +4019,32 @@ describe('System One decisions', () => {
         'repr-digest',
       ])
         expect(fixture.requests[0].headers.has(name)).toBe(false);
+      expect(fixture.requests[0].headers.get('x-model-pub-key')).toBe(
+        tee ? keyHex(keyPair(2).publicKey) : null,
+      );
       expect(fixture.requests[0].headers.get('x-no-aliasing')).toBe('true');
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(unpinned).not.toHaveBeenCalled();
     },
   );
 
-  test.each([false, true])(
-    'rejects incompatible model signer algorithms before a decision (mixed set: %s)',
-    async (mixed) => {
-      const fixture = decisionGateway({ tee: true });
-      const quotes = new Map<string, TdxQuoteVerificationResult>();
-      jest
-        .spyOn(globalThis, 'fetch')
-        .mockImplementation(async (input, init) => {
-          const response = await fixture.fetch(input, init);
-          const url = new URL(new Request(input, init).url);
-          if (
-            url.pathname !== '/v1/attestation/report' ||
-            !url.searchParams.has('model')
-          ) {
-            return response;
-          }
-          const body = await response.json();
-          const original = body.model_attestations[0];
-          const quote = fixture.gateway.tdxQuoteVerifier(original.intel_quote);
-          const reportData = Buffer.concat([
-            Buffer.from('22'.repeat(20), 'hex'),
-            Buffer.alloc(12),
-            quote.reportData.subarray(32),
-          ]);
-          quotes.set('ff', { ...quote, reportData });
-          const report = {
-            ...original,
-            signing_algo: 'ecdsa',
-            signing_address: `0x${'22'.repeat(20)}`,
-            intel_quote: 'ff',
-            report_data: reportData.toString('hex'),
-          };
-          body.model_attestations = mixed
-            ? [...body.model_attestations, report]
-            : [report];
-          return jsonResponse(body);
-        });
-      const client = new InferenceClient({
-        ...inferenceClientOptions(fixture.gateway),
-        e2ee: false,
-        modelVerification: {
-          verifiers: {
-            tdxQuote: (quote) =>
-              quotes.get(quote) ?? fixture.gateway.tdxQuoteVerifier(quote),
-          },
-        },
-      });
-      await expect(
-        client.systemone.create(decisionRequest),
-      ).rejects.toMatchObject({
-        failure: { code: 'signature.signer_mismatch' },
-      });
-      expect(fixture.requests).toHaveLength(0);
-    },
-  );
+  test('requires a model public key before sending a self-hosted decision', async () => {
+    const fixture = decisionGateway({
+      tee: true,
+      includeModelPublicKey: false,
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    await expect(
+      client.systemone.create(decisionRequest),
+    ).rejects.toMatchObject({
+      failure: { code: 'e2ee.model_public_key_required' },
+    });
+    expect(fixture.requests).toHaveLength(0);
+  });
 
   test('verifies decision evidence concurrently and waits before sending inference', async () => {
     const fixture = decisionGateway({ tee: true });
@@ -4180,8 +4206,8 @@ describe('System One decisions', () => {
         client.systemone.create(decisionRequest),
       ).rejects.toMatchObject({
         failure: {
-          code: 'api.inference_transport_failed',
-          details: { resource: 'completion', reason },
+          code: 'api.transport_failed',
+          details: { resource: 'systemone', reason },
           retryable: false,
         },
         retryable: false,
@@ -4363,7 +4389,7 @@ describe('System One decisions', () => {
     await expect(
       client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
-      failure: { code: 'api.model_attestation_signer_not_found' },
+      failure: { code: 'signature.signer_mismatch' },
     });
   });
 
@@ -4495,11 +4521,10 @@ describe('System One decisions', () => {
   });
 
   test.each(['chat', 'systemone'])(
-    'keeps Chat preverification and fleet decision sessions separate (%s first)',
+    'shares Chat and decision verification sessions (%s first)',
     async (first) => {
       const fixture = decisionGateway({
         tee: true,
-        secondSigner: true,
         includeModelPublicKey: true,
       });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
@@ -4524,12 +4549,12 @@ describe('System One decisions', () => {
           const result = await client.systemone.create(decisionRequest);
           const verified = await client.verifyResponse(result.decisionId);
           expect(verified.attestation.signer.signingAddress).toBe(
-            keyHex(keyPair(3).publicKey),
+            keyHex(keyPair(2).publicKey),
           );
         }
       }
-      expect(fixture.gateway.state.gatewayAttestationRequests).toBe(2);
-      expect(fixture.gateway.state.modelAttestationRequests).toBe(2);
+      expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
+      expect(fixture.gateway.state.modelAttestationRequests).toBe(1);
       for (const request of fixture.gateway.state.completionRequestsSeen) {
         expect(request.headers.get('x-model-pub-key')).toBe(
           keyHex(keyPair(2).publicKey),
@@ -4537,7 +4562,9 @@ describe('System One decisions', () => {
       }
       expect(
         fixture.requests.every(
-          (request) => !request.headers.has('x-model-pub-key'),
+          (request) =>
+            request.headers.get('x-model-pub-key') ===
+            keyHex(keyPair(2).publicKey),
         ),
       ).toBe(true);
     },
@@ -4614,6 +4641,49 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(1);
     expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
   });
+});
+
+describe('native inference retry policy', () => {
+  afterEach(() => jest.restoreAllMocks());
+  test.each(['chat/completions', 'responses', 'messages'])(
+    'does not replay a failed %s request',
+    async (endpoint) => {
+      const gateway = createTestGateway();
+      let inferenceRequests = 0;
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const request = new Request(input, init);
+          if (new URL(request.url).pathname === `/v1/${endpoint}`) {
+            inferenceRequests++;
+            return new Response('{"error":{"message":"fixture failure"}}', {
+              status: 500,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return gateway.fetch(request);
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: false,
+      });
+      const call =
+        endpoint === 'messages'
+          ? client.messages.create({
+              model,
+              messages: [{ role: 'user', content: 'Hello' }],
+              max_tokens: 128,
+            })
+          : endpoint === 'responses'
+            ? client.responses.create({ model, input: 'Hello' })
+            : client.chat.completions.create({
+                model,
+                messages: [{ role: 'user', content: 'Hello' }],
+              });
+      await expect(call).rejects.toMatchObject({ status: 500 });
+      expect(inferenceRequests).toBe(1);
+    },
+  );
 });
 
 describe('Responses API', () => {
@@ -4700,12 +4770,18 @@ describe('Responses API', () => {
     };
   }
 
-  test.each([
-    { streaming: false, ohttp: false, external: false, tee: true },
-    { streaming: true, ohttp: false, external: true, tee: true },
-    { streaming: false, ohttp: true, external: true, tee: false },
-    { streaming: true, ohttp: true, external: false, tee: false },
-  ])('creates and verifies exact bytes: %j', async (scenario) => {
+  test.each(
+    [false, true].flatMap((streaming) =>
+      [false, true].flatMap((ohttp) =>
+        [false, true].map((external) => ({
+          streaming,
+          ohttp,
+          external,
+          tee: !ohttp,
+        })),
+      ),
+    ),
+  )('creates and verifies exact bytes: %j', async (scenario) => {
     const fixture = responsesGateway(scenario);
     const endpoint = scenario.ohttp
       ? await createOhttpEndpoint({
@@ -4998,6 +5074,25 @@ describe('Messages API', () => {
     };
   }
 
+  test('classifies SDK failures wrapped by the native Messages client without I/O', async () => {
+    const fixture = messagesGateway();
+    const network = jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: true,
+    });
+    let caught: unknown;
+    try {
+      await client.messages.create({ model, messages: [], max_tokens: 1 });
+    } catch (error) {
+      caught = error;
+    }
+    expect(getSdkError(caught)?.failure.code).toBe('api.invalid_input');
+    expect(network).not.toHaveBeenCalled();
+  });
+
   const streamCases: { name: string; body: string; valid: boolean }[] =
     JSON.parse(
       readFileSync(
@@ -5005,6 +5100,89 @@ describe('Messages API', () => {
         'utf8',
       ),
     );
+  test.each([false, true])(
+    'preserves the original receipt after a duplicate ID (stream: %s)',
+    async (streaming) => {
+      const fixture = messagesGateway({ streaming });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const consume = async () => {
+        const response = await client.fetch(
+          `${baseUrl}messages`,
+          chatRequest({ stream: streaming }),
+        );
+        return response.text();
+      };
+      await consume();
+      const verified = await client.verifyResponse('msg_fixture');
+      await expect(consume()).rejects.toMatchObject({
+        failure: { code: 'api.duplicate_completion_id' },
+      });
+      expect(await client.verifyResponse('msg_fixture')).toBe(verified);
+      expect(fixture.signatureCalls()).toBe(1);
+      expect(fixture.requests).toHaveLength(2);
+    },
+  );
+
+  test.each([false, true])(
+    'disables receipt retention with zero TTL (stream: %s)',
+    async (streaming) => {
+      const fixture = messagesGateway({ streaming });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+        responseCacheTimeToLiveMs: 0,
+      });
+      for (let index = 0; index < 2; index += 1) {
+        const response = await client.fetch(
+          `${baseUrl}messages`,
+          chatRequest({ stream: streaming }),
+        );
+        await response.text();
+        await expect(
+          client.verifyResponse('msg_fixture'),
+        ).rejects.toMatchObject({
+          failure: { code: 'api.completion_not_found' },
+        });
+      }
+      expect(fixture.signatureCalls()).toBe(0);
+    },
+  );
+
+  test.each([false, true])(
+    'expires receipts before delayed cleanup and allows ID reuse (stream: %s)',
+    async (streaming) => {
+      const fixture = messagesGateway({ streaming });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1000);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+        responseCacheTimeToLiveMs: 100,
+      });
+      const consume = async () => {
+        const response = await client.fetch(
+          `${baseUrl}messages`,
+          chatRequest({ stream: streaming }),
+        );
+        await response.text();
+      };
+      await consume();
+      await client.verifyResponse('msg_fixture');
+      now.mockReturnValue(1100);
+      await expect(client.verifyResponse('msg_fixture')).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+      await consume();
+      await client.verifyResponse('msg_fixture');
+      expect(fixture.signatureCalls()).toBe(2);
+    },
+  );
+
   test.each(streamCases)('shared stream contract: $name', async (scenario) => {
     const fixture = messagesGateway({
       streaming: true,
@@ -5040,12 +5218,18 @@ describe('Messages API', () => {
     expect(fixture.requests).toHaveLength(1);
   });
 
-  test.each([
-    { streaming: false, ohttp: false, external: false, tee: false },
-    { streaming: true, ohttp: false, external: true, tee: false },
-    { streaming: false, ohttp: true, external: true, tee: false },
-    { streaming: true, ohttp: true, external: false, tee: false },
-  ])('creates and verifies exact bytes: %j', async (scenario) => {
+  test.each(
+    [false, true].flatMap((streaming) =>
+      [false, true].flatMap((ohttp) =>
+        [false, true].map((external) => ({
+          streaming,
+          ohttp,
+          external,
+          tee: false,
+        })),
+      ),
+    ),
+  )('creates and verifies exact bytes: %j', async (scenario) => {
     const fixture = messagesGateway(scenario);
     const endpoint = scenario.ohttp
       ? await createOhttpEndpoint({

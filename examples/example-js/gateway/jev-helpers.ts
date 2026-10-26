@@ -8,7 +8,11 @@ export function createVerifiedJevClients(
   if (options.e2ee || options.ohttp) {
     throw new Error('Jev requires e2ee and ohttp disabled.');
   }
-  const inference = new InferenceClient({ ...options, e2ee: false, ohttp: false });
+  const inference = new InferenceClient({
+    ...options,
+    e2ee: false,
+    ohttp: false,
+  });
   const baseUrl = new URL(inference.getBaseUrl());
   if (!baseUrl.pathname.endsWith('/v1/')) {
     throw new Error('The Jev example requires a NEAR base URL ending in /v1/.');
@@ -19,7 +23,7 @@ export function createVerifiedJevClients(
     fetch: inference.fetch,
     compression: false,
     retry: { maxRetries: 0 },
-    timeout: 60_000,
+    timeout: 120_000,
   });
   return { inference, jev };
 }

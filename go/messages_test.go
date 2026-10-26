@@ -6,16 +6,22 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type messagesFixture struct {
 	cloud                       *fakeCloud
+	ecdsaKey                    *secp.PrivateKey
 	raw                         []byte
 	streaming, tamper, provider bool
 	status                      int
@@ -47,6 +53,11 @@ func (f *messagesFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		text = "canonical/model:" + text
 	}
 	sig := CompletionSignature{kind, text, hex.EncodeToString(ed25519.Sign(f.cloud.priv, []byte(text))), f.cloud.a.Signer}
+	if f.ecdsaKey != nil {
+		digest := keccak([]byte("\x19Ethereum Signed Message:\n" + itoa(len(text)) + text))
+		compact := secpecdsa.SignCompact(f.ecdsaKey, digest, false)
+		sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
+	}
 	f.cloud.mu.Lock()
 	f.cloud.signatures["msg_fixture"] = sig
 	f.cloud.mu.Unlock()
@@ -257,6 +268,30 @@ func TestMessagesCloseBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestMessagesDuplicateIDPreservesOriginalReceipt(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			client, fixture := messagesClient(t, streaming, nil)
+			if _, err := sendMessage(t, client, streaming); err != nil {
+				t.Fatal(err)
+			}
+			original, err := client.VerifyResponse(context.Background(), "msg_fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = sendMessage(t, client, streaming)
+			requireCode(t, err, "api.duplicate_completion_id")
+			verified, err := client.VerifyResponse(context.Background(), "msg_fixture")
+			if err != nil || verified.ID != original.ID {
+				t.Fatal(verified, err)
+			}
+			if fixture.cloud.signatureCalls.Load() != 1 || fixture.cloud.chats.Load() != 2 {
+				t.Fatal("duplicate ID replaced the original receipt")
+			}
+		})
+	}
+}
+
 // Exercise signed fixtures through the public transport and receipt API.
 func TestMessagesStreamContract(t *testing.T) {
 	raw, err := os.ReadFile("testdata/messages/streams.json")
@@ -295,6 +330,60 @@ func TestMessagesStreamContract(t *testing.T) {
 			}
 			if fixture.cloud.chats.Load() != 1 {
 				t.Fatal("inference replayed")
+			}
+		})
+	}
+}
+
+func TestMessagesECDSA(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
+			c, f := messagesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = ECDSA })
+			key, err := secp.GeneratePrivateKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.ecdsaKey = key
+			public := key.PubKey().SerializeUncompressed()[1:]
+			address := keccak(public)[12:]
+			f.cloud.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
+			f.cloud.a.SigningPublicKey = hex.EncodeToString(public)
+			clear(f.cloud.q.ReportData[:32])
+			copy(f.cloud.q.ReportData, address)
+			raw, err := sendMessage(t, c, streaming)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(raw, f.raw) {
+				t.Fatal("message bytes changed")
+			}
+			receipt, err := c.VerifyResponse(t.Context(), "msg_fixture")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != ECDSA {
+				t.Fatal("wrong receipt")
+			}
+		})
+	}
+}
+
+func TestMessagesZeroResponseTTL(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			client, fixture := messagesClient(t, streaming, func(o *InferenceOptions) {
+				zero := time.Duration(0)
+				o.ResponseTTL = &zero
+			})
+			for range 2 {
+				if _, err := sendMessage(t, client, streaming); err != nil {
+					t.Fatal(err)
+				}
+				_, err := client.VerifyResponse(context.Background(), "msg_fixture")
+				requireCode(t, err, "api.completion_not_found")
+			}
+			if fixture.cloud.signatureCalls.Load() != 0 {
+				t.Fatal("zero TTL fetched a receipt")
 			}
 		})
 	}

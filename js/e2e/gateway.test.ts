@@ -76,69 +76,80 @@ const CLIENT_CASES: readonly ClientCase[] = [
   },
 ];
 
-for (const { name, options } of CLIENT_CASES) {
-  test(`Node client verifies JSON and SSE with ${name}`, {
-    timeout: 180_000,
-  }, async () => {
-    const inferenceClient = new InferenceClient(options);
-    await inferenceClient.verify(MODEL);
-    await verifyClientCompletions({
-      inferenceClient,
-      chat: inferenceClient.chat,
-      signingAlgo: options.signingAlgo,
-    });
-  });
+for (const { id: model } of MODELS.filter(
+  ({ provider }) => provider === 'near',
+)) {
+  for (const { name, options } of CLIENT_CASES) {
+    for (const official of [false, true]) {
+      test(`Node client verifies JSON and SSE with ${name}, model=${model}, official=${official}`, {
+        timeout: 180_000,
+      }, async () => {
+        const inferenceClient = new InferenceClient(options);
+        const preflight = await inferenceClient.verify(model);
+        assert.equal(preflight.gateway.tlsBinding.kind, 'attested');
+        assert.ok(preflight.models.length > 0);
+        for (const report of preflight.models)
+          assert.equal(report.gpuEvidence, 'verified');
+        await verifyClientCompletions({
+          inferenceClient,
+          model,
+          chat: official
+            ? new OpenAI({
+                apiKey: API_KEY,
+                baseURL: BASE_URL,
+                fetch: inferenceClient.fetch,
+                maxRetries: 0,
+              }).chat
+            : inferenceClient.chat,
+          signingAlgo: options.signingAlgo,
+        });
+      });
+    }
+  }
 }
 
 for (const model of MODELS.filter(({ provider }) => provider !== 'near')) {
-  test(`Node client handles ${model.provider} Chat: ${model.id}`, {
-    timeout: 180_000,
-  }, async () => {
-    const inferenceClient = new InferenceClient({
-      apiKey: API_KEY,
-      baseUrl: BASE_URL,
-      e2ee: false,
-    });
-    await inferenceClient.verify(model.id);
-    if (model.provider === 'chutes') {
-      const completion = await inferenceClient.chat.completions.create(
-        { ...CHAT_REQUEST, model: model.id },
-        { maxRetries: 0 },
-      );
-      assert.ok(completion.id);
-      assert.equal(completion.choices[0]?.finish_reason, 'stop');
-      assert.ok(completion.choices[0]?.message.content?.trim());
-      const verified = await retryReceipt(() =>
-        inferenceClient.verifyResponse(completion.id),
-      );
-      assert.equal(verified.signature.kind, 'gateway');
-    } else {
-      await verifyClientCompletions({
-        inferenceClient,
-        chat: inferenceClient.chat,
-        model: model.id,
-        expectedSignatureKind: 'gateway',
+  for (const official of [false, true]) {
+    test(`Node client handles ${model.provider} Chat: ${model.id}, official=${official}`, {
+      timeout: 180_000,
+    }, async () => {
+      const inferenceClient = new InferenceClient({
+        apiKey: API_KEY,
+        baseUrl: BASE_URL,
+        e2ee: false,
       });
-    }
-  });
+      await inferenceClient.verify(model.id);
+      const chat = official
+        ? new OpenAI({
+            apiKey: API_KEY,
+            baseURL: BASE_URL,
+            fetch: inferenceClient.fetch,
+            maxRetries: 0,
+          }).chat
+        : inferenceClient.chat;
+      if (model.provider === 'chutes') {
+        const completion = await chat.completions.create(
+          { ...CHAT_REQUEST, model: model.id },
+          { maxRetries: 0 },
+        );
+        assert.ok(completion.id);
+        assert.equal(completion.choices[0]?.finish_reason, 'stop');
+        assert.ok(completion.choices[0]?.message.content?.trim());
+        const verified = await retryReceipt(() =>
+          inferenceClient.verifyResponse(completion.id),
+        );
+        assert.equal(verified.signature.kind, 'gateway');
+      } else {
+        await verifyClientCompletions({
+          inferenceClient,
+          chat,
+          model: model.id,
+          expectedSignatureKind: 'gateway',
+        });
+      }
+    });
+  }
 }
-
-test('OpenAI SDK uses the verified fetch transport', {
-  timeout: 180_000,
-}, async () => {
-  const inferenceClient = new InferenceClient({
-    apiKey: API_KEY,
-    baseUrl: BASE_URL,
-    e2ee: true,
-  });
-  const openai = new OpenAI({
-    apiKey: API_KEY,
-    baseURL: BASE_URL,
-    fetch: inferenceClient.fetch,
-    maxRetries: 0,
-  });
-  await verifyClientCompletions({ inferenceClient, chat: openai.chat });
-});
 
 test('Generic entry verifies JSON and SSE without peer TLS binding', {
   timeout: 180_000,
@@ -213,108 +224,109 @@ async function verifyClientCompletions({
 }
 
 for (const selectedModel of MODELS) {
-  test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}`, {
-    timeout: 180_000,
-  }, async () => {
-    const client = new AttestationClient({
-      apiKey: API_KEY,
-      baseUrl: BASE_URL,
-    });
-    const signingAlgo = 'ed25519';
-    const fetchedGateway = await client.fetchGatewayAttestation({
-      signingAlgo,
-    });
-    const gateway = await verifyGatewayAttestation({
-      attestation: fetchedGateway.attestation,
-      clientBinding: fetchedGateway.clientBinding,
-    });
-    assert.ok(
-      gateway.tlsBinding.kind === 'attested',
-      'Expected peer TLS binding',
-    );
-    const pinnedTlsFetch = createPinnedTlsFetch(
-      gateway.tlsBinding.spkiFingerprint,
-    );
-
-    const models = [];
-    if (selectedModel.provider === 'near') {
-      const fetchedModels = await client.fetchModelAttestations({
-        model: selectedModel.id,
+  for (const signingAlgo of ['ed25519', 'ecdsa'] as const) {
+    test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}, ${signingAlgo}`, {
+      timeout: 180_000,
+    }, async () => {
+      const client = new AttestationClient({
+        apiKey: API_KEY,
+        baseUrl: BASE_URL,
+      });
+      const fetchedGateway = await client.fetchGatewayAttestation({
         signingAlgo,
       });
+      const gateway = await verifyGatewayAttestation({
+        attestation: fetchedGateway.attestation,
+        clientBinding: fetchedGateway.clientBinding,
+      });
       assert.ok(
-        fetchedModels.attestations.length > 0,
-        'Expected NEAR model evidence',
+        gateway.tlsBinding.kind === 'attested',
+        'Expected peer TLS binding',
       );
-      for (const attestation of fetchedModels.attestations) {
-        const model = await verifyModelAttestation({
-          attestation,
-          clientBinding: fetchedModels.clientBinding,
-          policy: { gpuEvidence: 'required' },
-        });
-        models.push(model);
-      }
-    }
+      const pinnedTlsFetch = createPinnedTlsFetch(
+        gateway.tlsBinding.spkiFingerprint,
+      );
 
-    // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
-    // so its live case uses JSON only.
-    const streams =
-      selectedModel.provider === 'chutes' ? [false] : [false, true];
-    for (const stream of streams) {
-      const requestBody = new TextEncoder().encode(
-        JSON.stringify({ ...CHAT_REQUEST, model: selectedModel.id, stream }),
-      );
-      const response = await pinnedTlsFetch(
-        new URL('chat/completions', BASE_URL),
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${API_KEY}`,
-            'Content-Type': 'application/json',
-            'Accept-Encoding': 'identity',
-            'x-no-aliasing': 'true',
-          },
-          body: requestBody,
-        },
-      );
-      assert.equal(response.status, 200, 'Chat request must succeed');
-      const responseBody = new Uint8Array(await response.arrayBuffer());
-      const id = readCompletionId({ responseBody, stream });
-      const signature = await retryReceipt(() =>
-        client.fetchCompletionSignature({ completionId: id, signingAlgo }),
-      );
-      assert.equal(signature.signer.signingAlgo, signingAlgo);
-      if (selectedModel.provider !== 'near') {
-        assert.equal(signature.kind, 'gateway');
-      }
-      // Changing even whitespace must invalidate the receipt's byte binding.
-      const altered = new Uint8Array([...responseBody, 0x20]);
-      if (signature.kind === 'provider_tee') {
-        const attestation = findModelAttestationForSignature({
-          attestations: models,
-          signature,
+      const models = [];
+      if (selectedModel.provider === 'near') {
+        const fetchedModels = await client.fetchModelAttestations({
+          model: selectedModel.id,
+          signingAlgo,
         });
-        const params = { requestBody, responseBody, signature, attestation };
-        verifyModelResponse(params);
-        assert.throws(
-          () => verifyModelResponse({ ...params, responseBody: altered }),
-          VerificationError,
+        assert.ok(
+          fetchedModels.attestations.length > 0,
+          'Expected NEAR model evidence',
         );
-      } else {
-        const params = {
-          requestBody,
-          responseBody,
-          signature,
-          attestation: gateway,
-        };
-        verifyGatewayResponse(params);
-        assert.throws(
-          () => verifyGatewayResponse({ ...params, responseBody: altered }),
-          VerificationError,
-        );
+        for (const attestation of fetchedModels.attestations) {
+          const model = await verifyModelAttestation({
+            attestation,
+            clientBinding: fetchedModels.clientBinding,
+            policy: { gpuEvidence: 'required' },
+          });
+          models.push(model);
+        }
       }
-    }
-  });
+
+      // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
+      // so its live case uses JSON only.
+      const streams =
+        selectedModel.provider === 'chutes' ? [false] : [false, true];
+      for (const stream of streams) {
+        const requestBody = new TextEncoder().encode(
+          JSON.stringify({ ...CHAT_REQUEST, model: selectedModel.id, stream }),
+        );
+        const response = await pinnedTlsFetch(
+          new URL('chat/completions', BASE_URL),
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${API_KEY}`,
+              'Content-Type': 'application/json',
+              'Accept-Encoding': 'identity',
+              'x-no-aliasing': 'true',
+            },
+            body: requestBody,
+          },
+        );
+        assert.equal(response.status, 200, 'Chat request must succeed');
+        const responseBody = new Uint8Array(await response.arrayBuffer());
+        const id = readCompletionId({ responseBody, stream });
+        const signature = await retryReceipt(() =>
+          client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+        );
+        assert.equal(signature.signer.signingAlgo, signingAlgo);
+        if (selectedModel.provider !== 'near') {
+          assert.equal(signature.kind, 'gateway');
+        }
+        // Changing even whitespace must invalidate the receipt's byte binding.
+        const altered = new Uint8Array([...responseBody, 0x20]);
+        if (signature.kind === 'provider_tee') {
+          const attestation = findModelAttestationForSignature({
+            attestations: models,
+            signature,
+          });
+          const params = { requestBody, responseBody, signature, attestation };
+          verifyModelResponse(params);
+          assert.throws(
+            () => verifyModelResponse({ ...params, responseBody: altered }),
+            VerificationError,
+          );
+        } else {
+          const params = {
+            requestBody,
+            responseBody,
+            signature,
+            attestation: gateway,
+          };
+          verifyGatewayResponse(params);
+          assert.throws(
+            () => verifyGatewayResponse({ ...params, responseBody: altered }),
+            VerificationError,
+          );
+        }
+      }
+    });
+  }
 }
 
 type ReadCompletionIdParams = {
@@ -336,9 +348,22 @@ function readCompletionId({
   }
 
   const events = text
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim());
+    .replace(/\r\n|\r/g, '\n')
+    .split('\n\n')
+    .slice(0, -1)
+    .map((record) =>
+      record
+        .split('\n')
+        .flatMap((line) =>
+          line === 'data'
+            ? ['']
+            : line.startsWith('data:')
+              ? [line.slice(5).replace(/^ /, '')]
+              : [],
+        )
+        .join('\n'),
+    )
+    .filter(Boolean);
   assert.equal(
     events.at(-1),
     '[DONE]',

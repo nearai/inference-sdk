@@ -3,6 +3,7 @@ package nearai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -12,9 +13,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cloudflare/circl/hpke"
 	"golang.org/x/crypto/hkdf"
@@ -58,6 +62,71 @@ func serverReadVector(t *testing.T, r *bytes.Reader) []byte {
 	}
 	return b
 }
+
+func TestOHTTPDoesNotReplayAfterConnectionFailure(t *testing.T) {
+	for _, header := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
+		t.Run(header, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				_, _ = io.Copy(io.Discard, r.Body)
+				if r.Header.Get(header) != "completion-key" {
+					t.Error("idempotency header was not forwarded")
+				}
+				if requests.Add(1) == 1 {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					_ = conn.Close()
+					return
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer server.Close()
+			base := &http.Transport{}
+			defer base.CloseIdleConnections()
+			client := &http.Client{Transport: base, Timeout: 5 * time.Second}
+			warmup, err := client.Get(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			warmup.Body.Close()
+			key, _, err := hpke.KEM_X25519_HKDF_SHA256.Scheme().GenerateKeyPair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			publicKey, _ := key.MarshalBinary()
+			config := append(append([]byte{1, 0, 32}, publicKey...), 0, 4, 0, 1, 0, 1)
+			transport, err := NewOHTTPTransport(config, server.URL, base, []string{header})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var reused atomic.Bool
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+				GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+			})
+			req, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/chat/completions", strings.NewReader(`{"model":"test"}`))
+			req.Header.Set(header, "completion-key")
+			_, err = transport.RoundTrip(req)
+
+			if !reused.Load() {
+				t.Fatal("did not exercise a reused connection")
+			}
+			if err == nil || requests.Load() != 1 {
+				t.Fatalf("requests=%d, error=%v; want one failed request", requests.Load(), err)
+			}
+		})
+	}
+}
+
 func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 	for _, framing := range []byte{1, 3} {
 		for _, scenario := range []struct {

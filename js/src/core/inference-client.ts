@@ -34,7 +34,6 @@ import type {
   ModelAttestationVerifiers,
   VerifiedModelAttestation,
 } from '../types/verification';
-import { hexToBuffer } from '../utils/common';
 import {
   ApiError,
   isApiError,
@@ -114,12 +113,12 @@ type CachedVerification<VerificationResult, AttestationResult> = {
   readonly session: InferenceSession<VerificationResult, AttestationResult>;
 };
 
-type InferenceEndpoint = 'chat' | 'systemone';
 type CompletionProtocol = 'chat' | 'responses' | 'messages';
 
 type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
+    expiresAt?: number;
   };
 
 type ParsedSecureRequest = {
@@ -231,7 +230,7 @@ type VerifyModelsParams = {
  * A verified Chat Completions transport.
  *
  * Every `fetch()` call reads its model from the Chat request, then uses a
- * successfully verified endpoint-specific session for that model when it remains
+ * successfully verified session for that model when it remains
  * within the configured cache lifetime. With `e2ee: true`,
  * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
@@ -263,7 +262,7 @@ export abstract class VerifiedInferenceClientBase<
     string,
     CachedVerification<VerificationResult, AttestationResult>
   >();
-  /** Shares verification work for the same model and endpoint while in progress. */
+  /** Shares verification work for the same model while in progress. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<InferenceSession<VerificationResult, AttestationResult>>
@@ -280,6 +279,18 @@ export abstract class VerifiedInferenceClientBase<
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
       options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
+    for (const [field, value] of [
+      ['attestationCacheTimeToLiveMs', this.attestationCacheTimeToLiveMs],
+      ['responseCacheTimeToLiveMs', this.responseCacheTimeToLiveMs],
+    ] as const) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw invalidInput({
+          field,
+          reason: 'unsupported_value',
+          expected: 'a finite non-negative duration in milliseconds',
+        });
+      }
+    }
     this.openai = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
@@ -288,10 +299,9 @@ export abstract class VerifiedInferenceClientBase<
     this.chat = this.openai.chat;
   }
 
-  /** Verify every required report before creating an endpoint-specific session. */
+  /** Verify every required report before creating a session. */
   protected abstract createVerificationState(
     model: string,
-    endpoint: InferenceEndpoint,
   ): Promise<InferenceSession<VerificationResult, AttestationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
@@ -328,7 +338,7 @@ export abstract class VerifiedInferenceClientBase<
     return verifyOhttpKeyConfig({ ohttpAttestation, signer });
   }
 
-  /** Only Chat uses OHTTP; evidence and signature fetches retain their transport. */
+  /** Inference creation uses OHTTP; evidence and signature fetches retain their transport. */
   protected createCompletionFetch(
     fetch: typeof globalThis.fetch,
     keyConfig: Uint8Array | undefined,
@@ -397,7 +407,7 @@ export abstract class VerifiedInferenceClientBase<
 
   /** Verify a captured response by ID. Consume streaming responses first. */
   verifyResponse(id: string): Promise<VerificationResult> {
-    const record = this.responseRecords.get(id);
+    const record = this.getResponseRecord(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
@@ -417,18 +427,42 @@ export abstract class VerifiedInferenceClientBase<
     return record.verification;
   }
 
-  /** Both endpoints share byte retention, expiry, and verification retries. */
+  /** All supported endpoints share byte retention, expiry, and verification retries. */
   protected registerResponse(record: ResponseRecord<VerificationResult>): void {
+    if (this.responseCacheTimeToLiveMs === 0) return;
     const id = record.id;
+    if (this.getResponseRecord(id) !== undefined) {
+      throw new ApiError({ code: 'api.duplicate_completion_id' });
+    }
     this.responseRecords.set(id, record);
     const expire = (): void => {
-      const timer = setTimeout(() => {
-        if (this.responseRecords.get(id) === record)
+      const expiresAt = Date.now() + this.responseCacheTimeToLiveMs;
+      record.expiresAt = expiresAt;
+      const release = (): void => {
+        if (this.responseRecords.get(id) !== record) return;
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
           this.responseRecords.delete(id);
-      }, this.responseCacheTimeToLiveMs);
-      timer.unref?.();
+          return;
+        }
+        // JavaScript timers accept at most a signed 32-bit delay.
+        const timer = setTimeout(release, Math.min(remaining, 2 ** 31 - 1));
+        timer.unref?.();
+      };
+      release();
     };
     void record.responseBody.then(expire, expire);
+  }
+
+  private getResponseRecord(
+    id: string,
+  ): ResponseRecord<VerificationResult> | undefined {
+    const record = this.responseRecords.get(id);
+    if (record?.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+      this.responseRecords.delete(id);
+      return undefined;
+    }
+    return record;
   }
 
   private async sendSecureCompletion({
@@ -529,11 +563,8 @@ export abstract class VerifiedInferenceClientBase<
 
   protected startVerification(
     model: string,
-    endpoint: InferenceEndpoint = 'chat',
   ): Promise<InferenceSession<VerificationResult, AttestationResult>> {
-    // Chat selects a routed model key; System One can use any verified fleet
-    // signer. Reuse caching mechanics without mixing those session assumptions.
-    const cacheKey = `${endpoint}:${model}`;
+    const cacheKey = model;
     const now = Date.now();
     this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(cacheKey);
@@ -546,7 +577,7 @@ export abstract class VerifiedInferenceClientBase<
       return existing;
     }
 
-    const verification = this.createVerificationState(model, endpoint);
+    const verification = this.createVerificationState(model);
     this.pendingVerifications.set(cacheKey, verification);
     void verification.then(
       (session) => {
@@ -732,7 +763,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
         headers: this.createCompletionHeaders(options?.headers ?? {}),
         getSession: (model) => {
-          const operation = this.startVerification(model, 'systemone');
+          const operation = this.startVerification(model);
           return options?.signal === undefined
             ? operation
             : awaitWithAbort({ operation, signal: options.signal });
@@ -790,11 +821,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 
   protected override async createVerificationState(
     model: string,
-    endpoint: InferenceEndpoint,
   ): Promise<
     InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
   > {
-    const systemone = endpoint === 'systemone';
     const gateway = await this.fetchGatewayAttestation();
     // Pin evidence requests to the observed peer without treating it as trusted
     // yet. Gateway verification must authenticate that same fingerprint before
@@ -843,27 +872,12 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         controller.abort(cause);
         throw cause;
       });
-    // System One does not route to a selected key: any verified model may sign.
-    if (
-      systemone &&
-      modelAttestations.some(
-        (attestation) => attestation.signer.signingAlgo !== this.signingAlgo,
-      )
-    ) {
-      throw new VerificationError({ code: 'signature.signer_mismatch' });
-    }
-    const modelAttestation = systemone
-      ? undefined
-      : modelAttestations.find(
-          (attestation) =>
-            attestation.signer.signingAlgo === this.signingAlgo &&
-            attestation.signingPublicKey !== undefined,
-        );
-    if (
-      !systemone &&
-      modelAttestations.length > 0 &&
-      modelAttestation === undefined
-    ) {
+    const modelAttestation = modelAttestations.find(
+      (attestation) =>
+        attestation.signer.signingAlgo === this.signingAlgo &&
+        attestation.signingPublicKey !== undefined,
+    );
+    if (modelAttestations.length > 0 && modelAttestation === undefined) {
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     const modelKey =
@@ -886,24 +900,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
-          const matchingAttestations = systemone
-            ? modelAttestations.filter(
-                ({ signer }) =>
-                  signer.signingAlgo === signature.signer.signingAlgo &&
-                  hexToBuffer(signer.signingAddress).equals(
-                    hexToBuffer(signature.signer.signingAddress),
-                  ),
-              )
-            : modelAttestation
-              ? [modelAttestation]
-              : [];
-          const servingAttestation = matchingAttestations[0];
-          if (servingAttestation === undefined) {
-            if (systemone) {
-              throw new ApiError({
-                code: 'api.model_attestation_signer_not_found',
-              });
-            }
+          if (modelAttestation === undefined) {
             throw new VerificationError({
               code: 'signature.kind_mismatch',
               details: { expected: 'gateway', actual: signature.kind },
@@ -913,15 +910,14 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             requestBody,
             responseBody,
             signature,
-            attestation: servingAttestation,
+            attestation: modelAttestation,
           });
           return {
             id,
             completionId: id,
             signatureKind: 'provider_tee',
             signature,
-            attestation: servingAttestation,
-            attestations: matchingAttestations,
+            attestation: modelAttestation,
           };
         }
         verifyGatewayResponse({
@@ -1018,6 +1014,7 @@ function createOpenAiClient({
   return new OpenAI({
     apiKey: requestConfiguration.apiKey ?? OPENAI_WRAPPER_API_KEY,
     baseURL: baseUrl,
+    maxRetries: 0,
     dangerouslyAllowBrowser: true,
     defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
@@ -1401,8 +1398,8 @@ function invalidCompletionId(cause?: unknown): ApiError {
     {
       code: 'api.invalid_response',
       details: {
-        path: 'Chat Completions response.id',
-        expected: 'a non-empty completion ID',
+        path: 'completion response ID or SSE lifecycle',
+        expected: 'a non-empty ID and a complete valid stream',
         actual: 'missing or invalid',
       },
     },

@@ -5,38 +5,32 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"time"
 
+	"example.com/nearai-inference-example/internal/demo"
 	"github.com/anthropics/anthropic-sdk-go/v2"
 	"github.com/anthropics/anthropic-sdk-go/v2/option"
 	nearai "github.com/nearai/inference-sdk/go"
 )
 
 func run() error {
-	key := os.Getenv("NEARAI_API_KEY")
-	if key == "" {
-		return fmt.Errorf("set NEARAI_API_KEY")
+	c, err := demo.ConfigurationForModel(false, "anthropic/claude-haiku-4-5")
+	if err != nil {
+		return err
 	}
-	baseURL := os.Getenv("NEARAI_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://cloud-api.near.ai/v1/"
-	}
-	model := os.Getenv("NEARAI_MODEL")
-	if model == "" {
-		model = "anthropic/claude-haiku-4-5"
-	}
+
 	inference, err := nearai.NewInferenceClient(nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{APIKey: key, BaseURL: baseURL},
-		OHTTP:         os.Getenv("NEARAI_OHTTP") == "true",
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		OHTTP:         c.OHTTP,
+		SigningAlgo:   c.Algo,
 	})
 	if err != nil {
 		return err
 	}
 	defer inference.Close()
 	client := anthropic.NewClient(
-		option.WithAPIKey(key),
+		option.WithAPIKey(c.Key),
 		// The official SDK appends /v1/messages to this API root.
 		option.WithBaseURL(strings.TrimSuffix(inference.BaseURL(), "v1/")),
 		option.WithHTTPClient(inference.HTTPClient()),
@@ -45,7 +39,7 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	request := anthropic.MessageNewParams{
-		Model:     anthropic.Model(model),
+		Model:     anthropic.Model(c.Model),
 		MaxTokens: 128,
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewTextBlock("Reply with the word ok.")),
@@ -69,12 +63,17 @@ func run() error {
 	stream := client.Messages.NewStreaming(ctx, request)
 	defer stream.Close()
 	accumulated := anthropic.Message{}
-	// Retain streamed content until the complete response has been verified.
+	// Display deltas as they arrive; verify the receipt after stream completion.
 	for stream.Next() {
-		if err := accumulated.Accumulate(stream.Current()); err != nil {
+		event := stream.Current()
+		if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" {
+			fmt.Print(event.Delta.Text)
+		}
+		if err := accumulated.Accumulate(event); err != nil {
 			return err
 		}
 	}
+	fmt.Println()
 	if err := stream.Err(); err != nil {
 		return err
 	}
@@ -86,11 +85,6 @@ func run() error {
 		return err
 	}
 	fmt.Printf("Verified %s streaming response.\n", receipt.SignatureKind)
-	for _, block := range accumulated.Content {
-		if block.Type == "text" {
-			fmt.Println(block.Text)
-		}
-	}
 	return nil
 }
 

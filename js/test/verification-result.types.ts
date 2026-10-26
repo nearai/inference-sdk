@@ -1,4 +1,4 @@
-// Both receipt IDs are available as strings; model attestations remain optional.
+// Both receipt IDs are available as strings.
 import type {
   VerifiedDirectCompletionResult,
   VerifiedGatewayCompletionResult,
@@ -6,16 +6,15 @@ import type {
 } from '../src';
 
 declare const gateway: VerifiedGatewayCompletionResult;
-declare const model: Omit<VerifiedModelCompletionResult, 'attestations'>;
+declare const model: VerifiedModelCompletionResult;
 declare const direct: VerifiedDirectCompletionResult;
 
-const modelResult: VerifiedModelCompletionResult = model;
 const ids: string[] = [
   gateway.id,
-  modelResult.id,
+  model.id,
   direct.id,
   gateway.completionId,
-  modelResult.completionId,
+  model.completionId,
   direct.completionId,
 ];
 void ids;
