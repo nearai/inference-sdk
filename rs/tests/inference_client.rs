@@ -871,9 +871,8 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
 }
 
 #[tokio::test]
-async fn canceled_verifications_release_capacity_and_keep_other_waiters_alive() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    options.max_cache_entries = 1;
+async fn canceled_verifications_keep_other_waiters_alive() {
+    let (_server, f, options) = setup(Fixture::default()).await;
     let client = InferenceClient::with_options(options).unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(5), client.verify("abandoned"))
@@ -1074,41 +1073,14 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
 }
 
 #[tokio::test]
-async fn receipt_cache_bounds_combined_request_and_response_bytes() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    // Measure an actual receipt so the budget fits exactly one completion.
-    let probe = InferenceClient::with_options(options.clone()).unwrap();
-    probe.chat_completions(body()).await.unwrap();
-    let size = {
-        let receipts = f.receipts.lock().unwrap();
-        let (request, response, _) = &receipts["chat-0"];
-        request.len() + response.len()
-    };
-    options.max_receipt_cache_bytes = size;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-    client.chat_completions(body()).await.unwrap();
-    client.verify_response("chat-1").await.unwrap();
-    client.chat_completions(body()).await.unwrap();
-    assert_eq!(
-        client.verify_response("chat-1").await.unwrap_err().code(),
-        "api.completion_not_found"
-    );
-    client.verify_response("chat-2").await.unwrap();
-    // An oversized request must count, even when its response is small.
-    let mut large = body();
-    large["extra"] = json!("x".repeat(size));
-    assert!(client.chat_completions(large).await.is_err());
-    client.verify_response("chat-2").await.unwrap();
-    assert_eq!(
-        client.verify_response("chat-3").await.unwrap_err().code(),
-        "api.completion_not_found"
-    );
-    options.max_receipt_cache_bytes = size - 1;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-    assert!(client.chat_completions(body()).await.is_err());
-    options.max_receipt_cache_bytes = 0;
-    assert!(InferenceClient::with_options(options.clone()).is_err());
-    assert!(DirectInferenceClient::with_options(options.into()).is_err());
+async fn new_completions_keep_unexpired_receipts_verifiable() {
+    let (_server, _, options) = setup(Fixture::default()).await;
+    let client = InferenceClient::with_options(options).unwrap();
+    for _ in 0..=1024 {
+        client.chat_completions(body()).await.unwrap();
+    }
+    client.verify_response("chat-0").await.unwrap();
+    client.verify_response("chat-1024").await.unwrap();
 }
 
 fn systemone_request() -> Value {
@@ -1418,32 +1390,6 @@ async fn systemone_rejects_wire_tampering_and_wrong_signers() {
 
         assert!(client.verify_response(&result.decision_id).await.is_err());
     }
-}
-
-#[tokio::test]
-async fn systemone_retained_receipts_follow_size_and_count_limits() {
-    let (_server, _, mut options) = setup(Fixture::default()).await;
-    options.max_cache_entries = 1;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    let first = client.systemone_create(&systemone_request()).await.unwrap();
-    let second = client.systemone_create(&systemone_request()).await.unwrap();
-    assert_eq!(
-        client
-            .verify_response(&first.decision_id)
-            .await
-            .unwrap_err()
-            .code(),
-        "api.completion_not_found"
-    );
-
-    client.verify_response(&second.decision_id).await.unwrap();
-
-    let (_server, _, mut options) = setup(Fixture::default()).await;
-    options.max_receipt_cache_bytes = 10;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert!(client.systemone_create(&systemone_request()).await.is_err());
 }
 
 fn response_request_body(streaming: bool) -> Value {

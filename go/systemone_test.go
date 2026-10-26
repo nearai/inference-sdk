@@ -356,13 +356,11 @@ func TestSystemOneFailuresAndUnsupportedRequests(t *testing.T) {
 		})
 	}
 }
-func TestSystemOneUsesResponseCacheBoundsAndCancellation(t *testing.T) {
-	c, _ := systemOneClient(t, false, Ed25519, func(_ *systemOneCloud, o *InferenceOptions) { o.MaxReceiptCacheBytes = 10 })
-	_, err := c.CreateSystemOne(context.Background(), systemOneRequest())
-	requireCode(t, err, "api.body_too_large")
+func TestSystemOneCancellationAndClose(t *testing.T) {
+	c, _ := systemOneClient(t, false, Ed25519, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = c.CreateSystemOne(ctx, systemOneRequest())
+	_, err := c.CreateSystemOne(ctx, systemOneRequest())
 	if err != context.Canceled {
 		t.Fatal(err)
 	}

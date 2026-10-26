@@ -196,11 +196,12 @@ image allowlist unless you configure a policy. See
 
 Attestation and response caches default to one hour. Response retention starts
 when the body is fully consumed. Set a TTL to a pointer to `time.Duration(0)`
-to disable reuse or retention. `MaxCacheEntries` defaults to 128,
-`MaxReceiptCacheBytes` to 64 MiB, and `MaxBodyBytes` to 64 MiB. Buffered protected
-requests honor the configured body limit. Evicted or expired response records
-cannot be verified later; choose limits appropriate to your application's memory
-budget. See [client lifecycle](./docs/api-reference.md#clients-and-lifecycle).
+to disable reuse or retention. Expired response records cannot be verified later.
+Cache memory grows with retained responses; choose a TTL appropriate for your
+workload. See [client lifecycle](./docs/api-reference.md#clients-and-lifecycle).
+
+`MaxBodyBytes` defaults to 64 MiB per request/response. Buffered protected
+requests honor the configured body limit.
 
 Errors support `errors.As` into `*nearai.Error`, exposing `Code` and `Retryable`.
 Retryable receipt retrieval can be attempted again without replaying Chat.

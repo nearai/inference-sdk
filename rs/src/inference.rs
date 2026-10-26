@@ -87,10 +87,6 @@ pub struct InferenceClientOptions {
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
     /// Exact bytes retained for a single response; larger responses fail closed.
     pub max_response_bytes: usize,
-    /// Bound both completed session and receipt caches. Oldest entries are evicted.
-    pub max_cache_entries: usize,
-    /// Total request and response bytes retained in the receipt cache.
-    pub max_receipt_cache_bytes: usize,
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
@@ -107,8 +103,6 @@ impl Default for InferenceClientOptions {
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
             max_response_bytes: 64 * 1024 * 1024,
-            max_cache_entries: 1024,
-            max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -215,10 +209,7 @@ impl InferenceClient {
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
         }
-        if options.max_cache_entries == 0
-            || options.max_response_bytes == 0
-            || options.max_receipt_cache_bytes == 0
-        {
+        if options.max_response_bytes == 0 {
             return Err(input("cache_limits", "must be positive").into());
         }
         if let Some(key) = &options.api_key {
@@ -273,11 +264,6 @@ impl InferenceClient {
             if let Some(future) = state.pending.get(&cache_key).and_then(|f| f.upgrade()) {
                 future
             } else {
-                if state.pending.len() >= options.max_cache_entries {
-                    return Err(
-                        input("model", "too many concurrent verification operations").into(),
-                    );
-                }
                 let owned = model.to_owned();
                 let options = options.clone();
                 let direct = self.inner.direct;
@@ -307,16 +293,6 @@ impl InferenceClient {
             state.pending.remove(&cache_key);
             if let Ok(session) = &result {
                 if !options.attestation_cache_ttl.is_zero() {
-                    if state.sessions.len() >= options.max_cache_entries {
-                        if let Some(key) = state
-                            .sessions
-                            .iter()
-                            .min_by_key(|(_, v)| v.0)
-                            .map(|(k, _)| k.clone())
-                        {
-                            state.sessions.remove(&key);
-                        }
-                    }
                     state
                         .sessions
                         .insert(cache_key.clone(), (Instant::now(), session.clone()));
@@ -727,32 +703,6 @@ impl InferenceClient {
         // Never let a repeated ID replace the evidence/bytes of another completion.
         if state.responses.contains_key(&id) {
             return Err(input("response.id", "duplicate completion ID").into());
-        }
-        let size = request
-            .len()
-            .checked_add(response.len())
-            .ok_or_else(|| input("response", "receipt exceeds configured cache byte limit"))?;
-        if size > options.max_receipt_cache_bytes {
-            return Err(input("response", "receipt exceeds configured cache byte limit").into());
-        }
-        let mut retained: usize = state
-            .responses
-            .values()
-            .map(|r| r.request.len() + r.response.len())
-            .sum();
-        while state.responses.len() >= options.max_cache_entries
-            || retained > options.max_receipt_cache_bytes - size
-        {
-            if let Some(key) = state
-                .responses
-                .iter()
-                .min_by_key(|(_, r)| r.finished)
-                .map(|(k, _)| k.clone())
-            {
-                if let Some(record) = state.responses.remove(&key) {
-                    retained -= record.request.len() + record.response.len();
-                }
-            }
         }
         state.responses.insert(
             id,
