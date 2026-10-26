@@ -315,7 +315,7 @@ async def test_raw_systemone_rejects_configured_compression(monkeypatch):
     assert gateway.headers == []
 
 
-@pytest.mark.parametrize('fault', ['status', 'id', 'encoding'])
+@pytest.mark.parametrize('fault', ['status', 'id'])
 async def test_bridge_propagates_failure_without_retry(monkeypatch, fault):
     gateway = DecisionGateway()
     gateway.response_fault = fault

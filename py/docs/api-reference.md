@@ -29,9 +29,9 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `inference_client.chat.completions.create` | OpenAI asynchronous Chat Completions parameters | completion or async stream | Verifies deployments before sending, then decrypts Chat. |
 | `inference_client.http_client` | property | `httpx.AsyncClient` | HTTPX adapter for external SDKs using the verified request pipeline. |
 | `inference_client.httpx2_client` | property | `httpx2.AsyncClient` | HTTPX2 adapter sharing the verified HTTPX pipeline, loaded on demand. |
-| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One at the configured Gateway, with exact bytes retained for receipts. |
+| `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat or uncompressed JSON System One requests at the configured Gateway, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat and System One. |
-| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained wire bytes. |
+| `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a Chat or System One signature over retained bytes. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -152,9 +152,9 @@ decision requests. The client verifies deployments before sending.
 ### Official Jev SDK
 
 Use `inference_client.httpx2_client` with `AsyncTypeSafeClient`. Configure its API
-key, API root, timeout, and disabled compression/retries as shown in the
+key, API root, timeout, and disabled request compression/retries as shown in the
 [complete construction example](./verification-guide.md#use-the-official-jev-sdk).
-System One accepts uncompressed, nonstreaming JSON with E2EE/OHTTP disabled.
+System One accepts uncompressed, nonstreaming JSON requests with E2EE/OHTTP disabled.
 Verify `raw_http_response.headers['x-generation-id']` through the owner before
 using the answers.
 
