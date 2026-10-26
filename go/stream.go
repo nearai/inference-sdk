@@ -15,6 +15,7 @@ type sseReader struct {
 	source    io.ReadCloser
 	reader    *bufio.Reader
 	transform func([]byte) ([]byte, error)
+	terminal  func([]byte) bool
 	finish    func() error
 	pending   []byte
 	ended     bool
@@ -70,6 +71,11 @@ func sseData(record []byte) (string, string) {
 	return strings.Join(data, "\n"), event
 }
 
+func completeSSERecord(record []byte) bool {
+	text := strings.ReplaceAll(strings.ReplaceAll(string(record), "\r\n", "\n"), "\r", "\n")
+	return strings.HasSuffix(text, "\n\n")
+}
+
 func (s *sseReader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -90,19 +96,20 @@ func (s *sseReader) Read(p []byte) (int, error) {
 			return 0, e
 		}
 		data, _ := sseData(record)
-		if data == "[DONE]" { // Authenticate trailing OHTTP frames before exposing completion.
+		if s.transform != nil {
+			record, e = s.transform(record)
+			if e != nil {
+				s.ended = true
+				return 0, e
+			}
+		}
+		if data == "[DONE]" || (s.terminal != nil && s.terminal(record)) {
+			// Authenticate trailing OHTTP frames before exposing completion.
 			if _, e = io.Copy(io.Discard, s.reader); e == nil && s.finish != nil {
 				e = s.finish()
 			}
 			s.ended = true
 			if e != nil {
-				return 0, e
-			}
-		}
-		if s.transform != nil {
-			record, e = s.transform(record)
-			if e != nil {
-				s.ended = true
 				return 0, e
 			}
 		}

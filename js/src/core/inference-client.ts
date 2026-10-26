@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import * as v from 'valibot';
 import {
@@ -21,6 +22,7 @@ import type {
   InferenceClientCommonOptions,
   InferenceClientOptions,
   InferenceEncryptionOptions,
+  InferenceMessages,
   InferenceResponses,
   NodeInferenceClientOptions,
   VerifiedCompletionResult,
@@ -109,6 +111,7 @@ type CachedVerification<VerificationResult, AttestationResult> = {
 };
 
 type InferenceEndpoint = 'chat' | 'systemone';
+type CompletionProtocol = 'chat' | 'responses' | 'messages';
 
 type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
@@ -118,12 +121,13 @@ type ResponseRecord<VerificationResult> =
 type ParsedSecureRequest = {
   readonly model: string;
   readonly request: Request;
-  readonly responses: boolean;
+  readonly protocol: CompletionProtocol;
 };
 
 type PreparePlaintextRequestParams = {
   readonly request: Request;
   readonly modelKey?: E2eeModelKey;
+  readonly messages?: boolean;
 };
 
 type SendSecureCompletionParams = {
@@ -133,7 +137,7 @@ type SendSecureCompletionParams = {
 
 type SentSecureCompletion<VerificationResult> = {
   response: Response;
-  readonly responses: boolean;
+  readonly protocol: CompletionProtocol;
   readonly session: InferenceSession<VerificationResult>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
@@ -246,7 +250,7 @@ export abstract class VerifiedInferenceClientBase<
   >();
   readonly chat: InferenceChat;
   protected readonly openai: OpenAI;
-  protected readonly supportsResponses: boolean = false;
+  protected readonly supportsGatewayEndpoints: boolean = false;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;
@@ -338,7 +342,7 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions, Gateway Responses, or Jev System One request.
+   * Send one verified Chat Completions, Responses, Messages, or System One request.
    * Only POST requests to the configured creation endpoints are accepted.
    */
   readonly fetch = async (
@@ -365,14 +369,14 @@ export abstract class VerifiedInferenceClientBase<
       // Register before exposing the response, including its first SSE event.
       completion.response = registerCompletionResponse({
         response: completion.response,
-        responses: completion.responses,
+        protocol: completion.protocol,
         register: (completionId) =>
           this.registerResponse({
             id: completionId,
             requestBody,
             responseBody,
             session: completion.session,
-            gatewayOnly: completion.responses,
+            gatewayOnly: completion.protocol !== 'chat',
           }),
       });
     }
@@ -454,7 +458,9 @@ export abstract class VerifiedInferenceClientBase<
         : {
             request: this.preparePlaintextRequest({
               request: parsed.request,
-              modelKey: session.modelKey,
+              modelKey:
+                parsed.protocol === 'messages' ? undefined : session.modelKey,
+              messages: parsed.protocol === 'messages',
             }),
           };
     const decryptResponse =
@@ -465,10 +471,13 @@ export abstract class VerifiedInferenceClientBase<
       request: prepared.request,
       transport: session.transport,
     });
-    const capturedResponse = captureResponseEntityBody(response);
+    const capturedResponse = captureResponseEntityBody(
+      response,
+      parsed.protocol,
+    );
     return {
       response: capturedResponse.response,
-      responses: parsed.responses,
+      protocol: parsed.protocol,
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
@@ -589,7 +598,7 @@ export abstract class VerifiedInferenceClientBase<
     init: RequestInit | undefined,
   ): Promise<ParsedSecureRequest> {
     const request = createRequest(input, init);
-    const responses = this.requireSupportedEndpoint(request);
+    const protocol = this.requireSupportedEndpoint(request);
     const value = await decodeChatRequest({ request });
     const generic = v.safeParse(ChatCompletionRequestSchema, value);
     if (!generic.success) {
@@ -600,19 +609,22 @@ export abstract class VerifiedInferenceClientBase<
       });
     }
     const model = generic.output.model;
-    return { model, request, responses };
+    return { model, request, protocol };
   }
 
-  private requireSupportedEndpoint(request: Request): boolean {
+  private requireSupportedEndpoint(request: Request): CompletionProtocol {
     const url = new URL(request.url);
     const baseUrl = new URL(this.baseUrl);
     const chatPath = new URL('chat/completions', this.baseUrl).pathname;
     const responses =
       url.pathname === new URL('responses', this.baseUrl).pathname;
+    const messages =
+      url.pathname === new URL('messages', this.baseUrl).pathname;
     if (
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
-      (url.pathname !== chatPath && !(responses && this.supportsResponses))
+      (url.pathname !== chatPath &&
+        !((responses || messages) && this.supportsGatewayEndpoints))
     ) {
       throw invalidInput({
         field: 'request',
@@ -621,23 +633,34 @@ export abstract class VerifiedInferenceClientBase<
         actual: `${request.method} ${url.pathname}`,
       });
     }
-    if (responses && this.e2eeEnabled) {
+    if ((responses || messages) && this.e2eeEnabled) {
       throw invalidInput({
         field: 'e2ee',
         reason: 'unsupported_value',
-        expected: 'field-level E2EE disabled for Responses',
+        expected: 'field-level E2EE disabled for Responses and Messages',
       });
     }
-    return responses;
+    return messages ? 'messages' : responses ? 'responses' : 'chat';
   }
 
   private preparePlaintextRequest({
     request,
     modelKey,
+    messages,
   }: PreparePlaintextRequestParams): Request {
     const headers = this.createCompletionHeaders(request.headers);
     headers.set(NO_ALIASING_HEADER, 'true');
     removeE2eeHeaders(headers);
+    if (messages) {
+      // External Anthropic clients may supply their own key. All inference and
+      // evidence requests must use this client's configured authentication.
+      const apiKey = this.requestConfiguration.defaultHeaders.get('x-api-key');
+      if (apiKey === null) headers.delete('x-api-key');
+      else headers.set('x-api-key', apiKey);
+      if (!headers.has('anthropic-version')) {
+        headers.set('anthropic-version', '2023-06-01');
+      }
+    }
     // Cloud API uses this routing-only header to select the verified NEAR
     // backend. It is deliberately not forwarded to the model request body.
     // X-Signing-Algo is an encryption header and requires a client key.
@@ -682,11 +705,17 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   AttestationVerificationResult
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
-  protected override readonly supportsResponses = true;
+  protected override readonly supportsGatewayEndpoints = true;
+  private readonly anthropic: Anthropic;
 
   /** Create a Response, then verify its top-level ID with verifyResponse(). */
   get responses(): InferenceResponses {
     return this.openai.responses;
+  }
+
+  /** Create a Message; verify its ID after consuming the response or stream. */
+  get messages(): InferenceMessages {
+    return this.anthropic.messages;
   }
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
@@ -711,6 +740,27 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   protected constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.gatewayOptions = options;
+    this.anthropic = new Anthropic({
+      apiKey: '@nearai/inference-sdk-internal',
+      defaultHeaders: {
+        'anthropic-version':
+          new Headers(options.headers).get('anthropic-version') ?? '2023-06-01',
+      },
+      baseURL: this.getBaseUrl(),
+      dangerouslyAllowBrowser: true,
+      maxRetries: 0,
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        // Anthropic includes v1 in its resource path; our base already names
+        // the API prefix. Adapt only this wrapper, preserving custom prefixes.
+        const sdkUrl = new URL('v1/messages', this.getBaseUrl());
+        if (url.origin === sdkUrl.origin && url.pathname === sdkUrl.pathname) {
+          url.pathname = new URL('messages', this.getBaseUrl()).pathname;
+        }
+        return this.fetch(new Request(url, request));
+      },
+    });
   }
 
   protected override sendSystemOneRequest(request: Request): Promise<Response> {
@@ -1034,14 +1084,14 @@ function createRequest(
 
 type RegisterCompletionResponseParams = {
   readonly response: Response;
-  readonly responses: boolean;
+  readonly protocol: CompletionProtocol;
   readonly register: (id: string) => void;
 };
 
 /** Register IDs before forwarding their bytes; streaming follows consumer backpressure. */
 function registerCompletionResponse({
   response,
-  responses,
+  protocol,
   register,
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
@@ -1060,7 +1110,7 @@ function registerCompletionResponse({
             for (const record of complete.records) {
               let id: string;
               try {
-                id = getSseCompletionId(record.value, responses);
+                id = getSseCompletionId(record.value, protocol);
               } catch {
                 continue;
               }
@@ -1079,7 +1129,7 @@ function registerCompletionResponse({
           let id: string;
           try {
             id = streaming
-              ? getSseCompletionId(pending, responses)
+              ? getSseCompletionId(pending, protocol)
               : parseCompletionId(JSON.parse(pending));
           } catch (cause) {
             throw invalidCompletionId(cause);
@@ -1107,6 +1157,7 @@ function captureRequestEntityBody(request: Request): Promise<Uint8Array> {
 
 function captureResponseEntityBody(
   response: Response,
+  protocol: CompletionProtocol,
 ): CapturedResponseEntityBody {
   if (response.body === null) {
     return {
@@ -1132,6 +1183,13 @@ function captureResponseEntityBody(
     if (settled) return;
     try {
       const body = concatChunks(chunks);
+      if (
+        response.ok &&
+        protocol === 'messages' &&
+        isServerSentEventResponse(response)
+      ) {
+        validateMessageStream(body);
+      }
       settled = true;
       resolveBody(body);
     } catch (cause) {
@@ -1165,6 +1223,7 @@ function captureResponseEntityBody(
         hasSseCompletionSentinel({
           chunks,
           contentType: response.headers.get('content-type'),
+          protocol,
         })
       ) {
         void drainResponseEntityBody({ reader, chunks, resolve, reject });
@@ -1196,7 +1255,10 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
   return body;
 }
 
-function getSseCompletionId(text: string, responses: boolean): string {
+function getSseCompletionId(
+  text: string,
+  protocol: CompletionProtocol,
+): string {
   for (const data of getSseDataRecords(text)) {
     if (data === '' || data === '[DONE]') {
       continue;
@@ -1207,10 +1269,20 @@ function getSseCompletionId(text: string, responses: boolean): string {
     } catch (cause) {
       throw invalidCompletionId(cause);
     }
-    if (responses) {
+    if (protocol === 'responses') {
       value =
         value !== null && typeof value === 'object' && 'response' in value
           ? value.response
+          : undefined;
+    }
+    if (protocol === 'messages') {
+      value =
+        value !== null &&
+        typeof value === 'object' &&
+        'type' in value &&
+        value.type === 'message_start' &&
+        'message' in value
+          ? value.message
           : undefined;
     }
     const parsed = v.safeParse(CompletionResponseIdSchema, value);
@@ -1224,11 +1296,13 @@ function getSseCompletionId(text: string, responses: boolean): string {
 type HasSseCompletionSentinelParams = {
   readonly chunks: readonly Uint8Array[];
   readonly contentType: string | null;
+  readonly protocol: CompletionProtocol;
 };
 
 function hasSseCompletionSentinel({
   chunks,
   contentType,
+  protocol,
 }: HasSseCompletionSentinelParams): boolean {
   if (!isServerSentEventContentType(contentType)) {
     return false;
@@ -1237,10 +1311,41 @@ function hasSseCompletionSentinel({
     const text = new TextDecoder('utf-8', { fatal: true }).decode(
       concatChunks(chunks),
     );
+    if (protocol === 'messages') {
+      validateMessageStream(concatChunks(chunks));
+      return true;
+    }
     return getSseDataRecords(text).some((data) => data === '[DONE]');
   } catch {
     return false;
   }
+}
+
+/** EOF or a tool block alone cannot complete a signed Messages stream. */
+function validateMessageStream(body: Uint8Array): void {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  const { records, pending } = takeCompleteSseRecords(text);
+  let id: string | undefined;
+  let stopped = false;
+  if (pending !== '') throw invalidCompletionId();
+  for (const record of records) {
+    for (const data of getSseDataRecords(record.value)) {
+      if (data === '') continue;
+      let event: { type?: unknown };
+      try {
+        event = JSON.parse(data);
+      } catch {
+        throw invalidCompletionId();
+      }
+      if (event?.type === 'error' || stopped) throw invalidCompletionId();
+      if (event?.type === 'message_start') {
+        if (id !== undefined) throw invalidCompletionId();
+        id = getSseCompletionId(record.value, 'messages');
+      }
+      if (event?.type === 'message_stop') stopped = true;
+    }
+  }
+  if (id === undefined || !stopped) throw invalidCompletionId();
 }
 
 type DrainResponseEntityBodyParams = {

@@ -240,6 +240,44 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [decision example](../../examples/example-go/README.md#system-one-decisions).
 
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```go
+raw, err := client.CreateMessage(ctx, map[string]any{
+    "model": "anthropic/claude-haiku-4-5",
+    "max_tokens": 128,
+    "messages": []map[string]any{{"role": "user", "content": "Hello"}},
+})
+if err != nil { return err }
+var message struct { ID string `json:"id"` }
+if err = json.Unmarshal(raw, &message); err != nil { return err }
+_, err = client.VerifyResponse(ctx, message.ID)
+```
+
+For streaming, POST to `client.BaseURL()+"messages"` through `client.HTTPClient()`
+with `"stream": true`. Consume and close the body before verification. Configure
+custom Anthropic headers on the request or in `ClientOptions.Headers`.
+See the [example](../../examples/example-go/gateway/messages/main.go).
+
 ## Responses API
 
 The Gateway client supports `POST /v1/responses` with the same authentication,

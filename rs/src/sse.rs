@@ -109,6 +109,7 @@ pub(crate) fn transform(
     key: Option<&ResponseKey>,
     id: &mut Option<String>,
     responses: bool,
+    messages: bool,
 ) -> Result<Vec<u8>, InferenceError> {
     let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
     let lines = lines(text);
@@ -130,7 +131,17 @@ pub(crate) fn transform(
         Err(_) => return Err(invalid_response().into()),
     };
     // Responses lifecycle events nest the receipt ID; item IDs are unrelated.
-    let receipt = if responses { &body["response"] } else { &body };
+    let receipt = if responses {
+        &body["response"]
+    } else if messages {
+        if body["type"] == "message_start" {
+            &body["message"]
+        } else {
+            &Value::Null
+        }
+    } else {
+        &body
+    };
     if let Some(value) = receipt
         .get("id")
         .and_then(Value::as_str)
@@ -167,6 +178,58 @@ pub(crate) fn transform(
         }
     }
     Ok(result.into_bytes())
+}
+
+#[derive(Default)]
+pub(crate) struct MessageStreamState {
+    started: bool,
+    stopped: bool,
+}
+
+impl MessageStreamState {
+    pub(crate) fn observe(&mut self, record: &[u8]) -> Result<(), InferenceError> {
+        let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
+        let lines = lines(text);
+        if !lines.last().is_some_and(|(line, _)| line.is_empty()) {
+            return Err(invalid_response().into());
+        }
+        let joined = lines
+            .iter()
+            .filter_map(|(line, _)| data(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if joined.is_empty() {
+            return Ok(());
+        }
+        let event: Value = serde_json::from_str(&joined).map_err(|_| invalid_response())?;
+        let kind = event["type"].as_str();
+        if self.stopped
+            || kind == Some("error")
+            || lines.iter().any(|(line, _)| {
+                line.strip_prefix("event:")
+                    .is_some_and(|name| Some(name.trim()) != kind)
+            })
+        {
+            return Err(invalid_response().into());
+        }
+        match kind {
+            Some("message_start") => {
+                if self.started {
+                    return Err(invalid_response().into());
+                }
+                self.started = true;
+            }
+            Some("message_stop") => self.stopped = true,
+            _ => {}
+        }
+        Ok(())
+    }
+    pub(crate) fn finish(&self) -> Result<(), InferenceError> {
+        if !self.started || !self.stopped {
+            return Err(invalid_response().into());
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

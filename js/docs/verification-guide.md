@@ -86,7 +86,7 @@ encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
-Chat and Gateway Responses can use OHTTP; metadata, attestation, and signature
+Chat, Gateway Responses, and Messages can use OHTTP; metadata, attestation, and signature
 requests keep their normal HTTP paths. Your endpoint or proxy must support
 `/ohttp` at the configured origin.
 Authorization and explicitly configured custom headers are also sent on this
@@ -171,6 +171,46 @@ may still finish in the background.
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
+
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```ts
+const message = await client.messages.create({
+  model: 'anthropic/claude-haiku-4-5',
+  max_tokens: 128,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+const receipt = await client.verifyResponse(message.id);
+console.log(receipt.signatureKind, message.content);
+```
+
+Set `stream: true` for typed Anthropic events. `InferenceMessages` exposes the
+official `create` overloads. An external `@anthropic-ai/sdk` client can use
+`fetch: client.fetch` and `maxRetries: 0`. Set its `baseURL` to
+`https://cloud-api.near.ai` (Anthropic appends `/v1/messages`); configure the
+inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport uses
+the inference client's configured authentication for both inference and evidence.
+See the [native example](../../examples/example-js/gateway/messages.ts) and
+[official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts).
 
 ## Responses API
 
@@ -314,7 +354,7 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, `/v1/responses`, and `/v1/signature/{id}`. For System One
+`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/signature/{id}`. For System One
 decisions, also forward `POST /v1/systemone`. Preserve the URL-encoded model and
 completion IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
 Preserve the request and response bodies, model-key routing header, and encryption

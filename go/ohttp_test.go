@@ -73,6 +73,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 			{name: "gzip", method: "POST", status: 200, encoding: "gzip"},
 			{name: "brotli", method: "POST", status: 200, encoding: "br"},
 			{name: "responses", method: "POST", status: 200, path: "/v1/responses"},
+			{name: "messages", method: "POST", status: 200, path: "/v1/messages"},
 			{name: "fixed-length", method: "POST", status: 200, length: "48"},
 			{name: "32 informational", method: "POST", status: 200, informational: 32},
 			{name: "33 informational", method: "POST", status: 200, informational: 33},
@@ -108,6 +109,12 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					reply := []byte("data: {\"id\":\"test\",\"choices\":[]}\n\ndata: [DONE]\n\n")
 					if scenario.name == "responses" {
 						reply, e = os.ReadFile("testdata/responses/response.sse")
+						if e != nil {
+							t.Fatal(e)
+						}
+					}
+					if scenario.name == "messages" {
+						reply, e = os.ReadFile("testdata/messages/message.sse")
 						if e != nil {
 							t.Fatal(e)
 						}

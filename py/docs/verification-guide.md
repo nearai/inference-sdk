@@ -174,7 +174,7 @@ JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
 `verify_response()` checks the inner request and response bodies before E2EE
 decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
 
-Chat and Gateway Responses can use OHTTP. Metadata, attestation, and signature
+Chat, Gateway Responses, and Messages can use OHTTP. Metadata, attestation, and signature
 requests keep their normal HTTP paths. The configured endpoint or proxy must
 serve `/ohttp` at its origin.
 Authorization and explicitly configured custom headers are also sent on the
@@ -204,7 +204,7 @@ async with InferenceClient(
 ```
 
 Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`,
-`/v1/responses`, and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+`/v1/responses`, `/v1/messages`, and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
 `X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
 bodies, model-key routing, and encryption headers. A browser-facing proxy must
 expose `X-Generation-Id` through CORS. The device verifies evidence and response
@@ -303,6 +303,43 @@ Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep th
 verified transport configuration and receipt-ID extraction together. See the
 [live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
 credential-gated validation against a deployed Gateway.
+
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```python
+message = await client.messages.create(
+    model='anthropic/claude-haiku-4-5',
+    max_tokens=128,
+    messages=[{'role': 'user', 'content': 'Hello'}],
+)
+receipt = await client.verify_response(message.id)
+print(receipt.signature_kind, message.content)
+```
+
+Set `stream=True` for typed Anthropic events. An external `AsyncAnthropic` can use
+`http_client=client.http_client`, `base_url='https://cloud-api.near.ai'`, and
+`max_retries=0`; the inference client's base URL includes `/v1/`. Its configured
+authentication governs inference and evidence requests.
+See the [JSON and streaming example](../../examples/example-py/gateway/messages.py).
 
 ## Responses API
 

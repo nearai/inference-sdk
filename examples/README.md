@@ -3,6 +3,20 @@
 These projects verify deployment evidence before sending inference requests,
 then verify the response signature.
 
+## Messages API
+
+Gateway Messages examples cover Anthropic JSON/SSE and exact-byte Gateway receipt
+verification. Set `NEARAI_API_KEY` and use a model available on your Gateway.
+Field-level E2EE is disabled; OHTTP may be enabled independently with Ed25519.
+
+| Language | Example | Run from the language example directory |
+| --- | --- | --- |
+| JavaScript | [messages.ts](example-js/gateway/messages.ts) | `node gateway/messages.ts` |
+| Official Anthropic JS SDK | [messages-anthropic-sdk.ts](example-js/gateway/messages-anthropic-sdk.ts) | `node gateway/messages-anthropic-sdk.ts` |
+| Python | [messages.py](example-py/gateway/messages.py) | `uv run python gateway/messages.py` |
+| Rust | [messages.rs](example-rs/src/bin/messages.rs) | `cargo run --bin messages` |
+| Go | [messages/main.go](example-go/gateway/messages/main.go) | `go run ./gateway/messages` |
+
 ## Responses API
 
 Gateway examples send JSON and SSE requests, then verify their Gateway receipts:

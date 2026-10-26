@@ -127,6 +127,8 @@ can keep their current dependencies and calls.
 
 ## Advanced APIs
 
+- **Messages:** use `messages.create()` for Anthropic JSON/SSE and verify Gateway receipts.
+  See [Messages API](./docs/verification-guide.md#messages-api).
 - **Responses:** create JSON or streaming responses and verify Gateway receipts.
   See [Responses API](./docs/verification-guide.md#responses-api).
 - **System One decisions:** send structured questions with `client.systemone.create()`
