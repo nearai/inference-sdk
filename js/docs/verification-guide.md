@@ -240,6 +240,34 @@ Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
 Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
+### Images and Box
+
+Send PNG or JPEG images using OpenRouter's
+[`image_url` JSON format](https://openrouter.ai/docs/guides/community/multimodal-decisions).
+Image parts can be nested in state, instructions, or criteria; text in content
+arrays stays a plain string. Select a Box-capable model, such as Jev 1.14, from
+your Gateway's catalog. With a base64-encoded PNG in `imageBase64`:
+
+```ts
+const image = {
+  type: 'image_url',
+  image_url: { url: `data:image/png;base64,${imageBase64}` },
+};
+const result = await client.systemone.create({
+  model: canonicalModelId,
+  state: { canvas: image },
+  questions: {
+    region: { type: 'box', instructions: 'Locate the red rectangle.' },
+  },
+});
+await client.verifyResponse(result.decisionId);
+const region = result.data.answers.region;
+if (region.type === 'box') console.log(region.box, region.confidence);
+```
+
+The official Jev SDK adapter also forwards these JSON image parts unchanged;
+use its `box()` helper for the question.
+
 ### Use the official Jev SDK
 
 Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to

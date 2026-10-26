@@ -51,6 +51,9 @@ pub enum SystemOneQuestion {
         instructions: SystemOneContent,
         criteria: Vec<SystemOneContent>,
     },
+    Box {
+        instructions: SystemOneContent,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SystemOneRequest {
@@ -87,6 +90,27 @@ pub enum SystemOneAnswer {
         #[serde(flatten)]
         extra: BTreeMap<String, Value>,
     },
+    Box {
+        #[serde(rename = "box", deserialize_with = "deserialize_json_number_field")]
+        bounds: SystemOneBoxCoordinates,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deserialize_json_number_field"
+        )]
+        confidence: Option<f64>,
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
+    },
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SystemOneBoxCoordinates {
+    pub top: f64,
+    pub bottom: f64,
+    pub left: f64,
+    pub right: f64,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SystemOneUsage {
@@ -141,6 +165,14 @@ pub(crate) fn decode_response(bytes: &[u8]) -> Result<SystemOneResponse, ApiErro
                     && probability(*confidence)
                     && probabilities.values().all(|p| probability(*p))
             }
+            SystemOneAnswer::Box {
+                bounds, confidence, ..
+            } => {
+                [bounds.top, bounds.bottom, bounds.left, bounds.right]
+                    .iter()
+                    .all(|coordinate| coordinate.is_finite())
+                    && confidence.is_none_or(f64::is_finite)
+            }
         };
         if !valid {
             return Err(invalid());
@@ -169,6 +201,7 @@ mod tests {
             serde_json::json!({"type":"noul"}),
             serde_json::json!({"type":"choice","criteria":{"billing":null,"other":null}}),
             serde_json::json!({"type":"score","criteria":["low","high"]}),
+            serde_json::json!({"type":"box"}),
         ] {
             assert!(serde_json::from_value::<SystemOneQuestion>(question.clone()).is_err());
             question["instructions"] = Value::Null;
@@ -197,6 +230,24 @@ mod tests {
             let response = decode_response(&serde_json::to_vec(value).unwrap()).unwrap();
             assert!(response.answers.contains_key("__proto__"));
             assert_eq!(response.extra["future"], value["future"]);
+            let SystemOneAnswer::Box {
+                bounds,
+                confidence,
+                extra,
+            } = &response.answers["region"]
+            else {
+                panic!("expected box");
+            };
+            assert_eq!(
+                bounds.top,
+                value["answers"]["region"]["box"]["top"].as_f64().unwrap()
+            );
+            assert_eq!(
+                *confidence,
+                value["answers"]["region"]["confidence"].as_f64()
+            );
+            assert_eq!(bounds.extra["future"], true);
+            assert_eq!(extra["future"], true);
         }
         for (name, value) in fixture["invalid"].as_object().unwrap() {
             assert!(

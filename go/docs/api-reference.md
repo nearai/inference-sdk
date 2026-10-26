@@ -69,9 +69,15 @@ required deployments and sends one nonstreaming request. `DecisionID` comes from
 
 Requests accept `SystemOneRequest` or another JSON-serializable value. Each
 question requires `Instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
-Structured legend numbers use `json.Number`, while score and probability fields
-use `float64`.
+support `noul`, `choice`, `score`, and `box`; `Extra` preserves unknown fields.
+A Box question requires only `Instructions`. Its answer exposes
+`Box *SystemOneBoxCoordinates` with finite `Top`, `Bottom`, `Left`, and `Right`
+values, plus optional `Confidence *float64`; missing or null confidence becomes `nil`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. Structured legend numbers use `json.Number`, while
+scores, probabilities, and Box coordinates/confidence use finite `float64` values.
+See [images and Box](./verification-guide.md#images-and-box).
 
 System One shares Chat's per-model session and the client's
 body limits and receipt cache.

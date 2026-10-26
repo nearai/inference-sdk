@@ -162,13 +162,14 @@ Chat's model session and selected-key routing. See the
 | --- | --- | --- |
 | `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
 | `state` | Text, object, or array | Decision context forwarded as JSON. |
-| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, `score`, or `box` questions. Names and choice labels may be any string. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
 | `score` | Text, object, or array | Ordered array of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 Use `SystemOneRequest<MyQuestions>` and `SystemOneQuestion<MyChoices>` to
 annotate application types; `create()` also infers question and choice maps.
@@ -195,6 +196,10 @@ annotate application types; `create()` also infers question and choice maps.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
 | `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `null`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. See [images and Box](./verification-guide.md#images-and-box).
 
 Attestation sessions are cached per model and endpoint, separately from Chat.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE

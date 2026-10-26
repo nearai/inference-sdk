@@ -158,6 +158,7 @@ export type {
   SystemOneQuestion,
   SystemOneResponse,
   SystemOneAnswer,
+  SystemOneBoxCoordinates,
   SystemOneRequestOptions,
   SystemOneResult,
 } from './types/systemone';

@@ -26,6 +26,11 @@ export type SystemOneQuestion<
       readonly type: 'score';
       readonly instructions: SystemOneContent;
       readonly criteria: readonly SystemOneContent[];
+    }
+  | {
+      readonly type: 'box';
+      readonly instructions: SystemOneContent;
+      readonly criteria?: never;
     };
 
 // Distribute over question unions so explicitly annotated generic questions
@@ -56,6 +61,10 @@ export type SystemOneRequest<
 
 export type SystemOneResponse = v.InferOutput<typeof SystemOneResponseSchema>;
 export type SystemOneAnswer = SystemOneResponse['answers'][string];
+export type SystemOneBoxCoordinates = Extract<
+  SystemOneAnswer,
+  { type: 'box' }
+>['box'];
 
 export type SystemOneRequestOptions = {
   readonly headers?: HeadersInit;

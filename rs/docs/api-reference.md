@@ -67,9 +67,16 @@ from `X-Generation-Id`. Verify the receipt before using `data`.
 
 Requests accept `SystemOneRequest` or another serializable JSON value. Each
 question requires `instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`, preserving unknown fields. Structured
-content preserves arbitrary-precision JSON numbers; scores and probabilities
-use finite `f64` values.
+support `noul`, `choice`, `score`, and `box`, preserving unknown fields. A Box
+question requires only `instructions`. `SystemOneAnswer::Box` exposes `bounds`
+(the JSON `box` field) as `SystemOneBoxCoordinates` with finite `top`, `bottom`,
+`left`, and `right` values, plus `confidence: Option<f64>`; missing or null
+confidence becomes `None`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria, and preserves arbitrary-precision JSON numbers.
+Scores, probabilities, and Box coordinates/confidence use finite `f64` values.
+See [images and Box](./verification-guide.md#images-and-box).
 
 System One shares Chat's per-model session and the client's
 body limits and receipt cache.

@@ -81,6 +81,7 @@ from .types.ohttp import OhttpAttestation
 from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
 from .types.systemone import (
     SystemOneAnswer,
+    SystemOneBoxCoordinates,
     SystemOneQuestion,
     SystemOneRequest,
     SystemOneResponse,
@@ -163,6 +164,7 @@ __all__ = [
     'SigningAlgo',
     'SigningIdentity',
     'SystemOneAnswer',
+    'SystemOneBoxCoordinates',
     'SystemOneQuestion',
     'SystemOneRequest',
     'SystemOneResponse',

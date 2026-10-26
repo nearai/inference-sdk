@@ -23,6 +23,24 @@ from nearai_inference_sdk import (
 
 from .test_inference_client import MESSAGES, MODEL, Gateway
 
+IMAGE_PART = {
+    'type': 'image_url',
+    'image_url': {'url': 'data:image/png;base64,ZmFrZS1pbWFnZQ=='},
+}
+BOX_BOUNDS = {'top': 0.31, 'bottom': 0.69, 'left': 0.25, 'right': 0.75}
+IMAGE_REQUEST = {
+    'model': MODEL,
+    'state': {'canvas': IMAGE_PART},
+    'questions': {
+        'region': {'type': 'box', 'instructions': ['Locate the rectangle', IMAGE_PART]},
+        'present': {
+            'type': 'noul',
+            'instructions': 'Does the canvas match?',
+            'criteria': {'true': IMAGE_PART},
+        },
+    },
+}
+
 REQUEST = {
     'model': MODEL,
     'state': {'question': 'Is this a useful answer?'},
@@ -176,6 +194,55 @@ class DecisionGateway(Gateway):
                 else 'x-generation-id': decision_id,
             },
         )
+
+
+@pytest.mark.parametrize('confidence', [{}, {'confidence': None}, {'confidence': 0.82}])
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_box_images_preserve_bytes_and_verify_receipts(
+    monkeypatch, confidence, signing_algo
+):
+    gateway = DecisionGateway(signing_algo)
+    answer = {
+        'type': 'box',
+        'box': {**BOX_BOUNDS, 'future': 'preserved'},
+        'future': {'preserved': True},
+        **confidence,
+    }
+    gateway.answers = {'region': answer, 'present': {'type': 'noul', 'noul': 0.98}}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        result = await client.systemone.create(IMAGE_REQUEST)
+        assert json.loads(gateway.requests[0].content) == IMAGE_REQUEST
+        assert result.data['answers']['region'] == answer
+        result.data['answers']['region']['box']['top'] = 0
+        verified = await client.verify_response(result.decision_id)
+        assert verified.signature_kind == 'gateway'
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize(
+    'answer',
+    [
+        {'type': 'box'},
+        {'type': 'box', 'box': None},
+        {'type': 'box', 'box': {'bottom': 1, 'left': 0, 'right': 1}},
+        *[
+            {'type': 'box', 'box': {**BOX_BOUNDS, 'top': top}}
+            for top in (None, True, '0.31', float('inf'))
+        ],
+        {'type': 'box', 'box': BOX_BOUNDS, 'confidence': '0.82'},
+    ],
+)
+async def test_malformed_box_is_not_retained_or_retried(monkeypatch, answer):
+    gateway = DecisionGateway()
+    gateway.answers = {'region': answer}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(ApiError, match='api.invalid_response'):
+            await client.systemone.create(IMAGE_REQUEST)
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response('systemone-1')
+    assert len(gateway.requests) == 1
 
 
 async def test_requires_model_public_key_before_sending_a_decision(monkeypatch):

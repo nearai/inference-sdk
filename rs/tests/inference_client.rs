@@ -1085,6 +1085,53 @@ async fn systemone_plaintext_key_routing_and_receipts() {
 }
 
 #[tokio::test]
+async fn systemone_preserves_json_images_and_box_receipts() {
+    let image = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="}});
+    let request: SystemOneRequest = serde_json::from_value(json!({
+        "model": "vendor/model",
+        "state": {"canvas": image},
+        "questions": {
+            "region": {"type": "box", "instructions": ["Locate the rectangle", image]},
+            "present": {"type": "noul", "instructions": "Does the canvas match?", "criteria": {"true": image}}
+        }
+    })).unwrap();
+    for ecdsa in [false, true] {
+        let fixture = Fixture {
+            ecdsa,
+            ..Default::default()
+        };
+        *fixture.metadata.lock().unwrap() = Some(json!({
+            "metadata": {"providerType": "proxy", "attestationSupported": false}
+        }));
+        let (_server, f, mut options) = setup(fixture).await;
+        if ecdsa {
+            options.signing_algo = SigningAlgo::Ecdsa;
+        }
+        let client = InferenceClient::with_options(options).unwrap();
+        let mut result = client.systemone_create(&request).await.unwrap();
+        let SystemOneAnswer::Box {
+            bounds, confidence, ..
+        } = result.data.answers.get_mut("region").unwrap()
+        else {
+            panic!("expected box");
+        };
+        assert_eq!(bounds.top, 0.31);
+        assert_eq!(*confidence, Some(0.82));
+        bounds.top = 0.0;
+        let receipt = client.verify_response(&result.decision_id).await.unwrap();
+        assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+        let receipts = f.receipts.lock().unwrap();
+        let (sent, _, _) = receipts.values().next().unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(sent).unwrap(),
+            serde_json::to_value(&request).unwrap()
+        );
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
 async fn systemone_shares_chat_session() {
     for decision_first in [false, true] {
         let (_server, f, options) = setup(Fixture::default()).await;

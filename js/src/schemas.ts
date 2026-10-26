@@ -142,6 +142,16 @@ export const SystemOneResponseSchema = looseObjectSchema({
         probabilities: ProbabilitiesSchema,
         legend: dictionarySchema(SystemOneContentSchema),
       }),
+      v.looseObject({
+        type: v.literal('box'),
+        box: v.looseObject({
+          top: v.pipe(v.number(), v.finite()),
+          bottom: v.pipe(v.number(), v.finite()),
+          left: v.pipe(v.number(), v.finite()),
+          right: v.pipe(v.number(), v.finite()),
+        }),
+        confidence: v.optional(v.nullable(v.pipe(v.number(), v.finite()))),
+      }),
     ]),
   ),
   usage: looseObjectSchema({

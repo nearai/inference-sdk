@@ -284,6 +284,21 @@ class SystemOneScoreAnswerSchema(ApiSchema):
     legend: dict[str, SystemOneContent]
 
 
+class SystemOneBoxCoordinatesSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    top: float = Field(allow_inf_nan=False)
+    bottom: float = Field(allow_inf_nan=False)
+    left: float = Field(allow_inf_nan=False)
+    right: float = Field(allow_inf_nan=False)
+
+
+class SystemOneBoxAnswerSchema(ApiSchema):
+    model_config = ConfigDict(extra='allow', strict=True)
+    type: Literal['box']
+    box: SystemOneBoxCoordinatesSchema
+    confidence: Annotated[float, Field(allow_inf_nan=False)] | None = None
+
+
 class SystemOneUsageSchema(ApiSchema):
     model_config = ConfigDict(extra='allow', strict=True)
     input_tokens: StrictInt = Field(ge=0)
@@ -299,7 +314,8 @@ class SystemOneResponseSchema(ApiSchema):
         Annotated[
             SystemOneNoulAnswerSchema
             | SystemOneChoiceAnswerSchema
-            | SystemOneScoreAnswerSchema,
+            | SystemOneScoreAnswerSchema
+            | SystemOneBoxAnswerSchema,
             Field(discriminator='type'),
         ],
     ]

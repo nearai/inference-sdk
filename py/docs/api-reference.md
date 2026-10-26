@@ -171,6 +171,7 @@ using the answers.
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |
 | `score` | Text, object, or array | Required list of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 | `SystemOneResult` member | Type | Description |
 | --- | --- | --- |
@@ -189,6 +190,10 @@ using the answers.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: string label; `confidence` and per-label `probabilities` in `[0, 1]`. |
 | `score` | `score`: finite number; `confidence` and per-level `probabilities` in `[0, 1]`; `legend`: descriptions keyed by level. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `None`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. See [images and Box](./verification-guide.md#images-and-box).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `response_cache_time_to_live_ms`.

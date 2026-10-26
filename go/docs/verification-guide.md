@@ -240,6 +240,32 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [decision example](../../examples/example-go/README.md#system-one-decisions).
 
+### Images and Box
+
+Send PNG or JPEG images using OpenRouter's
+[`image_url` JSON format](https://openrouter.ai/docs/guides/community/multimodal-decisions).
+Image parts can be nested in state, instructions, or criteria; text in content
+arrays stays a plain string. Select a Box-capable model, such as Jev 1.14, from
+your Gateway's catalog. With a base64-encoded PNG in `imageBase64`:
+
+```go
+image := map[string]any{
+    "type": "image_url",
+    "image_url": map[string]string{"url": "data:image/png;base64," + imageBase64},
+}
+result, err := client.CreateSystemOne(ctx, nearai.SystemOneRequest{
+    Model: decisionModel,
+    State: map[string]any{"canvas": image},
+    Questions: map[string]nearai.SystemOneQuestion{
+        "region": {Type: "box", Instructions: "Locate the red rectangle."},
+    },
+})
+if err != nil { return err }
+if _, err := client.VerifyResponse(ctx, result.DecisionID); err != nil { return err }
+region := result.Data.Answers["region"]
+fmt.Println(region.Box, region.Confidence)
+```
+
 ## Responses API
 
 The Gateway client supports `POST /v1/responses` with the same authentication,

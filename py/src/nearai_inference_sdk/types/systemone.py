@@ -31,8 +31,16 @@ class SystemOneScoreQuestion(TypedDict):
     criteria: list[SystemOneContent]
 
 
+class SystemOneBoxQuestion(TypedDict):
+    type: Literal['box']
+    instructions: SystemOneContent
+
+
 SystemOneQuestion = (
-    SystemOneNoulQuestion | SystemOneChoiceQuestion | SystemOneScoreQuestion
+    SystemOneNoulQuestion
+    | SystemOneChoiceQuestion
+    | SystemOneScoreQuestion
+    | SystemOneBoxQuestion
 )
 
 
@@ -62,7 +70,25 @@ class SystemOneScoreAnswer(TypedDict):
     legend: dict[str, SystemOneContent]
 
 
-SystemOneAnswer = SystemOneNoulAnswer | SystemOneChoiceAnswer | SystemOneScoreAnswer
+class SystemOneBoxCoordinates(TypedDict):
+    top: float
+    bottom: float
+    left: float
+    right: float
+
+
+class SystemOneBoxAnswer(TypedDict):
+    type: Literal['box']
+    box: SystemOneBoxCoordinates
+    confidence: NotRequired[float | None]
+
+
+SystemOneAnswer = (
+    SystemOneNoulAnswer
+    | SystemOneChoiceAnswer
+    | SystemOneScoreAnswer
+    | SystemOneBoxAnswer
+)
 
 
 class SystemOneUsage(TypedDict):
