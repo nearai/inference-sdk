@@ -70,6 +70,17 @@ def get_sse_data(line: str) -> str | None:
     return value.removeprefix(' ')
 
 
+def get_sse_event(record: str) -> str | None:
+    """Read the event name, with the last event field taking precedence."""
+    event = None
+    for line in split_sse_lines(record):
+        if line.content == 'event':
+            event = ''
+        elif line.content.startswith('event:'):
+            event = line.content[len('event:') :].removeprefix(' ')
+    return event
+
+
 def get_sse_data_records(text: str) -> list[str]:
     """Read complete response data payloads, joining each event's data lines."""
 

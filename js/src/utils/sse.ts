@@ -66,6 +66,19 @@ export function getSseData(line: string): string | undefined {
   return value.startsWith(' ') ? value.slice(1) : value;
 }
 
+/** Read the event name; the last event field in a record takes precedence. */
+export function getSseEvent(record: string): string | undefined {
+  let event: string | undefined;
+  for (const { content } of splitSseLines(record)) {
+    if (content === 'event') event = '';
+    else if (content.startsWith('event:')) {
+      const value = content.slice('event:'.length);
+      event = value.startsWith(' ') ? value.slice(1) : value;
+    }
+  }
+  return event;
+}
+
 /** Read event payloads from a complete response body, joining its data lines. */
 export function getSseDataRecords(text: string): string[] {
   const { records, pending } = takeCompleteSseRecords(text);

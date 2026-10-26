@@ -5225,7 +5225,13 @@ describe('Messages API', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  const errorHeaderStream =
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\nevent: error\ndata: {"type":"message_stop"}\n\n';
+
   test.each([
+    errorHeaderStream,
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\nevent:error\ndata: {"error":{"type":"overloaded_error"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+    'event: message_start\r\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\r\n\r\nevent: ping\r\ndata: {"type":"message_stop"}\r\n\r\n',
     'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\n',
     'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\nevent: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
     'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}',
@@ -5245,6 +5251,36 @@ describe('Messages API', () => {
       chatRequest({ stream: true }),
     );
     await response.text();
+    await expect(client.verifyResponse('msg_fixture')).rejects.toMatchObject({
+      failure: { code: 'api.invalid_response' },
+    });
+    expect(fixture.signatureCalls()).toBe(0);
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  test('cannot verify after the Anthropic SDK rejects an error header', async () => {
+    const fixture = messagesGateway({
+      streaming: true,
+      rawBody: Buffer.from(errorHeaderStream),
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const stream = await client.messages.create({
+      model,
+      max_tokens: 16,
+      messages: [{ role: 'user', content: 'Hello' }],
+      stream: true,
+    });
+    await expect(
+      (async () => {
+        for await (const event of stream) {
+          expect(event.type).toBe('message_start');
+        }
+      })(),
+    ).rejects.toBeInstanceOf(Anthropic.APIError);
     await expect(client.verifyResponse('msg_fixture')).rejects.toMatchObject({
       failure: { code: 'api.invalid_response' },
     });

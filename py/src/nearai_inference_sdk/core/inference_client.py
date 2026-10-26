@@ -48,7 +48,7 @@ from ..utils.errors import (
     verification_failure,
 )
 from ..utils.fetch import FetchResponse
-from ..utils.sse import get_sse_data_records, take_complete_sse_records
+from ..utils.sse import get_sse_data_records, get_sse_event, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
 from .chat import verify_gateway_response, verify_model_response
@@ -958,13 +958,20 @@ def _validate_message_stream(body: bytes) -> None:
     if parsed.pending:
         raise _invalid_completion_id()
     for record in parsed.records:
+        event_name = get_sse_event(record.value)
+        if event_name == 'error':
+            raise _invalid_completion_id()
         for data in get_sse_data_records(record.value):
             if not data:
                 continue
             try:
                 event = json.loads(data)
                 kind = event.get('type')
-                if kind == 'error' or stopped:
+                if (
+                    kind == 'error'
+                    or stopped
+                    or (event_name is not None and event_name != kind)
+                ):
                     raise _invalid_completion_id()
                 if kind == 'message_start':
                     if started:

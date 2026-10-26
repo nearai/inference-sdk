@@ -41,7 +41,11 @@ import {
   isVerificationError,
   VerificationError,
 } from '../utils/errors';
-import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
+import {
+  getSseDataRecords,
+  getSseEvent,
+  takeCompleteSseRecords,
+} from '../utils/sse';
 import { verifyGatewayAttestation } from './attestation-gateway';
 import { verifyModelAttestation } from './attestation-model';
 import { verifyGatewayResponse, verifyModelResponse } from './chat';
@@ -1329,6 +1333,8 @@ function validateMessageStream(body: Uint8Array): void {
   let stopped = false;
   if (pending !== '') throw invalidCompletionId();
   for (const record of records) {
+    const eventName = getSseEvent(record.value);
+    if (eventName === 'error') throw invalidCompletionId();
     for (const data of getSseDataRecords(record.value)) {
       if (data === '') continue;
       let event: { type?: unknown };
@@ -1337,7 +1343,12 @@ function validateMessageStream(body: Uint8Array): void {
       } catch {
         throw invalidCompletionId();
       }
-      if (event?.type === 'error' || stopped) throw invalidCompletionId();
+      if (
+        event?.type === 'error' ||
+        stopped ||
+        (eventName !== undefined && eventName !== event?.type)
+      )
+        throw invalidCompletionId();
       if (event?.type === 'message_start') {
         if (id !== undefined) throw invalidCompletionId();
         id = getSseCompletionId(record.value, 'messages');

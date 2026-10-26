@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic
 from eth_account.messages import encode_defunct
 
 from nearai_inference_sdk import ApiError, DirectInferenceClient, VerificationError
@@ -17,6 +17,7 @@ from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
 
 FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures' / 'messages'
+ERROR_HEADER_ENDING = b'event: error\ndata: {"type":"message_stop"}\n\n'
 
 
 class MessagesGateway(Gateway):
@@ -288,6 +289,9 @@ async def test_messages_reject_unsupported_paths_and_e2ee_before_io(monkeypatch)
 @pytest.mark.parametrize(
     'ending',
     [
+        ERROR_HEADER_ENDING,
+        b'event:error\ndata: {"error":{"type":"overloaded_error"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
+        b'event: ping\r\ndata: {"type":"message_stop"}\r\n\r\n',
         b'',
         b'event: message_stop\ndata: {"type":"message_stop"}',
         b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n',
@@ -309,6 +313,30 @@ async def test_messages_incomplete_or_failed_stream(monkeypatch, ending):
             await response.aread()
         with pytest.raises(ApiError, match='api.invalid_response'):
             await client.verify_response('msg_fixture')
+    assert len(gateway.completion_requests) == 1
+
+
+async def test_messages_cannot_verify_after_sdk_rejects_error_header(monkeypatch):
+    gateway = MessagesGateway(streaming=True)
+    gateway.raw = (
+        b'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_fixture"}}\n\n'
+        + ERROR_HEADER_ENDING
+    )
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        stream = await client.messages.create(
+            model=MODEL,
+            max_tokens=16,
+            messages=[{'role': 'user', 'content': 'Hello'}],
+            stream=True,
+        )
+        with pytest.raises(APIStatusError):
+            async with stream:
+                async for event in stream:
+                    assert event.type == 'message_start'
+        with pytest.raises(ApiError, match='api.invalid_response'):
+            await client.verify_response('msg_fixture')
+    assert not gateway.signature_requests
     assert len(gateway.completion_requests) == 1
 
 
