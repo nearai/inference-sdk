@@ -160,7 +160,9 @@ to retry after inspecting the error.
 from nearai_inference_sdk import get_sdk_error
 
 try:
-    response = await client.messages.create(model=model, max_tokens=128, messages=messages)
+    response = await client.messages.create(
+        model=model, max_tokens=128, messages=messages
+    )
 except Exception as error:
     sdk_error = get_sdk_error(error)
     if sdk_error is not None:
