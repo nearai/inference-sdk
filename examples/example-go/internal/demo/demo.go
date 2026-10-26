@@ -92,22 +92,23 @@ func request(ctx context.Context, c Config, stream bool) (*http.Request, error) 
 	}
 	return r, err
 }
-func readAll(r io.Reader) ([]byte, error) {
-	b, err := io.ReadAll(io.LimitReader(r, (64<<20)+1))
-	if err == nil && len(b) > 64<<20 {
-		err = fmt.Errorf("response exceeds 64 MiB")
-	}
-	return b, err
-}
 
 // EventDecoder retains partial records and UTF-8 across network chunks.
 type EventDecoder struct {
 	pending []byte
+	started bool
 	Done    bool
 }
 
 func (d *EventDecoder) Push(chunk []byte, eof bool) ([]map[string]any, error) {
 	d.pending = append(d.pending, chunk...)
+	if !d.started {
+		if len(d.pending) < 3 && !eof {
+			return nil, nil
+		}
+		d.pending = bytes.TrimPrefix(d.pending, []byte("\ufeff"))
+		d.started = true
+	}
 	var events []map[string]any
 	start, line := 0, 0
 	for index := 0; index < len(d.pending); {
@@ -189,10 +190,10 @@ func (s *streamOutput) Write(chunk []byte) (int, error) {
 }
 func ReadBody(r io.Reader, stream bool) ([]byte, error) {
 	if !stream {
-		return readAll(r)
+		return io.ReadAll(r)
 	}
 	output := new(streamOutput)
-	raw, err := readAll(io.TeeReader(r, output))
+	raw, err := io.ReadAll(io.TeeReader(r, output))
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +417,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			}
 			r = prepared.Request
 		}
-		wireRequest, err := readAll(r.Body)
+		wireRequest, err := io.ReadAll(r.Body)
 		r.Body.Close()
 		if err != nil {
 			return err
@@ -440,7 +441,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			decrypted.Close()
 		} else {
 			var raw []byte
-			raw, err = readAll(res.Body)
+			raw, err = io.ReadAll(res.Body)
 			wire.Write(raw)
 			if err == nil {
 				plain, err = prepared.DecryptJSON(raw)

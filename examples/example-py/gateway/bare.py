@@ -239,7 +239,11 @@ async def verify_completion_receipt(
 async def read_stream(response: httpx.Response) -> list[dict]:
     values, data = [], []
     done = False
+    first_line = True
     async for line in response.aiter_lines():
+        if first_line:
+            line = line.removeprefix('\ufeff')
+            first_line = False
         if line == 'data':
             data.append('')
         elif line.startswith('data:'):

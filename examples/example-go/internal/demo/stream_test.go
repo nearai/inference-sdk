@@ -46,3 +46,25 @@ func TestInvalidStream(t *testing.T) {
 		t.Fatal("conflicting IDs accepted")
 	}
 }
+
+func TestOnlyInitialBOMIsRemoved(t *testing.T) {
+	event := "data: {\"id\":\"chat-fixture\",\"choices\":[{\"delta\":{\"content\":\"Hello 🌍\"}}]}\n\n"
+	for _, prefix := range []string{"\ufeff", "\ufeff\ufeffdata: {\"error\":\"ignored\"}\n\n", ": first\n\n\ufeffdata: {\"error\":\"ignored\"}\n\n"} {
+		record := []byte(prefix + event)
+		for split := 0; split <= len(record); split++ {
+			decoder := new(EventDecoder)
+			first, err := decoder.Push(record[:split], false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := decoder.Push(record[split:], false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := append(first, second...)
+			if len(values) != 1 || textDelta(values[0]) != "Hello 🌍" || values[0]["id"] != "chat-fixture" || decoder.Done {
+				t.Fatalf("BOM handling at split %d: %v", split, values)
+			}
+		}
+	}
+}

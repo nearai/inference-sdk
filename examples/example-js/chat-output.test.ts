@@ -32,3 +32,24 @@ for (const separator of ['\n', '\r\n', '\r']) {
     assert.throws(() => chatOutput(record, true), /without \[DONE\]/);
   });
 }
+
+test('removes only the initial BOM across chunks', () => {
+  const event =
+    'data: {"id":"chat-fixture","choices":[{"delta":{"content":"Hello 🌍"}}]}\n\n';
+  for (const prefix of [
+    '\uFEFF',
+    '\uFEFF\uFEFFdata: {"error":"ignored"}\n\n',
+    ': first\n\n\uFEFFdata: {"error":"ignored"}\n\n',
+  ]) {
+    const record = prefix + event;
+    for (let split = 0; split <= record.length; split++) {
+      const output = new ChatStreamOutput();
+      assert.equal(
+        output.push(record.slice(0, split)) + output.push(record.slice(split)),
+        'Hello 🌍',
+      );
+      assert.equal(output.id, 'chat-fixture');
+      assert.equal(output.done, false);
+    }
+  }
+});

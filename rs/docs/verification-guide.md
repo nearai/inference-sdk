@@ -56,7 +56,6 @@ while let Some(chunk) = response.body.next().await {
 Add `futures-util = "0.3"` to use `StreamExt`. Raw body chunks are SSE bytes,
 not necessarily individual UTF-8 strings or Chat objects. The E2EE transform
 preserves SSE control lines and record boundaries, including split CRLF and UTF-8.
-Each SSE record is limited to 1 MiB, including in the standalone decryptor.
 
 Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP final
 chunk authentication are part of verification. Dropping a partial stream leaves

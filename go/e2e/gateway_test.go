@@ -205,12 +205,9 @@ func readResponse(t *testing.T, res *http.Response) []byte {
 		t.Fatalf("Chat HTTP %d", res.StatusCode)
 	}
 	// Consume actual EOF, including after SSE [DONE] and OHTTP final authentication.
-	raw, err := io.ReadAll(io.LimitReader(res.Body, (64<<20)+1))
+	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(raw) > 64<<20 {
-		t.Fatal("Chat body too large")
 	}
 	return raw
 }

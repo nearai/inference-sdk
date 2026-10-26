@@ -6,8 +6,9 @@ use std::io::{self, Write};
 
 async fn display_stream(mut body: ByteStream, output: &mut impl Write) -> Result<String> {
     let mut id = None;
+    let mut decoder = EventDecoder::default();
     while let Some(record) = body.next().await {
-        for event in events(&record?)? {
+        for event in decoder.push(&record?, false)? {
             if event["type"] == "message_start" {
                 id = event["message"]["id"].as_str().map(str::to_owned);
             }

@@ -100,11 +100,21 @@ pub fn display(bytes: &[u8], stream: bool) -> Result<()> {
 #[derive(Default)]
 pub struct EventDecoder {
     pending: Vec<u8>,
+    started: bool,
     pub done: bool,
 }
 impl EventDecoder {
     pub fn push(&mut self, chunk: &[u8], eof: bool) -> Result<Vec<Value>> {
         self.pending.extend_from_slice(chunk);
+        if !self.started {
+            if self.pending.len() < 3 && !eof {
+                return Ok(Vec::new());
+            }
+            if self.pending.starts_with(b"\xef\xbb\xbf") {
+                self.pending.drain(..3);
+            }
+            self.started = true;
+        }
         let mut values = Vec::new();
         let (mut start, mut line, mut index) = (0, 0, 0);
         while index < self.pending.len() {
@@ -277,6 +287,27 @@ mod tests {
             let body = format!("{event}data: [DONE]{separator}{separator}");
             assert_eq!(completion_id(body.as_bytes(), true).unwrap(), "chat-1");
             assert!(completion_id(event.as_bytes(), true).is_err());
+        }
+    }
+
+    #[test]
+    fn removes_only_initial_bom_across_byte_boundaries() {
+        let event = "data: {\"id\":\"chat-fixture\",\"choices\":[{\"delta\":{\"content\":\"Hello 🌍\"}}]}\n\n";
+        for prefix in [
+            "\u{feff}",
+            "\u{feff}\u{feff}data: {\"error\":\"ignored\"}\n\n",
+            ": first\n\n\u{feff}data: {\"error\":\"ignored\"}\n\n",
+        ] {
+            let record = format!("{prefix}{event}");
+            for split in 0..=record.len() {
+                let mut decoder = EventDecoder::default();
+                let mut values = decoder.push(&record.as_bytes()[..split], false).unwrap();
+                values.extend(decoder.push(&record.as_bytes()[split..], false).unwrap());
+                assert_eq!(values.len(), 1);
+                assert_eq!(delta(&values[0]), "Hello 🌍");
+                assert_eq!(values[0]["id"], "chat-fixture");
+                assert!(!decoder.done);
+            }
         }
     }
 

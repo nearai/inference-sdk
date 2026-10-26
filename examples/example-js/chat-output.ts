@@ -1,11 +1,16 @@
 /** Decode complete Chat SSE records while retaining partial UTF-8 text/CRLF. */
 export class ChatStreamOutput {
   private pending = '';
+  private started = false;
   id = '';
   done = false;
 
   push(chunk: string, eof = false): string {
     this.pending += chunk;
+    if (!this.started && this.pending) {
+      this.pending = this.pending.replace(/^\uFEFF/, '');
+      this.started = true;
+    }
     let text = '';
     let start = 0;
     let line = 0;

@@ -43,6 +43,37 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values[0]['id'], 'chat-fixture')
         self.assertEqual(output.getvalue(), 'Hello 🌍\n')
 
+    async def test_removes_only_initial_bom_across_chunks(self):
+        for read_stream in (read_direct, read_gateway):
+            for prefix in (
+                '\ufeff',
+                '\ufeff\ufeffdata: {"error":"ignored"}\n\n',
+                ': first\n\n\ufeffdata: {"error":"ignored"}\n\n',
+            ):
+                await self.check_bom_stream(read_stream, prefix)
+
+    async def check_bom_stream(self, read_stream, prefix):
+        event = 'data: {"id":"chat-fixture","choices":[{"delta":{"content":"Hello 🌍"}}]}\n\n'
+        record = (prefix + event).encode()
+        output = io.StringIO()
+        test = self
+
+        class Source(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for byte in record:
+                    yield bytes([byte])
+                test.assertEqual(output.getvalue(), 'Hello 🌍')
+                yield b'data: [DONE]\n\n'
+
+        with contextlib.redirect_stdout(output):
+            response = httpx.Response(200, stream=Source())
+            try:
+                values = await read_stream(response)
+            finally:
+                await response.aclose()
+        self.assertEqual(values[0]['id'], 'chat-fixture')
+        self.assertEqual(output.getvalue(), 'Hello 🌍\n')
+
     async def test_truncated_stream_is_an_error(self):
         for read_stream in (read_direct, read_gateway):
             with (
