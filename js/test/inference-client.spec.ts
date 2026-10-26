@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { TypeSafeClient, noul, choice, score } from '@typesafe-ai/sdk';
 import nacl from 'tweetnacl';
 import {
+  ApiError,
   type AttestationVerificationResult,
   InferenceClient,
   DirectInferenceClient,
@@ -4996,6 +4997,48 @@ describe('Messages API', () => {
       signatureCalls: () => signatureCalls,
     };
   }
+
+  const streamCases: { name: string; body: string; valid: boolean }[] =
+    JSON.parse(
+      readFileSync(
+        resolve(__dirname, '../../test-fixtures/messages/streams.json'),
+        'utf8',
+      ),
+    );
+  test.each(streamCases)('shared stream contract: $name', async (scenario) => {
+    const fixture = messagesGateway({
+      streaming: true,
+      rawBody: Buffer.from(scenario.body),
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    let body: string | undefined;
+    try {
+      const response = await client.fetch(
+        `${baseUrl}messages`,
+        chatRequest({ stream: true }),
+      );
+      body = await response.text();
+    } catch (error) {
+      if (scenario.valid) throw error;
+      expect(error).toBeInstanceOf(ApiError);
+    }
+    if (scenario.valid) {
+      expect(body).toBe(scenario.body);
+      await expect(client.verifyResponse('msg_fixture')).resolves.toMatchObject(
+        { signatureKind: 'gateway' },
+      );
+    } else {
+      await expect(client.verifyResponse('msg_fixture')).rejects.toBeInstanceOf(
+        ApiError,
+      );
+      expect(fixture.signatureCalls()).toBe(0);
+    }
+    expect(fixture.requests).toHaveLength(1);
+  });
 
   test.each([
     { streaming: false, ohttp: false, external: false, tee: false },

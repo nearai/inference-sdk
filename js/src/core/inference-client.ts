@@ -1328,7 +1328,7 @@ function hasSseCompletionSentinel({
 /** EOF or a tool block alone cannot complete a signed Messages stream. */
 function validateMessageStream(body: Uint8Array): void {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
-  const { records, pending } = takeCompleteSseRecords(text);
+  const { records, pending } = takeCompleteSseRecords(text, true);
   let id: string | undefined;
   let stopped = false;
   if (pending !== '') throw invalidCompletionId();
@@ -1344,7 +1344,9 @@ function validateMessageStream(body: Uint8Array): void {
         throw invalidCompletionId();
       }
       if (
-        event?.type === 'error' ||
+        typeof event?.type !== 'string' ||
+        event.type === '' ||
+        event.type === 'error' ||
         stopped ||
         (eventName !== undefined && eventName !== event?.type)
       )

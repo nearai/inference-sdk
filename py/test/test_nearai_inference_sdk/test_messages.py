@@ -394,3 +394,32 @@ async def test_messages_custom_prefix_and_protocol_headers(monkeypatch):
     assert requests[0].headers['anthropic-beta'] == 'test-beta'
     assert requests[0].headers['anthropic-version'] == '2023-06-01'
     assert requests[1].headers['anthropic-version'] == '2026-10-21'
+
+
+@pytest.mark.parametrize(
+    'case',
+    json.loads((FIXTURES / 'streams.json').read_text()),
+    ids=lambda case: case['name'],
+)
+async def test_messages_stream_contract(monkeypatch, case):
+    gateway = MessagesGateway(streaming=True)
+    gateway.raw = case['body'].encode()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+
+        async def consume():
+            response = await client.send(
+                httpx.Request('POST', BASE_URL + 'messages', json={'model': MODEL})
+            )
+            return await response.aread()
+
+        if case['valid']:
+            assert await consume() == gateway.raw
+            await client.verify_response('msg_fixture')
+        else:
+            with pytest.raises(ApiError):
+                await consume()
+            with pytest.raises(ApiError):
+                await client.verify_response('msg_fixture')
+            assert not gateway.signature_requests
+    assert len(gateway.completion_requests) == 1

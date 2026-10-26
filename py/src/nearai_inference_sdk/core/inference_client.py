@@ -952,7 +952,7 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
 
 def _validate_message_stream(body: bytes) -> None:
     """Only a complete message_start/message_stop sequence can have a receipt."""
-    parsed = take_complete_sse_records(body.decode('utf-8'))
+    parsed = take_complete_sse_records(body.decode('utf-8'), eof=True)
     started = False
     stopped = False
     if parsed.pending:
@@ -968,7 +968,9 @@ def _validate_message_stream(body: bytes) -> None:
                 event = json.loads(data)
                 kind = event.get('type')
                 if (
-                    kind == 'error'
+                    not isinstance(kind, str)
+                    or not kind
+                    or kind == 'error'
                     or stopped
                     or (event_name is not None and event_name != kind)
                 ):

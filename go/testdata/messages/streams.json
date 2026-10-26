@@ -130,6 +130,21 @@
     "valid": false
   },
   {
+    "name": "empty_type",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: {\"type\":\"\"}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "non_string_type",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: {\"type\":42}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
+    "name": "array_data",
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: []\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    "valid": false
+  },
+  {
     "name": "non_object",
     "body": "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_fixture\"}}\n\ndata: null\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
     "valid": false

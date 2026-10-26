@@ -23,7 +23,7 @@ class CompleteSseRecords:
     pending: str
 
 
-def take_complete_sse_records(value: str) -> CompleteSseRecords:
+def take_complete_sse_records(value: str, *, eof: bool = False) -> CompleteSseRecords:
     """Split complete events, keeping a trailing CR for the next byte chunk."""
 
     records: list[SseRecord] = []
@@ -32,7 +32,7 @@ def take_complete_sse_records(value: str) -> CompleteSseRecords:
         if value[index] not in '\r\n':
             index += 1
             continue
-        if value[index] == '\r' and index + 1 == len(value):
+        if not eof and value[index] == '\r' and index + 1 == len(value):
             break
         line_end = index
         index += 2 if value[index : index + 2] == '\r\n' else 1

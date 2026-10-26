@@ -16,7 +16,10 @@ type CompleteSseRecords = {
 };
 
 /** Split complete events without treating the CR and LF in CRLF as two lines. */
-export function takeCompleteSseRecords(value: string): CompleteSseRecords {
+export function takeCompleteSseRecords(
+  value: string,
+  eof = false,
+): CompleteSseRecords {
   const records: CompleteSseRecord[] = [];
   let recordStart = 0;
   let lineStart = 0;
@@ -27,7 +30,7 @@ export function takeCompleteSseRecords(value: string): CompleteSseRecords {
       continue;
     }
     // A trailing CR may be the first half of a CRLF split across chunks.
-    if (value[index] === '\r' && index + 1 === value.length) break;
+    if (!eof && value[index] === '\r' && index + 1 === value.length) break;
     const lineEnd = index;
     index += value[index] === '\r' && value[index + 1] === '\n' ? 2 : 1;
     if (lineEnd === lineStart) {
