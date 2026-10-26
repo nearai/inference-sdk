@@ -33,8 +33,15 @@ fn message_events(record: &[u8]) -> Result<Vec<Value>> {
 
 async fn display_stream(mut body: ByteStream, output: &mut impl Write) -> Result<String> {
     let mut id = None;
+    let mut first_record = true;
     while let Some(record) = body.next().await {
-        for event in message_events(&record?)? {
+        let record = record?;
+        let bytes = if std::mem::take(&mut first_record) {
+            record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+        } else {
+            &record
+        };
+        for event in message_events(bytes)? {
             if event["type"] == "message_start" {
                 id = event["message"]["id"].as_str().map(str::to_owned);
             }

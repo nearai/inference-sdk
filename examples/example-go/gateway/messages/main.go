@@ -73,7 +73,8 @@ func run() error {
 		return err
 	}
 	id := ""
-	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	text := strings.TrimPrefix(string(raw), "\ufeff")
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 	for _, record := range strings.Split(text, "\n\n") {
 		var data []string
 		for _, line := range strings.Split(record, "\n") {
