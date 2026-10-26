@@ -3501,7 +3501,7 @@ describe('System One decisions', () => {
     unavailableSignatureOnce = false,
     omitBodyId = false,
     unknownSigner = false,
-    includeModelPublicKey = true,
+    includeModelPublicKey = false,
     response = decisionResponse,
   }: DecisionGatewayParams = {}) {
     const gateway = createTestGateway({
@@ -3746,10 +3746,7 @@ describe('System One decisions', () => {
   );
 
   test('official Jev SDK fails before inference when model key verification fails', async () => {
-    const fixture = decisionGateway({
-      tee: true,
-      includeModelPublicKey: false,
-    });
+    const fixture = decisionGateway({ tee: true });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
@@ -3853,6 +3850,40 @@ describe('System One decisions', () => {
     },
   );
 
+  test('retains every verified report sharing the decision receipt signer', async () => {
+    const fixture = decisionGateway({ tee: true, secondSigner: true });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await fixture.fetch(request);
+      const url = new URL(request.url);
+      if (
+        url.pathname === '/v1/attestation/report' &&
+        url.searchParams.has('model')
+      ) {
+        const body = await response.json();
+        body.model_attestations.push({ ...body.model_attestations.at(-1) });
+        return jsonResponse(body);
+      }
+      return response;
+    });
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const result = await client.systemone.create(decisionRequest);
+    const verified = await client.verifyResponse(result.decisionId);
+    if (verified.signatureKind !== 'provider_tee')
+      throw new Error('wrong signature kind');
+    if (verified.attestations === undefined)
+      throw new Error('missing signer group');
+    expect(verified.attestations).toHaveLength(2);
+    for (const report of verified.attestations) {
+      expect(report.signer.signingAddress).toBe(keyHex(keyPair(3).publicKey));
+    }
+    expect(verified.attestation).toBe(verified.attestations[0]);
+    expect(fixture.requests).toHaveLength(1);
+  });
+
   test('cancels a stalled System One request body before preflight', async () => {
     const fixture = decisionGateway();
     const fetch = jest
@@ -3947,59 +3978,10 @@ describe('System One decisions', () => {
     },
   );
 
-  test('verifies a decision when multiple reports share the selected signer', async () => {
-    const fixture = decisionGateway({ tee: true });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const request = new Request(input, init);
-      const response = await fixture.fetch(request);
-      const url = new URL(request.url);
-      if (
-        url.pathname === '/v1/attestation/report' &&
-        url.searchParams.has('model')
-      ) {
-        const body = await response.json();
-        body.model_attestations.push({ ...body.model_attestations[0] });
-        return jsonResponse(body);
-      }
-      return response;
-    });
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      e2ee: false,
-    });
-    const preflight = await client.verify(model);
-    expect(preflight.models).toHaveLength(2);
-    const result = await client.systemone.create(decisionRequest);
-    const verified = await client.verifyResponse(result.decisionId);
-    expect(verified.attestation).toBe(preflight.models[0]);
-    expect(fixture.requests[0].headers.get('x-model-pub-key')).toBe(
-      preflight.models[0].signingPublicKey,
-    );
-  });
-
-  test('rejects a decision signed by another preflight-verified model key', async () => {
-    const fixture = decisionGateway({
-      tee: true,
-      secondSigner: true,
-      includeModelPublicKey: true,
-    });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      e2ee: false,
-    });
-    const result = await client.systemone.create(decisionRequest);
-    await expect(
-      client.verifyResponse(result.decisionId),
-    ).rejects.toMatchObject({
-      failure: { code: 'signature.signer_mismatch' },
-    });
-  });
-
   test.each([false, true])(
     'verifies exact response bytes (provider TEE: %s) through pinned Node transport',
     async (tee) => {
-      const fixture = decisionGateway({ tee });
+      const fixture = decisionGateway({ tee, secondSigner: tee });
       mockNodeGatewayAttestation({ gateway: fixture.gateway });
       const unpinned = jest
         .spyOn(globalThis, 'fetch')
@@ -4038,7 +4020,7 @@ describe('System One decisions', () => {
       expect(verified.completionId).toBe(result.decisionId);
       expect(verified.signatureKind).toBe(tee ? 'provider_tee' : 'gateway');
       expect(verified.attestation.signer.signingAddress).toBe(
-        keyHex(keyPair(tee ? 2 : 1).publicKey),
+        keyHex(keyPair(tee ? 3 : 1).publicKey),
       );
       expect(await client.verifyResponse(result.decisionId)).toBe(verified);
       expect(fixture.signaturePaths).toEqual([
@@ -4049,6 +4031,7 @@ describe('System One decisions', () => {
         decisionRequest,
       );
       for (const name of [
+        'x-model-pub-key',
         'x-signing-algo',
         'x-client-pub-key',
         'x-encryption-version',
@@ -4061,32 +4044,67 @@ describe('System One decisions', () => {
         'repr-digest',
       ])
         expect(fixture.requests[0].headers.has(name)).toBe(false);
-      expect(fixture.requests[0].headers.get('x-model-pub-key')).toBe(
-        tee ? keyHex(keyPair(2).publicKey) : null,
-      );
       expect(fixture.requests[0].headers.get('x-no-aliasing')).toBe('true');
       expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
       expect(unpinned).not.toHaveBeenCalled();
     },
   );
 
-  test('requires a model public key before sending a self-hosted decision', async () => {
-    const fixture = decisionGateway({
-      tee: true,
-      includeModelPublicKey: false,
-    });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
-    const client = new InferenceClient({
-      ...inferenceClientOptions(fixture.gateway),
-      e2ee: false,
-    });
-    await expect(
-      client.systemone.create(decisionRequest),
-    ).rejects.toMatchObject({
-      failure: { code: 'e2ee.model_public_key_required' },
-    });
-    expect(fixture.requests).toHaveLength(0);
-  });
+  test.each([false, true])(
+    'rejects incompatible model signer algorithms before a decision (mixed set: %s)',
+    async (mixed) => {
+      const fixture = decisionGateway({ tee: true });
+      const quotes = new Map<string, TdxQuoteVerificationResult>();
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const response = await fixture.fetch(input, init);
+          const url = new URL(new Request(input, init).url);
+          if (
+            url.pathname !== '/v1/attestation/report' ||
+            !url.searchParams.has('model')
+          ) {
+            return response;
+          }
+          const body = await response.json();
+          const original = body.model_attestations[0];
+          const quote = fixture.gateway.tdxQuoteVerifier(original.intel_quote);
+          const reportData = Buffer.concat([
+            Buffer.from('22'.repeat(20), 'hex'),
+            Buffer.alloc(12),
+            quote.reportData.subarray(32),
+          ]);
+          quotes.set('ff', { ...quote, reportData });
+          const report = {
+            ...original,
+            signing_algo: 'ecdsa',
+            signing_address: `0x${'22'.repeat(20)}`,
+            intel_quote: 'ff',
+            report_data: reportData.toString('hex'),
+          };
+          body.model_attestations = mixed
+            ? [...body.model_attestations, report]
+            : [report];
+          return jsonResponse(body);
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+        modelVerification: {
+          verifiers: {
+            tdxQuote: (quote) =>
+              quotes.get(quote) ?? fixture.gateway.tdxQuoteVerifier(quote),
+          },
+        },
+      });
+      await expect(
+        client.systemone.create(decisionRequest),
+      ).rejects.toMatchObject({
+        failure: { code: 'signature.signer_mismatch' },
+      });
+      expect(fixture.requests).toHaveLength(0);
+    },
+  );
 
   test('verifies decision evidence concurrently and waits before sending inference', async () => {
     const fixture = decisionGateway({ tee: true });
@@ -4248,8 +4266,8 @@ describe('System One decisions', () => {
         client.systemone.create(decisionRequest),
       ).rejects.toMatchObject({
         failure: {
-          code: 'api.transport_failed',
-          details: { resource: 'systemone', reason },
+          code: 'api.inference_transport_failed',
+          details: { resource: 'completion', reason },
           retryable: false,
         },
         retryable: false,
@@ -4431,7 +4449,7 @@ describe('System One decisions', () => {
     await expect(
       client.verifyResponse(result.decisionId),
     ).rejects.toMatchObject({
-      failure: { code: 'signature.signer_mismatch' },
+      failure: { code: 'api.model_attestation_signer_not_found' },
     });
   });
 
@@ -4563,10 +4581,11 @@ describe('System One decisions', () => {
   });
 
   test.each(['chat', 'systemone'])(
-    'shares Chat and decision verification sessions (%s first)',
+    'keeps Chat preverification and fleet decision sessions separate (%s first)',
     async (first) => {
       const fixture = decisionGateway({
         tee: true,
+        secondSigner: true,
         includeModelPublicKey: true,
       });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
@@ -4591,12 +4610,12 @@ describe('System One decisions', () => {
           const result = await client.systemone.create(decisionRequest);
           const verified = await client.verifyResponse(result.decisionId);
           expect(verified.attestation.signer.signingAddress).toBe(
-            keyHex(keyPair(2).publicKey),
+            keyHex(keyPair(3).publicKey),
           );
         }
       }
-      expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
-      expect(fixture.gateway.state.modelAttestationRequests).toBe(1);
+      expect(fixture.gateway.state.gatewayAttestationRequests).toBe(2);
+      expect(fixture.gateway.state.modelAttestationRequests).toBe(2);
       for (const request of fixture.gateway.state.completionRequestsSeen) {
         expect(request.headers.get('x-model-pub-key')).toBe(
           keyHex(keyPair(2).publicKey),
@@ -4604,9 +4623,7 @@ describe('System One decisions', () => {
       }
       expect(
         fixture.requests.every(
-          (request) =>
-            request.headers.get('x-model-pub-key') ===
-            keyHex(keyPair(2).publicKey),
+          (request) => !request.headers.has('x-model-pub-key'),
         ),
       ).toBe(true);
     },

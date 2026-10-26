@@ -7,7 +7,6 @@ import type {
 
 type ApiResource =
   | 'completion'
-  | 'systemone'
   | 'model_metadata'
   | 'model_attestation'
   | 'gateway_attestation'
@@ -48,7 +47,16 @@ export type ApiFailure =
         resource: ApiResource;
         reason: 'request' | 'response_body';
       };
-      retryable: boolean;
+      retryable: true;
+    }
+  | {
+      /** Replaying this inference could duplicate a billable request. */
+      code: 'api.inference_transport_failed';
+      details: {
+        resource: 'completion';
+        reason: 'request' | 'response_body';
+      };
+      retryable: false;
     }
   | {
       code: 'api.http_status';
@@ -510,6 +518,7 @@ function formatFailureMessage(failure: SdkFailure): string {
     case 'input.invalid':
       return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':
+    case 'api.inference_transport_failed':
       return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} ${
         failure.details.reason === 'request'
           ? 'request failed'
@@ -614,8 +623,6 @@ function formatFailureMessage(failure: SdkFailure): string {
 
 function formatApiResource(resource: ApiResource): string {
   switch (resource) {
-    case 'systemone':
-      return 'System One';
     case 'completion':
       return 'completion';
     case 'model_metadata':

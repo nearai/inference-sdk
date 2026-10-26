@@ -32,6 +32,7 @@ import type {
   ModelAttestationVerifiers,
   VerifiedModelAttestation,
 } from '../types/verification';
+import { hexToBuffer } from '../utils/common';
 import {
   ApiError,
   isApiError,
@@ -112,6 +113,8 @@ type CachedVerification<VerificationResult, AttestationResult> = {
   readonly expiresAt: number;
   readonly session: InferenceSession<VerificationResult, AttestationResult>;
 };
+
+type InferenceEndpoint = 'chat' | 'systemone';
 
 type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
@@ -232,7 +235,7 @@ type VerifyModelsParams = {
  * A verified Chat Completions transport.
  *
  * Every `fetch()` call reads its model from the Chat request, then uses a
- * successfully verified session for that model when it remains
+ * successfully verified endpoint-specific session for that model when it remains
  * within the configured cache lifetime. With `e2ee: true`,
  * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
@@ -271,7 +274,7 @@ export abstract class VerifiedInferenceClientBase<
     string,
     CachedVerification<VerificationResult, AttestationResult>
   >();
-  /** Shares verification work for the same model while in progress. */
+  /** Shares verification work for the same model and endpoint while in progress. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<InferenceSession<VerificationResult, AttestationResult>>
@@ -312,9 +315,10 @@ export abstract class VerifiedInferenceClientBase<
     this.chat = this.openai.chat;
   }
 
-  /** Verify every required report before creating a session. */
+  /** Verify every required report before creating an endpoint-specific session. */
   protected abstract createVerificationState(
     model: string,
+    endpoint: InferenceEndpoint,
   ): Promise<InferenceSession<VerificationResult, AttestationResult>>;
 
   /** Base URL to pair with this client's verified `fetch` implementation. */
@@ -628,8 +632,11 @@ export abstract class VerifiedInferenceClientBase<
 
   protected startVerification(
     model: string,
+    endpoint: InferenceEndpoint = 'chat',
   ): Promise<InferenceSession<VerificationResult, AttestationResult>> {
-    const cacheKey = model;
+    // Chat selects a routed model key; System One can use any verified fleet
+    // signer. Reuse caching mechanics without mixing those session assumptions.
+    const cacheKey = `${endpoint}:${model}`;
     const now = Date.now();
     this.removeExpiredVerifications(now);
     const cached = this.cachedVerifications.get(cacheKey);
@@ -651,7 +658,7 @@ export abstract class VerifiedInferenceClientBase<
         }),
       );
     }
-    const verification = this.createVerificationState(model);
+    const verification = this.createVerificationState(model, endpoint);
     this.pendingVerifications.set(cacheKey, verification);
     void verification.then(
       (session) => {
@@ -852,7 +859,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         responseByteLimit: (size) => this.responseByteLimit(size),
         headers: this.createCompletionHeaders(options?.headers ?? {}),
         getSession: (model) => {
-          const operation = this.startVerification(model);
+          const operation = this.startVerification(model, 'systemone');
           return options?.signal === undefined
             ? operation
             : awaitWithAbort({ operation, signal: options.signal });
@@ -890,9 +897,11 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 
   protected override async createVerificationState(
     model: string,
+    endpoint: InferenceEndpoint,
   ): Promise<
     InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
   > {
+    const systemone = endpoint === 'systemone';
     const gateway = await this.fetchGatewayAttestation();
     // Pin evidence requests to the observed peer without treating it as trusted
     // yet. Gateway verification must authenticate that same fingerprint before
@@ -941,12 +950,27 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         controller.abort(cause);
         throw cause;
       });
-    const modelAttestation = modelAttestations.find(
-      (attestation) =>
-        attestation.signer.signingAlgo === this.signingAlgo &&
-        attestation.signingPublicKey !== undefined,
-    );
-    if (modelAttestations.length > 0 && modelAttestation === undefined) {
+    // System One does not route to a selected key: any verified model may sign.
+    if (
+      systemone &&
+      modelAttestations.some(
+        (attestation) => attestation.signer.signingAlgo !== this.signingAlgo,
+      )
+    ) {
+      throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
+    const modelAttestation = systemone
+      ? undefined
+      : modelAttestations.find(
+          (attestation) =>
+            attestation.signer.signingAlgo === this.signingAlgo &&
+            attestation.signingPublicKey !== undefined,
+        );
+    if (
+      !systemone &&
+      modelAttestations.length > 0 &&
+      modelAttestation === undefined
+    ) {
       throw new VerificationError({ code: 'e2ee.model_public_key_required' });
     }
     const modelKey =
@@ -969,7 +993,24 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
-          if (modelAttestation === undefined) {
+          const matchingAttestations = systemone
+            ? modelAttestations.filter(
+                ({ signer }) =>
+                  signer.signingAlgo === signature.signer.signingAlgo &&
+                  hexToBuffer(signer.signingAddress).equals(
+                    hexToBuffer(signature.signer.signingAddress),
+                  ),
+              )
+            : modelAttestation
+              ? [modelAttestation]
+              : [];
+          const servingAttestation = matchingAttestations[0];
+          if (servingAttestation === undefined) {
+            if (systemone) {
+              throw new ApiError({
+                code: 'api.model_attestation_signer_not_found',
+              });
+            }
             throw new VerificationError({
               code: 'signature.kind_mismatch',
               details: { expected: 'gateway', actual: signature.kind },
@@ -979,14 +1020,15 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             requestBody,
             responseBody,
             signature,
-            attestation: modelAttestation,
+            attestation: servingAttestation,
           });
           return {
             id,
             completionId: id,
             signatureKind: 'provider_tee',
             signature,
-            attestation: modelAttestation,
+            attestation: servingAttestation,
+            attestations: matchingAttestations,
           };
         }
         verifyGatewayResponse({
