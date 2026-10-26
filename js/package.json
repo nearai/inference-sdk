@@ -28,7 +28,7 @@
   },
   "sideEffects": false,
   "engines": {
-    "node": ">=24"
+    "node": ">=24.22.1"
   },
   "packageManager": "pnpm@11.24.0",
   "files": [
@@ -73,7 +73,7 @@
     "esbuild": "^0.28.2",
     "jest": "^30.5.2",
     "ts-jest": "^29.4.15",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^6.0.3"
   }
 }

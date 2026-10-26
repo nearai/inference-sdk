@@ -84,35 +84,46 @@ async fn runs_a_model_deployment_verifier() {
 }
 
 #[tokio::test]
-async fn applies_an_explicit_model_tcb_policy() {
-    let tdx_quote = FixtureTdxQuoteVerifier(model_quote(TcbStatus::OutOfDate));
+async fn enforces_the_model_tcb_policy() {
     let attestation = model_attestation(None);
     let client_binding = client_binding();
-    let policy = ModelAttestationPolicy {
-        accepted_tcb_statuses: Some(vec![TcbStatus::UpToDate]),
-        ..Default::default()
-    };
-
-    let error = verify_model_attestation(
-        &attestation,
-        &client_binding,
-        Some(&policy),
-        ModelAttestationVerifiers {
-            tdx_quote: Some(&tdx_quote),
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap_err();
-
-    assert!(matches!(
-        error,
-        VerificationError::TcbStatusNotAllowed {
-            actual: TcbStatus::OutOfDate,
-            accepted,
-            ..
-        } if accepted == vec![TcbStatus::UpToDate]
-    ));
+    for (status, accepted_by_default) in [
+        (TcbStatus::OutOfDate, true),
+        (TcbStatus::TdRelaunchAdvised, true),
+        (TcbStatus::TdRelaunchAdvisedConfigurationNeeded, false),
+        (TcbStatus::Unknown, false),
+    ] {
+        let tdx_quote = FixtureTdxQuoteVerifier(model_quote(status));
+        for (accepted, should_accept) in [
+            (None, accepted_by_default),
+            (Some(vec![status]), true),
+            (Some(vec![TcbStatus::UpToDate]), false),
+        ] {
+            let policy = ModelAttestationPolicy {
+                accepted_tcb_statuses: accepted,
+                ..Default::default()
+            };
+            let result = verify_model_attestation(
+                &attestation,
+                &client_binding,
+                Some(&policy),
+                ModelAttestationVerifiers {
+                    tdx_quote: Some(&tdx_quote),
+                    ..Default::default()
+                },
+            )
+            .await;
+            if should_accept {
+                assert_eq!(result.unwrap().evidence.tcb_status, status);
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(VerificationError::TcbStatusNotAllowed { actual, .. })
+                        if actual == status
+                ));
+            }
+        }
+    }
 }
 
 #[tokio::test]

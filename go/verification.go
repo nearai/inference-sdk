@@ -394,6 +394,8 @@ func verifyQuote(ctx context.Context, intelQuote string, o VerificationOptions) 
 		"SWHardeningNeeded",
 		"ConfigurationAndSWHardeningNeeded",
 		"OutOfDateConfigurationNeeded",
+		"TDRelaunchAdvised",
+		"TDRelaunchAdvisedConfigurationNeeded",
 	} {
 		if q.TCBStatus == status {
 			validStatus = true
@@ -407,7 +409,7 @@ func verifyQuote(ctx context.Context, intelQuote string, o VerificationOptions) 
 	}
 	statuses := o.Policy.AcceptedTCBStatuses
 	if statuses == nil {
-		statuses = []string{"UpToDate", "OutOfDate"}
+		statuses = []string{"UpToDate", "OutOfDate", "TDRelaunchAdvised"}
 	}
 	allowed := false
 	for _, s := range statuses {

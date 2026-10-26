@@ -1,6 +1,6 @@
 # Go examples
 
-Use Go 1.25.8+ as described in [the Go SDK README](../../go/README.md).
+Use Go 1.26.10+ as described in [the Go SDK README](../../go/README.md).
 The DCAP verifier is embedded; no Rust, native library, or linker setup is required. Set `NEARAI_API_KEY` through your secret manager or shell.
 
 Run from this directory:
