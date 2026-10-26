@@ -62,7 +62,7 @@ export type {
   InferenceChat,
   InferenceChatCompletions,
   InferenceResponses,
-  InferenceMessages,
+  // InferenceMessages,
   InferenceClientOptions,
   VerifiedCompletionResult,
   AttestationVerificationResult,

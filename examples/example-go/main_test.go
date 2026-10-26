@@ -17,8 +17,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/anthropics/anthropic-sdk-go/v2"
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
+	// "github.com/anthropics/anthropic-sdk-go/v2"
+	// anthropicoption "github.com/anthropics/anthropic-sdk-go/v2/option"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	nearai "github.com/nearai/inference-sdk/go"
@@ -194,6 +194,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		t.Fatal(e)
 	}
 	defer c.Close()
+	/* Messages support is deferred until a later release.
 	if protocol == "messages" {
 		api := anthropic.NewClient(anthropicoption.WithAPIKey("key"), anthropicoption.WithBaseURL(server.URL), anthropicoption.WithHTTPClient(c.HTTPClient()), anthropicoption.WithMaxRetries(0))
 		params := anthropic.MessageNewParams{Model: "model", MaxTokens: 128, Messages: []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock("Hello"))}}
@@ -226,6 +227,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		}
 		return
 	}
+	*/
 	if protocol == "responses" {
 		api := openai.NewClient(option.WithAPIKey("key"), option.WithBaseURL(c.BaseURL()), option.WithHTTPClient(c.HTTPClient()), option.WithMaxRetries(0))
 		params := responses.ResponseNewParams{Model: "model", Input: responses.ResponseNewParamsInputUnion{OfString: openai.String("Hello")}, Store: openai.Bool(false)}
@@ -301,7 +303,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 }
 
 func TestOfficialGatewayEndpoints(t *testing.T) {
-	for _, protocol := range []string{"messages", "responses"} {
+	for _, protocol := range []string{ /* "messages", */ "responses"} {
 		for _, algo := range []nearai.SigningAlgo{nearai.Ed25519, nearai.ECDSA} {
 			t.Run(protocol+"/"+string(algo), func(t *testing.T) { testOpenAIClientIntegration(t, false, protocol, algo) })
 		}

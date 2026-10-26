@@ -123,9 +123,7 @@ for streaming. Rust exposes its own reqwest transport API; it does not provide a
 adapter for a third-party OpenAI Rust crate. See the
 [runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust-setup) for JSON and SSE workflows.
 Gateway clients also support [Responses](./docs/verification-guide.md#responses-api)
-through `create_response()` or `response_request()` and `send()`, and
-[Messages](./docs/verification-guide.md#messages-api) through `create_message()`
-or `message_request()` and `send()`.
+through `create_response()` or `response_request()` and `send()`.
 
 ## Advanced APIs
 

@@ -1,3 +1,5 @@
+# Messages support is deferred until a later release.
+
 """Messages creation and exact Gateway receipts, including native SSE shapes."""
 
 from __future__ import annotations

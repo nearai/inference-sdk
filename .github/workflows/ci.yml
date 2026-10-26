@@ -62,7 +62,7 @@ jobs:
           uv sync --locked
           ../../py/.venv/bin/ruff format --check .
           ../../py/.venv/bin/ruff check .
-          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, responses_openai_sdk, messages, messages_anthropic_sdk; from direct import bare, client, client_openai_sdk"
+          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, responses_openai_sdk; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
@@ -100,10 +100,10 @@ jobs:
       - name: Check shared response fixtures
         run: |
           cmp rs/test-fixtures/systemone-responses.json go/testdata/systemone-responses.json
-          for fixture in message.json message.sse streams.json; do
-            cmp "test-fixtures/messages/$fixture" "rs/test-fixtures/messages/$fixture"
-            cmp "test-fixtures/messages/$fixture" "go/testdata/messages/$fixture"
-          done
+          # for fixture in message.json message.sse streams.json; do
+          #   cmp "test-fixtures/messages/$fixture" "rs/test-fixtures/messages/$fixture"
+          #   cmp "test-fixtures/messages/$fixture" "go/testdata/messages/$fixture"
+          # done
       - run: make -C go check
       - name: Verify consumer builds without CGO
         env:
