@@ -3,7 +3,7 @@ import { TypeSafeClient } from '@typesafe-ai/sdk';
 
 /** Keep the verified transport and official SDK configuration together. */
 export function createVerifiedJevClients(
-  options: ConstructorParameters<typeof InferenceClient>[0],
+  options: ConstructorParameters<typeof InferenceClient>[0] = {},
 ) {
   if (options.e2ee || options.ohttp) {
     throw new Error('Jev requires e2ee and ohttp disabled.');
