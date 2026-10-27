@@ -266,7 +266,7 @@ if (region.type === 'box') console.log(region.box, region.confidence);
 ```
 
 The official Jev SDK adapter also forwards these JSON image parts unchanged;
-use its `box()` helper for the question.
+use its `box()` helper for the question. Its native `image()` helper is supported too.
 
 ### Use the official Jev SDK
 
@@ -303,10 +303,35 @@ await inference.verifyResponse(id);
 console.log(data.answers.billing.noul);
 ```
 
-The adapter accepts uncompressed, nonstreaming JSON requests at the configured
-System One endpoint. Keep E2EE, OHTTP, request compression and automatic inference
-retries disabled; multipart uploads and other official SDK endpoints are outside
-this adapter's scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+The adapter accepts uncompressed, nonstreaming JSON and image multipart requests
+at the configured System One endpoint. Keep E2EE, OHTTP, request compression and
+automatic inference retries disabled. Retry a transient receipt lookup through
+`verifyResponse(id)`.
+
+For images, use the official `image()` helper with PNG or JPEG bytes or a `Blob`:
+
+```ts
+import { openAsBlob } from 'node:fs';
+import { box, image } from '@typesafe-ai/sdk';
+
+const { data, response } = await jev.systemOne({
+  model, // A Jev model that supports Box, such as typesafe/jev-1.14.
+  state: { photo: image(await openAsBlob('photo.png')) },
+  questions: { region: box('Locate the main object in `photo`.') },
+}).withResponse();
+const id = response.headers.get('x-generation-id');
+if (!id) throw new Error('Missing System One receipt ID');
+await inference.verifyResponse(id);
+console.log(data.answers.region.box);
+```
+
+The adapter converts the official SDK's multipart uploads and JSON `assets` to
+OpenRouter `image_url` parts in state, instructions, and criteria. Named and
+inline references retain their order; ordinary JSON requests remain byte-for-byte
+unchanged. Receipts cover the converted JSON actually sent to the Gateway and
+the unchanged response bytes. Repeated references repeat the image in the JSON
+and count toward the upstream request-size limit. Returned criteria, such as a
+Score's `legend`, use OpenRouter image parts.
 
 `X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
 identifies the upstream request. Verification uses the exact captured bytes.

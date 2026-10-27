@@ -24,6 +24,7 @@ from ..utils.errors import (
     api_failure,
 )
 from .e2ee_request import remove_e2ee_headers
+from .systemone_assets import normalize_systemone_request
 
 if TYPE_CHECKING:
     from .inference_client import InferenceClient
@@ -87,7 +88,7 @@ class InferenceSystemOne:
         )
 
     async def _send(self, request: httpx.Request) -> httpx.Response:
-        """Retain exact JSON bytes; the external SDK owns response parsing."""
+        """Adapt official SDK images; the external SDK owns response parsing."""
         headers = self._client._request_headers(request.headers)
         response, register = await self._capture(request, headers)
         register()
@@ -104,18 +105,14 @@ class InferenceSystemOne:
         request_headers = httpx.Headers(headers)
         encoding = request_headers.get('content-encoding', '').strip().lower()
         content_type = request_headers.get('content-type', '').split(';')[0].strip()
-        if (
-            encoding not in ('', 'identity')
-            or content_type.lower() != 'application/json'
+        if encoding not in ('', 'identity') or content_type.lower() not in (
+            'application/json',
+            'multipart/form-data',
         ):
-            raise _invalid_input('an uncompressed JSON System One request')
-        request_body = await request.aread()
-        try:
-            parsed = json.loads(request_body)
-        except ValueError as cause:
-            raise _invalid_input(
-                'a JSON System One request with a non-empty model'
-            ) from cause
+            raise _invalid_input('an uncompressed JSON or multipart System One request')
+        request_body, parsed = normalize_systemone_request(
+            await request.aread(), request_headers
+        )
         try:
             model = CompletionRequestModelSchema.model_validate(parsed).model
         except ValidationError as cause:

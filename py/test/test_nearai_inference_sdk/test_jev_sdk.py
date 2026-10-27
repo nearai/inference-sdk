@@ -1,11 +1,21 @@
 """Exercise the published Jev SDK against the verified HTTPX2 adapter."""
 
 import asyncio
+import base64
 import json
+from pathlib import Path
 
 import httpx2
 import pytest
-from typesafe_sdk import AsyncTypeSafeClient, Box, Choice, Noul, RetryPolicy, Score
+from typesafe_sdk import (
+    AsyncTypeSafeClient,
+    Box,
+    Choice,
+    Image,
+    Noul,
+    RetryPolicy,
+    Score,
+)
 
 from nearai_inference_sdk import ApiError, VerificationError
 
@@ -61,6 +71,70 @@ async def test_official_box_with_openrouter_image_parts(monkeypatch):
         'instructions': 'Locate the rectangle',
     }
     assert 'assets' not in sent
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize('named', [False, True])
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_official_image_converts_multipart_and_verifies_sent_bytes(
+    monkeypatch, named, signing_algo
+):
+    gateway = DecisionGateway(signing_algo)
+    gateway.answers = {
+        'region': {'type': 'box', 'box': BOX_BOUNDS, 'confidence': 0.82},
+        'match': {'type': 'noul', 'noul': 0.98},
+    }
+    gateway.install(monkeypatch)
+    path = Path(__file__).resolve().parents[3] / 'test-fixtures/systemone/rectangle.png'
+    photo = Image(path)
+    part = {
+        'type': 'image_url',
+        'image_url': {
+            'url': 'data:image/png;base64,'
+            + base64.b64encode(path.read_bytes()).decode()
+        },
+    }
+    async with gateway.client(e2ee=False) as client:
+        async with official_client(client) as jev:
+            result = await jev.system_one(
+                state={'frames': ['<photo>' if named else photo]},
+                questions={
+                    'region': Box(
+                        instructions='Locate <photo> now'
+                        if named
+                        else f'Locate {photo} now'
+                    ),
+                    'match': Noul(
+                        instructions='Does it match?',
+                        criteria={
+                            'true': '<photo>' if named else photo,
+                            'false': 'Different',
+                        },
+                    ),
+                },
+                assets={'<photo>': photo} if named else None,
+                extra_headers={'content-md5': 'old-body', 'content-digest': 'old-body'},
+            )
+            assert result.boxes['region'].box.top == BOX_BOUNDS['top']
+            receipt_id = result.raw_http_response.headers['x-generation-id']
+        assert (await client.verify_response(receipt_id)).signature_kind == 'gateway'
+    sent = gateway.requests[0]
+    assert sent.headers['content-type'] == 'application/json'
+    assert int(sent.headers['content-length']) == len(sent.content)
+    assert 'content-md5' not in sent.headers
+    assert 'content-digest' not in sent.headers
+    assert json.loads(sent.content) == {
+        'model': MODEL,
+        'state': {'frames': [part]},
+        'questions': {
+            'region': {'type': 'box', 'instructions': ['Locate ', part, ' now']},
+            'match': {
+                'type': 'noul',
+                'instructions': 'Does it match?',
+                'criteria': {'true': part, 'false': 'Different'},
+            },
+        },
+    }
     assert len(gateway.requests) == 1
 
 

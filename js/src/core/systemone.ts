@@ -15,6 +15,7 @@ import type {
 import { ApiError, isApiError, isVerificationError } from '../utils/errors';
 import { NO_ALIASING_HEADER } from './cloud-api';
 import { removeE2eeHeaders } from './e2ee-request';
+import { normalizeSystemOneRequest } from './systemone-assets';
 import type {
   InferenceSession,
   VerifyCapturedResponseParams,
@@ -48,7 +49,7 @@ type SendSystemOneParams = {
   ) => void;
 };
 
-/** Preserve the official SDK's wire format and let it parse the response. */
+/** Adapt official SDK images and let it parse the unchanged response. */
 export async function sendSystemOne(
   params: SendSystemOneParams,
 ): Promise<Response> {
@@ -138,21 +139,17 @@ async function captureSystemOne({
     .toLowerCase();
   if (
     (encoding && encoding !== 'identity') ||
-    contentType !== 'application/json'
+    (contentType !== 'application/json' &&
+      contentType !== 'multipart/form-data')
   )
-    throw invalidInput('an uncompressed JSON System One request');
+    throw invalidInput('an uncompressed JSON or multipart System One request');
   const body = request.body?.pipeThrough(new TransformStream(), {
     signal: request.signal,
   });
-  const requestBody = new Uint8Array(await new Response(body).arrayBuffer());
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(
-      new TextDecoder('utf-8', { fatal: true }).decode(requestBody),
-    );
-  } catch {
-    throw invalidInput('a JSON System One request with a non-empty model');
-  }
+  const { body: requestBody, parsed } = await normalizeSystemOneRequest(
+    new Uint8Array(await new Response(body).arrayBuffer()),
+    headers,
+  );
   const result = v.safeParse(ChatCompletionRequestSchema, parsed);
   if (!result.success)
     throw invalidInput('a JSON System One request with a non-empty model');

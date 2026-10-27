@@ -4,7 +4,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
-import { TypeSafeClient, noul, choice, score, box } from '@typesafe-ai/sdk';
+import {
+  TypeSafeClient,
+  noul,
+  choice,
+  score,
+  box,
+  image,
+  withAssets,
+} from '@typesafe-ai/sdk';
 import nacl from 'tweetnacl';
 import {
   type AttestationVerificationResult,
@@ -3592,6 +3600,82 @@ describe('System One decisions', () => {
     });
     expect(fixture.requests).toHaveLength(1);
   });
+
+  test.each(['automatic', 'named'])(
+    'official Jev image() converts %s multipart references and verifies sent bytes',
+    async (mode) => {
+      const fixture = decisionGateway({
+        response: {
+          ...decisionResponse,
+          answers: {
+            region: { type: 'box', box: boxBounds, confidence: 0.82 },
+            match: { type: 'noul', noul: 0.98 },
+          },
+        },
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const png = readFileSync(
+        resolve(__dirname, '../../test-fixtures/systemone/rectangle.png'),
+      );
+      const photo = image(new Blob([png]));
+      const part = {
+        type: 'image_url',
+        image_url: { url: `data:image/png;base64,${png.toString('base64')}` },
+      };
+      const named = mode === 'named';
+      const { data, response } = await officialClient(client)
+        .systemOne(
+          {
+            model,
+            state: { frames: [named ? '<photo>' : photo] },
+            questions: {
+              region: box(
+                named ? 'Locate <photo> now' : withAssets`Locate ${photo} now`,
+              ),
+              match: noul('Does it match?', {
+                true: named ? '<photo>' : photo,
+                false: 'Different',
+              }),
+            },
+            ...(named ? { assets: { '<photo>': photo } } : {}),
+          },
+          {
+            headers: {
+              'content-md5': 'old-body',
+              'content-digest': 'old-body',
+            },
+          },
+        )
+        .withResponse();
+      const sent = fixture.requests[0];
+      expect(sent.headers.get('content-type')).toBe('application/json');
+      for (const header of ['content-md5', 'content-digest', 'content-length'])
+        expect(sent.headers.has(header)).toBe(false);
+      expect(await sent.json()).toEqual({
+        model,
+        state: { frames: [part] },
+        questions: {
+          region: { type: 'box', instructions: ['Locate ', part, ' now'] },
+          match: {
+            type: 'noul',
+            instructions: 'Does it match?',
+            criteria: { true: part, false: 'Different' },
+          },
+        },
+      });
+      expect(data.answers.region.box).toEqual(boxBounds);
+      const id = response.headers.get('x-generation-id');
+      if (!id) throw new Error('missing receipt ID');
+      await expect(client.verifyResponse(id)).resolves.toMatchObject({
+        signatureKind: 'gateway',
+      });
+      expect(fixture.requests).toHaveLength(1);
+    },
+  );
 
   test.each([
     { type: 'box' },
