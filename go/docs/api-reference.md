@@ -14,6 +14,7 @@ func (c *InferenceClient) Verify(ctx context.Context, model string) (Attestation
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
+func (c *InferenceClient) ClearResponseCache()
 func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
@@ -413,6 +414,13 @@ retention for services that process many or large completions.
 Verified records remain available until their TTL expires. A duplicate
 retained ID fails with `api.duplicate_completion_id` and preserves the original
 receipt. An expired ID can be reused.
+
+Call `ClearResponseCache()` when discarding a conversation. It clears captured
+request/response bytes and cached receipt results while keeping the client and
+attestation sessions reusable. Cleared IDs become unavailable to `VerifyResponse`.
+Ongoing response captures stay discarded when they finish.
+To end active work and release its buffers, also cancel the requests and finish
+any ongoing verification. Direct clients support the same cleanup method.
 
 ## Verification guarantees
 

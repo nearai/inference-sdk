@@ -178,6 +178,7 @@ struct State {
     sessions: HashMap<String, (Instant, Arc<Session>)>,
     pending: HashMap<String, PendingSession>,
     responses: HashMap<String, Arc<Record>>,
+    response_generation: u64,
 }
 struct Inner {
     options: InferenceClientOptions,
@@ -224,6 +225,12 @@ impl InferenceClient {
     }
     pub fn base_url(&self) -> &str {
         &self.inner.options.base_url
+    }
+    /// Release captured responses across all clones; keep the client reusable.
+    pub async fn clear_response_cache(&self) {
+        let mut state = self.inner.state.lock().await;
+        state.response_generation = state.response_generation.wrapping_add(1);
+        state.responses.clear();
     }
     /// Gateway and model evidence; cache hits preserve the original verification time.
     pub async fn verify(
@@ -308,6 +315,7 @@ impl InferenceClient {
         request: &T,
         headers: HeaderMap,
     ) -> Result<crate::SystemOneResult, InferenceError> {
+        let generation = self.inner.state.lock().await.response_generation;
         let options = &self.inner.options;
         if self.inner.direct || options.e2ee || options.ohttp {
             return Err(input("systemone", "requires a plaintext Gateway client").into());
@@ -398,7 +406,7 @@ impl InferenceClient {
             bytes.extend_from_slice(&chunk);
         }
         let data = crate::systemone::decode_response(&bytes)?;
-        self.register(decision_id.clone(), body, bytes, session, false)
+        self.register(decision_id.clone(), body, bytes, session, false, generation)
             .await?;
         Ok(crate::SystemOneResult { data, decision_id })
     }
@@ -480,6 +488,7 @@ impl InferenceClient {
         &self,
         mut request: reqwest::Request,
     ) -> Result<InferenceResponse, InferenceError> {
+        let generation = self.inner.state.lock().await.response_generation;
         let mut actual = request.url().clone();
         actual.set_query(None);
         let expected = crate::cloud_api::parse_base_url(self.base_url())?
@@ -648,7 +657,7 @@ impl InferenceClient {
                 }
                 let id = id.ok_or_else(invalid_response)?;
                 if messages { message_state.finish()?; }
-                owner.register(id, request_body, wire, session, gateway_only).await?;
+                owner.register(id, request_body, wire, session, gateway_only, generation).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -665,7 +674,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session, gateway_only).await?;
+                owner.register(id, request_body, wire, session, gateway_only, generation).await?;
                 yield bytes::Bytes::from(body);
             }
         };
@@ -682,9 +691,13 @@ impl InferenceClient {
         response: Vec<u8>,
         session: Arc<Session>,
         gateway_only: bool,
+        generation: u64,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
         let mut state = self.inner.state.lock().await;
+        if generation != state.response_generation {
+            return Ok(());
+        }
         state
             .responses
             .retain(|_, r| r.finished.elapsed() < options.response_cache_ttl);

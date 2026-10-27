@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
+import weakref
 from dataclasses import replace
 
 import httpx
@@ -367,6 +369,95 @@ async def test_one_openai_client_can_reuse_the_verified_transport(
     assert gateway.gateway_requests == 1
     assert gateway.model_requests == [MODEL]
     assert len(gateway.completion_requests) == 2
+
+
+@pytest.mark.parametrize('tee', [False, True])
+async def test_clear_response_cache_releases_records_and_preserves_session(
+    monkeypatch, tee
+):
+    gateway = Gateway(kind='provider_tee' if tee else 'gateway')
+    gateway.metadata = {
+        'providerType': 'vllm' if tee else 'openai',
+        'attestationSupported': tee,
+    }
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=tee) as client:
+        first = await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        await client.verify_response(first.id)
+        record = weakref.ref(client._responses[first.id])
+        expiry = client._responses[first.id].expiry
+        assert expiry is not None and not expiry.cancelled()
+
+        client.clear_response_cache()
+        client.clear_response_cache()
+        await asyncio.sleep(0)
+        gc.collect()
+        assert expiry.cancelled()
+        assert record() is None
+        with pytest.raises(ApiError) as error:
+            await client.verify_response(first.id)
+        assert error.value.failure.code == 'api.completion_not_found'
+
+        next_response = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        await client.verify_response(next_response.id)
+        assert gateway.gateway_requests == 1
+        assert gateway.model_requests == ([MODEL] if tee else [])
+
+
+async def test_clear_response_cache_ignores_a_late_response(monkeypatch):
+    ready, resume = asyncio.Event(), asyncio.Event()
+
+    class PausedGateway(Gateway):
+        async def handle(self, request):
+            response = await super().handle(request)
+            if request.url.path == '/v1/chat/completions':
+                ready.set()
+                await resume.wait()
+            return response
+
+    gateway = PausedGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client() as client:
+        task = asyncio.create_task(
+            client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        )
+        try:
+            await ready.wait()
+            client.clear_response_cache()
+        finally:
+            resume.set()
+        completion = await task
+        with pytest.raises(ApiError) as error:
+            await client.verify_response(completion.id)
+        assert error.value.failure.code == 'api.completion_not_found'
+
+
+async def test_clear_response_cache_during_stream_does_not_schedule_expiry(monkeypatch):
+    gateway = Gateway()
+    gateway.tail_gate = asyncio.Event()
+    gateway.install(monkeypatch)
+    async with gateway.client() as client:
+        stream = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES, stream=True
+        )
+        try:
+            first = await anext(stream)
+            record = client._responses[first.id]
+            client.clear_response_cache()
+            gateway.tail_gate.set()
+            chunks = [first, *[chunk async for chunk in stream]]
+            await record.response_body
+            await asyncio.sleep(0)
+            assert chunks[0].choices[0].delta.content == 'Hello back'
+            assert record.expiry is None
+            with pytest.raises(ApiError) as error:
+                await client.verify_response(first.id)
+            assert error.value.failure.code == 'api.completion_not_found'
+        finally:
+            gateway.tail_gate.set()
+            await stream.close()
 
 
 @pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])

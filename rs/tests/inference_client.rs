@@ -614,6 +614,92 @@ async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
     assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
+async fn clear_response_cache_preserves_session_and_applies_to_clones() {
+    for tee in [false, true] {
+        let fixture = Fixture::default();
+        if !tee {
+            *fixture.metadata.lock().unwrap() = Some(json!({
+                "metadata": {"providerType": "external", "attestationSupported": false}
+            }));
+        }
+        let (_server, f, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let first = client.chat_completions(body()).await.unwrap();
+        let id = first["id"].as_str().unwrap();
+        client.verify_response(id).await.unwrap();
+        client.clone().clear_response_cache().await;
+        client.clear_response_cache().await;
+        assert_eq!(
+            client.verify_response(id).await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+
+        let next = client.chat_completions(body()).await.unwrap();
+        client
+            .verify_response(next["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
+        assert_eq!(f.model.load(Ordering::SeqCst), usize::from(tee));
+    }
+}
+
+#[tokio::test]
+async fn clear_response_cache_allows_reusing_response_and_decision_ids() {
+    let (_server, _f, options) = setup(Fixture::default()).await;
+    let client = InferenceClient::with_options(options).unwrap();
+    for _ in 0..2 {
+        let response = client
+            .create_response(response_request_body(false))
+            .await
+            .unwrap();
+        let decision = client.systemone_create(&systemone_request()).await.unwrap();
+        let ids = [
+            response["id"].as_str().unwrap(),
+            decision.decision_id.as_str(),
+        ];
+        for id in ids {
+            client.verify_response(id).await.unwrap();
+        }
+        client.clear_response_cache().await;
+        for id in ids {
+            assert_eq!(
+                client.verify_response(id).await.unwrap_err().code(),
+                "api.completion_not_found"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn clear_response_cache_during_stream_prevents_late_registration() {
+    for responses in [false, true] {
+        let (_server, _f, options) = setup(Fixture::default()).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let (request, id) = if responses {
+            (
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+                "resp_fixture",
+            )
+        } else {
+            let mut value = body();
+            value["stream"] = json!(true);
+            (client.chat_request(value).unwrap(), "chat-0")
+        };
+        let mut response = client.send(request).await.unwrap();
+        assert!(!response.body.next().await.unwrap().unwrap().is_empty());
+        client.clear_response_cache().await;
+        response.bytes().await.unwrap();
+        assert_eq!(
+            client.verify_response(id).await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
+#[tokio::test]
 async fn incognito_requires_explicitly_valid_metadata_and_rejects_model_policy() {
     let fixture = Fixture {
         metadata: Mutex::new(Some(
