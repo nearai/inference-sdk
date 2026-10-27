@@ -7,6 +7,7 @@ import type {
 
 type ApiResource =
   | 'completion'
+  | 'systemone'
   | 'model_metadata'
   | 'model_attestation'
   | 'gateway_attestation'
@@ -23,6 +24,7 @@ type ApiResource =
  */
 export type ApiFailure =
   | { code: 'api.completion_not_found' }
+  | { code: 'api.duplicate_completion_id' }
   | {
       /** A value supplied to a Cloud API helper is not usable for that call. */
       code: 'api.invalid_input';
@@ -46,16 +48,7 @@ export type ApiFailure =
         resource: ApiResource;
         reason: 'request' | 'response_body';
       };
-      retryable: true;
-    }
-  | {
-      /** Replaying this inference could duplicate a billable request. */
-      code: 'api.inference_transport_failed';
-      details: {
-        resource: 'completion';
-        reason: 'request' | 'response_body';
-      };
-      retryable: false;
+      retryable: boolean;
     }
   | {
       code: 'api.http_status';
@@ -459,6 +452,19 @@ export function isApiError(value: unknown): value is ApiError {
   return value instanceof ApiError;
 }
 
+/** Find a structured SDK failure through an official client's error cause chain. */
+export function getSdkError(
+  value: unknown,
+): ApiError | VerificationError | undefined {
+  const seen = new Set<unknown>();
+  while (value instanceof Error && !seen.has(value)) {
+    if (isApiError(value) || isVerificationError(value)) return value;
+    seen.add(value);
+    value = value.cause;
+  }
+  return undefined;
+}
+
 /** Preserve a verification failure, or add a stable failure code around an external cause. */
 export function wrapVerificationError(
   failure: VerificationFailure,
@@ -510,12 +516,13 @@ function formatFailureMessage(failure: SdkFailure): string {
       return `[${failure.code}] OHTTP response could not be authenticated and decoded`;
     case 'api.completion_not_found':
       return 'Completion was not captured by this client or its retention period has expired';
+    case 'api.duplicate_completion_id':
+      return 'A response with this ID is already retained by this client';
     case 'api.invalid_input':
       return `[${failure.code}] Cloud API client input ${failure.details.field} is invalid: ${failure.details.reason}`;
     case 'input.invalid':
       return `[${failure.code}] ${formatInputFailure(failure.details)}`;
     case 'api.transport_failed':
-    case 'api.inference_transport_failed':
       return `[${failure.code}] Cloud API ${formatApiResource(failure.details.resource)} ${
         failure.details.reason === 'request'
           ? 'request failed'
@@ -620,6 +627,8 @@ function formatFailureMessage(failure: SdkFailure): string {
 
 function formatApiResource(resource: ApiResource): string {
   switch (resource) {
+    case 'systemone':
+      return 'System One';
     case 'completion':
       return 'completion';
     case 'model_metadata':

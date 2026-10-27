@@ -462,12 +462,12 @@ impl PreparedE2eeChatRequest {
             let mut id = None;
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
-                for record in decoder.push(&chunk, false)? {
-                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false)?);
+                for record in decoder.push(&chunk, false) {
+                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
                 }
             }
-            for record in decoder.push(&[], true)? {
-                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false)?);
+            for record in decoder.push(&[], true) {
+                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
             }
         })
     }

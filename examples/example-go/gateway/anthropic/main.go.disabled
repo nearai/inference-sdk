@@ -1,0 +1,97 @@
+// Messages support is deferred until a later release.
+
+// Official Anthropic SDK with Gateway preflight and JSON/SSE receipt verification.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"example.com/nearai-inference-example/internal/demo"
+	"github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
+	nearai "github.com/nearai/inference-sdk/go"
+)
+
+func run() error {
+	c, err := demo.ConfigurationForModel(false, "anthropic/claude-haiku-4-5")
+	if err != nil {
+		return err
+	}
+
+	inference, err := nearai.NewInferenceClient(nearai.InferenceOptions{
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		OHTTP:         c.OHTTP,
+		SigningAlgo:   c.Algo,
+	})
+	if err != nil {
+		return err
+	}
+	defer inference.Close()
+	client := anthropic.NewClient(
+		option.WithAPIKey(c.Key),
+		// The official SDK appends /v1/messages to this API root.
+		option.WithBaseURL(strings.TrimSuffix(inference.BaseURL(), "v1/")),
+		option.WithHTTPClient(inference.HTTPClient()),
+		option.WithMaxRetries(0),
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	request := anthropic.MessageNewParams{
+		Model:     anthropic.Model(c.Model),
+		MaxTokens: 128,
+		Messages: []anthropic.MessageParam{
+			anthropic.NewUserMessage(anthropic.NewTextBlock("Reply with the word ok.")),
+		},
+	}
+	message, err := client.Messages.New(ctx, request)
+	if err != nil {
+		return err
+	}
+	receipt, err := inference.VerifyResponse(ctx, message.ID)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Verified %s JSON response.\n", receipt.SignatureKind)
+	for _, block := range message.Content {
+		if block.Type == "text" {
+			fmt.Println(block.Text)
+		}
+	}
+
+	stream := client.Messages.NewStreaming(ctx, request)
+	defer stream.Close()
+	accumulated := anthropic.Message{}
+	// Display deltas as they arrive; verify the receipt after stream completion.
+	for stream.Next() {
+		event := stream.Current()
+		if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" {
+			fmt.Print(event.Delta.Text)
+		}
+		if err := accumulated.Accumulate(event); err != nil {
+			return err
+		}
+	}
+	fmt.Println()
+	if err := stream.Err(); err != nil {
+		return err
+	}
+	if err := stream.Close(); err != nil {
+		return err
+	}
+	receipt, err = inference.VerifyResponse(ctx, accumulated.ID)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Verified %s streaming response.\n", receipt.SignatureKind)
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}

@@ -43,9 +43,6 @@ semantics, streaming, and supported privacy options.
 | `gateway_verification` | TLS binding enabled; default TCB policy/verifiers. |
 | `model_verification` | Default TCB/GPU policy/verifiers. |
 | `deployment_policy` | No model-aware callback. |
-| `max_response_bytes` | 64 MiB per captured response. |
-| `max_receipt_cache_bytes` | 64 MiB total retained request/response bytes; oldest receipts are evicted to fit. |
-| `max_cache_entries` | 1024 per completed cache and for pending preverification. |
 
 Verification options own optional verifiers through `Arc<dyn ...>`. The
 `DeploymentPolicy` async trait receives `(model: &str, deployment: &MeasuredDeployment)`.
@@ -72,7 +69,7 @@ content preserves arbitrary-precision JSON numbers; scores and probabilities
 use finite `f64` values.
 
 System One shares Chat's per-model session and the client's
-body limits and receipt cache.
+receipt retention and verification.
 Dropping the request future cancels the operation.
 
 Inference is sent once. Retry transient receipt lookups through the verification

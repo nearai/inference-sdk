@@ -136,9 +136,8 @@ the quote, event log, and any NVIDIA payload. The sibling fields such as
 Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
-requests for the same model and endpoint share verification work and cached
-results. `verify(model)` and Chat share a session; System One uses a separate
-session because its model-routing rules differ.
+requests for the same model share verification work and cached results across
+`verify(model)`, Chat, Responses, and System One.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -171,6 +170,51 @@ may still finish in the background.
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
+
+<!-- Messages support is deferred until a later release.
+
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```ts
+const message = await client.messages.create({
+  model: 'anthropic/claude-haiku-4-5',
+  max_tokens: 128,
+  messages: [{ role: 'user', content: 'Hello' }],
+});
+const receipt = await client.verifyResponse(message.id);
+console.log(receipt.signatureKind, message.content);
+```
+
+Set `stream: true` for typed Anthropic events. `InferenceMessages` exposes the
+official `create` overloads. An external `@anthropic-ai/sdk` client can use
+`fetch: client.fetch` and `maxRetries: 0`. Set its `baseURL` to
+`https://cloud-api.near.ai` (Anthropic appends `/v1/messages`); configure the
+inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport uses
+the inference client's configured authentication for both inference and evidence.
+See the [native example](../../examples/example-js/gateway/messages.ts) and
+[official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
+for JSON and streaming calls with receipt verification.
+
+-->
 
 ## Responses API
 
@@ -233,8 +277,9 @@ console.log(verified.signatureKind, result.data.answers);
 
 `result.decisionId` comes from `X-Generation-Id`. Call `verifyResponse()` before
 using the answers; it checks the exact bytes captured by the client. Gateway
-receipts authenticate Gateway signing; provider TEE receipts authenticate a
-signer in the verified model reports.
+receipts authenticate Gateway signing; provider TEE receipts authenticate the
+model signer selected before the request. Self-hosted models use
+`x-model-pub-key` routing, which the endpoint must support.
 
 Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
@@ -314,7 +359,7 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, `/v1/responses`, and `/v1/signature/{id}`. For System One
+`/v1/chat/completions`, `/v1/responses` and `/v1/signature/{id}`. For System One
 decisions, also forward `POST /v1/systemone`. Preserve the URL-encoded model and
 completion IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
 Preserve the request and response bodies, model-key routing header, and encryption
@@ -465,8 +510,8 @@ const completion = await client.chat.completions.create({
   model,
   messages: [{ role: 'user', content: 'Hello' }],
 });
-render(completion.choices[0]?.message.content);
 const verified = await client.verifyResponse(completion.id);
+render(completion.choices[0]?.message.content);
 console.log(verified.signatureKind);
 ```
 
@@ -511,7 +556,7 @@ successful Gateway verification does not imply that the model runs in a TEE.
 ### Use the official OpenAI SDK
 
 Create both clients once. The same Fetch adapter supports sequential and
-concurrent requests, with the standard OpenAI retry behavior:
+concurrent requests. Disable automatic inference retries:
 
 ```ts
 import OpenAI from 'openai';
@@ -520,13 +565,14 @@ const openai = new OpenAI({
   apiKey,
   baseURL: client.getBaseUrl(),
   fetch: client.fetch,
+  maxRetries: 0,
 });
 const completion = await openai.chat.completions.create({
   model,
   messages: [{ role: 'user', content: 'Hello' }],
 });
-render(completion.choices[0]?.message.content);
 const verified = await client.verifyResponse(completion.id);
+render(completion.choices[0]?.message.content);
 ```
 
 Streaming uses the same ID-based verification as the built-in client.

@@ -308,12 +308,6 @@ pub struct DirectInferenceClientOptions {
     pub response_cache_ttl: Duration,
     pub model_verification: ModelVerificationOptions,
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-    /// Exact bytes retained for a single response; larger responses fail closed.
-    pub max_response_bytes: usize,
-    /// Bound both completed session and receipt caches. Oldest entries are evicted.
-    pub max_cache_entries: usize,
-    /// Total request and response bytes retained in the receipt cache.
-    pub max_receipt_cache_bytes: usize,
 }
 impl Default for DirectInferenceClientOptions {
     fn default() -> Self {
@@ -333,9 +327,6 @@ impl From<InferenceClientOptions> for DirectInferenceClientOptions {
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
             deployment_policy: options.deployment_policy,
-            max_response_bytes: options.max_response_bytes,
-            max_cache_entries: options.max_cache_entries,
-            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
         }
     }
 }
@@ -352,9 +343,6 @@ impl From<DirectInferenceClientOptions> for InferenceClientOptions {
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
             deployment_policy: options.deployment_policy,
-            max_response_bytes: options.max_response_bytes,
-            max_cache_entries: options.max_cache_entries,
-            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
             gateway_verification: GatewayVerificationOptions::default(),
         }
     }

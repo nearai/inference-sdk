@@ -551,6 +551,21 @@ async def test_failed_preverification_is_not_cached(monkeypatch):
     assert len(gateway.completion_requests) == 1
 
 
+@pytest.mark.parametrize('endpoint', ['responses/resp_fixture', 'messages'])
+async def test_unsupported_endpoint_is_rejected_before_preflight(monkeypatch, endpoint):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        request = httpx.Request('POST', BASE_URL + endpoint, json={'model': MODEL})
+        with pytest.raises(ApiError) as raised:
+            await client.send(request)
+        assert raised.value.failure.code == 'api.invalid_input'
+        assert raised.value.failure.details['field'] == 'request'
+    assert gateway.gateway_requests == 0
+    assert gateway.model_requests == []
+    assert gateway.completion_requests == []
+
+
 async def test_verify_rejects_an_empty_model_without_fetching_evidence(monkeypatch):
     gateway = Gateway()
     gateway.install(monkeypatch)
@@ -871,3 +886,31 @@ async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
             assert verified.signature_kind == 'provider_tee'
         finally:
             gateway.tail_gate.set()
+
+
+# Messages cases are deferred until the API is enabled.
+@pytest.mark.parametrize('endpoint', ['chat/completions', 'responses'])
+async def test_native_inference_does_not_replay_server_errors(monkeypatch, endpoint):
+    class FailingGateway(Gateway):
+        async def handle(self, request):
+            if request.url.path == '/v1/' + endpoint:
+                self.completion_requests.append(request)
+                return httpx.Response(
+                    500, json={'error': {'message': 'fixture failure'}}
+                )
+            return await super().handle(request)
+
+    gateway = FailingGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(Exception) as caught:
+            # if endpoint == 'messages':
+            #     await client.messages.create(
+            #         model=MODEL, messages=MESSAGES, max_tokens=128
+            #     )
+            if endpoint == 'responses':
+                await client.responses.create(model=MODEL, input='Hello')
+            else:
+                await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        assert caught.value.status_code == 500
+        assert len(gateway.completion_requests) == 1

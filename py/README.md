@@ -152,7 +152,7 @@ can keep their current dependencies and calls.
   streaming, encryption, proxies, policies, TLS binding, and error handling.
 - [API reference](https://github.com/nearai/inference-sdk/blob/main/py/docs/api-reference.md):
   client options, public functions, defaults, and result fields.
-- [Runnable Python examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#python):
+- [Runnable Python examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#python-setup):
   Gateway and direct clients, standalone verification, and OpenAI integration.
 - [Error handling](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#handle-retrieval-and-verification-errors):
   SDK errors, OpenAI exception wrapping, and receipt-only retries.

@@ -50,7 +50,7 @@ cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 # Go 1.26.10+
 export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
-go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
+go -C examples/example-go test -tags=e2e -run '^TestLive' -v -timeout 15m .
 ```
 
 Ordinary unit-test commands exclude the live suites. PR CI checks their source
@@ -82,7 +82,7 @@ a cheaper external model from another owner cannot replace it.
 | --- | --- |
 | Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
 | Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
-| Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; Gateway receipts over plain transport and OHTTP. |
+| Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
 | Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
 
@@ -90,8 +90,8 @@ The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
 Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
 integration requirements.
 
-The four-SDK Chat matrix sends 105 requests per environment before retries,
-with at most 1,024 completion tokens each. Responses must contain an answer and
+Chat runs the same native and supported official-client modes in each language,
+with at most 1,024 completion tokens per request. Responses must contain an answer and
 finish with `stop`. Test failures and timeouts fail the workflow.
 
 Receipt lookups retry transient API failures up to five attempts within the

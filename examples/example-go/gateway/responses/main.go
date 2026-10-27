@@ -5,9 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
+	"example.com/nearai-inference-example/internal/demo"
 	nearai "github.com/nearai/inference-sdk/go"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -15,13 +15,15 @@ import (
 )
 
 func run() error {
-	apiKey := os.Getenv("NEARAI_API_KEY")
-	if apiKey == "" {
-		return fmt.Errorf("set NEARAI_API_KEY")
+	c, err := demo.ConfigurationForModel(false, "z-ai/glm-5.3-flash")
+	if err != nil {
+		return err
 	}
+
 	client, err := nearai.NewInferenceClient(nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{APIKey: apiKey},
-		// OHTTP may be enabled independently; field-level E2EE is unavailable for Responses.
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		SigningAlgo:   c.Algo,
+		OHTTP:         c.OHTTP,
 	})
 	if err != nil {
 		return err
@@ -29,11 +31,12 @@ func run() error {
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	api := openai.NewClient(option.WithAPIKey(apiKey), option.WithBaseURL(client.BaseURL()), option.WithHTTPClient(client.HTTPClient()), option.WithMaxRetries(0))
+	api := openai.NewClient(option.WithAPIKey(c.Key), option.WithBaseURL(client.BaseURL()), option.WithHTTPClient(client.HTTPClient()), option.WithMaxRetries(0))
 	request := responses.ResponseNewParams{
-		Model: "z-ai/glm-5.3-flash",
-		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String("Reply with the word ok.")},
-		Store: openai.Bool(false),
+		Model:           c.Model,
+		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String("Reply with the word ok.")},
+		Store:           openai.Bool(false),
+		MaxOutputTokens: openai.Int(1024),
 	}
 	response, err := api.Responses.New(ctx, request)
 	if err != nil {
@@ -55,17 +58,18 @@ func run() error {
 			fmt.Print(event.Delta)
 		}
 	}
+	fmt.Println()
 	if err = stream.Err(); err != nil {
 		return err
 	}
 	if id == "" {
 		return fmt.Errorf("stream returned no response ID")
 	}
-	// Streamed text is provisional until the exact complete response is verified.
+	// Verify the receipt after consuming the complete stream.
 	if _, err = client.VerifyResponse(ctx, id); err != nil {
 		return err
 	}
-	fmt.Println("\nVerified Gateway Responses receipt.")
+	fmt.Println("Verified Gateway Responses receipt.")
 	return nil
 }
 func main() {

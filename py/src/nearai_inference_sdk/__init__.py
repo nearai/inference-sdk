@@ -109,6 +109,7 @@ from .utils.errors import (
     ApiFailure,
     VerificationError,
     VerificationFailure,
+    get_sdk_error,
 )
 from .utils.intel import create_tdx_quote_verifier
 from .utils.nvidia import create_gpu_evidence_verifier
@@ -189,6 +190,7 @@ __all__ = [
     'create_tdx_quote_verifier',
     'fetch_image_provenance',
     'find_model_attestation_for_signature',
+    'get_sdk_error',
     'prepare_e2ee_chat_request',
     'verify_compose_manager_deployment_image_provenance',
     'verify_deployment_image_provenance',

@@ -98,14 +98,10 @@ class ResponsesGateway(Gateway):
         )
 
 
+@pytest.mark.parametrize('streaming', [False, True])
+@pytest.mark.parametrize('external', [False, True])
 @pytest.mark.parametrize(
-    'streaming,ohttp,external,signing_algo',
-    [
-        (False, False, False, 'ed25519'),
-        (True, False, True, 'ecdsa'),
-        (False, True, True, 'ed25519'),
-        (True, True, False, 'ed25519'),
-    ],
+    'signing_algo,ohttp', [('ed25519', False), ('ecdsa', False), ('ed25519', True)]
 )
 async def test_responses_wire_receipts(
     monkeypatch, streaming, ohttp, external, signing_algo
@@ -132,7 +128,10 @@ async def test_responses_wire_receipts(
     async with gateway.client(e2ee=False, ohttp=ohttp) as client:
         wrapped = (
             AsyncOpenAI(
-                api_key='external', base_url=BASE_URL, http_client=client.http_client
+                api_key='external',
+                base_url=BASE_URL,
+                http_client=client.http_client,
+                max_retries=0,
             )
             if external
             else None

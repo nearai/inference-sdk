@@ -85,12 +85,6 @@ pub struct InferenceClientOptions {
     pub gateway_verification: GatewayVerificationOptions,
     pub model_verification: ModelVerificationOptions,
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-    /// Exact bytes retained for a single response; larger responses fail closed.
-    pub max_response_bytes: usize,
-    /// Bound both completed session and receipt caches. Oldest entries are evicted.
-    pub max_cache_entries: usize,
-    /// Total request and response bytes retained in the receipt cache.
-    pub max_receipt_cache_bytes: usize,
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
@@ -106,9 +100,6 @@ impl Default for InferenceClientOptions {
             gateway_verification: GatewayVerificationOptions::default(),
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
-            max_response_bytes: 64 * 1024 * 1024,
-            max_cache_entries: 1024,
-            max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -215,12 +206,6 @@ impl InferenceClient {
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
         }
-        if options.max_cache_entries == 0
-            || options.max_response_bytes == 0
-            || options.max_receipt_cache_bytes == 0
-        {
-            return Err(input("cache_limits", "must be positive").into());
-        }
         if let Some(key) = &options.api_key {
             options.headers.insert(
                 "authorization",
@@ -273,11 +258,6 @@ impl InferenceClient {
             if let Some(future) = state.pending.get(&cache_key).and_then(|f| f.upgrade()) {
                 future
             } else {
-                if state.pending.len() >= options.max_cache_entries {
-                    return Err(
-                        input("model", "too many concurrent verification operations").into(),
-                    );
-                }
                 let owned = model.to_owned();
                 let options = options.clone();
                 let direct = self.inner.direct;
@@ -307,16 +287,6 @@ impl InferenceClient {
             state.pending.remove(&cache_key);
             if let Ok(session) = &result {
                 if !options.attestation_cache_ttl.is_zero() {
-                    if state.sessions.len() >= options.max_cache_entries {
-                        if let Some(key) = state
-                            .sessions
-                            .iter()
-                            .min_by_key(|(_, v)| v.0)
-                            .map(|(k, _)| k.clone())
-                        {
-                            state.sessions.remove(&key);
-                        }
-                    }
                     state
                         .sessions
                         .insert(cache_key.clone(), (Instant::now(), session.clone()));
@@ -344,9 +314,6 @@ impl InferenceClient {
         }
         let body =
             serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
-        if body.len() > options.max_response_bytes {
-            return Err(input("body", "request exceeds configured byte limit").into());
-        }
         let value: Value = serde_json::from_slice(&body)
             .map_err(|_| input("systemone", "expected JSON object"))?;
         if !value.is_object() || value.get("stream").is_some() {
@@ -428,9 +395,6 @@ impl InferenceClient {
             resource: ApiResource::SystemOne,
             reason: ApiTransportReason::ResponseBody,
         })? {
-            if chunk.len() > options.max_response_bytes.saturating_sub(bytes.len()) {
-                return Err(input("response", "body exceeds configured byte limit").into());
-            }
             bytes.extend_from_slice(&chunk);
         }
         let data = crate::systemone::decode_response(&bytes)?;
@@ -477,6 +441,28 @@ impl InferenceClient {
     pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
         self.json_request("responses", body)
     }
+    /* Messages support is deferred until a later release.
+    /// Create an Anthropic Message and retain its bytes for `verify_response`.
+    /// Use `message_request` and `send` for streaming events.
+    pub async fn create_message(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Messages").into());
+        }
+        let response = self.send(self.message_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Messages creation request. `send` performs preflight and capture.
+    pub fn message_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("messages", body)
+    }
+    */
     fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
             .join(path)
@@ -488,7 +474,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for buffered Chat and Gateway Responses requests. Authentication
+    /// Transport adapter for Chat and Responses requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -503,17 +489,24 @@ impl InferenceClient {
             == crate::cloud_api::parse_base_url(self.base_url())?
                 .join("responses")
                 .map_err(|_| input("base_url", "invalid URL"))?;
-        if actual != expected && !responses {
+        let messages = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("messages")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        // Messages support is deferred until a later release.
+        // let gateway_only = responses || messages;
+        let gateway_only = responses;
+        if actual != expected && !gateway_only {
             return Err(input(
                 "request.url",
                 "expected configured inference creation endpoint",
             )
             .into());
         }
-        if responses && (self.inner.direct || self.inner.options.e2ee) {
+        if gateway_only && (self.inner.direct || self.inner.options.e2ee) {
             return Err(input(
                 "request",
-                "Responses requires a Gateway client with field-level E2EE disabled",
+                "Responses require a Gateway client with field-level E2EE disabled",
             )
             .into());
         }
@@ -536,6 +529,15 @@ impl InferenceClient {
         if let Some(value) = options.headers.get("api-key") {
             headers.insert("api-key", value.clone());
         }
+        if messages {
+            headers.remove("x-api-key");
+            if let Some(value) = options.headers.get("x-api-key") {
+                headers.insert("x-api-key", value.clone());
+            }
+            headers
+                .entry("anthropic-version")
+                .or_insert(HeaderValue::from_static("2023-06-01"));
+        }
         headers.insert("accept-encoding", HeaderValue::from_static("identity"));
         headers.remove("host");
         headers.remove("transfer-encoding");
@@ -556,7 +558,7 @@ impl InferenceClient {
             request
                 .headers_mut()
                 .insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
-            if let Some(model) = session.model_key() {
+            if let Some(model) = session.model_key().filter(|_| !messages) {
                 request.headers_mut().insert(
                     "x-model-pub-key",
                     HeaderValue::from_str(&model.public_key)
@@ -614,31 +616,39 @@ impl InferenceClient {
         }
         let mut source = response.body;
         let owner = self.clone();
-        let limit = options.max_response_bytes;
         let stream = async_stream::try_stream! {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut message_state = crate::sse::MessageStreamState::default();
+            let mut first_record = true;
+            let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
+                let parsed = if std::mem::replace(&mut first_record, false) {
+                    record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+                } else {
+                    &record
+                };
+                if messages { message_state.observe(parsed)?; }
+                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
+                // The retained signature payload and plaintext output keep the BOM.
+                Ok(if key.is_some() { transformed } else { record })
+            };
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
-                if chunk.len() > limit.saturating_sub(wire.len()) {
-                    Err(input("response", "response exceeds configured byte limit"))?;
-                }
                 wire.extend_from_slice(&chunk);
                 if streaming {
-                    for record in decoder.push(&chunk, false)? {
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
-                        yield bytes::Bytes::from(transformed);
+                    for record in decoder.push(&chunk, false) {
+                        yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
-                for record in decoder.push(&[], true)? {
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id, responses)?;
-                    yield bytes::Bytes::from(transformed);
+                for record in decoder.push(&[], true) {
+                    yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;
-                owner.register(id, request_body, wire, session, responses).await?;
+                if messages { message_state.finish()?; }
+                owner.register(id, request_body, wire, session, gateway_only).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -655,7 +665,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session, responses).await?;
+                owner.register(id, request_body, wire, session, gateway_only).await?;
                 yield bytes::Bytes::from(body);
             }
         };
@@ -678,35 +688,12 @@ impl InferenceClient {
         state
             .responses
             .retain(|_, r| r.finished.elapsed() < options.response_cache_ttl);
+        if options.response_cache_ttl.is_zero() {
+            return Ok(());
+        }
         // Never let a repeated ID replace the evidence/bytes of another completion.
         if state.responses.contains_key(&id) {
-            return Err(input("response.id", "duplicate completion ID").into());
-        }
-        let size = request
-            .len()
-            .checked_add(response.len())
-            .ok_or_else(|| input("response", "receipt exceeds configured cache byte limit"))?;
-        if size > options.max_receipt_cache_bytes {
-            return Err(input("response", "receipt exceeds configured cache byte limit").into());
-        }
-        let mut retained: usize = state
-            .responses
-            .values()
-            .map(|r| r.request.len() + r.response.len())
-            .sum();
-        while state.responses.len() >= options.max_cache_entries
-            || retained > options.max_receipt_cache_bytes - size
-        {
-            if let Some(key) = state
-                .responses
-                .iter()
-                .min_by_key(|(_, r)| r.finished)
-                .map(|(k, _)| k.clone())
-            {
-                if let Some(record) = state.responses.remove(&key) {
-                    retained -= record.request.len() + record.response.len();
-                }
-            }
+            return Err(ApiError::DuplicateCompletionId.into());
         }
         state.responses.insert(
             id,

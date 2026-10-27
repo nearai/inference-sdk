@@ -191,15 +191,16 @@ async def test_official_jev_sdk_verifies_live_receipt(kind, signing_algo):
         ) as jev:
             result = await jev.system_one(
                 model=model,
-                state={'message': 'I was charged twice. Please help.'},
+                state=decision_request()['state'],
                 questions={
                     'billing': Noul(instructions='Is this about billing?'),
                     'team': Choice(
-                        instructions='Choose a team.',
-                        criteria={'billing': 'Payments', 'support': 'Other'},
+                        instructions='Which team should handle this?',
+                        criteria=decision_request()['questions']['team']['criteria'],
                     ),
                     'urgency': Score(
-                        instructions='Rate urgency.', criteria=['Routine', 'Urgent']
+                        instructions='How urgent is this request?',
+                        criteria=decision_request()['questions']['urgency']['criteria'],
                     ),
                 },
             )
@@ -216,6 +217,8 @@ async def test_official_jev_sdk_verifies_live_receipt(kind, signing_algo):
                 == selected.signer.signing_address
             )
         assert inference_requests == 1
+        assert result.model
+        assert result.usage.input_tokens is not None and result.usage.input_tokens > 0
         assert 0 <= result.nouls['billing'].noul <= 1
         assert result.choices['team'].choice in ('billing', 'support')
         assert result.scores['urgency'].score is not None

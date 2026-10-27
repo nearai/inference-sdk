@@ -5,7 +5,7 @@ use nearai_inference_sdk::{
     InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
 };
 use serde_json::json;
-use std::{error::Error, io, time::Duration};
+use std::{error::Error, time::Duration};
 
 #[tokio::test]
 #[ignore = "requires NEARAI_BASE_URL, NEARAI_API_KEY and NEARAI_E2E_MODELS"]
@@ -38,12 +38,12 @@ async fn verify_models(
 ) -> Result<(), Box<dyn Error>> {
     let models = select_models(&required_env("NEARAI_E2E_MODELS")?, "chat")?;
     let selected: Vec<_> = if e2ee || ohttp {
-        vec![models
-            .iter()
-            .find(|m| m.provider == "near")
-            .ok_or_else(|| {
-                io::Error::other("Expected a NEAR model for live encryption coverage")
-            })?]
+        let selected: Vec<_> = models.iter().filter(|m| m.provider == "near").collect();
+        assert!(
+            !selected.is_empty(),
+            "Expected a NEAR model for live encryption coverage"
+        );
+        selected
     } else {
         models.iter().collect()
     };

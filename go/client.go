@@ -54,7 +54,6 @@ type InferenceClient struct {
 	wg                          sync.WaitGroup
 	closed                      bool
 	attestationTTL, responseTTL time.Duration
-	maxBody                     int64
 }
 
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
@@ -88,17 +87,8 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 	if o.ResponseTTL != nil {
 		rt = *o.ResponseTTL
 	}
-	if at < 0 || rt < 0 || o.MaxBodyBytes < 0 || o.MaxCacheEntries < 0 || o.MaxReceiptCacheBytes < 0 {
+	if at < 0 || rt < 0 {
 		return nil, failure("api.invalid_input", nil)
-	}
-	if o.MaxBodyBytes == 0 {
-		o.MaxBodyBytes = 64 << 20
-	}
-	if o.MaxCacheEntries == 0 {
-		o.MaxCacheEntries = 128
-	}
-	if o.MaxReceiptCacheBytes == 0 {
-		o.MaxReceiptCacheBytes = 64 << 20
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &InferenceClient{
@@ -112,7 +102,6 @@ func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, erro
 		transports:     map[string]*http.Transport{},
 		attestationTTL: at,
 		responseTTL:    rt,
-		maxBody:        o.MaxBodyBytes,
 	}
 	// Expiry also runs while idle so sensitive retained bodies do not linger.
 	c.wg.Add(1)
@@ -233,16 +222,6 @@ func (c *InferenceClient) getSession(ctx context.Context, model string) (*sessio
 			delete(c.pending, key)
 			if e == nil && !c.closed && c.attestationTTL > 0 {
 				c.prune(time.Now())
-				for len(c.sessions) >= c.options.MaxCacheEntries {
-					var oldest string
-					var expires time.Time
-					for key, cached := range c.sessions {
-						if expires.IsZero() || cached.expires.Before(expires) {
-							oldest, expires = key, cached.expires
-						}
-					}
-					delete(c.sessions, oldest)
-				}
 				s.expires = time.Now().Add(c.attestationTTL)
 				c.sessions[key] = s
 			}
@@ -397,7 +376,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		if e != nil {
 			return nil, e
 		}
-		s.transport, e = newOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers), c.maxBody)
+		s.transport, e = NewOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers))
 		if e != nil {
 			return nil, e
 		}
@@ -414,24 +393,30 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip accepts POSTs to Chat Completions and Gateway Responses creation.
+// RoundTrip accepts POSTs to Chat Completions and Responses creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	expected := *c.api.base
 	expected.Path += "chat/completions"
 	responsesURL := *c.api.base
 	responsesURL.Path += "responses"
+	messagesURL := *c.api.base
+	messagesURL.Path += "messages"
 	u := *req.URL
 	u.RawQuery = ""
 	u.ForceQuery = false
 	responses := u.String() == responsesURL.String()
-	if req.Method != "POST" || (u.String() != expected.String() && !responses) || req.Body == nil {
+	messages := u.String() == messagesURL.String()
+	// Messages support is deferred until a later release.
+	// gatewayOnly := responses || messages
+	gatewayOnly := responses
+	if req.Method != "POST" || (u.String() != expected.String() && !gatewayOnly) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
-	if responses && (c.api.direct || c.options.E2EE) {
+	if gatewayOnly && (c.api.direct || c.options.E2EE) {
 		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
 	}
-	body, e := readBounded(req.Body, c.maxBody)
+	body, e := io.ReadAll(req.Body)
 	if e != nil {
 		return nil, e
 	}
@@ -464,6 +449,15 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		r.Header.Del("Api-Key")
 	}
 	removeE2EEHeaders(r.Header)
+	if messages {
+		r.Header.Del("X-Api-Key")
+		if key := c.api.headers.Get("X-Api-Key"); key != "" {
+			r.Header.Set("X-Api-Key", key)
+		}
+		if r.Header.Get("Anthropic-Version") == "" {
+			r.Header.Set("Anthropic-Version", "2023-06-01")
+		}
+	}
 	removeBodyHeaders(r.Header)
 	r.Header.Set("Accept-Encoding", "identity")
 	r.Header.Set("Content-Type", "application/json")
@@ -479,23 +473,25 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			cancel()
 			return nil, failure("policy.model_attestation_required", nil)
 		}
-		prepared, e = prepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey}, c.maxBody)
+		prepared, e = PrepareE2EEChatRequest(r, E2EEModelKey{c.options.SigningAlgo, s.selected.SigningPublicKey})
 		if e != nil {
 			stop()
 			cancel()
 			return nil, e
 		}
 		r = prepared.Request
-		body, e = readBounded(r.Body, c.maxBody)
+		body, e = io.ReadAll(r.Body)
 		if e != nil {
 			stop()
 			cancel()
 			return nil, e
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-	} else if s.selected != nil {
+	} else if s.selected != nil && !messages {
 		r.Header.Set("X-Model-Pub-Key", s.selected.SigningPublicKey)
 	}
+	// Prevent transport retries after a connection failure, even with an idempotency key.
+	r.GetBody = nil
 	response, e := s.transport.RoundTrip(r)
 	if e != nil {
 		stop()
@@ -514,7 +510,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	streaming := strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream")
 	if !streaming {
 		defer source.Close()
-		wire, e := readBounded(source, c.maxBody)
+		wire, e := io.ReadAll(source)
 		if e != nil {
 			return nil, e
 		}
@@ -533,7 +529,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s, responses); e != nil {
+		if e = c.register(id, body, wire, s, gatewayOnly); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -541,11 +537,21 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		response.ContentLength = int64(len(visible))
 		return response, nil
 	}
-	capture := &captureReader{ReadCloser: source, limit: c.maxBody}
+	capture := &captureReader{ReadCloser: source}
 	id := ""
 	failed := false
+	messageStarted, messageStopped := false, false
+	firstRecord := true
 	transform := func(record []byte) ([]byte, error) {
-		data, event := sseData(record)
+		parsed := record
+		if firstRecord {
+			parsed = bytes.TrimPrefix(record, []byte("\xef\xbb\xbf"))
+			firstRecord = false
+		}
+		data, event, hasEvent := sseFields(parsed)
+		if messages && (!completeSSERecord(record) || event == "error" || data == "[DONE]") {
+			return nil, failure("api.invalid_response", nil)
+		}
 		if event == "error" {
 			failed = true
 		}
@@ -556,6 +562,27 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 			if _, ok := obj["error"]; ok {
 				failed = true
+			}
+			if messages {
+				kind, _ := obj["type"].(string)
+				if kind == "" || (hasEvent && event != kind) || messageStopped {
+					return nil, failure("api.invalid_response", nil)
+				}
+				if kind == "error" {
+					failed = true
+				}
+				if kind == "message_stop" {
+					messageStopped = true
+				}
+				if kind == "message_start" {
+					if messageStarted {
+						return nil, failure("api.invalid_response", nil)
+					}
+					messageStarted = true
+					obj, _ = obj["message"].(map[string]any)
+				} else {
+					obj = nil
+				}
 			}
 			if responses {
 				// Output item IDs are not response IDs. Lifecycle events carry
@@ -570,17 +597,21 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 			}
 		}
 		if prepared != nil {
-			return prepared.transformSSE(record)
+			return prepared.transformSSE(parsed)
 		}
 		return record, nil
 	}
 	finish := func() error {
-		if failed || id == "" {
+		if failed || id == "" || (messages && !messageStopped) {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s, responses)
+		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly)
 	}
-	response.Body = &sseReader{source: capture, reader: bufio.NewReader(capture), transform: transform, finish: finish, limit: c.maxBody}
+	response.Body = &sseReader{
+		source: capture, reader: bufio.NewReader(capture), transform: transform,
+		terminal: func([]byte) bool { return messages && messageStopped },
+		finish:   finish,
+	}
 	removeBodyHeaders(response.Header)
 	response.ContentLength = -1
 	return response, nil
@@ -606,29 +637,7 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 	if existing := c.responses[id]; existing != nil && time.Now().Before(existing.expires) {
 		return failure("api.duplicate_completion_id", nil)
 	}
-	// Reject oversized receipts before pruning/evicting otherwise useful records.
-	budget := c.options.MaxReceiptCacheBytes
-	if int64(len(request)) > budget || int64(len(response)) > budget-int64(len(request)) {
-		return failure("api.body_too_large", nil)
-	}
 	c.prune(time.Now())
-	size := int64(len(request)) + int64(len(response))
-	var retained int64
-	for _, record := range c.responses {
-		retained += int64(len(record.request)) + int64(len(record.response))
-	}
-	for len(c.responses) >= c.options.MaxCacheEntries || retained > budget-size {
-		var oldest string
-		var expires time.Time
-		for key, record := range c.responses {
-			if expires.IsZero() || record.expires.Before(expires) {
-				oldest, expires = key, record.expires
-			}
-		}
-		record := c.responses[oldest]
-		retained -= int64(len(record.request)) + int64(len(record.response))
-		delete(c.responses, oldest)
-	}
 	c.responses[id] = &responseRecord{
 		request:     append([]byte(nil), request...),
 		response:    append([]byte(nil), response...),
@@ -734,12 +743,20 @@ func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json
 	return c.createJSON(ctx, "responses", request)
 }
 
+/* Messages support is deferred until a later release.
+// CreateMessage sends an Anthropic Messages request and captures a Gateway receipt.
+// For streaming, send POST messages with HTTPClient and consume the full body.
+func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error) {
+	return c.createJSON(ctx, "messages", request)
+}
+*/
+
 func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
 	if e != nil {
 		return nil, e
 	}
-	if path == "responses" {
+	if path == "responses" || path == "messages" {
 		parsed, err := decodeObject(body)
 		if err != nil {
 			return nil, err
@@ -760,5 +777,5 @@ func (c *InferenceClient) createJSON(ctx context.Context, path string, request a
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, detail("api.http_status", "status", res.StatusCode)
 	}
-	return readBounded(res.Body, c.maxBody)
+	return io.ReadAll(res.Body)
 }

@@ -60,7 +60,9 @@ jobs:
         working-directory: examples/example-py
         run: |
           uv sync --locked
-          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses; from direct import bare, client, client_openai_sdk"
+          ../../py/.venv/bin/ruff format --check .
+          ../../py/.venv/bin/ruff check .
+          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, responses_openai_sdk; from direct import bare, client, client_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'
@@ -77,6 +79,7 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
 
   go:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'go'
@@ -94,8 +97,13 @@ jobs:
           cache-dependency-path: |
             go/go.sum
             examples/example-go/go.sum
-      - name: Check shared System One response vectors
-        run: cmp rs/test-fixtures/systemone-responses.json go/testdata/systemone-responses.json
+      - name: Check shared response fixtures
+        run: |
+          cmp rs/test-fixtures/systemone-responses.json go/testdata/systemone-responses.json
+          # for fixture in message.json message.sse streams.json; do
+          #   cmp "test-fixtures/messages/$fixture" "rs/test-fixtures/messages/$fixture"
+          #   cmp "test-fixtures/messages/$fixture" "go/testdata/messages/$fixture"
+          # done
       - run: make -C go check
       - name: Verify consumer builds without CGO
         env:
@@ -107,9 +115,10 @@ jobs:
       - name: Test live model selection without credentials
         working-directory: go
         run: go test -tags=e2e ./e2e -run '^TestSelectedModels$'
-      - name: Check Go OpenAI integration example
+      - name: Check Go SDK integration examples
         working-directory: examples/example-go
         run: |
+          test -z "$(gofmt -l .)"
           go vet ./...
           go test -race ./...
           go test -tags=e2e -run '^$' .

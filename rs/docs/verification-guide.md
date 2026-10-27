@@ -56,7 +56,6 @@ while let Some(chunk) = response.body.next().await {
 Add `futures-util = "0.3"` to use `StreamExt`. Raw body chunks are SSE bytes,
 not necessarily individual UTF-8 strings or Chat objects. The E2EE transform
 preserves SSE control lines and record boundaries, including split CRLF and UTF-8.
-Each SSE record is limited to 1 MiB, including in the standalone decryptor.
 
 Consume through HTTP EOF, even after SSE `[DONE]`: trailing bytes and OHTTP final
 chunk authentication are part of verification. Dropping a partial stream leaves
@@ -66,27 +65,23 @@ not yet signature-verified. `bytes()` and `json()` fully consume the body; use
 `send(reqwest::Request)` is a Rust transport API; it does not implement a trait
 from a third-party OpenAI crate.
 
-### Cache lifetime and limits
+### Cache lifetime
 
 Both caches default to 60 minutes. `attestation_cache_ttl = Duration::ZERO`
 disables reuse of completed deployment checks. `verify()` results contain Unix
 milliseconds in `verified_at`; cache hits preserve that time. Completion records
 retain their original evidence even if the deployment cache expires or refreshes.
 
-The response TTL begins after successful full-body consumption. Receipt lookups
+The response TTL begins after successful full-body consumption;
+`response_cache_ttl = Duration::ZERO` disables retention. Receipt lookups
 and new records prune expired entries; dropping all client clones and responses
-releases state. `max_cache_entries` defaults to 1024 for each completed cache
-and also bounds concurrent preverification. At capacity, completed caches evict
-the oldest entry. `max_response_bytes` defaults to 64 MiB; exceeding it fails
-closed. `max_receipt_cache_bytes` defaults to 64 MiB total for retained request
-and response bytes, for both Gateway and direct clients. Oldest receipts are
-evicted until a new receipt fits; a single receipt exceeding this budget fails
-body consumption. Verification shares these byte buffers rather than copying them.
-This budget covers cached payloads, not in-flight requests/responses, active
-verification holding an evicted receipt, or evidence/metadata overhead.
-Set suitable limits for your workload. A missing, expired, evicted, or
-incomplete completion yields `api.completion_not_found`. A duplicate retained
-completion ID is rejected instead of replacing its original bytes.
+releases state. Verification shares the retained byte buffers rather than copying
+them. Cache memory grows with the responses retained during the TTL; choose a
+retention period appropriate for your workload.
+
+A missing, expired, or incomplete completion yields `api.completion_not_found`.
+A duplicate retained completion ID fails with `api.duplicate_completion_id` and
+preserves the original receipt. An expired ID can be reused.
 
 ### Verification policies and TLS
 
@@ -185,7 +180,46 @@ External models use Gateway signatures.
 
 The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
-[Rust decision example](../../examples/README.md#rust).
+[Rust decision example](../../examples/README.md#rust-setup).
+
+<!-- Messages support is deferred until a later release.
+
+## Messages API
+
+The Gateway client supports `POST /v1/messages` with attestation preflight,
+TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
+Anthropic system/content blocks, tools, tool results, and other JSON fields;
+available features depend on the Gateway and model. `anthropic-version` and
+`anthropic-beta` headers are preserved. The built-in interface defaults to
+`anthropic-version: 2023-06-01`.
+
+Verify the top-level message `id` after JSON consumption, or
+`message_start.message.id` after consuming the complete SSE stream through
+`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
+Verification uses the original request and response bytes and requires a
+`gateway` receipt. This authenticates the Gateway's observation, not external
+Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
+cannot yield a verified complete response. If receipt lookup is temporarily
+unavailable, retry verification without sending inference again.
+
+Messages field-level E2EE and Direct clients are rejected before network I/O,
+matching the server's supported contract. Only Messages creation is supported.
+
+```rust
+let message = client.create_message(serde_json::json!({
+    "model": "anthropic/claude-haiku-4-5",
+    "max_tokens": 128,
+    "messages": [{"role": "user", "content": "Hello"}]
+})).await?;
+let id = message["id"].as_str().ok_or("missing message ID")?;
+client.verify_response(id).await?;
+```
+
+For streaming, use `message_request(body)` with `"stream": true`, then `send()`
+and consume `response.body` to completion. Set custom Anthropic headers on the
+request before sending. See the [example](../../examples/example-rs/src/bin/messages.rs).
+
+-->
 
 ## Responses API
 

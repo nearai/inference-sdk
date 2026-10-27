@@ -11,14 +11,25 @@ from nearai_inference_sdk import InferenceClient
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('provider', ['near', 'external'])
-@pytest.mark.parametrize('ohttp', [False, True])
-async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
+@pytest.mark.parametrize(
+    ('signing_algo', 'ohttp'), [('ed25519', False), ('ecdsa', False), ('ed25519', True)]
+)
+@pytest.mark.parametrize('official', [False, True])
+async def test_responses_json_and_sse(
+    ohttp: bool, provider: str, signing_algo: str, official: bool
+) -> None:
     model = selected_models('responses', provider)[0]
     api_key = required_env('NEARAI_API_KEY')
     base_url = required_env('NEARAI_BASE_URL')
     async with (
         asyncio.timeout(180),
-        InferenceClient(api_key, base_url=base_url, e2ee=False, ohttp=ohttp) as client,
+        InferenceClient(
+            api_key,
+            base_url=base_url,
+            e2ee=False,
+            ohttp=ohttp,
+            signing_algo=signing_algo,
+        ) as client,
         AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -26,6 +37,7 @@ async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
             max_retries=0,
         ) as external,
     ):
+        api = external if official else client
         request = {
             'model': model,
             'input': 'Reply with the word OK.',
@@ -34,7 +46,7 @@ async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
         }
         for stream in (False, True):
             if stream:
-                events = await external.responses.create(**request, stream=True)
+                events = await api.responses.create(**request, stream=True)
                 response_id, completed = None, False
                 async with events:
                     async for event in events:
@@ -49,7 +61,7 @@ async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
                     'SSE must reach response.completed and EOF'
                 )
             else:
-                result = await client.responses.create(**request)
+                result = await api.responses.create(**request)
                 assert result.status == 'completed'
                 assert result.output
                 response_id = result.id
@@ -60,3 +72,4 @@ async def test_responses_json_and_sse(ohttp: bool, provider: str) -> None:
                 )
             assert receipt.id == response_id
             assert receipt.signature_kind == 'gateway'
+            assert receipt.signature.signer.signing_algo == signing_algo

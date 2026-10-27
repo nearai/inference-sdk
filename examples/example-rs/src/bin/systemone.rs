@@ -1,46 +1,75 @@
-use nearai_inference_sdk::{InferenceClient, InferenceClientOptions};
+use example_rs::*;
+use nearai_inference_sdk::*;
 use serde_json::json;
-use std::{env, error::Error, time::Duration};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn run() -> Result<()> {
+    let model = std::env::var("NEARAI_MODEL")?;
+    let expected = match std::env::var("NEARAI_EXPECT_SIGNATURE_KIND")
+        .as_deref()
+        .unwrap_or("gateway")
+    {
+        "gateway" => CompletionSignatureKind::Gateway,
+        "provider_tee" => CompletionSignatureKind::ProviderTee,
+        _ => return Err("NEARAI_EXPECT_SIGNATURE_KIND must be gateway or provider_tee".into()),
+    };
     let client = InferenceClient::with_options(InferenceClientOptions {
-        api_key: Some(env::var("NEARAI_API_KEY")?),
-        base_url: env::var("NEARAI_BASE_URL")
-            .unwrap_or_else(|_| "https://cloud-api.near.ai/v1".into()),
+        api_key: Some(api_key()?),
+        base_url: gateway(),
+        signing_algo: algo()?,
+        model_verification: ModelVerificationOptions {
+            policy: (expected == CompletionSignatureKind::ProviderTee).then(Default::default),
+            ..Default::default()
+        },
         ..Default::default()
     })?;
-
-    let request = json!({
-        "model": env::var("NEARAI_SYSTEMONE_MODEL")?,
+    let mut request = json!({
         "state": {
-            "message": "I was charged twice for my subscription."
+            "message": "I was charged twice for my subscription. Please help."
         },
         "questions": {
             "billing": {
                 "type": "noul",
                 "instructions": "Is this about billing?"
+            },
+            "team": {
+                "type": "choice",
+                "instructions": "Which team should handle this?",
+                "criteria": {
+                    "billing": "Payments and subscriptions",
+                    "support": "Technical issues"
+                }
+            },
+            "urgency": {
+                "type": "score",
+                "instructions": "How urgent is this request?",
+                "criteria": [
+                    "Routine",
+                    "Needs prompt attention",
+                    "Critical"
+                ]
             }
         }
     });
-
+    request["model"] = json!(model);
     let result = client.systemone_create(&request).await?;
-
-    let mut receipt = client.verify_response(&result.decision_id).await;
-    for delay in [500, 1_000, 2_000, 4_000] {
-        if !receipt
-            .as_ref()
-            .is_err_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable")
-        {
-            break;
-        }
-
-        tokio::time::sleep(Duration::from_millis(delay)).await;
-        receipt = client.verify_response(&result.decision_id).await;
+    let receipt = client.verify_response(&result.decision_id).await?;
+    if receipt.signature_kind() != expected {
+        return Err("Unexpected signature kind".into());
     }
-
-    println!("Verified {:?} receipt", receipt?.signature_kind());
-    println!("{}", serde_json::to_string_pretty(&result.data)?);
-
+    println!(
+        "Verified {:?} receipt {}.",
+        receipt.signature_kind(),
+        result.decision_id
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(
+            &json!({"answers": result.data.answers, "usage": result.data.usage})
+        )?
+    );
     Ok(())
+}
+#[tokio::main]
+async fn main() -> Result<()> {
+    tokio::time::timeout(std::time::Duration::from_secs(120), run()).await?
 }

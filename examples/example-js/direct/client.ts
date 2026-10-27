@@ -1,9 +1,13 @@
+import type { SigningAlgo } from '@nearai/inference-sdk/node';
 // Experimental direct-endpoint example. Use the Gateway examples for production.
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
+import { transportOptions } from '../transport-options.ts';
 
-const BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1';
-const MODEL = 'z-ai/glm-5.3-flash';
-const SIGNING_ALGO = 'ed25519';
+const BASE_URL =
+  process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1';
+const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
+const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
+  'ed25519') as SigningAlgo;
 
 async function main(): Promise<void> {
   // Use a credential accepted by this direct endpoint. A Gateway API key is
@@ -19,7 +23,7 @@ async function main(): Promise<void> {
   const client = new DirectInferenceClient({
     baseUrl: BASE_URL,
     apiKey,
-    signingAlgo: SIGNING_ALGO,
+    ...transportOptions(SIGNING_ALGO),
     e2ee: true,
   });
 
@@ -35,12 +39,12 @@ async function runNonStreamingExample(
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
     max_completion_tokens: 1024,
   });
-  console.log(completion.choices[0]?.message.content ?? '');
 
   const verified = await client.verifyResponse(completion.id);
   console.log(
     `Verified model response against ${verified.attestations.length} matching attestations.`,
   );
+  console.log(completion.choices[0]?.message.content ?? '');
 }
 
 async function runStreamingExample(
@@ -58,8 +62,8 @@ async function runStreamingExample(
     completionId = chunk.id;
     process.stdout.write(chunk.choices[0]?.delta.content ?? '');
   }
-  process.stdout.write('\n');
 
+  process.stdout.write('\n');
   if (completionId === undefined)
     throw new Error('Stream returned no completion ID');
   const verified = await client.verifyResponse(completionId);
