@@ -108,17 +108,24 @@ Set `e2ee: true` for supported Chat fields. Ed25519 uses X25519, HKDF-SHA256,
 and XChaCha20-Poly1305; `SigningAlgo::Ecdsa` selects the secp256k1,
 HKDF-SHA256, AES-256-GCM protocol. Every request gets a fresh response key.
 Model keys are authenticated against the verified signing identity, including
-the Ethereum address derivation for ECDSA. Supported fields match the JavaScript
-and Python SDKs: message content and content-part arrays, reasoning, names,
-refusals, audio data, tool calls/definitions, function calls, and tool choice.
+the Ethereum address derivation for ECDSA.
+
+Supported request fields include message content and content-part arrays,
+reasoning, names, refusals, audio data, tool calls/definitions, function calls,
+and tool choice.
 Response decryption also handles tool results and logprob token/byte fields.
-Both suites send `X-Encryption-Version: 3`. Each request field authenticates the
-reply public key through AEAD associated data. V3 makes encryption of all
-supported fields mandatory even without `X-Encrypt-All-Fields`, and rejects
-failed decryption or plaintext protected fields. Gateway and proxy support for
-v3 is required; the SDK does not downgrade on failure. See the
-[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md).
 Routing metadata, roles, token counts, and unknown fields remain visible.
+
+Both suites send `X-Encryption-Version: 3`. Each encrypted request field
+authenticates the reply public key through AEAD associated data. V3 applies
+encryption to supported content when present, independently of
+`X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
+response fields must have the expected types and decrypt successfully.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
 
 `prepare_e2ee_chat_request(request, &verified_model_key)` is the standalone
 helper. It returns the encrypted `request` and `decrypt_json` / `decrypt_sse`

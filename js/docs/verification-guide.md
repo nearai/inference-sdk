@@ -432,16 +432,14 @@ to verified attestation. [Responses](#responses-api) supports OHTTP but rejects
 field-level E2EE.
 
 Both algorithms use `X-Encryption-Version: 3`. Every encrypted request field
-binds the fresh reply public key through AEAD associated data (AAD). V3 requires
-all supported fields below to be encrypted and rejects failed decryption; the
-optional `X-Encrypt-All-Fields` header cannot disable that policy. Other fields
-are forwarded unchanged. The gateway and model proxy must support v3; the SDK
-does not downgrade on failure.
+binds the fresh reply public key through AEAD associated data (AAD).
 
 Ed25519 uses X25519, HKDF-SHA256, and XChaCha20-Poly1305. ECDSA uses secp256k1
-ECDH, HKDF-SHA256, and AES-256-GCM. Response envelopes are unchanged. See the
-[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
-for AAD encoding and compatibility.
+ECDH, HKDF-SHA256, and AES-256-GCM.
+
+V3 applies encryption to supported content when present, independently of
+`X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
+response fields must have the expected types and decrypt successfully.
 
 | Capability | E2EE behavior |
 | --- | --- |
@@ -451,14 +449,18 @@ for AAD encoding and compatibility.
 | Function and tool fields | Recognized function definitions, function calls, and related message fields are encrypted. Other tool forms are preserved without E2EE transformation. |
 | `web_context_search` | The request is forwarded normally; supported search-tool output is decrypted. |
 | Other Chat request-body fields | Forwarded without encryption. |
-| Streaming Chat | Each complete SSE event is decrypted before it reaches the caller. |
+| JSON and streaming Chat responses | Supported content, tool results, and logprob tokens/bytes are decrypted before they reach the caller. |
 
-The client checks each encrypted field's authentication tag before decryption.
+The client authenticates each encrypted field during decryption.
 Use `verifyResponse(id)` separately to verify the response's signing identity.
 
-Field-level E2EE does not encrypt URL query parameters, headers, or fields
-outside the table.
+URL query parameters, headers, and fields outside the table remain visible.
 Non-2xx responses follow the normal OpenAI error path.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
 
 ### Stream an E2EE completion
 

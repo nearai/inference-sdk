@@ -35,16 +35,22 @@ model verification stops Chat without falling back to Incognito.
 
 E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 `e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
-`signing_algo` defaults to `'ed25519'` and also accepts
-`'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
-response signatures. Both algorithms send `X-Encryption-Version: 3`: each
-request field authenticates the fresh reply public key as AEAD associated data.
-V3 requires encryption of all supported fields, including tool calls and
-logprob tokens/bytes, independently of `X-Encrypt-All-Fields`. Protected fields
-must decrypt successfully. Gateway and model proxy support for v3 is required;
-the SDK does not downgrade on failure. ECDSA uses AES-256-GCM and Ed25519 uses
-XChaCha20-Poly1305, with existing response envelopes. See the
-[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md).
+
+`signing_algo` defaults to `'ed25519'` and also accepts `'ecdsa'`. The selected
+algorithm applies to evidence, encryption, routing, and response signatures.
+Ed25519 uses XChaCha20-Poly1305; ECDSA uses AES-256-GCM.
+
+Both algorithms send `X-Encryption-Version: 3`. Each encrypted request field
+authenticates the fresh reply public key as AEAD associated data. V3 applies
+encryption to supported content when present, including tool calls and logprob
+tokens/bytes, independently of `X-Encrypt-All-Fields`. Required fields follow
+the Chat API schema. Protected response fields must have the expected types
+and decrypt successfully.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
 
 Successful attestation checks are reused for 60 minutes per model across
 `verify()`, Chat, Responses, and System One calls on the same client.
