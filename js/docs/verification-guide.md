@@ -432,14 +432,16 @@ to verified attestation. [Responses](#responses-api) supports OHTTP but rejects
 field-level E2EE.
 
 Both algorithms use `X-Encryption-Version: 3`. Every encrypted request field
-binds the fresh reply public key through AEAD associated data (AAD).
+binds the fresh reply public key and a fixed field label through AEAD associated
+data (AAD).
 
 Ed25519 uses X25519, HKDF-SHA256, and XChaCha20-Poly1305. ECDSA uses secp256k1
 ECDH, HKDF-SHA256, and AES-256-GCM.
 
 V3 applies encryption to supported content when present, independently of
 `X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
-response fields must have the expected types and decrypt successfully.
+response containers must have the expected types, and protected values must
+decrypt successfully. Partial tool-call deltas are supported.
 
 | Capability | E2EE behavior |
 | --- | --- |

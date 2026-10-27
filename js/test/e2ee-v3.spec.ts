@@ -3,14 +3,17 @@ import { resolve } from 'node:path';
 import ed2curve from 'ed2curve';
 import nacl from 'tweetnacl';
 import {
+  buildE2eeFieldAad,
   buildE2eeRequestAad,
   decryptE2eeText,
   type E2eeClientKeyPair,
   encryptE2eeText,
 } from '../src/core/e2ee';
 import {
+  createE2eeChatSseTransform,
   decryptE2eeChatResponse,
   decryptE2eeChatStreamChunk,
+  parseE2eeChatResponse,
 } from '../src/core/e2ee-chat';
 import { VerificationError } from '../src/utils/errors';
 
@@ -43,10 +46,13 @@ describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
             nacl.sign.keyPair.fromSeed(seed).secretKey,
           ),
         };
-  const associatedData = buildE2eeRequestAad({
-    signingAlgo: vector.signing_algo,
-    publicKey: vector.reply_public,
-  });
+  const associatedData = buildE2eeFieldAad(
+    buildE2eeRequestAad({
+      signingAlgo: vector.signing_algo,
+      publicKey: vector.reply_public,
+    }),
+    'messages[].content',
+  );
   test('matches the canonical AAD and decrypts the independent request vector', () => {
     expect(Buffer.from(associatedData).toString('hex')).toBe(vector.aad);
     expect(
@@ -59,10 +65,13 @@ describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
     ).toBe(vector.plaintext);
     if (vector.signing_algo === 'ecdsa') {
       expect(
-        buildE2eeRequestAad({
-          signingAlgo: 'ecdsa',
-          publicKey: vector.reply_public.slice(2),
-        }),
+        buildE2eeFieldAad(
+          buildE2eeRequestAad({
+            signingAlgo: 'ecdsa',
+            publicKey: vector.reply_public.slice(2),
+          }),
+          'messages[].content',
+        ),
       ).toEqual(associatedData);
     }
     const ciphertext = encryptE2eeText({
@@ -82,14 +91,29 @@ describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
       }),
     ).toBe(vector.plaintext);
   });
-  test('rejects a different recipient, suite byte, or empty AAD', () => {
-    const changedKey = buildE2eeRequestAad({
-      signingAlgo: vector.signing_algo,
-      publicKey: vector.model_public,
-    });
+  test('rejects a different recipient, field, suite byte, or empty AAD', () => {
+    const changedKey = buildE2eeFieldAad(
+      buildE2eeRequestAad({
+        signingAlgo: vector.signing_algo,
+        publicKey: vector.model_public,
+      }),
+      'messages[].content',
+    );
     const changedSuite = Uint8Array.from(associatedData);
     changedSuite[22] = 0xff;
-    for (const aad of [changedKey, changedSuite, new Uint8Array()]) {
+    const changedField = buildE2eeFieldAad(
+      buildE2eeRequestAad({
+        signingAlgo: vector.signing_algo,
+        publicKey: vector.reply_public,
+      }),
+      'tool_choice.function.name',
+    );
+    for (const aad of [
+      changedKey,
+      changedField,
+      changedSuite,
+      new Uint8Array(),
+    ]) {
       expect(() =>
         decryptE2eeText({
           ciphertext: vector.ciphertext,
@@ -149,4 +173,50 @@ describe.each(vectors)('v3 $signing_algo shared vectors', (vector) => {
       }
     },
   );
+  test('rejects malformed protected containers in JSON and SSE', async () => {
+    const choices: Record<string, unknown>[] = [
+      { message: { tool_calls: { function: { arguments: 'plaintext' } } } },
+      { message: { tool_calls: [null] } },
+      { message: { tool_calls: [{ function: ['plaintext'] }] } },
+      { message: { audio: [{ data: 'plaintext' }] } },
+      { message: { function_call: ['plaintext'] } },
+      { logprobs: [] },
+      { logprobs: { content: { token: 'plaintext' } } },
+      { logprobs: { content: [null] } },
+      { logprobs: { content: [{ top_logprobs: { token: 'plaintext' } }] } },
+    ];
+    for (const choice of choices) {
+      const body = { id: 'chat-containers', choices: [choice] };
+      expect(() =>
+        decryptE2eeChatResponse({
+          body: parseE2eeChatResponse({ body }),
+          clientKeyPair,
+        }),
+      ).toThrow(VerificationError);
+      const chunk = {
+        id: 'chat-containers',
+        choices: [
+          choice.message === undefined ? choice : { delta: choice.message },
+        ],
+      };
+      const source = new Response(`data: ${JSON.stringify(chunk)}\n\n`).body;
+      if (source === null) throw new Error('missing fixture body');
+      const response = new Response(
+        source.pipeThrough(createE2eeChatSseTransform({ clientKeyPair })),
+      );
+      await expect(response.text()).rejects.toThrow(VerificationError);
+    }
+    const valid = {
+      id: 'chat-fragment',
+      choices: [
+        {
+          delta: { tool_calls: [{ index: 0, id: 'call-1' }], audio: null },
+          logprobs: null,
+        },
+      ],
+    };
+    expect(decryptE2eeChatStreamChunk({ chunk: valid, clientKeyPair })).toEqual(
+      valid,
+    );
+  });
 });

@@ -114,13 +114,15 @@ Supported request fields include message content and content-part arrays,
 reasoning, names, refusals, audio data, tool calls/definitions, function calls,
 and tool choice.
 Response decryption also handles tool results and logprob token/byte fields.
-Routing metadata, roles, token counts, and unknown fields remain visible.
+Routing metadata, roles, and token counts remain visible. Request fields outside
+the supported transforms are sent as provided.
 
 Both suites send `X-Encryption-Version: 3`. Each encrypted request field
-authenticates the reply public key through AEAD associated data. V3 applies
-encryption to supported content when present, independently of
+authenticates the reply public key and a fixed field label through AEAD associated
+data. V3 applies encryption to supported content when present, independently of
 `X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
-response fields must have the expected types and decrypt successfully.
+response containers must have the expected types, and protected values must
+decrypt successfully. Partial tool-call deltas are supported.
 
 V3 requires support in the model proxy and any gateway on the request path.
 The SDK does not downgrade on failure. See the

@@ -191,7 +191,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				f.t.Fatal(err)
 			}
-			message, err := decryptTextWithAAD(content, e2eeKey{algo: Ed25519, secret: secret}, aad)
+			message, err := decryptTextWithAAD(content, e2eeKey{algo: Ed25519, secret: secret}, fieldAAD(aad, "messages[].content"))
 			if err != nil || message != "review" {
 				f.t.Errorf("E2EE request: %q %v", message, err)
 			}

@@ -44,7 +44,7 @@ export type E2eeEncryptionKey = E2eeModelKey & {
   readonly associatedData?: Uint8Array;
 };
 
-/** Bind a v3 request to its reply recipient, using canonical public-key bytes. */
+/** Build the canonical reply-key prefix for v3 field AAD. */
 export function buildE2eeRequestAad(replyKey: E2eeModelKey): Uint8Array {
   const publicKey =
     replyKey.signingAlgo === 'ecdsa'
@@ -56,6 +56,12 @@ export function buildE2eeRequestAad(replyKey: E2eeModelKey): Uint8Array {
     Buffer.from([replyKey.signingAlgo === 'ecdsa' ? 1 : 2]),
     Buffer.from(publicKey),
   ]);
+}
+
+export function buildE2eeFieldAad(aad: Uint8Array, field: string): Uint8Array {
+  return aad.length === 0
+    ? aad
+    : Buffer.concat([aad, Buffer.from([0]), utf8(field)]);
 }
 
 type EncryptE2eeTextParams = {

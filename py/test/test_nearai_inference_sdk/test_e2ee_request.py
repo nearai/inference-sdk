@@ -10,6 +10,7 @@ from nearai_inference_sdk.core.e2ee import (
     build_e2ee_request_aad,
     create_e2ee_client_key_pair,
     decrypt_e2ee_text,
+    e2ee_field_aad,
     encrypt_e2ee_text,
 )
 from nearai_inference_sdk.core.e2ee_request import prepare_e2ee_chat_request
@@ -128,45 +129,94 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
     )
     message = encrypted['messages'][0]
     assert (
-        json.loads(decrypt_e2ee_text(message['content'], pair, 'content', aad))
+        json.loads(
+            decrypt_e2ee_text(
+                message['content'],
+                pair,
+                'content',
+                e2ee_field_aad(aad, 'messages[].content'),
+            )
+        )
         == body['messages'][0]['content']
     )
     for field in ('reasoning', 'reasoning_content', 'name', 'refusal'):
         assert (
-            decrypt_e2ee_text(message[field], pair, field, aad)
+            decrypt_e2ee_text(
+                message[field], pair, field, e2ee_field_aad(aad, f'messages[].{field}')
+            )
             == body['messages'][0][field]
         )
     assert (
-        decrypt_e2ee_text(message['audio']['data'], pair, 'audio', aad) == 'audio-bytes'
+        decrypt_e2ee_text(
+            message['audio']['data'],
+            pair,
+            'audio',
+            e2ee_field_aad(aad, 'messages[].audio.data'),
+        )
+        == 'audio-bytes'
     )
     for field in ('name', 'arguments'):
         assert (
             decrypt_e2ee_text(
-                message['tool_calls'][0]['function'][field], pair, field, aad
+                message['tool_calls'][0]['function'][field],
+                pair,
+                field,
+                e2ee_field_aad(aad, f'messages[].tool_calls[].function.{field}'),
             )
             == body['messages'][0]['tool_calls'][0]['function'][field]
         )
         assert (
-            decrypt_e2ee_text(message['function_call'][field], pair, field, aad)
+            decrypt_e2ee_text(
+                message['function_call'][field],
+                pair,
+                field,
+                e2ee_field_aad(aad, f'messages[].function_call.{field}'),
+            )
             == body['messages'][0]['function_call'][field]
         )
     function = encrypted['tools'][0]['function']
-    assert decrypt_e2ee_text(function['name'], pair, 'name', aad) == 'search'
-    assert (
-        decrypt_e2ee_text(function['description'], pair, 'description', aad) == 'lookup'
-    )
-    assert (
-        json.loads(decrypt_e2ee_text(function['parameters'], pair, 'parameters', aad))
-        == {}
-    )
     assert (
         decrypt_e2ee_text(
-            encrypted['tool_choice']['function']['name'], pair, 'name', aad
+            function['name'], pair, 'name', e2ee_field_aad(aad, 'tools[].function.name')
         )
         == 'search'
     )
     assert (
-        decrypt_e2ee_text(encrypted['function_call']['name'], pair, 'name', aad)
+        decrypt_e2ee_text(
+            function['description'],
+            pair,
+            'description',
+            e2ee_field_aad(aad, 'tools[].function.description'),
+        )
+        == 'lookup'
+    )
+    assert (
+        json.loads(
+            decrypt_e2ee_text(
+                function['parameters'],
+                pair,
+                'parameters',
+                e2ee_field_aad(aad, 'tools[].function.parameters'),
+            )
+        )
+        == {}
+    )
+    assert (
+        decrypt_e2ee_text(
+            encrypted['tool_choice']['function']['name'],
+            pair,
+            'name',
+            e2ee_field_aad(aad, 'tool_choice.function.name'),
+        )
+        == 'search'
+    )
+    assert (
+        decrypt_e2ee_text(
+            encrypted['function_call']['name'],
+            pair,
+            'name',
+            e2ee_field_aad(aad, 'function_call.name'),
+        )
         == 'legacy'
     )
     assert encrypted['future_option'] == body['future_option']
@@ -198,7 +248,12 @@ async def test_encrypts_async_request_body_with_buffered_framing():
         )
     )
     assert (
-        decrypt_e2ee_text(encrypted['messages'][0]['content'], pair, 'content', aad)
+        decrypt_e2ee_text(
+            encrypted['messages'][0]['content'],
+            pair,
+            'content',
+            e2ee_field_aad(aad, 'messages[].content'),
+        )
         == PROMPT['messages'][0]['content']
     )
 

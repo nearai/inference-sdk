@@ -7,6 +7,7 @@ import { ethers } from 'ethers';
 import OpenAI from 'openai';
 import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
 import {
+  buildE2eeFieldAad,
   buildE2eeRequestAad,
   decryptE2eeText,
   encryptE2eeText,
@@ -240,10 +241,13 @@ function createEcdsaGateway({
           privateKey: modelKey.privateKey,
         },
         field: 'messages[0].content',
-        associatedData: buildE2eeRequestAad({
-          signingAlgo: 'ecdsa',
-          publicKey: clientPublicKey,
-        }),
+        associatedData: buildE2eeFieldAad(
+          buildE2eeRequestAad({
+            signingAlgo: 'ecdsa',
+            publicKey: clientPublicKey,
+          }),
+          'messages[].content',
+        ),
       }),
     );
     const response = jsonResponse({

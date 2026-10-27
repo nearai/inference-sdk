@@ -100,6 +100,16 @@ func encryptText(text string, key E2EEModelKey) (string, error) {
 	return encryptTextWithAAD(text, key, nil)
 }
 
+func fieldAAD(aad []byte, field string) []byte {
+	if len(aad) == 0 {
+		return nil
+	}
+	result := make([]byte, 0, len(aad)+1+len(field))
+	result = append(result, aad...)
+	result = append(result, 0)
+	return append(result, field...)
+}
+
 func encryptTextWithAAD(text string, key E2EEModelKey, aad []byte) (string, error) {
 	pub, e := unhex(key.PublicKey)
 	if e != nil {
@@ -272,8 +282,17 @@ func transformFields(target map[string]any, transform func(string) (string, erro
 	return nil
 }
 
+func encryptFields(target map[string]any, key E2EEModelKey, aad []byte, path string, fields ...string) error {
+	for _, field := range fields {
+		transform := func(s string) (string, error) { return encryptTextWithAAD(s, key, fieldAAD(aad, path+"."+field)) }
+		if err := transformFields(target, transform, field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func encryptChat(body map[string]any, key E2EEModelKey, aad []byte) error {
-	f := func(s string) (string, error) { return encryptTextWithAAD(s, key, aad) }
 	for _, m := range objects(body["messages"]) {
 		if list, ok := m["content"].([]any); ok {
 			encoded, e := json.Marshal(list)
@@ -282,24 +301,24 @@ func encryptChat(body map[string]any, key E2EEModelKey, aad []byte) error {
 			}
 			m["content"] = string(encoded)
 		}
-		if e := transformFields(m, f, "content", "reasoning_content", "reasoning", "name", "refusal"); e != nil {
+		if e := encryptFields(m, key, aad, "messages[]", "content", "reasoning_content", "reasoning", "name", "refusal"); e != nil {
 			return e
 		}
-		if e := transformFields(object(m["audio"]), f, "data"); e != nil {
+		if e := encryptFields(object(m["audio"]), key, aad, "messages[].audio", "data"); e != nil {
 			return e
 		}
 		for _, call := range objects(m["tool_calls"]) {
-			if e := transformFields(object(call["function"]), f, "name", "arguments"); e != nil {
+			if e := encryptFields(object(call["function"]), key, aad, "messages[].tool_calls[].function", "name", "arguments"); e != nil {
 				return e
 			}
 		}
-		if e := transformFields(object(m["function_call"]), f, "name", "arguments"); e != nil {
+		if e := encryptFields(object(m["function_call"]), key, aad, "messages[].function_call", "name", "arguments"); e != nil {
 			return e
 		}
 	}
 	for _, tool := range objects(body["tools"]) {
 		fn := object(tool["function"])
-		if e := transformFields(fn, f, "name", "description"); e != nil {
+		if e := encryptFields(fn, key, aad, "tools[].function", "name", "description"); e != nil {
 			return e
 		}
 		if p, ok := fn["parameters"]; ok {
@@ -307,26 +326,70 @@ func encryptChat(body map[string]any, key E2EEModelKey, aad []byte) error {
 			if e != nil {
 				return e
 			}
-			fn["parameters"], e = f(string(b))
+			fn["parameters"], e = encryptTextWithAAD(string(b), key, fieldAAD(aad, "tools[].function.parameters"))
 			if e != nil {
 				return e
 			}
 		}
 	}
-	if e := transformFields(object(object(body["tool_choice"])["function"]), f, "name"); e != nil {
+	if e := encryptFields(object(object(body["tool_choice"])["function"]), key, aad, "tool_choice.function", "name"); e != nil {
 		return e
 	}
-	return transformFields(object(body["function_call"]), f, "name")
+	return encryptFields(object(body["function_call"]), key, aad, "function_call", "name")
+}
+
+func responseObject(value any) (map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return nil, failure("e2ee.decryption_failed", nil)
+	}
+	return obj, nil
+}
+
+func responseObjects(value any) ([]map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, failure("e2ee.decryption_failed", nil)
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		obj, err := responseObject(item)
+		if err != nil || obj == nil {
+			return nil, failure("e2ee.decryption_failed", nil)
+		}
+		result = append(result, obj)
+	}
+	return result, nil
 }
 
 func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 	f := func(s string) (string, error) { return decryptText(s, key) }
+	decryptObject := func(value any, fields ...string) error {
+		obj, err := responseObject(value)
+		if err != nil {
+			return err
+		}
+		return transformFields(obj, f, fields...)
+	}
 	field := "message"
 	if stream {
 		field = "delta"
 	}
-	for _, choice := range objects(body["choices"]) {
-		m := object(choice[field])
+	choices, err := responseObjects(body["choices"])
+	if err != nil {
+		return err
+	}
+	for _, choice := range choices {
+		m, err := responseObject(choice[field])
+		if err != nil {
+			return err
+		}
 		if e := transformFields(m, f, "reasoning_content", "reasoning", "refusal"); e != nil {
 			return e
 		}
@@ -345,24 +408,32 @@ func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 				return e
 			}
 		}
-		if e := transformFields(object(m["audio"]), f, "data"); e != nil {
+		if e := decryptObject(m["audio"], "data"); e != nil {
 			return e
 		}
-		for _, call := range objects(m["tool_calls"]) {
-			if e := transformFields(object(call["function"]), f, "name", "arguments"); e != nil {
+		calls, err := responseObjects(m["tool_calls"])
+		if err != nil {
+			return err
+		}
+		for _, call := range calls {
+			if e := decryptObject(call["function"], "name", "arguments"); e != nil {
 				return e
 			}
 		}
-		if e := transformFields(object(m["function_call"]), f, "name", "arguments"); e != nil {
+		if e := decryptObject(m["function_call"], "name", "arguments"); e != nil {
 			return e
 		}
 		if stream {
-			if e := transformFields(object(m["nearai_tool_result"]), f, "output"); e != nil {
+			if e := decryptObject(m["nearai_tool_result"], "output"); e != nil {
 				return e
 			}
 		}
+		logprobs, err := responseObject(choice["logprobs"])
+		if err != nil {
+			return err
+		}
 		for _, field := range []string{"content", "refusal"} {
-			if e := decryptLogprobs(object(choice["logprobs"])[field], f); e != nil {
+			if e := decryptLogprobs(logprobs[field], f); e != nil {
 				return e
 			}
 		}
@@ -371,7 +442,11 @@ func decryptChat(body map[string]any, key e2eeKey, stream bool) error {
 }
 
 func decryptLogprobs(value any, f func(string) (string, error)) error {
-	for _, entry := range objects(value) {
+	entries, err := responseObjects(value)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
 		if e := transformFields(entry, f, "token"); e != nil {
 			return e
 		}

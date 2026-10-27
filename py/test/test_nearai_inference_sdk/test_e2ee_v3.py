@@ -13,9 +13,14 @@ from nearai_inference_sdk.core.e2ee import (
     build_e2ee_request_aad,
     create_e2ee_client_key_pair,
     decrypt_e2ee_text,
+    e2ee_field_aad,
     encrypt_e2ee_text,
 )
-from nearai_inference_sdk.core.e2ee_chat import decrypt_e2ee_chat_response
+from nearai_inference_sdk.core.e2ee_chat import (
+    decrypt_e2ee_chat_response,
+    decrypt_e2ee_chat_sse,
+    parse_e2ee_chat_response,
+)
 from nearai_inference_sdk.types.e2ee import E2eeModelKey
 from nearai_inference_sdk.utils.errors import VerificationError
 
@@ -41,8 +46,11 @@ def test_v3_shared_vectors(vector):
             x25519_secret_key=bytes(SigningKey(seed).to_curve25519_private_key()),
         )
     )
-    aad = build_e2ee_request_aad(
-        E2eeModelKey(signing_algo=algo, public_key=vector['reply_public'])
+    aad = e2ee_field_aad(
+        build_e2ee_request_aad(
+            E2eeModelKey(signing_algo=algo, public_key=vector['reply_public'])
+        ),
+        'messages[].content',
     )
     assert aad.hex() == vector['aad']
     assert (
@@ -51,15 +59,30 @@ def test_v3_shared_vectors(vector):
     )
     if algo == 'ecdsa':
         assert (
-            build_e2ee_request_aad(
-                E2eeModelKey(signing_algo=algo, public_key=vector['reply_public'][2:])
+            e2ee_field_aad(
+                build_e2ee_request_aad(
+                    E2eeModelKey(
+                        signing_algo=algo, public_key=vector['reply_public'][2:]
+                    )
+                ),
+                'messages[].content',
             )
             == aad
         )
     model = E2eeModelKey(signing_algo=algo, public_key=vector['model_public'])
     cipher = encrypt_e2ee_text(vector['plaintext'], model, aad)
     assert decrypt_e2ee_text(cipher, key, 'request', aad) == vector['plaintext']
-    for wrong in [b'', build_e2ee_request_aad(model), aad[:22] + b'\xff' + aad[23:]]:
+    for wrong in [
+        b'',
+        e2ee_field_aad(build_e2ee_request_aad(model), 'messages[].content'),
+        e2ee_field_aad(
+            build_e2ee_request_aad(
+                E2eeModelKey(signing_algo=algo, public_key=vector['reply_public'])
+            ),
+            'tool_choice.function.name',
+        ),
+        aad[:22] + b'\xff' + aad[23:],
+    ]:
         with pytest.raises(VerificationError):
             decrypt_e2ee_text(vector['ciphertext'], key, 'request', wrong)
     for choice in [
@@ -92,3 +115,45 @@ def test_v3_validates_rich_content_parts(algo, streaming):
         with pytest.raises(VerificationError) as error:
             decrypt([part, invalid])
         assert error.value.failure.code == 'e2ee.decryption_failed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('algo', ['ecdsa', 'ed25519'])
+async def test_rejects_malformed_protected_containers_in_json_and_sse(algo):
+    key = create_e2ee_client_key_pair(algo)
+    choices = [
+        {'message': {'tool_calls': {'function': {'arguments': 'plaintext'}}}},
+        {'message': {'tool_calls': [None]}},
+        {'message': {'tool_calls': [{'function': ['plaintext']}]}},
+        {'message': {'audio': [{'data': 'plaintext'}]}},
+        {'message': {'function_call': ['plaintext']}},
+        {'logprobs': []},
+        {'logprobs': {'content': {'token': 'plaintext'}}},
+        {'logprobs': {'content': [None]}},
+        {'logprobs': {'content': [{'top_logprobs': {'token': 'plaintext'}}]}},
+    ]
+    for choice in choices:
+        body = {'id': 'chat-containers', 'choices': [choice]}
+        with pytest.raises(VerificationError):
+            decrypt_e2ee_chat_response(parse_e2ee_chat_response(body), key)
+        if 'message' in choice:
+            choice = {'delta': choice['message']}
+        chunk = {'id': 'chat-containers', 'choices': [choice]}
+
+        async def source(chunk=chunk):
+            yield f'data: {json.dumps(chunk)}\n\n'.encode()
+
+        with pytest.raises(VerificationError):
+            async for _ in decrypt_e2ee_chat_sse(source(), key):
+                pass
+    # A tool-call fragment may introduce the id before sending its function.
+    valid = {
+        'id': 'chat-fragment',
+        'choices': [
+            {
+                'delta': {'tool_calls': [{'index': 0, 'id': 'call-1'}], 'audio': None},
+                'logprobs': None,
+            }
+        ],
+    }
+    assert decrypt_e2ee_chat_response(valid, key, streaming=True) == valid

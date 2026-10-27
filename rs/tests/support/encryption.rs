@@ -29,6 +29,7 @@ pub fn decrypt_request(cipher: &str, algo: SigningAlgo, reply_public: &str) -> S
     let mut aad = b"nearai-e2ee-request-v3".to_vec();
     aad.push(if algo == SigningAlgo::Ecdsa { 1 } else { 2 });
     aad.extend(public);
+    aad.extend_from_slice(b"\0messages[].content");
     let cipher = hex::decode(cipher).unwrap();
     let plain = match algo {
         SigningAlgo::Ed25519 => {

@@ -55,7 +55,7 @@ def create_e2ee_client_key_pair(
 
 
 def build_e2ee_request_aad(reply_key: E2eeModelKey) -> bytes:
-    """Build v3 request AAD from the canonical reply public key."""
+    """Build the canonical reply-key prefix for v3 field AAD."""
     public = hex_to_bytes(reply_key.public_key, 'replyPublicKey')
     if reply_key.signing_algo == 'ecdsa':
         if len(public) == 64:
@@ -68,6 +68,11 @@ def build_e2ee_request_aad(reply_key: E2eeModelKey) -> bytes:
         bindings.crypto_sign_ed25519_pk_to_curve25519(public)
         suite = 2
     return b'nearai-e2ee-request-v3' + bytes([suite]) + public
+
+
+def e2ee_field_aad(aad: bytes, field: str) -> bytes:
+    """Append the fixed protocol field label to a v3 request's AAD prefix."""
+    return aad + b'\0' + field.encode('ascii') if aad else aad
 
 
 def encrypt_e2ee_text(plaintext: str, model_key: E2eeModelKey, aad: bytes = b'') -> str:

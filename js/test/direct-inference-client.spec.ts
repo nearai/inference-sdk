@@ -9,6 +9,7 @@ import {
   type TdxQuoteVerificationResult,
 } from '../src';
 import {
+  buildE2eeFieldAad,
   buildE2eeRequestAad,
   decryptE2eeText,
   encryptE2eeText,
@@ -195,10 +196,13 @@ function createDirectEndpoint({
               x25519SecretKey: secretKey,
             },
             field: 'messages[0].content',
-            associatedData: buildE2eeRequestAad({
-              signingAlgo: 'ed25519',
-              publicKey: clientPublicKey,
-            }),
+            associatedData: buildE2eeFieldAad(
+              buildE2eeRequestAad({
+                signingAlgo: 'ed25519',
+                publicKey: clientPublicKey,
+              }),
+              'messages[].content',
+            ),
           }),
     );
     const content = (plaintext: string): string =>

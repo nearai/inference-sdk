@@ -20,6 +20,7 @@ import {
 } from '../src';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
+  buildE2eeFieldAad,
   buildE2eeRequestAad,
   decryptE2eeText as decryptE2eeValue,
   encryptE2eeText as encryptE2eeValue,
@@ -177,7 +178,7 @@ type DecryptEd25519TextParams = {
   readonly field: string;
 };
 
-/** The in-memory Gateway fixture implements the Ed25519 v2 model side. */
+/** The in-memory Gateway fixture implements the Ed25519 v3 model side. */
 function decryptE2eeText({
   ciphertext,
   recipientSecretKey,
@@ -186,10 +187,13 @@ function decryptE2eeText({
 }: DecryptEd25519TextParams): string {
   return decryptE2eeValue({
     ciphertext,
-    associatedData: buildE2eeRequestAad({
-      signingAlgo: 'ed25519',
-      publicKey: replyPublicKey,
-    }),
+    associatedData: buildE2eeFieldAad(
+      buildE2eeRequestAad({
+        signingAlgo: 'ed25519',
+        publicKey: replyPublicKey,
+      }),
+      field.replace(/\[\d+\]/g, '[]'),
+    ),
     clientKeyPair: {
       signingAlgo: 'ed25519',
       publicKey: '',
@@ -465,13 +469,13 @@ function createTestGateway({
             ciphertext: toolCall.function.name,
             recipientSecretKey: modelX25519SecretKey,
             replyPublicKey: clientPublicKey,
-            field: `messages[${index}].tool_calls.function.name`,
+            field: `messages[${index}].tool_calls[].function.name`,
           }),
           arguments: decryptE2eeText({
             ciphertext: toolCall.function.arguments,
             recipientSecretKey: modelX25519SecretKey,
             replyPublicKey: clientPublicKey,
-            field: `messages[${index}].tool_calls.function.arguments`,
+            field: `messages[${index}].tool_calls[].function.arguments`,
           }),
         });
       }
