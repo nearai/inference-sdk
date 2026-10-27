@@ -301,6 +301,56 @@ impl Respond for Fixture {
                     )
                     .set_body_bytes(visible)
             }
+            "/v1/messages" => {
+                self.chat.fetch_add(1, Ordering::SeqCst);
+                assert!(self.gateway.load(Ordering::SeqCst) > 0);
+                assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
+                assert!(r.headers.get("x-client-pub-key").is_none());
+                let request: Value = serde_json::from_slice(&r.body).unwrap();
+                assert_eq!(request["messages"][1]["role"], "user");
+                assert!(r.headers.get("x-model-pub-key").is_none());
+                assert!(r.headers.get("x-api-key").is_none());
+                assert!(r.headers.get("anthropic-version").is_some());
+                let streaming = request["stream"] == true;
+                let raw = self.response_body.clone().unwrap_or_else(|| {
+                    if streaming {
+                        include_bytes!("../test-fixtures/messages/message.sse").to_vec()
+                    } else {
+                        include_bytes!("../test-fixtures/messages/message.json").to_vec()
+                    }
+                });
+                self.receipts.lock().unwrap().insert(
+                    "msg_fixture".into(),
+                    (
+                        r.body.clone(),
+                        raw.clone(),
+                        if self.response_provider_receipt {
+                            "provider_tee"
+                        } else {
+                            "gateway"
+                        }
+                        .into(),
+                    ),
+                );
+                let visible = if self.response_tamper {
+                    String::from_utf8(raw)
+                        .unwrap()
+                        .replace("Hello", "Altered")
+                        .into_bytes()
+                } else {
+                    raw
+                };
+                ResponseTemplate::new(self.response_status.unwrap_or(200))
+                    .insert_header(
+                        "content-type",
+                        if streaming {
+                            "text/event-stream"
+                        } else {
+                            "application/json"
+                        },
+                    )
+                    .set_body_bytes(visible)
+            }
             "/v1/chat/completions" => {
                 let n = self.chat.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
@@ -416,7 +466,9 @@ impl Respond for Fixture {
                     );
                 }
                 inner.body = message.content().to_vec();
-                let id = if inner.url.path() == "/v1/responses" {
+                let id = if inner.url.path() == "/v1/messages" {
+                    "msg_fixture".into()
+                } else if inner.url.path() == "/v1/responses" {
                     "resp_fixture".into()
                 } else {
                     format!("chat-{}", self.chat.load(Ordering::SeqCst))
@@ -770,21 +822,13 @@ async fn shares_inflight_verification_and_can_disable_cache() {
     assert_eq!(f.gateway.load(Ordering::SeqCst), 3);
 }
 #[tokio::test]
-async fn bounded_response_capture_and_expiry_fail_closed() {
+async fn zero_response_ttl_disables_retention() {
     let (_server, _f, mut options) = setup(Fixture::default()).await;
-    options.max_response_bytes = 5;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-    assert!(client.chat_completions(body()).await.is_err());
-    assert_eq!(
-        client.verify_response("chat-0").await.unwrap_err().code(),
-        "api.completion_not_found"
-    );
-    options.max_response_bytes = 1024;
     options.response_cache_ttl = Duration::ZERO;
     let client = InferenceClient::with_options(options).unwrap();
     client.chat_completions(body()).await.unwrap();
     assert_eq!(
-        client.verify_response("chat-1").await.unwrap_err().code(),
+        client.verify_response("chat-0").await.unwrap_err().code(),
         "api.completion_not_found"
     );
 }
@@ -819,9 +863,8 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
 }
 
 #[tokio::test]
-async fn canceled_verifications_release_capacity_and_keep_other_waiters_alive() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    options.max_cache_entries = 1;
+async fn canceled_verifications_keep_other_waiters_alive() {
+    let (_server, f, options) = setup(Fixture::default()).await;
     let client = InferenceClient::with_options(options).unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(5), client.verify("abandoned"))
@@ -1022,41 +1065,14 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
 }
 
 #[tokio::test]
-async fn receipt_cache_bounds_combined_request_and_response_bytes() {
-    let (_server, f, mut options) = setup(Fixture::default()).await;
-    // Measure an actual receipt so the budget fits exactly one completion.
-    let probe = InferenceClient::with_options(options.clone()).unwrap();
-    probe.chat_completions(body()).await.unwrap();
-    let size = {
-        let receipts = f.receipts.lock().unwrap();
-        let (request, response, _) = &receipts["chat-0"];
-        request.len() + response.len()
-    };
-    options.max_receipt_cache_bytes = size;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-    client.chat_completions(body()).await.unwrap();
-    client.verify_response("chat-1").await.unwrap();
-    client.chat_completions(body()).await.unwrap();
-    assert_eq!(
-        client.verify_response("chat-1").await.unwrap_err().code(),
-        "api.completion_not_found"
-    );
-    client.verify_response("chat-2").await.unwrap();
-    // An oversized request must count, even when its response is small.
-    let mut large = body();
-    large["extra"] = json!("x".repeat(size));
-    assert!(client.chat_completions(large).await.is_err());
-    client.verify_response("chat-2").await.unwrap();
-    assert_eq!(
-        client.verify_response("chat-3").await.unwrap_err().code(),
-        "api.completion_not_found"
-    );
-    options.max_receipt_cache_bytes = size - 1;
-    let client = InferenceClient::with_options(options.clone()).unwrap();
-    assert!(client.chat_completions(body()).await.is_err());
-    options.max_receipt_cache_bytes = 0;
-    assert!(InferenceClient::with_options(options.clone()).is_err());
-    assert!(DirectInferenceClient::with_options(options.into()).is_err());
+async fn new_completions_keep_unexpired_receipts_verifiable() {
+    let (_server, _, options) = setup(Fixture::default()).await;
+    let client = InferenceClient::with_options(options).unwrap();
+    for _ in 0..=1024 {
+        client.chat_completions(body()).await.unwrap();
+    }
+    client.verify_response("chat-0").await.unwrap();
+    client.verify_response("chat-1024").await.unwrap();
 }
 
 fn systemone_request() -> Value {
@@ -1183,28 +1199,27 @@ async fn systemone_preserves_json_images_and_box_receipts() {
 #[tokio::test]
 async fn systemone_compressed_responses() {
     for encoding in ["gzip", "br"] {
-        for mode in ["receipt", "tamper", "limit"] {
-            let (_server, f, mut options) = setup(Fixture {
+        for mode in ["receipt", "tamper", "padded"] {
+            let (_server, f, options) = setup(Fixture {
                 response_encoding: Some(encoding),
                 systemone_tamper: mode == "tamper",
-                systemone_body: (mode == "limit").then(|| format!("{{}}{}", " ".repeat(4096))),
+                systemone_body: (mode == "padded").then(|| {
+                    let fixture: Value = serde_json::from_str(include_str!(
+                        "../test-fixtures/systemone-responses.json"
+                    ))
+                    .unwrap();
+                    format!("{}{}", fixture["valid"][0], " ".repeat(4096))
+                }),
                 ..Default::default()
             })
             .await;
-            if mode == "limit" {
-                options.max_response_bytes = 2048;
-            }
             let client = InferenceClient::with_options(options).unwrap();
             let result = client.systemone_create(&systemone_request()).await;
-            if mode == "limit" {
-                assert_eq!(result.unwrap_err().code(), "api.invalid_input");
+            let receipt = client.verify_response(&result.unwrap().decision_id).await;
+            if mode == "tamper" {
+                assert_eq!(receipt.unwrap_err().code(), "signature.payload_mismatch");
             } else {
-                let receipt = client.verify_response(&result.unwrap().decision_id).await;
-                if mode == "tamper" {
-                    assert_eq!(receipt.unwrap_err().code(), "signature.payload_mismatch");
-                } else {
-                    receipt.unwrap();
-                }
+                receipt.unwrap();
             }
             assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
         }
@@ -1415,32 +1430,6 @@ async fn systemone_rejects_wire_tampering_and_wrong_signers() {
     }
 }
 
-#[tokio::test]
-async fn systemone_retained_receipts_follow_size_and_count_limits() {
-    let (_server, _, mut options) = setup(Fixture::default()).await;
-    options.max_cache_entries = 1;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    let first = client.systemone_create(&systemone_request()).await.unwrap();
-    let second = client.systemone_create(&systemone_request()).await.unwrap();
-    assert_eq!(
-        client
-            .verify_response(&first.decision_id)
-            .await
-            .unwrap_err()
-            .code(),
-        "api.completion_not_found"
-    );
-
-    client.verify_response(&second.decision_id).await.unwrap();
-
-    let (_server, _, mut options) = setup(Fixture::default()).await;
-    options.max_receipt_cache_bytes = 10;
-    let client = InferenceClient::with_options(options).unwrap();
-
-    assert!(client.systemone_create(&systemone_request()).await.is_err());
-}
-
 fn response_request_body(streaming: bool) -> Value {
     json!({
         "model": "vendor/model",
@@ -1465,8 +1454,9 @@ fn response_request_body(streaming: bool) -> Value {
 #[tokio::test]
 async fn responses_json_and_sse_retain_exact_gateway_receipts() {
     for streaming in [false, true] {
-        for oblivious in [false, true] {
+        for (ecdsa, oblivious) in [(false, false), (true, false), (false, true)] {
             let fixture = Fixture {
+                ecdsa,
                 ohttp: oblivious.then(|| {
                     ohttp::KeyConfig::new(
                         1,
@@ -1482,6 +1472,9 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
             };
             let (_server, f, mut options) = setup(fixture).await;
             options.ohttp = oblivious;
+            if ecdsa {
+                options.signing_algo = SigningAlgo::Ecdsa;
+            }
             let client = InferenceClient::with_options(options).unwrap();
             let body = response_request_body(streaming);
 
@@ -1679,10 +1672,255 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
         "api.invalid_input"
     );
 
-    let mut request = client
-        .response_request(response_request_body(false))
+    for path in ["/v1/responses/resp_fixture", "/v1/messages"] {
+        let mut request = client
+            .response_request(response_request_body(false))
+            .unwrap();
+        request.url_mut().set_path(path);
+        assert_eq!(
+            client.send(request).await.err().unwrap().code(),
+            "api.invalid_input"
+        );
+    }
+    assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
+    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
+}
+
+/* Messages support is deferred until a later release.
+
+fn message_request_body(streaming: bool) -> Value {
+    json!({
+        "model": "vendor/model", "max_tokens": 128, "stream": streaming,
+        "messages": [
+            {"role":"assistant", "content":[{"type":"tool_use", "id":"prior", "name":"weather", "input":{}}]},
+            {"role":"user", "content":[{"type":"tool_result", "tool_use_id":"prior", "content":"20"}]}
+        ]
+    })
+}
+
+#[tokio::test]
+async fn messages_json_and_sse_retain_exact_gateway_receipts() {
+    for streaming in [false, true] {
+        for (oblivious, ecdsa) in [(false, false), (false, true), (true, false)] {
+            let fixture = Fixture {
+                ecdsa,
+                ohttp: oblivious.then(|| {
+                    ohttp::KeyConfig::new(
+                        1,
+                        ohttp::hpke::Kem::X25519Sha256,
+                        vec![ohttp::SymmetricSuite::new(
+                            ohttp::hpke::Kdf::HkdfSha256,
+                            ohttp::hpke::Aead::Aes128Gcm,
+                        )],
+                    )
+                    .unwrap()
+                }),
+                ..Default::default()
+            };
+            let (_server, f, mut options) = setup(fixture).await;
+            options.ohttp = oblivious;
+            if ecdsa {
+                options.signing_algo = SigningAlgo::Ecdsa;
+            }
+            let client = InferenceClient::with_options(options).unwrap();
+            let body = message_request_body(streaming);
+
+            if streaming {
+                let response = client
+                    .send(client.message_request(body).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.bytes().await.unwrap(),
+                    include_bytes!("../test-fixtures/messages/message.sse")
+                );
+            } else {
+                let response = client.create_message(body).await.unwrap();
+                assert_eq!(response["id"], "msg_fixture");
+                assert_eq!(response["content"][1]["input"]["city"], "Beijing");
+            }
+
+            let receipt = client.verify_response("msg_fixture").await.unwrap();
+            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+            assert!(matches!(
+                receipt.attestation,
+                VerifiedCompletionAttestation::Gateway(_)
+            ));
+            assert_eq!(f.chat.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                client
+                    .verify_response("toolu_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn messages_reject_tampering_and_provider_receipts() {
+    for streaming in [false, true] {
+        for provider in [false, true] {
+            let (_server, _f, options) = setup(Fixture {
+                response_tamper: !provider,
+                response_provider_receipt: provider,
+                ..Default::default()
+            })
+            .await;
+            let client = InferenceClient::with_options(options).unwrap();
+
+            client
+                .send(
+                    client
+                        .message_request(message_request_body(streaming))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+
+            assert_eq!(
+                client
+                    .verify_response("msg_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                if provider {
+                    "signature.kind_mismatch"
+                } else {
+                    "signature.payload_mismatch"
+                }
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn messages_retry_receipts_without_repeating_inference() {
+    let (_server, f, options) = setup(Fixture {
+        retry_signature: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+
+    client
+        .create_message(message_request_body(false))
+        .await
         .unwrap();
-    request.url_mut().set_path("/v1/responses/resp_fixture");
+
+    assert_eq!(
+        client
+            .verify_response("msg_fixture")
+            .await
+            .unwrap_err()
+            .code(),
+        "api.http_status"
+    );
+    client.verify_response("msg_fixture").await.unwrap();
+
+    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
+    assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn messages_missing_ids_and_http_errors_are_not_receipts() {
+    for streaming in [false, true] {
+        let raw = if streaming {
+            b"data: {\"id\":\"item-only\",\"item\":{\"id\":\"msg_1\"}}\n\n".to_vec()
+        } else {
+            b"{\"output\":[]}".to_vec()
+        };
+        let (_server, _f, options) = setup(Fixture {
+            response_body: Some(raw),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+
+        let result = client
+            .send(
+                client
+                    .message_request(message_request_body(streaming))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.bytes().await.unwrap_err().code(),
+            "api.invalid_response"
+        );
+    }
+
+    let (_server, _f, options) = setup(Fixture {
+        response_status: Some(400),
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+
+    assert_eq!(
+        client
+            .create_message(message_request_body(false))
+            .await
+            .unwrap_err()
+            .code(),
+        "api.http_status"
+    );
+    assert_eq!(
+        client
+            .verify_response("msg_fixture")
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
+}
+
+#[tokio::test]
+async fn messages_unsupported_modes_are_rejected_before_preflight() {
+    let (_server, f, mut options) = setup(Fixture::default()).await;
+    options.e2ee = true;
+    let client = InferenceClient::with_options(options.clone()).unwrap();
+
+    assert_eq!(
+        client
+            .create_message(message_request_body(false))
+            .await
+            .unwrap_err()
+            .code(),
+        "api.invalid_input"
+    );
+
+    options.e2ee = false;
+    let direct = DirectInferenceClient::with_options(options.clone().into()).unwrap();
+    let client = InferenceClient::with_options(options).unwrap();
+
+    assert_eq!(
+        client
+            .create_message(message_request_body(true))
+            .await
+            .unwrap_err()
+            .code(),
+        "api.invalid_input"
+    );
+    assert_eq!(
+        direct
+            .send(client.message_request(message_request_body(false)).unwrap())
+            .await
+            .err()
+            .unwrap()
+            .code(),
+        "api.invalid_input"
+    );
+
+    let mut request = client.message_request(message_request_body(false)).unwrap();
+    request.url_mut().set_path("/v1/messages/resp_fixture");
 
     assert_eq!(
         client.send(request).await.err().unwrap().code(),
@@ -1691,3 +1929,135 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
     assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn messages_incomplete_or_failed_streams_have_no_receipt() {
+    for ending in [
+        "",
+        "event: message_stop\ndata: {\"type\":\"message_stop\"}",
+        "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"other\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+    ] {
+        let raw = format!("event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_fixture\"}}}}\n\n{ending}").into_bytes();
+        let (_server, f, options) = setup(Fixture { response_body: Some(raw), ..Default::default() }).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let response = client.send(client.message_request(message_request_body(true)).unwrap()).await.unwrap();
+        assert_eq!(response.bytes().await.unwrap_err().code(), "api.invalid_response");
+        assert_eq!(client.verify_response("msg_fixture").await.unwrap_err().code(), "api.completion_not_found");
+        assert_eq!(f.chat.load(Ordering::SeqCst), 1);
+        assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn messages_dropped_stream_has_no_receipt() {
+    let (_server, f, options) = setup(Fixture::default()).await;
+    let client = InferenceClient::with_options(options).unwrap();
+    let mut response = client
+        .send(client.message_request(message_request_body(true)).unwrap())
+        .await
+        .unwrap();
+    response.body.next().await.unwrap().unwrap();
+    drop(response);
+    assert_eq!(
+        client
+            .verify_response("msg_fixture")
+            .await
+            .unwrap_err()
+            .code(),
+        "api.completion_not_found"
+    );
+    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn messages_stream_contract() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../test-fixtures/messages/streams.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let raw = case["body"].as_str().unwrap().as_bytes().to_vec();
+        let (_server, fixture, options) = setup(Fixture {
+            response_body: Some(raw.clone()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let response = client
+            .send(client.message_request(message_request_body(true)).unwrap())
+            .await
+            .unwrap();
+        let body = response.bytes().await;
+        if case["valid"].as_bool().unwrap() {
+            assert_eq!(body.unwrap(), raw, "{}", case["name"]);
+            client.verify_response("msg_fixture").await.unwrap();
+        } else {
+            assert_eq!(
+                body.unwrap_err().code(),
+                "api.invalid_response",
+                "{}",
+                case["name"]
+            );
+            assert_eq!(
+                client
+                    .verify_response("msg_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found"
+            );
+            assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+        }
+        assert_eq!(fixture.chat.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn messages_duplicate_id_preserves_original_receipt() {
+    for streaming in [false, true] {
+        let (_server, fixture, options) = setup(Fixture::default()).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let request = client
+            .message_request(message_request_body(streaming))
+            .unwrap();
+
+        let response = client.send(request).await.unwrap();
+        response.bytes().await.unwrap();
+        let receipt = client.verify_response("msg_fixture").await.unwrap();
+        assert_eq!(receipt.id, "msg_fixture");
+
+        let duplicate = client
+            .message_request(message_request_body(streaming))
+            .unwrap();
+        let response = client.send(duplicate).await.unwrap();
+        let error = response.bytes().await.unwrap_err();
+        assert_eq!(error.code(), "api.duplicate_completion_id");
+        assert_eq!(
+            client.verify_response("msg_fixture").await.unwrap().id,
+            receipt.id
+        );
+        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.chat.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn messages_zero_response_ttl_disables_retention() {
+    for streaming in [false, true] {
+        let (_server, fixture, mut options) = setup(Fixture::default()).await;
+        options.response_cache_ttl = Duration::ZERO;
+        let client = InferenceClient::with_options(options).unwrap();
+
+        for _ in 0..2 {
+            let request = client
+                .message_request(message_request_body(streaming))
+                .unwrap();
+            let response = client.send(request).await.unwrap();
+            response.bytes().await.unwrap();
+
+            let error = client.verify_response("msg_fixture").await.unwrap_err();
+            assert_eq!(error.code(), "api.completion_not_found");
+        }
+        assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+    }
+}
+*/

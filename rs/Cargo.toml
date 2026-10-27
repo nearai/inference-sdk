@@ -1,6 +1,6 @@
 [package]
 name = "nearai-inference-sdk"
-version = "0.2.0-rc.1"
+version = "0.2.0"
 edition = "2021"
 description = "Rust SDK for NEAR AI inference with attestation verification and end-to-end encryption"
 license = "MIT"

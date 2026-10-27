@@ -110,7 +110,7 @@ publishing the same package concurrently.
 ## Registry setup
 
 Configure the `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` repository secrets
-for the live release checks. See [Live E2E configuration](e2e/README.md#configuration).
+for the live release checks. See [Live E2E configuration](e2e/README.md#ci-configuration).
 
 Create a GitHub Actions environment named `release`, restrict deployments to
 the default branch, and optionally add required reviewers. Add tag rulesets for

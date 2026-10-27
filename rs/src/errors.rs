@@ -54,6 +54,8 @@ impl std::fmt::Display for ApiResource {
 pub enum ApiError {
     #[error("completion not retained; consume the entire response before verification")]
     CompletionNotFound,
+    #[error("a response with this ID is already retained by this client")]
+    DuplicateCompletionId,
     #[error("invalid API input {field}: {reason}")]
     InvalidInput {
         field: String,
@@ -112,6 +114,7 @@ impl ApiError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::CompletionNotFound => "api.completion_not_found",
+            Self::DuplicateCompletionId => "api.duplicate_completion_id",
             Self::InvalidInput { .. } => "api.invalid_input",
             Self::Transport { .. } => "api.transport_failed",
             Self::HttpStatus { .. } => "api.http_status",

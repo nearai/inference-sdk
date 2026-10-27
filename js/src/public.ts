@@ -62,6 +62,7 @@ export type {
   InferenceChat,
   InferenceChatCompletions,
   InferenceResponses,
+  // InferenceMessages,
   InferenceClientOptions,
   VerifiedCompletionResult,
   AttestationVerificationResult,
@@ -139,6 +140,7 @@ export type {
 export {
   ApiError,
   isApiError,
+  getSdkError,
   isVerificationError,
   VerificationError,
 } from './utils/errors';

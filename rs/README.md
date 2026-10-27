@@ -86,9 +86,9 @@ verifies deployments; it does not verify a particular reply.
 Successful deployment verification is cached for 60 minutes by default. Set
 `attestation_cache_ttl: Duration::ZERO` (from `std::time`) to verify before every
 request. Response records have a separate 60-minute lifetime starting after full
-body consumption. Verify responses before their records expire or are evicted.
-See [cache lifetime and limits](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#cache-lifetime-and-limits)
-for entry and byte budgets.
+body consumption. Verify responses before their records expire.
+See [cache lifetime](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#cache-lifetime)
+for retention behavior.
 
 ## Verification and encryption
 
@@ -121,7 +121,7 @@ and [image build provenance](https://github.com/nearai/inference-sdk/blob/main/r
 Use `chat_completions()` for JSON or `chat_request()` and `send(reqwest::Request)`
 for streaming. Rust exposes its own reqwest transport API; it does not provide an
 adapter for a third-party OpenAI Rust crate. See the
-[runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust) for JSON and SSE workflows.
+[runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust-setup) for JSON and SSE workflows.
 Gateway clients also support [Responses](./docs/verification-guide.md#responses-api)
 through `create_response()` or `response_request()` and `send()`.
 
@@ -160,9 +160,10 @@ The recommended lifecycle has three stages:
 3. Fetch the completion signature and verify that response receipt against the
    corresponding preflight result.
 
-The Gateway may return zero or multiple model candidates. Reject an empty
-preflight, verify every returned candidate, and retain the verified results for
-response-receipt selection.
+For attested models, require a nonempty set of model reports and verify every
+returned candidate. Incognito models verify the Gateway and use Gateway receipts;
+they do not return model attestation. Retain the preflight evidence for receipt
+verification.
 
 The Gateway and model checks are both useful preflight controls. A completion
 signature's `CompletionSignatureKind` only selects the final response-receipt
@@ -187,7 +188,7 @@ the evidence currently proves.
   preflight, chat, and response-receipt stages.
 - [API reference](https://github.com/nearai/inference-sdk/blob/main/rs/docs/api-reference.md) lists the client, verification
   functions, return values, policies, and callback traits.
-- [Runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust) cover Gateway and direct
+- [Runnable Rust examples](https://github.com/nearai/inference-sdk/blob/main/examples/README.md#rust-setup) cover Gateway and direct
   clients, JSON/SSE, standalone verification, and image provenance.
 
 When using standalone verification, retain the exact bytes sent to and received

@@ -32,17 +32,12 @@ type ohttpTransport struct {
 	relay     *url.URL
 	base      http.RoundTripper
 	forwarded map[string]bool
-	maxBody   int64
 }
 
 // NewOHTTPTransport encapsulates same-origin requests using an authenticated
 // key configuration. Authorization and explicitly forwarded headers remain
 // visible to the relay. Body and encryption headers stay inside OHTTP.
 func NewOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, forwarded []string) (http.RoundTripper, error) {
-	return newOHTTPTransport(config, baseURL, base, forwarded, 64<<20)
-}
-
-func newOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, forwarded []string, maxBody int64) (http.RoundTripper, error) {
 	if len(config) < 41 || config[1] != 0 || config[2] != 32 {
 		return nil, failure("ohttp.key_config_invalid", nil)
 	}
@@ -78,7 +73,7 @@ func newOHTTPTransport(config []byte, baseURL string, base http.RoundTripper, fo
 	for _, n := range forwarded {
 		names[strings.ToLower(n)] = true
 	}
-	return &ohttpTransport{append([]byte{config[0]}, 0, 32, 0, 1, 0, 1), pub, u, base, names, maxBody}, nil
+	return &ohttpTransport{append([]byte{config[0]}, 0, 32, 0, 1, 0, 1), pub, u, base, names}, nil
 }
 
 func varint(v uint64) []byte {
@@ -184,7 +179,7 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	var body []byte
 	var e error
 	if req.Body != nil {
-		body, e = readBounded(req.Body, t.maxBody)
+		body, e = io.ReadAll(req.Body)
 		req.Body.Close()
 		if e != nil {
 			return nil, e
@@ -241,6 +236,8 @@ func (t *ohttpTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	outer.Header.Set("Content-Type", "message/ohttp-chunked-req")
 	outer.Header.Set("Incremental", "?1")
+	// Encapsulation must not make an inference request replayable.
+	outer.GetBody = nil
 	res, e := t.base.RoundTrip(outer)
 	if e != nil {
 		return nil, e

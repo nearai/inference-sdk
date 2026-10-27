@@ -1,45 +1,65 @@
 """System One decisions: verify captured bytes before using the answers."""
 
 import asyncio
+import json
 import os
 
-from nearai_inference_sdk import InferenceClient
+from nearai_inference_sdk import (
+    InferenceClient,
+    ModelAttestationPolicy,
+    ModelVerificationOptions,
+)
 
 
 async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
-    base_url = os.environ['NEARAI_BASE_URL']
-    model = os.environ['NEARAI_SYSTEMONE_MODEL']
-    expected_kind = os.environ.get('NEARAI_EXPECTED_SIGNATURE_KIND', 'gateway')
+    base_url = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
+    model = os.environ['NEARAI_MODEL']
+    expected_kind = os.environ.get('NEARAI_EXPECT_SIGNATURE_KIND', 'gateway')
     signing_algo = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
     if signing_algo not in ('ed25519', 'ecdsa'):
         raise ValueError('NEARAI_SIGNING_ALGO must be ed25519 or ecdsa')
     if expected_kind not in ('provider_tee', 'gateway'):
-        raise ValueError(
-            'NEARAI_EXPECTED_SIGNATURE_KIND must be provider_tee or gateway'
-        )
+        raise ValueError('NEARAI_EXPECT_SIGNATURE_KIND must be provider_tee or gateway')
     # System One supports neither field E2EE nor OHTTP. Both default to False.
-    async with InferenceClient(
-        api_key, base_url=base_url, signing_algo=signing_algo
-    ) as client:
+    async with (
+        asyncio.timeout(120),
+        InferenceClient(
+            api_key,
+            base_url=base_url,
+            signing_algo=signing_algo,
+            model_verification=ModelVerificationOptions(policy=ModelAttestationPolicy())
+            if expected_kind == 'provider_tee'
+            else None,
+        ) as client,
+    ):
         result = await client.systemone.create(
             {
                 'model': model,
-                'state': {'message': 'The user wants a concise explanation.'},
+                'state': {
+                    'message': 'I was charged twice for my subscription. Please help.'
+                },
                 'questions': {
-                    'brief': {
+                    'billing': {
                         'type': 'noul',
-                        'instructions': 'Should the answer be brief?',
+                        'instructions': 'Is this about billing?',
                     },
-                    'format': {
+                    'team': {
                         'type': 'choice',
-                        'instructions': 'Which format should the answer use?',
-                        'criteria': {'text': 'Use plain text', 'code': 'Use code'},
+                        'instructions': 'Which team should handle this?',
+                        'criteria': {
+                            'billing': 'Payments and subscriptions',
+                            'support': 'Technical issues',
+                        },
                     },
-                    'detail': {
+                    'urgency': {
                         'type': 'score',
-                        'instructions': 'How much detail should the answer include?',
-                        'criteria': ['brief', 'moderate', 'detailed'],
+                        'instructions': 'How urgent is this request?',
+                        'criteria': [
+                            'Routine',
+                            'Needs prompt attention',
+                            'Critical',
+                        ],
                     },
                 },
             }
@@ -49,8 +69,14 @@ async def main() -> None:
             raise RuntimeError(
                 f'Expected {expected_kind}, got {verified.signature_kind}'
             )
-        print(result.data['answers'])
-        print(f'Verified {result.decision_id}: {verified.signature_kind}')
+        print(f'Verified {verified.signature_kind} receipt {result.decision_id}.')
+        print(
+            json.dumps(
+                {'answers': result.data['answers'], 'usage': result.data['usage']},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
 
 if __name__ == '__main__':

@@ -101,8 +101,14 @@ test('routes mixed model selections by endpoint', (t) => {
     if (previous === undefined) delete process.env.NEARAI_E2E_MODELS;
     else process.env.NEARAI_E2E_MODELS = previous;
   });
-  process.env.NEARAI_E2E_MODELS = JSON.stringify([decision, chat]);
+  const response = {
+    id: 'openai/text',
+    provider: 'external',
+    endpoint: 'responses',
+  };
+  process.env.NEARAI_E2E_MODELS = JSON.stringify([decision, chat, response]);
 
   assert.deepEqual(selectedModels('chat'), [chat]);
   assert.deepEqual(selectedModels('systemone'), [decision]);
+  assert.deepEqual(selectedModels('responses'), [response]);
 });
