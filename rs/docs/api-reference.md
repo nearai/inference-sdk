@@ -7,8 +7,9 @@ This page lists the public Rust request and verification APIs exported by
 ## Integrated client
 
 `InferenceClient` is cheap to clone; clones share caches and in-flight verification.
-Construct it with `new(api_key: String)` or `with_options(InferenceClientOptions)`;
-both return `Result<InferenceClient, InferenceError>`.
+Construct it with `new(api_key: impl Into<Option<String>>)` or
+`with_options(InferenceClientOptions)`; both return `Result<InferenceClient, InferenceError>`.
+`new` accepts a `String`, `Some(String)`, or `None`.
 
 | Method | Result | Behavior |
 | --- | --- | --- |
