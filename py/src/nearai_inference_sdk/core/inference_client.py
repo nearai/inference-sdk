@@ -417,7 +417,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 'api.invalid_input',
                 {'field': 'headers', 'reason': 'invalid_header_value'},
             ) from None
-        # Use the same configured authorization for evidence, Chat, and signatures,
+        # Use the same configured authorization for Chat and signatures,
         # including when an external OpenAI client supplies its own API key.
         if 'authorization' in self._headers:
             headers['authorization'] = self._headers['authorization']

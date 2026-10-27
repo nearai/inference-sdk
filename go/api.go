@@ -132,6 +132,11 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 		return nil, "", e
 	}
 	req.Header = c.headers.Clone()
+	if path == "attestation/report" {
+		for _, name := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
+			req.Header.Del(name)
+		}
+	}
 	req.Header.Set(NoAliasingHeader, "true")
 	res, e := c.http.Do(req)
 	if e != nil {

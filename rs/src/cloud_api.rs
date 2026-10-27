@@ -25,12 +25,12 @@ pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 /// Client for retrieving attestation evidence and completion signatures from
 /// NEAR AI Cloud.
 ///
-/// The client owns its API key, base URL, and HTTP clients. Reuse one instance
-/// for related evidence requests instead of passing the API key to each call.
+/// The client owns its optional API key, base URL, and HTTP clients.
+/// Attestation requests omit Authorization, api-key, and x-api-key headers.
 #[derive(Clone)]
 pub struct AttestationClient {
     headers: HeaderMap,
-    api_key: String,
+    api_key: Option<String>,
     base_url: Url,
     client: Client,
     gateway_client: Client,
@@ -38,20 +38,23 @@ pub struct AttestationClient {
 
 impl AttestationClient {
     /// Create a client for the production Cloud API endpoint.
-    pub fn new(api_key: String) -> Self {
+    pub fn new(api_key: impl Into<Option<String>>) -> Self {
         let base_url = parse_base_url(DEFAULT_NEAR_AI_CLOUD_BASE_URL)
             .expect("the SDK's default Cloud API URL is valid");
-        Self::from_parts(api_key, base_url)
+        Self::from_parts(api_key.into(), base_url)
     }
 
     /// Create a client for an absolute Cloud API base URL, such as a staging
     /// endpoint. The base URL may include a path prefix such as `/v1`.
-    pub fn with_base_url(api_key: String, base_url: &str) -> Result<Self, ApiError> {
+    pub fn with_base_url(
+        api_key: impl Into<Option<String>>,
+        base_url: &str,
+    ) -> Result<Self, ApiError> {
         let base_url = parse_base_url(base_url)?;
-        Ok(Self::from_parts(api_key, base_url))
+        Ok(Self::from_parts(api_key.into(), base_url))
     }
 
-    fn from_parts(api_key: String, base_url: Url) -> Self {
+    fn from_parts(api_key: Option<String>, base_url: Url) -> Self {
         Self {
             api_key,
             base_url,
@@ -72,7 +75,7 @@ impl AttestationClient {
         }
     }
 
-    /// Use additional authentication or application headers on every evidence request.
+    /// Use additional headers; attestation requests omit authentication headers.
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.headers = headers;
         self
@@ -373,7 +376,7 @@ async fn get_cloud_api_response(
     extra_header: Option<(&str, &str)>,
     capture_peer_spki_fingerprint: bool,
 ) -> Result<CloudApiResponse, ApiError> {
-    let headers = build_cloud_api_headers(client, extra_header)?;
+    let headers = build_cloud_api_headers(client, resource, extra_header)?;
     let http_client = if capture_peer_spki_fingerprint {
         &client.gateway_client
     } else {
@@ -407,11 +410,19 @@ async fn get_cloud_api_response(
 
 fn build_cloud_api_headers(
     client: &AttestationClient,
+    resource: ApiResource,
     extra_header: Option<(&str, &str)>,
 ) -> Result<HeaderMap, ApiError> {
     let mut headers = client.headers.clone();
-    let authorization =
-        HeaderValue::from_str(&format!("Bearer {}", client.api_key)).map_err(|_| {
+    if matches!(
+        resource,
+        ApiResource::GatewayAttestation | ApiResource::ModelAttestation
+    ) {
+        for name in ["authorization", "api-key", "x-api-key"] {
+            headers.remove(name);
+        }
+    } else if let Some(api_key) = client.api_key.as_ref().filter(|key| !key.is_empty()) {
+        let authorization = HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|_| {
             invalid_api_input(
                 "api_key",
                 "invalid_header_value",
@@ -419,7 +430,6 @@ fn build_cloud_api_headers(
                 None,
             )
         })?;
-    if !client.api_key.is_empty() {
         headers.insert(AUTHORIZATION, authorization);
         headers.remove("api-key");
     }

@@ -100,7 +100,7 @@ type TestGateway = {
 type CreateTestGatewayParams = {
   readonly expectedRequestHeader?: {
     readonly name: string;
-    readonly value: string;
+    readonly value: string | null;
   };
   readonly includeModelPublicKey?: boolean;
   readonly providerType?: string;
@@ -302,6 +302,18 @@ function createTestGateway({
   }
 
   function expectRequestHeader(request: Request): void {
+    if (new URL(request.url).pathname === '/v1/attestation/report') {
+      for (const name of ['authorization', 'api-key', 'x-api-key']) {
+        expect(request.headers.has(name)).toBe(false);
+      }
+      if (
+        ['authorization', 'api-key', 'x-api-key'].includes(
+          expectedRequestHeader.name,
+        )
+      ) {
+        return;
+      }
+    }
     expect(request.headers.get(expectedRequestHeader.name)).toBe(
       expectedRequestHeader.value,
     );
@@ -1298,37 +1310,42 @@ describe('inference client', () => {
     ).resolves.toMatchObject({ id: completion.id });
   });
 
-  test('accepts an API key for a direct Gateway connection', async () => {
-    const gateway = createTestGateway({
-      expectedRequestHeader: {
-        name: 'authorization',
-        value: `Bearer ${directApiKey}`,
-      },
-    });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new InferenceClient({
-      apiKey: directApiKey,
-      baseUrl,
-      gatewayVerification: {
-        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
-      },
-      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
-    });
+  test.each([undefined, directApiKey])(
+    'supports optional Gateway API key %s',
+    async (apiKey) => {
+      const gateway = createTestGateway({
+        expectedRequestHeader: {
+          name: 'authorization',
+          value: apiKey === undefined ? null : `Bearer ${apiKey}`,
+        },
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const client = new InferenceClient({
+        apiKey,
+        baseUrl,
+        gatewayVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+        modelVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+      });
 
-    await client.fetch(
-      `${baseUrl}chat/completions`,
-      chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
-    );
+      await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+      );
 
-    expect(gateway.state).toMatchObject({
-      gatewayAttestationRequests: 1,
-      modelAttestationRequests: 1,
-      completionRequests: 1,
-    });
-    expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
-      false,
-    ]);
-  });
+      expect(gateway.state).toMatchObject({
+        gatewayAttestationRequests: 1,
+        modelAttestationRequests: 1,
+        completionRequests: 1,
+      });
+      expect(gateway.state.gatewayAttestationIncludeSpkiFingerprints).toEqual([
+        false,
+      ]);
+    },
+  );
 
   test.each([true, false])(
     'preverifies without Chat and reuses evidence for 60 minutes (TEE: %s)',

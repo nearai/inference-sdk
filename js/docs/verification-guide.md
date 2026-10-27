@@ -209,7 +209,8 @@ official `create` overloads. An external `@anthropic-ai/sdk` client can use
 `fetch: client.fetch` and `maxRetries: 0`. Set its `baseURL` to
 `https://cloud-api.near.ai` (Anthropic appends `/v1/messages`); configure the
 inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport uses
-the inference client's configured authentication for both inference and evidence.
+the inference client's configured authentication for inference and signatures;
+attestation requests omit authentication headers.
 See the [native example](../../examples/example-js/gateway/messages.ts) and
 [official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
 for JSON and streaming calls with receipt verification.
@@ -571,8 +572,9 @@ render(completion.choices[0]?.message.content);
 Streaming uses the same ID-based verification as the built-in client.
 
 Configure authentication on the inference client. Its `apiKey` or
-`headers.Authorization` supplies bearer authorization for evidence, Chat, and
-signature requests. Without either, no Authorization header is sent, including
+`headers.Authorization` supplies bearer authorization for metadata, Chat, and
+signature requests. Attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`. Without configured bearer authentication, no Authorization header is sent, including
 when an external OpenAI client adds one. OpenAI's required `apiKey` can therefore
 be a placeholder when a proxy uses custom headers. Other per-request headers can
 override their configured defaults.

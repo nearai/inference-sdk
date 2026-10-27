@@ -349,7 +349,9 @@ describe('DirectInferenceClient', () => {
       ]);
       for (const request of endpoint.requests) {
         expect(request.headers.get('authorization')).toBe(
-          'Bearer direct-test-key',
+          new URL(request.url).pathname === '/v1/attestation/report'
+            ? null
+            : 'Bearer direct-test-key',
         );
         expect(request.headers.get('x-proxy-token')).toBe('proxy-test-token');
       }

@@ -65,10 +65,12 @@ export type GatewayAttestationHttpResponse = {
 type CreateCloudApiRequestParams = {
   readonly url: URL;
   readonly extraHeaders?: HeadersInit;
+  readonly authenticate?: boolean;
 };
 type MergeCloudApiRequestHeadersParams = {
   readonly configuration: CloudApiRequestConfiguration;
   readonly requestHeaders?: HeadersInit;
+  readonly authenticate?: boolean;
 };
 type ReadCloudApiJsonParams = {
   readonly response: Response;
@@ -104,6 +106,7 @@ export function createCloudApiRequestConfiguration(
 export function mergeCloudApiRequestHeaders({
   configuration,
   requestHeaders,
+  authenticate = true,
 }: MergeCloudApiRequestHeadersParams): Headers {
   const headers = new Headers(configuration.defaultHeaders);
   try {
@@ -114,6 +117,12 @@ export function mergeCloudApiRequestHeaders({
     }
   } catch (cause) {
     throw invalidHeaderInput('headers', cause);
+  }
+  if (!authenticate) {
+    for (const name of ['authorization', 'api-key', 'x-api-key']) {
+      headers.delete(name);
+    }
+    return headers;
   }
   try {
     const authorization =
@@ -143,7 +152,7 @@ export class CloudApiClient {
   private readonly baseUrl: string;
   private readonly requestConfiguration: CloudApiRequestConfiguration;
 
-  constructor(options: AttestationClientOptions) {
+  constructor(options: AttestationClientOptions = {}) {
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.baseUrl = resolveCloudApiBaseUrl(options.baseUrl);
   }
@@ -309,7 +318,11 @@ export class CloudApiClient {
     resource,
     extraHeaders = {},
   }: GetCloudApiJsonParams): Promise<unknown> {
-    const request = this.createCloudApiRequest({ url, extraHeaders });
+    const request = this.createCloudApiRequest({
+      url,
+      extraHeaders,
+      authenticate: resource !== 'model_attestation',
+    });
     let response: Response;
     try {
       response = await this.requestCloudApi(request);
@@ -334,7 +347,7 @@ export class CloudApiClient {
     url,
     capturePeerSpkiFingerprint,
   }: GetGatewayAttestationJsonParams): Promise<GatewayAttestationJson> {
-    const request = this.createCloudApiRequest({ url });
+    const request = this.createCloudApiRequest({ url, authenticate: false });
     let result: GatewayAttestationHttpResponse;
     try {
       result = await this.requestGatewayAttestation(
@@ -364,10 +377,12 @@ export class CloudApiClient {
   private createCloudApiRequest({
     url,
     extraHeaders = {},
+    authenticate = true,
   }: CreateCloudApiRequestParams): Request {
     const headers = mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
       requestHeaders: extraHeaders,
+      authenticate,
     });
     return new Request(url, { headers });
   }

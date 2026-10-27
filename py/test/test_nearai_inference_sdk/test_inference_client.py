@@ -73,6 +73,7 @@ class Gateway:
         self.signature_requests = 0
         self.plaintexts: list[str] = []
         self.headers: list[httpx.Headers] = []
+        self.attestation_headers: list[httpx.Headers] = []
         self.pins: list[str | None] = []
         self.peer_spki_fingerprint: str | None = TLS_FINGERPRINT
         self.quotes = {}
@@ -135,7 +136,14 @@ class Gateway:
         }
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
-        self.headers.append(request.headers)
+        if request.url.path == '/v1/attestation/report':
+            self.attestation_headers.append(request.headers)
+            assert all(
+                name not in request.headers
+                for name in ('authorization', 'api-key', 'x-api-key')
+            )
+        else:
+            self.headers.append(request.headers)
         if request.url.path.startswith('/v1/model/'):
             return httpx.Response(200, json={'metadata': self.metadata})
         if request.url.path == '/v1/attestation/report':
@@ -756,7 +764,7 @@ async def test_every_returned_model_report_must_pass_preflight(monkeypatch):
     assert gateway.completion_requests == []
 
 
-async def test_configured_authentication_is_shared_with_evidence_and_chat(
+async def test_configured_authentication_is_omitted_from_attestation(
     monkeypatch,
     gateway,
 ):
@@ -776,6 +784,10 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
         headers['authorization'] == 'Bearer test-key' for headers in gateway.headers
     )
     assert all(headers['x-aggregator'] == 'app' for headers in gateway.headers)
+    assert len(gateway.attestation_headers) == 2
+    assert all(
+        headers['x-aggregator'] == 'app' for headers in gateway.attestation_headers
+    )
     assert all('api-key' not in headers for headers in gateway.headers)
     assert gateway.completion_requests[0].headers['x-tenant'] == 'alice'
 
@@ -801,6 +813,7 @@ async def test_external_openai_uses_configured_header_only_authentication(
 
     assert all(headers['x-api-key'] == 'aggregator-key' for headers in gateway.headers)
     assert all('authorization' not in headers for headers in gateway.headers)
+    assert len(gateway.attestation_headers) == 2
 
 
 @pytest.mark.parametrize('e2ee', [False, True])

@@ -48,7 +48,7 @@ pub struct DirectAttestationClient {
 impl DirectAttestationClient {
     pub fn new(base_url: &str, api_key: Option<String>) -> Result<Self, ApiError> {
         Ok(Self {
-            api: AttestationClient::with_base_url(api_key.unwrap_or_default(), base_url)?,
+            api: AttestationClient::with_base_url(api_key, base_url)?,
         })
     }
     pub fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {

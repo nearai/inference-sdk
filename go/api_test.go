@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -131,5 +132,65 @@ func TestReadBoundedMaximumLimit(t *testing.T) {
 	body, err := readBounded(strings.NewReader("completion"), math.MaxInt64)
 	if err != nil || string(body) != "completion" {
 		t.Fatalf("maximum limit discarded body: %q, %v", body, err)
+	}
+}
+
+func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
+	for _, direct := range []bool{false, true} {
+		for _, apiKey := range []string{"", "test"} {
+			for _, customHeaders := range []bool{false, true} {
+				t.Run(fmt.Sprintf("direct=%t/key=%s/headers=%t", direct, apiKey, customHeaders), func(t *testing.T) {
+					fixture := newFakeCloud(t)
+					fixture.direct = direct
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if customHeaders && r.Header.Get("X-Tenant") != "tenant" {
+							t.Error("custom header missing")
+						}
+						if r.URL.Path == "/v1/attestation/report" {
+							fixture.ServeHTTP(w, r)
+							return
+						}
+						want := ""
+						if apiKey != "" {
+							want = "Bearer test"
+						} else if customHeaders {
+							want = "Bearer custom"
+						}
+						if r.Header.Get("Authorization") != want {
+							t.Errorf("signature authorization = %q, want %q", r.Header.Get("Authorization"), want)
+						}
+						json.NewEncoder(w).Encode(map[string]string{
+							"text": "request:response", "signature": "aa", "signature_kind": "provider_tee",
+							"signing_algo": "ed25519", "signing_address": strings.Repeat("22", 32),
+						})
+					}))
+					defer server.Close()
+					options := ClientOptions{BaseURL: server.URL + "/v1", APIKey: apiKey}
+					if customHeaders {
+						options.Headers = http.Header{"Authorization": {"Bearer custom"}, "Api-Key": {"api-key"}, "X-Api-Key": {"x-api-key"}, "X-Tenant": {"tenant"}}
+					}
+					constructor := NewAttestationClient
+					if direct {
+						constructor = NewDirectAttestationClient
+					}
+					client, err := constructor(options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					ctx := context.Background()
+					if !direct {
+						if _, err = client.FetchGatewayAttestation(ctx, FetchOptions{DisableTLSBinding: true}); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if _, err = client.FetchModelAttestations(ctx, "canonical/model", FetchOptions{}); err != nil {
+						t.Fatal(err)
+					}
+					if _, err = client.FetchCompletionSignature(ctx, "test", Ed25519); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+		}
 	}
 }

@@ -125,7 +125,11 @@ impl Fixture {
 }
 impl Respond for Fixture {
     fn respond(&self, r: &Request) -> ResponseTemplate {
-        if self.header_auth {
+        if r.url.path() == "/v1/attestation/report" {
+            for name in ["authorization", "api-key", "x-api-key"] {
+                assert!(r.headers.get(name).is_none(), "attestation sent {name}");
+            }
+        } else if self.header_auth {
             assert_eq!(r.headers.get("api-key").unwrap(), "fixture");
             assert!(r.headers.get("authorization").is_none());
         } else {

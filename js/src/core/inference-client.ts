@@ -993,7 +993,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 export class InferenceClient extends InferenceClientBase {
   private readonly attestationClient: AttestationClient;
 
-  constructor(options: InferenceClientOptions) {
+  constructor(options: InferenceClientOptions = {}) {
     super(options);
     this.attestationClient = new AttestationClient(options);
   }

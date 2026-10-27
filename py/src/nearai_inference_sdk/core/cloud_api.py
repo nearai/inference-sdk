@@ -131,7 +131,10 @@ class _ApiClient:
         headers = dict(self._headers)
         if extra_headers is not None:
             headers.update(extra_headers)
-        if self._api_key is not None:
+        if resource in {'gateway_attestation', 'model_attestation'}:
+            for name in ('authorization', 'api-key', 'x-api-key'):
+                headers.pop(name, None)
+        elif self._api_key is not None:
             headers['authorization'] = _authorization_header(self._api_key)
         try:
             response = await self._fetch(

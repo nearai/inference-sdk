@@ -15,28 +15,18 @@ import type {
   VerifiedModelAttestation,
 } from './verification';
 
-type AttestationClientBaseOptions = {
-  readonly baseUrl?: string;
-};
-
 /**
- * Request authentication used by attestation and signature requests. `apiKey`
- * is the convenience form for a direct Gateway connection. `headers` supports
- * an aggregator or another compatible endpoint with its own authentication.
+ * Optional authentication for metadata, signature, and inference requests.
+ * Attestation requests omit Authorization, api-key, and x-api-key headers.
  * Only a configured `apiKey` or Authorization header supplies bearer authorization.
  * Request-specific Authorization is ignored. Other headers can be overridden per request.
  */
-export type AttestationClientOptions =
-  | (AttestationClientBaseOptions & {
-      readonly apiKey: string;
-      /** Sent with every SDK request. `apiKey` overrides its Authorization value. */
-      readonly headers?: HeadersInit;
-    })
-  | (AttestationClientBaseOptions & {
-      readonly apiKey?: never;
-      /** Sent with every SDK request. Required when no direct Gateway API key is used. */
-      readonly headers: HeadersInit;
-    });
+export type AttestationClientOptions = {
+  readonly baseUrl?: string;
+  readonly apiKey?: string;
+  /** Additional request headers, subject to the authentication rules above. */
+  readonly headers?: HeadersInit;
+};
 
 /** Catalog metadata used to select model or Gateway-only verification. */
 export type ModelMetadata = v.InferOutput<

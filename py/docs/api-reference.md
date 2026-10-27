@@ -75,7 +75,7 @@ semantics, streaming, and supported privacy options.
 | --- | --- | --- | --- |
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
 | `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator HTTP(S) base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
+| `headers` | `Mapping[str, str] \| None` | `None` | Static request headers. Attestation omits `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an explicit `api_key` overrides Authorization. Per-request or external OpenAI authorization does not override this configuration. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat and Responses requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
@@ -348,9 +348,13 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `api_key` | `str \| None` | No | `None` | Bearer token for signature and evidence requests. |
+| `api_key` | `str \| None` | No | `None` | Bearer token for metadata and signature requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
+
+Use `AttestationClient()` to fetch attestation without credentials. Gateway and
+direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
+including values supplied in `headers`. Other custom headers are preserved.
 
 `AttestationClient` construction and methods, plus
 `find_model_attestation_for_signature`, raise `ApiError` for invalid helper

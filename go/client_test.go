@@ -59,7 +59,13 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.expectedHost != "" && r.Host != f.expectedHost {
 		f.t.Errorf("unexpected authority %q", r.Host)
 	}
-	if r.Header.Get("Authorization") != "Bearer test" {
+	if strings.HasSuffix(r.URL.Path, "/attestation/report") {
+		for _, name := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
+			if r.Header.Get(name) != "" {
+				f.t.Errorf("attestation sent %s", name)
+			}
+		}
+	} else if r.Header.Get("Authorization") != "Bearer test" {
 		http.Error(w, "bad auth", 401)
 		return
 	}

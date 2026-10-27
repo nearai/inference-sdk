@@ -9,7 +9,7 @@ export class NodeInferenceClient extends InferenceClientBase {
   private readonly attestationClient: AttestationClient;
   private readonly includeSpkiFingerprint: boolean;
 
-  constructor(options: NodeInferenceClientOptions) {
+  constructor(options: NodeInferenceClientOptions = {}) {
     super(options);
     this.attestationClient = new AttestationClient(options);
     this.includeSpkiFingerprint =

@@ -8,7 +8,8 @@ standalone verification functions.
 ## Integrated Chat client
 
 The [README example](../README.md#send-and-verify-a-chat-completion) sends encrypted Chat and verifies
-its response. `InferenceClient::new(api_key)` uses defaults; `with_options` accepts
+its response. `InferenceClient::new(api_key)` accepts a `String`, `Some(String)`,
+or `None` and uses defaults; `with_options` accepts
 `InferenceClientOptions` for a custom base URL, headers, encryption, policies,
 and cache settings. `send` accepts Chat Completions and Gateway
 [Responses creation](#responses-api).

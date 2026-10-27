@@ -35,7 +35,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default |
 | --- | --- |
-| `api_key` / `headers` | No API key / empty headers; an API key overrides configured Authorization and removes `api-key`. |
+| `api_key` / `headers` | No API key / empty headers. Attestation omits `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
 | `base_url` | `https://cloud-api.near.ai/v1` |
 | `signing_algo` | `Ed25519` |
 | `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
@@ -128,15 +128,20 @@ tracks a complete provider-signature and Gateway-receipt chain.
 
 ## Gateway client
 
-`AttestationClient` owns the API key, Gateway base URL, and its internal
+`AttestationClient` owns the optional API key, Gateway base URL, and its internal
 reqwest clients. Create it once and reuse it for all signature and evidence
 requests in a flow. The client only fetches evidence; it does not send
 inference requests or retain completion bytes.
 
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
-| `AttestationClient::new` | `api_key: String` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. |
-| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+| `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
+| `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+
+Use `AttestationClient::new(None)` to fetch attestation without credentials.
+Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`, including values supplied through `with_headers`. Other custom
+headers are preserved. Metadata and signature requests use configured authentication.
 
 All client methods below are asynchronous and return `Result<_, ApiError>`.
 
