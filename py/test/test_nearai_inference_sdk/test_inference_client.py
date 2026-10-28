@@ -77,6 +77,7 @@ class Gateway:
         self.signature_requests = 0
         self.plaintexts: list[str] = []
         self.headers: list[httpx.Headers] = []
+        self.attestation_headers: list[httpx.Headers] = []
         self.pins: list[str | None] = []
         self.peer_spki_fingerprint: str | None = TLS_FINGERPRINT
         self.quotes = {}
@@ -139,7 +140,17 @@ class Gateway:
         }
 
     async def handle(self, request: httpx.Request) -> httpx.Response:
-        self.headers.append(request.headers)
+        if (
+            request.url.path == '/v1/attestation/report'
+            and 'model' not in request.url.params
+        ):
+            self.attestation_headers.append(request.headers)
+            assert all(
+                name not in request.headers
+                for name in ('authorization', 'api-key', 'x-api-key')
+            )
+        else:
+            self.headers.append(request.headers)
         if request.url.path.startswith('/v1/model/'):
             return httpx.Response(200, json={'metadata': self.metadata})
         if request.url.path == '/v1/attestation/report':
@@ -657,13 +668,15 @@ async def test_verify_rejects_an_empty_model_without_fetching_evidence(monkeypat
     assert gateway.gateway_requests == 0
 
 
-async def test_model_verification_overlaps_gateway_but_chat_waits_for_both(monkeypatch):
+async def test_model_requests_wait_for_gateway_verification(monkeypatch):
     gateway = Gateway()
     gateway.install(monkeypatch)
     release_gateway = asyncio.Event()
+    gateway_started = asyncio.Event()
     model_verified = asyncio.Event()
 
     async def verify_gateway_quote(quote):
+        gateway_started.set()
         await release_gateway.wait()
         return gateway.quotes[quote]
 
@@ -683,7 +696,7 @@ async def test_model_verification_overlaps_gateway_but_chat_waits_for_both(monke
     ) as client:
         preflight = asyncio.create_task(client.verify(MODEL))
         async with asyncio.timeout(1):
-            await model_verified.wait()
+            await gateway_started.wait()
         chat = asyncio.create_task(
             client.chat.completions.create(model=MODEL, messages=MESSAGES)
         )
@@ -691,10 +704,13 @@ async def test_model_verification_overlaps_gateway_but_chat_waits_for_both(monke
         assert not preflight.done()
         assert not chat.done()
         assert gateway.completion_requests == []
-        assert gateway.pins == [TLS_FINGERPRINT]
+        assert gateway.pins == []
+        assert gateway.headers == []
+        assert gateway.model_requests == []
 
         release_gateway.set()
         await preflight
+        assert model_verified.is_set()
         completion = await chat
         await client.verify_response(completion.id)
 
@@ -726,8 +742,9 @@ async def test_unverified_tls_peer_never_allows_chat(monkeypatch, peer_fingerpri
             if peer_fingerprint is None
             else 'binding.spki_fingerprint_mismatch'
         )
-    # Pinning uses the observed peer, never the report's unauthenticated claim.
-    assert gateway.pins == ([] if peer_fingerprint is None else [peer_fingerprint])
+    # A rejected peer is never used for authenticated evidence requests.
+    assert gateway.pins == []
+    assert gateway.headers == []
     assert gateway.completion_requests == []
 
 
@@ -840,7 +857,36 @@ async def test_every_returned_model_report_must_pass_preflight(monkeypatch):
     assert gateway.completion_requests == []
 
 
-async def test_configured_authentication_is_shared_with_evidence_and_chat(
+@pytest.mark.parametrize('reject_gateway', [False, True])
+async def test_gateway_verification_precedes_authenticated_requests(
+    monkeypatch, gateway, reject_gateway
+):
+    gateway.install(monkeypatch)
+
+    async def verify_quote(quote):
+        await asyncio.sleep(0)
+        assert gateway.headers == []
+        assert gateway.model_requests == []
+        return replace(gateway.quotes[quote], debug_enabled=reject_gateway)
+
+    async with gateway.client(
+        gateway_verification=GatewayVerificationOptions(
+            include_spki_fingerprint=False,
+            verifiers=AttestationVerifiers(tdx_quote=verify_quote),
+        )
+    ) as client:
+        if reject_gateway:
+            with pytest.raises(VerificationError) as raised:
+                await client.verify(MODEL)
+            assert raised.value.failure.code == 'policy.debug_enabled'
+            assert gateway.headers == []
+        else:
+            await client.verify(MODEL)
+            assert gateway.model_requests == [MODEL]
+            assert all(h['authorization'] == 'Bearer test-key' for h in gateway.headers)
+
+
+async def test_configured_authentication_is_omitted_only_from_gateway_attestation(
     monkeypatch,
     gateway,
 ):
@@ -860,6 +906,10 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
         headers['authorization'] == 'Bearer test-key' for headers in gateway.headers
     )
     assert all(headers['x-aggregator'] == 'app' for headers in gateway.headers)
+    assert len(gateway.attestation_headers) == 1
+    assert all(
+        headers['x-aggregator'] == 'app' for headers in gateway.attestation_headers
+    )
     assert all('api-key' not in headers for headers in gateway.headers)
     assert gateway.completion_requests[0].headers['x-tenant'] == 'alice'
 
@@ -885,6 +935,7 @@ async def test_external_openai_uses_configured_header_only_authentication(
 
     assert all(headers['x-api-key'] == 'aggregator-key' for headers in gateway.headers)
     assert all('authorization' not in headers for headers in gateway.headers)
+    assert len(gateway.attestation_headers) == 1
 
 
 @pytest.mark.parametrize('e2ee', [False, True])

@@ -44,7 +44,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default and behavior |
 | --- | --- |
-| `ClientOptions.APIKey` | Explicit application credential; the library does not read environment variables. |
+| `ClientOptions.APIKey` | Optional application credential; the empty string omits it. The library does not read environment variables. |
 | `ClientOptions.BaseURL` | `DefaultBaseURL` (`https://cloud-api.near.ai/v1`) for Gateway; required for direct. |
 | `ClientOptions.Headers` | Additional request headers. |
 | `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
@@ -55,6 +55,17 @@ semantics, streaming, and supported privacy options.
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
+
+Use `NewAttestationClient(ClientOptions{})` to fetch attestation without credentials.
+Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`, including values supplied in `Headers`. Other custom headers are
+preserved. Metadata, inference, and signature requests use configured authentication.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
@@ -72,9 +83,23 @@ required deployments and sends one nonstreaming request. `DecisionID` comes from
 
 Requests accept `SystemOneRequest` or another JSON-serializable value. Each
 question requires `Instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
-Structured legend numbers use `json.Number`, while score and probability fields
-use `float64`.
+support `noul`, `choice`, `score`, and `box`; `Extra` preserves unknown fields.
+A Box question requires only `Instructions`. Its answer exposes
+`Box *SystemOneBoxCoordinates` with finite `Top`, `Bottom`, `Left`, and `Right`
+values, plus optional `Confidence *float64`; missing or null confidence becomes `nil`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.Assets` accepts a map of `SystemOneImageAsset` values.
+Structured legend numbers use `json.Number`, while scores, probabilities,
+and Box coordinates/confidence use finite `float64` values.
+
+See the [native image example](../../examples/example-go/gateway/systemone/main.go) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.

@@ -64,7 +64,9 @@ class DirectAttestationClient(_ApiClient):
         if signing_address is not None:
             query['signing_address'] = signing_address
         response = await self._get_json(
-            _endpoint(self._base_url, 'attestation/report', query), 'model_attestation'
+            _endpoint(self._base_url, 'attestation/report', query),
+            'model_attestation',
+            authenticate=False,
         )
         try:
             raw = DirectAttestationReportSchema.model_validate(response.json)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -48,6 +49,24 @@ func run() error {
 		"team":    {Type: "choice", Instructions: "Which team should handle this?", Criteria: map[string]string{"billing": "Payments and subscriptions", "support": "Technical issues"}},
 		"urgency": {Type: "score", Instructions: "How urgent is this request?", Criteria: []string{"Routine", "Needs prompt attention", "Critical"}},
 	}}
+	if imagePath := os.Getenv("NEARAI_IMAGE_PATH"); imagePath != "" {
+		image, err := os.ReadFile(imagePath)
+		if err != nil {
+			return err
+		}
+		request = nearai.SystemOneRequest{
+			Model: c.Model,
+			State: map[string]any{
+				"photo": map[string]any{
+					"type":      "image_url",
+					"image_url": map[string]string{"url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(image)},
+				},
+			},
+			Questions: map[string]nearai.SystemOneQuestion{
+				"region": {Type: "box", Instructions: "the main object in `photo`"},
+			},
+		}
+	}
 	result, err := client.CreateSystemOne(ctx, request)
 	if err != nil {
 		return err

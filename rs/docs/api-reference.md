@@ -7,8 +7,9 @@ This page lists the public Rust request and verification APIs exported by
 ## Integrated client
 
 `InferenceClient` is cheap to clone; clones share caches and in-flight verification.
-Construct it with `new(api_key: String)` or `with_options(InferenceClientOptions)`;
-both return `Result<InferenceClient, InferenceError>`.
+Construct it with `new(api_key: impl Into<Option<String>>)` or
+`with_options(InferenceClientOptions)`; both return `Result<InferenceClient, InferenceError>`.
+`new` accepts a `String`, `Some(String)`, or `None`.
 
 | Method | Result | Behavior |
 | --- | --- | --- |
@@ -49,7 +50,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default |
 | --- | --- |
-| `api_key` / `headers` | No API key / empty headers; an API key overrides configured Authorization and removes `api-key`. |
+| `api_key` / `headers` | No API key / empty headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
 | `base_url` | `https://cloud-api.near.ai/v1` |
 | `signing_algo` | `Ed25519` |
 | `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
@@ -78,9 +79,24 @@ from `X-Generation-Id`. Verify the receipt before using `data`.
 
 Requests accept `SystemOneRequest` or another serializable JSON value. Each
 question requires `instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`, preserving unknown fields. Structured
-content preserves arbitrary-precision JSON numbers; scores and probabilities
-use finite `f64` values.
+support `noul`, `choice`, `score`, and `box`, preserving unknown fields. A Box
+question requires only `instructions`. `SystemOneAnswer::Box` exposes `bounds`
+(the JSON `box` field) as `SystemOneBoxCoordinates` with finite `top`, `bottom`,
+`left`, and `right` values, plus `confidence: Option<f64>`; missing or null
+confidence becomes `None`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.assets` accepts an optional map of `SystemOneImageAsset` values.
+Structured content preserves arbitrary-precision JSON numbers; scores,
+probabilities, and Box coordinates/confidence use finite `f64` values.
+
+See the [native image example](../../examples/example-rs/src/bin/systemone.rs) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.
@@ -142,15 +158,26 @@ tracks a complete provider-signature and Gateway-receipt chain.
 
 ## Gateway client
 
-`AttestationClient` owns the API key, Gateway base URL, and its internal
+`AttestationClient` owns the optional API key, Gateway base URL, and its internal
 reqwest clients. Create it once and reuse it for all signature and evidence
 requests in a flow. The client only fetches evidence; it does not send
 inference requests or retain completion bytes.
 
 | Constructor | Parameters | Result | Description |
 | --- | --- | --- | --- |
-| `AttestationClient::new` | `api_key: String` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. |
-| `AttestationClient::with_base_url` | `api_key: String`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+| `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
+| `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+
+Use `AttestationClient::new(None)` to fetch attestation without credentials.
+Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`, including values supplied through `with_headers`. Other custom
+headers are preserved. Metadata and signature requests use configured authentication.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 All client methods below are asynchronous and return `Result<_, ApiError>`.
 

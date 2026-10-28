@@ -190,9 +190,9 @@ pub struct InferenceClient {
     inner: Arc<Inner>,
 }
 impl InferenceClient {
-    pub fn new(api_key: String) -> Result<Self, InferenceError> {
+    pub fn new(api_key: impl Into<Option<String>>) -> Result<Self, InferenceError> {
         Self::with_options(InferenceClientOptions {
-            api_key: Some(api_key),
+            api_key: api_key.into(),
             ..Default::default()
         })
     }
@@ -865,11 +865,8 @@ async fn create_session(
     model: &str,
     options: InferenceClientOptions,
 ) -> Result<Arc<Session>, InferenceError> {
-    let api = AttestationClient::with_base_url(
-        options.api_key.clone().unwrap_or_default(),
-        &options.base_url,
-    )?
-    .with_headers(options.headers.clone());
+    let api = AttestationClient::with_base_url(options.api_key.clone(), &options.base_url)?
+        .with_headers(options.headers.clone());
     let fetched = api
         .fetch_gateway_attestation(GatewayAttestationFetchOptions {
             signing_algo: Some(options.signing_algo),
@@ -975,7 +972,9 @@ async fn create_session(
         .await?;
         Ok::<_, InferenceError>(results)
     };
-    let ((gateway, ohttp), models) = futures_util::try_join!(gateway, models)?;
+    // Authenticate the Gateway before sending configured credentials to it.
+    let (gateway, ohttp) = gateway.await?;
+    let models = models.await?;
     let selected = models
         .iter()
         .find(|m| {

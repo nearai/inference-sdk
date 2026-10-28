@@ -127,11 +127,15 @@ class _ApiClient:
         *,
         capture_peer_spki: bool = False,
         extra_headers: Mapping[str, str] | None = None,
+        authenticate: bool = True,
     ) -> _CloudApiJsonResponse:
         headers = dict(self._headers)
         if extra_headers is not None:
             headers.update(extra_headers)
-        if self._api_key is not None:
+        if not authenticate:
+            for name in ('authorization', 'api-key', 'x-api-key'):
+                headers.pop(name, None)
+        elif self._api_key is not None:
             headers['authorization'] = _authorization_header(self._api_key)
         try:
             response = await self._fetch(
@@ -254,6 +258,7 @@ class AttestationClient(_ApiClient):
             ),
             'gateway_attestation',
             capture_peer_spki=include_spki_fingerprint,
+            authenticate=False,
         )
         attestation = _decode_gateway_attestation_report(response.json)
         response_includes_spki_fingerprint = attestation.spki_fingerprint is not None

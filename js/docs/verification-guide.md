@@ -9,8 +9,9 @@ These clients connect through the NEAR AI Cloud Gateway. For a model's own
 [direct clients](#use-a-direct-model-endpoint) are experimental and not
 recommended for production. Use Gateway clients for production integrations.
 
-`InferenceClient` always verifies Gateway evidence. On a model-session cache
-miss, it reads model metadata from `GET /v1/model/{model}` using a URL-encoded
+`InferenceClient` first verifies Gateway evidence without authentication headers.
+On a model-session cache miss, it then uses configured authentication for model
+reports and reads model metadata from `GET /v1/model/{model}` using a URL-encoded
 model ID. Models with `providerType: 'vllm'` and `attestationSupported: true`
 require all returned NEAR model reports to pass before key routing. Other models
 use Incognito mode: the SDK verifies the Gateway without verifying model evidence.
@@ -158,11 +159,10 @@ Reusable deployment checks can also be passed through
 `deploymentPolicy`, which also receives the requested model name. If both are
 configured, both must pass.
 
-Gateway verification runs concurrently with model metadata retrieval and model
-attestation verification. With Node TLS binding enabled, model metadata and
-evidence requests are pinned to the TLS fingerprint observed when fetching the
-Gateway report. Gateway verification must authenticate that same fingerprint
-before the session is cached or Chat is sent. All required checks must pass.
+Gateway verification completes before authenticated model metadata and model
+attestation requests are sent. With Node TLS binding enabled, these requests
+are pinned to the TLS fingerprint authenticated by Gateway verification.
+All required checks must pass before the session is cached or Chat is sent.
 If preflight fails, pending model metadata and attestation requests are aborted.
 Already-running third-party or custom verifiers without cancellation support
 may still finish in the background.
@@ -207,7 +207,8 @@ official `create` overloads. An external `@anthropic-ai/sdk` client can use
 `fetch: client.fetch` and `maxRetries: 0`. Set its `baseURL` to
 `https://cloud-api.near.ai` (Anthropic appends `/v1/messages`); configure the
 inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport uses
-the inference client's configured authentication for both inference and evidence.
+the inference client's configured authentication for inference and signatures;
+Gateway attestation requests omit authentication headers; model reports use configured authentication.
 See the [native example](../../examples/example-js/gateway/messages.ts) and
 [official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
 for JSON and streaming calls with receipt verification.
@@ -318,8 +319,7 @@ console.log(data.answers.billing.noul);
 
 The adapter accepts uncompressed, nonstreaming JSON requests at the configured
 System One endpoint. Keep E2EE, OHTTP, request compression and automatic inference
-retries disabled; multipart uploads and other official SDK endpoints are outside
-this adapter's scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+retries disabled. Retry a transient receipt lookup through `verifyResponse(id)`.
 
 `X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
 identifies the upstream request. Verification uses the exact captured bytes.
@@ -578,8 +578,9 @@ render(completion.choices[0]?.message.content);
 Streaming uses the same ID-based verification as the built-in client.
 
 Configure authentication on the inference client. Its `apiKey` or
-`headers.Authorization` supplies bearer authorization for evidence, Chat, and
-signature requests. Without either, no Authorization header is sent, including
+`headers.Authorization` supplies bearer authorization for model reports, metadata, Chat, and
+signature requests. Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`. Without configured bearer authentication, no Authorization header is sent, including
 when an external OpenAI client adds one. OpenAI's required `apiKey` can therefore
 be a placeholder when a proxy uses custom headers. Other per-request headers can
 override their configured defaults.

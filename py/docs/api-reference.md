@@ -81,7 +81,7 @@ stream before passing `message_start.message.id` to `verify_response`.
 | --- | --- | --- | --- |
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
 | `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator HTTP(S) base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | `None` | Configured headers for evidence, Chat, and signature requests. An explicit `api_key` determines their bearer authorization. Per-request or external OpenAI authorization does not override this configuration. |
+| `headers` | `Mapping[str, str] \| None` | `None` | Static request headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an explicit `api_key` overrides Authorization. Per-request or external OpenAI authorization does not override this configuration. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
@@ -209,12 +209,14 @@ using the answers.
 | `model` | `str` | Canonical decision-model ID. |
 | `state` | `str \| dict \| list` | Text or structured decision context. |
 | `questions` | `dict[str, SystemOneQuestion]` | Named questions; request business rules are checked by the server. |
+| `assets` | Optional `dict[str, SystemOneImageAsset]` | Named images referenced from the request content. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |
 | `score` | Text, object, or array | Required list of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 | `SystemOneResult` member | Type | Description |
 | --- | --- | --- |
@@ -233,6 +235,17 @@ using the answers.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: string label; `confidence` and per-label `probabilities` in `[0, 1]`. |
 | `score` | `score`: finite number; `confidence` and per-level `probabilities` in `[0, 1]`; `legend`: descriptions keyed by level. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `None`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+
+See the [native image example](../../examples/example-py/gateway/jev.py) and
+[run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `response_cache_time_to_live_ms`.
@@ -362,9 +375,19 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `api_key` | `str \| None` | No | `None` | Bearer token for signature and evidence requests. |
+| `api_key` | `str \| None` | No | `None` | Bearer token for model reports, metadata, and signature requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
+
+Use `AttestationClient()` to fetch attestation without credentials. Gateway and
+direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
+including values supplied in `headers`. Other custom headers are preserved.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 `AttestationClient` construction and methods, plus
 `find_model_attestation_for_signature`, raise `ApiError` for invalid helper

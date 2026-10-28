@@ -65,7 +65,11 @@ class ObliviousGateway(Gateway):
                 if self.proof_failure == 'signer'
                 else self.key
             )
-            config = self.ohttp_gateway.key_config
+            config = (
+                b'\x00'
+                if self.proof_failure == 'malformed_config'
+                else self.ohttp_gateway.key_config
+            )
             payload = response.json()
             payload['ohttp_attestation'] = {
                 'signing_algo': 'ed25519',
@@ -154,19 +158,14 @@ async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee
         ('missing', 'ohttp.attestation_required'),
         ('signer', 'ohttp.signer_mismatch'),
         ('signature', 'ohttp.signature_invalid'),
+        ('malformed_config', 'ohttp.key_config_invalid'),
     ],
 )
-async def test_untrusted_ohttp_proof_blocks_inference(monkeypatch, failure, code):
+async def test_invalid_ohttp_evidence_blocks_authenticated_preflight(
+    monkeypatch, failure, code
+):
     gateway = ObliviousGateway()
     gateway.proof_failure = failure
-    handle = gateway.handle
-
-    async def hold_model_metadata(request):
-        if request.url.path.startswith('/v1/model/'):
-            await asyncio.Event().wait()
-        return await handle(request)
-
-    monkeypatch.setattr(gateway, 'handle', hold_model_metadata)
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
@@ -175,12 +174,13 @@ async def test_untrusted_ohttp_proof_blocks_inference(monkeypatch, failure, code
             BASE_URL + 'chat/completions',
             json={'model': MODEL, 'messages': MESSAGES},
         )
-        # An invalid Gateway proof must fail without waiting on the model arm.
         async with asyncio.timeout(1):
             with pytest.raises(VerificationError) as raised:
                 await client.send(request)
 
     assert raised.value.failure.code == code
+    assert gateway.transport_paths == ['/v1/attestation/report']
+    assert gateway.headers == []
     assert gateway.outer_requests == []
     assert gateway.completion_requests == []
     assert gateway.signature_requests == 0
