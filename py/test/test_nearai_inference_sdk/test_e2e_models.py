@@ -13,9 +13,9 @@ def test_suites_use_their_entries_from_the_shared_catalog(monkeypatch):
                 {'id': 'typesafe/jev', 'provider': 'external', 'endpoint': 'systemone'},
                 {'id': 'external/chat', 'provider': 'external', 'endpoint': 'chat'},
                 {
-                    'id': 'openai/text',
+                    'id': 'anthropic/text',
                     'provider': 'external',
-                    'endpoint': 'responses',
+                    'endpoint': 'messages',
                 },
             ]
         ),
@@ -24,4 +24,4 @@ def test_suites_use_their_entries_from_the_shared_catalog(monkeypatch):
     assert selected_models('chat', 'near') == ['near/chat']
     assert selected_models('chat', 'external') == ['external/chat']
     assert decision_request()['model'] == 'typesafe/jev'
-    assert selected_models('responses', 'external') == ['openai/text']
+    assert selected_models('messages', 'external') == ['anthropic/text']

@@ -240,8 +240,6 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [decision example](../../examples/example-go/gateway/systemone/main.go).
 
-<!-- Messages support is deferred until a later release.
-
 ## Messages API
 
 The Gateway client supports `POST /v1/messages` with attestation preflight,
@@ -286,8 +284,6 @@ Set its base URL to the API root, such as `https://cloud-api.near.ai`, because i
 appends `/v1/messages`. The inference client's base URL includes `/v1/`.
 The [official SDK example](../../examples/example-go/gateway/anthropic/main.go)
 covers JSON and streaming, then verifies each response before printing it.
-
--->
 
 ## Responses API
 

@@ -177,8 +177,6 @@ The [API reference](./api-reference.md#system-one-decisions) describes request
 and result types. To try a complete application, run the
 [Rust decision example](../../examples/README.md#rust-setup).
 
-<!-- Messages support is deferred until a later release.
-
 ## Messages API
 
 The Gateway client supports `POST /v1/messages` with attestation preflight,
@@ -213,8 +211,6 @@ client.verify_response(id).await?;
 For streaming, use `message_request(body)` with `"stream": true`, then `send()`
 and consume `response.body` to completion. Set custom Anthropic headers on the
 request before sending. See the [example](../../examples/example-rs/src/bin/messages.rs).
-
--->
 
 ## Responses API
 

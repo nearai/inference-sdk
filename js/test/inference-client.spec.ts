@@ -2,16 +2,16 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import { choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
 import nacl from 'tweetnacl';
 import {
-  // ApiError,
+  ApiError,
   type AttestationVerificationResult,
   DirectInferenceClient,
-  // getSdkError,
+  getSdkError,
   InferenceClient,
   type InferenceClientOptions,
   type SystemOneRequest,
@@ -2786,28 +2786,22 @@ describe('inference client', () => {
     });
   });
 
-  test.each(['responses/resp_fixture', 'messages'])(
-    'rejects unsupported path %s before fetching attestation evidence',
-    async (endpoint) => {
-      const gateway = createTestGateway();
-      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-      const client = new InferenceClient({
-        ...inferenceClientOptions(gateway),
-        e2ee: false,
-      });
+  test('rejects unsupported paths before it fetches attestation evidence', async () => {
+    const gateway = createTestGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+    const client = new InferenceClient(inferenceClientOptions(gateway));
 
-      await expect(
-        client.fetch(
-          `${baseUrl}${endpoint}`,
-          chatRequest({ input: 'hello model' }),
-        ),
-      ).rejects.toMatchObject({
-        failure: { code: 'api.invalid_input', details: { field: 'request' } },
-      });
-      expect(gateway.state.gatewayAttestationRequests).toBe(0);
-      expect(gateway.state.modelAttestationRequests).toBe(0);
-    },
-  );
+    await expect(
+      client.fetch(
+        `${baseUrl}responses/resp_fixture`,
+        chatRequest({ input: 'hello model' }),
+      ),
+    ).rejects.toMatchObject({
+      failure: { code: 'api.invalid_input', details: { field: 'request' } },
+    });
+    expect(gateway.state.gatewayAttestationRequests).toBe(0);
+    expect(gateway.state.modelAttestationRequests).toBe(0);
+  });
 
   describe.each([
     { providerType: 'external', attestationSupported: false },
@@ -4668,7 +4662,7 @@ describe('System One decisions', () => {
 
 describe('native inference retry policy', () => {
   afterEach(() => jest.restoreAllMocks());
-  test.each(['chat/completions', 'responses' /*, 'messages' */])(
+  test.each(['chat/completions', 'responses', 'messages'])(
     'does not replay a failed %s request',
     async (endpoint) => {
       const gateway = createTestGateway();
@@ -4691,19 +4685,18 @@ describe('native inference retry policy', () => {
         e2ee: false,
       });
       const call =
-        // endpoint === 'messages'
-        //   ? client.messages.create({
-        //       model,
-        //       messages: [{ role: 'user', content: 'Hello' }],
-        //       max_tokens: 128,
-        //     })
-        //   :
-        endpoint === 'responses'
-          ? client.responses.create({ model, input: 'Hello' })
-          : client.chat.completions.create({
+        endpoint === 'messages'
+          ? client.messages.create({
               model,
               messages: [{ role: 'user', content: 'Hello' }],
-            });
+              max_tokens: 128,
+            })
+          : endpoint === 'responses'
+            ? client.responses.create({ model, input: 'Hello' })
+            : client.chat.completions.create({
+                model,
+                messages: [{ role: 'user', content: 'Hello' }],
+              });
       await expect(call).rejects.toMatchObject({ status: 500 });
       expect(inferenceRequests).toBe(1);
     },
@@ -5007,8 +5000,6 @@ describe('Responses API', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
-
-/* Messages support is deferred until a later release.
 
 describe('Messages API', () => {
   afterEach(() => jest.restoreAllMocks());
@@ -5593,4 +5584,3 @@ describe('Messages API', () => {
     expect(fixture.signatureCalls()).toBe(0);
   });
 });
-*/
