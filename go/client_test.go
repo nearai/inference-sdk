@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cloudflare/circl/hpke"
 )
 
 type fakeCloud struct {
@@ -30,12 +32,14 @@ type fakeCloud struct {
 	t               *testing.T
 	a               Attestation
 	q               QuoteVerificationResult
+	ohttp           *OHTTPAttestation
 	priv            ed25519.PrivateKey
 	mu              sync.Mutex
 	signatureStatus atomic.Int32
 	signatureCalls  atomic.Int32
 	signatures      map[string]CompletionSignature
 	next            int
+	metadata        atomic.Int32
 	attestations    atomic.Int32
 	chats           atomic.Int32
 	dropChatAt      int32
@@ -72,6 +76,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case strings.Contains(r.URL.Path, "/model/"):
+		f.metadata.Add(1)
 		if r.URL.EscapedPath() != "/v1/model/canonical%2Fmodel" {
 			f.t.Errorf("model URL %s", r.URL.EscapedPath())
 		}
@@ -149,7 +154,11 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			json.NewEncoder(w).Encode(map[string]any{"model_attestations": items})
 		} else {
-			json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": a})
+			root := map[string]any{"gateway_attestation": a}
+			if f.ohttp != nil {
+				root["ohttp_attestation"] = f.ohttp
+			}
+			json.NewEncoder(w).Encode(root)
 		}
 	case strings.HasSuffix(r.URL.Path, "/chat/completions"):
 		if f.chats.Add(1) == f.dropChatAt {
@@ -260,6 +269,65 @@ func TestRejectedGatewayDoesNotFetchModelReports(t *testing.T) {
 	}
 	if fixture.attestations.Load() != 1 || fixture.chats.Load() != 0 {
 		t.Fatal("rejected Gateway was used for further requests")
+	}
+}
+
+func TestGatewayOHTTPVerificationPrecedesAuthenticatedRequests(t *testing.T) {
+	pub, _, err := hpke.KEM_X25519_HKDF_SHA256.Scheme().GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := pub.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	validConfig := append([]byte{1, 0, 32}, key...)
+	validConfig = append(validConfig, 0, 4, 0, 1, 0, 1)
+	for _, tc := range []struct{ name, code string }{
+		{"missing", "ohttp.attestation_required"},
+		{"invalid_signature", "ohttp.signature_invalid"},
+		{"invalid_config", "ohttp.key_config_invalid"},
+		{"valid", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newFakeCloud(t)
+			fixture.tee = true
+			if tc.name != "missing" {
+				config := validConfig
+				if tc.name == "invalid_config" {
+					config = []byte("invalid")
+				}
+				fixture.ohttp = &OHTTPAttestation{
+					SigningAlgo: Ed25519,
+					SigningKey:  fixture.a.Signer.SigningAddress,
+					KeyConfig:   hex.EncodeToString(config),
+					Signature:   hex.EncodeToString(ed25519.Sign(fixture.priv, config)),
+				}
+				if tc.name == "invalid_signature" {
+					fixture.ohttp.Signature = strings.Repeat("00", ed25519.SignatureSize)
+				}
+			}
+			client, _ := fakeClient(t, fixture, func(options *InferenceOptions) {
+				options.OHTTP = true
+			})
+			session, err := client.getSession(context.Background(), "canonical/model")
+			if tc.code != "" {
+				requireCode(t, err, tc.code)
+				if fixture.metadata.Load() != 0 || fixture.attestations.Load() != 1 {
+					t.Fatalf("invalid OHTTP evidence allowed authenticated preflight: metadata=%d reports=%d", fixture.metadata.Load(), fixture.attestations.Load())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := session.transport.(*ohttpTransport); !ok {
+				t.Fatal("valid OHTTP configuration was not installed")
+			}
+			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.result.Models) != 1 {
+				t.Fatal("valid OHTTP evidence did not allow authenticated model verification")
+			}
+		})
 	}
 }
 
