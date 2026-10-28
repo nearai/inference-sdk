@@ -12,10 +12,11 @@ the configuration; it does not delay security updates. See GitHub's
 [configuration for security updates only](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/customizing-dependabot-security-prs#example-1-configuration-for-security-updates-only).
 
 GitHub Actions receive weekly version updates, including major releases,
-grouped into one PR with `open-pull-requests-limit: 1`. This keeps the
-workflows' full commit SHA pins current. GitHub generates Dependabot alerts
-for Actions using semantic-version references, but not SHA references, so
-these pins rely on version updates for automated maintenance. See
+grouped into one PR with `open-pull-requests-limit: 1`. New releases become
+eligible after a seven-day cooldown (`cooldown.default-days: 7`). These
+updates keep the workflows' full commit SHA pins current. GitHub generates
+Dependabot alerts for Actions using semantic-version references, but not SHA
+references, so these pins rely on version updates for automated maintenance. See
 [GitHub Actions alert support](https://docs.github.com/en/code-security/reference/supply-chain-security/dependency-graph-supported-package-ecosystems).
 
 Automatic security PRs require the repository's dependency graph, Dependabot
