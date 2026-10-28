@@ -1711,21 +1711,18 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
         "api.invalid_input"
     );
 
-    for path in ["/v1/responses/resp_fixture", "/v1/messages"] {
-        let mut request = client
-            .response_request(response_request_body(false))
-            .unwrap();
-        request.url_mut().set_path(path);
-        assert_eq!(
-            client.send(request).await.err().unwrap().code(),
-            "api.invalid_input"
-        );
-    }
+    let mut request = client
+        .response_request(response_request_body(false))
+        .unwrap();
+    request.url_mut().set_path("/v1/responses/resp_fixture");
+
+    assert_eq!(
+        client.send(request).await.err().unwrap().code(),
+        "api.invalid_input"
+    );
     assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
 }
-
-/* Messages support is deferred until a later release.
 
 fn message_request_body(streaming: bool) -> Value {
     json!({
@@ -2099,4 +2096,3 @@ async fn messages_zero_response_ttl_disables_retention() {
         assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
     }
 }
-*/

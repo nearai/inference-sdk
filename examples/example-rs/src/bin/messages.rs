@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 use example_rs::*;
 use futures_util::StreamExt;
 use nearai_inference_sdk::{ByteStream, InferenceClient, InferenceClientOptions};

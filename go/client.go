@@ -408,7 +408,7 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip accepts POSTs to Chat Completions and Responses creation.
+// RoundTrip accepts POSTs to Chat Completions, Responses, and Messages creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	generation := c.responseCacheGeneration()
 	expected := *c.api.base
@@ -422,15 +422,13 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	u.ForceQuery = false
 	responses := u.String() == responsesURL.String()
 	messages := u.String() == messagesURL.String()
-	// Messages support is deferred until a later release.
-	// gatewayOnly := responses || messages
-	gatewayOnly := responses
+	gatewayOnly := responses || messages
 	if req.Method != "POST" || (u.String() != expected.String() && !gatewayOnly) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
 	if gatewayOnly && (c.api.direct || c.options.E2EE) {
-		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
+		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
 	body, e := io.ReadAll(req.Body)
 	if e != nil {
@@ -762,13 +760,11 @@ func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json
 	return c.createJSON(ctx, "responses", request)
 }
 
-/* Messages support is deferred until a later release.
 // CreateMessage sends an Anthropic Messages request and captures a Gateway receipt.
 // For streaming, send POST messages with HTTPClient and consume the full body.
 func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error) {
 	return c.createJSON(ctx, "messages", request)
 }
-*/
 
 func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
@@ -781,7 +777,7 @@ func (c *InferenceClient) createJSON(ctx context.Context, path string, request a
 			return nil, err
 		}
 		if parsed["stream"] == true {
-			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses")
+			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses or Messages")
 		}
 	}
 	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint(path, nil), bytes.NewReader(body))

@@ -13,9 +13,7 @@ from time import monotonic, time
 from typing import TYPE_CHECKING, Self
 
 import httpx
-
-# Messages support is deferred until a later release.
-# from anthropic import AsyncAnthropic
+from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -317,8 +315,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         messages = actual == httpx.URL(self.base_url).join('messages')
         if request.method != 'POST' or (
             actual != expected
-            # and not ((responses or messages) and self._supports_gateway_endpoints)
-            and not (responses and self._supports_gateway_endpoints)
+            and not ((responses or messages) and self._supports_gateway_endpoints)
         ):
             raise api_failure(
                 'api.invalid_input',
@@ -334,7 +331,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 {
                     'field': 'e2ee',
                     'reason': 'unsupported_value',
-                    'expected': 'field-level E2EE disabled for Responses',
+                    'expected': 'field-level E2EE disabled for Responses and Messages',
                 },
             )
         parsed = await decode_chat_request(request)
@@ -653,31 +650,31 @@ class InferenceClient(
         )
         self._gateway_options = gateway_verification or GatewayVerificationOptions()
         self.responses = self._openai.responses
-        # self._anthropic = AsyncAnthropic(
-        #     api_key='@nearai/inference-sdk-internal',
-        #     base_url=self.base_url,
-        #     default_headers={
-        #         'anthropic-version': self._headers.get(
-        #             'anthropic-version', '2023-06-01'
-        #         ),
-        #     },
-        #     max_retries=0,
-        #     http_client=httpx.AsyncClient(
-        #         transport=_InferenceTransport(self, anthropic=True), timeout=None
-        #     ),
-        # )
-        # self.messages = self._anthropic.messages
+        self._anthropic = AsyncAnthropic(
+            api_key='@nearai/inference-sdk-internal',
+            base_url=self.base_url,
+            default_headers={
+                'anthropic-version': self._headers.get(
+                    'anthropic-version', '2023-06-01'
+                ),
+            },
+            max_retries=0,
+            http_client=httpx.AsyncClient(
+                transport=_InferenceTransport(self, anthropic=True), timeout=None
+            ),
+        )
+        self.messages = self._anthropic.messages
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
         self.systemone = InferenceSystemOne(self)
 
-    # async def aclose(self) -> None:
-    #     await self._anthropic.close()
-    #     await super().aclose()
+    async def aclose(self) -> None:
+        await self._anthropic.close()
+        await super().aclose()
 
     async def send(self, request: httpx.Request) -> httpx.Response:
-        """Send verified Chat, Responses, or System One through the Gateway."""
+        """Send verified Chat, Responses, Messages, or System One through the Gateway."""
         if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
             self.base_url
         ).join('systemone'):

@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 //go:build e2e
 
 package main

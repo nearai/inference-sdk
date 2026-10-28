@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import Anthropic from '@anthropic-ai/sdk';
