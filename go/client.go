@@ -50,6 +50,7 @@ type InferenceClient struct {
 	sessions                    map[string]*session
 	pending                     map[string]*pendingSession
 	responses                   map[string]*responseRecord
+	responseGeneration          uint64
 	transports                  map[string]*http.Transport
 	wg                          sync.WaitGroup
 	closed                      bool
@@ -142,6 +143,20 @@ func (c *InferenceClient) HTTPClient() *http.Client {
 }
 
 func (c *InferenceClient) BaseURL() string { return c.api.base.String() }
+
+// ClearResponseCache releases captured responses while keeping the client reusable.
+func (c *InferenceClient) ClearResponseCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.responseGeneration++
+	clear(c.responses)
+}
+
+func (c *InferenceClient) responseCacheGeneration() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.responseGeneration
+}
 
 func (c *InferenceClient) Close() error {
 	c.mu.Lock()
@@ -393,8 +408,9 @@ func headerNames(h http.Header) []string {
 	return out
 }
 
-// RoundTrip accepts POSTs to Chat Completions and Responses creation.
+// RoundTrip accepts POSTs to Chat Completions, Responses, and Messages creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
+	generation := c.responseCacheGeneration()
 	expected := *c.api.base
 	expected.Path += "chat/completions"
 	responsesURL := *c.api.base
@@ -406,15 +422,13 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 	u.ForceQuery = false
 	responses := u.String() == responsesURL.String()
 	messages := u.String() == messagesURL.String()
-	// Messages support is deferred until a later release.
-	// gatewayOnly := responses || messages
-	gatewayOnly := responses
+	gatewayOnly := responses || messages
 	if req.Method != "POST" || (u.String() != expected.String() && !gatewayOnly) || req.Body == nil {
 		return nil, failure("api.invalid_input", nil)
 	}
 	defer req.Body.Close()
 	if gatewayOnly && (c.api.direct || c.options.E2EE) {
-		return nil, detail("api.invalid_input", "expected", "Gateway Responses with field-level E2EE disabled")
+		return nil, detail("api.invalid_input", "expected", "Gateway Responses or Messages with field-level E2EE disabled")
 	}
 	body, e := io.ReadAll(req.Body)
 	if e != nil {
@@ -529,7 +543,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s, gatewayOnly); e != nil {
+		if e = c.register(id, body, wire, s, gatewayOnly, generation); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -605,7 +619,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if failed || id == "" || (messages && !messageStopped) {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly)
+		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly, generation)
 	}
 	response.Body = &sseReader{
 		source: capture, reader: bufio.NewReader(capture), transform: transform,
@@ -625,11 +639,14 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
 
-func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool) error {
+func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool, generation uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return failure("api.client_closed", nil)
+	}
+	if generation != c.responseGeneration {
+		return nil
 	}
 	if c.responseTTL == 0 {
 		return nil
@@ -743,13 +760,11 @@ func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json
 	return c.createJSON(ctx, "responses", request)
 }
 
-/* Messages support is deferred until a later release.
 // CreateMessage sends an Anthropic Messages request and captures a Gateway receipt.
 // For streaming, send POST messages with HTTPClient and consume the full body.
 func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error) {
 	return c.createJSON(ctx, "messages", request)
 }
-*/
 
 func (c *InferenceClient) createJSON(ctx context.Context, path string, request any) (json.RawMessage, error) {
 	body, e := json.Marshal(request)
@@ -762,7 +777,7 @@ func (c *InferenceClient) createJSON(ctx context.Context, path string, request a
 			return nil, err
 		}
 		if parsed["stream"] == true {
-			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses")
+			return nil, detail("api.invalid_input", "expected", "use HTTPClient for streaming Responses or Messages")
 		}
 	}
 	req, e := http.NewRequestWithContext(ctx, "POST", c.api.endpoint(path, nil), bytes.NewReader(body))

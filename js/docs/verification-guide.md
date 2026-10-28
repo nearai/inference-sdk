@@ -86,7 +86,7 @@ encrypts supported Chat fields to the model.
 Gateway OHTTP also works with Incognito models; it does not provide model
 encryption. With a direct endpoint, both terminate at the model service.
 
-Chat and Gateway Responses can use OHTTP; metadata, attestation, and signature
+Chat, Gateway Responses, and Messages can use OHTTP; metadata, attestation, and signature
 requests keep their normal HTTP paths. Your endpoint or proxy must support
 `/ohttp` at the configured origin.
 Authorization and explicitly configured custom headers are also sent on this
@@ -137,7 +137,7 @@ Endpoint metadata in `report` is not an additional authenticated claim.
 
 `attestationCacheTimeToLiveMs` defaults to `3600000` (60 minutes). Concurrent
 requests for the same model share verification work and cached results across
-`verify(model)`, Chat, Responses, and System One.
+`verify(model)`, Chat, Responses, Messages, and System One.
 The TTL starts when verification succeeds. Cache hits preserve `verifiedAt`,
 so the UI can show when the evidence was actually verified. A later Chat request
 reuses that result while it is cached. Increase the value to check deployments less
@@ -170,8 +170,6 @@ may still finish in the background.
 CPU and GPU checks run concurrently. Deployment callbacks run only after the
 CPU quote and deployment measurements have been verified. Checks for different
 model reports may also run concurrently.
-
-<!-- Messages support is deferred until a later release.
 
 ## Messages API
 
@@ -213,8 +211,6 @@ the inference client's configured authentication for both inference and evidence
 See the [native example](../../examples/example-js/gateway/messages.ts) and
 [official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
 for JSON and streaming calls with receipt verification.
-
--->
 
 ## Responses API
 
@@ -358,7 +354,7 @@ const client = new InferenceClient({
 ```
 
 The proxy must forward `/v1/model/{model}`, `/v1/attestation/report`,
-`/v1/chat/completions`, `/v1/responses` and `/v1/signature/{id}`. For System One
+`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/signature/{id}`. For System One
 decisions, also forward `POST /v1/systemone`. Preserve the URL-encoded model and
 completion IDs. The proxy authenticates the user and supplies its upstream NEAR AI credential.
 Preserve the request and response bodies, model-key routing header, and encryption

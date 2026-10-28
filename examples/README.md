@@ -13,15 +13,15 @@ All four languages use the same environment variables:
 | --- | --- |
 | `NEARAI_API_KEY` | Required credential for the selected endpoint |
 | `NEARAI_BASE_URL` | Gateway: `https://cloud-api.near.ai/v1/`; direct: `https://glm-5-3-flash.completions.near.ai/v1/` |
-| `NEARAI_MODEL` | Chat/Responses: `z-ai/glm-5.3-flash`; required for System One |
+| `NEARAI_MODEL` | Chat/Responses: `z-ai/glm-5.3-flash`; Messages: `anthropic/claude-haiku-4-5`; required for System One |
 | `NEARAI_SIGNING_ALGO` | `ed25519` (default) or `ecdsa`, used for evidence and receipts, and for Chat E2EE |
-| `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat and Responses clients; requires Ed25519 |
+| `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat, Responses, and Messages clients; requires Ed25519 |
 | `NEARAI_EXPECT_SIGNATURE_KIND` | System One: `gateway` (default) or `provider_tee`; the latter requires verified model evidence |
 | `NEARAI_IMAGE_PATH` | Optional PNG file path for the native System One image/Box example |
 
 Choose a model available in the selected endpoint's catalog. Chat client examples
 and the standalone Gateway Chat examples explicitly enable field-level E2EE;
-use a NEAR TEE model for those examples. Responses and System One keep
+use a NEAR TEE model for those examples. Responses, Messages, and System One keep
 E2EE disabled. OHTTP is independent of E2EE and requires signed key configuration
 and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 
@@ -30,7 +30,7 @@ Native clients and official SDK adapters disable automatic inference retries.
 
 ## Entry points
 
-Each Chat or Responses entry point runs JSON and SSE. Commands below
+Each Chat, Responses, and Messages entry point runs JSON and SSE. Commands below
 run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 `examples/example-go`, respectively.
 
@@ -41,6 +41,8 @@ run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 | Gateway Chat, official OpenAI SDK | `node gateway/client-openai-sdk.ts` | `uv run python gateway/client_openai_sdk.py` | — | `go run ./gateway/openai` |
 | Responses, native client | `node gateway/responses.ts` | `uv run python gateway/responses.py` | `cargo run --bin responses` | `go run ./gateway/responses-client` |
 | Responses, official OpenAI SDK | `node gateway/responses-openai-sdk.ts` | `uv run python gateway/responses_openai_sdk.py` | — | `go run ./gateway/responses` |
+| Messages, native client | `node gateway/messages.ts` | `uv run python gateway/messages.py` | `cargo run --bin messages` | `go run ./gateway/messages` |
+| Messages, official Anthropic SDK | `node gateway/messages-anthropic-sdk.ts` | `uv run python gateway/messages_anthropic_sdk.py` | — | `go run ./gateway/anthropic` |
 | System One, native client | `node gateway/jev.ts` | `uv run python gateway/jev.py` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
 | System One, official Jev SDK | `node gateway/jev-sdk.ts` | `uv run python gateway/jev_sdk.py` | — | — |
 | Direct Chat, native client | `node direct/client.ts` | `uv run python direct/client.py` | `cargo run --bin direct-client` | `go run ./direct/client` |
@@ -49,7 +51,7 @@ run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 
 A dash means the vendor has no official SDK for that language. Official SDK
 examples share the inference client's verified transport and verify receipts
-through that same owner. OpenAI uses the `/v1/` base URL; Jev examples
+through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and Jev examples
 derive their API root from it. Jev disables compression and inference retries,
 and uses `X-Generation-Id` as the receipt ID. Its native and official examples ask
 the same billing, team, and urgency questions by default and print answers after

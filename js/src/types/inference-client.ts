@@ -1,5 +1,4 @@
-// Messages support is deferred until a later release.
-// import type Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
 import type OpenAI from 'openai';
 import type * as v from 'valibot';
 import type { ChatCompletionRequestSchema } from '../schemas';
@@ -79,7 +78,7 @@ export type ModelVerificationOptions = {
 export type InferenceClientCommonOptions = {
   /**
    * How long to reuse a successfully verified Gateway/model session for the
-   * same model across verify(), Chat, Responses, and System One.
+   * same model across verify(), Chat, Responses, Messages, and System One.
    * Defaults to 60 minutes. Set `0` to verify every request.
    */
   readonly attestationCacheTimeToLiveMs?: number;
@@ -174,5 +173,5 @@ export type InferenceChatCompletions = Pick<OpenAI.Chat.Completions, 'create'>;
 /** Gateway Responses creation with the official OpenAI request and event types. */
 export type InferenceResponses = Pick<OpenAI.Responses, 'create'>;
 
-// /** Gateway Messages creation with the official Anthropic request and event types. */
-// export type InferenceMessages = Pick<Anthropic.Messages, 'create'>;
+/** Gateway Messages creation with the official Anthropic request and event types. */
+export type InferenceMessages = Pick<Anthropic.Messages, 'create'>;

@@ -123,6 +123,21 @@ func sendResponse(t *testing.T, c *InferenceClient, streaming bool) ([]byte, err
 	defer res.Body.Close()
 	return io.ReadAll(res.Body)
 }
+func TestResponsesClearResponseCache(t *testing.T) {
+	c, _ := responsesClient(t, false, nil)
+	for i := 0; i < 2; i++ {
+		if _, err := sendResponse(t, c, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.VerifyResponse(context.Background(), "resp_fixture"); err != nil {
+			t.Fatal(err)
+		}
+		c.ClearResponseCache()
+		_, err := c.VerifyResponse(context.Background(), "resp_fixture")
+		requireCode(t, err, "api.completion_not_found")
+	}
+}
+
 func TestResponsesExactGatewayReceipts(t *testing.T) {
 	for _, streaming := range []bool{false, true} {
 		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {

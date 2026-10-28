@@ -41,7 +41,7 @@ response signatures. ECDSA uses the legacy AES-GCM protocol and omits
 `X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
 
 Successful attestation checks are reused for 60 minutes per model across
-`verify()`, Chat, Responses, and System One calls on the same client.
+`verify()`, Chat, Responses, Messages, and System One calls on the same client.
 Set `attestation_cache_time_to_live_ms=0` to check every request.
 `response_cache_time_to_live_ms` separately controls how long exact response
 bytes remain available after completion; its default is also 60 minutes.
@@ -144,7 +144,7 @@ time. With a cache TTL of zero, the later Chat verifies again.
 set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
 result. In both workflows, response signatures are still checked separately
 with `verify_response(id)` after Chat.
-Chat, Responses, and System One share the session warmed by `verify(model)`.
+Chat, Responses, Messages, and System One share the session warmed by `verify(model)`.
 
 ### Use OHTTP
 
@@ -175,7 +175,7 @@ JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
 `verify_response()` checks the inner request and response bodies before E2EE
 decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
 
-Chat and Gateway Responses can use OHTTP. Metadata, attestation, and signature
+Chat, Gateway Responses, and Messages can use OHTTP. Metadata, attestation, and signature
 requests keep their normal HTTP paths. The configured endpoint or proxy must
 serve `/ohttp` at its origin.
 Authorization and explicitly configured custom headers are also sent on the
@@ -205,7 +205,7 @@ async with InferenceClient(
 ```
 
 Forward `/v1/model/{model}`, `/v1/attestation/report`, `/v1/chat/completions`,
-`/v1/responses` and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
+`/v1/responses`, `/v1/messages`, and `/v1/signature/{id}`. For System One, also forward `POST /v1/systemone` and its
 `X-Generation-Id` response header. Preserve URL-encoded model and signature IDs,
 bodies, model-key routing, and encryption headers. A browser-facing proxy must
 expose `X-Generation-Id` through CORS. The device verifies evidence and response
@@ -304,8 +304,6 @@ verified transport configuration and receipt-ID extraction together. See the
 [live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
 credential-gated validation against a deployed Gateway.
 
-<!-- Messages support is deferred until a later release.
-
 ## Messages API
 
 The Gateway client supports `POST /v1/messages` with attestation preflight,
@@ -344,8 +342,6 @@ authentication governs inference and evidence requests.
 See the [native example](../../examples/example-py/gateway/messages.py) and
 [official SDK example](../../examples/example-py/gateway/messages_anthropic_sdk.py)
 for JSON and streaming calls with receipt verification.
-
--->
 
 ## Responses API
 

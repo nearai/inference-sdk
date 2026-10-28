@@ -107,12 +107,12 @@ async function main() {
     { ...nearResponse, endpoint: 'responses' },
     { id: openaiResponse.modelId, provider: 'external', endpoint: 'responses' },
   );
-  // const anthropicMessage = chatModels.find(({ metadata }) =>
-  //   metadata.providerType === 'external' && metadata.ownedBy === 'anthropic' &&
-  //   !metadata.attestationSupported,
-  // );
-  // assert.ok(anthropicMessage, 'Expected an Anthropic external text model for Messages');
-  // selected.push({ id: anthropicMessage.modelId, provider: 'external', endpoint: 'messages' });
+  const anthropicMessage = chatModels.find(({ metadata }) =>
+    metadata.providerType === 'external' && metadata.ownedBy === 'anthropic' &&
+    !metadata.attestationSupported,
+  );
+  assert.ok(anthropicMessage, 'Expected an Anthropic external text model for Messages');
+  selected.push({ id: anthropicMessage.modelId, provider: 'external', endpoint: 'messages' });
   if (systemoneModel) {
     selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
   }

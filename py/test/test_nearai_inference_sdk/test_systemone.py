@@ -303,6 +303,20 @@ async def test_malformed_box_is_not_retained_or_retried(monkeypatch, answer):
     assert len(gateway.requests) == 1
 
 
+async def test_clear_response_cache_allows_reusing_decision_id(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        first = await client.systemone.create(REQUEST)
+        await client.verify_response(first.decision_id)
+        client.clear_response_cache()
+        with pytest.raises(ApiError) as error:
+            await client.verify_response(first.decision_id)
+        assert error.value.failure.code == 'api.completion_not_found'
+        next_response = await client.systemone.create(REQUEST)
+        await client.verify_response(next_response.decision_id)
+
+
 async def test_requires_model_public_key_before_sending_a_decision(monkeypatch):
     gateway = DecisionGateway(kind='provider_tee')
     gateway.omit_public_key = True

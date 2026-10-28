@@ -13,16 +13,18 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error)
+func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
+func (c *InferenceClient) ClearResponseCache()
 func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
 func (c *InferenceClient) Close() error
 ```
 
-`CreateChatCompletion` and `CreateResponse` send non-streaming JSON requests.
+`CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send non-streaming JSON requests.
 Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accepts
-POST requests at the configured Chat Completions and Gateway Responses creation
+POST requests at the configured Chat Completions, Gateway Responses, and Messages creation
 endpoints. It verifies deployments before transmission and retains the exact wire
 bytes after complete body consumption. It does not automatically verify receipts.
 
@@ -30,7 +32,12 @@ bytes after complete body consumption. It does not automatically verify receipts
 matching API URL for OpenAI client configuration. Close response bodies and the
 inference client when finished.
 
-See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+`CreateMessage(ctx, request)` returns Anthropic JSON as `json.RawMessage`. Use
+`HTTPClient()` for streaming Messages. Both require a Gateway client with
+field-level E2EE disabled.
+
+See [Messages API](./verification-guide.md#messages-api) and
+[Responses API](./verification-guide.md#responses-api) for Gateway receipt
 semantics, streaming, and supported privacy options.
 
 ### Options and defaults
@@ -427,6 +434,13 @@ retention for services that process many or large completions.
 Verified records remain available until their TTL expires. A duplicate
 retained ID fails with `api.duplicate_completion_id` and preserves the original
 receipt. An expired ID can be reused.
+
+Call `ClearResponseCache()` when discarding a conversation. It clears captured
+request/response bytes and cached receipt results while keeping the client and
+attestation sessions reusable. Cleared IDs become unavailable to `VerifyResponse`.
+Ongoing response captures stay discarded when they finish.
+To end active work and release its buffers, also cancel the requests and finish
+any ongoing verification. Direct clients support the same cleanup method.
 
 ## Verification guarantees
 

@@ -98,6 +98,22 @@ class ResponsesGateway(Gateway):
         )
 
 
+async def test_clear_response_cache_allows_reusing_response_id(monkeypatch):
+    gateway = ResponsesGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        first = await client.responses.create(model=MODEL, input='hello', store=False)
+        await client.verify_response(first.id)
+        client.clear_response_cache()
+        with pytest.raises(ApiError) as error:
+            await client.verify_response(first.id)
+        assert error.value.failure.code == 'api.completion_not_found'
+        next_response = await client.responses.create(
+            model=MODEL, input='hello', store=False
+        )
+        await client.verify_response(next_response.id)
+
+
 @pytest.mark.parametrize('streaming', [False, True])
 @pytest.mark.parametrize('external', [False, True])
 @pytest.mark.parametrize(
