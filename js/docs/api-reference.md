@@ -57,9 +57,9 @@ the attestation socket to be reused.
 Provides `chat.completions.create()`, `responses.create()`, `messages.create()`, a reusable `fetch`
 adapter, `systemone.create()`, and `verifyResponse(id)`. Chat, Responses, and Messages
 support JSON and streaming; System One uses non-streaming decisions.
-On a cache miss, the client fetches Gateway evidence, then verifies it and any
-required OHTTP evidence concurrently with model metadata retrieval and model
-attestation verification. All required checks must pass before the session is
+On a cache miss, the client fetches and verifies Gateway evidence and any
+required OHTTP evidence before sending authenticated model metadata and
+attestation requests. All required checks must pass before the session is
 cached or an inference request is sent.
 
 The client reads `metadata.providerType` and `metadata.attestationSupported` from
@@ -77,14 +77,16 @@ semantics, streaming, and supported privacy options.
 
 ### Constructor options
 
-`InferenceClientOptions` configures the client.
-Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
-`headers` supports a proxy or another compatible endpoint.
+`InferenceClientOptions` configures the client. All options are optional;
+`new InferenceClient()` uses the defaults. Configure `apiKey` or `headers`
+when the inference endpoint requires authentication. Gateway and direct
+attestation requests omit `Authorization`, `api-key`, and `x-api-key` headers.
+Model reports through the Gateway use configured authentication after Gateway verification.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
-| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers for metadata, evidence, signature, and inference requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
+| `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, signature, and inference requests; overrides `headers.Authorization`. |
+| `headers?` | `HeadersInit` | No | — | Static request headers. Gateway reports omit authentication headers; model reports use them for organization access. Other requests use configured authorization; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model across `verify()`, Chat, Responses, Messages, and System One. Set `0` to check every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
@@ -272,7 +274,7 @@ There is no `gatewayVerification` option.
 | --- | --- | --- | --- | --- |
 | `baseUrl` | `string` | Yes | — | Direct model API base URL, including `/v1` where applicable. |
 | `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
-| `headers?` | `HeadersInit` | No | — | Authentication or other headers sent to evidence, Chat, and signature requests. Bearer authorization comes only from `apiKey` or these headers; per-request Authorization is ignored. |
+| `headers?` | `HeadersInit` | No | — | Static request headers; attestation omits `Authorization`, `api-key`, and `x-api-key`. Chat and signatures use configured authentication; per-request Authorization is ignored. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. With `ohttp: true`, only `'ed25519'` is accepted. |
 | `e2ee?` | `boolean` | No | `false` | Encrypts supported Chat fields when enabled. `false` preserves model verification and sends plaintext over the selected transport. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat through the direct endpoint's `/ohttp`. Authenticates its configuration with the serving attestation's Ed25519 signer, also selected for model-key routing and response verification. |
@@ -375,9 +377,17 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey?` | `string` | When `headers` is absent | — | Direct-Gateway credential. The SDK sends it as `Authorization: Bearer …` and gives it precedence over an `Authorization` value in `headers`. |
-| `headers?` | `HeadersInit` | When `apiKey` is absent | — | Static headers sent to every metadata, evidence, and signature request. |
+| `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, and signature requests; overrides `headers.Authorization`. |
+| `headers?` | `HeadersInit` | No | — | Static request headers; Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Model reports use configured authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
+
+Use `new AttestationClient()` to fetch attestation without credentials.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 ### Methods
 
@@ -428,7 +438,8 @@ attestation verifier.
 > `AttestationClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
 
 Fetches `/attestation/report` and `/signature/{id}` relative to a direct model API
-base URL. Authentication is optional in the SDK and depends on the endpoint.
+base URL. Attestation requests omit `Authorization`, `api-key`, and `x-api-key`;
+signature requests use any configured authentication.
 Both entry points request `include_tls_fingerprint=false`; this is not configurable.
 
 | Constructor field | Type | Required | Description |

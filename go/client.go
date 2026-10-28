@@ -277,6 +277,20 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	var models FetchedModelAttestations
 	var ohttp *OHTTPAttestation
 	var ohttpSigner SigningIdentity
+	configureOHTTP := func(attestation *OHTTPAttestation, signer SigningIdentity) error {
+		if !o.OHTTP {
+			return nil
+		}
+		if attestation == nil {
+			return failure("ohttp.attestation_required", nil)
+		}
+		config, e := VerifyOHTTPKeyConfig(*attestation, signer)
+		if e != nil {
+			return e
+		}
+		s.transport, e = NewOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers))
+		return e
+	}
 	if c.api.direct {
 		var e error
 		models, e = c.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
@@ -297,8 +311,6 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, failure("signature.signer_mismatch", nil)
 		}
 		s.result.Gateway = &verified
-		ohttp = fetched.OHTTPAttestation
-		ohttpSigner = verified.Signer
 		if !o.DisableTLSBinding {
 			base, ok := transport.(*http.Transport)
 			if !ok {
@@ -334,6 +346,9 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			client.Transport = pinned
 			api.http = &client
 			s.api = &api
+		}
+		if e := configureOHTTP(fetched.OHTTPAttestation, verified.Signer); e != nil {
+			return nil, e
 		}
 		metadata, e := s.api.FetchModelMetadata(ctx, model)
 		if e != nil {
@@ -383,16 +398,8 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	if c.api.direct && len(s.result.Models) == 0 {
 		return nil, failure("policy.model_attestation_required", nil)
 	}
-	if o.OHTTP {
-		if ohttp == nil {
-			return nil, failure("ohttp.attestation_required", nil)
-		}
-		config, e := VerifyOHTTPKeyConfig(*ohttp, ohttpSigner)
-		if e != nil {
-			return nil, e
-		}
-		s.transport, e = NewOHTTPTransport(config, c.BaseURL(), s.transport, headerNames(c.api.headers))
-		if e != nil {
+	if c.api.direct {
+		if e := configureOHTTP(ohttp, ohttpSigner); e != nil {
 			return nil, e
 		}
 	}

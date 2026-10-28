@@ -11,6 +11,7 @@ import nacl from 'tweetnacl';
 type CreateOhttpEndpointParams = {
   readonly fetch: typeof globalThis.fetch;
   readonly signingKey: nacl.SignKeyPair;
+  readonly attestedKeyConfig?: Uint8Array;
   readonly truncateResponse?: boolean;
 };
 
@@ -18,6 +19,7 @@ type CreateOhttpEndpointParams = {
 export async function createOhttpEndpoint({
   fetch: innerFetch,
   signingKey,
+  attestedKeyConfig,
   truncateResponse = false,
 }: CreateOhttpEndpointParams) {
   const config = await KeyConfig.generate(
@@ -28,7 +30,7 @@ export async function createOhttpEndpoint({
     ),
     1,
   );
-  const keyConfig = KeyConfig.serialize(config);
+  const keyConfig = attestedKeyConfig ?? KeyConfig.serialize(config);
   // Put SSE content in a non-final frame when testing trailing authentication.
   const server = new ChunkedOHTTPServer([config], {
     padding: truncateResponse ? 32768 : 16384,

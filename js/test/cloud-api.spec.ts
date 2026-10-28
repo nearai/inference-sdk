@@ -3,12 +3,19 @@ import type {
   CompletionSignature,
   VerifiedModelAttestation,
 } from '../src';
-import { AttestationClient, findModelAttestationForSignature } from '../src';
+import {
+  AttestationClient,
+  InferenceClient,
+  findModelAttestationForSignature,
+} from '../src';
 import {
   createCloudApiRequestConfiguration,
   mergeCloudApiRequestHeaders,
 } from '../src/core/cloud-api';
-import { AttestationClient as NodeAttestationClient } from '../src/node';
+import {
+  AttestationClient as NodeAttestationClient,
+  InferenceClient as NodeInferenceClient,
+} from '../src/node';
 import { createModelAttestation } from './fixtures';
 
 const baseUrl = 'https://cloud-api.near.ai/v1';
@@ -194,6 +201,113 @@ describe('AttestationClient', () => {
     jest.restoreAllMocks();
   });
 
+  test('constructs Gateway clients without options', () => {
+    expect(() => new AttestationClient()).not.toThrow();
+    expect(() => new NodeAttestationClient()).not.toThrow();
+    expect(() => new InferenceClient()).not.toThrow();
+    expect(() => new NodeInferenceClient()).not.toThrow();
+  });
+
+  test.each([AttestationClient, NodeAttestationClient])(
+    'omits Gateway authentication and retains model/signature authentication with %p',
+    async (Client) => {
+      for (const apiKey of [undefined, 'test']) {
+        for (const headers of [
+          undefined,
+          {
+            Authorization: 'Bearer custom',
+            'Api-Key': 'custom-api-key',
+            'X-API-Key': 'custom-x-api-key',
+            'X-Tenant': 'tenant',
+          },
+        ]) {
+          const requests: Request[] = [];
+          jest
+            .spyOn(globalThis, 'fetch')
+            .mockImplementation(async (input, init) => {
+              const request = new Request(input, init);
+              requests.push(request);
+              const url = new URL(request.url);
+              if (url.pathname.includes('/signature/')) {
+                return jsonResponse(completionSignature('gateway'));
+              }
+              if (!url.searchParams.has('model')) {
+                for (const name of ['authorization', 'api-key', 'x-api-key']) {
+                  expect(request.headers.has(name)).toBe(false);
+                }
+              } else {
+                expect(request.headers.get('authorization')).toBe(
+                  apiKey ? 'Bearer test' : headers ? 'Bearer custom' : null,
+                );
+              }
+              expect(request.headers.get('x-tenant')).toBe(
+                headers ? 'tenant' : null,
+              );
+              return jsonResponse(
+                url.searchParams.has('model')
+                  ? modelReport(requestNonce(request))
+                  : gatewayReport(requestNonce(request), {
+                      tls_cert_fingerprint: null,
+                    }),
+              );
+            });
+          const client = new Client({
+            baseUrl: 'http://gateway.test/v1',
+            apiKey,
+            headers,
+          });
+          await client.fetchGatewayAttestation({
+            includeSpkiFingerprint: false,
+          });
+          await client.fetchModelAttestations({ model: 'test' });
+          await client.fetchCompletionSignature({ completionId: 'test' });
+          expect(requests).toHaveLength(3);
+          expect(requests[2].headers.get('authorization')).toBe(
+            apiKey ? 'Bearer test' : headers ? 'Bearer custom' : null,
+          );
+        }
+      }
+    },
+  );
+
+  test.each([undefined, 'other-org-key', 'allowed-org-key'])(
+    'preserves organization authorization for unlisted model reports (key: %s)',
+    async (apiKey) => {
+      const api = cloudFor(
+        (request) => {
+          const url = new URL(request.url);
+          if (!url.searchParams.has('model')) {
+            expect(request.headers.has('authorization')).toBe(false);
+            return jsonResponse(
+              gatewayReport(requestNonce(request), {
+                tls_cert_fingerprint: null,
+              }),
+            );
+          }
+          expect(url.searchParams.get('model')).toBe('unlisted-model');
+          if (
+            request.headers.get('authorization') !== 'Bearer allowed-org-key'
+          ) {
+            return jsonResponse({ error: { message: 'Unknown model' } }, 400);
+          }
+          return jsonResponse(modelReport(requestNonce(request)));
+        },
+        { baseUrl, apiKey },
+      );
+      await api.client.fetchGatewayAttestation();
+      const report = api.client.fetchModelAttestations({
+        model: 'unlisted-model',
+      });
+      if (apiKey === 'allowed-org-key') {
+        expect((await report).attestations).toHaveLength(1);
+      } else {
+        await expect(report).rejects.toMatchObject({
+          failure: { code: 'api.http_status', details: { status: 400 } },
+        });
+      }
+    },
+  );
+
   test.each(['not a URL', '/v1', 'ftp://cloud.example/v1'])(
     'rejects an invalid base URL: %s',
     (invalidBaseUrl) => {
@@ -236,12 +350,17 @@ describe('AttestationClient', () => {
   });
 
   test('reports an invalid API key as client input', async () => {
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(new Error('unexpected request'));
     const client = new AttestationClient({
       apiKey: 'invalid\nheader',
       baseUrl,
     });
 
-    await expect(client.fetchGatewayAttestation()).rejects.toMatchObject({
+    await expect(
+      client.fetchCompletionSignature({ completionId: 'test' }),
+    ).rejects.toMatchObject({
       name: 'ApiError',
       failure: {
         code: 'api.invalid_input',
@@ -252,6 +371,7 @@ describe('AttestationClient', () => {
         },
       },
     });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('uses configured headers when no direct API key is provided', async () => {
@@ -274,7 +394,7 @@ describe('AttestationClient', () => {
     expect(api.request().headers.get('authorization')).toBeNull();
   });
 
-  test('uses a direct API key over a configured authorization header', async () => {
+  test('omits configured authentication from Gateway attestation', async () => {
     const api = cloudFor(
       (request) =>
         jsonResponse(
@@ -285,6 +405,8 @@ describe('AttestationClient', () => {
         apiKey: 'direct-key',
         headers: {
           authorization: 'Bearer aggregator-token',
+          'Api-Key': 'api-key',
+          'X-API-Key': 'x-api-key',
           'x-tenant-id': 'tenant-a',
         },
       },
@@ -292,9 +414,9 @@ describe('AttestationClient', () => {
 
     await api.client.fetchGatewayAttestation();
 
-    expect(api.request().headers.get('authorization')).toBe(
-      'Bearer direct-key',
-    );
+    for (const name of ['authorization', 'api-key', 'x-api-key']) {
+      expect(api.request().headers.has(name)).toBe(false);
+    }
     expect(api.request().headers.get('x-tenant-id')).toBe('tenant-a');
   });
 

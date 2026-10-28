@@ -105,7 +105,7 @@ export class DirectApiClient {
     if (signingAddress !== undefined) {
       url.searchParams.set('signing_address', signingAddress);
     }
-    const request = this.createRequest(url);
+    const request = this.createRequest(url, false);
     let result: DirectAttestationHttpResponse;
     try {
       result = await this.requestAttestation(request, includeSpkiFingerprint);
@@ -171,9 +171,10 @@ export class DirectApiClient {
     return fetch(request);
   }
 
-  private createRequest(url: URL): Request {
+  private createRequest(url: URL, authenticate = true): Request {
     const headers = mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
+      authenticate,
     });
     return new Request(url, { headers });
   }

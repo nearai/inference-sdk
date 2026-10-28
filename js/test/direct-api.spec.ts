@@ -416,16 +416,38 @@ describe('DirectAttestationClient', () => {
     { apiKey: 'direct-key', expected: 'Bearer direct-key' },
     { apiKey: undefined, expected: 'Bearer proxy-token' },
   ])(
-    'preserves configured authentication (apiKey=$apiKey)',
+    'omits attestation authentication and preserves signature authentication (apiKey=$apiKey)',
     async ({ apiKey, expected }) => {
-      const api = directFor((request) => jsonResponse(reportFor(request)), {
-        baseUrl,
-        apiKey,
-        headers: { Authorization: 'Bearer proxy-token', 'x-tenant': 'tenant' },
-      });
+      const api = directFor(
+        (request) =>
+          jsonResponse(
+            new URL(request.url).pathname.includes('/signature/')
+              ? {
+                  text: 'request:response',
+                  signature: 'aa',
+                  signing_algo: 'ed25519',
+                  signing_address: signingAddress,
+                }
+              : reportFor(request),
+          ),
+        {
+          baseUrl,
+          apiKey,
+          headers: {
+            Authorization: 'Bearer proxy-token',
+            'Api-Key': 'api-key',
+            'X-API-Key': 'x-api-key',
+            'x-tenant': 'tenant',
+          },
+        },
+      );
       await api.client.fetchModelAttestations();
-      expect(api.requests[0].headers.get('authorization')).toBe(expected);
+      for (const name of ['authorization', 'api-key', 'x-api-key']) {
+        expect(api.requests[0].headers.has(name)).toBe(false);
+      }
       expect(api.requests[0].headers.get('x-tenant')).toBe('tenant');
+      await api.client.fetchCompletionSignature({ completionId: 'test' });
+      expect(api.requests[1].headers.get('authorization')).toBe(expected);
     },
   );
 

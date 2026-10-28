@@ -44,7 +44,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default and behavior |
 | --- | --- |
-| `ClientOptions.APIKey` | Explicit application credential; the library does not read environment variables. |
+| `ClientOptions.APIKey` | Optional application credential; the empty string omits it. The library does not read environment variables. |
 | `ClientOptions.BaseURL` | `DefaultBaseURL` (`https://cloud-api.near.ai/v1`) for Gateway; required for direct. |
 | `ClientOptions.Headers` | Additional request headers. |
 | `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
@@ -55,6 +55,17 @@ semantics, streaming, and supported privacy options.
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
+
+Use `NewAttestationClient(ClientOptions{})` to fetch attestation without credentials.
+Gateway and direct attestation requests omit `Authorization`, `api-key`, and
+`x-api-key`, including values supplied in `Headers`. Other custom headers are
+preserved. Metadata, inference, and signature requests use configured authentication.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
