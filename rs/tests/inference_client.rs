@@ -667,6 +667,92 @@ async fn gateway_verification_precedes_authenticated_requests() {
 }
 
 #[tokio::test]
+async fn clear_response_cache_preserves_session_and_applies_to_clones() {
+    for tee in [false, true] {
+        let fixture = Fixture::default();
+        if !tee {
+            *fixture.metadata.lock().unwrap() = Some(json!({
+                "metadata": {"providerType": "external", "attestationSupported": false}
+            }));
+        }
+        let (_server, f, options) = setup(fixture).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let first = client.chat_completions(body()).await.unwrap();
+        let id = first["id"].as_str().unwrap();
+        client.verify_response(id).await.unwrap();
+        client.clone().clear_response_cache().await;
+        client.clear_response_cache().await;
+        assert_eq!(
+            client.verify_response(id).await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+
+        let next = client.chat_completions(body()).await.unwrap();
+        client
+            .verify_response(next["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
+        assert_eq!(f.model.load(Ordering::SeqCst), usize::from(tee));
+    }
+}
+
+#[tokio::test]
+async fn clear_response_cache_allows_reusing_response_and_decision_ids() {
+    let (_server, _f, options) = setup(Fixture::default()).await;
+    let client = InferenceClient::with_options(options).unwrap();
+    for _ in 0..2 {
+        let response = client
+            .create_response(response_request_body(false))
+            .await
+            .unwrap();
+        let decision = client.systemone_create(&systemone_request()).await.unwrap();
+        let ids = [
+            response["id"].as_str().unwrap(),
+            decision.decision_id.as_str(),
+        ];
+        for id in ids {
+            client.verify_response(id).await.unwrap();
+        }
+        client.clear_response_cache().await;
+        for id in ids {
+            assert_eq!(
+                client.verify_response(id).await.unwrap_err().code(),
+                "api.completion_not_found"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn clear_response_cache_during_stream_prevents_late_registration() {
+    for responses in [false, true] {
+        let (_server, _f, options) = setup(Fixture::default()).await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let (request, id) = if responses {
+            (
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+                "resp_fixture",
+            )
+        } else {
+            let mut value = body();
+            value["stream"] = json!(true);
+            (client.chat_request(value).unwrap(), "chat-0")
+        };
+        let mut response = client.send(request).await.unwrap();
+        assert!(!response.body.next().await.unwrap().unwrap().is_empty());
+        client.clear_response_cache().await;
+        response.bytes().await.unwrap();
+        assert_eq!(
+            client.verify_response(id).await.unwrap_err().code(),
+            "api.completion_not_found"
+        );
+    }
+}
+
+#[tokio::test]
 async fn incognito_requires_explicitly_valid_metadata_and_rejects_model_policy() {
     let fixture = Fixture {
         metadata: Mutex::new(Some(
@@ -1199,6 +1285,59 @@ async fn systemone_plaintext_key_routing_and_receipts() {
             assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
             assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
         }
+    }
+}
+
+#[tokio::test]
+async fn systemone_preserves_json_images_and_box_receipts() {
+    let image = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="}});
+    let request_json = json!({
+        "model": "vendor/model",
+        "state": {"canvas": image},
+        "questions": {
+            "region": {"type": "box", "instructions": ["Locate the rectangle", image]},
+            "present": {"type": "noul", "instructions": "Does the canvas match?", "criteria": {"true": image}}
+        }
+    });
+    for (ecdsa, assets) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut expected = request_json.clone();
+        if assets {
+            expected["assets"] =
+                json!({"<photo>": {"format": "png", "data_base64": "ZmFrZS1pbWFnZQ=="}});
+            expected["state"] = json!({"canvas": ["<photo>", image]});
+            expected["questions"]["region"]["instructions"] = json!("Locate <photo> now");
+            expected["questions"]["present"]["criteria"] = json!({"true": "<photo>"});
+        }
+        let request: SystemOneRequest = serde_json::from_value(expected.clone()).unwrap();
+        let fixture = Fixture {
+            ecdsa,
+            ..Default::default()
+        };
+        *fixture.metadata.lock().unwrap() = Some(json!({
+            "metadata": {"providerType": "proxy", "attestationSupported": false}
+        }));
+        let (_server, f, mut options) = setup(fixture).await;
+        if ecdsa {
+            options.signing_algo = SigningAlgo::Ecdsa;
+        }
+        let client = InferenceClient::with_options(options).unwrap();
+        let mut result = client.systemone_create(&request).await.unwrap();
+        let SystemOneAnswer::Box {
+            bounds, confidence, ..
+        } = result.data.answers.get_mut("region").unwrap()
+        else {
+            panic!("expected box");
+        };
+        assert_eq!(bounds.top, 0.31);
+        assert_eq!(*confidence, Some(0.82));
+        bounds.top = 0.0;
+        let receipt = client.verify_response(&result.decision_id).await.unwrap();
+        assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+        let receipts = f.receipts.lock().unwrap();
+        let (sent, _, _) = receipts.values().next().unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(sent).unwrap(), expected);
+        assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
+        assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     }
 }
 

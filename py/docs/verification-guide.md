@@ -290,9 +290,8 @@ async def decide(api_key: str, model: str) -> None:
 
 Use a canonical Jev model ID from your endpoint's catalog. System One accepts
 uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, request compression
-and automatic inference retries disabled. Multipart uploads and other official
-SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
-receipt lookups through `verify_response(receipt_id)`.
+and automatic inference retries disabled. Retry transient receipt lookups through
+`verify_response(receipt_id)`.
 
 Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
 than the official SDK's upstream `request_id`. The official SDK parses the

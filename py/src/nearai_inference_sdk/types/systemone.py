@@ -8,6 +8,12 @@ from typing import Any, Literal, NotRequired, TypedDict
 SystemOneContent = str | dict[str, Any] | list[Any]
 
 
+class SystemOneImageAsset(TypedDict):
+    type: NotRequired[Literal['image']]
+    format: Literal['png', 'jpg', 'jpeg']
+    data_base64: str
+
+
 class SystemOneNoulCriteria(TypedDict, total=False):
     true: SystemOneContent
     false: SystemOneContent
@@ -31,8 +37,16 @@ class SystemOneScoreQuestion(TypedDict):
     criteria: list[SystemOneContent]
 
 
+class SystemOneBoxQuestion(TypedDict):
+    type: Literal['box']
+    instructions: SystemOneContent
+
+
 SystemOneQuestion = (
-    SystemOneNoulQuestion | SystemOneChoiceQuestion | SystemOneScoreQuestion
+    SystemOneNoulQuestion
+    | SystemOneChoiceQuestion
+    | SystemOneScoreQuestion
+    | SystemOneBoxQuestion
 )
 
 
@@ -40,6 +54,7 @@ class SystemOneRequest(TypedDict):
     model: str
     state: SystemOneContent
     questions: dict[str, SystemOneQuestion]
+    assets: NotRequired[dict[str, SystemOneImageAsset]]
 
 
 class SystemOneNoulAnswer(TypedDict):
@@ -62,7 +77,25 @@ class SystemOneScoreAnswer(TypedDict):
     legend: dict[str, SystemOneContent]
 
 
-SystemOneAnswer = SystemOneNoulAnswer | SystemOneChoiceAnswer | SystemOneScoreAnswer
+class SystemOneBoxCoordinates(TypedDict):
+    top: float
+    bottom: float
+    left: float
+    right: float
+
+
+class SystemOneBoxAnswer(TypedDict):
+    type: Literal['box']
+    box: SystemOneBoxCoordinates
+    confidence: NotRequired[float | None]
+
+
+SystemOneAnswer = (
+    SystemOneNoulAnswer
+    | SystemOneChoiceAnswer
+    | SystemOneScoreAnswer
+    | SystemOneBoxAnswer
+)
 
 
 class SystemOneUsage(TypedDict):

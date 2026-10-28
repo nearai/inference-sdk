@@ -15,6 +15,7 @@ func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any)
 func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) CreateMessage(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
+func (c *InferenceClient) ClearResponseCache()
 func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
@@ -82,9 +83,23 @@ required deployments and sends one nonstreaming request. `DecisionID` comes from
 
 Requests accept `SystemOneRequest` or another JSON-serializable value. Each
 question requires `Instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
-Structured legend numbers use `json.Number`, while score and probability fields
-use `float64`.
+support `noul`, `choice`, `score`, and `box`; `Extra` preserves unknown fields.
+A Box question requires only `Instructions`. Its answer exposes
+`Box *SystemOneBoxCoordinates` with finite `Top`, `Bottom`, `Left`, and `Right`
+values, plus optional `Confidence *float64`; missing or null confidence becomes `nil`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.Assets` accepts a map of `SystemOneImageAsset` values.
+Structured legend numbers use `json.Number`, while scores, probabilities,
+and Box coordinates/confidence use finite `float64` values.
+
+See the [native image example](../../examples/example-go/gateway/systemone/main.go) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.
@@ -430,6 +445,13 @@ retention for services that process many or large completions.
 Verified records remain available until their TTL expires. A duplicate
 retained ID fails with `api.duplicate_completion_id` and preserves the original
 receipt. An expired ID can be reused.
+
+Call `ClearResponseCache()` when discarding a conversation. It clears captured
+request/response bytes and cached receipt results while keeping the client and
+attestation sessions reusable. Cleared IDs become unavailable to `VerifyResponse`.
+Ongoing response captures stay discarded when they finish.
+To end active work and release its buffers, also cancel the requests and finish
+any ongoing verification. Direct clients support the same cleanup method.
 
 ## Verification guarantees
 

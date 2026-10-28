@@ -121,6 +121,7 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat, Responses, Messages, or System One result. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `InferenceClient.clearResponseCache()` | `void` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
@@ -150,6 +151,12 @@ non-negative durations. Expired records are unavailable immediately; timers rele
 retained bodies while idle. A duplicate retained ID fails with
 `api.duplicate_completion_id` and preserves the original receipt. An expired ID
 can be reused.
+
+Call `clearResponseCache()` when discarding a conversation. Cleared IDs become
+unavailable to `verifyResponse`. Ongoing response captures stay discarded when
+they finish. To end active work and release its buffers,
+also cancel the requests and finish any ongoing verification. Direct clients
+support the same cleanup method.
 
 ### Errors wrapped by official SDKs
 
@@ -192,13 +199,15 @@ Chat's model session and selected-key routing. See the
 | --- | --- | --- |
 | `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
 | `state` | Text, object, or array | Decision context forwarded as JSON. |
-| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, `score`, or `box` questions. Names and choice labels may be any string. |
+| `assets?` | `Record<string, SystemOneImageAsset>` | Optional named images referenced from the request content. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
 | `score` | Text, object, or array | Ordered array of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 Use `SystemOneRequest<MyQuestions>` and `SystemOneQuestion<MyChoices>` to
 annotate application types; `create()` also infers question and choice maps.
@@ -225,6 +234,17 @@ annotate application types; `create()` also infers question and choice maps.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
 | `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `null`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+
+See the [native image example](../../examples/example-js/gateway/jev.ts) and
+[run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
@@ -272,6 +292,7 @@ There is no `gatewayVerification` option.
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
 | `verifyResponse(id)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
+| `clearResponseCache()` | `void` | Clears captured responses, cached receipt results, and expiry timers; preserves verified model sessions. |
 
 | `DirectAttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |

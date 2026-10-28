@@ -50,6 +50,7 @@ type InferenceClient struct {
 	sessions                    map[string]*session
 	pending                     map[string]*pendingSession
 	responses                   map[string]*responseRecord
+	responseGeneration          uint64
 	transports                  map[string]*http.Transport
 	wg                          sync.WaitGroup
 	closed                      bool
@@ -142,6 +143,20 @@ func (c *InferenceClient) HTTPClient() *http.Client {
 }
 
 func (c *InferenceClient) BaseURL() string { return c.api.base.String() }
+
+// ClearResponseCache releases captured responses while keeping the client reusable.
+func (c *InferenceClient) ClearResponseCache() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.responseGeneration++
+	clear(c.responses)
+}
+
+func (c *InferenceClient) responseCacheGeneration() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.responseGeneration
+}
 
 func (c *InferenceClient) Close() error {
 	c.mu.Lock()
@@ -402,6 +417,7 @@ func headerNames(h http.Header) []string {
 
 // RoundTrip accepts POSTs to Chat Completions, Responses, and Messages creation.
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
+	generation := c.responseCacheGeneration()
 	expected := *c.api.base
 	expected.Path += "chat/completions"
 	responsesURL := *c.api.base
@@ -534,7 +550,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 				return nil, e
 			}
 		}
-		if e = c.register(id, body, wire, s, gatewayOnly); e != nil {
+		if e = c.register(id, body, wire, s, gatewayOnly, generation); e != nil {
 			return nil, e
 		}
 		response.Body = io.NopCloser(bytes.NewReader(visible))
@@ -610,7 +626,7 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
 		if failed || id == "" || (messages && !messageStopped) {
 			return failure("api.invalid_response", nil)
 		}
-		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly)
+		return c.register(id, body, capture.body.Bytes(), s, gatewayOnly, generation)
 	}
 	response.Body = &sseReader{
 		source: capture, reader: bufio.NewReader(capture), transform: transform,
@@ -630,11 +646,14 @@ type cancelBody struct {
 
 func (b *cancelBody) Close() error { e := b.ReadCloser.Close(); b.once.Do(b.cancel); return e }
 
-func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool) error {
+func (c *InferenceClient) register(id string, request, response []byte, s *session, gatewayOnly bool, generation uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return failure("api.client_closed", nil)
+	}
+	if generation != c.responseGeneration {
+		return nil
 	}
 	if c.responseTTL == 0 {
 		return nil

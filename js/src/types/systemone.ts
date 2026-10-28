@@ -4,6 +4,13 @@ import type { SystemOneResponseSchema } from '../schemas';
 /** Text or structured JSON passed through to the decision model. */
 export type SystemOneContent = string | object;
 
+/** JSON image data referenced by its key in the request's assets map. */
+export type SystemOneImageAsset = {
+  readonly type?: 'image';
+  readonly format: 'png' | 'jpg' | 'jpeg';
+  readonly data_base64: string;
+};
+
 export type SystemOneQuestion<
   Choices extends Readonly<
     Record<keyof Choices, SystemOneContent | null>
@@ -26,6 +33,11 @@ export type SystemOneQuestion<
       readonly type: 'score';
       readonly instructions: SystemOneContent;
       readonly criteria: readonly SystemOneContent[];
+    }
+  | {
+      readonly type: 'box';
+      readonly instructions: SystemOneContent;
+      readonly criteria?: never;
     };
 
 // Distribute over question unions so explicitly annotated generic questions
@@ -52,10 +64,15 @@ export type SystemOneRequest<
   readonly model: string;
   readonly state: SystemOneContent;
   readonly questions: Questions;
+  readonly assets?: Readonly<Record<string, SystemOneImageAsset>>;
 };
 
 export type SystemOneResponse = v.InferOutput<typeof SystemOneResponseSchema>;
 export type SystemOneAnswer = SystemOneResponse['answers'][string];
+export type SystemOneBoxCoordinates = Extract<
+  SystemOneAnswer,
+  { type: 'box' }
+>['box'];
 
 export type SystemOneRequestOptions = {
   readonly headers?: HeadersInit;

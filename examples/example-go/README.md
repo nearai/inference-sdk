@@ -14,7 +14,7 @@ image policies, and the matching JavaScript, Python, and Rust examples.
 | `go run ./gateway/responses` | Official OpenAI Responses JSON/SSE and Gateway receipts |
 | `go run ./gateway/messages` | Native Messages JSON/SSE and Gateway receipts |
 | `go run ./gateway/anthropic` | Official Anthropic Messages JSON/SSE and Gateway receipts |
-| `go run ./gateway/systemone` | Billing, team, and urgency decisions with verified receipts |
+| `go run ./gateway/systemone` | Text decisions or PNG image/Box decisions with verified receipts |
 | `go run ./direct/client` | Experimental native direct Chat with E2EE and receipts |
 | `go run ./direct/bare` | Experimental standalone direct verification over plaintext HTTPS |
 | `go run ./direct/openai` | Experimental official OpenAI direct Chat with E2EE and receipts |
@@ -24,6 +24,7 @@ image policies, and the matching JavaScript, Python, and Rust examples.
 model, signature algorithm, and optional OHTTP. Set `NEARAI_MODEL` for System One;
 `NEARAI_EXPECT_SIGNATURE_KIND` defaults to `gateway`, with `provider_tee` available
 for verified self-hosted decision models.
+Set `NEARAI_IMAGE_PATH` for the shared [PNG image/Box example](../README.md#system-one-images).
 
 JSON answers are printed after receipt verification. SSE text is printed as it
 arrives; the example consumes through EOF and verifies the receipt afterward.

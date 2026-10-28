@@ -208,6 +208,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
+        self._response_generation = 0
         self._drains: set[asyncio.Task[None]] = set()
         self._chat_client = httpx.AsyncClient(
             transport=_InferenceTransport(self), timeout=None
@@ -265,14 +266,19 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
-        for record in self._responses.values():
-            if record.expiry is not None:
-                record.expiry.cancel()
+        self.clear_response_cache()
         await asyncio.gather(
             *(client.aclose() for client in self._http_clients.values())
         )
         self._http_clients.clear()
         self._sessions.clear()
+
+    def clear_response_cache(self) -> None:
+        """Release captured responses and expiry timers; keep the client reusable."""
+        self._response_generation += 1
+        for record in self._responses.values():
+            if record.expiry is not None:
+                record.expiry.cancel()
         self._responses.clear()
 
     async def verify(self, model: str) -> AttestationResult:
@@ -302,6 +308,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         close its response, and finish a stream before calling verify_response.
         """
 
+        generation = self._response_generation
         expected = httpx.URL(self.base_url).join('chat/completions')
         actual = request.url.copy_with(query=None)
         responses = actual == httpx.URL(self.base_url).join('responses')
@@ -384,6 +391,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 request_body,
                 response_body,
                 session,
+                generation=generation,
                 gateway_only=responses or messages,
             )
 
@@ -567,12 +575,15 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result, AttestationResult],
         *,
+        generation: int,
         gateway_only: bool = False,
     ) -> None:
         """Retain exact wire bytes for expiry and independent verification retries."""
 
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
+        if generation != self._response_generation:
+            return
         if self._response_ttl == 0:
             return
         if self._get_response_record(id) is not None:

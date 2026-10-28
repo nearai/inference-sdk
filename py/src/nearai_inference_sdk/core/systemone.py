@@ -97,6 +97,7 @@ class InferenceSystemOne:
         self, request: httpx.Request, headers: httpx.Headers
     ) -> tuple[httpx.Response, Callable[[], None]]:
         client = self._client
+        generation = client._response_generation
         if client._e2ee or client._ohttp:
             raise _invalid_input('System One requires e2ee=False and ohttp=False')
         # Both entry points merge configured headers exactly once. Native create()
@@ -184,7 +185,9 @@ class InferenceSystemOne:
         def register() -> None:
             captured = asyncio.get_running_loop().create_future()
             captured.set_result(response_body)
-            client._register_response(decision_id, request_body, captured, session)
+            client._register_response(
+                decision_id, request_body, captured, session, generation=generation
+            )
 
         # HTTPX decodes the body but retains the original compression headers.
         response_headers = response.headers.copy()

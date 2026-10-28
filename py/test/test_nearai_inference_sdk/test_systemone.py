@@ -18,11 +18,30 @@ from nearai_inference_sdk import (
     GatewayVerificationOptions,
     ModelAttestationVerifiers,
     ModelVerificationOptions,
+    SystemOneRequest,
     VerificationError,
     VerifiedModelCompletionResult,
 )
 
 from .test_inference_client import MESSAGES, MODEL, Gateway
+
+IMAGE_PART = {
+    'type': 'image_url',
+    'image_url': {'url': 'data:image/png;base64,ZmFrZS1pbWFnZQ=='},
+}
+BOX_BOUNDS = {'top': 0.31, 'bottom': 0.69, 'left': 0.25, 'right': 0.75}
+IMAGE_REQUEST = {
+    'model': MODEL,
+    'state': {'canvas': IMAGE_PART},
+    'questions': {
+        'region': {'type': 'box', 'instructions': ['Locate the rectangle', IMAGE_PART]},
+        'present': {
+            'type': 'noul',
+            'instructions': 'Does the canvas match?',
+            'criteria': {'true': IMAGE_PART},
+        },
+    },
+}
 
 REQUEST = {
     'model': MODEL,
@@ -179,6 +198,123 @@ class DecisionGateway(Gateway):
                 else 'x-generation-id': decision_id,
             },
         )
+
+
+@pytest.mark.parametrize('confidence', [{}, {'confidence': None}, {'confidence': 0.82}])
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_box_images_preserve_bytes_and_verify_receipts(
+    monkeypatch, confidence, signing_algo
+):
+    gateway = DecisionGateway(signing_algo)
+    answer = {
+        'type': 'box',
+        'box': {**BOX_BOUNDS, 'future': 'preserved'},
+        'future': {'preserved': True},
+        **confidence,
+    }
+    gateway.answers = {'region': answer, 'present': {'type': 'noul', 'noul': 0.98}}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        result = await client.systemone.create(IMAGE_REQUEST)
+        assert json.loads(gateway.requests[0].content) == IMAGE_REQUEST
+        assert result.data['answers']['region'] == answer
+        result.data['answers']['region']['box']['top'] = 0
+        verified = await client.verify_response(result.decision_id)
+        assert verified.signature_kind == 'gateway'
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize('entrypoint', ['native', 'httpx', 'httpx2'])
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_json_assets_preserve_references_and_receipt_bytes(
+    monkeypatch, entrypoint, signing_algo
+):
+    request: SystemOneRequest = {
+        'model': MODEL,
+        'assets': {'<photo>': {'format': 'png', 'data_base64': 'ZmFrZS1pbWFnZQ=='}},
+        'state': {'<photo>': ['<photo>', IMAGE_PART]},
+        'questions': {
+            'region': {'type': 'box', 'instructions': 'Locate <photo> — now'},
+            'match': {
+                'type': 'score',
+                'instructions': 'Rate the match.',
+                'criteria': ['Different', '<photo>'],
+            },
+        },
+    }
+    legend = {'0': 'Different', '1': '<photo>'}
+    gateway = DecisionGateway(signing_algo)
+    gateway.answers = {
+        'region': {'type': 'box', 'box': BOX_BOUNDS},
+        'match': {
+            'type': 'score',
+            'score': 1,
+            'confidence': 0.9,
+            'probabilities': {'0': 0.1, '1': 0.9},
+            'legend': legend,
+        },
+    }
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        if entrypoint == 'native':
+            body = json.dumps(request).encode()
+            result = await client.systemone.create(request)
+            assert result.data['answers']['match']['legend'] == legend
+            receipt_id = result.decision_id
+        else:
+            body = (json.dumps(request, ensure_ascii=False, indent=2) + '\n').encode()
+            http_client = (
+                client.http_client if entrypoint == 'httpx' else client.httpx2_client
+            )
+            response = await http_client.post(
+                client.base_url + 'systemone',
+                headers={'content-type': 'application/json'},
+                content=body,
+            )
+            assert response.json()['answers']['match']['legend'] == legend
+            receipt_id = response.headers['x-generation-id']
+        assert gateway.requests[0].content == body
+        assert (await client.verify_response(receipt_id)).signature_kind == 'gateway'
+    assert len(gateway.requests) == 1
+
+
+@pytest.mark.parametrize(
+    'answer',
+    [
+        {'type': 'box'},
+        {'type': 'box', 'box': None},
+        {'type': 'box', 'box': {'bottom': 1, 'left': 0, 'right': 1}},
+        *[
+            {'type': 'box', 'box': {**BOX_BOUNDS, 'top': top}}
+            for top in (None, True, '0.31', float('inf'))
+        ],
+        {'type': 'box', 'box': BOX_BOUNDS, 'confidence': '0.82'},
+    ],
+)
+async def test_malformed_box_is_not_retained_or_retried(monkeypatch, answer):
+    gateway = DecisionGateway()
+    gateway.answers = {'region': answer}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(ApiError, match='api.invalid_response'):
+            await client.systemone.create(IMAGE_REQUEST)
+        with pytest.raises(ApiError, match='api.completion_not_found'):
+            await client.verify_response('systemone-1')
+    assert len(gateway.requests) == 1
+
+
+async def test_clear_response_cache_allows_reusing_decision_id(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        first = await client.systemone.create(REQUEST)
+        await client.verify_response(first.decision_id)
+        client.clear_response_cache()
+        with pytest.raises(ApiError) as error:
+            await client.verify_response(first.decision_id)
+        assert error.value.failure.code == 'api.completion_not_found'
+        next_response = await client.systemone.create(REQUEST)
+        await client.verify_response(next_response.decision_id)
 
 
 async def test_requires_model_public_key_before_sending_a_decision(monkeypatch):

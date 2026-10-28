@@ -23,6 +23,7 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
 | `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. |
+| `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
 `body` to EOF or call `bytes()` / `json()`. Dropping an incomplete body prevents
@@ -32,6 +33,12 @@ turn them into `ApiError::HttpStatus`.
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
 returns `CompletionSignatureKind`.
+
+Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
+become unavailable to `verify_response`. The client remains reusable. Ongoing
+response captures stay discarded when they finish. To end active work and release
+its buffers, also cancel the requests and finish any
+ongoing verification. Direct clients support the same cleanup method.
 
 `create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
 Messages request for `send()`, including SSE. Both require a Gateway client with
@@ -72,9 +79,24 @@ from `X-Generation-Id`. Verify the receipt before using `data`.
 
 Requests accept `SystemOneRequest` or another serializable JSON value. Each
 question requires `instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`, preserving unknown fields. Structured
-content preserves arbitrary-precision JSON numbers; scores and probabilities
-use finite `f64` values.
+support `noul`, `choice`, `score`, and `box`, preserving unknown fields. A Box
+question requires only `instructions`. `SystemOneAnswer::Box` exposes `bounds`
+(the JSON `box` field) as `SystemOneBoxCoordinates` with finite `top`, `bottom`,
+`left`, and `right` values, plus `confidence: Option<f64>`; missing or null
+confidence becomes `None`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.assets` accepts an optional map of `SystemOneImageAsset` values.
+Structured content preserves arbitrary-precision JSON numbers; scores,
+probabilities, and Box coordinates/confidence use finite `f64` values.
+
+See the [native image example](../../examples/example-rs/src/bin/systemone.rs) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.

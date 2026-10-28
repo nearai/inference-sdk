@@ -20,8 +20,9 @@ one-signature design.
 
 ## Public API
 
-Gateway retrieval, attestation verification, and `InferenceClient` operations
-are asynchronous. Standalone response-signature verification is synchronous.
+Gateway retrieval, attestation verification, and inference operations are
+asynchronous. Standalone response-signature verification and response-cache
+cleanup are synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
@@ -32,6 +33,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat, Responses, Messages, or uncompressed JSON System One requests, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat, Responses, Messages, and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a response signature over retained bytes. |
+| `inference_client.clear_response_cache` | `()` | `None` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -155,6 +157,12 @@ timers release retained bodies while idle. A duplicate retained ID fails with
 `api.duplicate_completion_id` and preserves the original receipt. An expired ID
 can be reused. Closing the client releases retained records.
 
+Call `clear_response_cache()` when discarding a conversation. Cleared IDs become
+unavailable to `verify_response`. Ongoing response captures stay discarded when
+they finish. To end active work and release its buffers,
+also cancel the requests and finish any ongoing verification. Direct clients
+support the same cleanup method.
+
 ### Errors wrapped by official SDKs
 
 The OpenAI and Anthropic clients can wrap transport errors. Use
@@ -201,12 +209,14 @@ using the answers.
 | `model` | `str` | Canonical decision-model ID. |
 | `state` | `str \| dict \| list` | Text or structured decision context. |
 | `questions` | `dict[str, SystemOneQuestion]` | Named questions; request business rules are checked by the server. |
+| `assets` | Optional `dict[str, SystemOneImageAsset]` | Named images referenced from the request content. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |
 | `score` | Text, object, or array | Required list of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 | `SystemOneResult` member | Type | Description |
 | --- | --- | --- |
@@ -225,6 +235,17 @@ using the answers.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: string label; `confidence` and per-label `probabilities` in `[0, 1]`. |
 | `score` | `score`: finite number; `confidence` and per-level `probabilities` in `[0, 1]`; `legend`: descriptions keyed by level. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `None`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+
+See the [native image example](../../examples/example-py/gateway/jev.py) and
+[run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `response_cache_time_to_live_ms`.

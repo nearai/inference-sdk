@@ -21,15 +21,54 @@ type SystemOneQuestion struct {
 	Criteria     any              `json:"criteria,omitempty"`
 }
 type SystemOneRequest struct {
-	Model     string                       `json:"model"`
-	State     SystemOneContent             `json:"state"`
-	Questions map[string]SystemOneQuestion `json:"questions"`
+	Model     string                         `json:"model"`
+	State     SystemOneContent               `json:"state"`
+	Questions map[string]SystemOneQuestion   `json:"questions"`
+	Assets    map[string]SystemOneImageAsset `json:"assets,omitempty"`
 }
+
+// SystemOneImageAsset holds PNG or JPEG data in standard base64, without a data URL prefix.
+type SystemOneImageAsset struct {
+	Type       string `json:"type,omitempty"` // Optional; when present, use "image".
+	Format     string `json:"format"`         // png, jpg, or jpeg.
+	DataBase64 string `json:"data_base64"`
+}
+type SystemOneBoxCoordinates struct {
+	Top    float64                    `json:"top"`
+	Bottom float64                    `json:"bottom"`
+	Left   float64                    `json:"left"`
+	Right  float64                    `json:"right"`
+	Extra  map[string]json.RawMessage `json:"-"`
+}
+
+func (b *SystemOneBoxCoordinates) UnmarshalJSON(body []byte) error {
+	// Missing/null coordinates are not zero-valued edges.
+	var coordinates struct {
+		Top, Bottom, Left, Right *float64
+	}
+	if err := json.Unmarshal(body, &coordinates); err != nil {
+		return err
+	}
+	if coordinates.Top == nil || coordinates.Bottom == nil || coordinates.Left == nil || coordinates.Right == nil {
+		return errors.New("System One box requires top, bottom, left, and right numbers")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return err
+	}
+	*b = SystemOneBoxCoordinates{
+		Top: *coordinates.Top, Bottom: *coordinates.Bottom, Left: *coordinates.Left, Right: *coordinates.Right,
+		Extra: systemOneExtras(fields, "top", "bottom", "left", "right"),
+	}
+	return nil
+}
+
 type SystemOneAnswer struct {
 	Type          string                      `json:"type"`
 	Noul          *float64                    `json:"noul,omitempty"`
 	Choice        *string                     `json:"choice,omitempty"`
 	Score         *float64                    `json:"score,omitempty"`
+	Box           *SystemOneBoxCoordinates    `json:"box,omitempty"`
 	Confidence    *float64                    `json:"confidence,omitempty"`
 	Probabilities map[string]float64          `json:"probabilities,omitempty"`
 	Legend        map[string]SystemOneContent `json:"legend,omitempty"`
@@ -55,6 +94,8 @@ func (a *SystemOneAnswer) UnmarshalJSON(body []byte) error {
 		selected["choice"], selected["confidence"], selected["probabilities"] = &a.Choice, &a.Confidence, &a.Probabilities
 	case "score":
 		selected["score"], selected["confidence"], selected["probabilities"], selected["legend"] = &a.Score, &a.Confidence, &a.Probabilities, &a.Legend
+	case "box":
+		selected["box"], selected["confidence"] = &a.Box, &a.Confidence
 	}
 	known := []string{"type"}
 	for name, target := range selected {
@@ -129,6 +170,10 @@ func decodeSystemOneResponse(body []byte) (SystemOneResponse, error) {
 			if !probability(answer.Noul) {
 				return invalid()
 			}
+		case "box":
+			if answer.Box == nil {
+				return invalid()
+			}
 		case "choice", "score":
 			if !probability(answer.Confidence) || answer.Probabilities == nil {
 				return invalid()
@@ -174,6 +219,7 @@ func (c *InferenceClient) CreateSystemOne(ctx context.Context, request any) (Sys
 // CreateSystemOneWithHeaders adds per-call headers while preserving client-owned
 // authentication and the generated body's identity encoding and integrity headers.
 func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, request any, headers http.Header) (SystemOneResult, error) {
+	generation := c.responseCacheGeneration()
 	var result SystemOneResult
 	if c.api.direct || c.options.E2EE || c.options.OHTTP {
 		return result, detail("api.invalid_input", "resource", "systemone")
@@ -253,7 +299,7 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, err
 	}
-	if err = c.register(id, body, wire, s, false); err != nil {
+	if err = c.register(id, body, wire, s, false, generation); err != nil {
 		return result, err
 	}
 	return SystemOneResult{Data: data, DecisionID: id}, nil
