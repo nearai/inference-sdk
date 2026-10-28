@@ -1,0 +1,3 @@
+# Preserve signed SSE line endings and the final blank frame delimiter.
+**/responses/response.sse -text whitespace=cr-at-eol,-blank-at-eof
+**/messages/message.sse -text whitespace=cr-at-eol,-blank-at-eof

@@ -88,10 +88,27 @@ impl DirectAttestationClient {
             .and_then(serde_json::Value::as_array)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| invalid("all_attestations"))?;
-        let attestations = reports.iter().map(decode).collect::<Result<Vec<_>, _>>()?;
-        if !attestations.contains(&serving) {
-            return Err(invalid("serving_attestation"));
-        }
+        let mut attestations = reports
+            .iter()
+            .map(|value| {
+                // Only the serving envelope supplies manager evidence. Ignore
+                // nested payloads before decoding even if their shape is unknown.
+                let mut value = value.clone();
+                value
+                    .as_object_mut()
+                    .ok_or_else(|| invalid("all_attestations"))?
+                    .remove("compose_manager_attestation");
+                decode(&value)
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+        let mut bare = serving.clone();
+        bare.attestation.compose_manager_attestation = None;
+        let index = attestations
+            .iter()
+            .position(|report| report == &bare)
+            .ok_or_else(|| invalid("serving_attestation"))?;
+        attestations[index].attestation.compose_manager_attestation =
+            serving.attestation.compose_manager_attestation.clone();
         for item in &attestations {
             if item.spki_fingerprint.is_some() {
                 return Err(invalid("tls_cert_fingerprint"));
@@ -291,12 +308,6 @@ pub struct DirectInferenceClientOptions {
     pub response_cache_ttl: Duration,
     pub model_verification: ModelVerificationOptions,
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-    /// Exact bytes retained for a single response; larger responses fail closed.
-    pub max_response_bytes: usize,
-    /// Bound both completed session and receipt caches. Oldest entries are evicted.
-    pub max_cache_entries: usize,
-    /// Total request and response bytes retained in the receipt cache.
-    pub max_receipt_cache_bytes: usize,
 }
 impl Default for DirectInferenceClientOptions {
     fn default() -> Self {
@@ -316,9 +327,6 @@ impl From<InferenceClientOptions> for DirectInferenceClientOptions {
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
             deployment_policy: options.deployment_policy,
-            max_response_bytes: options.max_response_bytes,
-            max_cache_entries: options.max_cache_entries,
-            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
         }
     }
 }
@@ -335,9 +343,6 @@ impl From<DirectInferenceClientOptions> for InferenceClientOptions {
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
             deployment_policy: options.deployment_policy,
-            max_response_bytes: options.max_response_bytes,
-            max_cache_entries: options.max_cache_entries,
-            max_receipt_cache_bytes: options.max_receipt_cache_bytes,
             gateway_verification: GatewayVerificationOptions::default(),
         }
     }

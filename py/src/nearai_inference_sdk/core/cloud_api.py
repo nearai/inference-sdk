@@ -37,6 +37,7 @@ from ..types.cloud_api import (
     FetchedModelAttestations,
     ModelMetadata,
 )
+from ..types.compose_manager import ComposeManagerAttestation
 from ..types.ohttp import OhttpAttestation
 from ..types.verification import (
     GatewayClientBinding,
@@ -94,10 +95,12 @@ class _ApiClient:
         query: dict[str, str] = {}
         if signing_algo is not None:
             query['signing_algo'] = signing_algo
+        # urllib leaves dots unescaped; HTTPX normalizes bare '.' and '..'.
+        signature_id = quote(completion_id, safe='').replace('.', '%2E')
         response = await self._get_json(
             _endpoint(
                 self._base_url,
-                f'signature/{quote(completion_id, safe="")}',
+                f'signature/{signature_id}',
                 query,
             ),
             'completion_signature',
@@ -364,6 +367,8 @@ def _decode_gateway_attestation_report(value: object) -> GatewayAttestation:
 def _map_model_attestation(
     raw: CloudModelAttestationSchema | DirectModelAttestationSchema, label: str
 ) -> ModelAttestation:
+    # Direct reports carry manager evidence only on the response envelope.
+    manager = getattr(raw, 'compose_manager_attestation', None)
     if raw.signing_public_key is not None:
         _api_hex_to_bytes(raw.signing_public_key, f'{label}.signing_public_key')
     return ModelAttestation(
@@ -375,6 +380,18 @@ def _map_model_attestation(
         reported_quote_data=raw.report_data,
         nvidia_payload=raw.nvidia_payload,
         signing_public_key=raw.signing_public_key,
+        compose_manager_attestation=(
+            None
+            if manager is None
+            else ComposeManagerAttestation(
+                actions=tuple(action.root for action in manager.actions),
+                actions_hash=manager.actions_hash,
+                nonce=manager.nonce,
+                intel_quote=manager.quote,
+                event_log=manager.event_log,
+                reported_quote_data=manager.report_data,
+            )
+        ),
     )
 
 

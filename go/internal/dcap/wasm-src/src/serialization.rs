@@ -182,6 +182,11 @@ impl FfiReport {
             Report::SgxEnclave(r) => Self::from_sgx(r),
             Report::TD10(r) => Self::from_td10(r),
             Report::TD15(r) => Self::from_td15(r),
+            Report::TD15Ex(r) => {
+                let mut ffi = Self::from_td15(&r.base);
+                ffi.r#type = "TD15Ex";
+                ffi
+            }
         }
     }
 }

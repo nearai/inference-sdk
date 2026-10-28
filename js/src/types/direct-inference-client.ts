@@ -9,10 +9,9 @@ import type {
   InferenceEncryptionOptions,
   ModelVerificationOptions,
 } from './inference-client';
-
 export type DirectModelVerificationOptions = ModelVerificationOptions;
 
-export type NodeDirectModelVerificationOptions = ModelVerificationOptions;
+export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 
 /**
  * Verified Chat requests to one direct model endpoint, without a Gateway.
@@ -47,12 +46,11 @@ export type DirectAttestationVerificationResult =
 
 /** A signed response associated with the preflight-verified signer group. */
 export type VerifiedDirectCompletionResult = {
-  /** Receipt lookup ID, retained for compatibility with Chat consumers. */
+  readonly id: string;
+  /** @deprecated Use `id` instead. */
   readonly completionId: string;
-  /** Alias populated by SDK clients; optional for existing custom verifiers. */
-  readonly id?: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** All verified reports sharing this signer, not a claim identifying one CVM. */
+  /** Eligible verified reports sharing this signer, not a claim identifying one CVM. */
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };

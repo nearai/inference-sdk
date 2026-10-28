@@ -97,6 +97,22 @@ async function main() {
       })),
     );
   }
+  const nearResponse = selected.find(({ provider }) => provider === 'near');
+  const openaiResponse = chatModels.find(({ metadata }) =>
+    metadata.providerType === 'external' && metadata.ownedBy === 'openai' &&
+    !metadata.attestationSupported,
+  );
+  assert.ok(openaiResponse, 'Expected an OpenAI external text model for Responses');
+  selected.push(
+    { ...nearResponse, endpoint: 'responses' },
+    { id: openaiResponse.modelId, provider: 'external', endpoint: 'responses' },
+  );
+  // const anthropicMessage = chatModels.find(({ metadata }) =>
+  //   metadata.providerType === 'external' && metadata.ownedBy === 'anthropic' &&
+  //   !metadata.attestationSupported,
+  // );
+  // assert.ok(anthropicMessage, 'Expected an Anthropic external text model for Messages');
+  // selected.push({ id: anthropicMessage.modelId, provider: 'external', endpoint: 'messages' });
   if (systemoneModel) {
     selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
   }

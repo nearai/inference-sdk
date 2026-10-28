@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import math
+import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic, time
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
+
+# Messages support is deferred until a later release.
+# from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -46,7 +51,7 @@ from ..utils.errors import (
     verification_failure,
 )
 from ..utils.fetch import FetchResponse
-from ..utils.sse import get_sse_data_records, take_complete_sse_records
+from ..utils.sse import get_sse_data_records, get_sse_event, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
 from .chat import verify_gateway_response, verify_model_response
@@ -63,6 +68,10 @@ from .e2ee_request import (
 from .ohttp import create_ohttp_client
 from .ohttp_attestation import verify_ohttp_key_config
 from .pinned_tls import create_pinned_tls_client
+from .systemone import InferenceSystemOne
+
+if TYPE_CHECKING:
+    import httpx2
 
 DEFAULT_CACHE_TIME_TO_LIVE_MS = 60 * 60 * 1000
 _OPENAI_PLACEHOLDER = 'nearai-inference-sdk-internal'
@@ -82,8 +91,10 @@ class _ResponseRecord[Result, AttestationResult]:
     request_body: bytes
     response_body: asyncio.Future[bytes]
     session: _VerifiedSession[Result, AttestationResult]
+    gateway_only: bool = False
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
+    expires_at: float | None = None
 
 
 class _SessionAttestationClient(AttestationClient):
@@ -112,10 +123,19 @@ class _SessionAttestationClient(AttestationClient):
 
 
 class _InferenceTransport(httpx.AsyncBaseTransport):
-    def __init__(self, client: _VerifiedInferenceClient) -> None:
+    def __init__(
+        self, client: _VerifiedInferenceClient, *, anthropic: bool = False
+    ) -> None:
         self._client = client
+        self._anthropic = anthropic
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if self._anthropic:
+            base = httpx.URL(self._client.base_url)
+            if request.url.copy_with(query=None) == base.join('v1/messages'):
+                request.url = base.join('messages').copy_with(
+                    query=request.url.query or None
+                )
         return await self._client.send(request)
 
 
@@ -127,6 +147,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     transport. Both paths retain encrypted wire bytes for ``verify_response``.
     Use ``async with`` or call ``aclose`` to release connections and caches.
     """
+
+    _supports_gateway_endpoints = False
 
     def __init__(
         self,
@@ -142,6 +164,19 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         model_verification: ModelVerificationOptions | None = None,
         deployment_policy: DeploymentPolicy | None = None,
     ) -> None:
+        for field, value in (
+            ('attestation_cache_time_to_live_ms', attestation_cache_time_to_live_ms),
+            ('response_cache_time_to_live_ms', response_cache_time_to_live_ms),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise api_failure(
+                    'api.invalid_input',
+                    {
+                        'field': field,
+                        'reason': 'unsupported_value',
+                        'expected': 'a finite non-negative duration in milliseconds',
+                    },
+                )
         if ohttp and signing_algo != 'ed25519':
             raise api_failure(
                 'api.invalid_input',
@@ -166,10 +201,12 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._model_options = model_verification or ModelVerificationOptions()
         self._deployment_policy = deployment_policy
         self._sessions: dict[
-            str, tuple[float, _VerifiedSession[Result, AttestationResult]]
+            str,
+            tuple[float, _VerifiedSession[Result, AttestationResult]],
         ] = {}
         self._pending: dict[
-            str, asyncio.Task[_VerifiedSession[Result, AttestationResult]]
+            str,
+            asyncio.Task[_VerifiedSession[Result, AttestationResult]],
         ] = {}
         self._http_clients: dict[str | tuple[str, ...] | None, httpx.AsyncClient] = {}
         self._responses: dict[str, _ResponseRecord[Result, AttestationResult]] = {}
@@ -183,17 +220,31 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             api_key=api_key or _OPENAI_PLACEHOLDER,
             base_url=self.base_url,
             http_client=self._chat_client,
+            max_retries=0,
         )
         self.chat = self._openai.chat
 
     @property
     def http_client(self) -> httpx.AsyncClient:
-        """Return a non-owning HTTPX adapter for an external OpenAI client.
+        """Return a non-owning HTTPX adapter for an external SDK.
 
         Each adapter may be closed independently; the inference client owns
         the connections, sessions, and response-verification records.
         """
         return httpx.AsyncClient(transport=_InferenceTransport(self), timeout=None)
+
+    @property
+    def httpx2_client(self) -> httpx2.AsyncClient:
+        """Return a non-owning HTTPX2 adapter using the same request pipeline.
+
+        Install ``httpx2`` before accessing this property; it is loaded on demand.
+        The adapter shares this client's supported endpoints, verification,
+        encryption, and receipts. Each access returns a new adapter that may be
+        closed independently. Keep the owner open while sending and verifying.
+        """
+        from ..integrations.httpx2 import _create_httpx2_client
+
+        return _create_httpx2_client(self)
 
     async def __aenter__(self) -> Self:
         return self
@@ -247,26 +298,47 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         return session.attestation_result
 
     async def send(self, request: httpx.Request) -> httpx.Response:
-        """Send a Chat request; the returned body can be read or streamed.
+        """Send a Chat or Gateway Responses request; read or stream the body.
 
         This is the low-level counterpart of ``http_client.send``. Consume or
         close its response, and finish a stream before calling verify_response.
         """
 
         expected = httpx.URL(self.base_url).join('chat/completions')
-        if request.method != 'POST' or request.url.copy_with(query=None) != expected:
+        actual = request.url.copy_with(query=None)
+        responses = actual == httpx.URL(self.base_url).join('responses')
+        messages = actual == httpx.URL(self.base_url).join('messages')
+        if request.method != 'POST' or (
+            actual != expected
+            # and not ((responses or messages) and self._supports_gateway_endpoints)
+            and not (responses and self._supports_gateway_endpoints)
+        ):
             raise api_failure(
                 'api.invalid_input',
                 {
                     'field': 'request',
                     'reason': 'unsupported_value',
-                    'expected': 'a POST to the configured Chat Completions endpoint',
+                    'expected': 'a POST to a supported inference creation endpoint',
+                },
+            )
+        if (responses or messages) and self._e2ee:
+            raise api_failure(
+                'api.invalid_input',
+                {
+                    'field': 'e2ee',
+                    'reason': 'unsupported_value',
+                    'expected': 'field-level E2EE disabled for Responses',
                 },
             )
         parsed = await decode_chat_request(request)
         body = request.content
-        session = await self._start_verification(parsed['model'])
         headers = self._request_headers(request.headers)
+        if messages:
+            headers.pop('x-api-key', None)
+            if 'x-api-key' in self._headers:
+                headers['x-api-key'] = self._headers['x-api-key']
+            headers.setdefault('anthropic-version', '2023-06-01')
+        session = await self._start_verification(parsed['model'])
         # The async request body has been buffered; HTTPX sets Content-Length.
         headers.pop('transfer-encoding', None)
         headers.pop('trailer', None)
@@ -288,7 +360,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         else:
             remove_e2ee_headers(prepared_request.headers)
             prepared_request.headers[NO_ALIASING_HEADER] = 'true'
-            if session.model_key is not None:
+            if session.model_key is not None and not messages:
                 prepared_request.headers['x-model-pub-key'] = (
                     session.model_key.public_key
                 )
@@ -310,12 +382,25 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         request_body = await prepared_request.aread()
 
         def register(completion_id: str) -> None:
-            self._register_response(completion_id, request_body, response_body, session)
+            self._register_response(
+                completion_id,
+                request_body,
+                response_body,
+                session,
+                gateway_only=responses or messages,
+            )
 
         captured = httpx.Response(
             response.status_code,
             headers=_decoded_headers(response.headers),
-            stream=_CapturedResponseStream(response, response_body, register, self),
+            stream=_CapturedResponseStream(
+                response,
+                response_body,
+                register,
+                self,
+                responses=responses,
+                messages=messages,
+            ),
             extensions=response.extensions,
             request=prepared_request,
         )
@@ -325,7 +410,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 
     def _request_headers(self, request_headers: Mapping[str, str]) -> httpx.Headers:
         headers = httpx.Headers(self._headers)
-        headers.update(request_headers)
+        try:
+            headers.update(request_headers)
+        except UnicodeError:
+            raise api_failure(
+                'api.invalid_input',
+                {'field': 'headers', 'reason': 'invalid_header_value'},
+            ) from None
         # Use the same configured authorization for evidence, Chat, and signatures,
         # including when an external OpenAI client supplies its own API key.
         if 'authorization' in self._headers:
@@ -334,18 +425,44 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             headers.pop('authorization', None)
         if self._api_key is not None:
             headers.pop('api-key', None)
+        # HTTPX stores headers without checking the syntax sent on the wire.
+        for name, value in headers.raw:
+            if (
+                not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or re.search(rb'[\x00-\x08\x0a-\x1f\x7f]', value)
+                or value != value.strip(b' \t')
+            ):
+                raise api_failure(
+                    'api.invalid_input',
+                    {'field': 'headers', 'reason': 'invalid_header_value'},
+                )
         return headers
 
     async def verify_response(self, id: str) -> Result:
         """Verify a retained response against the evidence used before sending."""
 
-        record = self._responses.get(id)
+        record = self._get_response_record(id)
         if record is None:
             raise api_failure('api.completion_not_found')
         if record.verification is None:
             record.verification = asyncio.create_task(self._verify_record(id, record))
             record.verification.add_done_callback(_observe_exception)
         return await asyncio.shield(record.verification)
+
+    def _get_response_record(
+        self, id: str
+    ) -> _ResponseRecord[Result, AttestationResult] | None:
+        record = self._responses.get(id)
+        if (
+            record is not None
+            and record.expires_at is not None
+            and record.expires_at <= monotonic()
+        ):
+            del self._responses[id]
+            if record.expiry is not None:
+                record.expiry.cancel()
+            return None
+        return record
 
     async def _verify_record(
         self, id: str, record: _ResponseRecord[Result, AttestationResult]
@@ -359,6 +476,11 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             )
             if signature.signer.signing_algo != self._signing_algo:
                 raise verification_failure('signature.signer_mismatch')
+            if record.gateway_only and signature.kind != 'gateway':
+                raise verification_failure(
+                    'signature.kind_mismatch',
+                    {'expected': 'gateway', 'actual': signature.kind},
+                )
             return record.session.verify_response(
                 id, record.request_body, body, signature
             )
@@ -376,27 +498,28 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     ) -> _VerifiedSession[Result, AttestationResult]:
         if self._chat_client.is_closed:
             raise RuntimeError('InferenceClient is closed')
+        cache_key = model
         now = monotonic()
         self._sessions = {
             name: value for name, value in self._sessions.items() if value[0] > now
         }
-        if self._attestation_ttl != 0 and model in self._sessions:
-            return self._sessions[model][1]
-        task = self._pending.get(model)
+        if self._attestation_ttl != 0 and cache_key in self._sessions:
+            return self._sessions[cache_key][1]
+        task = self._pending.get(cache_key)
         if task is None:
             task = asyncio.create_task(self._create_session(model))
-            self._pending[model] = task
+            self._pending[cache_key] = task
 
             def finished(
                 completed: asyncio.Task[_VerifiedSession[Result, AttestationResult]],
             ) -> None:
-                self._pending.pop(model, None)
+                self._pending.pop(cache_key, None)
                 if (
                     not completed.cancelled()
                     and completed.exception() is None
                     and self._attestation_ttl != 0
                 ):
-                    self._sessions[model] = (
+                    self._sessions[cache_key] = (
                         monotonic() + self._attestation_ttl,
                         completed.result(),
                     )
@@ -446,20 +569,32 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         request_body: bytes,
         response_body: asyncio.Future[bytes],
         session: _VerifiedSession[Result, AttestationResult],
+        *,
+        gateway_only: bool = False,
     ) -> None:
         """Retain exact wire bytes for expiry and independent verification retries."""
 
-        record = _ResponseRecord(request_body, response_body, session)
-        previous = self._responses.get(id)
-        if previous is not None and previous.expiry is not None:
-            previous.expiry.cancel()
+        if self._chat_client.is_closed:
+            raise RuntimeError('InferenceClient is closed')
+        if self._response_ttl == 0:
+            return
+        if self._get_response_record(id) is not None:
+            raise api_failure('api.duplicate_completion_id')
+        record = _ResponseRecord(
+            request_body, response_body, session, gateway_only=gateway_only
+        )
         self._responses[id] = record
 
         def settled(_future: asyncio.Future[bytes]) -> None:
+            # A completed future's callback may run after close or replacement.
+            if self._chat_client.is_closed or self._responses.get(id) is not record:
+                return
+
             def expire() -> None:
                 if self._responses.get(id) is record:
                     del self._responses[id]
 
+            record.expires_at = monotonic() + self._response_ttl
             record.expiry = asyncio.get_running_loop().call_later(
                 self._response_ttl, expire
             )
@@ -470,11 +605,13 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
 class InferenceClient(
     _VerifiedInferenceClient[VerifiedCompletionResult, AttestationVerificationResult]
 ):
-    """Gateway Chat with preflight and explicit response verification.
+    """Gateway Chat and System One with preflight and explicit response verification.
 
     E2EE is opt-in. NEAR TEE models require model evidence; Incognito models
     verify only the Gateway. All calls share the configured authentication.
     """
+
+    _supports_gateway_endpoints = True
 
     def __init__(
         self,
@@ -504,9 +641,37 @@ class InferenceClient(
             deployment_policy=deployment_policy,
         )
         self._gateway_options = gateway_verification or GatewayVerificationOptions()
+        self.responses = self._openai.responses
+        # self._anthropic = AsyncAnthropic(
+        #     api_key='@nearai/inference-sdk-internal',
+        #     base_url=self.base_url,
+        #     default_headers={
+        #         'anthropic-version': self._headers.get(
+        #             'anthropic-version', '2023-06-01'
+        #         ),
+        #     },
+        #     max_retries=0,
+        #     http_client=httpx.AsyncClient(
+        #         transport=_InferenceTransport(self, anthropic=True), timeout=None
+        #     ),
+        # )
+        # self.messages = self._anthropic.messages
         self._attestation_client = AttestationClient(
             api_key, base_url=self.base_url, headers=self._headers
         )
+        self.systemone = InferenceSystemOne(self)
+
+    # async def aclose(self) -> None:
+    #     await self._anthropic.close()
+    #     await super().aclose()
+
+    async def send(self, request: httpx.Request) -> httpx.Response:
+        """Send verified Chat, Responses, or System One through the Gateway."""
+        if request.method == 'POST' and request.url.copy_with(query=None) == httpx.URL(
+            self.base_url
+        ).join('systemone'):
+            return await self.systemone._send(request)
+        return await super().send(request)
 
     async def _create_session(
         self, model: str
@@ -656,16 +821,21 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         response_body: asyncio.Future[bytes],
         register: Callable[[str], None],
         client: _VerifiedInferenceClient,
+        *,
+        responses: bool = False,
+        messages: bool = False,
     ) -> None:
         self._response = response
         self._response_body = response_body
         self._register = register
         self._client = client
+        self._responses = responses
+        self._messages = messages
         self._chunks: list[bytes] = []
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
         self._streaming = self._content_type.lower().startswith('text/event-stream')
-        self._decoder = codecs.getincrementaldecoder('utf-8')()
+        self._decoder = codecs.getincrementaldecoder('utf-8-sig')()
         self._pending = ''
         self._registered = False
         self._done = False
@@ -704,12 +874,36 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             for data in get_sse_data_records(record.value):
                 if data == '[DONE]':
                     self._done = True
+                elif self._messages and data:
+                    try:
+                        value = json.loads(data)
+                        if value.get('type') == 'message_stop':
+                            self._done = True
+                        if (
+                            value.get('type') == 'message_start'
+                            and not self._registered
+                        ):
+                            self._register(
+                                CompletionResponseIdSchema.model_validate(
+                                    value.get('message')
+                                ).id
+                            )
+                            self._registered = True
+                    except (ValueError, ValidationError, AttributeError):
+                        continue
                 elif data and not self._registered:
                     try:
-                        completion_id = CompletionResponseIdSchema.model_validate_json(
-                            data
+                        value = json.loads(data)
+                        if self._responses:
+                            value = (
+                                value.get('response')
+                                if isinstance(value, dict)
+                                else None
+                            )
+                        completion_id = CompletionResponseIdSchema.model_validate(
+                            value
                         ).id
-                    except ValidationError:
+                    except (ValueError, ValidationError):
                         continue
                     self._register(completion_id)
                     self._registered = True
@@ -718,8 +912,10 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         if self._response_body.done():
             return
         body = b''.join(self._chunks)
+        if self._messages and self._streaming:
+            _validate_message_stream(body)
         if not self._registered:
-            self._register(_completion_id(body, self._content_type))
+            self._register(_completion_id(body, self._content_type, self._responses))
             self._registered = True
         self._response_body.set_result(body)
         self._chunks.clear()
@@ -769,12 +965,16 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             await self._response.aclose()
 
 
-def _completion_id(body: bytes, content_type: str) -> str:
+def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
     try:
         if content_type.lower().startswith('text/event-stream'):
-            for data in get_sse_data_records(body.decode('utf-8')):
+            for data in get_sse_data_records(body.decode('utf-8-sig')):
                 if data and data != '[DONE]':
                     value = json.loads(data)
+                    if responses:
+                        value = (
+                            value.get('response') if isinstance(value, dict) else None
+                        )
                     try:
                         return CompletionResponseIdSchema.model_validate(value).id
                     except ValidationError:
@@ -786,12 +986,50 @@ def _completion_id(body: bytes, content_type: str) -> str:
     raise _invalid_completion_id()
 
 
+def _validate_message_stream(body: bytes) -> None:
+    """Only a complete message_start/message_stop sequence can have a receipt."""
+    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
+    started = False
+    stopped = False
+    if parsed.pending:
+        raise _invalid_completion_id()
+    for record in parsed.records:
+        event_name = get_sse_event(record.value)
+        if event_name == 'error':
+            raise _invalid_completion_id()
+        for data in get_sse_data_records(record.value):
+            if not data:
+                continue
+            try:
+                event = json.loads(data)
+                kind = event.get('type')
+                if (
+                    not isinstance(kind, str)
+                    or not kind
+                    or kind == 'error'
+                    or stopped
+                    or (event_name is not None and event_name != kind)
+                ):
+                    raise _invalid_completion_id()
+                if kind == 'message_start':
+                    if started:
+                        raise _invalid_completion_id()
+                    CompletionResponseIdSchema.model_validate(event.get('message'))
+                    started = True
+                if kind == 'message_stop':
+                    stopped = True
+            except (ValueError, AttributeError) as error:
+                raise _invalid_completion_id(error) from error
+    if not started or not stopped:
+        raise _invalid_completion_id()
+
+
 def _invalid_completion_id(cause: BaseException | None = None) -> ApiError:
     return api_failure(
         'api.invalid_response',
         {
-            'path': 'Chat Completions response.id',
-            'expected': 'a non-empty completion ID',
+            'path': 'completion response ID or SSE lifecycle',
+            'expected': 'a non-empty ID and a complete valid stream',
             'actual': 'missing or invalid',
         },
         cause=cause,

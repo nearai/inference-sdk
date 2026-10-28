@@ -15,11 +15,11 @@ type sseReader struct {
 	source    io.ReadCloser
 	reader    *bufio.Reader
 	transform func([]byte) ([]byte, error)
+	terminal  func([]byte) bool
 	finish    func() error
 	pending   []byte
 	ended     bool
 	closeOnce sync.Once
-	limit     int64
 }
 
 func (s *sseReader) record() ([]byte, error) {
@@ -34,9 +34,6 @@ func (s *sseReader) record() ([]byte, error) {
 			return nil, e
 		}
 		raw.WriteByte(b)
-		if int64(raw.Len()) > s.limit {
-			return nil, failure("api.body_too_large", nil)
-		}
 		if b == '\r' || b == '\n' {
 			if b == '\r' {
 				if next, e := s.reader.Peek(1); e == nil && next[0] == '\n' {
@@ -55,19 +52,32 @@ func (s *sseReader) record() ([]byte, error) {
 }
 
 func sseData(record []byte) (string, string) {
+	data, event, _ := sseFields(record)
+	return data, event
+}
+
+func sseFields(record []byte) (string, string, bool) {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(record), "\r\n", "\n"), "\r", "\n")
 	var data []string
 	event := ""
+	hasEvent := false
 	for _, line := range strings.Split(text, "\n") {
 		if line == "data" {
 			data = append(data, "")
 		} else if strings.HasPrefix(line, "data:") {
 			data = append(data, strings.TrimPrefix(line[5:], " "))
+		} else if line == "event" {
+			event, hasEvent = "", true
 		} else if strings.HasPrefix(line, "event:") {
-			event = strings.TrimPrefix(line[6:], " ")
+			event, hasEvent = strings.TrimPrefix(line[6:], " "), true
 		}
 	}
-	return strings.Join(data, "\n"), event
+	return strings.Join(data, "\n"), event, hasEvent
+}
+
+func completeSSERecord(record []byte) bool {
+	text := strings.ReplaceAll(strings.ReplaceAll(string(record), "\r\n", "\n"), "\r", "\n")
+	return strings.HasSuffix(text, "\n\n")
 }
 
 func (s *sseReader) Read(p []byte) (int, error) {
@@ -90,19 +100,47 @@ func (s *sseReader) Read(p []byte) (int, error) {
 			return 0, e
 		}
 		data, _ := sseData(record)
-		if data == "[DONE]" { // Authenticate trailing OHTTP frames before exposing completion.
+		if s.transform != nil {
+			record, e = s.transform(record)
+			if e != nil {
+				s.ended = true
+				return 0, e
+			}
+		}
+		if s.terminal != nil && s.terminal(record) {
+			// Messages clients may stop reading at message_stop. Validate all
+			// remaining records and OHTTP frames before exposing that event.
+			for {
+				tail, err := s.record()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					s.ended = true
+					return 0, err
+				}
+				if s.transform != nil {
+					tail, err = s.transform(tail)
+					if err != nil {
+						s.ended = true
+						return 0, err
+					}
+				}
+				record = append(record, tail...)
+			}
+			s.ended = true
+			if s.finish != nil {
+				if err := s.finish(); err != nil {
+					return 0, err
+				}
+			}
+		} else if data == "[DONE]" {
+			// Authenticate trailing OHTTP frames before exposing completion.
 			if _, e = io.Copy(io.Discard, s.reader); e == nil && s.finish != nil {
 				e = s.finish()
 			}
 			s.ended = true
 			if e != nil {
-				return 0, e
-			}
-		}
-		if s.transform != nil {
-			record, e = s.transform(record)
-			if e != nil {
-				s.ended = true
 				return 0, e
 			}
 		}
@@ -180,20 +218,16 @@ func (p *PreparedE2EEChatRequest) transformSSE(record []byte) ([]byte, error) {
 
 // DecryptSSE streams protocol fields while retaining SSE controls. It owns source.
 func (p *PreparedE2EEChatRequest) DecryptSSE(source io.ReadCloser) io.ReadCloser {
-	return &sseReader{source: source, reader: bufio.NewReader(source), transform: p.transformSSE, limit: 64 << 20}
+	return &sseReader{source: source, reader: bufio.NewReader(source), transform: p.transformSSE}
 }
 
 type captureReader struct {
 	io.ReadCloser
-	body  bytes.Buffer
-	limit int64
+	body bytes.Buffer
 }
 
 func (c *captureReader) Read(p []byte) (int, error) {
 	n, e := c.ReadCloser.Read(p)
-	if int64(c.body.Len()+n) > c.limit {
-		return 0, failure("api.body_too_large", nil)
-	}
 	c.body.Write(p[:n])
 	return n, e
 }

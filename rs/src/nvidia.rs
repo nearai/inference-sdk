@@ -35,16 +35,13 @@ impl Default for NrasGpuEvidenceVerifier {
 }
 
 impl NrasGpuEvidenceVerifier {
-    /// Submit evidence to this URL, using NVIDIA's official JWKS URL by default.
+    /// Submit evidence to a complete POST URL.
+    /// Signing keys come from NVIDIA's official JWKS URL by default.
     pub fn new(url: impl Into<String>) -> Self {
-        let client = Client::new();
-        Self {
-            client,
-            url: url.into(),
-            jwks_url: DEFAULT_NVIDIA_JWKS_URL.to_owned(),
-        }
+        Self::with_client(Client::new(), url)
     }
 
+    /// Submit evidence to a complete POST URL with a caller-provided HTTP client.
     pub fn with_client(client: Client, url: impl Into<String>) -> Self {
         Self {
             client,
@@ -386,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_official_nras_endpoint_by_default() {
+    fn uses_the_official_nras_and_jwks_endpoints_by_default() {
         let verifier = NrasGpuEvidenceVerifier::default();
         assert_eq!(
             verifier.url,
@@ -395,6 +392,10 @@ mod tests {
         assert_eq!(
             verifier.jwks_url,
             "https://nras.attestation.nvidia.com/.well-known/jwks.json"
+        );
+        assert_eq!(
+            NrasGpuEvidenceVerifier::new("https://proxy.example/attest").jwks_url,
+            verifier.jwks_url
         );
     }
 

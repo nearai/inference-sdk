@@ -5,27 +5,29 @@ import os
 
 from nearai_inference_sdk import DirectInferenceClient
 
-BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ed25519'
+BASE_URL = os.environ.get(
+    'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
+)
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 
 
 async def run_non_streaming_example(client: DirectInferenceClient) -> None:
     completion = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
     )
-    print(completion.choices[0].message.content or '')
     verified = await client.verify_response(completion.id)
     print(f'Verified response against {len(verified.attestations)} model reports.')
+    print(completion.choices[0].message.content or '')
 
 
 async def run_streaming_example(client: DirectInferenceClient) -> None:
     stream = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
         stream=True,
     )
     completion_id = None
@@ -48,6 +50,7 @@ async def main() -> None:
         api_key=os.environ.get('NEARAI_API_KEY'),
         signing_algo=SIGNING_ALGO,
         e2ee=True,
+        ohttp=os.environ.get('NEARAI_OHTTP') == 'true',
     ) as direct_client:
         await run_non_streaming_example(direct_client)
         await run_streaming_example(direct_client)

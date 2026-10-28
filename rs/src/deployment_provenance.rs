@@ -1,9 +1,18 @@
 use crate::{
-    fetch_image_provenance, verify_image_provenance, verify_image_provenance_with_signer_identity,
-    DeploymentImagesFailureReason as Reason, ImageProvenancePolicy, VerificationError,
+    fetch_image_provenance_with_options, verify_image_provenance,
+    verify_image_provenance_with_signer_identity, DeploymentImagesFailureReason as Reason,
+    ImageProvenanceFetchOptions, ImageProvenancePolicy, VerificationError,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
+
+/// GitHub transport and optional reusable-workflow identities for deployment checks.
+#[derive(Clone, Debug, Default)]
+pub struct DeploymentImageProvenanceOptions<'a> {
+    pub github_token: Option<&'a str>,
+    pub github_api_url: Option<&'a str>,
+    pub image_signer_identities: Option<&'a BTreeMap<String, String>>,
+}
 
 /// Verify the required image repositories in a measured deployment's Compose file.
 ///
@@ -19,7 +28,15 @@ pub async fn verify_deployment_image_provenance(
     image_policies: &BTreeMap<String, ImageProvenancePolicy>,
     github_token: Option<&str>,
 ) -> Result<(), VerificationError> {
-    verify_deployment_image_provenance_inner(app_compose, image_policies, None, github_token).await
+    verify_deployment_image_provenance_with_options(
+        app_compose,
+        image_policies,
+        DeploymentImageProvenanceOptions {
+            github_token,
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 /// Verify deployment image provenance with reusable-workflow signer identities.
@@ -34,51 +51,104 @@ pub async fn verify_deployment_image_provenance_with_signer_identities(
     image_signer_identities: &BTreeMap<String, String>,
     github_token: Option<&str>,
 ) -> Result<(), VerificationError> {
-    for repository in image_signer_identities.keys() {
-        if !image_policies.contains_key(repository) {
-            return Err(VerificationError::InvalidInput {
-                field: "image_signer_identities".to_owned(),
-                reason: format!("{repository:?} must be an exact key from image_policies"),
-            });
-        }
-    }
-    verify_deployment_image_provenance_inner(
+    verify_deployment_image_provenance_with_options(
         app_compose,
         image_policies,
-        Some(image_signer_identities),
-        github_token,
+        DeploymentImageProvenanceOptions {
+            github_token,
+            image_signer_identities: Some(image_signer_identities),
+            ..Default::default()
+        },
     )
     .await
 }
 
-async fn verify_deployment_image_provenance_inner(
+/// Verify measured Compose images using a GitHub API proxy and/or exact signer identities.
+/// With a custom `github_api_url`, its backend handles GitHub authentication.
+pub async fn verify_deployment_image_provenance_with_options(
     app_compose: &str,
+    image_policies: &BTreeMap<String, ImageProvenancePolicy>,
+    options: DeploymentImageProvenanceOptions<'_>,
+) -> Result<(), VerificationError> {
+    if let Some(identities) = options.image_signer_identities {
+        for repository in identities.keys() {
+            if !image_policies.contains_key(repository) {
+                return Err(VerificationError::InvalidInput {
+                    field: "image_signer_identities".to_owned(),
+                    reason: format!("{repository:?} must be an exact key from image_policies"),
+                });
+            }
+        }
+    }
+    verify_selected_images(
+        select_images(app_compose, image_policies)?,
+        options.image_signer_identities,
+        options.github_token,
+        options.github_api_url,
+    )
+    .await
+}
+
+pub(crate) async fn verify_compose_image_provenance(
+    docker_compose: &str,
     image_policies: &BTreeMap<String, ImageProvenancePolicy>,
     image_signer_identities: Option<&BTreeMap<String, String>>,
     github_token: Option<&str>,
+    services: Option<&[String]>,
+    github_api_url: Option<&str>,
 ) -> Result<(), VerificationError> {
-    // Finish all Compose/reference checks before making any external request.
-    for image in select_images(app_compose, image_policies)? {
-        let bundles = fetch_image_provenance(&image.policy.repository, &image.digest, github_token)
-            .await
-            .map_err(|source| VerificationError::ImageProvenanceRequestFailed {
-                image_repository: image.repository.to_owned(),
-                digest: image.digest.clone(),
-                source: Box::new(source),
-            })?;
-        if let Some(signer_identity) =
-            image_signer_identities.and_then(|identities| identities.get(image.policy_key))
-        {
-            verify_image_provenance_with_signer_identity(
-                &bundles,
-                &image.digest,
-                image.policy,
-                signer_identity,
-            )
-            .await?;
-        } else {
-            verify_image_provenance(&bundles, &image.digest, image.policy).await?;
-        }
+    let selected = select_compose_images(docker_compose, image_policies, services)?;
+    verify_selected_images(
+        selected,
+        image_signer_identities,
+        github_token,
+        github_api_url,
+    )
+    .await
+}
+
+async fn verify_selected_images(
+    images: Vec<SelectedImage<'_>>,
+    image_signer_identities: Option<&BTreeMap<String, String>>,
+    github_token: Option<&str>,
+    github_api_url: Option<&str>,
+) -> Result<(), VerificationError> {
+    for image in images {
+        verify_required_image_provenance(
+            image.repository,
+            &image.digest,
+            image.policy,
+            image_signer_identities
+                .and_then(|identities| identities.get(image.policy_key))
+                .map(String::as_str),
+            ImageProvenanceFetchOptions {
+                github_token,
+                github_api_url,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn verify_required_image_provenance(
+    repository: &str,
+    digest: &str,
+    policy: &ImageProvenancePolicy,
+    signer_identity: Option<&str>,
+    access: ImageProvenanceFetchOptions<'_>,
+) -> Result<(), VerificationError> {
+    let bundles = fetch_image_provenance_with_options(&policy.repository, digest, access)
+        .await
+        .map_err(|source| VerificationError::ImageProvenanceRequestFailed {
+            image_repository: repository.to_owned(),
+            digest: digest.to_owned(),
+            source: Box::new(source),
+        })?;
+    if let Some(identity) = signer_identity {
+        verify_image_provenance_with_signer_identity(&bundles, digest, policy, identity).await?;
+    } else {
+        verify_image_provenance(&bundles, digest, policy).await?;
     }
     Ok(())
 }
@@ -104,17 +174,39 @@ fn select_images<'a>(
     }
     let app: AppCompose = serde_json::from_str(app_compose)
         .map_err(|_| images_error(Reason::InvalidAppCompose, None, None))?;
+    select_compose_images(&app.docker_compose_file, image_policies, None)
+}
+
+fn select_compose_images<'a>(
+    docker_compose: &str,
+    image_policies: &'a BTreeMap<String, ImageProvenancePolicy>,
+    selected_services: Option<&[String]>,
+) -> Result<Vec<SelectedImage<'a>>, VerificationError> {
+    if image_policies.is_empty() {
+        return Err(images_error(Reason::EmptyPolicy, None, None));
+    }
     let invalid_compose = || images_error(Reason::InvalidDockerCompose, None, None);
     let mut value: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&app.docker_compose_file).map_err(|_| invalid_compose())?;
+        serde_yaml_ng::from_str(docker_compose).map_err(|_| invalid_compose())?;
     value.apply_merge().map_err(|_| invalid_compose())?;
     let services = value
         .get("services")
         .and_then(serde_yaml_ng::Value::as_mapping)
         .ok_or_else(invalid_compose)?;
+    let filter = selected_services.filter(|names| !names.is_empty());
+    if let Some(names) = filter {
+        for name in names {
+            if !services.contains_key(serde_yaml_ng::Value::String(name.clone())) {
+                return Err(images_error(Reason::ServiceMissing, None, Some(name)));
+            }
+        }
+    }
     let mut images = Vec::new();
     for (service, config) in services {
         let service = service.as_str().ok_or_else(invalid_compose)?;
+        if filter.is_some_and(|names| !names.iter().any(|name| name == service)) {
+            continue;
+        }
         if !config.is_mapping() {
             return Err(images_error(
                 Reason::InvalidDockerCompose,
@@ -163,7 +255,7 @@ fn select_images<'a>(
     Ok(selected)
 }
 
-fn pinned_digest(suffix: &str) -> Option<&str> {
+pub(crate) fn pinned_digest(suffix: &str) -> Option<&str> {
     let (tag, digest) = suffix.split_once('@')?;
     if !tag.is_empty() {
         let tag = tag.strip_prefix(':')?;

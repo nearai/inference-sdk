@@ -1,20 +1,20 @@
-// Compile-only compatibility coverage for existing Playground-style adapters.
+// Both receipt IDs are available as strings.
 import type {
+  VerifiedDirectCompletionResult,
   VerifiedGatewayCompletionResult,
   VerifiedModelCompletionResult,
-} from '../src/types/inference-client';
-import type { VerifiedDirectCompletionResult } from '../src/types/direct-inference-client';
+} from '../src';
 
-declare const gateway: Omit<VerifiedGatewayCompletionResult, 'id'>;
-declare const model: Omit<VerifiedModelCompletionResult, 'id' | 'attestations'>;
-declare const direct: Omit<VerifiedDirectCompletionResult, 'id'>;
+declare const gateway: VerifiedGatewayCompletionResult;
+declare const model: VerifiedModelCompletionResult;
+declare const direct: VerifiedDirectCompletionResult;
 
-const gatewayResult: VerifiedGatewayCompletionResult = gateway;
-const modelResult: VerifiedModelCompletionResult = model;
-const directResult: VerifiedDirectCompletionResult = direct;
 const ids: string[] = [
-  gatewayResult.completionId,
-  modelResult.completionId,
-  directResult.completionId,
+  gateway.id,
+  model.id,
+  direct.id,
+  gateway.completionId,
+  model.completionId,
+  direct.completionId,
 ];
 void ids;

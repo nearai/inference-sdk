@@ -6,6 +6,9 @@ from types import SimpleNamespace
 import pytest
 
 from nearai_inference_sdk import VerificationError, create_tdx_quote_verifier
+from nearai_inference_sdk.core.dstack_attestation import verify_tdx_quote
+from nearai_inference_sdk.types.attestation_common import TcbStatus
+from nearai_inference_sdk.types.verification import AttestationPolicy
 from nearai_inference_sdk.utils import intel
 
 from .fixtures import create_model_quote
@@ -61,6 +64,56 @@ async def test_quote_factories_route_collateral_and_keep_configuration_isolated(
     ]
     assert parsed_quotes == [b'\xaa\xbb'] * 5
     assert verified_quotes == [(b'\xaa\xbb', collateral, 1800000000)] * 5
+
+
+@pytest.mark.parametrize(
+    ('report_type', 'status', 'accepted_by_default'),
+    [
+        ('TD15', 'TDRelaunchAdvised', True),
+        ('TD15Ex', 'TDRelaunchAdvisedConfigurationNeeded', False),
+    ],
+)
+async def test_dcap_td15_reports_and_tcb_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    report_type: str,
+    status: TcbStatus,
+    accepted_by_default: bool,
+) -> None:
+    quote = create_model_quote()
+    td10 = {
+        'report_data': quote.report_data.hex(),
+        'mr_config_id': quote.mr_config_id.hex(),
+        'rt_mr3': quote.rt_mr3.hex(),
+        'td_attributes': '00' * 8,
+    }
+    report_body = {'base': td10}
+    if report_type == 'TD15Ex':
+        report_body = {'base': report_body}
+    verified = SimpleNamespace(
+        status=status,
+        advisory_ids=(),
+        to_json=lambda: json.dumps({'report': {report_type: report_body}}),
+    )
+
+    async def get_collateral(_: str, __: bytes) -> object:
+        return object()
+
+    monkeypatch.setattr(intel, 'Quote', SimpleNamespace(parse=lambda _: None))
+    monkeypatch.setattr(intel, 'get_collateral', get_collateral)
+    monkeypatch.setattr(intel, 'verify', lambda *_: verified)
+    result = await intel.verify_dcap_quote('aabb')
+    assert result.report_data == quote.report_data
+    assert result.mr_config_id == quote.mr_config_id
+    assert result.rt_mr3 == quote.rt_mr3
+    assert result.tcb_status == status
+    if accepted_by_default:
+        assert await verify_tdx_quote('aabb', None, None) == result
+    else:
+        with pytest.raises(VerificationError) as raised:
+            await verify_tdx_quote('aabb', None, None)
+        assert raised.value.failure.code == 'policy.tcb_status_not_allowed'
+    policy = AttestationPolicy(accepted_tcb_statuses=(status,))
+    assert await verify_tdx_quote('aabb', policy, None) == result
 
 
 @pytest.mark.parametrize('stage', ['collateral', 'verification'])

@@ -4,6 +4,7 @@ import type { ModelAttestation } from './attestation-model';
 import type { CompletionSignature } from './chat';
 import type { SigningIdentity } from './attestation-common';
 import type { Awaitable } from './shared';
+import type { VerifiedComposeManagerAttestation } from './compose-manager';
 
 export type TcbStatus =
   | 'UpToDate'
@@ -12,6 +13,8 @@ export type TcbStatus =
   | 'ConfigurationAndSWHardeningNeeded'
   | 'OutOfDate'
   | 'OutOfDateConfigurationNeeded'
+  | 'TDRelaunchAdvised'
+  | 'TDRelaunchAdvisedConfigurationNeeded'
   | 'Revoked'
   | 'Unknown';
 
@@ -23,6 +26,8 @@ export type RuntimeMeasurements = {
 export type MeasuredDeployment = {
   readonly appCompose: string;
   readonly runtimeMeasurements: RuntimeMeasurements;
+  /** Authenticated deployment actions when the model report supplied them. */
+  readonly composeManager?: VerifiedComposeManagerAttestation;
 };
 
 /** Facts returned by a quote verifier before SDK policy and binding checks. */
@@ -42,12 +47,12 @@ export type TdxQuoteVerifier = (
 export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
 
 export type CreateTdxQuoteVerifierParams = {
-  /** Collateral base URL. Defaults to Phala PCCS in browsers and Intel in Node.js. */
+  /** Collateral base URL. Defaults to the NEAR AI proxy in browsers and Intel in Node.js. */
   readonly pccsUrl?: string;
 };
 
 export type CreateGpuEvidenceVerifierParams = {
-  /** GPU attestation POST URL. Defaults to NVIDIA NRAS. */
+  /** GPU attestation POST URL. Defaults to the NEAR AI proxy in browsers and NVIDIA NRAS in Node.js. */
   readonly nrasUrl?: string;
   /** Public-key GET URL. Defaults to NVIDIA's JWKS. Use only a trusted proxy. */
   readonly jwksUrl?: string;

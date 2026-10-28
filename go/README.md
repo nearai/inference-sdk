@@ -7,7 +7,7 @@ signature verification.
 
 ## Build and install
 
-Requires Go **1.25.8+**. The module includes the pinned DCAP verifier as an
+Requires Go **1.26.10+**. The module includes the pinned DCAP verifier as an
 embedded WebAssembly artifact, executed locally with wazero. Users do not need
 Rust, CGO, a C compiler, a native library, or linker environment variables.
 There is no Node.js or Python runtime dependency. `CGO_ENABLED=0` and ordinary
@@ -132,7 +132,9 @@ and streaming Chat. Direct endpoints are experimental: they omit Gateway
 verification and do not bind direct TLS identity to attestation. Normal HTTPS
 validation remains enabled. Use Gateway clients for production.
 
-The adapter only accepts POSTs to its configured `chat/completions` endpoint.
+The Gateway adapter accepts POSTs to its configured `chat/completions` and
+`responses` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
+for JSON, SSE, and Gateway receipt verification.
 Use `AttestationClient` for metadata and evidence. Arbitrary/future Chat fields
 are preserved; the SDK encrypts only the documented protocol fields.
 
@@ -193,11 +195,9 @@ image allowlist unless you configure a policy. See
 
 Attestation and response caches default to one hour. Response retention starts
 when the body is fully consumed. Set a TTL to a pointer to `time.Duration(0)`
-to disable reuse or retention. `MaxCacheEntries` defaults to 128,
-`MaxReceiptCacheBytes` to 64 MiB, and `MaxBodyBytes` to 64 MiB. Buffered protected
-requests honor the configured body limit. Evicted or expired response records
-cannot be verified later; choose limits appropriate to your application's memory
-budget. See [client lifecycle](./docs/api-reference.md#clients-and-lifecycle).
+to disable reuse or retention. Expired response records cannot be verified later.
+Cache memory grows with retained responses; choose a TTL appropriate for your
+workload. See [client lifecycle](./docs/api-reference.md#clients-and-lifecycle).
 
 Errors support `errors.As` into `*nearai.Error`, exposing `Code` and `Retryable`.
 Retryable receipt retrieval can be attempted again without replaying Chat.
@@ -208,7 +208,7 @@ The SDK does not automatically replay completions.
 Use `NewAttestationClient` to fetch evidence and standalone verification
 functions to validate it. Fetching evidence alone does not verify it.
 `PrepareE2EEChatRequest` supports manual encryption after authenticating the
-model key; standalone encryption and OHTTP helpers use a 64 MiB body limit.
+model key.
 Keep exact wire bytes when verifying receipts manually.
 
 - [Verification guide](./docs/verification-guide.md)

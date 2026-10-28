@@ -1,7 +1,6 @@
 """Experimental manual direct verification. This example sends plaintext over HTTPS."""
 
 import asyncio
-import codecs
 import json
 import os
 
@@ -13,10 +12,30 @@ from nearai_inference_sdk import (
     verify_direct_model_response,
 )
 
+BASE_URL = (
+    os.environ.get(
+        'NEARAI_BASE_URL', 'https://glm-5-3-flash.completions.near.ai/v1/'
+    ).rstrip('/')
+    + '/'
+)
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 
-BASE_URL = 'https://glm-5-3-flash.completions.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ed25519'
+
+class RecordingStream(httpx.AsyncByteStream):
+    """Keep the decoded HTTP body before parsing it for display."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
+        self.chunks: list[bytes] = []
+
+    async def __aiter__(self):
+        async for chunk in self.response.aiter_bytes():
+            self.chunks.append(chunk)
+            yield chunk
+
+    async def aclose(self) -> None:
+        await self.response.aclose()
 
 
 async def send_and_verify(
@@ -32,29 +51,36 @@ async def send_and_verify(
         json={
             'model': MODEL,
             'messages': [{'role': 'user', 'content': 'Reply with the word ok.'}],
-            'max_completion_tokens': 8,
+            'max_completion_tokens': 1024,
             'stream': stream,
         },
     )
     response = await client.send(request, stream=True)
+    recording = RecordingStream(response)
+    response = httpx.Response(
+        response.status_code,
+        headers={'Content-Type': response.headers.get('content-type', '')},
+        stream=recording,
+        request=request,
+    )
     try:
         response.raise_for_status()
-        chunks = []
-        decoder = codecs.getincrementaldecoder('utf-8')()
-        async for chunk in response.aiter_bytes():
-            chunks.append(chunk)
-            if stream:
-                print(decoder.decode(chunk), end='', flush=True)
-        response_body = b''.join(chunks)
+        values = (
+            await read_stream(response)
+            if stream
+            else [json.loads(await response.aread())]
+        )
+        response_body = b''.join(recording.chunks)
     finally:
         await response.aclose()
-    if stream:
-        print(decoder.decode(b'', final=True))
-        completion_id = read_stream_id(response_body)
-    else:
-        completion = json.loads(response_body)
-        completion_id = completion['id']
-        print(completion['choices'][0]['message'].get('content') or '')
+    completion_id = next((value['id'] for value in values if value.get('id')), None)
+    if completion_id is None:
+        raise RuntimeError('Stream returned no completion ID')
+    text = ''.join(
+        choice.get('delta' if stream else 'message', {}).get('content') or ''
+        for value in values
+        for choice in value.get('choices', [])[:1]
+    )
     signature = await attestation_client.fetch_completion_signature(
         completion_id, signing_algo=SIGNING_ALGO
     )
@@ -62,19 +88,40 @@ async def send_and_verify(
         request.content, response_body, signature, verified.attestations
     )
     print(f'Verified response against {len(matching)} model reports.')
+    if not stream:
+        print(text)
 
 
-def read_stream_id(response_body: bytes) -> str:
-    for line in response_body.decode().splitlines():
-        if not line.startswith('data:'):
-            continue
-        data = line[5:].strip()
-        if not data or data == '[DONE]':
-            continue
-        chunk = json.loads(data)
-        if 'id' in chunk:
-            return chunk['id']
-    raise RuntimeError('Stream returned no completion ID')
+async def read_stream(response: httpx.Response) -> list[dict]:
+    values, data = [], []
+    done = False
+    first_line = True
+    async for line in response.aiter_lines():
+        if first_line:
+            line = line.removeprefix('\ufeff')
+            first_line = False
+        if line == 'data':
+            data.append('')
+        elif line.startswith('data:'):
+            data.append(line[5:].removeprefix(' '))
+        elif not line:
+            payload = '\n'.join(data)
+            data = []
+            if payload == '[DONE]':
+                done = True
+            elif payload:
+                value = json.loads(payload)
+                if value.get('error'):
+                    raise RuntimeError('Stream returned an error')
+                values.append(value)
+                for choice in value.get('choices', [])[:1]:
+                    print(
+                        choice.get('delta', {}).get('content') or '', end='', flush=True
+                    )
+    print()
+    if not done:
+        raise RuntimeError('Stream ended without [DONE]')
+    return values
 
 
 async def run_non_streaming_example(client, attestation_client, verified) -> None:

@@ -8,10 +8,11 @@ import (
 )
 
 // CreateTDXQuoteVerifier uses DCAP QVL's Intel production root and fresh PCCS
-// collateral. An empty URL selects Phala's PCCS. Collateral requests honor context cancellation.
+// collateral. An empty base URL selects Intel's official PCS endpoint.
+// Collateral requests honor context cancellation.
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 	if pccsURL == "" {
-		pccsURL = dcap.PhalaPCCSURL
+		pccsURL = dcap.IntelPCSURL
 	}
 	return func(ctx context.Context, encoded string) (QuoteVerificationResult, error) {
 		var result QuoteVerificationResult
@@ -37,7 +38,7 @@ func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier {
 			return result, failure("quote.verification_failed", e)
 		}
 		report := verified.Report
-		if (report.Type != "TD10" && report.Type != "TD15") || len(report.TdAttributes) != 8 {
+		if (report.Type != "TD10" && report.Type != "TD15" && report.Type != "TD15Ex") || len(report.TdAttributes) != 8 {
 			return result, failure("quote.unsupported_report_type", nil)
 		}
 		return QuoteVerificationResult{

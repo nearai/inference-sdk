@@ -5,12 +5,15 @@ from typing import Literal
 
 from .attestation_model import ModelAttestation
 from .chat import CompletionSignature
+from .inference_client import ModelVerificationOptions
 from .ohttp import OhttpAttestation
 from .verification import (
     GatewayTlsBinding,
     ModelClientBinding,
     VerifiedModelAttestation,
 )
+
+DirectModelVerificationOptions = ModelVerificationOptions
 
 
 @dataclass(frozen=True, kw_only=True)

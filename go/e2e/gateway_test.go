@@ -28,36 +28,59 @@ func required(t *testing.T, name string) string {
 	}
 	return value
 }
-func models(t *testing.T, encryption bool) []liveModel {
+func selectedModels(t *testing.T, endpoint string) []liveModel {
 	t.Helper()
 	var all []liveModel
 	if err := json.Unmarshal([]byte(required(t, "NEARAI_E2E_MODELS")), &all); err != nil {
 		t.Fatal(err)
 	}
-	chat := make([]liveModel, 0, len(all))
+	selected := make([]liveModel, 0, len(all))
 	for _, m := range all {
-		if m.Endpoint == "chat" {
-			chat = append(chat, m)
+		if m.Endpoint == endpoint {
+			selected = append(selected, m)
 		}
 	}
-	all = chat
-	if len(all) == 0 {
-		t.Fatal("expected representative Chat models")
+	if len(selected) == 0 {
+		t.Fatalf("expected representative %s models", endpoint)
 	}
-	for _, m := range all {
+	for _, m := range selected {
 		if m.ID == "" || (m.Provider != "near" && m.Provider != "chutes" && m.Provider != "external") {
 			t.Fatalf("invalid selected model: %v", m)
 		}
 	}
+	return selected
+}
+func models(t *testing.T, encryption bool) []liveModel {
+	t.Helper()
+	all := selectedModels(t, "chat")
+
 	if encryption {
+		var selected []liveModel
 		for _, m := range all {
 			if m.Provider == "near" {
-				return []liveModel{m}
+				selected = append(selected, m)
 			}
 		}
-		t.Fatal("expected a NEAR model for encryption coverage")
+		if len(selected) == 0 {
+			t.Fatal("expected a NEAR model for encryption coverage")
+		}
+		return selected
 	}
 	return all
+}
+
+func TestSelectedModels(t *testing.T) {
+	t.Setenv("NEARAI_E2E_MODELS", `[
+		{"id":"near/chat","provider":"near","endpoint":"chat"},
+		{"id":"typesafe/decision","provider":"external","endpoint":"systemone"},
+		{"id":"openai/text","provider":"external","endpoint":"responses"}
+	]`)
+	for endpoint, id := range map[string]string{"chat": "near/chat", "systemone": "typesafe/decision", "responses": "openai/text"} {
+		selected := selectedModels(t, endpoint)
+		if len(selected) != 1 || selected[0].ID != id {
+			t.Fatalf("%s selected wrong models: %v", endpoint, selected)
+		}
+	}
 }
 func chatRequest(ctx context.Context, base, key string, m liveModel, stream bool) (*http.Request, []byte, error) {
 	body, err := json.Marshal(map[string]any{
@@ -113,14 +136,7 @@ func completionID(t *testing.T, raw []byte, stream bool) string {
 	}
 	id, text, finish := "", "", ""
 	done := false
-	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r", ""), "\n") {
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(line[5:])
-		if data == "" {
-			continue
-		}
+	for _, data := range sseData(raw) {
 		if data == "[DONE]" {
 			done = true
 			continue
@@ -189,12 +205,9 @@ func readResponse(t *testing.T, res *http.Response) []byte {
 		t.Fatalf("Chat HTTP %d", res.StatusCode)
 	}
 	// Consume actual EOF, including after SSE [DONE] and OHTTP final authentication.
-	raw, err := io.ReadAll(io.LimitReader(res.Body, (64<<20)+1))
+	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(raw) > 64<<20 {
-		t.Fatal("Chat body too large")
 	}
 	return raw
 }
@@ -372,4 +385,25 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 			}
 		})
 	}
+}
+
+// Parse complete SSE records, including multiline data and all line endings.
+func sseData(raw []byte) []string {
+	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	records := strings.Split(text, "\n\n")
+	var result []string
+	for _, record := range records[:len(records)-1] {
+		var data []string
+		for _, line := range strings.Split(record, "\n") {
+			if line == "data" {
+				data = append(data, "")
+			} else if value, ok := strings.CutPrefix(line, "data:"); ok {
+				data = append(data, strings.TrimPrefix(value, " "))
+			}
+		}
+		if value := strings.Join(data, "\n"); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }

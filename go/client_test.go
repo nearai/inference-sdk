@@ -7,10 +7,13 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +25,7 @@ type fakeCloud struct {
 	expectedHost    string
 	encrypt         bool
 	streamBody      string
+	encoding        string
 	t               *testing.T
 	a               Attestation
 	q               QuoteVerificationResult
@@ -33,6 +37,9 @@ type fakeCloud struct {
 	next            int
 	attestations    atomic.Int32
 	chats           atomic.Int32
+	dropChatAt      int32
+	extraModel      bool
+	missingModelKey bool
 	tee             bool
 	direct          bool
 	stream          bool
@@ -80,7 +87,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		quote, _ := json.Marshal(q)
 		a := map[string]any{
 			"request_nonce":      n,
-			"signing_algo":       "ed25519",
+			"signing_algo":       f.a.Signer.SigningAlgo,
 			"signing_address":    f.a.Signer.SigningAddress,
 			"signing_public_key": f.a.SigningPublicKey,
 			"intel_quote":        string(quote),
@@ -88,13 +95,43 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"report_data":        hex.EncodeToString(report),
 			"info":               map[string]any{"tcb_info": map[string]any{"app_compose": f.a.AppCompose}},
 		}
+		if f.a.ComposeManagerAttestation != nil && (f.direct || r.URL.Query().Get("model") != "") {
+			manager := *f.a.ComposeManagerAttestation
+			manager.Nonce = n
+			managerQuote := q
+			managerQuote.ReportData = bytes.Clone(report)
+			actionsHash, _ := hex.DecodeString(manager.ActionsHash)
+			copy(managerQuote.ReportData, actionsHash)
+			managerQuoteBytes, _ := json.Marshal(managerQuote)
+			manager.IntelQuote = string(managerQuoteBytes)
+			a["compose_manager_attestation"] = manager
+		}
 		if f.direct {
 			a["model_name"] = "canonical/model"
 			root := maps.Clone(a)
 			root["all_attestations"] = []any{a}
 			json.NewEncoder(w).Encode(root)
 		} else if r.URL.Query().Get("model") != "" {
+			if f.missingModelKey {
+				delete(a, "signing_public_key")
+			}
 			items := []any{a}
+			if f.extraModel {
+				other := maps.Clone(a)
+				other["signing_address"] = strings.Repeat("22", 32)
+				other["signing_public_key"] = other["signing_address"]
+				report := append([]byte(nil), q.ReportData...)
+				for i := 0; i < 32; i++ {
+					report[i] = 0x22
+				}
+				otherQuote := q
+				otherQuote.ReportData = report
+				encoded, _ := json.Marshal(otherQuote)
+				other["intel_quote"] = string(encoded)
+				other["report_data"] = hex.EncodeToString(report)
+				items = append([]any{other}, items...)
+			}
+
 			if f.badModel {
 				bad := map[string]any{}
 				for k, v := range a {
@@ -108,7 +145,16 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]any{"gateway_attestation": a})
 		}
 	case strings.HasSuffix(r.URL.Path, "/chat/completions"):
-		f.chats.Add(1)
+		if f.chats.Add(1) == f.dropChatAt {
+			_, _ = io.Copy(io.Discard, r.Body)
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				f.t.Error(err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
 		if f.encrypt {
 			if r.Header.Get("X-Signing-Algo") != "ed25519" {
 				f.t.Error("missing E2EE signing algorithm")
@@ -167,7 +213,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.tamper {
 			reply = strings.ReplaceAll(reply, "answer", "altered")
 		}
-		io.WriteString(w, reply)
+		writeEncodedResponse(f.t, w, []byte(reply), f.encoding)
 	case strings.Contains(r.URL.Path, "/signature/"):
 		f.signatureCalls.Add(1)
 		if status := f.signatureStatus.Load(); status != 0 {
@@ -216,6 +262,46 @@ func fakeClient(t *testing.T, f *fakeCloud, modify func(*InferenceOptions)) (*In
 func chatRequest() map[string]any {
 	return map[string]any{"model": "canonical/model", "messages": []any{map[string]any{"role": "user", "content": "review"}}}
 }
+
+func TestClientDoesNotReplayAfterConnectionFailure(t *testing.T) {
+	for _, encrypted := range []bool{false, true} {
+		for _, header := range []string{"Idempotency-Key", "X-Idempotency-Key"} {
+			t.Run(fmt.Sprintf("encrypted=%t/%s", encrypted, header), func(t *testing.T) {
+				transport := &http.Transport{}
+				t.Cleanup(transport.CloseIdleConnections)
+				f := newFakeCloud(t)
+				f.tee, f.encrypt, f.dropChatAt = encrypted, encrypted, 2
+				client, _ := fakeClient(t, f, func(o *InferenceOptions) {
+					o.E2EE = encrypted
+					o.HTTPClient = &http.Client{Transport: transport}
+					o.Headers = http.Header{header: {"completion-key"}}
+				})
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+					t.Fatal(err)
+				}
+
+				var reused atomic.Bool
+				ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+					GotConn: func(info httptrace.GotConnInfo) { reused.Store(info.Reused) },
+				})
+				_, err := client.CreateChatCompletion(ctx, chatRequest())
+
+				if !reused.Load() {
+					t.Fatal("did not exercise a reused connection")
+				}
+				if err == nil {
+					t.Fatal("connection failure was not propagated")
+				}
+				if f.chats.Load() != 2 {
+					t.Fatalf("completion was replayed: %d requests, want warmup + one failed request", f.chats.Load())
+				}
+			})
+		}
+	}
+}
+
 func TestClientPreflightAndSignature(t *testing.T) {
 	for _, tee := range []bool{false, true} {
 		for _, stream := range []bool{false, true} {
@@ -253,6 +339,9 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
+				if verified.ID != "chat-1" || verified.CompletionID != verified.ID {
+					t.Fatal("receipt ID alias mismatch")
+				}
 				want := "gateway"
 				if tee {
 					want = "provider_tee"
@@ -271,12 +360,117 @@ func TestClientPreflightAndSignature(t *testing.T) {
 		}
 	}
 }
+func TestClientCompressedResponses(t *testing.T) {
+	for _, encoding := range []string{"gzip", "br"} {
+		for _, stream := range []bool{false, true} {
+			t.Run(encoding+"/stream="+fmt.Sprint(stream), func(t *testing.T) {
+				f := newFakeCloud(t)
+				f.encoding, f.stream = encoding, stream
+				c, _ := fakeClient(t, f, nil)
+				body, _ := json.Marshal(chatRequest())
+				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+				res, err := c.HTTPClient().Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer res.Body.Close()
+				if _, err = io.ReadAll(res.Body); err != nil {
+					t.Fatal(err)
+				}
+				if res.Header.Get("Content-Encoding") != "" || res.Header.Get("Content-Length") != "" {
+					t.Fatal("decoded response retained compressed headers")
+				}
+				if _, err = c.VerifyResponse(context.Background(), "chat-1"); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
 }
+
+func TestProviderReceiptManagerEvidenceDoesNotAliasCachedResults(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee = true
+	f.q.AdvisoryIDs = []string{"original-advisory"}
+	fixture := loadManagerFixture(t)
+	f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
+	client, _ := fakeClient(t, f, nil)
+	ctx := context.Background()
+	if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	before, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := first.Attestation.Deployment.ComposeManager
+	manager.Actions[0]["tag"] = "mutated"
+	manager.Actions[0]["services"].([]string)[0] = "mutated"
+	manager.AdvisoryIDs[0] = "mutated"
+	manager.RuntimeMeasurements.ComposeHash = "mutated"
+	second, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := before.Models[0].Deployment.ComposeManager
+	if !reflect.DeepEqual(second.Attestation.Deployment.ComposeManager, want) || !reflect.DeepEqual(after.Models[0].Deployment.ComposeManager, want) {
+		t.Fatal("mutating a receipt changed cached manager evidence")
+	}
+	if f.signatureCalls.Load() != 1 || f.attestations.Load() != 2 {
+		t.Fatal("expected cached receipt and session results")
+	}
+}
+
+func TestClientDeploymentPoliciesReceiveManagerEvidence(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee = true
+	fixture := loadManagerFixture(t)
+	f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
+	var calls []string
+	check := func(name string, deployment MeasuredDeployment) {
+		t.Helper()
+		if deployment.ComposeManager == nil || !reflect.DeepEqual(deployment.ComposeManager.Actions, fixture.Actions) {
+			t.Error("callback did not receive authenticated manager actions")
+		}
+		calls = append(calls, name)
+	}
+	client, _ := fakeClient(t, f, func(opts *InferenceOptions) {
+		opts.ModelVerification.DeploymentVerifier = func(_ context.Context, deployment MeasuredDeployment) error {
+			check("verifier", deployment)
+			return nil
+		}
+		opts.DeploymentPolicy = func(_ context.Context, model string, deployment MeasuredDeployment) error {
+			if model != "canonical/model" {
+				t.Error("wrong policy model")
+			}
+			check("policy", deployment)
+			return nil
+		}
+	})
+	result, err := client.Verify(context.Background(), "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"verifier", "policy"}) || result.Models[0].DeploymentProvenance != "verified" {
+		t.Fatal("deployment policy order or result changed", calls)
+	}
+}
+
 func TestClientRejectsTamperingAndUnsupportedPrivacy(t *testing.T) {
 	t.Run("tampered reply", func(t *testing.T) {
 		f := newFakeCloud(t)
@@ -339,7 +533,7 @@ func TestSharedVerificationCancellation(t *testing.T) {
 func TestZeroTTLAndResponseExpiry(t *testing.T) {
 	f := newFakeCloud(t)
 	zero := time.Duration(0)
-	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero; o.MaxReceiptCacheBytes = 1 })
+	c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.AttestationTTL = &zero; o.ResponseTTL = &zero })
 	for i := 0; i < 2; i++ {
 		if _, e := c.Verify(context.Background(), "canonical/model"); e != nil {
 			t.Fatal(e)
@@ -380,18 +574,22 @@ func TestPinnedTLSRejectsBeforeSending(t *testing.T) {
 	}
 }
 func TestUnconsumedStreamCannotVerify(t *testing.T) {
-	f := newFakeCloud(t)
-	f.stream = true
-	c, _ := fakeClient(t, f, nil)
-	body, _ := json.Marshal(chatRequest())
-	req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
-	res, e := c.HTTPClient().Do(req)
-	if e != nil {
-		t.Fatal(e)
+	for _, encoding := range []string{"", "gzip", "br"} {
+		t.Run(encoding, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.stream, f.encoding = true, encoding
+			c, _ := fakeClient(t, f, nil)
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+			res, e := c.HTTPClient().Do(req)
+			if e != nil {
+				t.Fatal(e)
+			}
+			res.Body.Close()
+			_, e = c.VerifyResponse(context.Background(), "chat-1")
+			requireCode(t, e, "api.completion_not_found")
+		})
 	}
-	res.Body.Close()
-	_, e = c.VerifyResponse(context.Background(), "chat-1")
-	requireCode(t, e, "api.completion_not_found")
 }
 
 func TestSuccessfulE2EEInference(t *testing.T) {
@@ -509,47 +707,64 @@ func TestVerificationRetriesTransientSignatureStatus(t *testing.T) {
 	}
 }
 
-func TestReceiptCacheBudgetAndEviction(t *testing.T) {
-	c, err := NewInferenceClient(InferenceOptions{MaxCacheEntries: 2, MaxReceiptCacheBytes: 12})
+func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
+	c, err := NewInferenceClient(InferenceOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
 	request, response := []byte("req"), []byte("res")
-	if err = c.register("first", request, response, nil); err != nil {
+	if err = c.register("first", request, response, nil, false); err != nil {
 		t.Fatal(err)
 	}
 	request[0], response[0] = 'X', 'X'
-	if string(c.responses["first"].request) != "req" || string(c.responses["first"].response) != "res" {
+	c.mu.Lock()
+	first := c.responses["first"]
+	c.mu.Unlock()
+	if string(first.request) != "req" || string(first.response) != "res" {
 		t.Fatal("caller mutated retained receipt")
 	}
-	if err = c.register("second", []byte("req"), []byte("res"), nil); err != nil {
+	// New completions keep earlier receipts available until their TTL expires.
+	for i := 0; i < 128; i++ {
+		if err = c.register(fmt.Sprint(i), []byte("req"), []byte("res"), nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.mu.Lock()
+	retained := c.responses["first"] != nil && len(c.responses) == 129
+	for _, record := range c.responses {
+		record.expires = time.Now().Add(-time.Second)
+	}
+	c.mu.Unlock()
+	if !retained {
+		t.Fatal("unexpired receipts were discarded")
+	}
+	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false); err != nil {
 		t.Fatal(err)
 	}
-	// An oversized new receipt must not evict either retained receipt.
-	requireCode(t, c.register("oversized", []byte("1234567"), []byte("123456"), nil), "api.body_too_large")
-	if len(c.responses) != 2 {
-		t.Fatal("oversized receipt evicted records")
-	}
-	if err = c.register("third", []byte("req"), []byte("res"), nil); err != nil {
-		t.Fatal(err)
-	}
-	if c.responses["first"] != nil || len(c.responses) != 2 {
-		t.Fatal("oldest receipt was not evicted")
-	}
-	// Count alone is insufficient: this receipt fills the entire byte budget.
-	if err = c.register("full", []byte("123456"), []byte("123456"), nil); err != nil {
-		t.Fatal(err)
-	}
-	if len(c.responses) != 1 || c.responses["full"] == nil {
-		t.Fatal("combined byte budget exceeded")
-	}
-	c.responses["full"].expires = time.Now().Add(-time.Second)
-	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil); err != nil {
-		t.Fatal(err)
-	}
-	if len(c.responses) != 1 {
+	c.mu.Lock()
+	remaining := len(c.responses)
+	c.mu.Unlock()
+	if remaining != 1 {
 		t.Fatal("expired receipt retained")
+	}
+}
+
+func TestUnsupportedEndpointBeforePreflight(t *testing.T) {
+	f := newFakeCloud(t)
+	c, server := fakeClient(t, f, nil)
+	defer server.Close()
+	defer c.Close()
+	for _, endpoint := range []string{"responses/resp_fixture", "messages"} {
+		r, err := http.NewRequest("POST", c.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.HTTPClient().Do(r)
+		requireCode(t, err, "api.invalid_input")
+	}
+	if f.attestations.Load() != 0 || f.chats.Load() != 0 {
+		t.Fatal("unsupported endpoint performed network I/O")
 	}
 }
 

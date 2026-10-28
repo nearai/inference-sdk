@@ -2,6 +2,7 @@ package nearai
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,6 +18,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/andybalholm/brotli"
 )
 
 // AttestationClient fetches evidence without making any claim that it is verified.
@@ -90,6 +93,39 @@ func readBounded(r io.Reader, limit int64) ([]byte, error) {
 	return b, e
 }
 
+// Decode before capturing signed bytes or applying response size limits.
+func decodeResponse(res *http.Response) error {
+	var reader io.Reader
+	switch strings.ToLower(strings.TrimSpace(res.Header.Get("Content-Encoding"))) {
+	case "gzip":
+		var err error
+		reader, err = gzip.NewReader(res.Body)
+		if err != nil {
+			return err
+		}
+	case "br":
+		reader = brotli.NewReader(res.Body)
+	default:
+		return nil
+	}
+	res.Body = struct {
+		io.Reader
+		io.Closer
+	}{reader, res.Body}
+	res.Header.Del("Content-Encoding")
+	res.Header.Del("Content-Length")
+	res.ContentLength = -1
+	res.Uncompressed = true
+	return nil
+}
+
+func readResponseBounded(res *http.Response, limit int64) ([]byte, error) {
+	if err := decodeResponse(res); err != nil {
+		return nil, err
+	}
+	return readBounded(res.Body, limit)
+}
+
 func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) ([]byte, string, error) {
 	req, e := http.NewRequestWithContext(ctx, "GET", c.endpoint(path, q), nil)
 	if e != nil {
@@ -113,7 +149,7 @@ func (c *AttestationClient) get(ctx context.Context, path string, q url.Values) 
 			Retryable: res.StatusCode == 408 || res.StatusCode == 425 || res.StatusCode == 429 || res.StatusCode >= 500,
 		}
 	}
-	b, e := readBounded(res.Body, 16<<20)
+	b, e := readResponseBounded(res, 16<<20)
 	if e != nil {
 		return nil, "", e
 	}
@@ -245,6 +281,19 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 	}
 	for _, entry := range entries {
+		if c.direct {
+			// Only the serving envelope supplies manager evidence. Discard nested
+			// payloads before typed decoding, including unsupported future shapes.
+			var nested map[string]json.RawMessage
+			if e = json.Unmarshal(entry, &nested); e != nil || nested == nil {
+				return out, failure("api.invalid_response", e)
+			}
+			delete(nested, "compose_manager_attestation")
+			entry, e = json.Marshal(nested)
+			if e != nil {
+				return out, failure("api.invalid_response", e)
+			}
+		}
 		a, e := decodeAttestation(entry)
 		if e != nil {
 			return out, e
@@ -261,7 +310,10 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 		}
 		found := false
 		for i := range out.Attestations {
-			if sameAttestation(a, out.Attestations[i]) {
+			candidate := a
+			candidate.ComposeManagerAttestation = nil
+			if sameAttestation(candidate, out.Attestations[i]) {
+				out.Attestations[i].ComposeManagerAttestation = a.ComposeManagerAttestation
 				out.ServingAttestation = &out.Attestations[i]
 				found = true
 				break
@@ -282,7 +334,7 @@ func (c *AttestationClient) FetchModelAttestations(ctx context.Context, model st
 
 func (c *AttestationClient) FetchCompletionSignature(ctx context.Context, id string, algo SigningAlgo) (CompletionSignature, error) {
 	var sig CompletionSignature
-	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
+	if id == "" || id == "." || id == ".." {
 		return sig, failure("api.invalid_input", nil)
 	}
 	q, e := optionsQuery(FetchOptions{SigningAlgo: algo})
@@ -346,14 +398,18 @@ func decodeAttestation(data []byte) (Attestation, error) {
 			TCB        json.RawMessage `json:"tcb_info"`
 			InstanceID string          `json:"instance_id"`
 		} `json:"info"`
-		Report    string  `json:"report_data"`
-		PublicKey string  `json:"signing_public_key"`
-		GPU       *string `json:"nvidia_payload"`
-		FP        string  `json:"tls_cert_fingerprint"`
-		Model     string  `json:"model_name"`
+		Manager   *ComposeManagerAttestation `json:"compose_manager_attestation"`
+		Report    string                     `json:"report_data"`
+		PublicKey string                     `json:"signing_public_key"`
+		GPU       *string                    `json:"nvidia_payload"`
+		FP        string                     `json:"tls_cert_fingerprint"`
+		Model     string                     `json:"model_name"`
 	}
 	if e := json.Unmarshal(data, &raw); e != nil {
 		return a, failure("api.invalid_response", e)
+	}
+	if raw.Manager != nil && (raw.Manager.Actions == nil || raw.Manager.Nonce == "" || raw.Manager.IntelQuote == "" || len(raw.Manager.EventLog) == 0 || raw.Manager.ActionsHash == "") {
+		return a, failure("api.invalid_response", nil)
 	}
 	var encoded string
 	if json.Unmarshal(raw.Info.TCB, &encoded) == nil {
@@ -366,17 +422,18 @@ func decodeAttestation(data []byte) (Attestation, error) {
 		return a, failure("api.invalid_response", e)
 	}
 	a = Attestation{
-		Nonce:             raw.Nonce,
-		Signer:            SigningIdentity{raw.Algo, raw.Address},
-		IntelQuote:        raw.Quote,
-		EventLog:          raw.EventLog,
-		AppCompose:        *tcb.Compose,
-		ReportedQuoteData: raw.Report,
-		SigningPublicKey:  raw.PublicKey,
-		NvidiaPayload:     raw.GPU,
-		SPKIFingerprint:   raw.FP,
-		ModelName:         raw.Model,
-		InstanceID:        raw.Info.InstanceID,
+		ComposeManagerAttestation: raw.Manager,
+		Nonce:                     raw.Nonce,
+		Signer:                    SigningIdentity{raw.Algo, raw.Address},
+		IntelQuote:                raw.Quote,
+		EventLog:                  raw.EventLog,
+		AppCompose:                *tcb.Compose,
+		ReportedQuoteData:         raw.Report,
+		SigningPublicKey:          raw.PublicKey,
+		NvidiaPayload:             raw.GPU,
+		SPKIFingerprint:           raw.FP,
+		ModelName:                 raw.Model,
+		InstanceID:                raw.Info.InstanceID,
 	}
 	if _, e := hexSize(a.Nonce, 32); e != nil {
 		return a, failure("api.invalid_response", e)
@@ -448,7 +505,7 @@ func FindModelAttestationForSignature(items []VerifiedAttestation, sig Completio
 	if count != 1 {
 		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", count)
 	}
-	return found, nil
+	return cloneAttestation(found), nil
 }
 
 // Compare parsed event logs so JSON whitespace/key ordering cannot affect routing.

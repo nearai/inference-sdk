@@ -1,13 +1,12 @@
 import asyncio
 import os
 
-from openai import AsyncOpenAI
 from nearai_inference_sdk import InferenceClient
+from openai import AsyncOpenAI
 
-
-BASE_URL = 'https://cloud-api.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ed25519'
+BASE_URL = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 
 
 async def run_non_streaming_example(
@@ -16,7 +15,7 @@ async def run_non_streaming_example(
     completion = await openai_client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
     )
     verified = await inference_client.verify_response(completion.id)
     print(f'Verified {verified.signature_kind} response.')
@@ -29,17 +28,17 @@ async def run_streaming_example(
     stream = await openai_client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
         stream=True,
     )
     completion_id = None
-    # Streamed content is not signature-verified until verify_response succeeds.
+    # Stream text as it arrives; verify the receipt after full consumption.
     async for chunk in stream:
         completion_id = chunk.id
         if chunk.choices:
             print(chunk.choices[0].delta.content or '', end='', flush=True)
-    print()
 
+    print()
     if completion_id is None:
         raise RuntimeError('Stream returned no completion ID')
     verified = await inference_client.verify_response(completion_id)
@@ -51,9 +50,14 @@ async def main() -> None:
     # InferenceClient owns the transport. Reuse it for one OpenAI client; it
     # verifies deployments, pins Gateway TLS, encrypts, and retains receipt bytes.
     async with InferenceClient(
-        api_key, base_url=BASE_URL, signing_algo=SIGNING_ALGO, e2ee=True
+        api_key,
+        base_url=BASE_URL,
+        signing_algo=SIGNING_ALGO,
+        e2ee=True,
+        ohttp=os.environ.get('NEARAI_OHTTP') == 'true',
     ) as inference_client:
         openai_client = AsyncOpenAI(
+            max_retries=0,
             api_key=api_key,
             base_url=BASE_URL,
             http_client=inference_client.http_client,

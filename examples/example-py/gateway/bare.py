@@ -7,13 +7,16 @@ import httpx
 from nearai_inference_sdk import (
     AttestationClient,
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     E2eeModelKey,
     ImageProvenancePolicy,
     MeasuredDeployment,
+    ModelAttestationVerifiers,
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
     create_pinned_tls_client,
     prepare_e2ee_chat_request,
+    verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
     verify_gateway_attestation,
     verify_gateway_response,
@@ -21,10 +24,11 @@ from nearai_inference_sdk import (
     verify_model_response,
 )
 
-
-BASE_URL = 'https://cloud-api.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
-SIGNING_ALGO = 'ed25519'
+BASE_URL = (
+    os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/').rstrip('/') + '/'
+)
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 GATEWAY_IMAGE_POLICIES = {
     'nearaidev/cloud-api': ImageProvenancePolicy(
         repository='nearai/cloud-api', workflow='.github/workflows/build.yml'
@@ -41,11 +45,32 @@ GATEWAY_IMAGE_POLICIES = {
 }
 
 
+MODEL_IMAGE_POLICIES = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
+    ),
+}
+
+
+async def verify_model_images(deployment: MeasuredDeployment) -> None:
+    # Verify recorded deployment intent, not the currently running containers.
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        MODEL_IMAGE_POLICIES,
+        compose_manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
+
+
 @dataclass
 class Completion:
     id: str
     request_body: bytes
     response_body: bytes
+    text: str | None
 
 
 @dataclass(frozen=True)
@@ -55,19 +80,19 @@ class E2eeRecipient:
 
 
 class RecordingStream(httpx.AsyncByteStream):
-    """Keep ciphertext while the E2EE decryptor consumes the response stream."""
+    """Keep the decoded HTTP body before the E2EE decryptor consumes it."""
 
-    def __init__(self, source: httpx.AsyncByteStream) -> None:
-        self.source = source
+    def __init__(self, response: httpx.Response) -> None:
+        self.response = response
         self.chunks: list[bytes] = []
 
     async def __aiter__(self):
-        async for chunk in self.source:
+        async for chunk in self.response.aiter_bytes():
             self.chunks.append(chunk)
             yield chunk
 
     async def aclose(self) -> None:
-        await self.source.aclose()
+        await self.response.aclose()
 
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
@@ -102,7 +127,11 @@ async def fetch_and_verify_models(
     # connections. Verify every report before choosing an encryption recipient.
     models = []
     for attestation in fetched.attestations:
-        verified = await verify_model_attestation(attestation, fetched.client_binding)
+        verified = await verify_model_attestation(
+            attestation,
+            fetched.client_binding,
+            verifiers=ModelAttestationVerifiers(deployment=verify_model_images),
+        )
         models.append(verified)
     print(f'Model deployments: verified {len(models)}.')
     return models
@@ -136,7 +165,7 @@ async def send_completion(
         json={
             'model': MODEL,
             'messages': [{'role': 'user', 'content': 'Reply with the word ok.'}],
-            'max_completion_tokens': 8,
+            'max_completion_tokens': 1024,
             'stream': stream,
         },
     )
@@ -145,43 +174,40 @@ async def send_completion(
     prepared = await prepare_e2ee_chat_request(request, recipient.key)
     request_body = prepared.request.content
     response = await client.send(prepared.request, stream=True)
-    response.raise_for_status()
-    recording = RecordingStream(response.stream)
-    response.stream = recording
-    decrypted = await prepared.decrypt_response(response)
-    completion_id = None
-    stream_complete = False
+    recording = RecordingStream(response)
+    response = httpx.Response(
+        response.status_code,
+        headers={'Content-Type': response.headers.get('content-type', '')},
+        stream=recording,
+        request=prepared.request,
+    )
     try:
-        if stream:
-            async for line in decrypted.aiter_lines():
-                if not line.startswith('data:'):
-                    continue
-                data = line.removeprefix('data:').strip()
-                if data == '[DONE]':
-                    stream_complete = True
-                    continue
-                chunk = json.loads(data)
-                completion_id = chunk.get('id', completion_id)
-                for choice in chunk.get('choices', []):
-                    print(
-                        choice.get('delta', {}).get('content') or '', end='', flush=True
-                    )
-            print()
-        else:
-            await decrypted.aread()
-            body = decrypted.json()
-            completion_id = body['id']
-            print(body['choices'][0]['message'].get('content') or '')
+        response.raise_for_status()
+        decrypted = await prepared.decrypt_response(response)
+        try:
+            values = (
+                await read_stream(decrypted)
+                if stream
+                else [json.loads(await decrypted.aread())]
+            )
+        finally:
+            await decrypted.aclose()
+        completion_id = next((value['id'] for value in values if value.get('id')), None)
+        text = ''.join(
+            choice.get('delta' if stream else 'message', {}).get('content') or ''
+            for value in values
+            for choice in value.get('choices', [])[:1]
+        )
     finally:
-        await decrypted.aclose()
         await response.aclose()
-
     if completion_id is None:
         raise RuntimeError('Completion response did not contain an ID')
-    if stream and not stream_complete:
-        raise RuntimeError('Streaming completion ended before [DONE]')
-    # Signatures cover the encrypted HTTP bytes, not the displayed plaintext.
-    return Completion(completion_id, request_body, b''.join(recording.chunks))
+    return Completion(
+        completion_id,
+        request_body,
+        b''.join(recording.chunks),
+        None if stream else text,
+    )
 
 
 async def run_non_streaming_example(client, api_key, recipient) -> Completion:
@@ -215,6 +241,40 @@ async def verify_completion_receipt(
             completion.request_body, completion.response_body, signature, gateway
         )
     print(f'Verified {signature.kind} response.')
+    if completion.text is not None:
+        print(completion.text)
+
+
+async def read_stream(response: httpx.Response) -> list[dict]:
+    values, data = [], []
+    done = False
+    first_line = True
+    async for line in response.aiter_lines():
+        if first_line:
+            line = line.removeprefix('\ufeff')
+            first_line = False
+        if line == 'data':
+            data.append('')
+        elif line.startswith('data:'):
+            data.append(line[5:].removeprefix(' '))
+        elif not line:
+            payload = '\n'.join(data)
+            data = []
+            if payload == '[DONE]':
+                done = True
+            elif payload:
+                value = json.loads(payload)
+                if value.get('error'):
+                    raise RuntimeError('Stream returned an error')
+                values.append(value)
+                for choice in value.get('choices', [])[:1]:
+                    print(
+                        choice.get('delta', {}).get('content') or '', end='', flush=True
+                    )
+    print()
+    if not done:
+        raise RuntimeError('Stream ended without [DONE]')
+    return values
 
 
 async def main() -> None:

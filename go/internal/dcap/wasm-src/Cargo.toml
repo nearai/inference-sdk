@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-dcap-qvl = { git = "https://github.com/Phala-Network/dcap-qvl", rev = "884e22ce767f31fd5d5a6672511519fc7975cde0", default-features = false, features = ["std", "rustcrypto", "default-x509"] }
+dcap-qvl = { git = "https://github.com/Phala-Network/dcap-qvl", rev = "94208e2753a854191759e493ca5892be482ad453", default-features = false, features = ["std", "rustcrypto", "default-x509"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = { package = "serde-human-bytes", version = "0.1" }

@@ -58,7 +58,13 @@ class ChunkStream(httpx.AsyncByteStream):
 class Gateway:
     """Real message crypto; only the hardware quote verifier is substituted."""
 
-    def __init__(self, signing_algo: str = 'ed25519', kind: str = 'provider_tee'):
+    def __init__(
+        self,
+        signing_algo: str = 'ed25519',
+        kind: str = 'provider_tee',
+        *,
+        seed: bytes = bytes([7]) * 32,
+    ):
         self.signing_algo = signing_algo
         self.kind = kind
         self.gateway_requests = 0
@@ -76,7 +82,7 @@ class Gateway:
         self.additional_model_is_invalid = False
         self.bad_quote = False
         self.tail_gate: asyncio.Event | None = None
-        self.seed = bytes([7]) * 32
+        self.seed = seed
         if signing_algo == 'ed25519':
             self.key = SigningKey(self.seed)
             self.public_key = bytes(self.key.verify_key).hex()
@@ -338,12 +344,17 @@ def gateway(request):
     return Gateway()
 
 
-async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch, gateway):
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
+async def test_one_openai_client_can_reuse_the_verified_transport(
+    monkeypatch, gateway, adapter_name
+):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
         openai = AsyncOpenAI(
-            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
         )
         first, second = await asyncio.gather(
             openai.chat.completions.create(model=MODEL, messages=MESSAGES),
@@ -358,12 +369,17 @@ async def test_one_openai_client_can_reuse_the_verified_transport(monkeypatch, g
     assert len(gateway.completion_requests) == 2
 
 
-async def test_external_openai_close_preserves_receipts_and_owner(monkeypatch, gateway):
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
+async def test_external_openai_close_preserves_receipts_and_owner(
+    monkeypatch, gateway, adapter_name
+):
     gateway.install(monkeypatch)
 
     async with gateway.client() as client:
         async with AsyncOpenAI(
-            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
         ) as openai:
             completion = await openai.chat.completions.create(
                 model=MODEL, messages=MESSAGES
@@ -377,7 +393,9 @@ async def test_external_openai_close_preserves_receipts_and_owner(monkeypatch, g
         )
         await client.verify_response(completion.id)
         async with AsyncOpenAI(
-            api_key='test-key', base_url=BASE_URL, http_client=client.http_client
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
         ) as openai:
             completion = await openai.chat.completions.create(
                 model=MODEL, messages=MESSAGES
@@ -527,6 +545,21 @@ async def test_failed_preverification_is_not_cached(monkeypatch):
         await client.verify_response(completion.id)
     assert gateway.gateway_requests == 2
     assert len(gateway.completion_requests) == 1
+
+
+@pytest.mark.parametrize('endpoint', ['responses/resp_fixture', 'messages'])
+async def test_unsupported_endpoint_is_rejected_before_preflight(monkeypatch, endpoint):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        request = httpx.Request('POST', BASE_URL + endpoint, json={'model': MODEL})
+        with pytest.raises(ApiError) as raised:
+            await client.send(request)
+        assert raised.value.failure.code == 'api.invalid_input'
+        assert raised.value.failure.details['field'] == 'request'
+    assert gateway.gateway_requests == 0
+    assert gateway.model_requests == []
+    assert gateway.completion_requests == []
 
 
 async def test_verify_rejects_an_empty_model_without_fetching_evidence(monkeypatch):
@@ -747,8 +780,9 @@ async def test_configured_authentication_is_shared_with_evidence_and_chat(
     assert gateway.completion_requests[0].headers['x-tenant'] == 'alice'
 
 
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
 async def test_external_openai_uses_configured_header_only_authentication(
-    monkeypatch, gateway
+    monkeypatch, gateway, adapter_name
 ):
     gateway.install(monkeypatch)
 
@@ -758,7 +792,7 @@ async def test_external_openai_uses_configured_header_only_authentication(
         openai_client = AsyncOpenAI(
             api_key='placeholder',
             base_url=BASE_URL,
-            http_client=client.http_client,
+            http_client=getattr(client, adapter_name),
         )
         completion = await openai_client.chat.completions.create(
             model=MODEL, messages=MESSAGES
@@ -793,11 +827,21 @@ async def test_async_request_body_is_sent_with_buffered_framing(
     assert gateway.plaintexts == ['Hello']
 
 
-async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch, gateway):
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
+async def test_early_stream_close_is_not_a_verifiable_receipt(
+    monkeypatch, gateway, adapter_name
+):
     gateway.install(monkeypatch)
 
-    async with gateway.client() as client:
-        stream = await client.chat.completions.create(
+    async with (
+        gateway.client() as client,
+        AsyncOpenAI(
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
+        ) as openai,
+    ):
+        stream = await openai.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
         )
         chunk = await anext(stream)
@@ -808,15 +852,22 @@ async def test_early_stream_close_is_not_a_verifiable_receipt(monkeypatch, gatew
     assert gateway.signature_requests == 0
 
 
+@pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])
 async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
-    monkeypatch,
-    gateway,
+    monkeypatch, gateway, adapter_name
 ):
     gateway.tail_gate = asyncio.Event()
     gateway.install(monkeypatch)
 
-    async with gateway.client() as client:
-        stream = await client.chat.completions.create(
+    async with (
+        gateway.client() as client,
+        AsyncOpenAI(
+            api_key='test-key',
+            base_url=BASE_URL,
+            http_client=getattr(client, adapter_name),
+        ) as openai,
+    ):
+        stream = await openai.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
         )
         try:
@@ -831,3 +882,31 @@ async def test_done_finishes_chat_while_receipt_waits_for_trailing_wire_bytes(
             assert verified.signature_kind == 'provider_tee'
         finally:
             gateway.tail_gate.set()
+
+
+# Messages cases are deferred until the API is enabled.
+@pytest.mark.parametrize('endpoint', ['chat/completions', 'responses'])
+async def test_native_inference_does_not_replay_server_errors(monkeypatch, endpoint):
+    class FailingGateway(Gateway):
+        async def handle(self, request):
+            if request.url.path == '/v1/' + endpoint:
+                self.completion_requests.append(request)
+                return httpx.Response(
+                    500, json={'error': {'message': 'fixture failure'}}
+                )
+            return await super().handle(request)
+
+    gateway = FailingGateway()
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        with pytest.raises(Exception) as caught:
+            # if endpoint == 'messages':
+            #     await client.messages.create(
+            #         model=MODEL, messages=MESSAGES, max_tokens=128
+            #     )
+            if endpoint == 'responses':
+                await client.responses.create(model=MODEL, input='Hello')
+            else:
+                await client.chat.completions.create(model=MODEL, messages=MESSAGES)
+        assert caught.value.status_code == 500
+        assert len(gateway.completion_requests) == 1

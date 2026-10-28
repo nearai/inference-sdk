@@ -1,11 +1,11 @@
 //! Real Gateway coverage for the integrated transport; never use mock verifiers.
-use super::{read_completion_id, required_env, LiveModel};
+use super::{read_completion_id, required_env, select_models, LiveModel};
 use nearai_inference_sdk::{
     CompletionSignatureKind, GatewayTlsBinding, GpuEvidenceStatus, InferenceClient,
     InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
 };
 use serde_json::json;
-use std::{error::Error, io, time::Duration};
+use std::{error::Error, time::Duration};
 
 #[tokio::test]
 #[ignore = "requires NEARAI_BASE_URL, NEARAI_API_KEY and NEARAI_E2E_MODELS"]
@@ -36,20 +36,14 @@ async fn verify_models(
     signing_algo: SigningAlgo,
     ohttp: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let models: Vec<LiveModel> = serde_json::from_str(&required_env("NEARAI_E2E_MODELS")?)?;
-    let models: Vec<_> = models
-        .into_iter()
-        .filter(|model| model.endpoint == "chat")
-        .collect();
-
-    assert!(!models.is_empty(), "Expected representative Chat models");
+    let models = select_models(&required_env("NEARAI_E2E_MODELS")?, "chat")?;
     let selected: Vec<_> = if e2ee || ohttp {
-        vec![models
-            .iter()
-            .find(|m| m.provider == "near")
-            .ok_or_else(|| {
-                io::Error::other("Expected a NEAR model for live encryption coverage")
-            })?]
+        let selected: Vec<_> = models.iter().filter(|m| m.provider == "near").collect();
+        assert!(
+            !selected.is_empty(),
+            "Expected a NEAR model for live encryption coverage"
+        );
+        selected
     } else {
         models.iter().collect()
     };
@@ -154,7 +148,7 @@ async fn verify_chat(
     Ok(())
 }
 
-async fn verify_receipt_with_retry(
+pub(super) async fn verify_receipt_with_retry(
     client: &InferenceClient,
     id: &str,
 ) -> Result<VerifiedCompletionResult, InferenceError> {
@@ -162,7 +156,9 @@ async fn verify_receipt_with_retry(
     // cryptographic check; the integrated client classifies those as permanent.
     for backoff_ms in [500, 1_000, 2_000, 4_000] {
         match client.verify_response(id).await {
-            Err(error) if error.retryable() => {
+            Err(error)
+                if error.retryable() || error.code() == "api.completion_signature_unavailable" =>
+            {
                 tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
             }
             result => return result,

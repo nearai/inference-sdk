@@ -61,6 +61,8 @@ export type {
   ModelVerificationOptions,
   InferenceChat,
   InferenceChatCompletions,
+  InferenceResponses,
+  // InferenceMessages,
   InferenceClientOptions,
   VerifiedCompletionResult,
   AttestationVerificationResult,
@@ -76,6 +78,14 @@ export { createGpuEvidenceVerifier } from './utils/nvidia';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';
 export { verifyDeploymentImageProvenance } from './core/deployment-provenance';
+export { verifyComposeManagerDeploymentImageProvenance } from './core/compose-manager-provenance';
+export type {
+  ComposeManagerAction,
+  ComposeManagerAttestation,
+  ComposeManagerDeploymentFailureReason,
+  VerifiedComposeManagerAttestation,
+  VerifyComposeManagerDeploymentImageProvenanceParams,
+} from './types/compose-manager';
 export type {
   DeploymentImagesFailureReason,
   FetchImageProvenanceParams,
@@ -130,6 +140,7 @@ export type {
 export {
   ApiError,
   isApiError,
+  getSdkError,
   isVerificationError,
   VerificationError,
 } from './utils/errors';
