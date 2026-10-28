@@ -843,6 +843,11 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     const gatewayFetch = this.createGatewayFetch(
       gateway.clientBinding.spkiFingerprint,
     );
+    // Parse required OHTTP configuration before authenticated evidence requests.
+    const completionFetch = this.createCompletionFetch(
+      gatewayFetch,
+      ohttpKeyConfig,
+    );
     const controller = new AbortController();
     const { signal } = controller;
     const client = new GatewaySessionEvidenceClient({
@@ -891,7 +896,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       modelKey,
       transport: {
         ...transport,
-        fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
+        fetch: completionFetch,
       },
       verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {

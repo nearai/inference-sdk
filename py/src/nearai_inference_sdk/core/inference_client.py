@@ -690,6 +690,8 @@ class InferenceClient(
         if client is None:
             client = self._create_gateway_client(fingerprint)
             self._http_clients[fingerprint] = client
+        # Parse required OHTTP configuration before authenticated evidence requests.
+        completion_client = self._completion_client(client, key_config)
         attestations = _SessionAttestationClient(
             client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
         )
@@ -736,7 +738,7 @@ class InferenceClient(
 
         return _VerifiedSession(
             model_key=model_key,
-            http_client=self._completion_client(client, key_config),
+            http_client=completion_client,
             attestation_client=attestations,
             verify_response=verify_response,
             attestation_result=AttestationVerificationResult(

@@ -991,63 +991,62 @@ describe('inference client', () => {
     }
   });
 
-  test.each(['missing', 'model-signed'] as const)(
-    'rejects %s Gateway OHTTP evidence while model verification is pending',
-    async (evidence) => {
-      const gateway = createTestGateway();
-      const endpoint = await createOhttpEndpoint({
-        fetch: gateway.fetch,
-        signingKey: keyPair(2),
-      });
-      jest
-        .spyOn(globalThis, 'fetch')
-        .mockImplementation(
-          evidence === 'missing' ? gateway.fetch : endpoint.fetch,
-        );
-      let releaseModelVerification: () => void = () => {};
-      const modelVerificationPending = new Promise<void>((resolve) => {
-        releaseModelVerification = resolve;
-      });
-      const client = new InferenceClient({
-        ...inferenceClientOptions(gateway),
-        ohttp: true,
-        signingAlgo: 'ed25519',
-        modelVerification: {
-          verifiers: {
-            tdxQuote: async (quote) => {
-              await modelVerificationPending;
-              return gateway.tdxQuoteVerifier(quote);
+  describe.each(['browser', 'Node'] as const)(
+    '%s OHTTP preflight',
+    (runtime) => {
+      test.each(['missing', 'model-signed', 'malformed-config'] as const)(
+        'rejects %s Gateway evidence before authenticated requests',
+        async (evidence) => {
+          const gateway = createTestGateway();
+          const endpoint = await createOhttpEndpoint({
+            fetch: gateway.fetch,
+            signingKey: keyPair(evidence === 'model-signed' ? 2 : 1),
+            attestedKeyConfig:
+              evidence === 'malformed-config' ? new Uint8Array([0]) : undefined,
+          });
+          const fetch = evidence === 'missing' ? gateway.fetch : endpoint.fetch;
+          jest.spyOn(globalThis, 'fetch').mockImplementation(fetch);
+          if (runtime === 'Node') {
+            mockNodeGatewayAttestation({ gateway: { ...gateway, fetch } });
+          }
+          const options: InferenceClientOptions = {
+            ...inferenceClientOptions(gateway),
+            ohttp: true,
+            signingAlgo: 'ed25519',
+          };
+          const client =
+            runtime === 'Node'
+              ? new TestNodeInferenceClient(options, fetch)
+              : new InferenceClient(options);
+          const verification = client.verify(model);
+          const completion = client.fetch(
+            `${baseUrl}chat/completions`,
+            chatRequest({ messages: [] }),
+          );
+          const expectedError = {
+            failure: {
+              code: {
+                missing: 'ohttp.attestation_required',
+                'model-signed': 'ohttp.signer_mismatch',
+                'malformed-config': 'ohttp.key_config_invalid',
+              }[evidence],
             },
-          },
+          };
+          await Promise.all([
+            expect(verification).rejects.toMatchObject(expectedError),
+            expect(completion).rejects.toMatchObject(expectedError),
+          ]);
+          expect(gateway.state.gatewayAttestationRequests).toBe(1);
+          expect(gateway.state.metadataModels).toEqual([]);
+          expect(gateway.state.modelAttestationRequests).toBe(0);
+          expect(gateway.state.completionRequests).toBe(0);
+          expect(
+            endpoint.requests.every(
+              (request) => new URL(request.url).pathname !== '/ohttp',
+            ),
+          ).toBe(true);
         },
-      });
-      const verification = client.verify(model);
-      const completion = client.fetch(
-        `${baseUrl}chat/completions`,
-        chatRequest({ messages: [] }),
       );
-      const expectedError = {
-        failure: {
-          code:
-            evidence === 'missing'
-              ? 'ohttp.attestation_required'
-              : 'ohttp.signer_mismatch',
-        },
-      };
-      try {
-        await Promise.all([
-          expect(verification).rejects.toMatchObject(expectedError),
-          expect(completion).rejects.toMatchObject(expectedError),
-        ]);
-      } finally {
-        releaseModelVerification();
-      }
-      expect(gateway.state.completionRequests).toBe(0);
-      expect(
-        endpoint.requests.every(
-          (request) => new URL(request.url).pathname !== '/ohttp',
-        ),
-      ).toBe(true);
     },
   );
 
