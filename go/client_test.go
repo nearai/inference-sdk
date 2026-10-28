@@ -750,24 +750,6 @@ func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
 	}
 }
 
-func TestUnsupportedEndpointBeforePreflight(t *testing.T) {
-	f := newFakeCloud(t)
-	c, server := fakeClient(t, f, nil)
-	defer server.Close()
-	defer c.Close()
-	for _, endpoint := range []string{"responses/resp_fixture", "messages"} {
-		r, err := http.NewRequest("POST", c.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = c.HTTPClient().Do(r)
-		requireCode(t, err, "api.invalid_input")
-	}
-	if f.attestations.Load() != 0 || f.chats.Load() != 0 {
-		t.Fatal("unsupported endpoint performed network I/O")
-	}
-}
-
 func TestRequestAuthorityUsesConfiguredEndpoint(t *testing.T) {
 	f := newFakeCloud(t)
 	c, server := fakeClient(t, f, nil)

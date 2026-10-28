@@ -18,19 +18,26 @@ both return `Result<InferenceClient, InferenceError>`.
 | `chat_completions(serde_json::Value)` | `serde_json::Value` | Send non-streaming verified Chat. Response signature still requires `verify_response`. |
 | `response_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Responses request for `send`, including streaming. |
 | `create_response(serde_json::Value)` | `serde_json::Value` | Create a non-streaming Gateway Response; verify its ID with `verify_response`. |
-| `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat or Gateway Responses. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
+| `message_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Messages request for `send`, including streaming. |
+| `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
+| `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
 | `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
 `body` to EOF or call `bytes()` / `json()`. Dropping an incomplete body prevents
-receipt registration. Non-2xx responses pass through `send`; `chat_completions` and `create_response`
+receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
 returns `CompletionSignatureKind`.
 
-See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+`create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
+Messages request for `send()`, including SSE. Both require a Gateway client with
+field-level E2EE disabled.
+
+See [Messages API](./verification-guide.md#messages-api) and
+[Responses API](./verification-guide.md#responses-api) for Gateway receipt
 semantics, streaming, and supported privacy options.
 
 | Option | Default |

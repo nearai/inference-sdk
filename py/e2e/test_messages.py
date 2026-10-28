@@ -1,5 +1,3 @@
-# Messages support is deferred until a later release.
-
 """Live Messages JSON/SSE through native and official Anthropic clients."""
 
 import asyncio

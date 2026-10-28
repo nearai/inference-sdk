@@ -1,5 +1,4 @@
-// Messages support is deferred until a later release.
-// import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import * as v from 'valibot';
 import {
@@ -23,7 +22,7 @@ import type {
   InferenceClientCommonOptions,
   InferenceClientOptions,
   InferenceEncryptionOptions,
-  // InferenceMessages,
+  InferenceMessages,
   InferenceResponses,
   NodeInferenceClientOptions,
   VerifiedCompletionResult,
@@ -357,7 +356,7 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions, Responses, or System One request.
+   * Send one verified Chat Completions, Responses, Messages, or System One request.
    * Only POST requests to the configured creation endpoints are accepted.
    */
   readonly fetch = async (
@@ -660,8 +659,7 @@ export abstract class VerifiedInferenceClientBase<
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
       (url.pathname !== chatPath &&
-        // !((responses || messages) && this.supportsGatewayEndpoints))
-        !(responses && this.supportsGatewayEndpoints))
+        !((responses || messages) && this.supportsGatewayEndpoints))
     ) {
       throw invalidInput({
         field: 'request',
@@ -674,7 +672,7 @@ export abstract class VerifiedInferenceClientBase<
       throw invalidInput({
         field: 'e2ee',
         reason: 'unsupported_value',
-        expected: 'field-level E2EE disabled for Responses',
+        expected: 'field-level E2EE disabled for Responses and Messages',
       });
     }
     return messages ? 'messages' : responses ? 'responses' : 'chat';
@@ -743,17 +741,17 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
   protected override readonly supportsGatewayEndpoints = true;
-  // private readonly anthropic: Anthropic;
+  private readonly anthropic: Anthropic;
 
   /** Create a Response, then verify its top-level ID with verifyResponse(). */
   get responses(): InferenceResponses {
     return this.openai.responses;
   }
 
-  // /** Create a Message; verify its ID after consuming the response or stream. */
-  // get messages(): InferenceMessages {
-  //   return this.anthropic.messages;
-  // }
+  /** Create a Message; verify its ID after consuming the response or stream. */
+  get messages(): InferenceMessages {
+    return this.anthropic.messages;
+  }
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
@@ -777,7 +775,6 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   protected constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.gatewayOptions = options;
-    /* Messages support is deferred until a later release.
     this.anthropic = new Anthropic({
       apiKey: '@nearai/inference-sdk-internal',
       defaultHeaders: {
@@ -799,7 +796,6 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         return this.fetch(new Request(url, request));
       },
     });
-    */
   }
 
   protected override sendSystemOneRequest(request: Request): Promise<Response> {

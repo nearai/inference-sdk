@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 use nearai_inference_sdk::{
     CompletionSignatureKind, InferenceClient, InferenceClientOptions, SigningAlgo,
 };
