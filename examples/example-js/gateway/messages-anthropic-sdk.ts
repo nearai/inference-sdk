@@ -1,5 +1,4 @@
-// Messages support is deferred until a later release.
-
+import Anthropic from '@anthropic-ai/sdk';
 import { InferenceClient, type SigningAlgo } from '@nearai/inference-sdk/node';
 import { transportOptions } from '../transport-options.ts';
 
@@ -17,14 +16,21 @@ async function main(): Promise<void> {
     baseUrl: BASE_URL,
     ...transportOptions(SIGNING_ALGO),
   });
-  await runNonStreamingExample(inferenceClient);
-  await runStreamingExample(inferenceClient);
+  const api = new Anthropic({
+    apiKey,
+    baseURL: inferenceClient.getBaseUrl().replace(/v1\/$/, ''),
+    fetch: inferenceClient.fetch,
+    maxRetries: 0,
+  });
+  await runNonStreamingExample(api, inferenceClient);
+  await runStreamingExample(api, inferenceClient);
 }
 
 async function runNonStreamingExample(
+  api: Anthropic,
   inferenceClient: InferenceClient,
 ): Promise<void> {
-  const response = await inferenceClient.messages.create(
+  const response = await api.messages.create(
     {
       model: MODEL,
       messages: [{ role: 'user', content: 'Reply with the word ok.' }],
@@ -43,9 +49,10 @@ async function runNonStreamingExample(
 }
 
 async function runStreamingExample(
+  api: Anthropic,
   inferenceClient: InferenceClient,
 ): Promise<void> {
-  const stream = await inferenceClient.messages.create(
+  const stream = await api.messages.create(
     {
       model: MODEL,
       messages: [{ role: 'user', content: 'Reply with the word ok.' }],

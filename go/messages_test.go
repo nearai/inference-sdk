@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 package nearai
 
 import (

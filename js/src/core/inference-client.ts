@@ -1,5 +1,4 @@
-// Messages support is deferred until a later release.
-// import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import * as v from 'valibot';
 import {
@@ -23,7 +22,7 @@ import type {
   InferenceClientCommonOptions,
   InferenceClientOptions,
   InferenceEncryptionOptions,
-  // InferenceMessages,
+  InferenceMessages,
   InferenceResponses,
   NodeInferenceClientOptions,
   VerifiedCompletionResult,
@@ -120,6 +119,7 @@ type ResponseRecord<VerificationResult> =
   VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
     expiresAt?: number;
+    expiry?: ReturnType<typeof setTimeout>;
   };
 
 type ParsedSecureRequest = {
@@ -248,6 +248,7 @@ export abstract class VerifiedInferenceClientBase<
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
+  protected responseCacheGeneration = 0;
   private readonly responseRecords = new Map<
     string,
     ResponseRecord<VerificationResult>
@@ -357,13 +358,14 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions, Responses, or System One request.
+   * Send one verified Chat Completions, Responses, Messages, or System One request.
    * Only POST requests to the configured creation endpoints are accepted.
    */
   readonly fetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
+    const generation = this.responseCacheGeneration;
     const request = createRequest(input, init);
     const url = new URL(request.url);
     const systemOneUrl = new URL('systemone', this.baseUrl);
@@ -386,13 +388,16 @@ export abstract class VerifiedInferenceClientBase<
         response: completion.response,
         protocol: completion.protocol,
         register: (completionId) =>
-          this.registerResponse({
-            id: completionId,
-            requestBody,
-            responseBody,
-            session: completion.session,
-            gatewayOnly: completion.protocol !== 'chat',
-          }),
+          this.registerResponse(
+            {
+              id: completionId,
+              requestBody,
+              responseBody,
+              session: completion.session,
+              gatewayOnly: completion.protocol !== 'chat',
+            },
+            generation,
+          ),
       });
     }
     return this.toClientResponse(completion);
@@ -428,8 +433,21 @@ export abstract class VerifiedInferenceClientBase<
     return record.verification;
   }
 
+  /** Release captured responses and expiry timers; keep the client reusable. */
+  clearResponseCache(): void {
+    this.responseCacheGeneration++;
+    for (const record of this.responseRecords.values()) {
+      clearTimeout(record.expiry);
+    }
+    this.responseRecords.clear();
+  }
+
   /** All supported endpoints share byte retention, expiry, and verification retries. */
-  protected registerResponse(record: ResponseRecord<VerificationResult>): void {
+  protected registerResponse(
+    record: ResponseRecord<VerificationResult>,
+    generation: number,
+  ): void {
+    if (generation !== this.responseCacheGeneration) return;
     if (this.responseCacheTimeToLiveMs === 0) return;
     const id = record.id;
     if (this.getResponseRecord(id) !== undefined) {
@@ -437,6 +455,7 @@ export abstract class VerifiedInferenceClientBase<
     }
     this.responseRecords.set(id, record);
     const expire = (): void => {
+      if (this.responseRecords.get(id) !== record) return;
       const expiresAt = Date.now() + this.responseCacheTimeToLiveMs;
       record.expiresAt = expiresAt;
       const release = (): void => {
@@ -447,8 +466,8 @@ export abstract class VerifiedInferenceClientBase<
           return;
         }
         // JavaScript timers accept at most a signed 32-bit delay.
-        const timer = setTimeout(release, Math.min(remaining, 2 ** 31 - 1));
-        timer.unref?.();
+        record.expiry = setTimeout(release, Math.min(remaining, 2 ** 31 - 1));
+        record.expiry.unref?.();
       };
       release();
     };
@@ -460,6 +479,7 @@ export abstract class VerifiedInferenceClientBase<
   ): ResponseRecord<VerificationResult> | undefined {
     const record = this.responseRecords.get(id);
     if (record?.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+      clearTimeout(record.expiry);
       this.responseRecords.delete(id);
       return undefined;
     }
@@ -660,8 +680,7 @@ export abstract class VerifiedInferenceClientBase<
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
       (url.pathname !== chatPath &&
-        // !((responses || messages) && this.supportsGatewayEndpoints))
-        !(responses && this.supportsGatewayEndpoints))
+        !((responses || messages) && this.supportsGatewayEndpoints))
     ) {
       throw invalidInput({
         field: 'request',
@@ -674,7 +693,7 @@ export abstract class VerifiedInferenceClientBase<
       throw invalidInput({
         field: 'e2ee',
         reason: 'unsupported_value',
-        expected: 'field-level E2EE disabled for Responses',
+        expected: 'field-level E2EE disabled for Responses and Messages',
       });
     }
     return messages ? 'messages' : responses ? 'responses' : 'chat';
@@ -743,22 +762,23 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
   protected override readonly supportsGatewayEndpoints = true;
-  // private readonly anthropic: Anthropic;
+  private readonly anthropic: Anthropic;
 
   /** Create a Response, then verify its top-level ID with verifyResponse(). */
   get responses(): InferenceResponses {
     return this.openai.responses;
   }
 
-  // /** Create a Message; verify its ID after consuming the response or stream. */
-  // get messages(): InferenceMessages {
-  //   return this.anthropic.messages;
-  // }
+  /** Create a Message; verify its ID after consuming the response or stream. */
+  get messages(): InferenceMessages {
+    return this.anthropic.messages;
+  }
 
   /** Send a decision request; pass result.decisionId to verifyResponse(). */
   readonly systemone: InferenceSystemOne = {
-    create: async (request, options) =>
-      createSystemOne({
+    create: async (request, options) => {
+      const generation = this.responseCacheGeneration;
+      return createSystemOne({
         request,
         options,
         baseUrl: this.getBaseUrl(),
@@ -770,14 +790,14 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             ? operation
             : awaitWithAbort({ operation, signal: options.signal });
         },
-        registerResponse: (record) => this.registerResponse(record),
-      }),
+        registerResponse: (record) => this.registerResponse(record, generation),
+      });
+    },
   };
 
   protected constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.gatewayOptions = options;
-    /* Messages support is deferred until a later release.
     this.anthropic = new Anthropic({
       apiKey: '@nearai/inference-sdk-internal',
       defaultHeaders: {
@@ -799,10 +819,10 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         return this.fetch(new Request(url, request));
       },
     });
-    */
   }
 
   protected override sendSystemOneRequest(request: Request): Promise<Response> {
+    const generation = this.responseCacheGeneration;
     return sendSystemOne({
       request,
       encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
@@ -813,7 +833,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           operation: this.startVerification(model),
           signal: request.signal,
         }),
-      registerResponse: (record) => this.registerResponse(record),
+      registerResponse: (record) => this.registerResponse(record, generation),
     });
   }
 

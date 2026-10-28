@@ -364,6 +364,72 @@ func TestClientPreflightAndSignature(t *testing.T) {
 		}
 	}
 }
+func TestClearResponseCachePreservesSession(t *testing.T) {
+	for _, tee := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tee=%t", tee), func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee = tee
+			c, _ := fakeClient(t, f, nil)
+			ctx := context.Background()
+			if _, err := c.CreateChatCompletion(ctx, chatRequest()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.VerifyResponse(ctx, "chat-1"); err != nil {
+				t.Fatal(err)
+			}
+			attestations := f.attestations.Load()
+			c.ClearResponseCache()
+			c.ClearResponseCache()
+			_, err := c.VerifyResponse(ctx, "chat-1")
+			requireCode(t, err, "api.completion_not_found")
+			if _, err := c.CreateChatCompletion(ctx, chatRequest()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.VerifyResponse(ctx, "chat-2"); err != nil {
+				t.Fatal(err)
+			}
+			if f.attestations.Load() != attestations {
+				t.Fatal("clearing responses discarded the attestation session")
+			}
+		})
+	}
+}
+
+func TestClearResponseCacheDuringStream(t *testing.T) {
+	for _, endpoint := range []string{"chat/completions", "responses"} {
+		t.Run(endpoint, func(t *testing.T) {
+			var c *InferenceClient
+			var request any
+			id := "chat-1"
+			if endpoint == "responses" {
+				c, _ = responsesClient(t, true, nil)
+				request, id = responseInput(true), "resp_fixture"
+			} else {
+				f := newFakeCloud(t)
+				f.stream = true
+				c, _ = fakeClient(t, f, nil)
+				request = chatRequest()
+			}
+			body, _ := json.Marshal(request)
+			req, _ := http.NewRequest("POST", c.BaseURL()+endpoint, bytes.NewReader(body))
+			response, err := c.HTTPClient().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if _, err := io.ReadFull(response.Body, make([]byte, 1)); err != nil {
+				t.Fatal(err)
+			}
+			c.ClearResponseCache()
+			if _, err := io.Copy(io.Discard, response.Body); err != nil {
+				t.Fatal(err)
+			}
+			_, err = c.VerifyResponse(context.Background(), id)
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
+
 func TestClientCompressedResponses(t *testing.T) {
 	for _, encoding := range []string{"gzip", "br"} {
 		for _, stream := range []bool{false, true} {
@@ -718,7 +784,7 @@ func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
 	}
 	defer c.Close()
 	request, response := []byte("req"), []byte("res")
-	if err = c.register("first", request, response, nil, false); err != nil {
+	if err = c.register("first", request, response, nil, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	request[0], response[0] = 'X', 'X'
@@ -730,7 +796,7 @@ func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
 	}
 	// New completions keep earlier receipts available until their TTL expires.
 	for i := 0; i < 128; i++ {
-		if err = c.register(fmt.Sprint(i), []byte("req"), []byte("res"), nil, false); err != nil {
+		if err = c.register(fmt.Sprint(i), []byte("req"), []byte("res"), nil, false, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -743,7 +809,7 @@ func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
 	if !retained {
 		t.Fatal("unexpired receipts were discarded")
 	}
-	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false); err != nil {
+	if err = c.register("after-expiry", []byte("req"), []byte("res"), nil, false, 0); err != nil {
 		t.Fatal(err)
 	}
 	c.mu.Lock()
@@ -751,24 +817,6 @@ func TestReceiptCacheCopiesBytesAndExpires(t *testing.T) {
 	c.mu.Unlock()
 	if remaining != 1 {
 		t.Fatal("expired receipt retained")
-	}
-}
-
-func TestUnsupportedEndpointBeforePreflight(t *testing.T) {
-	f := newFakeCloud(t)
-	c, server := fakeClient(t, f, nil)
-	defer server.Close()
-	defer c.Close()
-	for _, endpoint := range []string{"responses/resp_fixture", "messages"} {
-		r, err := http.NewRequest("POST", c.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = c.HTTPClient().Do(r)
-		requireCode(t, err, "api.invalid_input")
-	}
-	if f.attestations.Load() != 0 || f.chats.Load() != 0 {
-		t.Fatal("unsupported endpoint performed network I/O")
 	}
 }
 

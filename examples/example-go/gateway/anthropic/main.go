@@ -1,5 +1,3 @@
-// Messages support is deferred until a later release.
-
 // Official Anthropic SDK with Gateway preflight and JSON/SSE receipt verification.
 package main
 

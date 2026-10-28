@@ -1,5 +1,5 @@
 mod integrated;
-// mod messages;
+mod messages;
 mod responses;
 mod systemone;
 
@@ -52,12 +52,12 @@ fn selects_models_by_endpoint() {
     let json = r#"[
         {"id":"near/chat","provider":"near","endpoint":"chat"},
         {"id":"typesafe/decision","provider":"external","endpoint":"systemone"},
-        {"id":"openai/text","provider":"external","endpoint":"responses"}
+        {"id":"anthropic/text","provider":"external","endpoint":"messages"}
     ]"#;
     for (endpoint, id) in [
         ("chat", "near/chat"),
         ("systemone", "typesafe/decision"),
-        ("responses", "openai/text"),
+        ("messages", "anthropic/text"),
     ] {
         let models = select_models(json, endpoint).unwrap();
         assert_eq!(models.len(), 1);

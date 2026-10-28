@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import { ethers } from 'ethers';
 import OpenAI from 'openai';
 import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
@@ -418,7 +418,7 @@ describe('ECDSA inference client', () => {
 
 describe('ECDSA Gateway endpoint adapters', () => {
   afterEach(() => jest.restoreAllMocks());
-  for (const endpoint of [/* 'messages', */ 'responses'] as const) {
+  for (const endpoint of ['messages', 'responses'] as const) {
     for (const official of [false, true]) {
       for (const stream of [false, true] as const) {
         test(`ECDSA ${endpoint}, official=${official}, stream=${stream}`, async () => {
@@ -437,62 +437,61 @@ describe('ECDSA Gateway endpoint adapters', () => {
               verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
             },
           });
-          // const id = endpoint === 'messages' ? 'msg_fixture' : 'resp_fixture';
-          const id = 'resp_fixture';
-          // if (endpoint === 'messages') {
-          //   const api = official
-          //     ? new Anthropic({
-          //         apiKey: 'key',
-          //         baseURL: 'https://gateway.test',
-          //         fetch: client.fetch,
-          //         maxRetries: 0,
-          //       })
-          //     : client;
-          //   const result = await api.messages.create({
-          //     model,
-          //     max_tokens: 128,
-          //     messages: [{ role: 'user', content: 'Hello' }],
-          //     stream,
-          //   });
-          //   if (Symbol.asyncIterator in result) {
-          //     let text = '';
-          //     for await (const event of result) {
-          //       if (event.type === 'message_start')
-          //         expect(event.message.id).toBe(id);
-          //       if (
-          //         event.type === 'content_block_delta' &&
-          //         event.delta.type === 'text_delta'
-          //       )
-          //         text += event.delta.text;
-          //     }
-          //     expect(text).toContain('Hello');
-          //   } else expect(result.id).toBe(id);
-          // } else {
-          const api = official
-            ? new OpenAI({
-                apiKey: 'key',
-                baseURL: baseUrl,
-                fetch: client.fetch,
-                maxRetries: 0,
-              })
-            : client;
-          const result = await api.responses.create({
-            model,
-            input: 'Hello',
-            store: false,
-            stream,
-          });
-          if (Symbol.asyncIterator in result) {
-            let text = '';
-            for await (const event of result) {
-              if (event.type === 'response.created')
-                expect(event.response.id).toBe(id);
-              if (event.type === 'response.output_text.delta')
-                text += event.delta;
-            }
-            expect(text).toContain('你好');
-          } else expect(result.id).toBe(id);
-          // }
+          const id = endpoint === 'messages' ? 'msg_fixture' : 'resp_fixture';
+          if (endpoint === 'messages') {
+            const api = official
+              ? new Anthropic({
+                  apiKey: 'key',
+                  baseURL: 'https://gateway.test',
+                  fetch: client.fetch,
+                  maxRetries: 0,
+                })
+              : client;
+            const result = await api.messages.create({
+              model,
+              max_tokens: 128,
+              messages: [{ role: 'user', content: 'Hello' }],
+              stream,
+            });
+            if (Symbol.asyncIterator in result) {
+              let text = '';
+              for await (const event of result) {
+                if (event.type === 'message_start')
+                  expect(event.message.id).toBe(id);
+                if (
+                  event.type === 'content_block_delta' &&
+                  event.delta.type === 'text_delta'
+                )
+                  text += event.delta.text;
+              }
+              expect(text).toContain('Hello');
+            } else expect(result.id).toBe(id);
+          } else {
+            const api = official
+              ? new OpenAI({
+                  apiKey: 'key',
+                  baseURL: baseUrl,
+                  fetch: client.fetch,
+                  maxRetries: 0,
+                })
+              : client;
+            const result = await api.responses.create({
+              model,
+              input: 'Hello',
+              store: false,
+              stream,
+            });
+            if (Symbol.asyncIterator in result) {
+              let text = '';
+              for await (const event of result) {
+                if (event.type === 'response.created')
+                  expect(event.response.id).toBe(id);
+                if (event.type === 'response.output_text.delta')
+                  text += event.delta;
+              }
+              expect(text).toContain('你好');
+            } else expect(result.id).toBe(id);
+          }
           const receipt = await client.verifyResponse(id);
           expect(receipt.signatureKind).toBe('gateway');
           expect(receipt.signature.signer.signingAlgo).toBe('ecdsa');
