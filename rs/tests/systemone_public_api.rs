@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 fn external_callers_can_construct_every_question_variant() {
     let request = SystemOneRequest {
         model: "decision-model".into(),
+        assets: None,
         state: SystemOneContent::Text("A customer request".into()),
         questions: BTreeMap::from([
             (

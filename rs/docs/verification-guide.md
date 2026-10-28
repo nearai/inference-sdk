@@ -243,6 +243,23 @@ if let nearai_inference_sdk::SystemOneAnswer::Box { bounds, confidence, .. } =
 }
 ```
 
+Alternatively, include a JSON `assets` map on the same request and use references
+in state, instructions, or criteria:
+
+```json
+{
+  "model": "typesafe/jev-1.14",
+  "state": {"photo": "photo-ref"},
+  "assets": {"photo-ref": {"format": "png", "data_base64": "<image-data>"}},
+  "questions": {"region": {"type": "box", "instructions": "Locate the object in photo-ref."}}
+}
+```
+
+Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
+URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
+unchanged; the provider resolves them. Every asset must be referenced. A Score
+`legend` retains the original criterion reference. Multipart uploads are unsupported.
+
 ## Responses API
 
 The Gateway client supports `POST /v1/responses` with the same authentication,

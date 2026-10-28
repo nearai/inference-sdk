@@ -230,32 +230,40 @@ func TestSystemOnePreservesJSONImagesAndBoxReceipts(t *testing.T) {
 			"present": {Type: "noul", Instructions: "Does the canvas match?", Criteria: map[string]any{"true": image}},
 		},
 	}
-	expected, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
-		t.Run(string(algo), func(t *testing.T) {
-			c, f := systemOneClient(t, false, algo, func(f *systemOneCloud, _ *InferenceOptions) {
-				f.expectedRequest = expected
+	for _, assets := range []bool{false, true} {
+		if assets {
+			request.Assets = map[string]SystemOneImageAsset{"<photo>": {Format: "png", DataBase64: "ZmFrZS1pbWFnZQ=="}}
+			request.State = map[string]any{"canvas": []any{"<photo>", image}}
+			request.Questions["region"] = SystemOneQuestion{Type: "box", Instructions: "Locate <photo> now"}
+			request.Questions["present"] = SystemOneQuestion{Type: "noul", Instructions: "Does it match?", Criteria: map[string]any{"true": "<photo>"}}
+		}
+		expected, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+			t.Run(string(algo), func(t *testing.T) {
+				c, f := systemOneClient(t, false, algo, func(f *systemOneCloud, _ *InferenceOptions) {
+					f.expectedRequest = expected
+				})
+				result, err := c.CreateSystemOne(context.Background(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				answer := result.Data.Answers["region"]
+				if answer.Box == nil || answer.Box.Top != 0.31 || answer.Confidence == nil || *answer.Confidence != 0.82 {
+					t.Fatalf("wrong box answer: %+v", answer)
+				}
+				answer.Box.Top = 0
+				receipt, err := c.VerifyResponse(context.Background(), result.DecisionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if receipt.SignatureKind != "gateway" || f.calls.Load() != 1 || f.f.signatureCalls.Load() != 1 {
+					t.Fatal("expected one request and its Gateway receipt")
+				}
 			})
-			result, err := c.CreateSystemOne(context.Background(), request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			answer := result.Data.Answers["region"]
-			if answer.Box == nil || answer.Box.Top != 0.31 || answer.Confidence == nil || *answer.Confidence != 0.82 {
-				t.Fatalf("wrong box answer: %+v", answer)
-			}
-			answer.Box.Top = 0
-			receipt, err := c.VerifyResponse(context.Background(), result.DecisionID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if receipt.SignatureKind != "gateway" || f.calls.Load() != 1 || f.f.signatureCalls.Load() != 1 {
-				t.Fatal("expected one request and its Gateway receipt")
-			}
-		})
+		}
 	}
 }
 

@@ -1152,15 +1152,24 @@ async fn systemone_plaintext_key_routing_and_receipts() {
 #[tokio::test]
 async fn systemone_preserves_json_images_and_box_receipts() {
     let image = json!({"type": "image_url", "image_url": {"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="}});
-    let request: SystemOneRequest = serde_json::from_value(json!({
+    let request_json = json!({
         "model": "vendor/model",
         "state": {"canvas": image},
         "questions": {
             "region": {"type": "box", "instructions": ["Locate the rectangle", image]},
             "present": {"type": "noul", "instructions": "Does the canvas match?", "criteria": {"true": image}}
         }
-    })).unwrap();
-    for ecdsa in [false, true] {
+    });
+    for (ecdsa, assets) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut expected = request_json.clone();
+        if assets {
+            expected["assets"] =
+                json!({"<photo>": {"format": "png", "data_base64": "ZmFrZS1pbWFnZQ=="}});
+            expected["state"] = json!({"canvas": ["<photo>", image]});
+            expected["questions"]["region"]["instructions"] = json!("Locate <photo> now");
+            expected["questions"]["present"]["criteria"] = json!({"true": "<photo>"});
+        }
+        let request: SystemOneRequest = serde_json::from_value(expected.clone()).unwrap();
         let fixture = Fixture {
             ecdsa,
             ..Default::default()
@@ -1187,10 +1196,7 @@ async fn systemone_preserves_json_images_and_box_receipts() {
         assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
         let receipts = f.receipts.lock().unwrap();
         let (sent, _, _) = receipts.values().next().unwrap();
-        assert_eq!(
-            serde_json::from_slice::<Value>(sent).unwrap(),
-            serde_json::to_value(&request).unwrap()
-        );
+        assert_eq!(serde_json::from_slice::<Value>(sent).unwrap(), expected);
         assert_eq!(f.systemone.load(Ordering::SeqCst), 1);
         assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     }

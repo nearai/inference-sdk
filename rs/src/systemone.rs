@@ -60,6 +60,28 @@ pub struct SystemOneRequest {
     pub model: String,
     pub state: SystemOneContent,
     pub questions: BTreeMap<String, SystemOneQuestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<BTreeMap<String, SystemOneImageAsset>>,
+}
+/// JSON image data referenced by its key in the request's assets map.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SystemOneImageAsset {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub asset_type: Option<SystemOneImageAssetType>,
+    pub format: SystemOneImageFormat,
+    pub data_base64: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SystemOneImageAssetType {
+    Image,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SystemOneImageFormat {
+    Png,
+    Jpg,
+    Jpeg,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]

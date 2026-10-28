@@ -21,9 +21,17 @@ type SystemOneQuestion struct {
 	Criteria     any              `json:"criteria,omitempty"`
 }
 type SystemOneRequest struct {
-	Model     string                       `json:"model"`
-	State     SystemOneContent             `json:"state"`
-	Questions map[string]SystemOneQuestion `json:"questions"`
+	Model     string                         `json:"model"`
+	State     SystemOneContent               `json:"state"`
+	Questions map[string]SystemOneQuestion   `json:"questions"`
+	Assets    map[string]SystemOneImageAsset `json:"assets,omitempty"`
+}
+
+// SystemOneImageAsset holds PNG or JPEG data in standard base64, without a data URL prefix.
+type SystemOneImageAsset struct {
+	Type       string `json:"type,omitempty"` // Optional; when present, use "image".
+	Format     string `json:"format"`         // png, jpg, or jpeg.
+	DataBase64 string `json:"data_base64"`
 }
 type SystemOneBoxCoordinates struct {
 	Top    float64                    `json:"top"`

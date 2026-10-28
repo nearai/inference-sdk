@@ -3,15 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 // import Anthropic from '@anthropic-ai/sdk';
-import {
-  box,
-  choice,
-  image,
-  noul,
-  score,
-  TypeSafeClient,
-  withAssets,
-} from '@typesafe-ai/sdk';
+import { box, choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
 import nacl from 'tweetnacl';
@@ -3653,15 +3645,37 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(1);
   });
 
-  test.each(['automatic', 'named'])(
-    'official Jev image() converts %s multipart references and verifies sent bytes',
-    async (mode) => {
+  test.each(['native', 'fetch'])(
+    '%s preserves JSON assets, reference strings, and receipt bytes',
+    async (entrypoint) => {
+      const request = {
+        model,
+        assets: {
+          '<photo>': { format: 'png', data_base64: 'ZmFrZS1pbWFnZQ==' },
+        },
+        state: { '<photo>': ['<photo>', imagePart] },
+        questions: {
+          region: { type: 'box', instructions: 'Locate <photo> — now' },
+          match: {
+            type: 'score',
+            instructions: 'Rate the match.',
+            criteria: ['Different', '<photo>'],
+          },
+        },
+      } satisfies SystemOneRequest;
+      const legend = { '0': 'Different', '1': '<photo>' };
       const fixture = decisionGateway({
         response: {
           ...decisionResponse,
           answers: {
-            region: { type: 'box', box: boxBounds, confidence: 0.82 },
-            match: { type: 'noul', noul: 0.98 },
+            region: { type: 'box', box: boxBounds },
+            match: {
+              type: 'score',
+              score: 1,
+              confidence: 0.9,
+              probabilities: { '0': 0.1, '1': 0.9 },
+              legend,
+            },
           },
         },
       });
@@ -3670,58 +3684,25 @@ describe('System One decisions', () => {
         ...inferenceClientOptions(fixture.gateway),
         e2ee: false,
       });
-      const png = readFileSync(
-        resolve(__dirname, '../../test-fixtures/systemone/rectangle.png'),
-      );
-      const photo = image(new Blob([png]));
-      const part = {
-        type: 'image_url',
-        image_url: { url: `data:image/png;base64,${png.toString('base64')}` },
-      };
-      const named = mode === 'named';
-      const { data, response } = await officialClient(client)
-        .systemOne(
-          {
-            model,
-            state: { frames: [named ? '<photo>' : photo] },
-            questions: {
-              region: box(
-                named ? 'Locate <photo> now' : withAssets`Locate ${photo} now`,
-              ),
-              match: noul('Does it match?', {
-                true: named ? '<photo>' : photo,
-                false: 'Different',
-              }),
-            },
-            ...(named ? { assets: { '<photo>': photo } } : {}),
-          },
-          {
-            headers: {
-              'content-md5': 'old-body',
-              'content-digest': 'old-body',
-            },
-          },
-        )
-        .withResponse();
-      const sent = fixture.requests[0];
-      expect(sent.headers.get('content-type')).toBe('application/json');
-      for (const header of ['content-md5', 'content-digest', 'content-length'])
-        expect(sent.headers.has(header)).toBe(false);
-      expect(await sent.json()).toEqual({
-        model,
-        state: { frames: [part] },
-        questions: {
-          region: { type: 'box', instructions: ['Locate ', part, ' now'] },
-          match: {
-            type: 'noul',
-            instructions: 'Does it match?',
-            criteria: { true: part, false: 'Different' },
-          },
-        },
-      });
-      expect(data.answers.region.box).toEqual(boxBounds);
-      const id = response.headers.get('x-generation-id');
-      if (!id) throw new Error('missing receipt ID');
+      const body =
+        entrypoint === 'native'
+          ? JSON.stringify(request)
+          : `${JSON.stringify(request, null, 2)}\n`;
+      let id: string;
+      if (entrypoint === 'native') {
+        const result = await client.systemone.create(request);
+        expect(result.data.answers.match).toMatchObject({ legend });
+        id = result.decisionId;
+      } else {
+        const response = await client.fetch(`${baseUrl}systemone`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        });
+        expect((await response.json()).answers.match.legend).toEqual(legend);
+        id = response.headers.get('x-generation-id') ?? '';
+      }
+      expect(await fixture.requests[0].text()).toBe(body);
       await expect(client.verifyResponse(id)).resolves.toMatchObject({
         signatureKind: 'gateway',
       });

@@ -82,6 +82,7 @@ from .types.provenance import ImageProvenancePolicy, VerifiedImageProvenance
 from .types.systemone import (
     SystemOneAnswer,
     SystemOneBoxCoordinates,
+    SystemOneImageAsset,
     SystemOneQuestion,
     SystemOneRequest,
     SystemOneResponse,
@@ -166,6 +167,7 @@ __all__ = [
     'SigningIdentity',
     'SystemOneAnswer',
     'SystemOneBoxCoordinates',
+    'SystemOneImageAsset',
     'SystemOneQuestion',
     'SystemOneRequest',
     'SystemOneResponse',

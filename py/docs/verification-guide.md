@@ -273,8 +273,26 @@ async with InferenceClient(api_key, base_url=base_url) as inference_client:
     print(region['box'], region.get('confidence'))
 ```
 
+Alternatively, include a JSON `assets` map on the same request and use references
+in state, instructions, or criteria:
+
+```json
+{
+  "model": "typesafe/jev-1.14",
+  "state": {"photo": "photo-ref"},
+  "assets": {"photo-ref": {"format": "png", "data_base64": "<image-data>"}},
+  "questions": {"region": {"type": "box", "instructions": "Locate the object in photo-ref."}}
+}
+```
+
+Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
+URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
+unchanged; the provider resolves them. Every asset must be referenced. A Score
+`legend` retains the original criterion reference. Multipart uploads are unsupported.
+
 The official Jev SDK adapter also forwards these JSON image dictionaries
-unchanged; use its `Box` question type. Its native `Image(...)` helper is supported too.
+unchanged; use its `Box` question type. The official `Image(...)` upload helper
+emits multipart and is unsupported.
 
 ### Use the official Jev SDK
 
@@ -317,36 +335,11 @@ async def decide(api_key: str, model: str) -> None:
         print(result.nouls['billing'].noul)
 ```
 
-Use a canonical Jev model ID from your endpoint's catalog. The adapter accepts
-uncompressed, nonstreaming JSON and image multipart requests at the configured
-System One endpoint. Keep E2EE, OHTTP, request compression and automatic inference
-retries disabled. Retry transient receipt lookups through
-`verify_response(receipt_id)`.
-
-For images, use the official `Image(...)` helper with PNG or JPEG bytes or a path
-inside the client context:
-
-```python
-from pathlib import Path
-from typesafe_sdk import Box, Image
-
-result = await jev.system_one(
-    model=model,  # A Jev model that supports Box, such as typesafe/jev-1.14.
-    state={'photo': Image(Path('photo.png'))},
-    questions={'region': Box(instructions='Locate the main object in `photo`.')},
-)
-receipt_id = result.raw_http_response.headers['x-generation-id']
-await inference.verify_response(receipt_id)
-print(result.boxes['region'].box)
-```
-
-The adapter converts the official SDK's multipart uploads and JSON `assets` to
-OpenRouter `image_url` parts in state, instructions, and criteria. Named and
-inline references retain their order; ordinary JSON requests remain byte-for-byte
-unchanged. Receipts cover the converted JSON actually sent to the Gateway and
-the unchanged response bytes. Repeated references repeat the image in the JSON
-and count toward the upstream request-size limit. Returned criteria, such as a
-Score's `legend`, use OpenRouter image parts.
+Use a canonical Jev model ID from your endpoint's catalog. System One accepts
+uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, request compression
+and automatic inference retries disabled. Multipart uploads and other official
+SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
+receipt lookups through `verify_response(receipt_id)`.
 
 Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
 than the official SDK's upstream `request_id`. The official SDK parses the

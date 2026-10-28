@@ -8,6 +8,12 @@ from typing import Any, Literal, NotRequired, TypedDict
 SystemOneContent = str | dict[str, Any] | list[Any]
 
 
+class SystemOneImageAsset(TypedDict):
+    type: NotRequired[Literal['image']]
+    format: Literal['png', 'jpg', 'jpeg']
+    data_base64: str
+
+
 class SystemOneNoulCriteria(TypedDict, total=False):
     true: SystemOneContent
     false: SystemOneContent
@@ -48,6 +54,7 @@ class SystemOneRequest(TypedDict):
     model: str
     state: SystemOneContent
     questions: dict[str, SystemOneQuestion]
+    assets: NotRequired[dict[str, SystemOneImageAsset]]
 
 
 class SystemOneNoulAnswer(TypedDict):
