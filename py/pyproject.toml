@@ -1,6 +1,6 @@
 [project]
 name = "nearai-inference-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for NEAR AI inference with attestation verification and end-to-end encryption"
 readme = "README.md"
 license = "MIT"
@@ -8,7 +8,9 @@ license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.13.0",
-    "httpx>=0.28.1,<0.29",
+    "certifi>=2026.10.19",
+    "multidict>=6.9.1",
+    "httpx[brotli]>=0.28.1,<0.29",
     # TLS pinning uses this version's documented handshake trace event.
     "httpcore==1.0.9",
     "openai>=2.0.0,<3",
@@ -16,24 +18,27 @@ dependencies = [
     "pyhpke==0.6.5",
     "eth-account>=0.10.0",
     "eth-utils>=2.0.0",
-    "dcap-qvl>=0.3.9",
+    "dcap-qvl>=0.7.0",
     "pynacl>=1.5.0",
     "pydantic>=2.12.5",
     "pyasn1>=0.6.4,<0.7",
     "ruamel.yaml>=0.19.1,<0.20",
     "sigstore>=4.5.0,<5",
-    "PyJWT[crypto]==2.14.0",
+    "PyJWT[crypto]==2.15.1",
+    "anthropic>=0.75,<1",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0,<3",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "ruff>=0.14.8",
+    "typesafe-sdk==0.7.5",
 ]
 
 [build-system]
-requires = ["uv_build>=0.9.15,<0.13.0"]
+requires = ["uv_build>=0.9.15,<0.14.0"]
 build-backend = "uv_build"
 
 [project.urls]

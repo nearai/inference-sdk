@@ -62,29 +62,50 @@ describe('image provenance verification', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  test('fetches bundles and verifies an approved GitHub build', async () => {
-    const body = { attestations: [{ bundle: JSON.parse(BUNDLE) }] };
-    jest.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(body));
+  test.each([undefined, 'https://app.example/verification/github/'])(
+    'fetches bundles and verifies an approved GitHub build with GitHub API URL %s',
+    async (githubApiUrl) => {
+      const body = { attestations: [{ bundle: JSON.parse(BUNDLE) }] };
+      const fetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(Response.json(body));
 
-    const bundles = await fetchImageProvenance({
-      repository: POLICY.repository,
-      digest: DIGEST,
-    });
-    const verified = await verifyImageProvenance({
-      bundles,
-      digest: DIGEST,
-      policy: POLICY,
-    });
+      const bundles = await fetchImageProvenance({
+        repository: POLICY.repository,
+        digest: DIGEST,
+        githubToken: 'test-github-token',
+        githubApiUrl,
+      });
+      const verified = await verifyImageProvenance({
+        bundles,
+        digest: DIGEST,
+        policy: POLICY,
+      });
 
-    expect(verified).toEqual({
-      digest: DIGEST,
-      ...POLICY,
-      certificateIdentity:
-        'https://github.com/nearai/compose-manager/.github/workflows/build.yml@refs/heads/master',
-      issuer: 'https://token.actions.githubusercontent.com',
-      predicateType: 'https://slsa.dev/provenance/v1',
-    });
-  });
+      expect(verified).toEqual({
+        digest: DIGEST,
+        ...POLICY,
+        certificateIdentity:
+          'https://github.com/nearai/compose-manager/.github/workflows/build.yml@refs/heads/master',
+        issuer: 'https://token.actions.githubusercontent.com',
+        predicateType: 'https://slsa.dev/provenance/v1',
+      });
+      const baseUrl = githubApiUrl ?? 'https://api.github.com/';
+      expect(fetch).toHaveBeenCalledWith(
+        `${baseUrl}repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`,
+        {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+            ...(githubApiUrl === undefined
+              ? { Authorization: 'Bearer test-github-token' }
+              : {}),
+          },
+          redirect: 'error',
+        },
+      );
+    },
+  );
 
   test('verifies a real cross-repository workflow and returns the caller source ref', async () => {
     const verified = await verifyImageProvenance({
@@ -102,7 +123,7 @@ describe('image provenance verification', () => {
     });
   });
 
-  test('fetches reusable-workflow proofs from the source repository', async () => {
+  test('fetches reusable-workflow proofs from the source repository through a proxy', async () => {
     const fetch = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
       Response.json({
         attestations: [{ bundle: JSON.parse(REUSABLE_BUNDLE) }],
@@ -115,10 +136,11 @@ describe('image provenance verification', () => {
     await verifyDeploymentImageProvenance({
       appCompose,
       imagePolicies: { 'example/app': REUSABLE_POLICY },
+      githubApiUrl: 'https://app.example/verification/github',
     });
 
     expect(fetch).toHaveBeenCalledWith(
-      `https://api.github.com/repos/${REUSABLE_POLICY.repository}/attestations/${encodeURIComponent(REUSABLE_DIGEST)}?per_page=100`,
+      `https://app.example/verification/github/repos/${REUSABLE_POLICY.repository}/attestations/${encodeURIComponent(REUSABLE_DIGEST)}?per_page=100`,
       expect.any(Object),
     );
   });
@@ -492,6 +514,36 @@ services:
       ]);
     },
   );
+
+  test('keeps GitHub pagination links on the proxy', async () => {
+    const fetch = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        Response.json(
+          { attestations: [] },
+          {
+            headers: {
+              Link: `<https://api.github.com/repos/${POLICY.repository}/attestations/${DIGEST}?after=next>; rel="next"`,
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ attestations: [{ bundle: JSON.parse(BUNDLE) }] }),
+      );
+
+    const bundles = await fetchImageProvenance({
+      repository: POLICY.repository,
+      digest: DIGEST,
+      githubApiUrl: 'https://app.example/verification/github',
+    });
+    const baseUrl = `https://app.example/verification/github/repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`;
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      baseUrl,
+      `${baseUrl}&after=next`,
+    ]);
+    expect(bundles).toEqual([JSON.stringify(JSON.parse(BUNDLE))]);
+  });
 
   test('reports a repeated pagination cursor as an API error', async () => {
     const url = `https://api.github.com/repos/${POLICY.repository}/attestations/${encodeURIComponent(DIGEST)}?per_page=100`;

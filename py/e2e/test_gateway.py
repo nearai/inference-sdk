@@ -2,15 +2,13 @@
 
 import asyncio
 import json
-import os
-from collections.abc import Awaitable, Callable
 
 import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
+from e2e.helpers import required_env, retry_receipt, selected_models
 from nearai_inference_sdk import (
-    ApiError,
     AttestationClient,
     InferenceClient,
     ModelAttestationPolicy,
@@ -38,10 +36,12 @@ from nearai_inference_sdk import (
     ],
     ids=['unencrypted', 'ed25519-e2ee', 'ecdsa-e2ee', 'ohttp-e2ee'],
 )
+@pytest.mark.parametrize('official', [False, True])
+@pytest.mark.parametrize('model_index', [0, 1])
 async def test_inference_client_verifies_json_and_streams(
-    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool
+    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool, model_index: int
 ) -> None:
-    model = selected_models('near')[0]
+    model = selected_models('chat', 'near')[model_index]
     async with (
         asyncio.timeout(180),
         InferenceClient(
@@ -54,19 +54,32 @@ async def test_inference_client_verifies_json_and_streams(
                 policy=ModelAttestationPolicy(gpu_evidence='required'),
             ),
         ) as inference_client,
+        AsyncOpenAI(
+            api_key=required_env('NEARAI_API_KEY'),
+            base_url=required_env('NEARAI_BASE_URL'),
+            http_client=inference_client.http_client,
+            max_retries=0,
+        ) as external,
     ):
         # Explicit preflight shares its verified session with both Chat calls.
         await inference_client.verify(model)
         for stream in (False, True):
             await verify_client_chat(
-                inference_client, inference_client.chat, model, signing_algo, stream
+                inference_client,
+                external.chat if official else inference_client.chat,
+                model,
+                signing_algo,
+                stream,
             )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('provider', ['chutes', 'external'])
-async def test_inference_client_verifies_gateway_only_receipts(provider: str) -> None:
-    for model in selected_models(provider):
+@pytest.mark.parametrize('official', [False, True])
+async def test_inference_client_verifies_gateway_only_receipts(
+    provider: str, official: bool
+) -> None:
+    for model in selected_models('chat', provider):
         async with (
             asyncio.timeout(180),
             InferenceClient(
@@ -74,44 +87,25 @@ async def test_inference_client_verifies_gateway_only_receipts(provider: str) ->
                 base_url=required_env('NEARAI_BASE_URL'),
                 e2ee=False,
             ) as inference_client,
+            AsyncOpenAI(
+                api_key=required_env('NEARAI_API_KEY'),
+                base_url=required_env('NEARAI_BASE_URL'),
+                http_client=inference_client.http_client,
+                max_retries=0,
+            ) as external,
         ):
             await inference_client.verify(model)
             # Chutes streaming is separately provider-gated; use JSON only.
             streams = (False,) if provider == 'chutes' else (False, True)
             for stream in streams:
                 verified = await verify_client_chat(
-                    inference_client, inference_client.chat, model, 'ed25519', stream
+                    inference_client,
+                    external.chat if official else inference_client.chat,
+                    model,
+                    'ed25519',
+                    stream,
                 )
                 assert verified.signature_kind == 'gateway'
-
-
-@pytest.mark.asyncio
-async def test_openai_sdk_uses_the_verified_http_client() -> None:
-    api_key = required_env('NEARAI_API_KEY')
-    base_url = required_env('NEARAI_BASE_URL')
-    model = selected_models('near')[0]
-    async with (
-        asyncio.timeout(180),
-        InferenceClient(
-            api_key,
-            base_url=base_url,
-            e2ee=True,
-            model_verification=ModelVerificationOptions(
-                policy=ModelAttestationPolicy(gpu_evidence='required'),
-            ),
-        ) as inference_client,
-        AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            http_client=inference_client.http_client,
-            max_retries=0,
-        ) as openai_client,
-    ):
-        # The first Chat performs preflight through the supplied transport.
-        for stream in (False, True):
-            await verify_client_chat(
-                inference_client, openai_client.chat, model, 'ed25519', stream
-            )
 
 
 async def verify_client_chat(
@@ -176,7 +170,7 @@ async def verify_client_chat(
 async def test_gateway_chat_receipt(
     signing_algo: SigningAlgo, stream: bool, provider: str
 ) -> None:
-    for model in selected_models(provider):
+    for model in selected_models('chat', provider):
         print(f'{provider}: {model}, {signing_algo}, stream={stream}')
         async with asyncio.timeout(180):
             await verify_chat(model, provider, signing_algo, stream)
@@ -262,18 +256,6 @@ async def verify_chat(
             verify_gateway_response(request_body, altered, signature, gateway)
 
 
-async def retry_receipt[T](lookup: Callable[[], Awaitable[T]]) -> T:
-    # Retry receipt propagation only. Never repeat Chat or cryptographic checks.
-    for delay in (0.5, 1, 2, 4):
-        try:
-            return await lookup()
-        except ApiError as error:
-            if not error.retryable:
-                raise
-        await asyncio.sleep(delay)
-    return await lookup()
-
-
 def read_completion_id(response_body: bytes, stream: bool) -> str:
     if not stream:
         completion = json.loads(response_body)
@@ -284,11 +266,16 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
         )
         return completion['id']
 
-    events = [
-        line.removeprefix('data:').strip()
-        for line in response_body.decode().splitlines()
-        if line.startswith('data:')
-    ]
+    events = []
+    text = response_body.decode().replace('\r\n', '\n').replace('\r', '\n')
+    for record in text.split('\n\n')[:-1]:
+        data = '\n'.join(
+            '' if line == 'data' else line[5:].removeprefix(' ')
+            for line in record.split('\n')
+            if line == 'data' or line.startswith('data:')
+        )
+        if data:
+            events.append(data)
     assert events and events[-1] == '[DONE]', 'Expected a complete SSE response'
     chunks = [json.loads(event) for event in events if event != '[DONE]']
     completion_id = chunks[0]['id']
@@ -310,17 +297,3 @@ def read_completion_id(response_body: bytes, stream: bool) -> str:
     )
     assert content.strip(), 'Expected non-empty Chat content'
     return completion_id
-
-
-def required_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise RuntimeError(f'{name} is required for live E2E tests')
-    return value
-
-
-def selected_models(provider: str) -> list[str]:
-    selected = json.loads(required_env('NEARAI_E2E_MODELS'))
-    models = [model['id'] for model in selected if model['provider'] == provider]
-    assert models, f'Expected {provider} models from the catalog'
-    return models

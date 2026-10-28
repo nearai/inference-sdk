@@ -6,15 +6,15 @@ use std::sync::{Arc, Mutex};
 #[tokio::main]
 async fn main() -> Result<()> {
     let key = api_key()?;
-    let api = AttestationClient::with_base_url(key.clone(), GATEWAY)?;
+    let api = AttestationClient::with_base_url(key.clone(), &gateway())?;
     let fetched = api
         .fetch_gateway_attestation(GatewayAttestationFetchOptions {
-            signing_algo: Some(ALGO),
+            signing_algo: Some(algo()?),
             ..Default::default()
         })
         .await?;
     let images = GatewayImages;
-    let gateway = verify_gateway_attestation(
+    let verified_gateway = verify_gateway_attestation(
         &fetched.attestation,
         &fetched.client_binding,
         None,
@@ -24,13 +24,13 @@ async fn main() -> Result<()> {
         },
     )
     .await?;
-    let pin = match &gateway.tls_binding {
+    let pin = match &verified_gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         _ => return Err("Gateway did not supply attested TLS binding".into()),
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
     let fetched_models = api
-        .fetch_model_attestations(MODEL, Some(ALGO), None)
+        .fetch_model_attestations(&model(), Some(algo()?), None)
         .await?;
     let mut models = Vec::new();
     for report in &fetched_models.attestations {
@@ -39,22 +39,28 @@ async fn main() -> Result<()> {
                 report,
                 &fetched_models.client_binding,
                 None,
-                Default::default(),
+                ModelAttestationVerifiers {
+                    deployment: Some(&ModelImages),
+                    ..Default::default()
+                },
             )
             .await?,
         );
     }
+    let recipient_algo = algo()?;
     let recipient = models
         .iter()
-        .find(|m| m.evidence.signer.signing_algo == ALGO && m.signing_public_key.is_some())
+        .find(|m| {
+            m.evidence.signer.signing_algo == recipient_algo && m.signing_public_key.is_some()
+        })
         .ok_or("No verified model public key")?;
     let model_key = E2eeModelKey {
-        signing_algo: ALGO,
+        signing_algo: algo()?,
         public_key: recipient.signing_public_key.clone().unwrap(),
     };
     println!("Gateway/model deployments and Gateway images verified");
     for stream in [false, true] {
-        let prepared = prepare_e2ee_chat_request(request(GATEWAY, &key, stream)?, &model_key)?;
+        let prepared = prepare_e2ee_chat_request(request(&gateway(), &key, stream)?, &model_key)?;
         let wire_request = prepared
             .request
             .body()
@@ -88,11 +94,7 @@ async fn main() -> Result<()> {
                     .extend_from_slice(&chunk);
                 Ok(chunk)
             }));
-            let mut decrypted = prepared.decrypt_sse(source);
-            let mut output = Vec::new();
-            while let Some(chunk) = decrypted.next().await {
-                output.extend_from_slice(&chunk?);
-            }
+            let output = read_stream(prepared.decrypt_sse(source)).await?;
             let wire = captured.lock().expect("recording lock").clone();
             (wire, output)
         } else {
@@ -101,14 +103,17 @@ async fn main() -> Result<()> {
             (wire, plaintext)
         };
         let id = completion_id(&plaintext, stream)?;
-        let signature = api.fetch_completion_signature(&id, Some(ALGO)).await?;
+        let signature = api.fetch_completion_signature(&id, Some(algo()?)).await?;
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
                 verify_model_response(&wire_request, &wire_response, &signature, recipient)?
             }
-            CompletionSignatureKind::Gateway => {
-                verify_gateway_response(&wire_request, &wire_response, &signature, &gateway)?
-            }
+            CompletionSignatureKind::Gateway => verify_gateway_response(
+                &wire_request,
+                &wire_response,
+                &signature,
+                &verified_gateway,
+            )?,
         }
         println!("Verified {:?} ciphertext receipt", signature.kind);
         display(&plaintext, stream)?;

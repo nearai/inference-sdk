@@ -13,6 +13,8 @@ TcbStatus = Literal[
     'ConfigurationAndSWHardeningNeeded',
     'OutOfDate',
     'OutOfDateConfigurationNeeded',
+    'TDRelaunchAdvised',
+    'TDRelaunchAdvisedConfigurationNeeded',
     'Revoked',
     'Unknown',
 ]

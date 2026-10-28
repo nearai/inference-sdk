@@ -1,15 +1,13 @@
+// Messages support is deferred until a later release.
+// import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import * as v from 'valibot';
 import {
   ChatCompletionRequestSchema,
   CompletionResponseIdSchema,
 } from '../schemas';
-import type {
-  ModelAttestationVerifiers,
-  VerifiedModelAttestation,
-} from '../types/verification';
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
-import type { OhttpAttestation } from '../types/ohttp';
+import type { CompletionSignature } from '../types/chat';
 import type {
   AttestationClientOptions,
   FetchCompletionSignatureParams,
@@ -18,25 +16,40 @@ import type {
   FetchModelAttestationsParams,
   ModelMetadata,
 } from '../types/cloud-api';
-import type { CompletionSignature } from '../types/chat';
-import type {
-  NodeInferenceClientOptions,
-  InferenceChat,
-  InferenceClientOptions,
-  VerifiedCompletionResult,
-  AttestationVerificationResult,
-  InferenceClientCommonOptions,
-  InferenceEncryptionOptions,
-} from '../types/inference-client';
-import type { Awaitable } from '../types/shared';
 import type { E2eeModelKey, PreparedE2eeChatRequest } from '../types/e2ee';
+import type {
+  AttestationVerificationResult,
+  InferenceChat,
+  InferenceClientCommonOptions,
+  InferenceClientOptions,
+  InferenceEncryptionOptions,
+  // InferenceMessages,
+  InferenceResponses,
+  NodeInferenceClientOptions,
+  VerifiedCompletionResult,
+} from '../types/inference-client';
+import type { OhttpAttestation } from '../types/ohttp';
+import type { Awaitable } from '../types/shared';
+import type { InferenceSystemOne } from '../types/systemone';
+import type {
+  ModelAttestationVerifiers,
+  VerifiedModelAttestation,
+} from '../types/verification';
 import {
   ApiError,
   isApiError,
   isVerificationError,
   VerificationError,
 } from '../utils/errors';
-import { getSseDataRecords, takeCompleteSseRecords } from '../utils/sse';
+import {
+  getSseDataRecords,
+  getSseEvent,
+  takeCompleteSseRecords,
+} from '../utils/sse';
+import { verifyGatewayAttestation } from './attestation-gateway';
+import { verifyModelAttestation } from './attestation-model';
+import { verifyGatewayResponse, verifyModelResponse } from './chat';
+import type { CloudApiRequestConfiguration } from './cloud-api';
 import {
   AttestationClient,
   CloudApiClient,
@@ -45,12 +58,6 @@ import {
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
 } from './cloud-api';
-import type { CloudApiRequestConfiguration } from './cloud-api';
-import { verifyGatewayAttestation } from './attestation-gateway';
-import { verifyModelAttestation } from './attestation-model';
-import { verifyOhttpKeyConfig } from './ohttp-attestation';
-import { createOhttpFetch } from './ohttp-fetch';
-import { verifyGatewayResponse, verifyModelResponse } from './chat';
 import {
   decodeChatRequest,
   isServerSentEventContentType,
@@ -58,6 +65,9 @@ import {
   prepareE2eeChatRequest,
   removeE2eeHeaders,
 } from './e2ee-request';
+import { verifyOhttpKeyConfig } from './ohttp-attestation';
+import { createOhttpFetch } from './ohttp-fetch';
+import { createSystemOne, sendSystemOne } from './systemone';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -79,7 +89,7 @@ export type InferenceSession<
 };
 
 export type VerifySessionResponseParams = {
-  readonly completionId: string;
+  readonly id: string;
   readonly requestBody: Uint8Array;
   readonly responseBody: Uint8Array;
   readonly signature: CompletionSignature;
@@ -104,19 +114,24 @@ type CachedVerification<VerificationResult, AttestationResult> = {
   readonly session: InferenceSession<VerificationResult, AttestationResult>;
 };
 
-type CompletionRecord<VerificationResult> =
-  VerifyCapturedCompletionParams<VerificationResult> & {
+type CompletionProtocol = 'chat' | 'responses' | 'messages';
+
+type ResponseRecord<VerificationResult> =
+  VerifyCapturedResponseParams<VerificationResult> & {
     verification?: Promise<VerificationResult>;
+    expiresAt?: number;
   };
 
 type ParsedSecureRequest = {
   readonly model: string;
   readonly request: Request;
+  readonly protocol: CompletionProtocol;
 };
 
 type PreparePlaintextRequestParams = {
   readonly request: Request;
   readonly modelKey?: E2eeModelKey;
+  readonly messages?: boolean;
 };
 
 type SendSecureCompletionParams = {
@@ -126,6 +141,7 @@ type SendSecureCompletionParams = {
 
 type SentSecureCompletion<VerificationResult> = {
   response: Response;
+  readonly protocol: CompletionProtocol;
   readonly session: InferenceSession<VerificationResult>;
   readonly decryptResponse?: PreparedE2eeChatRequest['decryptResponse'];
 };
@@ -141,11 +157,12 @@ type CapturedResponseEntityBody = {
   readonly responseBody: Promise<Uint8Array>;
 };
 
-type VerifyCapturedCompletionParams<VerificationResult> = {
+export type VerifyCapturedResponseParams<VerificationResult> = {
+  readonly id: string;
   readonly requestBody: Uint8Array;
   readonly responseBody: Promise<Uint8Array>;
   readonly session: InferenceSession<VerificationResult>;
-  readonly contentType: string | null;
+  readonly gatewayOnly?: boolean;
 };
 
 type SendCompletionRequestParams = {
@@ -154,7 +171,7 @@ type SendCompletionRequestParams = {
 };
 
 type ClearPendingVerificationParams<VerificationResult> = {
-  readonly model: string;
+  readonly cacheKey: string;
   readonly verification: Promise<InferenceSession<VerificationResult>>;
 };
 
@@ -204,22 +221,17 @@ class GatewaySessionEvidenceClient extends CloudApiClient {
   }
 }
 
-type VerifyModelParams = {
+type VerifyModelsParams = {
   readonly model: string;
   readonly transport: GatewaySessionTransport;
   readonly signal: AbortSignal;
-};
-
-type VerifiedModelState = {
-  readonly attestations: readonly VerifiedModelAttestation[];
-  readonly selected?: VerifiedModelAttestation;
 };
 
 /**
  * A verified Chat Completions transport.
  *
  * Every `fetch()` call reads its model from the Chat request, then uses a
- * successfully verified endpoint-specific session for that model when it remains
+ * successfully verified session for that model when it remains
  * within the configured cache lifetime. With `e2ee: true`,
  * supported fields are encrypted to a quote-bound model key and
  * integrity-checked on the way back.
@@ -236,11 +248,13 @@ export abstract class VerifiedInferenceClientBase<
   private readonly attestationCacheTimeToLiveMs: number;
   protected readonly e2eeEnabled: boolean;
   private readonly responseCacheTimeToLiveMs: number;
-  private readonly completions = new Map<
+  private readonly responseRecords = new Map<
     string,
-    CompletionRecord<VerificationResult>
+    ResponseRecord<VerificationResult>
   >();
   readonly chat: InferenceChat;
+  protected readonly openai: OpenAI;
+  protected readonly supportsGatewayEndpoints: boolean = false;
   protected readonly signingAlgo: SigningAlgo;
   protected readonly ohttpEnabled: boolean;
   private readonly options: InferenceTransportOptions;
@@ -249,7 +263,7 @@ export abstract class VerifiedInferenceClientBase<
     string,
     CachedVerification<VerificationResult, AttestationResult>
   >();
-  /** Shares same-model verification work while it is in progress. */
+  /** Shares verification work for the same model while in progress. */
   private readonly pendingVerifications = new Map<
     string,
     Promise<InferenceSession<VerificationResult, AttestationResult>>
@@ -266,14 +280,27 @@ export abstract class VerifiedInferenceClientBase<
     this.requestConfiguration = createCloudApiRequestConfiguration(options);
     this.responseCacheTimeToLiveMs =
       options.responseCacheTimeToLiveMs ?? DEFAULT_CACHE_TIME_TO_LIVE_MS;
-    this.chat = createOpenAiClient({
+    for (const [field, value] of [
+      ['attestationCacheTimeToLiveMs', this.attestationCacheTimeToLiveMs],
+      ['responseCacheTimeToLiveMs', this.responseCacheTimeToLiveMs],
+    ] as const) {
+      if (!Number.isFinite(value) || value < 0) {
+        throw invalidInput({
+          field,
+          reason: 'unsupported_value',
+          expected: 'a finite non-negative duration in milliseconds',
+        });
+      }
+    }
+    this.openai = createOpenAiClient({
       baseUrl: this.baseUrl,
       fetch: this.fetch,
       requestConfiguration: this.requestConfiguration,
-    }).chat;
+    });
+    this.chat = this.openai.chat;
   }
 
-  /** Verify every required report before creating a transport for Chat requests. */
+  /** Verify every required report before creating a session. */
   protected abstract createVerificationState(
     model: string,
   ): Promise<InferenceSession<VerificationResult, AttestationResult>>;
@@ -312,7 +339,7 @@ export abstract class VerifiedInferenceClientBase<
     return verifyOhttpKeyConfig({ ohttpAttestation, signer });
   }
 
-  /** Only Chat uses OHTTP; evidence and signature fetches retain their transport. */
+  /** Inference creation uses OHTTP; evidence and signature fetches retain their transport. */
   protected createCompletionFetch(
     fetch: typeof globalThis.fetch,
     keyConfig: Uint8Array | undefined,
@@ -330,64 +357,113 @@ export abstract class VerifiedInferenceClientBase<
   }
 
   /**
-   * Send one verified Chat Completions request.
-   *
-   * Only POST requests to this client's configured Chat Completions endpoint
-   * are accepted. Other API paths, including Responses, are rejected locally.
+   * Send one verified Chat Completions, Responses, or System One request.
+   * Only POST requests to the configured creation endpoints are accepted.
    */
   readonly fetch = async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
+    const request = createRequest(input, init);
+    const url = new URL(request.url);
+    const systemOneUrl = new URL('systemone', this.baseUrl);
+    if (
+      request.method === 'POST' &&
+      url.origin === systemOneUrl.origin &&
+      url.pathname === systemOneUrl.pathname
+    ) {
+      return this.sendSystemOneRequest(request);
+    }
     const completion = await this.sendSecureCompletion({
-      input,
-      init,
+      input: request,
     });
     const requestBody = await completion.requestBody;
     const responseBody = completion.responseBody;
 
     if (completion.response.ok) {
-      const record: CompletionRecord<VerificationResult> = {
-        requestBody,
-        responseBody,
-        session: completion.session,
-        contentType: completion.response.headers.get('content-type'),
-      };
       // Register before exposing the response, including its first SSE event.
       completion.response = registerCompletionResponse({
         response: completion.response,
-        register: (id) => {
-          this.completions.set(id, record);
-          const expire = (): void => {
-            const timer = setTimeout(() => {
-              if (this.completions.get(id) === record)
-                this.completions.delete(id);
-            }, this.responseCacheTimeToLiveMs);
-            timer.unref?.();
-          };
-          void responseBody.then(expire, expire);
-        },
+        protocol: completion.protocol,
+        register: (completionId) =>
+          this.registerResponse({
+            id: completionId,
+            requestBody,
+            responseBody,
+            session: completion.session,
+            gatewayOnly: completion.protocol !== 'chat',
+          }),
       });
     }
     return this.toClientResponse(completion);
   };
 
+  protected async sendSystemOneRequest(_request: Request): Promise<Response> {
+    throw invalidInput({
+      field: 'request',
+      reason: 'unsupported_value',
+      expected: 'a POST to the configured Chat Completions endpoint',
+    });
+  }
+
   /** Verify a captured response by ID. Consume streaming responses first. */
-  verifyResponse(completionId: string): Promise<VerificationResult> {
-    const record = this.completions.get(completionId);
+  verifyResponse(id: string): Promise<VerificationResult> {
+    const record = this.getResponseRecord(id);
     if (record === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
-    record.verification ??= this.verifyCapturedCompletion(record).catch(
+    record.verification ??= this.verifyCapturedResponse(record).catch(
       (cause: unknown) => {
         // Keep the captured bytes so a later call can retry a transient lookup.
-        if (isApiError(cause) && cause.retryable) {
+        if (
+          isApiError(cause) &&
+          (cause.retryable ||
+            cause.failure.code === 'api.completion_signature_unavailable')
+        ) {
           record.verification = undefined;
         }
         throw cause;
       },
     );
     return record.verification;
+  }
+
+  /** All supported endpoints share byte retention, expiry, and verification retries. */
+  protected registerResponse(record: ResponseRecord<VerificationResult>): void {
+    if (this.responseCacheTimeToLiveMs === 0) return;
+    const id = record.id;
+    if (this.getResponseRecord(id) !== undefined) {
+      throw new ApiError({ code: 'api.duplicate_completion_id' });
+    }
+    this.responseRecords.set(id, record);
+    const expire = (): void => {
+      const expiresAt = Date.now() + this.responseCacheTimeToLiveMs;
+      record.expiresAt = expiresAt;
+      const release = (): void => {
+        if (this.responseRecords.get(id) !== record) return;
+        const remaining = expiresAt - Date.now();
+        if (remaining <= 0) {
+          this.responseRecords.delete(id);
+          return;
+        }
+        // JavaScript timers accept at most a signed 32-bit delay.
+        const timer = setTimeout(release, Math.min(remaining, 2 ** 31 - 1));
+        timer.unref?.();
+      };
+      release();
+    };
+    void record.responseBody.then(expire, expire);
+  }
+
+  private getResponseRecord(
+    id: string,
+  ): ResponseRecord<VerificationResult> | undefined {
+    const record = this.responseRecords.get(id);
+    if (record?.expiresAt !== undefined && record.expiresAt <= Date.now()) {
+      this.responseRecords.delete(id);
+      return undefined;
+    }
+    return record;
   }
 
   private async sendSecureCompletion({
@@ -421,7 +497,9 @@ export abstract class VerifiedInferenceClientBase<
         : {
             request: this.preparePlaintextRequest({
               request: parsed.request,
-              modelKey: session.modelKey,
+              modelKey:
+                parsed.protocol === 'messages' ? undefined : session.modelKey,
+              messages: parsed.protocol === 'messages',
             }),
           };
     const decryptResponse =
@@ -432,9 +510,13 @@ export abstract class VerifiedInferenceClientBase<
       request: prepared.request,
       transport: session.transport,
     });
-    const capturedResponse = captureResponseEntityBody(response);
+    const capturedResponse = captureResponseEntityBody(
+      response,
+      parsed.protocol,
+    );
     return {
       response: capturedResponse.response,
+      protocol: parsed.protocol,
       session,
       requestBody,
       responseBody: capturedResponse.responseBody,
@@ -449,73 +531,84 @@ export abstract class VerifiedInferenceClientBase<
     return decryptResponse === undefined ? response : decryptResponse(response);
   }
 
-  private async verifyCapturedCompletion({
+  private async verifyCapturedResponse({
+    id,
     requestBody,
     responseBody,
     session,
-    contentType,
-  }: VerifyCapturedCompletionParams<VerificationResult>): Promise<VerificationResult> {
+    gatewayOnly,
+  }: VerifyCapturedResponseParams<VerificationResult>): Promise<VerificationResult> {
     const bytes = await responseBody;
-    const completionId = getCompletionId({ bytes, contentType });
     const signature = await session.transport.fetchCompletionSignature({
-      completionId,
+      completionId: id,
       signingAlgo: this.signingAlgo,
     });
 
+    if (signature.signer.signingAlgo !== this.signingAlgo) {
+      throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
+    if (gatewayOnly && signature.kind !== 'gateway') {
+      throw new VerificationError({
+        code: 'signature.kind_mismatch',
+        details: { expected: 'gateway', actual: signature.kind },
+      });
+    }
+
     return session.verifyResponse({
-      completionId,
+      id,
       requestBody,
       responseBody: bytes,
       signature,
     });
   }
 
-  private startVerification(
+  protected startVerification(
     model: string,
   ): Promise<InferenceSession<VerificationResult, AttestationResult>> {
+    const cacheKey = model;
     const now = Date.now();
     this.removeExpiredVerifications(now);
-    const cached = this.cachedVerifications.get(model);
+    const cached = this.cachedVerifications.get(cacheKey);
     if (this.attestationCacheTimeToLiveMs !== 0 && cached !== undefined) {
       return Promise.resolve(cached.session);
     }
 
-    const existing = this.pendingVerifications.get(model);
+    const existing = this.pendingVerifications.get(cacheKey);
     if (existing !== undefined) {
       return existing;
     }
 
     const verification = this.createVerificationState(model);
-    this.pendingVerifications.set(model, verification);
+    this.pendingVerifications.set(cacheKey, verification);
     void verification.then(
       (session) => {
         if (this.attestationCacheTimeToLiveMs !== 0) {
-          this.cachedVerifications.set(model, {
+          this.cachedVerifications.set(cacheKey, {
             expiresAt: Date.now() + this.attestationCacheTimeToLiveMs,
             session,
           });
         }
-        this.clearPendingVerification({ model, verification });
+        this.clearPendingVerification({ cacheKey, verification });
       },
-      () => this.clearPendingVerification({ model, verification }),
+      () => this.clearPendingVerification({ cacheKey, verification }),
     );
     return verification;
   }
 
   private removeExpiredVerifications(now: number): void {
-    for (const [model, cached] of this.cachedVerifications) {
+    for (const [cacheKey, cached] of this.cachedVerifications) {
       if (cached.expiresAt <= now) {
-        this.cachedVerifications.delete(model);
+        this.cachedVerifications.delete(cacheKey);
       }
     }
   }
 
   private clearPendingVerification({
-    model,
+    cacheKey,
     verification,
   }: ClearPendingVerificationParams<VerificationResult>): void {
-    if (this.pendingVerifications.get(model) === verification) {
-      this.pendingVerifications.delete(model);
+    if (this.pendingVerifications.get(cacheKey) === verification) {
+      this.pendingVerifications.delete(cacheKey);
     }
   }
 
@@ -541,45 +634,70 @@ export abstract class VerifiedInferenceClientBase<
     init: RequestInit | undefined,
   ): Promise<ParsedSecureRequest> {
     const request = createRequest(input, init);
-    this.requireSupportedEndpoint(request);
+    const protocol = this.requireSupportedEndpoint(request);
     const value = await decodeChatRequest({ request });
     const generic = v.safeParse(ChatCompletionRequestSchema, value);
     if (!generic.success) {
       throw invalidInput({
         field: 'request body',
         reason: 'unsupported_value',
-        expected: 'a JSON Chat Completions request with a string model',
+        expected: 'a JSON inference request with a string model',
       });
     }
     const model = generic.output.model;
-    return { model, request };
+    return { model, request, protocol };
   }
 
-  private requireSupportedEndpoint(request: Request): void {
+  private requireSupportedEndpoint(request: Request): CompletionProtocol {
     const url = new URL(request.url);
     const baseUrl = new URL(this.baseUrl);
     const chatPath = new URL('chat/completions', this.baseUrl).pathname;
+    const responses =
+      url.pathname === new URL('responses', this.baseUrl).pathname;
+    const messages =
+      url.pathname === new URL('messages', this.baseUrl).pathname;
     if (
       request.method !== 'POST' ||
       url.origin !== baseUrl.origin ||
-      url.pathname !== chatPath
+      (url.pathname !== chatPath &&
+        // !((responses || messages) && this.supportsGatewayEndpoints))
+        !(responses && this.supportsGatewayEndpoints))
     ) {
       throw invalidInput({
         field: 'request',
         reason: 'unsupported_value',
-        expected: 'a POST to the configured Chat Completions endpoint',
+        expected: 'a POST to a supported inference creation endpoint',
         actual: `${request.method} ${url.pathname}`,
       });
     }
+    if ((responses || messages) && this.e2eeEnabled) {
+      throw invalidInput({
+        field: 'e2ee',
+        reason: 'unsupported_value',
+        expected: 'field-level E2EE disabled for Responses',
+      });
+    }
+    return messages ? 'messages' : responses ? 'responses' : 'chat';
   }
 
   private preparePlaintextRequest({
     request,
     modelKey,
+    messages,
   }: PreparePlaintextRequestParams): Request {
     const headers = this.createCompletionHeaders(request.headers);
     headers.set(NO_ALIASING_HEADER, 'true');
     removeE2eeHeaders(headers);
+    if (messages) {
+      // External Anthropic clients may supply their own key. All inference and
+      // evidence requests must use this client's configured authentication.
+      const apiKey = this.requestConfiguration.defaultHeaders.get('x-api-key');
+      if (apiKey === null) headers.delete('x-api-key');
+      else headers.set('x-api-key', apiKey);
+      if (!headers.has('anthropic-version')) {
+        headers.set('anthropic-version', '2023-06-01');
+      }
+    }
     // Cloud API uses this routing-only header to select the verified NEAR
     // backend. It is deliberately not forwarded to the model request body.
     // X-Signing-Algo is an encryption header and requires a client key.
@@ -610,7 +728,7 @@ export abstract class VerifiedInferenceClientBase<
     }
   }
 
-  private createCompletionHeaders(requestHeaders: HeadersInit): Headers {
+  protected createCompletionHeaders(requestHeaders: HeadersInit): Headers {
     return mergeCloudApiRequestHeaders({
       configuration: this.requestConfiguration,
       requestHeaders,
@@ -624,10 +742,79 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   AttestationVerificationResult
 > {
   private readonly gatewayOptions: NodeInferenceClientOptions;
+  protected override readonly supportsGatewayEndpoints = true;
+  // private readonly anthropic: Anthropic;
+
+  /** Create a Response, then verify its top-level ID with verifyResponse(). */
+  get responses(): InferenceResponses {
+    return this.openai.responses;
+  }
+
+  // /** Create a Message; verify its ID after consuming the response or stream. */
+  // get messages(): InferenceMessages {
+  //   return this.anthropic.messages;
+  // }
+
+  /** Send a decision request; pass result.decisionId to verifyResponse(). */
+  readonly systemone: InferenceSystemOne = {
+    create: async (request, options) =>
+      createSystemOne({
+        request,
+        options,
+        baseUrl: this.getBaseUrl(),
+        encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
+        headers: this.createCompletionHeaders(options?.headers ?? {}),
+        getSession: (model) => {
+          const operation = this.startVerification(model);
+          return options?.signal === undefined
+            ? operation
+            : awaitWithAbort({ operation, signal: options.signal });
+        },
+        registerResponse: (record) => this.registerResponse(record),
+      }),
+  };
 
   protected constructor(options: NodeInferenceClientOptions) {
     super(options);
     this.gatewayOptions = options;
+    /* Messages support is deferred until a later release.
+    this.anthropic = new Anthropic({
+      apiKey: '@nearai/inference-sdk-internal',
+      defaultHeaders: {
+        'anthropic-version':
+          new Headers(options.headers).get('anthropic-version') ?? '2023-06-01',
+      },
+      baseURL: this.getBaseUrl(),
+      dangerouslyAllowBrowser: true,
+      maxRetries: 0,
+      fetch: (input, init) => {
+        const request = new Request(input, init);
+        const url = new URL(request.url);
+        // Anthropic includes v1 in its resource path; our base already names
+        // the API prefix. Adapt only this wrapper, preserving custom prefixes.
+        const sdkUrl = new URL('v1/messages', this.getBaseUrl());
+        if (url.origin === sdkUrl.origin && url.pathname === sdkUrl.pathname) {
+          url.pathname = new URL('messages', this.getBaseUrl()).pathname;
+        }
+        return this.fetch(new Request(url, request));
+      },
+    });
+    */
+  }
+
+  protected override sendSystemOneRequest(request: Request): Promise<Response> {
+    return sendSystemOne({
+      request,
+      encryptionEnabled: this.e2eeEnabled || this.ohttpEnabled,
+      headers: this.createCompletionHeaders(request.headers),
+      // Official clients use Chat's selected-key routing contract for self-hosted models.
+      getSession: (model) =>
+        awaitWithAbort({
+          operation: this.startVerification(model),
+          signal: request.signal,
+        }),
+      registerResponse: (record) => this.registerResponse(record),
+    });
   }
 
   protected abstract fetchGatewayAttestation(): Promise<FetchedGatewayAttestation>;
@@ -662,7 +849,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       fetchCompletionSignature: (params) =>
         client.fetchCompletionSignature(params),
     };
-    const [{ gatewayAttestation, ohttpKeyConfig }, modelState] =
+    const [{ gatewayAttestation, ohttpKeyConfig }, modelAttestations] =
       await Promise.all([
         verifyGatewayAttestation({
           attestation: gateway.attestation,
@@ -671,6 +858,9 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
         }).then((gatewayAttestation) => {
           signal.throwIfAborted();
+          if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
+            throw new VerificationError({ code: 'signature.signer_mismatch' });
+          }
           return {
             gatewayAttestation,
             ohttpKeyConfig: this.getOhttpKeyConfig(
@@ -679,14 +869,21 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             ),
           };
         }),
-        this.verifyModel({ model, transport, signal }),
+        this.verifyModels({ model, transport, signal }),
       ]).catch((cause: unknown) => {
         // Cancel outstanding evidence I/O before a retry can start a new preflight.
         // Keep the original failure instead of replacing it with an abort error.
         controller.abort(cause);
         throw cause;
       });
-    const modelAttestation = modelState.selected;
+    const modelAttestation = modelAttestations.find(
+      (attestation) =>
+        attestation.signer.signingAlgo === this.signingAlgo &&
+        attestation.signingPublicKey !== undefined,
+    );
+    if (modelAttestations.length > 0 && modelAttestation === undefined) {
+      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
+    }
     const modelKey =
       modelAttestation?.signingPublicKey !== undefined
         ? {
@@ -697,7 +894,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     return {
       attestationResult: {
         gateway: gatewayAttestation,
-        models: modelState.attestations,
+        models: modelAttestations,
         verifiedAt: Date.now(),
       },
       modelKey,
@@ -705,12 +902,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         ...transport,
         fetch: this.createCompletionFetch(transport.fetch, ohttpKeyConfig),
       },
-      verifyResponse: ({
-        completionId,
-        requestBody,
-        responseBody,
-        signature,
-      }) => {
+      verifyResponse: ({ id, requestBody, responseBody, signature }) => {
         if (signature.kind === 'provider_tee') {
           if (modelAttestation === undefined) {
             throw new VerificationError({
@@ -725,7 +917,8 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             attestation: modelAttestation,
           });
           return {
-            completionId,
+            id,
+            completionId: id,
             signatureKind: 'provider_tee',
             signature,
             attestation: modelAttestation,
@@ -738,7 +931,8 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           attestation: gatewayAttestation,
         });
         return {
-          completionId,
+          id,
+          completionId: id,
           signatureKind: 'gateway',
           signature,
           attestation: gatewayAttestation,
@@ -748,11 +942,11 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
   }
 
   /** NEAR deployments use model evidence; Incognito sessions verify only the Gateway. */
-  private async verifyModel({
+  private async verifyModels({
     model,
     transport,
     signal,
-  }: VerifyModelParams): Promise<VerifiedModelState> {
+  }: VerifyModelsParams): Promise<VerifiedModelAttestation[]> {
     const metadata = await transport.fetchModelMetadata(model);
     signal.throwIfAborted();
     if (metadata.providerType !== 'vllm' || !metadata.attestationSupported) {
@@ -767,7 +961,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           code: 'policy.model_attestation_required',
         });
       }
-      return { attestations: [] };
+      return [];
     }
 
     const fetchedModels = await transport.fetchModelAttestations({
@@ -791,15 +985,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
         }),
       ),
     );
-    const selected = attestations.find(
-      (attestation) =>
-        attestation.signer.signingAlgo === this.signingAlgo &&
-        attestation.signingPublicKey !== undefined,
-    );
-    if (selected?.signingPublicKey === undefined) {
-      throw new VerificationError({ code: 'e2ee.model_public_key_required' });
-    }
-    return { attestations, selected };
+    return attestations;
   }
 }
 
@@ -832,6 +1018,7 @@ function createOpenAiClient({
   return new OpenAI({
     apiKey: requestConfiguration.apiKey ?? OPENAI_WRAPPER_API_KEY,
     baseURL: baseUrl,
+    maxRetries: 0,
     dangerouslyAllowBrowser: true,
     defaultHeaders: createOpenAiDefaultHeaders(requestConfiguration),
     fetch,
@@ -902,17 +1089,19 @@ function createRequest(
 
 type RegisterCompletionResponseParams = {
   readonly response: Response;
+  readonly protocol: CompletionProtocol;
   readonly register: (id: string) => void;
 };
 
 /** Register IDs before forwarding their bytes; streaming follows consumer backpressure. */
 function registerCompletionResponse({
   response,
+  protocol,
   register,
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
   const streaming = isServerSentEventResponse(response);
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder('utf-8', { fatal: true });
   let pending = '';
   let registered = false;
   const body = response.body.pipeThrough(
@@ -926,7 +1115,7 @@ function registerCompletionResponse({
             for (const record of complete.records) {
               let id: string;
               try {
-                id = getSseCompletionId(record.value);
+                id = getSseCompletionId(record.value, protocol);
               } catch {
                 continue;
               }
@@ -945,7 +1134,7 @@ function registerCompletionResponse({
           let id: string;
           try {
             id = streaming
-              ? getSseCompletionId(pending)
+              ? getSseCompletionId(pending, protocol)
               : parseCompletionId(JSON.parse(pending));
           } catch (cause) {
             throw invalidCompletionId(cause);
@@ -973,6 +1162,7 @@ function captureRequestEntityBody(request: Request): Promise<Uint8Array> {
 
 function captureResponseEntityBody(
   response: Response,
+  protocol: CompletionProtocol,
 ): CapturedResponseEntityBody {
   if (response.body === null) {
     return {
@@ -998,6 +1188,13 @@ function captureResponseEntityBody(
     if (settled) return;
     try {
       const body = concatChunks(chunks);
+      if (
+        response.ok &&
+        protocol === 'messages' &&
+        isServerSentEventResponse(response)
+      ) {
+        validateMessageStream(body);
+      }
       settled = true;
       resolveBody(body);
     } catch (cause) {
@@ -1031,6 +1228,7 @@ function captureResponseEntityBody(
         hasSseCompletionSentinel({
           chunks,
           contentType: response.headers.get('content-type'),
+          protocol,
         })
       ) {
         void drainResponseEntityBody({ reader, chunks, resolve, reject });
@@ -1062,34 +1260,10 @@ function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
   return body;
 }
 
-type GetCompletionIdParams = {
-  readonly bytes: Uint8Array;
-  readonly contentType: string | null;
-};
-
-function getCompletionId({
-  bytes,
-  contentType,
-}: GetCompletionIdParams): string {
-  let text: string;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch (cause) {
-    throw invalidCompletionId(cause);
-  }
-  if (isServerSentEventContentType(contentType)) {
-    return getSseCompletionId(text);
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause) {
-    throw invalidCompletionId(cause);
-  }
-  return parseCompletionId(value);
-}
-
-function getSseCompletionId(text: string): string {
+function getSseCompletionId(
+  text: string,
+  protocol: CompletionProtocol,
+): string {
   for (const data of getSseDataRecords(text)) {
     if (data === '' || data === '[DONE]') {
       continue;
@@ -1099,6 +1273,22 @@ function getSseCompletionId(text: string): string {
       value = JSON.parse(data);
     } catch (cause) {
       throw invalidCompletionId(cause);
+    }
+    if (protocol === 'responses') {
+      value =
+        value !== null && typeof value === 'object' && 'response' in value
+          ? value.response
+          : undefined;
+    }
+    if (protocol === 'messages') {
+      value =
+        value !== null &&
+        typeof value === 'object' &&
+        'type' in value &&
+        value.type === 'message_start' &&
+        'message' in value
+          ? value.message
+          : undefined;
     }
     const parsed = v.safeParse(CompletionResponseIdSchema, value);
     if (parsed.success) {
@@ -1111,11 +1301,13 @@ function getSseCompletionId(text: string): string {
 type HasSseCompletionSentinelParams = {
   readonly chunks: readonly Uint8Array[];
   readonly contentType: string | null;
+  readonly protocol: CompletionProtocol;
 };
 
 function hasSseCompletionSentinel({
   chunks,
   contentType,
+  protocol,
 }: HasSseCompletionSentinelParams): boolean {
   if (!isServerSentEventContentType(contentType)) {
     return false;
@@ -1124,10 +1316,50 @@ function hasSseCompletionSentinel({
     const text = new TextDecoder('utf-8', { fatal: true }).decode(
       concatChunks(chunks),
     );
+    if (protocol === 'messages') {
+      validateMessageStream(concatChunks(chunks));
+      return true;
+    }
     return getSseDataRecords(text).some((data) => data === '[DONE]');
   } catch {
     return false;
   }
+}
+
+/** EOF or a tool block alone cannot complete a signed Messages stream. */
+function validateMessageStream(body: Uint8Array): void {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  const { records, pending } = takeCompleteSseRecords(text, true);
+  let id: string | undefined;
+  let stopped = false;
+  if (pending !== '') throw invalidCompletionId();
+  for (const record of records) {
+    const eventName = getSseEvent(record.value);
+    if (eventName === 'error') throw invalidCompletionId();
+    for (const data of getSseDataRecords(record.value)) {
+      if (data === '') continue;
+      let event: { type?: unknown };
+      try {
+        event = JSON.parse(data);
+      } catch {
+        throw invalidCompletionId();
+      }
+      if (
+        typeof event?.type !== 'string' ||
+        event.type === '' ||
+        event.type === 'error' ||
+        stopped ||
+        (eventName !== undefined && eventName !== event?.type)
+      )
+        throw invalidCompletionId();
+      if (event?.type === 'message_start') {
+        if (id !== undefined) throw invalidCompletionId();
+        id = getSseCompletionId(record.value, 'messages');
+      }
+      if (event?.type === 'message_stop') stopped = true;
+    }
+  }
+  if (id === undefined || !stopped) throw invalidCompletionId();
 }
 
 type DrainResponseEntityBodyParams = {
@@ -1170,8 +1402,8 @@ function invalidCompletionId(cause?: unknown): ApiError {
     {
       code: 'api.invalid_response',
       details: {
-        path: 'Chat Completions response.id',
-        expected: 'a non-empty completion ID',
+        path: 'completion response ID or SSE lifecycle',
+        expected: 'a non-empty ID and a complete valid stream',
         actual: 'missing or invalid',
       },
     },

@@ -135,6 +135,7 @@ fn verified_model_attestation_for_signer(signer: SigningIdentity) -> VerifiedMod
             tcb_status: TcbStatus::UpToDate,
             advisory_ids: vec![],
             deployment: MeasuredDeployment {
+                compose_manager: None,
                 app_compose: "{}".to_owned(),
                 runtime_measurements: RuntimeMeasurements::default(),
             },

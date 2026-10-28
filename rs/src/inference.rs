@@ -85,12 +85,6 @@ pub struct InferenceClientOptions {
     pub gateway_verification: GatewayVerificationOptions,
     pub model_verification: ModelVerificationOptions,
     pub deployment_policy: Option<Arc<dyn DeploymentPolicy>>,
-    /// Exact bytes retained for a single response; larger responses fail closed.
-    pub max_response_bytes: usize,
-    /// Bound both completed session and receipt caches. Oldest entries are evicted.
-    pub max_cache_entries: usize,
-    /// Total request and response bytes retained in the receipt cache.
-    pub max_receipt_cache_bytes: usize,
 }
 impl Default for InferenceClientOptions {
     fn default() -> Self {
@@ -106,9 +100,6 @@ impl Default for InferenceClientOptions {
             gateway_verification: GatewayVerificationOptions::default(),
             model_verification: ModelVerificationOptions::default(),
             deployment_policy: None,
-            max_response_bytes: 64 * 1024 * 1024,
-            max_cache_entries: 1024,
-            max_receipt_cache_bytes: 64 * 1024 * 1024,
         }
     }
 }
@@ -178,6 +169,7 @@ struct Record {
     request: Arc<[u8]>,
     response: Arc<[u8]>,
     session: Arc<Session>,
+    gateway_only: bool,
     finished: Instant,
     verification: Mutex<Option<ReceiptFuture>>,
 }
@@ -214,12 +206,6 @@ impl InferenceClient {
         if options.ohttp && options.signing_algo != SigningAlgo::Ed25519 {
             return Err(input("signing_algo", "OHTTP requires Ed25519").into());
         }
-        if options.max_cache_entries == 0
-            || options.max_response_bytes == 0
-            || options.max_receipt_cache_bytes == 0
-        {
-            return Err(input("cache_limits", "must be positive").into());
-        }
         if let Some(key) = &options.api_key {
             options.headers.insert(
                 "authorization",
@@ -255,6 +241,7 @@ impl InferenceClient {
         })
     }
     pub(crate) async fn session(&self, model: &str) -> Result<Arc<Session>, InferenceError> {
+        let cache_key = model.to_owned();
         if model.is_empty() || matches!(model, "." | "..") {
             return Err(input("model", "expected a canonical model ID").into());
         }
@@ -264,18 +251,13 @@ impl InferenceClient {
             state
                 .sessions
                 .retain(|_, (time, _)| time.elapsed() < options.attestation_cache_ttl);
-            if let Some((_, session)) = state.sessions.get(model) {
+            if let Some((_, session)) = state.sessions.get(&cache_key) {
                 return Ok(session.clone());
             }
             state.pending.retain(|_, f| f.upgrade().is_some());
-            if let Some(future) = state.pending.get(model).and_then(|f| f.upgrade()) {
+            if let Some(future) = state.pending.get(&cache_key).and_then(|f| f.upgrade()) {
                 future
             } else {
-                if state.pending.len() >= options.max_cache_entries {
-                    return Err(
-                        input("model", "too many concurrent verification operations").into(),
-                    );
-                }
                 let owned = model.to_owned();
                 let options = options.clone();
                 let direct = self.inner.direct;
@@ -290,7 +272,7 @@ impl InferenceClient {
                 .shared();
                 state
                     .pending
-                    .insert(model.to_owned(), future.downgrade().expect("live future"));
+                    .insert(cache_key.clone(), future.downgrade().expect("live future"));
                 future
             }
         };
@@ -298,30 +280,127 @@ impl InferenceClient {
         let mut state = self.inner.state.lock().await;
         if state
             .pending
-            .get(model)
+            .get(&cache_key)
             .and_then(|f| f.upgrade())
             .is_some_and(|f| f.ptr_eq(&future))
         {
-            state.pending.remove(model);
+            state.pending.remove(&cache_key);
             if let Ok(session) = &result {
                 if !options.attestation_cache_ttl.is_zero() {
-                    if state.sessions.len() >= options.max_cache_entries {
-                        if let Some(key) = state
-                            .sessions
-                            .iter()
-                            .min_by_key(|(_, v)| v.0)
-                            .map(|(k, _)| k.clone())
-                        {
-                            state.sessions.remove(&key);
-                        }
-                    }
                     state
                         .sessions
-                        .insert(model.to_owned(), (Instant::now(), session.clone()));
+                        .insert(cache_key.clone(), (Instant::now(), session.clone()));
                 }
             }
         }
         result
+    }
+    /// Send one plaintext System One decision and retain exact bytes for verify_response.
+    pub async fn systemone_create<T: serde::Serialize>(
+        &self,
+        request: &T,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        self.systemone_create_with_headers(request, HeaderMap::new())
+            .await
+    }
+    pub async fn systemone_create_with_headers<T: serde::Serialize>(
+        &self,
+        request: &T,
+        headers: HeaderMap,
+    ) -> Result<crate::SystemOneResult, InferenceError> {
+        let options = &self.inner.options;
+        if self.inner.direct || options.e2ee || options.ohttp {
+            return Err(input("systemone", "requires a plaintext Gateway client").into());
+        }
+        let body =
+            serde_json::to_vec(request).map_err(|_| input("systemone", "expected JSON request"))?;
+        let value: Value = serde_json::from_slice(&body)
+            .map_err(|_| input("systemone", "expected JSON object"))?;
+        if !value.is_object() || value.get("stream").is_some() {
+            return Err(input("systemone", "streaming is unsupported").into());
+        }
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| input("model", "missing model"))?;
+        let mut owned = options.headers.clone();
+        owned.extend(headers);
+        for name in ["authorization", "api-key"] {
+            owned.remove(name);
+            if let Some(value) = options.headers.get(name) {
+                owned.insert(name, value.clone());
+            }
+        }
+        remove_e2ee_headers(&mut owned);
+        for name in [
+            "host",
+            "content-length",
+            "content-encoding",
+            "transfer-encoding",
+            "trailer",
+            "content-md5",
+            "digest",
+            "content-digest",
+            "repr-digest",
+        ] {
+            owned.remove(name);
+        }
+        owned.insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
+        owned.insert("content-type", HeaderValue::from_static("application/json"));
+        owned.insert("accept", HeaderValue::from_static("application/json"));
+        owned.insert("accept-encoding", HeaderValue::from_static("identity"));
+        let session = self.session(model).await?;
+        if let Some(model) = session.model_key() {
+            owned.insert(
+                "x-model-pub-key",
+                HeaderValue::from_str(&model.public_key)
+                    .map_err(|_| input("model_key", "invalid header"))?,
+            );
+        }
+        let url = crate::cloud_api::parse_base_url(self.base_url())?
+            .join("systemone")
+            .map_err(|_| input("base_url", "invalid URL"))?;
+        let mut response = session
+            .client
+            .post(url)
+            .headers(owned)
+            .body(body.clone())
+            .send()
+            .await
+            .map_err(|_| ApiError::Transport {
+                resource: ApiResource::SystemOne,
+                reason: ApiTransportReason::Request,
+            })?;
+        if !response.status().is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::SystemOne,
+                status: response.status().as_u16(),
+            }
+            .into());
+        }
+        let decision_id = response
+            .headers()
+            .get("x-generation-id")
+            .and_then(|v| v.to_str().ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ApiError::InvalidResponse {
+                path: "systemone.x-generation-id".into(),
+                expected: "nonempty receipt ID".into(),
+                actual: "missing or invalid".into(),
+            })?
+            .to_owned();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| ApiError::Transport {
+            resource: ApiResource::SystemOne,
+            reason: ApiTransportReason::ResponseBody,
+        })? {
+            bytes.extend_from_slice(&chunk);
+        }
+        let data = crate::systemone::decode_response(&bytes)?;
+        self.register(decision_id.clone(), body, bytes, session, false)
+            .await?;
+        Ok(crate::SystemOneResult { data, decision_id })
     }
     /// OpenAI-compatible JSON Chat request. Use `send` for a byte-stream response.
     pub async fn chat_completions(&self, body: Value) -> Result<Value, InferenceError> {
@@ -340,8 +419,53 @@ impl InferenceClient {
         response.json().await
     }
     pub fn chat_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("chat/completions", body)
+    }
+    /// Create a Gateway Response and retain its bytes for `verify_response`.
+    /// Use `response_request` and `send` for streaming responses.
+    pub async fn create_response(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Responses").into());
+        }
+        let response = self.send(self.response_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Responses creation request. `send` performs preflight and capture.
+    pub fn response_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("responses", body)
+    }
+    /* Messages support is deferred until a later release.
+    /// Create an Anthropic Message and retain its bytes for `verify_response`.
+    /// Use `message_request` and `send` for streaming events.
+    pub async fn create_message(&self, body: Value) -> Result<Value, InferenceError> {
+        if body.get("stream") == Some(&Value::Bool(true)) {
+            return Err(input("stream", "use send for streaming Messages").into());
+        }
+        let response = self.send(self.message_request(body)?).await?;
+        if !response.status.is_success() {
+            return Err(ApiError::HttpStatus {
+                resource: ApiResource::Completion,
+                status: response.status.as_u16(),
+            }
+            .into());
+        }
+        response.json().await
+    }
+    /// Build a Messages creation request. `send` performs preflight and capture.
+    pub fn message_request(&self, body: Value) -> Result<reqwest::Request, InferenceError> {
+        self.json_request("messages", body)
+    }
+    */
+    fn json_request(&self, path: &str, body: Value) -> Result<reqwest::Request, InferenceError> {
         let url = crate::cloud_api::parse_base_url(self.base_url())?
-            .join("chat/completions")
+            .join(path)
             .map_err(|_| input("base_url", "invalid URL"))?;
         let mut request = reqwest::Request::new(reqwest::Method::POST, url);
         *request.body_mut() = Some(body.to_string().into());
@@ -350,7 +474,7 @@ impl InferenceClient {
             .insert("content-type", HeaderValue::from_static("application/json"));
         Ok(request)
     }
-    /// Transport adapter for buffered reqwest Chat requests. Request authentication
+    /// Transport adapter for Chat and Responses requests. Authentication
     /// is always supplied by this client, including evidence and signature calls.
     pub async fn send(
         &self,
@@ -361,8 +485,30 @@ impl InferenceClient {
         let expected = crate::cloud_api::parse_base_url(self.base_url())?
             .join("chat/completions")
             .map_err(|_| input("base_url", "invalid URL"))?;
-        if actual != expected {
-            return Err(input("request.url", "expected configured Chat endpoint").into());
+        let responses = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("responses")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        let messages = actual
+            == crate::cloud_api::parse_base_url(self.base_url())?
+                .join("messages")
+                .map_err(|_| input("base_url", "invalid URL"))?;
+        // Messages support is deferred until a later release.
+        // let gateway_only = responses || messages;
+        let gateway_only = responses;
+        if actual != expected && !gateway_only {
+            return Err(input(
+                "request.url",
+                "expected configured inference creation endpoint",
+            )
+            .into());
+        }
+        if gateway_only && (self.inner.direct || self.inner.options.e2ee) {
+            return Err(input(
+                "request",
+                "Responses require a Gateway client with field-level E2EE disabled",
+            )
+            .into());
         }
         let parsed = decode_request(&request)?;
         let session = self
@@ -382,6 +528,15 @@ impl InferenceClient {
         headers.remove("api-key");
         if let Some(value) = options.headers.get("api-key") {
             headers.insert("api-key", value.clone());
+        }
+        if messages {
+            headers.remove("x-api-key");
+            if let Some(value) = options.headers.get("x-api-key") {
+                headers.insert("x-api-key", value.clone());
+            }
+            headers
+                .entry("anthropic-version")
+                .or_insert(HeaderValue::from_static("2023-06-01"));
         }
         headers.insert("accept-encoding", HeaderValue::from_static("identity"));
         headers.remove("host");
@@ -403,7 +558,7 @@ impl InferenceClient {
             request
                 .headers_mut()
                 .insert(NO_ALIASING_HEADER, HeaderValue::from_static("true"));
-            if let Some(model) = session.model_key() {
+            if let Some(model) = session.model_key().filter(|_| !messages) {
                 request.headers_mut().insert(
                     "x-model-pub-key",
                     HeaderValue::from_str(&model.public_key)
@@ -461,31 +616,39 @@ impl InferenceClient {
         }
         let mut source = response.body;
         let owner = self.clone();
-        let limit = options.max_response_bytes;
         let stream = async_stream::try_stream! {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut message_state = crate::sse::MessageStreamState::default();
+            let mut first_record = true;
+            let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
+                let parsed = if std::mem::replace(&mut first_record, false) {
+                    record.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&record)
+                } else {
+                    &record
+                };
+                if messages { message_state.observe(parsed)?; }
+                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
+                // The retained signature payload and plaintext output keep the BOM.
+                Ok(if key.is_some() { transformed } else { record })
+            };
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
-                if chunk.len() > limit.saturating_sub(wire.len()) {
-                    Err(input("response", "response exceeds configured byte limit"))?;
-                }
                 wire.extend_from_slice(&chunk);
                 if streaming {
-                    for record in decoder.push(&chunk, false)? {
-                        let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
-                        yield bytes::Bytes::from(transformed);
+                    for record in decoder.push(&chunk, false) {
+                        yield bytes::Bytes::from(transform_record(record)?);
                     }
                 }
             }
             if streaming {
-                for record in decoder.push(&[], true)? {
-                    let transformed = crate::sse::transform(&record, key.as_ref(), &mut id)?;
-                    yield bytes::Bytes::from(transformed);
+                for record in decoder.push(&[], true) {
+                    yield bytes::Bytes::from(transform_record(record)?);
                 }
                 let id = id.ok_or_else(invalid_response)?;
-                owner.register(id, request_body, wire, session).await?;
+                if messages { message_state.finish()?; }
+                owner.register(id, request_body, wire, session, gateway_only).await?;
             } else {
                 let mut value: Value = serde_json::from_slice(&wire).map_err(|_| invalid_response())?;
                 let id = value
@@ -502,7 +665,7 @@ impl InferenceClient {
                 } else {
                     wire.clone()
                 };
-                owner.register(id, request_body, wire, session).await?;
+                owner.register(id, request_body, wire, session, gateway_only).await?;
                 yield bytes::Bytes::from(body);
             }
         };
@@ -512,47 +675,25 @@ impl InferenceClient {
             body: Box::pin(stream),
         })
     }
-    async fn register(
+    pub(crate) async fn register(
         &self,
         id: String,
         request: Vec<u8>,
         response: Vec<u8>,
         session: Arc<Session>,
+        gateway_only: bool,
     ) -> Result<(), InferenceError> {
         let options = &self.inner.options;
         let mut state = self.inner.state.lock().await;
         state
             .responses
             .retain(|_, r| r.finished.elapsed() < options.response_cache_ttl);
+        if options.response_cache_ttl.is_zero() {
+            return Ok(());
+        }
         // Never let a repeated ID replace the evidence/bytes of another completion.
         if state.responses.contains_key(&id) {
-            return Err(input("response.id", "duplicate completion ID").into());
-        }
-        let size = request
-            .len()
-            .checked_add(response.len())
-            .ok_or_else(|| input("response", "receipt exceeds configured cache byte limit"))?;
-        if size > options.max_receipt_cache_bytes {
-            return Err(input("response", "receipt exceeds configured cache byte limit").into());
-        }
-        let mut retained: usize = state
-            .responses
-            .values()
-            .map(|r| r.request.len() + r.response.len())
-            .sum();
-        while state.responses.len() >= options.max_cache_entries
-            || retained > options.max_receipt_cache_bytes - size
-        {
-            if let Some(key) = state
-                .responses
-                .iter()
-                .min_by_key(|(_, r)| r.finished)
-                .map(|(k, _)| k.clone())
-            {
-                if let Some(record) = state.responses.remove(&key) {
-                    retained -= record.request.len() + record.response.len();
-                }
-            }
+            return Err(ApiError::DuplicateCompletionId.into());
         }
         state.responses.insert(
             id,
@@ -560,6 +701,7 @@ impl InferenceClient {
                 request: request.into(),
                 response: response.into(),
                 session,
+                gateway_only,
                 finished: Instant::now(),
                 verification: Mutex::new(None),
             }),
@@ -588,6 +730,7 @@ impl InferenceClient {
                 let request = record.request.clone();
                 let response = record.response.clone();
                 let session = record.session.clone();
+                let gateway_only = record.gateway_only;
                 let id = id.to_owned();
                 let algo = self.inner.options.signing_algo;
                 *pending = Some(
@@ -595,6 +738,13 @@ impl InferenceClient {
                         let signature = session.api.signature(&id, algo).await?;
                         if signature.signer.signing_algo != algo {
                             return Err(VerificationError::SignatureSignerMismatch.into());
+                        }
+                        if gateway_only && signature.kind != CompletionSignatureKind::Gateway {
+                            return Err(VerificationError::SignatureKindMismatch {
+                                expected: CompletionSignatureKind::Gateway,
+                                actual: signature.kind,
+                            }
+                            .into());
                         }
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {

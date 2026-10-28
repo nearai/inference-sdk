@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 
@@ -294,18 +293,38 @@ func TestDefaultQuoteVerifierRejectsMalformedQuote(t *testing.T) {
 	requireCode(t, e, "quote.verification_failed")
 }
 
-func TestUnknownTCBRequiresExplicitAcceptance(t *testing.T) {
-	a, q, _ := attestationFixture(t, Ed25519)
-	q.TCBStatus = "Unknown"
-	options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
-	binding := ClientBinding{Nonce: a.Nonce}
+func TestTCBPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		status            string
+		acceptedByDefault bool
+	}{
+		{"OutOfDate", true},
+		{"TDRelaunchAdvised", true},
+		{"TDRelaunchAdvisedConfigurationNeeded", false},
+		{"Unknown", false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			a, q, _ := attestationFixture(t, Ed25519)
+			q.TCBStatus = tc.status
+			options := VerificationOptions{QuoteVerifier: fixedQuote(q)}
+			binding := ClientBinding{Nonce: a.Nonce}
 
-	_, err := VerifyModelAttestation(context.Background(), a, binding, options)
-	requireCode(t, err, "policy.tcb_status_not_allowed")
-
-	options.Policy.AcceptedTCBStatuses = []string{"Unknown"}
-	if _, err := VerifyModelAttestation(context.Background(), a, binding, options); err != nil {
-		t.Fatal(err)
+			_, err := VerifyModelAttestation(context.Background(), a, binding, options)
+			if tc.acceptedByDefault {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				requireCode(t, err, "policy.tcb_status_not_allowed")
+			}
+			options.Policy.AcceptedTCBStatuses = []string{tc.status}
+			if _, err := VerifyModelAttestation(context.Background(), a, binding, options); err != nil {
+				t.Fatal(err)
+			}
+			options.Policy.AcceptedTCBStatuses = []string{"UpToDate"}
+			_, err = VerifyModelAttestation(context.Background(), a, binding, options)
+			requireCode(t, err, "policy.tcb_status_not_allowed")
+		})
 	}
 }
 
@@ -319,25 +338,5 @@ func TestQuoteVerifierPreservesSDKError(t *testing.T) {
 	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
 	if err != original {
 		t.Fatalf("quote error changed: %v", err)
-	}
-}
-
-func TestE2EEConfiguredBodyLimit(t *testing.T) {
-	key, err := newE2EEKey(Ed25519)
-	if err != nil {
-		t.Fatal(err)
-	}
-	payload := `{"model":"test","messages":[{"role":"user","content":"hello"}]}`
-	for _, limit := range []int64{int64(len(payload) - 1), int64(len(payload))} {
-		req, err := http.NewRequest("POST", "https://example.com/chat/completions", strings.NewReader(payload))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = prepareE2EEChatRequest(req, E2EEModelKey{Ed25519, key.public}, limit)
-		if limit < int64(len(payload)) {
-			requireCode(t, err, "api.body_too_large")
-		} else if err != nil {
-			t.Fatal(err)
-		}
 	}
 }

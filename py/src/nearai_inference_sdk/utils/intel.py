@@ -118,7 +118,7 @@ def _decode_quote_bytes(value: object, path: str) -> bytes:
 
 
 def _td10_base(report: object) -> dict[str, object]:
-    """Return TD1.0 measurements from a TD1.0 or TD1.5 report."""
+    """Return shared TD1.0 measurements from a verified TDX report."""
 
     if not isinstance(report, dict):
         raise TypeError('report is not an object')
@@ -127,9 +127,12 @@ def _td10_base(report: object) -> dict[str, object]:
         if isinstance(td10, dict):
             return td10
         raise TypeError('TD10 is not an object')
-    if 'TD15' not in report:
+    if 'TD15Ex' in report:
+        td15 = report['TD15Ex']['base']
+    elif 'TD15' in report:
+        td15 = report['TD15']
+    else:
         raise KeyError('TD10')
-    td15 = report['TD15']
     if not isinstance(td15, dict):
         raise TypeError('TD15 is not an object')
     base = td15.get('base')
@@ -143,7 +146,7 @@ def _invalid_quote_result(cause: BaseException | None = None) -> VerificationErr
         'quote.invalid_result',
         {
             'path': 'dcap_result',
-            'expected': 'verified TD10 or TD15 quote',
+            'expected': 'verified TDX quote',
             'actual': 'unreadable',
         },
         cause=cause,

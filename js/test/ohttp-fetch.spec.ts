@@ -84,6 +84,27 @@ test('round-trips exact bytes, status and headers while exposing only configured
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(responseBody);
 });
 
+test('pads short requests of different sizes to the same 16 KiB bucket', async () => {
+  const sizes: number[] = [];
+  const ohttp = createOhttpFetch({
+    keyConfig: config,
+    baseUrl: BASE_URL,
+    fetch: async (input, init) => {
+      const outer = new Request(input, init);
+      sizes.push((await outer.clone().arrayBuffer()).byteLength);
+      const { request, context } = await server.decapsulateRequest(outer);
+      return context.encapsulateResponse(new Response(await request.text()));
+    },
+  });
+  for (const length of [1, 4096]) {
+    const body = 'a'.repeat(length);
+    const response = await ohttp(URL, { method: 'POST', body });
+    expect(await response.text()).toBe(body);
+  }
+  expect(sizes[0]).toBeGreaterThanOrEqual(16_384);
+  expect(sizes[1]).toBe(sizes[0]);
+});
+
 test.each(['valid', 'truncated', 'tampered'] as const)(
   'streams entity bytes and verifies the final chunk after the BHTTP terminator: %s',
   async (ending) => {

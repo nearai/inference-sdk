@@ -1,0 +1,111 @@
+// Messages support is deferred until a later release.
+
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import Anthropic from '@anthropic-ai/sdk';
+import { InferenceClient } from '../dist/node.js';
+import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
+
+const models = selectedModels('messages');
+assert.equal(models.length, 1, 'Expected one Anthropic Messages model');
+const scenarios = [
+  { signingAlgo: 'ed25519', ohttp: false },
+  { signingAlgo: 'ecdsa', ohttp: false },
+  { signingAlgo: 'ed25519', ohttp: true },
+] as const;
+
+for (const { id: model } of models) {
+  for (const scenario of scenarios) {
+    const { signingAlgo, ohttp } = scenario;
+    for (const external of [false, true]) {
+      test(`Messages ${model}, ${signingAlgo}, OHTTP=${ohttp}, official SDK=${external}`, {
+        timeout: 180_000,
+      }, async (t) => {
+        const apiKey = requiredEnv('NEARAI_API_KEY');
+        const client = new InferenceClient({
+          apiKey,
+          baseUrl: requiredEnv('NEARAI_BASE_URL'),
+          ...scenario,
+          e2ee: false,
+        });
+        const anthropic = new Anthropic({
+          apiKey,
+          baseURL: client.getBaseUrl().replace(/v1\/$/, ''),
+          defaultHeaders: { 'anthropic-version': '2023-06-01' },
+          fetch: client.fetch,
+          maxRetries: 0,
+        });
+        const messages = external ? anthropic.messages : client.messages;
+        const request: Anthropic.MessageCreateParamsNonStreaming = {
+          model,
+          messages: [{ role: 'user', content: 'Reply with the word OK.' }],
+          max_tokens: 128,
+        };
+
+        for (const stream of [false, true]) {
+          let id: string;
+          let text = '';
+          if (stream) {
+            const events = await messages.create(
+              { ...request, stream: true },
+              {
+                signal: t.signal,
+              },
+            );
+            let messageId: string | undefined;
+            let stopped = false;
+            let stopReason: string | null | undefined;
+            for await (const event of events) {
+              if (event.type === 'message_start') messageId = event.message.id;
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'text_delta'
+              )
+                text += event.delta.text;
+              if (event.type === 'message_delta')
+                stopReason = event.delta.stop_reason;
+              if (event.type === 'message_stop') stopped = true;
+            }
+            assert.ok(
+              messageId && stopped,
+              'SSE must reach message_stop and EOF',
+            );
+            assert.equal(stopReason, 'end_turn');
+            id = messageId;
+          } else {
+            const message = await messages.create(request, {
+              signal: t.signal,
+            });
+            assert.equal(message.type, 'message');
+            assert.equal(message.stop_reason, 'end_turn');
+            id = message.id;
+            text = message.content
+              .filter((block) => block.type === 'text')
+              .map((block) => block.text)
+              .join('');
+          }
+          assert.ok(
+            id && text.trim(),
+            'Expected a nonempty complete Messages answer',
+          );
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const receipt = await Promise.race([
+              retryReceipt(() => client.verifyResponse(id), t.signal),
+              new Promise<never>((_, reject) => {
+                timer = setTimeout(
+                  () => reject(new Error('Receipt deadline exceeded')),
+                  15_000,
+                );
+              }),
+            ]);
+            assert.equal(receipt.id, id);
+            assert.equal(receipt.signatureKind, 'gateway');
+          } finally {
+            clearTimeout(timer);
+          }
+        }
+      });
+    }
+  }
+}

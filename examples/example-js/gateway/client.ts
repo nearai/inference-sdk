@@ -1,13 +1,17 @@
+import type { SigningAlgo } from '@nearai/inference-sdk/node';
 import {
-  InferenceClient,
-  verifyDeploymentImageProvenance,
   type ImageProvenancePolicy,
+  InferenceClient,
+  verifyComposeManagerDeploymentImageProvenance,
+  verifyDeploymentImageProvenance,
 } from '@nearai/inference-sdk/node';
+import { transportOptions } from '../transport-options.ts';
 
-const BASE_URL = 'https://cloud-api.near.ai/v1/';
-const MODEL = 'z-ai/glm-5.3-flash';
+const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
+const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';
 // Selects the algorithm for attestation, E2EE, and response signatures.
-const SIGNING_ALGO = 'ed25519';
+const SIGNING_ALGO = (process.env.NEARAI_SIGNING_ALGO ??
+  'ed25519') as SigningAlgo;
 
 // Required Gateway images and build workflows. Add a reviewed `commit`
 // to each policy if your application also requires commit pinning.
@@ -30,6 +34,13 @@ const GATEWAY_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
   },
 };
 
+const MODEL_IMAGE_POLICIES: Record<string, ImageProvenancePolicy> = {
+  'nearaidev/vllm-proxy-rs': {
+    repository: 'nearai/inference-proxy',
+    workflow: '.github/workflows/build.yml',
+  },
+};
+
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   if (!apiKey) throw new Error('NEARAI_API_KEY is required');
@@ -40,8 +51,22 @@ async function main(): Promise<void> {
   const inferenceClient = new InferenceClient({
     apiKey,
     baseUrl: BASE_URL,
-    signingAlgo: SIGNING_ALGO,
+    ...transportOptions(SIGNING_ALGO),
     e2ee: true,
+    modelVerification: {
+      verifiers: {
+        deployment: (deployment) =>
+          verifyComposeManagerDeploymentImageProvenance({
+            deployment,
+            imagePolicies: MODEL_IMAGE_POLICIES,
+            composeManagerImagePolicy: {
+              imageRepository: 'nearaidev/compose-manager',
+              repository: 'nearai/compose-manager',
+              workflow: '.github/workflows/build.yml',
+            },
+          }),
+      },
+    },
     gatewayVerification: {
       verifiers: {
         deployment: ({ appCompose }) =>
@@ -53,8 +78,8 @@ async function main(): Promise<void> {
     },
   });
 
-  // Gateway/model attestations and all four Gateway image checks must pass
-  // before Chat is sent. These policies do not verify model runtime images.
+  // Attestations and required Gateway/model image builds must pass before Chat.
+  // Model image checks authenticate recorded deployment intent, not runtime state.
   // Optional: verify ahead of the first message, for example on model selection.
   await inferenceClient.verify(MODEL);
 
@@ -68,12 +93,12 @@ async function runNonStreamingExample(
   const completion = await inferenceClient.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 8,
+    max_completion_tokens: 1024,
   });
-  console.log(completion.choices[0]?.message.content ?? '');
 
   const verified = await inferenceClient.verifyResponse(completion.id);
   console.log(`Verified ${verified.signatureKind} response.`);
+  console.log(completion.choices[0]?.message.content ?? '');
 }
 
 async function runStreamingExample(
@@ -82,7 +107,7 @@ async function runStreamingExample(
   const stream = await inferenceClient.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: 'Reply with the word ok.' }],
-    max_completion_tokens: 8,
+    max_completion_tokens: 1024,
     stream: true,
   });
 
@@ -91,9 +116,9 @@ async function runStreamingExample(
     completionId = chunk.id;
     process.stdout.write(chunk.choices[0]?.delta.content ?? '');
   }
-  process.stdout.write('\n');
 
   // Consume the full stream before verifying its exact bytes.
+  process.stdout.write('\n');
   if (completionId === undefined)
     throw new Error('Stream returned no completion ID');
   const verified = await inferenceClient.verifyResponse(completionId);

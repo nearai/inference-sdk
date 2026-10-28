@@ -12,6 +12,7 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error
 
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
+func (c *InferenceClient) CreateResponse(ctx context.Context, request any) (json.RawMessage, error)
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error)
 func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
@@ -19,15 +20,18 @@ func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
 func (c *InferenceClient) Close() error
 ```
 
-`CreateChatCompletion` marshals a request to JSON and consumes the response. Use
-it for non-streaming Chat; use `HTTPClient` for streaming or the official OpenAI
-Go SDK. `RoundTrip` accepts POST requests only at the configured Chat Completions
-endpoint. It verifies deployments before transmission and retains the exact wire
+`CreateChatCompletion` and `CreateResponse` send non-streaming JSON requests.
+Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accepts
+POST requests at the configured Chat Completions and Gateway Responses creation
+endpoints. It verifies deployments before transmission and retains the exact wire
 bytes after complete body consumption. It does not automatically verify receipts.
 
 `HTTPClient` uses the inference client as its transport. `BaseURL` supplies the
 matching API URL for OpenAI client configuration. Close response bodies and the
 inference client when finished.
+
+See [Responses API](./verification-guide.md#responses-api) for Gateway receipt
+semantics, streaming, and supported privacy options.
 
 ### Options and defaults
 
@@ -38,18 +42,39 @@ inference client when finished.
 | `ClientOptions.Headers` | Additional request headers. |
 | `ClientOptions.HTTPClient` | Optional borrowed HTTP client; custom transports are trusted application code. |
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
-| `E2EE` | `false` for Gateway. Direct clients use `DisableE2EE` instead, defaulting to encryption enabled. |
+| `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
 | `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
-| `MaxBodyBytes` | Zero selects 64 MiB per request/response. |
-| `MaxCacheEntries` | Zero selects 128 entries for each cache. |
-| `MaxReceiptCacheBytes` | Zero selects 64 MiB combined retained request/response bytes. |
 
-Negative size/count limits are invalid. See [lifecycle](#clients-and-lifecycle)
-for eviction, cancellation, and retention behavior.
+See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
+
+## System One decisions
+
+| Method | Result |
+| --- | --- |
+| `CreateSystemOne(ctx, request)` | `SystemOneResult{Data, DecisionID}` |
+| `CreateSystemOneWithHeaders(ctx, request, headers)` | Same result, with per-call headers. |
+| `VerifyResponse(ctx, result.DecisionID)` | Verified receipt for the captured request and response. |
+
+Use a Gateway client with E2EE and OHTTP disabled. Each create call verifies the
+required deployments and sends one nonstreaming request. `DecisionID` comes from
+`X-Generation-Id`. Verify the receipt before using `Data`.
+
+Requests accept `SystemOneRequest` or another JSON-serializable value. Each
+question requires `Instructions` as text, an object, or an array. Responses
+support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
+Structured legend numbers use `json.Number`, while score and probability fields
+use `float64`.
+
+System One shares Chat's per-model session and the client's
+receipt retention and verification.
+Cancellation uses `ctx`, and `Close` cancels outstanding operations.
+
+Inference is sent once. Retry transient receipt lookups through the verification
+method while the response remains cached.
 
 ## Evidence retrieval
 
@@ -98,9 +123,14 @@ matching instances; a shared signer does not uniquely identify an instance.
 
 `NewPinnedTransport` clones a standard HTTP transport and checks the attested
 SPKI fingerprint in addition to normal TLS validation. Close its idle connections
-when finished. `CreateTDXQuoteVerifier("")` uses the default PCCS service.
-`GPUVerifierOptions` has `NRASURL`, `JWKSURL`, and `HTTPClient` fields; empty URLs
-select NVIDIA's NRAS and JWKS endpoints.
+when finished.
+
+| Factory | Parameter or field | Default | Description |
+| --- | --- | --- | --- |
+| `CreateTDXQuoteVerifier` | `pccsURL string` | `https://api.trustedservices.intel.com` | PCCS base URL; DCAP constructs SGX and TDX collateral paths beneath it. An empty string selects the default. |
+| `CreateGPUEvidenceVerifier` | `GPUVerifierOptions.NRASURL string` | `https://nras.attestation.nvidia.com/v3/attest/gpu` | Complete GPU evidence POST URL. An empty string selects the default. |
+| | `GPUVerifierOptions.JWKSURL string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Independent trusted signing-key URL. An empty string selects the default. |
+| | `GPUVerifierOptions.HTTPClient *http.Client` | Built-in HTTP client | Optional HTTP configuration for NRAS and JWKS requests. |
 
 ## Encryption helpers
 
@@ -179,17 +209,36 @@ type SigningIdentity struct {
 }
 
 type Attestation struct {
-	Nonce             string
-	Signer            SigningIdentity
-	IntelQuote        string
-	EventLog          json.RawMessage
-	AppCompose        string
-	ReportedQuoteData string
-	SigningPublicKey  string
-	NvidiaPayload     *string
-	SPKIFingerprint   string
-	ModelName         string
-	InstanceID        string
+	ComposeManagerAttestation *ComposeManagerAttestation
+	Nonce                     string
+	Signer                    SigningIdentity
+	IntelQuote                string
+	EventLog                  json.RawMessage
+	AppCompose                string
+	ReportedQuoteData         string
+	SigningPublicKey          string
+	NvidiaPayload             *string
+	SPKIFingerprint           string
+	ModelName                 string
+	InstanceID                string
+}
+
+type ComposeManagerAction map[string]any
+
+type ComposeManagerAttestation struct {
+	Actions           []ComposeManagerAction `json:"actions"`
+	ActionsHash       string                 `json:"actions_hash"`
+	Nonce             string                 `json:"nonce"`
+	IntelQuote        string                 `json:"quote"`
+	EventLog          json.RawMessage        `json:"event_log"`
+	ReportedQuoteData string                 `json:"report_data"`
+}
+
+type VerifiedComposeManagerAttestation struct {
+	Actions             []ComposeManagerAction
+	TCBStatus           string
+	AdvisoryIDs         []string
+	RuntimeMeasurements RuntimeMeasurements
 }
 
 type ClientBinding struct{ Nonce, SPKIFingerprint string }
@@ -237,6 +286,7 @@ type QuoteVerificationResult struct {
 type RuntimeMeasurements struct{ OSImageHash, ComposeHash string }
 
 type MeasuredDeployment struct {
+	ComposeManager      *VerifiedComposeManagerAttestation
 	AppCompose          string
 	RuntimeMeasurements RuntimeMeasurements
 }
@@ -275,6 +325,8 @@ type AttestationVerificationResult struct {
 }
 
 type VerifiedCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
@@ -311,18 +363,14 @@ type InferenceOptions struct {
 	GatewayVerification VerificationOptions
 	ModelVerification   VerificationOptions
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
-	// MaxBodyBytes bounds each retained completion and request. Defaults to 64 MiB.
-	MaxBodyBytes int64
-	// MaxCacheEntries bounds retained sessions and receipts. Defaults to 128.
-	MaxCacheEntries int
-	// MaxReceiptCacheBytes bounds combined retained request/response bytes. Defaults to 64 MiB.
-	MaxReceiptCacheBytes int64
 }
 
-// DirectInferenceOptions defaults E2EE to true, matching the other SDKs.
+// DirectInferenceOptions leaves E2EE disabled by default.
 // Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
 	InferenceOptions
+	// Deprecated: set InferenceOptions.E2EE to enable encryption.
+	// When true, DisableE2EE takes precedence over E2EE.
 	DisableE2EE bool
 }
 
@@ -359,21 +407,17 @@ waiters intact; shared verification is limited to two minutes. Failed preflight
 is not cached. Retryable signature retrieval failures can be attempted again
 without replaying the completion.
 
-`MaxBodyBytes` defaults to 64 MiB for each buffered Chat request/response. Streaming
-is incremental, but signature verification requires retaining the wire body.
-`MaxReceiptCacheBytes` defaults to 64 MiB for the combined request and response
-bytes across retained receipts. `MaxCacheEntries` defaults to 128 for both
-completed preflight sessions and receipts. Oldest entries are evicted to admit
-new ones; evicted receipt IDs cannot be verified later. A single receipt exceeding
-the byte budget fails with `api.body_too_large` before any existing receipt is evicted.
-These cache limits do not bound concurrent requests or records held by active callers.
-Select shorter retention and smaller limits for memory-constrained services.
-Successful verification does not automatically discard its retained record.
+Streaming is incremental, but signature verification requires retaining the wire body.
+Cache memory grows with the responses retained during the TTL. Select shorter
+retention for services that process many or large completions.
+Verified records remain available until their TTL expires. A duplicate
+retained ID fails with `api.duplicate_completion_id` and preserves the original
+receipt. An expired ID can be reused.
 
 ## Verification guarantees
 
 All returned model reports must verify, including instances sharing a signer.
-By default, only `UpToDate` and `OutOfDate` TCB states are accepted. An explicitly
+By default, `UpToDate`, `OutOfDate`, and `TDRelaunchAdvised` TCB states are accepted. An explicitly
 empty `AcceptedTCBStatuses` rejects all states. Debug-enabled quotes are rejected.
 Quote report data binds the client nonce and signer, plus the Gateway's SPKI
 fingerprint when requested. The SDK replays RTMR3 events and checks the hash of
@@ -461,6 +505,7 @@ bounded to 1 MiB and at most 32 informational responses precede the final respon
 `DeploymentPolicy(ctx, model, deployment)` runs after the model's configured
 `DeploymentVerifier`. Verification alone does not approve a publisher, image,
 measurement or release version. Supply policies for those decisions.
+Deployment callbacks inspect the verified evidence as read-only input.
 
 `VerifyDeploymentImageProvenance` selects digest-pinned images from measured
 app-compose JSON's `docker_compose_file`. Every configured image repository must
@@ -468,6 +513,19 @@ occur, and every matching service must pin a digest. Unresolved image variables
 and malformed Compose are rejected before fetching evidence.
 
 `FetchImageProvenance` retrieves inline GitHub bundles, including pagination.
+Provenance fetch limits:
+
+| Resource | Limit |
+| --- | --- |
+| Response page | 16 MiB and 100 attestations |
+| Entire fetch | 32 pages and 64 MiB |
+| Combined `Link` headers per page | 8 KiB |
+| Encoded `before`/`after` query | 4 KiB |
+
+Body limits apply while reading, including responses without `Content-Length`,
+and fail with `api.body_too_large`. Other limits fail with `api.invalid_response`.
+Limit failures are non-retryable and return no partial bundles.
+
 Pagination contributes only a cursor; supplied origins/paths and bundle URLs are
 never followed. `ProvenanceOptions.GitHubToken` is separate from the Gateway key.
 `VerifyImageProvenance` checks Sigstore signatures, certificate transparency,
@@ -477,6 +535,39 @@ workflows. `Commit` optionally pins reviewed source. The default Sigstore root
 uses authenticated production TUF updates; `TrustedRoot` supports offline trusted
 material. Trust-root refresh uses the upstream synchronous API; cancellation is
 checked before and after it, not during its network operation.
+
+### Compose Manager deployment provenance
+
+`Attestation.ComposeManagerAttestation` holds optional raw manager evidence.
+When present in a model report, verification checks its quote/TCB, nonce, canonical
+action hash, event log, and binding to the model's measured app-compose. The
+callback receives `MeasuredDeployment.ComposeManager`, including authenticated
+actions, TCB status, advisory IDs and runtime measurements.
+
+`VerifyComposeManagerDeploymentImageProvenance(ctx, deployment, imagePolicies, options)`
+requires manager evidence, selects the latest matching `compose_up`, fetches its
+recorded file at its commit, verifies exact SHA-256 and UTF-8, and verifies images
+in the action's named `services`. An absent/empty service list selects the entire
+file; unknown services fail. Unselected images cannot satisfy a required policy.
+
+| Option | Meaning |
+| --- | --- |
+| `ComposeRepository` | Trusted `owner/repo`; defaults to `nearai/cvm-compose-files`. |
+| `ComposeFile` | Exact file path, or the latest `compose_up` across all files. |
+| `ComposeManagerImagePolicy` | Required `ImageRepository` and `Build` (`ImageProvenancePolicy`) for the latest `compose_manager_started` image. |
+| `ProvenanceOptions` | Shared proof options: `TrustedRoot`, `HTTPClient`, `GitHubToken`, `GitHubAPIURL`. |
+
+Compose files are limited to 8 MiB before hashing or parsing. Missing evidence,
+hash mismatches, and rejected image policies fail verification. See the
+[guide](./verification-guide.md#images-deployed-by-compose-manager) for usage
+and evidence scope.
+
+`GitHubAPIURL` sets the GitHub API base URL for compose files and image proofs;
+it defaults to `https://api.github.com`. When using a GitHub token in a frontend
+is impractical, set it to a GitHub-compatible endpoint on your backend. The
+backend supplies the GitHub credentials; the SDK omits `GitHubToken` when
+`GitHubAPIURL` is set. Redirects and pagination outside the requested artifact
+are rejected.
 
 ## Errors and development
 

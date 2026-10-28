@@ -3,18 +3,21 @@ import os
 
 from nearai_inference_sdk import (
     AttestationVerifiers,
+    ComposeManagerImagePolicy,
     GatewayVerificationOptions,
     ImageProvenancePolicy,
     InferenceClient,
     MeasuredDeployment,
+    ModelAttestationVerifiers,
+    ModelVerificationOptions,
+    verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
 )
 
-
-BASE_URL = 'https://cloud-api.near.ai/v1/'
-MODEL = 'z-ai/glm-5.3-flash'
+BASE_URL = os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/')
+MODEL = os.environ.get('NEARAI_MODEL', 'z-ai/glm-5.3-flash')
 # One algorithm selects attestation, E2EE, model routing, and response signatures.
-SIGNING_ALGO = 'ed25519'
+SIGNING_ALGO = os.environ.get('NEARAI_SIGNING_ALGO', 'ed25519')
 GATEWAY_IMAGE_POLICIES = {
     'nearaidev/cloud-api': ImageProvenancePolicy(
         repository='nearai/cloud-api', workflow='.github/workflows/build.yml'
@@ -31,6 +34,26 @@ GATEWAY_IMAGE_POLICIES = {
 }
 
 
+MODEL_IMAGE_POLICIES = {
+    'nearaidev/vllm-proxy-rs': ImageProvenancePolicy(
+        repository='nearai/inference-proxy', workflow='.github/workflows/build.yml'
+    ),
+}
+
+
+async def verify_model_images(deployment: MeasuredDeployment) -> None:
+    # Verify recorded deployment intent, not the currently running containers.
+    await verify_compose_manager_deployment_image_provenance(
+        deployment,
+        MODEL_IMAGE_POLICIES,
+        compose_manager_image_policy=ComposeManagerImagePolicy(
+            image_repository='nearaidev/compose-manager',
+            repository='nearai/compose-manager',
+            workflow='.github/workflows/build.yml',
+        ),
+    )
+
+
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
     # These caller-owned policies check Gateway images, not model runtime images.
     await verify_deployment_image_provenance(
@@ -42,7 +65,7 @@ async def run_non_streaming_example(client: InferenceClient) -> None:
     completion = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
     )
     verified = await client.verify_response(completion.id)
     print(f'Verified {verified.signature_kind} response.')
@@ -53,18 +76,18 @@ async def run_streaming_example(client: InferenceClient) -> None:
     stream = await client.chat.completions.create(
         model=MODEL,
         messages=[{'role': 'user', 'content': 'Reply with the word ok.'}],
-        max_completion_tokens=8,
+        max_completion_tokens=1024,
         stream=True,
     )
     completion_id = None
-    # Streamed content is not signature-verified until verify_response succeeds.
+    # Stream text as it arrives; verify the receipt after full consumption.
     async for chunk in stream:
         completion_id = chunk.id
         if chunk.choices:
             print(chunk.choices[0].delta.content or '', end='', flush=True)
-    print()
 
     # Receipt verification needs the complete encrypted response, including DONE.
+    print()
     if completion_id is None:
         raise RuntimeError('Stream returned no completion ID')
     verified = await client.verify_response(completion_id)
@@ -81,6 +104,10 @@ async def main() -> None:
         base_url=BASE_URL,
         signing_algo=SIGNING_ALGO,
         e2ee=True,
+        ohttp=os.environ.get('NEARAI_OHTTP') == 'true',
+        model_verification=ModelVerificationOptions(
+            verifiers=ModelAttestationVerifiers(deployment=verify_model_images)
+        ),
         gateway_verification=GatewayVerificationOptions(
             verifiers=AttestationVerifiers(deployment=verify_gateway_images)
         ),

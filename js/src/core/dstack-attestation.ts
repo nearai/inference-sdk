@@ -1,12 +1,9 @@
 import type { AttestationEvidence } from '../types/attestation-common';
 import type {
   AttestationPolicy,
-  DeploymentProvenanceStatus,
-  DeploymentVerifier,
   MeasuredDeployment,
   TdxQuoteVerifier,
   TcbStatus,
-  VerifiedAttestationEvidence,
   VerifiedTdxQuote,
 } from '../types/verification';
 import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
@@ -23,6 +20,7 @@ import { verifyAndReplayRtmr3 } from './event-log';
 const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
   'OutOfDate',
+  'TDRelaunchAdvised',
 ];
 
 /** Quote facts shared by model and gateway evidence. Internal to the SDK. */
@@ -52,8 +50,6 @@ export async function verifyDstackQuote({
   tdxQuoteVerifier,
   advertisedReportData,
 }: VerifyDstackQuoteParams): Promise<VerifiedDstackQuote> {
-  const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
-
   verifyReportedNonce({
     reportedNonce: attestation.nonce,
     nonce,
@@ -63,8 +59,29 @@ export async function verifyDstackQuote({
     attestation.signer.signingAddress,
   );
 
-  const quote = await verifyQuote(tdxQuoteVerifier, attestation.intelQuote);
+  const quote = await verifyTdxQuote({
+    intelQuote: attestation.intelQuote,
+    policy,
+    verifier: tdxQuoteVerifier,
+  });
   verifyAdvertisedReportData(advertisedReportData, quote.reportData);
+  return { attestation, quote, signer };
+}
+
+type VerifyTdxQuoteParams = {
+  intelQuote: string;
+  policy?: AttestationPolicy;
+  verifier?: TdxQuoteVerifier;
+};
+
+/** Shared CPU trust and TCB policy, independent of the report-data layout. */
+export async function verifyTdxQuote({
+  intelQuote,
+  policy,
+  verifier,
+}: VerifyTdxQuoteParams): Promise<VerifiedTdxQuote> {
+  const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
+  const quote = await verifyQuote(verifier, intelQuote);
   if (quote.debugEnabled) {
     throw new VerificationError({
       code: 'policy.debug_enabled',
@@ -81,51 +98,23 @@ export async function verifyDstackQuote({
     });
   }
 
-  return { attestation, quote, signer };
+  return quote;
 }
 
-/**
- * Replay measurements and optionally apply caller-owned deployment policy.
- * A supplied verifier is required to resolve successfully; there is no second
- * boolean that can silently change that requirement.
- */
+/** Verify the compose binding and replay dstack runtime measurements. */
 export async function verifyDstackDeployment(
   verifiedQuote: VerifiedDstackQuote,
-  deploymentVerifier?: DeploymentVerifier,
-): Promise<VerifiedAttestationEvidence> {
-  const { attestation, quote, signer } = verifiedQuote;
+): Promise<MeasuredDeployment> {
+  const { attestation, quote } = verifiedQuote;
   const runtimeMeasurements = await verifyAndReplayRtmr3(
     attestation.eventLog,
     quote.rtMr3,
   );
   const { appCompose } = attestation;
   await verifyAppComposeMrConfigBinding(appCompose, quote.mrConfigId);
-  const deployment: MeasuredDeployment = {
+  return {
     appCompose,
     runtimeMeasurements,
-  };
-
-  let deploymentProvenance: DeploymentProvenanceStatus = 'not_checked';
-  if (deploymentVerifier) {
-    try {
-      await deploymentVerifier(deployment);
-      deploymentProvenance = 'verified';
-    } catch (cause) {
-      throw wrapVerificationError(
-        {
-          code: 'provenance.verification_failed',
-        },
-        cause,
-      );
-    }
-  }
-
-  return {
-    signer,
-    tcbStatus: quote.tcbStatus,
-    advisoryIds: quote.advisoryIds,
-    deployment,
-    deploymentProvenance,
   };
 }
 

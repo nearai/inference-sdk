@@ -1,110 +1,31 @@
 # Live E2E tests
 
-These tests send real Chat requests and verify real attestation evidence and
-response signatures. They run after pushes to `main` (including merged PRs)
-and daily at 03:00 UTC, after the daily production deployment. GitHub may delay scheduled runs.
-The **Live E2E** workflow can also be started manually from `main`.
-Push, scheduled, and manual runs test both staging and production with all
-four SDKs, as eight separate jobs. Releases run only the selected language
-against both environments and block publication on failure. A failing test job
-does not cancel the other environment.
-
-## Configuration
-
-Add these repository secrets in **Settings → Secrets and variables → Actions**:
-
-| Environment | Fixed API URL | API key secret |
-| --- | --- | --- |
-| STG | `https://cloud-stg-api.near.ai/v1` | `NEARAI_STG_API_KEY` |
-| PRD | `https://cloud-api.near.ai/v1` | `NEARAI_PRD_API_KEY` |
-
-Use a dedicated test account with inference credits in each environment. URLs
-are defined in the workflow; no URL secret is needed. Each test job receives only
-its environment's API key, and both secrets are required before tests start.
-
-Each environment discovers representative Chat models from its public
-`/model/list` catalog: two NEAR TEE models, one Chutes model, and one external
-model. All four SDKs receive the same selection for that environment. The
-selector uses Chat capabilities, prefers non-reasoning models and lower token
-prices, and fails if a category is missing. It does not silently fall back to a
-hardcoded model.
-
-The first NEAR model also runs the integrated E2EE/OHTTP cases for all four SDKs.
-These capabilities are not listed separately in the catalog; missing support
-fails the relevant case. The Gateway URL must expose its own TLS certificate,
-not an aggregator's certificate.
-
-Missing secrets fail the workflow. It does not run on pull requests and does
-not expose credentials to build or dependency-install steps. Tests do not log
-credentials, request bodies, or full attestation reports.
-
-## Coverage
-
-| SDK | Live checks |
-| --- | --- |
-| All four, all selected models | Gateway quote and peer TLS binding, JSON Chat responses and exact-byte receipt verification |
-| All four, NEAR and external models | Complete SSE responses and exact-byte receipt verification |
-| All four, NEAR models | Every returned model report and GPU evidence; model or Gateway receipt verification according to the returned signature kind |
-| All four, external models | Gateway receipt verification; no NEAR model attestation or E2EE claims |
-| All four, Chutes | Gateway receipt verification for JSON responses; no Chutes model attestation or E2EE claims |
-| All four, signed responses | An altered response is rejected using the real receipt, without sending another request |
-| All four | `InferenceClient` with unencrypted NEAR/Chutes/external Chat, Ed25519 E2EE, ECDSA E2EE, and OHTTP + E2EE |
-| JavaScript | External OpenAI SDK using `InferenceClient.fetch`, generic package entry, and standalone verification functions |
-| Go | External OpenAI Go client through the verified `http.RoundTripper`, JSON/SSE and E2EE |
-| Python | External `AsyncOpenAI` using `InferenceClient.http_client`; explicit preflight and automatic preflight on the first Chat |
-| Python, Rust, and Go | Standalone verification with both Ed25519 and ECDSA |
-| All four | Standalone Chat uses the verified Gateway SPKI to pin its TLS connections |
-
-Rust and Go also cover explicit and automatic preflight, cached evidence
-timestamps, repeated receipt verification, and consuming streams through HTTP
-EOF. The shared Gateway feature matrix is covered in all four SDKs;
-JavaScript's generic entry and the JavaScript/Python/Go OpenAI transport adapters
-are language-specific checks with no Rust adapter equivalent. None of the live
-suites covers experimental direct endpoints or the example-specific Gateway
-image-provenance allowlist.
-
-The JavaScript tests import the built package entry points. Its generic entry
-is exercised in Node; this is not a browser or CORS test. This suite targets
-Gateway APIs, not experimental direct endpoints. Verification uses the SDK's
-default TCB policy and real Intel/NVIDIA verifiers, not mocks or an application
-deployment allowlist.
-
-A complete four-language run without retries sends 105 small Chat requests per
-environment (210 total), each capped at 1,024 completion tokens to leave room for
-reasoning and a visible answer.
-Responses must have non-empty answer content and finish with `stop`; empty or
-token-truncated responses fail. The test does not require the model to return a
-particular word. JavaScript and the external Python OpenAI client disable OpenAI
-request retries. Python's built-in Chat interface retains its SDK retry defaults. Go sends Chat once
-and disables OpenAI retries.
-Receipt lookup retries transient API failures up to five attempts, with 0.5, 1,
-2, and 4 second backoffs, within each model case's 180 second deadline. It never
-resends Chat or retries a cryptographic verification failure.
-Test failures and timeouts fail CI; they are not converted into skipped or
-successful tests.
-
-Chutes' own evidence format and encrypted channel are outside these SDK
-verification APIs. Its streaming support is separately gated by the provider,
-so this suite tests Chutes with JSON only and verifies the Gateway signature over
-the client-facing response. A missing signature fails every receipt test.
+Run the SDKs against staging or production to check deployment attestation,
+inference, and response signatures. These tests require a funded test account
+and make billable requests.
 
 ## Local use
 
-Select one environment by setting `NEARAI_BASE_URL` to its URL above and
-`NEARAI_API_KEY` to that environment's key through your local secret manager
-or shell. Do not commit a key or paste it into a
-command that saves shell history.
-Discover models once from the repository root (Node.js 24; no API key used):
+Set `NEARAI_API_KEY` through your local secret manager or shell and set
+`NEARAI_BASE_URL` to the matching environment:
+
+| Environment | `NEARAI_BASE_URL` |
+| --- | --- |
+| Staging | `https://cloud-stg-api.near.ai/v1` |
+| Production | `https://cloud-api.near.ai/v1` |
+
+Install Node.js 24.22.1 or later, then discover models once from the repository root.
+Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` to select
+one SDK's suites; the default selects all available suites.
 
 ```sh
-NEARAI_E2E_MODELS=$(node e2e/select-models.mjs)
-export NEARAI_E2E_MODELS
+export NEARAI_E2E_MODELS="$(node e2e/select-models.mjs)"
 ```
 
-Then run the relevant command from the repository root:
+Run the selected SDK's command from the repository root:
 
 ```sh
-# Node.js 24
+# Node.js 24.22.1+
 cd js
 pnpm install --frozen-lockfile
 pnpm build
@@ -126,19 +47,87 @@ cargo test --locked --test e2e -- --ignored --nocapture --test-threads=1
 ```
 
 ```sh
-# Go 1.25.8+; the verifier is embedded
+# Go 1.26.10+
 export CGO_ENABLED=0
 go -C go test -tags=e2e ./e2e -v -timeout 15m
-go -C examples/example-go test -tags=e2e -run '^TestLiveOpenAI$' -v -timeout 5m .
+go -C examples/example-go test -tags=e2e -run '^TestLive' -v -timeout 15m .
 ```
 
-Go has six live SDK cases: standalone Ed25519/ECDSA across the selected catalog,
-integrated plaintext across the catalog, and Ed25519 E2EE, ECDSA E2EE, and
-OHTTP + E2EE on the first NEAR model. Each covers JSON/SSE (Chutes JSON only).
-A seventh case covers the official OpenAI Go SDK's encrypted JSON and SSE calls.
-Go live code uses the `e2e` build tag; ordinary test commands cannot select it.
+Ordinary unit-test commands exclude the live suites. PR CI checks their source
+without making live requests.
 
-Normal unit-test commands do not contact the live service. Jest selects only
-`test/**/*.spec.ts`, pytest defaults to `test/`, and Rust's live tests are
-explicitly ignored until the E2E command opts into them. PR CI still lints and
-typechecks/compiles the live test code without using secrets.
+## CI configuration
+
+Add `NEARAI_STG_API_KEY` and `NEARAI_PRD_API_KEY` as repository Actions secrets.
+Both are required. Each test job receives only its environment's key.
+
+The [Live E2E workflow](../.github/workflows/e2e.yml) runs all four SDKs against
+both environments after pushes to `main`, daily at 03:00 UTC, and on manual
+dispatch from `main`. Releases test all four SDKs in both environments and
+block publication on failure.
+
+## Coverage
+
+Each environment selects representative models from its public `/model/list`
+catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
+external model; all SDKs use the same selection. The same list includes a hosted
+Jev model when the selected SDK has a System One suite. Each entry carries an
+`endpoint` (`chat`, `responses`, or `systemone`), and each suite uses only its
+endpoint. A missing required category fails setup. Responses has its own `responses` entries:
+one of the selected NEAR TEE models and one OpenAI-owned external text model.
+The OpenAI model uses the same non-reasoning, price, and ID ordering as Chat;
+a cheaper external model from another owner cannot replace it.
+
+| Area | Live checks |
+| --- | --- |
+| Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
+| Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
+| Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
+| Client integration | Integrated and standalone SDK APIs; OpenAI adapters for JavaScript, Python, and Go. |
+
+The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
+Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
+integration requirements.
+
+Chat runs the same native and supported official-client modes in each language,
+with at most 1,024 completion tokens per request. Responses must contain an answer and
+finish with `stop`. Test failures and timeouts fail the workflow.
+
+Receipt lookups retry transient API failures up to five attempts within the
+model case's 180 second deadline. A receipt retry does not send another
+inference request.
+
+## Official Jev SDK integration
+
+`js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
+`@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
+send one real decision per case, parse the official response types, extract
+`X-Generation-Id`, and verify the captured bytes. Receipt lookups alone may
+retry. Compression, E2EE, OHTTP, and automatic inference retries are disabled.
+Both Ed25519 and ECDSA are covered.
+
+The official-SDK cases are part of the existing System One live suites and run
+through the existing live commands and workflow. They use the same
+`NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
+native cases. The catalog selector supplies an external Jev model; there are no
+separate Jev environment variables or CI steps.
+
+Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
+same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
+these cases requires the routing contract from
+[cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
+self-hosted deployment. They preverify the selected model and require a provider
+receipt matching its attested signing identity. An external model is never
+substituted. The current catalog selector chooses only hosted Jev deployments.
+
+Like the existing live tests, these suites require explicit configuration and
+are excluded from ordinary unit-test runs. Missing required external-model
+configuration or verification failures fail the tests.
+
+The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
+`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+transport, disabled retries/compression, and receipt-ID extraction together.
+The official SDKs remain example/test dependencies only. Python uses
+`inference.httpx2_client` to bridge
+Jev's HTTPX2 client to the existing verified HTTPX transport.

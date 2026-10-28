@@ -146,7 +146,7 @@ fn verify_ecdsa_signature(signature: &CompletionSignature) -> Result<(), Verific
             .map_err(|_| VerificationError::SignatureInvalid {
                 signing_algo: SigningAlgo::Ecdsa,
             })?;
-    let point = key.to_encoded_point(false);
+    let point = key.to_sec1_point(false);
     let public_key = point.as_bytes();
     if public_key.len() != 65 || public_key[0] != 0x04 {
         return Err(VerificationError::SignatureInvalid {

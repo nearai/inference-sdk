@@ -69,6 +69,9 @@ async function verifyDirectModelCpuAttestation({
     attestation,
     verifiedQuote,
     deploymentVerifier: verifiers?.deployment,
+    nonce,
+    policy,
+    tdxQuoteVerifier: verifiers?.tdxQuote,
   });
   return {
     ...verified,
