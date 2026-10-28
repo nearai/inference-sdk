@@ -1133,6 +1133,85 @@ describe('inference client', () => {
     },
   );
 
+  test.each([false, true])(
+    'clears response bytes and expiry timers while preserving the session (TEE=%s)',
+    async (tee) => {
+      const gateway = createTestGateway({
+        providerType: tee ? 'vllm' : 'openai',
+        attestationSupported: tee,
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(
+          createSignatureFetch(gateway, tee ? 'provider_tee' : 'gateway'),
+        );
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: tee,
+      });
+      jest.useFakeTimers({
+        doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+      });
+      const request = {
+        model,
+        messages: [{ role: 'user' as const, content: 'hello' }],
+      };
+      const first = await client.chat.completions.create(request);
+      await client.verifyResponse(first.id);
+      expect(jest.getTimerCount()).toBe(1);
+
+      client.clearResponseCache();
+      client.clearResponseCache();
+      expect(jest.getTimerCount()).toBe(0);
+      await expect(client.verifyResponse(first.id)).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+
+      const next = await client.chat.completions.create(request);
+      await expect(client.verifyResponse(next.id)).resolves.toMatchObject({
+        id: next.id,
+      });
+      expect(gateway.state.gatewayAttestationRequests).toBe(1);
+      expect(gateway.state.modelAttestationRequests).toBe(tee ? 1 : 0);
+      client.clearResponseCache();
+      expect(jest.getTimerCount()).toBe(0);
+    },
+  );
+
+  test('does not retain a response that arrives after the cache was cleared', async () => {
+    const gateway = createTestGateway();
+    const fetch = createSignatureFetch(gateway);
+    let resumeResponse!: () => void;
+    let responseReady!: () => void;
+    const resume = new Promise<void>((resolve) => {
+      resumeResponse = resolve;
+    });
+    const ready = new Promise<void>((resolve) => {
+      responseReady = resolve;
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const response = await fetch(input, init);
+      if (isChatCompletionRequest(input)) {
+        responseReady();
+        await resume;
+      }
+      return response;
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    const completion = client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+    await ready;
+    client.clearResponseCache();
+    resumeResponse();
+    const result = await completion;
+    expect(result.choices[0].message.content).toBe('hello client');
+    await expect(client.verifyResponse(result.id)).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+  });
+
   test.each([
     'attestationCacheTimeToLiveMs',
     'responseCacheTimeToLiveMs',
@@ -1977,6 +2056,54 @@ describe('inference client', () => {
       await verification;
     },
   );
+
+  test('finishing a cleared stream does not restore its expiry timer', async () => {
+    const gateway = createTestGateway({ streamRecordSeparators: ['\n\n'] });
+    let resumeStream!: () => void;
+    const resume = new Promise<void>((resolve) => {
+      resumeStream = resolve;
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const response = await gateway.fetch(input, init);
+      if (!isChatCompletionRequest(input)) return response;
+      let chunks = 0;
+      return new Response(
+        response.body?.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            async transform(chunk, controller) {
+              if (chunks++ === 2) await resume;
+              controller.enqueue(chunk);
+            },
+          }),
+        ),
+        { headers: response.headers },
+      );
+    });
+    const client = new InferenceClient(inferenceClientOptions(gateway));
+    jest.useFakeTimers({
+      doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'],
+    });
+    const stream = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: true,
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.value?.choices[0]?.delta.content).toBe('hello ');
+    client.clearResponseCache();
+    resumeStream();
+    expect((await iterator.next()).value?.choices[0]?.delta.content).toBe(
+      'client',
+    );
+    expect((await iterator.next()).done).toBe(true);
+    await expect(
+      client.verifyResponse('chatcmpl-stream'),
+    ).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    expect(jest.getTimerCount()).toBe(0);
+  });
 
   test('returns a non-streaming completion with verifiable entity bodies', async () => {
     const gateway = createTestGateway();
@@ -4570,6 +4697,61 @@ describe('System One decisions', () => {
     },
   );
 
+  test.each([false, true])(
+    'clears an in-flight decision (external=%s)',
+    async (external) => {
+      const fixture = decisionGateway();
+      let responseReady!: () => void;
+      let resumeResponse!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        responseReady = resolve;
+      });
+      const resume = new Promise<void>((resolve) => {
+        resumeResponse = resolve;
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(async (input, init) => {
+          const response = await fixture.fetch(input, init);
+          const url = new URL(
+            input instanceof Request ? input.url : input.toString(),
+          );
+          if (url.pathname === '/v1/systemone') {
+            responseReady();
+            await resume;
+          }
+          return response;
+        });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const pending = external
+        ? client
+            .fetch(new URL('systemone', baseUrl), {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(decisionRequest),
+            })
+            .then(async (response) => {
+              await response.arrayBuffer();
+              return response.headers.get('x-generation-id') ?? '';
+            })
+        : client.systemone
+            .create(decisionRequest)
+            .then((result) => result.decisionId);
+      await ready;
+      client.clearResponseCache();
+      resumeResponse();
+      await expect(client.verifyResponse(await pending)).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+      const next = await client.systemone.create(decisionRequest);
+      await client.verifyResponse(next.decisionId);
+      client.clearResponseCache();
+    },
+  );
+
   test('expires decision response records using the shared response TTL', async () => {
     const fixture = decisionGateway();
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
@@ -4769,6 +4951,25 @@ describe('Responses API', () => {
       signatureCalls: () => signatureCalls,
     };
   }
+
+  test('clears Responses receipts and permits the same ID to be captured again', async () => {
+    const fixture = responsesGateway();
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const request = { model, input: 'hello', store: false };
+    const first = await client.responses.create(request);
+    await client.verifyResponse(first.id);
+    client.clearResponseCache();
+    await expect(client.verifyResponse(first.id)).rejects.toMatchObject({
+      failure: { code: 'api.completion_not_found' },
+    });
+    const next = await client.responses.create(request);
+    await client.verifyResponse(next.id);
+    client.clearResponseCache();
+  });
 
   test.each(
     [false, true].flatMap((streaming) =>

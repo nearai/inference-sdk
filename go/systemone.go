@@ -174,6 +174,7 @@ func (c *InferenceClient) CreateSystemOne(ctx context.Context, request any) (Sys
 // CreateSystemOneWithHeaders adds per-call headers while preserving client-owned
 // authentication and the generated body's identity encoding and integrity headers.
 func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, request any, headers http.Header) (SystemOneResult, error) {
+	generation := c.responseCacheGeneration()
 	var result SystemOneResult
 	if c.api.direct || c.options.E2EE || c.options.OHTTP {
 		return result, detail("api.invalid_input", "resource", "systemone")
@@ -253,7 +254,7 @@ func (c *InferenceClient) CreateSystemOneWithHeaders(ctx context.Context, reques
 	if err != nil {
 		return result, err
 	}
-	if err = c.register(id, body, wire, s, false); err != nil {
+	if err = c.register(id, body, wire, s, false, generation); err != nil {
 		return result, err
 	}
 	return SystemOneResult{Data: data, DecisionID: id}, nil

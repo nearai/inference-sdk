@@ -20,8 +20,9 @@ one-signature design.
 
 ## Public API
 
-Gateway retrieval, attestation verification, and `InferenceClient` operations
-are asynchronous. Standalone response-signature verification is synchronous.
+Gateway retrieval, attestation verification, and inference operations are
+asynchronous. Standalone response-signature verification and response-cache
+cleanup are synchronous.
 
 | API | Signature | Returns | Purpose |
 | --- | --- | --- | --- |
@@ -32,6 +33,7 @@ are asynchronous. Standalone response-signature verification is synchronous.
 | `inference_client.send` | `(request)` | `httpx.Response` | Verified Chat, Responses, Messages, or uncompressed JSON System One requests, with exact bytes retained for receipts. |
 | `inference_client.verify` | `(model)` | `AttestationVerificationResult` | Returns verified deployments without sending inference, sharing the cache and in-flight work with Chat, Responses, Messages, and System One. |
 | `inference_client.verify_response` | `(id)` | `VerifiedCompletionResult` | Fetches and verifies a response signature over retained bytes. |
+| `inference_client.clear_response_cache` | `()` | `None` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `inference_client.systemone.create` | `(request, *, headers=None)` | `SystemOneResult` | Preflights and sends one decision request; response verification is explicit. |
 | `DirectInferenceClient` | `(base_url, *, api_key=None, ...)` | client | Experimental direct Chat, without a Gateway. |
 | `DirectAttestationClient` | `(base_url, *, api_key=None, headers=None)` | client | Experimental retrieval of direct reports and signatures. |
@@ -154,6 +156,12 @@ finite, non-negative durations. Expired records are unavailable immediately;
 timers release retained bodies while idle. A duplicate retained ID fails with
 `api.duplicate_completion_id` and preserves the original receipt. An expired ID
 can be reused. Closing the client releases retained records.
+
+Call `clear_response_cache()` when discarding a conversation. Cleared IDs become
+unavailable to `verify_response`. Ongoing response captures stay discarded when
+they finish. To end active work and release its buffers,
+also cancel the requests and finish any ongoing verification. Direct clients
+support the same cleanup method.
 
 ### Errors wrapped by official SDKs
 

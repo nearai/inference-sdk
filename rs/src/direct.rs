@@ -378,6 +378,10 @@ impl DirectInferenceClient {
     pub fn base_url(&self) -> &str {
         self.client.base_url()
     }
+    /// Release captured responses across all clones; keep the client reusable.
+    pub async fn clear_response_cache(&self) {
+        self.client.clear_response_cache().await;
+    }
     pub fn chat_request(
         &self,
         body: serde_json::Value,

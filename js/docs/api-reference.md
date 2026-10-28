@@ -119,6 +119,7 @@ Supply `apiKey`, `headers`, or both. `apiKey` is the direct-Gateway shortcut;
 | `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
 | `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat, Responses, Messages, or System One result. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
+| `InferenceClient.clearResponseCache()` | `void` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
@@ -148,6 +149,12 @@ non-negative durations. Expired records are unavailable immediately; timers rele
 retained bodies while idle. A duplicate retained ID fails with
 `api.duplicate_completion_id` and preserves the original receipt. An expired ID
 can be reused.
+
+Call `clearResponseCache()` when discarding a conversation. Cleared IDs become
+unavailable to `verifyResponse`. Ongoing response captures stay discarded when
+they finish. To end active work and release its buffers,
+also cancel the requests and finish any ongoing verification. Direct clients
+support the same cleanup method.
 
 ### Errors wrapped by official SDKs
 
@@ -270,6 +277,7 @@ There is no `gatewayVerification` option.
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
 | `verifyResponse(id)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
+| `clearResponseCache()` | `void` | Clears captured responses, cached receipt results, and expiry timers; preserves verified model sessions. |
 
 | `DirectAttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |

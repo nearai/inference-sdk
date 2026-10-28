@@ -182,6 +182,22 @@ func systemOneRequest() any {
 	return map[string]any{"model": "canonical/model", "state": map[string]string{"text": "hello"}, "questions": map[string]any{"q": map[string]string{"type": "noul", "instructions": "Is this a greeting?"}}}
 }
 
+func TestSystemOneClearResponseCache(t *testing.T) {
+	c, _ := systemOneClient(t, true, Ed25519, nil)
+	for i := 0; i < 2; i++ {
+		result, err := c.CreateSystemOne(context.Background(), systemOneRequest())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.VerifyResponse(context.Background(), result.DecisionID); err != nil {
+			t.Fatal(err)
+		}
+		c.ClearResponseCache()
+		_, err = c.VerifyResponse(context.Background(), result.DecisionID)
+		requireCode(t, err, "api.completion_not_found")
+	}
+}
+
 func TestSystemOnePlaintextKeyRoutingAndReceipt(t *testing.T) {
 	for _, tee := range []bool{false, true} {
 		for _, algo := range []SigningAlgo{Ed25519, ECDSA} {

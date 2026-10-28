@@ -22,6 +22,7 @@ both return `Result<InferenceClient, InferenceError>`.
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
 | `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. |
+| `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume
 `body` to EOF or call `bytes()` / `json()`. Dropping an incomplete body prevents
@@ -31,6 +32,12 @@ turn them into `ApiError::HttpStatus`.
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
 returns `CompletionSignatureKind`.
+
+Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
+become unavailable to `verify_response`. The client remains reusable. Ongoing
+response captures stay discarded when they finish. To end active work and release
+its buffers, also cancel the requests and finish any
+ongoing verification. Direct clients support the same cleanup method.
 
 `create_message(Value)` returns JSON; `message_request(Value)` builds an Anthropic
 Messages request for `send()`, including SSE. Both require a Gateway client with
