@@ -330,7 +330,7 @@ in state, instructions, or criteria:
 Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
 URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
 unchanged; the provider resolves them. Every asset must be referenced. A Score
-`legend` retains the original criterion reference. Multipart uploads are unsupported.
+`legend` retains the original criterion reference.
 
 ## Responses API
 

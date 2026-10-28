@@ -325,11 +325,10 @@ in state, instructions, or criteria:
 Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
 URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
 unchanged; the provider resolves them. Every asset must be referenced. A Score
-`legend` retains the original criterion reference. Multipart uploads are unsupported.
+`legend` retains the original criterion reference.
 
 The official Jev SDK adapter also forwards these JSON image parts unchanged;
-use its `box()` helper for the question. The official `image()` upload helper
-emits multipart and is unsupported.
+use its `box()` helper for the question.
 
 ### Use the official Jev SDK
 
@@ -368,8 +367,7 @@ console.log(data.answers.billing.noul);
 
 The adapter accepts uncompressed, nonstreaming JSON requests at the configured
 System One endpoint. Keep E2EE, OHTTP, request compression and automatic inference
-retries disabled; multipart uploads and other official SDK endpoints are outside
-this adapter's scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+retries disabled. Retry a transient receipt lookup through `verifyResponse(id)`.
 
 `X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
 identifies the upstream request. Verification uses the exact captured bytes.

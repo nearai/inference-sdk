@@ -288,11 +288,10 @@ in state, instructions, or criteria:
 Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
 URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
 unchanged; the provider resolves them. Every asset must be referenced. A Score
-`legend` retains the original criterion reference. Multipart uploads are unsupported.
+`legend` retains the original criterion reference.
 
 The official Jev SDK adapter also forwards these JSON image dictionaries
-unchanged; use its `Box` question type. The official `Image(...)` upload helper
-emits multipart and is unsupported.
+unchanged; use its `Box` question type.
 
 ### Use the official Jev SDK
 
@@ -337,9 +336,8 @@ async def decide(api_key: str, model: str) -> None:
 
 Use a canonical Jev model ID from your endpoint's catalog. System One accepts
 uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, request compression
-and automatic inference retries disabled. Multipart uploads and other official
-SDK endpoints are outside the NEAR client's supported endpoints. Retry transient
-receipt lookups through `verify_response(receipt_id)`.
+and automatic inference retries disabled. Retry transient receipt lookups through
+`verify_response(receipt_id)`.
 
 Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
 than the official SDK's upstream `request_id`. The official SDK parses the
