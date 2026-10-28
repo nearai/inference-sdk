@@ -103,8 +103,9 @@ interfaces; the owner retains its HTTPX connections. Other SDKs accepting an
 HTTPX2 client can use this property for the same supported endpoints.
 
 Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
-the authorization for metadata, Chat, and signature requests. Attestation requests
-omit `Authorization`, `api-key`, and `x-api-key`. An external
+the authorization for model reports, metadata, Chat, and signature requests.
+The client verifies Gateway evidence first, before sending authenticated requests.
+Gateway and direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`. An external
 `AsyncOpenAI` client's API key does not override it. With header-only authentication,
 you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
 
@@ -340,7 +341,7 @@ print(receipt.signature_kind, message.content)
 Set `stream=True` for typed Anthropic events. An external `AsyncAnthropic` can use
 `http_client=client.http_client`, `base_url='https://cloud-api.near.ai'`, and
 `max_retries=0`; the inference client's base URL includes `/v1/`. Its configured
-authentication governs inference and signature requests; attestation omits authentication headers.
+authentication governs model reports, inference, and signature requests; Gateway attestation omits authentication headers.
 See the [native example](../../examples/example-py/gateway/messages.py) and
 [official SDK example](../../examples/example-py/gateway/messages_anthropic_sdk.py)
 for JSON and streaming calls with receipt verification.

@@ -209,7 +209,7 @@ describe('AttestationClient', () => {
   });
 
   test.each([AttestationClient, NodeAttestationClient])(
-    'fetches unauthenticated reports and retains signature authentication with %p',
+    'omits Gateway authentication and retains model/signature authentication with %p',
     async (Client) => {
       for (const apiKey of [undefined, 'test']) {
         for (const headers of [
@@ -231,8 +231,14 @@ describe('AttestationClient', () => {
               if (url.pathname.includes('/signature/')) {
                 return jsonResponse(completionSignature('gateway'));
               }
-              for (const name of ['authorization', 'api-key', 'x-api-key']) {
-                expect(request.headers.has(name)).toBe(false);
+              if (!url.searchParams.has('model')) {
+                for (const name of ['authorization', 'api-key', 'x-api-key']) {
+                  expect(request.headers.has(name)).toBe(false);
+                }
+              } else {
+                expect(request.headers.get('authorization')).toBe(
+                  apiKey ? 'Bearer test' : headers ? 'Bearer custom' : null,
+                );
               }
               expect(request.headers.get('x-tenant')).toBe(
                 headers ? 'tenant' : null,
@@ -260,6 +266,44 @@ describe('AttestationClient', () => {
             apiKey ? 'Bearer test' : headers ? 'Bearer custom' : null,
           );
         }
+      }
+    },
+  );
+
+  test.each([undefined, 'other-org-key', 'allowed-org-key'])(
+    'preserves organization authorization for unlisted model reports (key: %s)',
+    async (apiKey) => {
+      const api = cloudFor(
+        (request) => {
+          const url = new URL(request.url);
+          if (!url.searchParams.has('model')) {
+            expect(request.headers.has('authorization')).toBe(false);
+            return jsonResponse(
+              gatewayReport(requestNonce(request), {
+                tls_cert_fingerprint: null,
+              }),
+            );
+          }
+          expect(url.searchParams.get('model')).toBe('unlisted-model');
+          if (
+            request.headers.get('authorization') !== 'Bearer allowed-org-key'
+          ) {
+            return jsonResponse({ error: { message: 'Unknown model' } }, 400);
+          }
+          return jsonResponse(modelReport(requestNonce(request)));
+        },
+        { baseUrl, apiKey },
+      );
+      await api.client.fetchGatewayAttestation();
+      const report = api.client.fetchModelAttestations({
+        model: 'unlisted-model',
+      });
+      if (apiKey === 'allowed-org-key') {
+        expect((await report).attestations).toHaveLength(1);
+      } else {
+        await expect(report).rejects.toMatchObject({
+          failure: { code: 'api.http_status', details: { status: 400 } },
+        });
       }
     },
   );
@@ -500,7 +544,7 @@ describe('AttestationClient', () => {
       expect(query.get('include_tls_fingerprint')).toBe('false');
       expect(query.get('signing_algo')).toBe('ecdsa');
       expect(query.get('signing_address')).toBe(selectedSigningAddress);
-      expect(request.headers.has('authorization')).toBe(false);
+      expect(request.headers.get('authorization')).toBe('Bearer test');
       expect(request.headers.get('x-no-aliasing')).toBe('true');
     });
 

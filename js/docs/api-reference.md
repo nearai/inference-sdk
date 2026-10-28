@@ -57,9 +57,9 @@ the attestation socket to be reused.
 Provides `chat.completions.create()`, `responses.create()`, `messages.create()`, a reusable `fetch`
 adapter, `systemone.create()`, and `verifyResponse(id)`. Chat, Responses, and Messages
 support JSON and streaming; System One uses non-streaming decisions.
-On a cache miss, the client fetches Gateway evidence, then verifies it and any
-required OHTTP evidence concurrently with model metadata retrieval and model
-attestation verification. All required checks must pass before the session is
+On a cache miss, the client fetches and verifies Gateway evidence and any
+required OHTTP evidence before sending authenticated model metadata and
+attestation requests. All required checks must pass before the session is
 cached or an inference request is sent.
 
 The client reads `metadata.providerType` and `metadata.attestationSupported` from
@@ -81,11 +81,12 @@ semantics, streaming, and supported privacy options.
 `new InferenceClient()` uses the defaults. Configure `apiKey` or `headers`
 when the inference endpoint requires authentication. Gateway and direct
 attestation requests omit `Authorization`, `api-key`, and `x-api-key` headers.
+Model reports through the Gateway use configured authentication after Gateway verification.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey?` | `string` | No | — | Bearer credential for metadata, signature, and inference requests; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | — | Static request headers. Attestation omits authentication headers. Other requests use configured authorization; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
+| `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, signature, and inference requests; overrides `headers.Authorization`. |
+| `headers?` | `HeadersInit` | No | — | Static request headers. Gateway reports omit authentication headers; model reports use them for organization access. Other requests use configured authorization; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model across `verify()`, Chat, Responses, Messages, and System One. Set `0` to check every request. |
 | `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
@@ -355,11 +356,17 @@ The Gateway's report and signature endpoints have different defaults.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `apiKey?` | `string` | No | — | Bearer credential for metadata and signature requests; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | — | Static request headers; attestation omits `Authorization`, `api-key`, and `x-api-key`. |
+| `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, and signature requests; overrides `headers.Authorization`. |
+| `headers?` | `HeadersInit` | No | — | Static request headers; Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Model reports use configured authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
 
 Use `new AttestationClient()` to fetch attestation without credentials.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 ### Methods
 

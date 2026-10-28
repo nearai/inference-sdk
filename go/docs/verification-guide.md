@@ -20,7 +20,8 @@ supported attestation and encryption keys.
 
 ## Send and verify a completion
 
-The client verifies Gateway and supported model deployments before sending Chat.
+The client first verifies Gateway evidence without authentication headers, then uses
+configured authentication to fetch metadata and model reports before sending Chat.
 `VerifyResponse` then verifies the exact request and response bytes against the
 evidence captured before transmission. This example enables E2EE and prints the
 response only after its receipt verifies.

@@ -22,6 +22,7 @@ import (
 )
 
 type fakeCloud struct {
+	authorization   string
 	expectedHost    string
 	encrypt         bool
 	streamBody      string
@@ -50,7 +51,7 @@ type fakeCloud struct {
 
 func newFakeCloud(t *testing.T) *fakeCloud {
 	a, q, key := attestationFixture(t, Ed25519)
-	return &fakeCloud{t: t, a: a, q: q, priv: key, signatures: map[string]CompletionSignature{}}
+	return &fakeCloud{t: t, a: a, q: q, priv: key, signatures: map[string]CompletionSignature{}, authorization: "Bearer test"}
 }
 func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/chat/completions" && r.Header.Get("Accept-Encoding") != "identity" {
@@ -59,13 +60,13 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.expectedHost != "" && r.Host != f.expectedHost {
 		f.t.Errorf("unexpected authority %q", r.Host)
 	}
-	if strings.HasSuffix(r.URL.Path, "/attestation/report") {
+	if strings.HasSuffix(r.URL.Path, "/attestation/report") && (f.direct || !r.URL.Query().Has("model")) {
 		for _, name := range []string{"Authorization", "Api-Key", "X-Api-Key"} {
 			if r.Header.Get(name) != "" {
 				f.t.Errorf("attestation sent %s", name)
 			}
 		}
-	} else if r.Header.Get("Authorization") != "Bearer test" {
+	} else if r.Header.Get("Authorization") != f.authorization {
 		http.Error(w, "bad auth", 401)
 		return
 	}
@@ -246,6 +247,22 @@ func fakeQuote(ctx context.Context, raw string) (QuoteVerificationResult, error)
 	e := json.Unmarshal([]byte(raw), &q)
 	return q, e
 }
+func TestRejectedGatewayDoesNotFetchModelReports(t *testing.T) {
+	fixture := newFakeCloud(t)
+	fixture.tee = true
+	client, _ := fakeClient(t, fixture, func(options *InferenceOptions) {
+		options.GatewayVerification.QuoteVerifier = func(context.Context, string) (QuoteVerificationResult, error) {
+			return QuoteVerificationResult{}, failure("policy.debug_enabled", nil)
+		}
+	})
+	if _, err := client.Verify(context.Background(), "canonical/model"); err == nil {
+		t.Fatal("expected Gateway verification rejection")
+	}
+	if fixture.attestations.Load() != 1 || fixture.chats.Load() != 0 {
+		t.Fatal("rejected Gateway was used for further requests")
+	}
+}
+
 func fakeClient(t *testing.T, f *fakeCloud, modify func(*InferenceOptions)) (*InferenceClient, *httptest.Server) {
 	t.Helper()
 	server := httptest.NewServer(f)

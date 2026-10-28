@@ -128,7 +128,58 @@ fn client(server: &MockServer) -> AttestationClient {
 }
 
 #[tokio::test]
-async fn optional_keys_are_omitted_from_attestation_but_retained_for_signatures() {
+async fn unlisted_model_reports_use_configured_organization_keys() {
+    test_api_key();
+    let server = MockServer::start().await;
+    Mock::given(path("/v1/attestation/report"))
+        .respond_with(|request: &Request| {
+            if !request.url.query_pairs().any(|(name, _)| name == "model") {
+                assert!(request.headers.get("authorization").is_none());
+                return GatewayAttestationResponder.respond(request);
+            }
+            assert!(request
+                .url
+                .query_pairs()
+                .any(|(name, value)| name == "model" && value == "unlisted-model"));
+            if request
+                .headers
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                != Some("Bearer allowed-org-key")
+            {
+                return ResponseTemplate::new(400).set_body_json(json!({"error": "Unknown model"}));
+            }
+            ModelAttestationResponder.respond(request)
+        })
+        .mount(&server)
+        .await;
+    for api_key in [None, Some("other-org-key"), Some("allowed-org-key")] {
+        let client =
+            AttestationClient::with_base_url(api_key.map(str::to_owned), &base_url(&server))
+                .unwrap();
+        client
+            .fetch_gateway_attestation(GatewayAttestationFetchOptions {
+                include_spki_fingerprint: false,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let report = client
+            .fetch_model_attestations("unlisted-model", None, None)
+            .await;
+        if api_key == Some("allowed-org-key") {
+            assert_eq!(report.unwrap().attestations.len(), 1);
+        } else {
+            assert!(matches!(
+                report,
+                Err(ApiError::HttpStatus { status: 400, .. })
+            ));
+        }
+    }
+}
+
+#[tokio::test]
+async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports_and_signatures() {
     test_api_key();
     let _ = AttestationClient::new(None);
     nearai_inference_sdk::InferenceClient::new(None).unwrap();
@@ -220,7 +271,9 @@ async fn optional_keys_are_omitted_from_attestation_but_retained_for_signatures(
                         request.headers.get("x-tenant").map(|v| v.to_str().unwrap()),
                         custom_headers.then_some("tenant")
                     );
-                    if request.url.path() == "/v1/attestation/report" {
+                    if request.url.path() == "/v1/attestation/report"
+                        && (direct || !request.url.query_pairs().any(|(name, _)| name == "model"))
+                    {
                         for name in ["authorization", "api-key", "x-api-key"] {
                             assert!(
                                 request.headers.get(name).is_none(),

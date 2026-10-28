@@ -176,7 +176,7 @@ def use_fake_cloud_api_fetch(
 @pytest.mark.parametrize('api_key', [None, API_KEY])
 @pytest.mark.parametrize('custom_headers', [False, True])
 @pytest.mark.parametrize('direct', [False, True])
-async def test_attestation_omits_authentication_and_signatures_retain_it(
+async def test_gateway_and_direct_reports_omit_authentication_but_model_reports_retain_it(
     monkeypatch, api_key, custom_headers, direct
 ):
     from nearai_inference_sdk import DirectAttestationClient
@@ -191,10 +191,20 @@ async def test_attestation_omits_authentication_and_signatures_retain_it(
                 kind='provider_tee',
                 signing_address=SIGNING_ADDRESS,
             )
-        assert all(
-            name not in headers for name in ('authorization', 'api-key', 'x-api-key')
-        )
         query = parse_qs(urlsplit(url).query)
+        if direct or 'model' not in query:
+            assert all(
+                name not in headers
+                for name in ('authorization', 'api-key', 'x-api-key')
+            )
+        else:
+            assert headers.get('authorization') == (
+                'Bearer test'
+                if api_key
+                else 'Bearer custom'
+                if custom_headers
+                else None
+            )
         report = cloud_attestation(
             query['nonce'][0],
             report_data='00' * 64,
@@ -235,6 +245,40 @@ async def test_attestation_omits_authentication_and_signatures_retain_it(
         headers.get('x-tenant') == ('tenant' if custom_headers else None)
         for _, headers in requests
     )
+
+
+@pytest.mark.parametrize('api_key', [None, 'other-org-key', 'allowed-org-key'])
+async def test_unlisted_model_report_uses_configured_organization_key(
+    monkeypatch, api_key
+):
+    async def fetch(url, *, headers, **kwargs):
+        query = parse_qs(urlsplit(url).query)
+        report = cloud_attestation(
+            query['nonce'][0], report_data='00' * 64, tls_cert_fingerprint=None
+        )
+        if 'model' not in query:
+            assert 'authorization' not in headers
+            payload = {'gateway_attestation': report}
+        else:
+            assert query['model'] == ['unlisted-model']
+            if headers.get('authorization') != 'Bearer allowed-org-key':
+                return FetchResponse(status=400, body=b'{"error":"Unknown model"}')
+            payload = {'model_attestations': [report]}
+        return FetchResponse(status=200, body=json.dumps(payload).encode())
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', fetch)
+    client = AttestationClient(api_key, base_url=BASE_URL)
+    await client.fetch_gateway_attestation(include_spki_fingerprint=False)
+    if api_key == 'allowed-org-key':
+        assert (
+            len((await client.fetch_model_attestations('unlisted-model')).attestations)
+            == 1
+        )
+    else:
+        with pytest.raises(ApiError) as raised:
+            await client.fetch_model_attestations('unlisted-model')
+        assert raised.value.failure.code == 'api.http_status'
+        assert raised.value.failure.details['status'] == 400
 
 
 def cloud_attestation(nonce: str, **overrides: object) -> dict[str, object]:
@@ -345,7 +389,7 @@ async def test_model_helper_requests_fresh_evidence(
     assert query['include_tls_fingerprint'] == ['false']
     assert query['signing_algo'] == ['ecdsa']
     assert query['signing_address'] == [SIGNING_ADDRESS]
-    assert 'authorization' not in headers
+    assert headers['authorization'] == 'Bearer test'
     assert headers['x-no-aliasing'] == 'true'
 
 

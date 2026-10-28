@@ -16,8 +16,8 @@ import type {
 } from './verification';
 
 /**
- * Optional authentication for metadata, signature, and inference requests.
- * Attestation requests omit Authorization, api-key, and x-api-key headers.
+ * Optional authentication for model reports, metadata, signature, and inference requests.
+ * Gateway reports omit Authorization, api-key, and x-api-key headers.
  * Only a configured `apiKey` or Authorization header supplies bearer authorization.
  * Request-specific Authorization is ignored. Other headers can be overridden per request.
  */

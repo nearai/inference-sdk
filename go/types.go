@@ -123,7 +123,8 @@ type VerifiedCompletionResult struct {
 // ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
-	// APIKey is optional and is omitted from attestation requests.
+	// API Key is optional. Gateway and direct reports omit authentication;
+	// model reports through the Gateway use it for organization access.
 	APIKey     string
 	BaseURL    string
 	Headers    http.Header

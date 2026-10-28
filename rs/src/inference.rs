@@ -959,7 +959,9 @@ async fn create_session(
         .await?;
         Ok::<_, InferenceError>(results)
     };
-    let ((gateway, ohttp), models) = futures_util::try_join!(gateway, models)?;
+    // Authenticate the Gateway before sending configured credentials to it.
+    let (gateway, ohttp) = gateway.await?;
+    let models = models.await?;
     let selected = models
         .iter()
         .find(|m| {

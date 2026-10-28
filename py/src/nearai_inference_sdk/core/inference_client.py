@@ -677,8 +677,9 @@ class InferenceClient(
             signing_algo=self._signing_algo,
             include_spki_fingerprint=self._gateway_options.include_spki_fingerprint,
         )
-        # Pin evidence requests to the observed TLS peer, not the report's claim.
-        # The peer only becomes trusted after Gateway verification succeeds.
+        # Authenticate the Gateway before sending configured credentials to it.
+        gateway, key_config = await self._verify_gateway(fetched)
+        # Pin subsequent requests to the verified report's observed TLS peer.
         fingerprint = fetched.client_binding.spki_fingerprint
         if self._gateway_options.include_spki_fingerprint:
             if fingerprint is None:
@@ -692,9 +693,7 @@ class InferenceClient(
         attestations = _SessionAttestationClient(
             client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
         )
-        (gateway, key_config), models = await gather_cancel_on_error(
-            self._verify_gateway(fetched), self._verify_models(model, attestations)
-        )
+        models = await self._verify_models(model, attestations)
         selected = next(
             (
                 item

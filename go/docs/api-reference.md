@@ -60,6 +60,12 @@ Gateway and direct attestation requests omit `Authorization`, `api-key`, and
 `x-api-key`, including values supplied in `Headers`. Other custom headers are
 preserved. Metadata, inference, and signature requests use configured authentication.
 
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
+
 See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
 ## System One decisions

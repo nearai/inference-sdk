@@ -43,7 +43,7 @@ semantics, streaming, and supported privacy options.
 
 | Option | Default |
 | --- | --- |
-| `api_key` / `headers` | No API key / empty headers. Attestation omits `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
+| `api_key` / `headers` | No API key / empty headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an API key overrides Authorization and removes `api-key`. |
 | `base_url` | `https://cloud-api.near.ai/v1` |
 | `signing_algo` | `Ed25519` |
 | `e2ee` / `ohttp` | Both `false` for Gateway clients. OHTTP requires Ed25519. |
@@ -150,6 +150,12 @@ Use `AttestationClient::new(None)` to fetch attestation without credentials.
 Gateway and direct attestation requests omit `Authorization`, `api-key`, and
 `x-api-key`, including values supplied through `with_headers`. Other custom
 headers are preserved. Metadata and signature requests use configured authentication.
+
+Model reports through the Gateway use the client's configured API key or authentication
+headers. Listed models can be queried without credentials; unlisted models require a
+key for an organization granted access. With standalone evidence clients, verify the
+Gateway before fetching an authenticated model report. Integrated clients perform
+this ordering automatically.
 
 All client methods below are asynchronous and return `Result<_, ApiError>`.
 

@@ -302,7 +302,11 @@ function createTestGateway({
   }
 
   function expectRequestHeader(request: Request): void {
-    if (new URL(request.url).pathname === '/v1/attestation/report') {
+    const url = new URL(request.url);
+    if (
+      url.pathname === '/v1/attestation/report' &&
+      !url.searchParams.has('model')
+    ) {
       for (const name of ['authorization', 'api-key', 'x-api-key']) {
         expect(request.headers.has(name)).toBe(false);
       }
@@ -3107,111 +3111,53 @@ describe('inference client', () => {
   });
 
   describe.each(['browser', 'Node'] as const)(
-    '%s preflight cancellation',
+    '%s Gateway authentication boundary',
     (runtime) => {
-      test.each([
-        'metadata',
-        'model attestation',
-        'model attestation body',
-      ] as const)(
-        'cancels stalled %s requests before retrying a failed preflight',
-        async (resource) => {
-          const gateway = createTestGateway();
-          const providerFetch = createSignatureFetch(gateway);
-          const pendingSignals: AbortSignal[] = [];
-          const failure = new VerificationError({
-            code: 'policy.debug_enabled',
-          });
-          let rejectGateway = true;
-          let requestStarted = Promise.resolve();
-          let notifyRequestStarted: () => void = () => {};
-          const transportFetch: typeof globalThis.fetch = (input, init) => {
-            const request = new Request(input, init);
-            const url = new URL(request.url);
-            const shouldStall =
-              resource === 'metadata'
-                ? url.pathname.startsWith('/v1/model/')
-                : url.pathname === '/v1/attestation/report' &&
-                  url.searchParams.has('model');
-            if (!rejectGateway || !shouldStall) return providerFetch(request);
-
-            pendingSignals.push(request.signal);
-            notifyRequestStarted();
-            if (resource === 'model attestation body') {
-              return Promise.resolve(
-                new Response(
-                  new ReadableStream({
-                    start(controller) {
-                      request.signal.addEventListener(
-                        'abort',
-                        () => {
-                          controller.error(request.signal.reason);
-                        },
-                        { once: true },
-                      );
-                    },
-                  }),
-                ),
-              );
-            }
-            return new Promise((_, reject) => {
-              request.signal.addEventListener(
-                'abort',
-                () => {
-                  reject(request.signal.reason);
-                },
-                { once: true },
-              );
-            });
-          };
-          jest.spyOn(globalThis, 'fetch').mockImplementation(transportFetch);
-          const options: InferenceClientOptions = {
-            ...inferenceClientOptions(gateway),
-            gatewayVerification: {
-              verifiers: {
-                tdxQuote: async (quote) => {
-                  if (rejectGateway) {
-                    await requestStarted;
-                    throw failure;
-                  }
-                  return gateway.tdxQuoteVerifier(quote);
-                },
+      test('does not send credentials after rejected Gateway verification and can retry', async () => {
+        const gateway = createTestGateway();
+        const providerFetch = createSignatureFetch(gateway);
+        jest.spyOn(globalThis, 'fetch').mockImplementation(providerFetch);
+        const failure = new VerificationError({ code: 'policy.debug_enabled' });
+        let rejectGateway = true;
+        const options: InferenceClientOptions = {
+          ...inferenceClientOptions(gateway),
+          apiKey: 'configured-key',
+          gatewayVerification: {
+            verifiers: {
+              tdxQuote: async (quote) => {
+                await Promise.resolve();
+                if (rejectGateway) throw failure;
+                return gateway.tdxQuoteVerifier(quote);
               },
             },
-          };
-          if (runtime === 'Node') mockNodeGatewayAttestation({ gateway });
-          const client =
-            runtime === 'Node'
-              ? new TestNodeInferenceClient(options, transportFetch)
-              : new InferenceClient(options);
-
-          for (let attempt = 1; attempt <= 2; attempt += 1) {
-            requestStarted = new Promise((resolve) => {
-              notifyRequestStarted = resolve;
-            });
-            await expect(client.verify(model)).rejects.toBe(failure);
-            expect(pendingSignals).toHaveLength(attempt);
-            for (const signal of pendingSignals)
-              expect(signal.aborted).toBe(true);
-            expect(gateway.state.completionRequests).toBe(0);
-          }
-
-          rejectGateway = false;
-          await client.verify(model);
-          const completion = await client.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: 'hello after retry' }],
-          });
-          await client.verifyResponse(completion.id);
-          expect(gateway.state.gatewayAttestationRequests).toBe(3);
-          expect(gateway.state.completionRequests).toBe(1);
-        },
-      );
+          },
+        };
+        if (runtime === 'Node') mockNodeGatewayAttestation({ gateway });
+        const client =
+          runtime === 'Node'
+            ? new TestNodeInferenceClient(options, providerFetch)
+            : new InferenceClient(options);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          await expect(client.verify(model)).rejects.toBe(failure);
+          expect(gateway.state.metadataModels).toEqual([]);
+          expect(gateway.state.modelAttestationRequests).toBe(0);
+          expect(gateway.state.completionRequests).toBe(0);
+        }
+        rejectGateway = false;
+        await client.verify(model);
+        const completion = await client.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: 'hello after retry' }],
+        });
+        await client.verifyResponse(completion.id);
+        expect(gateway.state.gatewayAttestationRequests).toBe(3);
+        expect(gateway.state.completionRequests).toBe(1);
+      });
     },
   );
 
   describe('Node inference client', () => {
-    test('verifies model evidence while Gateway verification is pending and blocks Chat until both pass', async () => {
+    test('waits for Gateway verification before sending model credentials and Chat', async () => {
       const gateway = createTestGateway();
       const unpinnedFetch = jest
         .spyOn(globalThis, 'fetch')
@@ -3223,9 +3169,9 @@ describe('inference client', () => {
       const gatewayVerificationPending = new Promise<void>((resolve) => {
         releaseGatewayVerification = resolve;
       });
-      let notifyModelVerified: () => void = () => {};
-      const modelVerified = new Promise<void>((resolve) => {
-        notifyModelVerified = resolve;
+      let notifyGatewayStarted: () => void = () => {};
+      const gatewayStarted = new Promise<void>((resolve) => {
+        notifyGatewayStarted = resolve;
       });
       const client = new TestNodeInferenceClient(
         {
@@ -3233,6 +3179,7 @@ describe('inference client', () => {
           gatewayVerification: {
             verifiers: {
               tdxQuote: async (quote) => {
+                notifyGatewayStarted();
                 await gatewayVerificationPending;
                 return gateway.tdxQuoteVerifier(quote);
               },
@@ -3241,7 +3188,6 @@ describe('inference client', () => {
           modelVerification: {
             verifiers: {
               tdxQuote: gateway.tdxQuoteVerifier,
-              deployment: notifyModelVerified,
             },
           },
         },
@@ -3253,10 +3199,11 @@ describe('inference client', () => {
         model,
         messages: [{ role: 'user', content: 'hello model' }],
       });
-      await modelVerified;
-      expect(gateway.state.modelAttestationRequests).toBe(1);
+      await gatewayStarted;
+      expect(gateway.state.metadataModels).toEqual([]);
+      expect(gateway.state.modelAttestationRequests).toBe(0);
       expect(gateway.state.completionRequests).toBe(0);
-      expect(client.pinnedSpkiFingerprints).toEqual([tlsFingerprint]);
+      expect(client.pinnedSpkiFingerprints).toEqual([]);
 
       releaseGatewayVerification();
       const result = await preverification;
@@ -3361,8 +3308,10 @@ describe('inference client', () => {
       ).rejects.toMatchObject({
         failure: { code: 'binding.spki_fingerprint_mismatch' },
       });
-      // The pin comes from the observed peer, not the report's claimed key.
-      expect(client.pinnedSpkiFingerprints).toEqual([peerSpkiFingerprint]);
+      // A rejected peer is never used for authenticated evidence requests.
+      expect(client.pinnedSpkiFingerprints).toEqual([]);
+      expect(gateway.state.metadataModels).toEqual([]);
+      expect(gateway.state.modelAttestationRequests).toBe(0);
       expect(gateway.state.completionRequests).toBe(0);
       expect(unpinnedFetch).not.toHaveBeenCalled();
     });
@@ -4063,16 +4012,16 @@ describe('System One decisions', () => {
     expect(fixture.requests).toHaveLength(0);
   });
 
-  test('verifies decision evidence concurrently and waits before sending inference', async () => {
+  test('verifies the Gateway before fetching model evidence for decisions', async () => {
     const fixture = decisionGateway({ tee: true });
     jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
     let releaseGateway!: () => void;
     const gatewayPending = new Promise<void>((resolve) => {
       releaseGateway = resolve;
     });
-    let modelVerified!: () => void;
-    const modelReady = new Promise<void>((resolve) => {
-      modelVerified = resolve;
+    let gatewayStarted!: () => void;
+    const gatewayReady = new Promise<void>((resolve) => {
+      gatewayStarted = resolve;
     });
     const client = new InferenceClient({
       ...inferenceClientOptions(fixture.gateway),
@@ -4080,6 +4029,7 @@ describe('System One decisions', () => {
       gatewayVerification: {
         verifiers: {
           tdxQuote: async (quote) => {
+            gatewayStarted();
             await gatewayPending;
             return fixture.gateway.tdxQuoteVerifier(quote);
           },
@@ -4089,7 +4039,6 @@ describe('System One decisions', () => {
         verifiers: {
           tdxQuote: async (quote) => {
             const verified = await fixture.gateway.tdxQuoteVerifier(quote);
-            modelVerified();
             return verified;
           },
         },
@@ -4098,7 +4047,9 @@ describe('System One decisions', () => {
 
     const decision = client.systemone.create(decisionRequest);
     try {
-      await modelReady;
+      await gatewayReady;
+      expect(fixture.gateway.state.metadataModels).toEqual([]);
+      expect(fixture.gateway.state.modelAttestationRequests).toBe(0);
       expect(fixture.requests).toHaveLength(0);
     } finally {
       releaseGateway();

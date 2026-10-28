@@ -26,7 +26,8 @@ pub const NO_ALIASING_HEADER: &str = "x-no-aliasing";
 /// NEAR AI Cloud.
 ///
 /// The client owns its optional API key, base URL, and HTTP clients.
-/// Attestation requests omit Authorization, api-key, and x-api-key headers.
+/// Gateway and direct reports omit Authorization, api-key, and x-api-key headers.
+/// Model reports through the Gateway use configured authentication.
 #[derive(Clone)]
 pub struct AttestationClient {
     headers: HeaderMap,
@@ -75,7 +76,7 @@ impl AttestationClient {
         }
     }
 
-    /// Use additional headers; attestation requests omit authentication headers.
+    /// Use additional headers; Gateway and direct reports omit authentication headers.
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.headers = headers;
         self
@@ -100,7 +101,8 @@ impl AttestationClient {
             .pop_if_empty()
             .push(model);
         let response =
-            get_cloud_api_response(self, url, ApiResource::ModelMetadata, None, false).await?;
+            get_cloud_api_response(self, url, ApiResource::ModelMetadata, None, false, true)
+                .await?;
         #[derive(Deserialize)]
         struct MetadataResponse {
             metadata: crate::ModelMetadata,
@@ -119,7 +121,7 @@ impl AttestationClient {
         let mut url = self.endpoint(path)?;
         url.query_pairs_mut()
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
-        let response = get_cloud_api_response(self, url, resource, None, false).await?;
+        let response = get_cloud_api_response(self, url, resource, None, false, false).await?;
         decode_wire_response(&response.body, resource, path)
     }
 
@@ -136,9 +138,15 @@ impl AttestationClient {
             url.query_pairs_mut()
                 .append_pair("signing_algo", &algo.to_string());
         }
-        let response =
-            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None, false)
-                .await?;
+        let response = get_cloud_api_response(
+            self,
+            url,
+            ApiResource::CompletionSignature,
+            None,
+            false,
+            true,
+        )
+        .await?;
         let mut value: serde_json::Value = decode_wire_response(
             &response.body,
             ApiResource::CompletionSignature,
@@ -199,6 +207,7 @@ impl AttestationClient {
             ApiResource::ModelAttestation,
             Some((NO_ALIASING_HEADER, "true")),
             false,
+            true,
         )
         .await?;
         let response: WireModelAttestationResponse = decode_wire_response(
@@ -258,6 +267,7 @@ impl AttestationClient {
             ApiResource::GatewayAttestation,
             None,
             options.include_spki_fingerprint,
+            false,
         )
         .await?;
         let response: WireGatewayAttestationResponse = decode_wire_response(
@@ -321,9 +331,15 @@ impl AttestationClient {
             url.query_pairs_mut()
                 .append_pair("signing_algo", &signing_algo.to_string());
         }
-        let cloud_response =
-            get_cloud_api_response(self, url, ApiResource::CompletionSignature, None, false)
-                .await?;
+        let cloud_response = get_cloud_api_response(
+            self,
+            url,
+            ApiResource::CompletionSignature,
+            None,
+            false,
+            true,
+        )
+        .await?;
         let response: WireCompletionSignatureResponse = decode_wire_response(
             &cloud_response.body,
             ApiResource::CompletionSignature,
@@ -375,8 +391,9 @@ async fn get_cloud_api_response(
     resource: ApiResource,
     extra_header: Option<(&str, &str)>,
     capture_peer_spki_fingerprint: bool,
+    authenticate: bool,
 ) -> Result<CloudApiResponse, ApiError> {
-    let headers = build_cloud_api_headers(client, resource, extra_header)?;
+    let headers = build_cloud_api_headers(client, authenticate, extra_header)?;
     let http_client = if capture_peer_spki_fingerprint {
         &client.gateway_client
     } else {
@@ -410,14 +427,11 @@ async fn get_cloud_api_response(
 
 fn build_cloud_api_headers(
     client: &AttestationClient,
-    resource: ApiResource,
+    authenticate: bool,
     extra_header: Option<(&str, &str)>,
 ) -> Result<HeaderMap, ApiError> {
     let mut headers = client.headers.clone();
-    if matches!(
-        resource,
-        ApiResource::GatewayAttestation | ApiResource::ModelAttestation
-    ) {
+    if !authenticate {
         for name in ["authorization", "api-key", "x-api-key"] {
             headers.remove(name);
         }

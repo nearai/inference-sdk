@@ -17,7 +17,7 @@ The client owns authentication and forces `Accept-Encoding: identity` so capture
 bytes match the completion receipt, including when adapting an existing request.
 
 `verify(model)`, Chat, and System One share a per-model cache and in-flight work.
-Gateway and model checks run concurrently after obtaining Gateway TLS evidence. Every returned
+Gateway verification completes before authenticated metadata and model-report requests. Every returned
 model candidate must pass; an empty set for an attestation-capable model is an
 error. The model key must match the quote-authenticated signer before it is used
 for encryption or routing. Receipt verification requires the selected model

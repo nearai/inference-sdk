@@ -653,13 +653,15 @@ async def test_decision_preflight_rejects_an_incompatible_gateway_signer(
     assert gateway.signature_requests == 0
 
 
-async def test_decision_preflight_is_concurrent_but_blocks_inference(monkeypatch):
+async def test_decision_model_requests_wait_for_gateway_verification(monkeypatch):
     gateway = DecisionGateway(kind='provider_tee')
     gateway.install(monkeypatch)
     release_gateway = asyncio.Event()
+    gateway_started = asyncio.Event()
     model_verified = asyncio.Event()
 
     async def verify_gateway_quote(quote):
+        gateway_started.set()
         await release_gateway.wait()
         return gateway.quotes[quote]
 
@@ -680,11 +682,14 @@ async def test_decision_preflight_is_concurrent_but_blocks_inference(monkeypatch
     ) as client:
         decision = asyncio.create_task(client.systemone.create(REQUEST))
         async with asyncio.timeout(1):
-            await model_verified.wait()
+            await gateway_started.wait()
+        assert gateway.model_requests == []
+        assert gateway.headers == []
         assert gateway.requests == []
         assert not decision.done()
         release_gateway.set()
         result = await decision
+        assert model_verified.is_set()
         await client.verify_response(result.decision_id)
 
     assert gateway.gateway_requests == 1

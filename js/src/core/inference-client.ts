@@ -825,9 +825,21 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
   > {
     const gateway = await this.fetchGatewayAttestation();
-    // Pin evidence requests to the observed peer without treating it as trusted
-    // yet. Gateway verification must authenticate that same fingerprint before
-    // this session can be cached or used to send inference.
+    // Authenticate the Gateway before sending configured credentials to it.
+    const gatewayAttestation = await verifyGatewayAttestation({
+      attestation: gateway.attestation,
+      clientBinding: gateway.clientBinding,
+      policy: this.gatewayOptions.gatewayVerification?.policy,
+      verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+    });
+    if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
+      throw new VerificationError({ code: 'signature.signer_mismatch' });
+    }
+    const ohttpKeyConfig = this.getOhttpKeyConfig(
+      gateway.attestation.ohttpAttestation,
+      gatewayAttestation.signer,
+    );
+    // Pin subsequent requests to the verified report's observed TLS peer.
     const gatewayFetch = this.createGatewayFetch(
       gateway.clientBinding.spkiFingerprint,
     );
@@ -845,33 +857,16 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
       fetchCompletionSignature: (params) =>
         client.fetchCompletionSignature(params),
     };
-    const [{ gatewayAttestation, ohttpKeyConfig }, modelAttestations] =
-      await Promise.all([
-        verifyGatewayAttestation({
-          attestation: gateway.attestation,
-          clientBinding: gateway.clientBinding,
-          policy: this.gatewayOptions.gatewayVerification?.policy,
-          verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
-        }).then((gatewayAttestation) => {
-          signal.throwIfAborted();
-          if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
-            throw new VerificationError({ code: 'signature.signer_mismatch' });
-          }
-          return {
-            gatewayAttestation,
-            ohttpKeyConfig: this.getOhttpKeyConfig(
-              gateway.attestation.ohttpAttestation,
-              gatewayAttestation.signer,
-            ),
-          };
-        }),
-        this.verifyModels({ model, transport, signal }),
-      ]).catch((cause: unknown) => {
-        // Cancel outstanding evidence I/O before a retry can start a new preflight.
-        // Keep the original failure instead of replacing it with an abort error.
-        controller.abort(cause);
-        throw cause;
-      });
+    const modelAttestations = await this.verifyModels({
+      model,
+      transport,
+      signal,
+    }).catch((cause: unknown) => {
+      // Cancel outstanding evidence I/O before a retry can start a new preflight.
+      // Keep the original failure instead of replacing it with an abort error.
+      controller.abort(cause);
+      throw cause;
+    });
     const modelAttestation = modelAttestations.find(
       (attestation) =>
         attestation.signer.signingAlgo === this.signingAlgo &&

@@ -321,7 +321,6 @@ export class CloudApiClient {
     const request = this.createCloudApiRequest({
       url,
       extraHeaders,
-      authenticate: resource !== 'model_attestation',
     });
     let response: Response;
     try {

@@ -135,6 +135,44 @@ func TestReadBoundedMaximumLimit(t *testing.T) {
 	}
 }
 
+func TestUnlistedModelReportUsesConfiguredOrganizationKey(t *testing.T) {
+	fixture := newFakeCloud(t)
+	fixture.authorization = "Bearer allowed-org-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Has("model") {
+			if r.URL.Query().Get("model") != "unlisted-model" {
+				t.Errorf("unexpected model: %s", r.URL.Query().Get("model"))
+			}
+			if r.Header.Get("Authorization") != fixture.authorization {
+				http.Error(w, "Unknown model", http.StatusBadRequest)
+				return
+			}
+		}
+		fixture.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	for _, key := range []string{"", "other-org-key", "allowed-org-key"} {
+		t.Run(key, func(t *testing.T) {
+			client, err := NewAttestationClient(ClientOptions{APIKey: key, BaseURL: server.URL + "/v1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if _, err = client.FetchGatewayAttestation(ctx, FetchOptions{DisableTLSBinding: true}); err != nil {
+				t.Fatal(err)
+			}
+			report, err := client.FetchModelAttestations(ctx, "unlisted-model", FetchOptions{})
+			if key == "allowed-org-key" {
+				if err != nil || len(report.Attestations) != 1 {
+					t.Fatalf("authorized report: %v, %v", report, err)
+				}
+			} else if sdk, ok := err.(*Error); !ok || sdk.Code != "api.http_status" || sdk.Details["status"] != 400 {
+				t.Fatalf("expected anonymous/unauthorized model rejection, got %v", err)
+			}
+		})
+	}
+}
+
 func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 	for _, direct := range []bool{false, true} {
 		for _, apiKey := range []string{"", "test"} {
@@ -142,6 +180,12 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 				t.Run(fmt.Sprintf("direct=%t/key=%s/headers=%t", direct, apiKey, customHeaders), func(t *testing.T) {
 					fixture := newFakeCloud(t)
 					fixture.direct = direct
+					fixture.authorization = ""
+					if apiKey != "" {
+						fixture.authorization = "Bearer test"
+					} else if customHeaders {
+						fixture.authorization = "Bearer custom"
+					}
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						if customHeaders && r.Header.Get("X-Tenant") != "tenant" {
 							t.Error("custom header missing")

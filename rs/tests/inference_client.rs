@@ -125,7 +125,9 @@ impl Fixture {
 }
 impl Respond for Fixture {
     fn respond(&self, r: &Request) -> ResponseTemplate {
-        if r.url.path() == "/v1/attestation/report" {
+        if r.url.path() == "/v1/attestation/report"
+            && (self.direct || !r.url.query_pairs().any(|(name, _)| name == "model"))
+        {
             for name in ["authorization", "api-key", "x-api-key"] {
                 assert!(r.headers.get(name).is_none(), "attestation sent {name}");
             }
@@ -617,6 +619,53 @@ async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
     assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
     assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn gateway_verification_precedes_authenticated_requests() {
+    struct CheckingGateway {
+        server: Arc<MockServer>,
+        reject: bool,
+    }
+    #[async_trait]
+    impl TdxQuoteVerifier for CheckingGateway {
+        async fn verify(
+            &self,
+            quote: &str,
+        ) -> Result<TdxQuoteVerificationResult, VerificationError> {
+            // Leave the verifier pending while the executor can poll other work.
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            let requests = self.server.received_requests().await.unwrap();
+            assert_eq!(
+                requests.len(),
+                1,
+                "credentials sent before Gateway verification"
+            );
+            assert!(requests[0].headers.get("authorization").is_none());
+            if self.reject {
+                return Err(VerificationError::DebugEnabled);
+            }
+            Quote.verify(quote).await
+        }
+    }
+    for reject in [false, true] {
+        let (server, fixture, mut options) = setup(Fixture::default()).await;
+        let server = Arc::new(server);
+        options.gateway_verification.tdx_quote = Some(Arc::new(CheckingGateway {
+            server: server.clone(),
+            reject,
+        }));
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client.verify("vendor/model").await;
+        if reject {
+            assert_eq!(result.unwrap_err().code(), "policy.debug_enabled");
+            assert_eq!(server.received_requests().await.unwrap().len(), 1);
+        } else {
+            result.unwrap();
+            assert_eq!(fixture.model.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
 #[tokio::test]
 async fn incognito_requires_explicitly_valid_metadata_and_rejects_model_policy() {
     let fixture = Fixture {
