@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use example_rs::*;
 use nearai_inference_sdk::*;
 use serde_json::json;
@@ -50,6 +51,20 @@ async fn run() -> Result<()> {
             }
         }
     });
+    if let Ok(image_path) = std::env::var("NEARAI_IMAGE_PATH") {
+        let image_base64 = STANDARD.encode(std::fs::read(image_path)?);
+        request = json!({
+            "state": {
+                "photo": {
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:image/png;base64,{image_base64}")}
+                }
+            },
+            "questions": {
+                "region": {"type": "box", "instructions": "the main object in `photo`"}
+            }
+        });
+    }
     request["model"] = json!(model);
     let result = client.systemone_create(&request).await?;
     let receipt = client.verify_response(&result.decision_id).await?;

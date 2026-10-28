@@ -71,9 +71,17 @@ question requires only `instructions`. `SystemOneAnswer::Box` exposes `bounds`
 confidence becomes `None`.
 
 Structured content accepts OpenRouter `image_url` JSON parts in state,
-instructions, and criteria, and preserves arbitrary-precision JSON numbers.
-Scores, probabilities, and Box coordinates/confidence use finite `f64` values.
-See [images and Box](./verification-guide.md#images-and-box).
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.assets` accepts an optional map of `SystemOneImageAsset` values.
+Structured content preserves arbitrary-precision JSON numbers; scores,
+probabilities, and Box coordinates/confidence use finite `f64` values.
+
+See the [native image example](../../examples/example-rs/src/bin/systemone.rs) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.

@@ -289,49 +289,6 @@ covers JSON and streaming, then verifies each response before printing it.
 
 -->
 
-### Images and Box
-
-Send PNG or JPEG images using OpenRouter's
-[`image_url` JSON format](https://openrouter.ai/docs/guides/community/multimodal-decisions).
-Image parts can be nested in state, instructions, or criteria; text in content
-arrays stays a plain string. Select a Box-capable model, such as Jev 1.14, from
-your Gateway's catalog. With a base64-encoded PNG in `imageBase64`:
-
-```go
-image := map[string]any{
-    "type": "image_url",
-    "image_url": map[string]string{"url": "data:image/png;base64," + imageBase64},
-}
-result, err := client.CreateSystemOne(ctx, nearai.SystemOneRequest{
-    Model: decisionModel,
-    State: map[string]any{"canvas": image},
-    Questions: map[string]nearai.SystemOneQuestion{
-        "region": {Type: "box", Instructions: "Locate the red rectangle."},
-    },
-})
-if err != nil { return err }
-if _, err := client.VerifyResponse(ctx, result.DecisionID); err != nil { return err }
-region := result.Data.Answers["region"]
-fmt.Println(region.Box, region.Confidence)
-```
-
-Alternatively, include a JSON `assets` map on the same request and use references
-in state, instructions, or criteria:
-
-```json
-{
-  "model": "typesafe/jev-1.14",
-  "state": {"photo": "photo-ref"},
-  "assets": {"photo-ref": {"format": "png", "data_base64": "<image-data>"}},
-  "questions": {"region": {"type": "box", "instructions": "Locate the object in photo-ref."}}
-}
-```
-
-Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
-URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
-unchanged; the provider resolves them. Every asset must be referenced. A Score
-`legend` retains the original criterion reference.
-
 ## Responses API
 
 The Gateway client supports `POST /v1/responses` with the same authentication,

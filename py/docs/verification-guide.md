@@ -245,54 +245,6 @@ Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
 
-### Images and Box
-
-Send PNG or JPEG images using OpenRouter's
-[`image_url` JSON format](https://openrouter.ai/docs/guides/community/multimodal-decisions).
-Image parts can be nested in state, instructions, or criteria; text in content
-arrays stays a plain string. Select a Box-capable model, such as Jev 1.14, from
-your Gateway's catalog. With a base64-encoded PNG in `image_base64`:
-
-```python
-image = {
-    'type': 'image_url',
-    'image_url': {'url': f'data:image/png;base64,{image_base64}'},
-}
-async with InferenceClient(api_key, base_url=base_url) as inference_client:
-    result = await inference_client.systemone.create(
-        {
-            'model': decision_model,
-            'state': {'canvas': image},
-            'questions': {
-                'region': {'type': 'box', 'instructions': 'Locate the red rectangle.'},
-            },
-        }
-    )
-    await inference_client.verify_response(result.decision_id)
-    region = result.data['answers']['region']
-    print(region['box'], region.get('confidence'))
-```
-
-Alternatively, include a JSON `assets` map on the same request and use references
-in state, instructions, or criteria:
-
-```json
-{
-  "model": "typesafe/jev-1.14",
-  "state": {"photo": "photo-ref"},
-  "assets": {"photo-ref": {"format": "png", "data_base64": "<image-data>"}},
-  "questions": {"region": {"type": "box", "instructions": "Locate the object in photo-ref."}}
-}
-```
-
-Each asset uses `format: "png" | "jpg" | "jpeg"`, standard base64 without a data
-URL prefix, and an optional `type: "image"`. The SDK forwards assets and references
-unchanged; the provider resolves them. Every asset must be referenced. A Score
-`legend` retains the original criterion reference.
-
-The official Jev SDK adapter also forwards these JSON image dictionaries
-unchanged; use its `Box` question type.
-
 ### Use the official Jev SDK
 
 Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs

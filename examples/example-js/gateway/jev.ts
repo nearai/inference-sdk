@@ -1,4 +1,8 @@
-import { InferenceClient } from '@nearai/inference-sdk/node';
+import { readFile } from 'node:fs/promises';
+import {
+  InferenceClient,
+  type SystemOneRequest,
+} from '@nearai/inference-sdk/node';
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
@@ -31,31 +35,47 @@ async function main(): Promise<void> {
     modelVerification:
       expectedKind === 'provider_tee' ? { policy: {} } : undefined,
   });
-  const result = await client.systemone.create(
-    {
-      model,
-      state: {
-        message: 'I was charged twice for my subscription. Please help.',
+  let request: SystemOneRequest = {
+    model,
+    state: {
+      message: 'I was charged twice for my subscription. Please help.',
+    },
+    questions: {
+      billing: { type: 'noul', instructions: 'Is this about billing?' },
+      team: {
+        type: 'choice',
+        instructions: 'Which team should handle this?',
+        criteria: {
+          billing: 'Payments and subscriptions',
+          support: 'Technical issues',
+        },
       },
-      questions: {
-        billing: { type: 'noul', instructions: 'Is this about billing?' },
-        team: {
-          type: 'choice',
-          instructions: 'Which team should handle this?',
-          criteria: {
-            billing: 'Payments and subscriptions',
-            support: 'Technical issues',
-          },
-        },
-        urgency: {
-          type: 'score',
-          instructions: 'How urgent is this request?',
-          criteria: ['Routine', 'Needs prompt attention', 'Critical'],
-        },
+      urgency: {
+        type: 'score',
+        instructions: 'How urgent is this request?',
+        criteria: ['Routine', 'Needs prompt attention', 'Critical'],
       },
     },
-    { signal: AbortSignal.timeout(120_000) },
-  );
+  };
+  const imagePath = process.env.NEARAI_IMAGE_PATH;
+  if (imagePath) {
+    const imageBase64 = (await readFile(imagePath)).toString('base64');
+    request = {
+      model,
+      state: {
+        photo: {
+          type: 'image_url',
+          image_url: { url: `data:image/png;base64,${imageBase64}` },
+        },
+      },
+      questions: {
+        region: { type: 'box', instructions: 'the main object in `photo`' },
+      },
+    };
+  }
+  const result = await client.systemone.create(request, {
+    signal: AbortSignal.timeout(120_000),
+  });
 
   // decisionId comes from X-Generation-Id.
   // Verification hashes the exact bytes sent/received. Wait before acting on answers.
