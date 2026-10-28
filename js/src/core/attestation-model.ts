@@ -26,6 +26,8 @@ import {
 import type { VerifiedDstackQuote } from './dstack-attestation';
 import { verifyComposeManagerAttestation } from './compose-manager-attestation';
 import { runDeploymentVerifier } from './deployment-verifier';
+import { createVerificationContext } from './verification-context';
+import type { QuoteVerificationOptions } from '../types/verification-context';
 
 /**
  * Verify model evidence returned through NEAR AI Cloud. This verifies freshness
@@ -37,7 +39,10 @@ export async function verifyModelAttestation(
 ): Promise<VerifiedModelAttestation> {
   // CPU and GPU evidence bind independently to the same client nonce.
   const [deployment, gpuEvidence] = await Promise.all([
-    verifyModelCpuAttestation(params),
+    verifyModelCpuAttestation({
+      ...params,
+      context: params.context ?? createVerificationContext(),
+    }),
     verifyModelGpuEvidence(params),
   ]);
   return { ...deployment, gpuEvidence, report: params.attestation };
@@ -53,6 +58,8 @@ async function verifyModelCpuAttestation({
   clientBinding,
   policy,
   verifiers,
+  context,
+  signal,
 }: VerifyModelAttestationParams): Promise<VerifiedModelDeployment> {
   const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
@@ -61,6 +68,8 @@ async function verifyModelCpuAttestation({
     policy,
     tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
+    context,
+    signal,
   });
   verifyReportDataBinding({
     reportData: verifiedQuote.quote.reportData,
@@ -74,10 +83,12 @@ async function verifyModelCpuAttestation({
     nonce,
     policy,
     tdxQuoteVerifier: verifiers?.tdxQuote,
+    context,
+    signal,
   });
 }
 
-type VerifyModelDeploymentParams = {
+type VerifyModelDeploymentParams = QuoteVerificationOptions & {
   attestation: ModelAttestation;
   verifiedQuote: VerifiedDstackQuote;
   deploymentVerifier?: DeploymentVerifier;
@@ -94,6 +105,8 @@ export async function verifyModelDeployment({
   nonce,
   policy,
   tdxQuoteVerifier,
+  context,
+  signal,
 }: VerifyModelDeploymentParams): Promise<VerifiedModelDeployment> {
   const composeManager =
     attestation.composeManagerAttestation === undefined
@@ -104,6 +117,8 @@ export async function verifyModelDeployment({
           nonce,
           policy,
           tdxQuoteVerifier,
+          context,
+          signal,
         });
   const baseDeployment = await verifyDstackDeployment(verifiedQuote);
   const deployment =

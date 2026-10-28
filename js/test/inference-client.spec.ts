@@ -16,6 +16,7 @@ import {
   type InferenceClientOptions,
   type SystemOneRequest,
   type TdxQuoteVerificationResult,
+  type QuoteVerificationOptions,
   VerificationError,
 } from '../src';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
@@ -1827,6 +1828,34 @@ describe('inference client', () => {
     expect(
       gateway.state.completionRequestsSeen[0].headers.get('content-length'),
     ).toBeNull();
+  });
+
+  test('shares one material context across Gateway/replicas and creates a fresh one on re-verification', async () => {
+    const gateway = createTestGateway({ includeSecondModelAttestation: true });
+    mockProviderSignatures(gateway);
+    const tdxQuote = jest.fn(
+      (quote: string, options?: QuoteVerificationOptions) => {
+        expect(options?.context).toBeDefined();
+        return gateway.tdxQuoteVerifier(quote);
+      },
+    );
+    const client = new InferenceClient({
+      ...inferenceClientOptions(gateway),
+      attestationCacheTimeToLiveMs: 0,
+      gatewayVerification: { verifiers: { tdxQuote } },
+      modelVerification: { verifiers: { tdxQuote } },
+    });
+    await client.verify(model);
+    expect(tdxQuote).toHaveBeenCalledTimes(3);
+    const first = tdxQuote.mock.calls.map(([, options]) => options?.context);
+    expect(new Set(first).size).toBe(1);
+    await client.verify(model);
+    const second = tdxQuote.mock.calls
+      .slice(3)
+      .map(([, options]) => options?.context);
+    expect(second).toHaveLength(3);
+    expect(new Set(second).size).toBe(1);
+    expect(second[0]).not.toBe(first[0]);
   });
 
   test('selects a verified model key when multiple candidates are returned', async () => {

@@ -16,6 +16,7 @@ import {
   verifyReportedNonce,
 } from './attestation-common';
 import { verifyAndReplayRtmr3 } from './event-log';
+import type { QuoteVerificationOptions } from '../types/verification-context';
 
 const DEFAULT_ACCEPTED_TCB_STATUSES: readonly TcbStatus[] = [
   'UpToDate',
@@ -30,7 +31,7 @@ export type VerifiedDstackQuote = {
   signer: AttestationEvidence['signer'];
 };
 
-type VerifyDstackQuoteParams = {
+type VerifyDstackQuoteParams = QuoteVerificationOptions & {
   attestation: AttestationEvidence;
   nonce: string;
   policy?: AttestationPolicy;
@@ -49,6 +50,8 @@ export async function verifyDstackQuote({
   policy,
   tdxQuoteVerifier,
   advertisedReportData,
+  context,
+  signal,
 }: VerifyDstackQuoteParams): Promise<VerifiedDstackQuote> {
   verifyReportedNonce({
     reportedNonce: attestation.nonce,
@@ -63,12 +66,14 @@ export async function verifyDstackQuote({
     intelQuote: attestation.intelQuote,
     policy,
     verifier: tdxQuoteVerifier,
+    context,
+    signal,
   });
   verifyAdvertisedReportData(advertisedReportData, quote.reportData);
   return { attestation, quote, signer };
 }
 
-type VerifyTdxQuoteParams = {
+type VerifyTdxQuoteParams = QuoteVerificationOptions & {
   intelQuote: string;
   policy?: AttestationPolicy;
   verifier?: TdxQuoteVerifier;
@@ -79,9 +84,11 @@ export async function verifyTdxQuote({
   intelQuote,
   policy,
   verifier,
+  context,
+  signal,
 }: VerifyTdxQuoteParams): Promise<VerifiedTdxQuote> {
   const acceptedTcbStatuses = getAcceptedTcbStatuses(policy);
-  const quote = await verifyQuote(verifier, intelQuote);
+  const quote = await verifyQuote(verifier, intelQuote, { context, signal });
   if (quote.debugEnabled) {
     throw new VerificationError({
       code: 'policy.debug_enabled',
@@ -121,15 +128,17 @@ export async function verifyDstackDeployment(
 async function verifyQuote(
   verifier: TdxQuoteVerifier | undefined,
   intelQuote: string,
+  options: QuoteVerificationOptions,
 ): Promise<VerifiedTdxQuote> {
   if (verifier === undefined) {
-    return verifyDcapQuote(intelQuote);
+    return verifyDcapQuote(intelQuote, undefined, options);
   }
 
   let quote: unknown;
   try {
-    quote = await verifier(intelQuote);
+    quote = await verifier(intelQuote, options);
   } catch (cause) {
+    options.signal?.throwIfAborted();
     throw wrapVerificationError(
       {
         code: 'quote.verification_failed',

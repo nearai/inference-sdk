@@ -9,8 +9,9 @@ import type {
   ModelClientBinding,
   VerifiedModelAttestation,
 } from './verification';
+import type { QuoteVerificationOptions } from './verification-context';
 
-export type VerifyDirectModelAttestationParams = {
+export type VerifyDirectModelAttestationParams = QuoteVerificationOptions & {
   readonly attestation: DirectModelAttestation;
   readonly clientBinding: ModelClientBinding;
   readonly policy?: ModelAttestationPolicy;
@@ -30,10 +31,11 @@ export type VerifiedDirectModelAttestation = VerifiedModelAttestation & {
 };
 
 export type VerifyDirectModelAttestationsParams =
-  FetchedDirectModelAttestations & {
-    readonly policy?: ModelAttestationPolicy;
-    readonly verifiers?: ModelAttestationVerifiers;
-  };
+  FetchedDirectModelAttestations &
+    QuoteVerificationOptions & {
+      readonly policy?: ModelAttestationPolicy;
+      readonly verifiers?: ModelAttestationVerifiers;
+    };
 
 /** TLS identity of the direct endpoint that returned the attestation. */
 export type DirectTlsBinding = GatewayTlsBinding;

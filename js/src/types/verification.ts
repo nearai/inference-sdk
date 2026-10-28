@@ -5,6 +5,10 @@ import type { CompletionSignature } from './chat';
 import type { SigningIdentity } from './attestation-common';
 import type { Awaitable } from './shared';
 import type { VerifiedComposeManagerAttestation } from './compose-manager';
+import type {
+  QuoteVerificationOptions,
+  VerificationContext,
+} from './verification-context';
 
 export type TcbStatus =
   | 'UpToDate'
@@ -42,6 +46,7 @@ export type TdxQuoteVerificationResult = {
 
 export type TdxQuoteVerifier = (
   quote: string,
+  options?: QuoteVerificationOptions,
 ) => Awaitable<TdxQuoteVerificationResult>;
 
 export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
@@ -49,6 +54,8 @@ export type GpuEvidenceVerifier = (payload: string) => Awaitable<void>;
 export type CreateTdxQuoteVerifierParams = {
   /** Collateral base URL. Defaults to the NEAR AI proxy in browsers and Intel in Node.js. */
   readonly pccsUrl?: string;
+  /** Explicit operation context; otherwise uses the calling verification's context. */
+  readonly context?: VerificationContext;
 };
 
 export type CreateGpuEvidenceVerifierParams = {
@@ -85,7 +92,7 @@ export type ModelClientBinding = {
   readonly nonce: string;
 };
 
-export type VerifyModelAttestationParams = {
+export type VerifyModelAttestationParams = QuoteVerificationOptions & {
   readonly attestation: ModelAttestation;
   readonly clientBinding: ModelClientBinding;
   readonly policy?: ModelAttestationPolicy;
@@ -100,7 +107,7 @@ export type GatewayClientBinding = {
   readonly spkiFingerprint?: string;
 };
 
-export type VerifyGatewayAttestationParams = {
+export type VerifyGatewayAttestationParams = QuoteVerificationOptions & {
   readonly attestation: GatewayAttestation;
   readonly clientBinding: GatewayClientBinding;
   /** TCB statuses accepted for this Gateway attestation. */

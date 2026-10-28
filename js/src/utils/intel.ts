@@ -1,7 +1,6 @@
 import { Buffer } from 'buffer';
 import {
   Quote,
-  getCollateral,
   type Collateral,
   type VerifiedReport,
   verify,
@@ -15,12 +14,20 @@ import { decodeTdxQuoteVerifierOutput } from '../boundaries/quote-verifier';
 import { hexToBuffer } from './common';
 import { INTEL_PCCS_API_URL } from './consts';
 import { isVerificationError, VerificationError } from './errors';
+import { createVerificationContext } from '../core/verification-context';
+import type { QuoteVerificationOptions } from '../types/verification-context';
+import { getIntelCollateral } from './intel-collateral';
 
 /** Use Intel DCAP verification with collateral fetched from the selected service. */
 export function createTdxQuoteVerifier({
   pccsUrl = INTEL_PCCS_API_URL,
+  context,
 }: CreateTdxQuoteVerifierParams = {}): TdxQuoteVerifier {
-  return (quote) => verifyDcapQuote(quote, pccsUrl);
+  return (quote, options) =>
+    verifyDcapQuote(quote, pccsUrl, {
+      ...options,
+      context: context ?? options?.context,
+    });
 }
 
 /**
@@ -30,7 +37,12 @@ export function createTdxQuoteVerifier({
 export async function verifyDcapQuote(
   quote: string,
   pccsUrl = INTEL_PCCS_API_URL,
+  {
+    context = createVerificationContext(),
+    signal,
+  }: QuoteVerificationOptions = {},
 ): Promise<VerifiedTdxQuote> {
+  signal?.throwIfAborted();
   let quoteBytes: Uint8Array;
   try {
     quoteBytes = hexToBuffer(quote);
@@ -44,8 +56,9 @@ export async function verifyDcapQuote(
     );
   }
 
+  let parsedQuote: Quote;
   try {
-    Quote.parse(quoteBytes);
+    parsedQuote = Quote.parse(quoteBytes);
   } catch (cause) {
     throw new VerificationError(
       {
@@ -58,8 +71,14 @@ export async function verifyDcapQuote(
 
   let collateral: Collateral;
   try {
-    collateral = await getCollateral(pccsUrl, quoteBytes);
+    collateral = await getIntelCollateral(
+      pccsUrl,
+      parsedQuote,
+      context,
+      signal,
+    );
   } catch (cause) {
+    signal?.throwIfAborted();
     throw new VerificationError(
       {
         code: 'quote.collateral_unavailable',
@@ -70,6 +89,7 @@ export async function verifyDcapQuote(
   }
 
   let verifiedReport: VerifiedReport;
+  signal?.throwIfAborted();
   try {
     verifiedReport = verify(
       quoteBytes,

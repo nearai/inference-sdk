@@ -13,6 +13,7 @@ import {
   verifyDstackQuote,
 } from './dstack-attestation';
 import { runDeploymentVerifier } from './deployment-verifier';
+import { createVerificationContext } from './verification-context';
 
 /** Verify Gateway evidence using the report-data layout returned by Cloud API. */
 export async function verifyGatewayAttestation({
@@ -20,6 +21,8 @@ export async function verifyGatewayAttestation({
   clientBinding,
   policy,
   verifiers,
+  context = createVerificationContext(),
+  signal,
 }: VerifyGatewayAttestationParams): Promise<VerifiedGatewayAttestation> {
   const verifiedQuote = await verifyDstackQuote({
     attestation,
@@ -27,6 +30,8 @@ export async function verifyGatewayAttestation({
     policy,
     tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
+    context,
+    signal,
   });
   let tlsBinding: VerifiedGatewayAttestation['tlsBinding'];
   if (attestation.spkiFingerprint !== undefined) {

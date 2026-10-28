@@ -425,6 +425,59 @@ DCAP builds the SGX and TDX collateral paths beneath `pccsUrl`. `nrasUrl` is the
 complete GPU evidence POST URL. Signing keys come from NVIDIA; set `jwksUrl`
 separately to use another trusted key source.
 
+### Share Intel material within a verification operation
+
+`InferenceClient` and `DirectInferenceClient` automatically share public Intel
+collateral across the quotes in each fresh verification operation. Individual
+model verification also shares material with its nested Compose Manager quote.
+Every quote still runs DCAP verification and the configured binding, measurement
+and policy checks. The existing attestation-session cache is unchanged.
+
+When calling Gateway and model verification separately, create one context for
+the operation and pass it to both calls:
+
+```ts
+import {
+  createVerificationContext,
+  verifyGatewayAttestation,
+  verifyModelAttestation,
+} from '@nearai/inference-sdk';
+
+const context = createVerificationContext();
+const [verifiedGateway, verifiedModels] = await Promise.all([
+  verifyGatewayAttestation({ ...fetchedGateway, context }),
+  Promise.all(fetchedModels.attestations.map((attestation) =>
+    verifyModelAttestation({
+      attestation,
+      clientBinding: fetchedModels.clientBinding,
+      context,
+    }),
+  )),
+]);
+```
+
+Discard the context after the operation and create a new one for explicit
+re-verification. It coalesces identical pending GETs and retains at most 64
+public fragments / 8 MiB, bounded by material validity, issuer-certificate expiry
+and HTTP freshness. Cache hits do not extend the lifetime. Failed downloads and
+material without a usable validity window are not retained; a failed refresh
+never uses stale material.
+This operation-local reuse also works when a proxy disables HTTP caching with
+`no-store` or `no-cache`; it creates no browser or persistent cache.
+The independent PCK, TCB and QE downloads run concurrently, preserving their
+error precedence and the QE-chain-dependent Root CRL fallback.
+
+`createVerificationContext({ fetch })` accepts a transport for Intel GETs.
+`createTdxQuoteVerifier({ pccsUrl })` uses the context supplied by the calling
+verification; `{ pccsUrl, context }` explicitly binds a verifier to one operation.
+Custom wrappers around that factory should forward its optional second argument.
+An optional `signal` on the verification call cancels that consumer's wait
+without cancelling a shared download needed by other consumers.
+
+Contexts share public collateral fragments, not PCK certificate lookups, attestation
+reports or verification verdicts. NVIDIA requests, JWKS, model metadata and
+image-provenance retrieval retain their existing behavior.
+
 ## E2EE scope and response handling
 
 Field-level E2EE supports `POST /v1/chat/completions` with a model public key bound

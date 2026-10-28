@@ -17,8 +17,9 @@ import {
 } from './attestation-common';
 import { verifyTdxQuote } from './dstack-attestation';
 import { verifyAndReplayRtmr3 } from './event-log';
+import type { QuoteVerificationOptions } from '../types/verification-context';
 
-type VerifyComposeManagerAttestationParams = {
+type VerifyComposeManagerAttestationParams = QuoteVerificationOptions & {
   attestation: ComposeManagerAttestation;
   appCompose: string;
   nonce: string;
@@ -37,6 +38,8 @@ export async function verifyComposeManagerAttestation({
   nonce,
   policy,
   tdxQuoteVerifier,
+  context,
+  signal,
 }: VerifyComposeManagerAttestationParams): Promise<VerifiedComposeManagerAttestation> {
   verifyReportedNonce({
     reportedNonce: attestation.nonce,
@@ -47,6 +50,8 @@ export async function verifyComposeManagerAttestation({
     intelQuote: attestation.intelQuote,
     policy,
     verifier: tdxQuoteVerifier,
+    context,
+    signal,
   });
   verifyAdvertisedReportData(attestation.reportedQuoteData, quote.reportData);
   const reportData = verifyQuoteReportDataNonce({

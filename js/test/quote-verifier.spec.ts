@@ -1,22 +1,27 @@
 import { Buffer } from 'node:buffer';
-import { Quote, getCollateral, verify } from '@phala/dcap-qvl';
+import { Quote, verify } from '@phala/dcap-qvl';
+import { getIntelCollateral } from '../src/utils/intel-collateral';
 import { createTdxQuoteVerifier } from '../src';
 import { verifyTdxQuote } from '../src/core/dstack-attestation';
 import { createModelQuote } from './fixtures';
 
 jest.mock('@phala/dcap-qvl', () => ({
   Quote: { parse: jest.fn() },
-  getCollateral: jest.fn(),
   verify: jest.fn(),
 }));
 
+jest.mock('../src/utils/intel-collateral', () => ({
+  getIntelCollateral: jest.fn(),
+}));
+
 describe('Intel quote verifier configuration', () => {
-  const collateral = {} as Awaited<ReturnType<typeof getCollateral>>;
+  const collateral = {} as Awaited<ReturnType<typeof getIntelCollateral>>;
   let verifiedReport: ReturnType<typeof verify>;
 
   beforeEach(() => {
     jest.resetAllMocks();
-    jest.mocked(getCollateral).mockResolvedValue(collateral);
+    jest.mocked(Quote.parse).mockReturnValue({} as Quote);
+    jest.mocked(getIntelCollateral).mockResolvedValue(collateral);
     const quote = createModelQuote();
     verifiedReport = {
       status: quote.tcbStatus,
@@ -64,9 +69,11 @@ describe('Intel quote verifier configuration', () => {
     const verifyQuote = createTdxQuoteVerifier();
     const quote = await verifyQuote('abcd');
 
-    expect(getCollateral).toHaveBeenCalledWith(
+    expect(getIntelCollateral).toHaveBeenCalledWith(
       'https://api.trustedservices.intel.com',
-      expect.any(Uint8Array),
+      expect.any(Object),
+      expect.any(Object),
+      undefined,
     );
     expect(quote).toEqual(createModelQuote());
   });
@@ -77,9 +84,11 @@ describe('Intel quote verifier configuration', () => {
     });
     const quote = await verifyQuote('abcd');
 
-    expect(getCollateral).toHaveBeenCalledWith(
+    expect(getIntelCollateral).toHaveBeenCalledWith(
       'https://app.example.com/api/attestation/intel',
-      expect.any(Uint8Array),
+      expect.any(Object),
+      expect.any(Object),
+      undefined,
     );
     expect(verify).toHaveBeenCalledWith(
       expect.any(Uint8Array),
@@ -101,7 +110,7 @@ describe('Intel quote verifier configuration', () => {
         details: { reason: 'invalid_quote' },
       },
     });
-    expect(getCollateral).not.toHaveBeenCalled();
+    expect(getIntelCollateral).not.toHaveBeenCalled();
   });
 
   test('does not accept invalid collateral from a proxy', async () => {

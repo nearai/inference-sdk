@@ -730,11 +730,14 @@ in Node.js. NVIDIA signing keys use the official JWKS URL in both runtimes.
 | Function | Parameter type | Returns |
 | --- | --- | --- |
 | `createTdxQuoteVerifier(params?)` | `CreateTdxQuoteVerifierParams` | `TdxQuoteVerifier` |
+| `createVerificationContext(params?)` | `CreateVerificationContextParams` | `VerificationContext` |
 | `createGpuEvidenceVerifier(params?)` | `CreateGpuEvidenceVerifierParams` | `GpuEvidenceVerifier` |
 
 | Parameter type | Field | Type | Default | Description |
 | --- | --- | --- | --- | --- |
 | `CreateTdxQuoteVerifierParams` | `pccsUrl?` | `string` | NEAR AI proxy (browser); Intel PCS (Node.js) | PCCS base URL. DCAP constructs SGX and TDX collateral paths below this base. |
+|  | `context?` | `VerificationContext` | Calling verification's context | Explicitly bind this verifier to an operation. |
+| `CreateVerificationContextParams` | `fetch?` | `typeof globalThis.fetch` | Global fetch | Transport for Intel material GETs only. |
 | `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | NEAR AI proxy (browser); NVIDIA NRAS (Node.js) | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
@@ -744,6 +747,14 @@ nonce. `verifyModelAttestation` additionally binds that nonce to
 The expected NVIDIA issuer remains fixed when either URL changes.
 See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
 for default URLs and custom configuration.
+
+Gateway, model and direct attestation verification parameters also accept
+`context?: VerificationContext` and `signal?: AbortSignal`. A context shares
+public Intel fragments across concurrent and sequential calls, including nested
+Compose Manager checks. Built-in clients create a fresh context for each fresh
+preflight. Retention is limited to 64 fragments / 8 MiB and valid material;
+aborting one consumer does not cancel other consumers' shared downloads.
+See [operation-scoped material reuse](./verification-guide.md#share-intel-material-within-a-verification-operation).
 
 ## Policies and verifier callbacks
 
@@ -769,7 +780,7 @@ for default URLs and custom configuration.
 | `ModelAttestationVerifiers` | `tdxQuote?: TdxQuoteVerifier` | Replaces the built-in Intel DCAP quote verifier. |
 |  | `deployment?: DeploymentVerifier` | Applies caller-defined deployment acceptance. |
 |  | `gpuEvidence?: GpuEvidenceVerifier` | Replaces the default NVIDIA NRAS verifier. |
-| `TdxQuoteVerifier` | `(quote: string) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. |
+| `TdxQuoteVerifier` | `(quote: string, options?: QuoteVerificationOptions) => Awaitable<TdxQuoteVerificationResult>` | Authenticates a quote and returns the verified quote fields. The optional options carry `context` and `signal`; existing one-argument callbacks remain supported. |
 | `DeploymentVerifier` | `(deployment: MeasuredDeployment) => Awaitable<void>` | Resolves only for an accepted deployment. |
 | `GpuEvidenceVerifier` | `(payload: string) => Awaitable<void>` | Resolves only for accepted GPU evidence. |
 

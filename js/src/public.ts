@@ -74,6 +74,12 @@ export type { Awaitable } from './types/shared';
 export { verifyModelAttestation } from './core/attestation-model';
 export { verifyGatewayAttestation } from './core/attestation-gateway';
 export { createTdxQuoteVerifier } from './utils/intel';
+export { createVerificationContext } from './core/verification-context';
+export type {
+  VerificationContext,
+  CreateVerificationContextParams,
+  QuoteVerificationOptions,
+} from './types/verification-context';
 export { createGpuEvidenceVerifier } from './utils/nvidia';
 export { verifyGatewayResponse, verifyModelResponse } from './core/chat';
 export { fetchImageProvenance, verifyImageProvenance } from './core/provenance';

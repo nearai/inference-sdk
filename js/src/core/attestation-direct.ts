@@ -16,6 +16,7 @@ import {
   verifyModelGpuEvidence,
 } from './attestation-model';
 import { verifyDstackQuote } from './dstack-attestation';
+import { createVerificationContext } from './verification-context';
 
 /**
  * Verify one direct model attestation. Its optional fingerprint is authenticated by
@@ -25,7 +26,10 @@ export async function verifyDirectModelAttestation(
   params: VerifyDirectModelAttestationParams,
 ): Promise<VerifiedDirectModelAttestation> {
   const [deployment, gpuEvidence] = await Promise.all([
-    verifyDirectModelCpuAttestation(params),
+    verifyDirectModelCpuAttestation({
+      ...params,
+      context: params.context ?? createVerificationContext(),
+    }),
     verifyModelGpuEvidence(params),
   ]);
   return { ...deployment, gpuEvidence, report: params.attestation };
@@ -41,6 +45,8 @@ async function verifyDirectModelCpuAttestation({
   clientBinding,
   policy,
   verifiers,
+  context,
+  signal,
 }: VerifyDirectModelAttestationParams): Promise<VerifiedDirectModelDeployment> {
   const { nonce } = clientBinding;
   const verifiedQuote = await verifyDstackQuote({
@@ -49,6 +55,8 @@ async function verifyDirectModelCpuAttestation({
     policy,
     tdxQuoteVerifier: verifiers?.tdxQuote,
     advertisedReportData: attestation.reportedQuoteData,
+    context,
+    signal,
   });
   let spkiFingerprint: string | undefined;
   if (attestation.spkiFingerprint !== undefined) {
@@ -72,6 +80,8 @@ async function verifyDirectModelCpuAttestation({
     nonce,
     policy,
     tdxQuoteVerifier: verifiers?.tdxQuote,
+    context,
+    signal,
   });
   return {
     ...verified,
@@ -95,6 +105,8 @@ export async function verifyDirectModelAttestations({
   clientBinding,
   policy,
   verifiers,
+  context = createVerificationContext(),
+  signal,
 }: VerifyDirectModelAttestationsParams): Promise<VerifiedDirectModelAttestations> {
   if (suppliedAttestations.length === 0) {
     throw new VerificationError({ code: 'policy.model_attestation_required' });
@@ -119,6 +131,8 @@ export async function verifyDirectModelAttestations({
         clientBinding,
         policy,
         verifiers,
+        context,
+        signal,
       }),
     ),
   );

@@ -68,6 +68,8 @@ import {
 import { verifyOhttpKeyConfig } from './ohttp-attestation';
 import { createOhttpFetch } from './ohttp-fetch';
 import { createSystemOne, sendSystemOne } from './systemone';
+import { createVerificationContext } from './verification-context';
+import type { VerificationContext } from '../types/verification-context';
 
 // OpenAI's client requires an API key even when a compatible aggregator uses
 // another authentication header. `createOpenAiDefaultHeaders` removes this
@@ -225,6 +227,7 @@ type VerifyModelsParams = {
   readonly model: string;
   readonly transport: GatewaySessionTransport;
   readonly signal: AbortSignal;
+  readonly context: VerificationContext;
 };
 
 /**
@@ -829,6 +832,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     InferenceSession<VerifiedCompletionResult, AttestationVerificationResult>
   > {
     const gateway = await this.fetchGatewayAttestation();
+    const context = createVerificationContext();
     // Pin evidence requests to the observed peer without treating it as trusted
     // yet. Gateway verification must authenticate that same fingerprint before
     // this session can be cached or used to send inference.
@@ -856,6 +860,8 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           clientBinding: gateway.clientBinding,
           policy: this.gatewayOptions.gatewayVerification?.policy,
           verifiers: this.gatewayOptions.gatewayVerification?.verifiers,
+          context,
+          signal,
         }).then((gatewayAttestation) => {
           signal.throwIfAborted();
           if (gatewayAttestation.signer.signingAlgo !== this.signingAlgo) {
@@ -869,7 +875,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             ),
           };
         }),
-        this.verifyModels({ model, transport, signal }),
+        this.verifyModels({ model, transport, signal, context }),
       ]).catch((cause: unknown) => {
         // Cancel outstanding evidence I/O before a retry can start a new preflight.
         // Keep the original failure instead of replacing it with an abort error.
@@ -946,6 +952,7 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     model,
     transport,
     signal,
+    context,
   }: VerifyModelsParams): Promise<VerifiedModelAttestation[]> {
     const metadata = await transport.fetchModelMetadata(model);
     signal.throwIfAborted();
@@ -982,6 +989,8 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
           clientBinding: fetchedModels.clientBinding,
           policy: this.gatewayOptions.modelVerification?.policy,
           verifiers: modelVerifiers,
+          context,
+          signal,
         }),
       ),
     );
