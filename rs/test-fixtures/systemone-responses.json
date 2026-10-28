@@ -36,6 +36,18 @@
               "yes"
             ]
           }
+        },
+        "region": {
+          "type": "box",
+          "box": {
+            "top": 0.31,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          },
+          "confidence": 0.82,
+          "future": true
         }
       },
       "usage": {
@@ -82,6 +94,28 @@
             "3": [
               "yes"
             ]
+          }
+        },
+        "region": {
+          "type": "box",
+          "box": {
+            "top": 2,
+            "bottom": -1,
+            "left": 4,
+            "right": 3,
+            "future": true
+          },
+          "confidence": null,
+          "future": true
+        },
+        "unscored_region": {
+          "type": "box",
+          "box": {
+            "top": 0.31,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
           }
         }
       },
@@ -344,6 +378,165 @@
       "answers": {
         "__proto__": {
           "type": "noul"
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "missing box": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box"
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "null box": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": null
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "missing box coordinate": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "null box coordinate": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": null,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "string box coordinate": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": "0.31",
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "boolean box coordinate": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": true,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "overflow box coordinate": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": 1e400,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "invalid box confidence": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": 0.31,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          },
+          "confidence": "0.82"
+        }
+      },
+      "usage": {
+        "input_tokens": 4,
+        "output_tokens": 2
+      }
+    },
+    "overflow box confidence": {
+      "model": "vendor/model",
+      "answers": {
+        "region": {
+          "type": "box",
+          "box": {
+            "top": 0.31,
+            "bottom": 0.69,
+            "left": 0.25,
+            "right": 0.75,
+            "future": true
+          },
+          "confidence": 1e400
         }
       },
       "usage": {

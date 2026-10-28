@@ -49,6 +49,10 @@ func TestSystemOneSharedResponseVectors(t *testing.T) {
 		if data.Answers["__proto__"].Noul == nil || data.Extra["future"] == nil || data.Usage.Extra["extra_tokens"] == nil || data.Answers["__proto__"].Extra["future"] == nil {
 			t.Fatal("lost unknown fields or opaque keys")
 		}
+		answer := data.Answers["region"]
+		if answer.Box == nil || string(answer.Box.Extra["future"]) != "true" || string(answer.Extra["future"]) != "true" {
+			t.Fatal("lost Box coordinates or unknown fields")
+		}
 	}
 	for name, body := range fixture.Invalid {
 		t.Run(name, func(t *testing.T) {
@@ -71,6 +75,7 @@ type systemOneCloud struct {
 	calls               atomic.Int32
 	dropDecisionAt      int32
 	truncateBody        bool
+	expectedRequest     []byte
 }
 
 func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +128,9 @@ func (f *systemOneCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
+	if f.expectedRequest != nil && !bytes.Equal(body, f.expectedRequest) {
+		f.f.t.Errorf("System One changed the JSON image request: %s", body)
+	}
 	kind := "gateway"
 	text := hashText(body) + ":" + hashText([]byte(f.body))
 	if f.f.tee {
@@ -229,6 +237,52 @@ func TestSystemOnePlaintextKeyRoutingAndReceipt(t *testing.T) {
 		}
 	}
 }
+func TestSystemOnePreservesJSONImagesAndBoxReceipts(t *testing.T) {
+	image := map[string]any{"type": "image_url", "image_url": map[string]string{"url": "data:image/png;base64,ZmFrZS1pbWFnZQ=="}}
+	request := SystemOneRequest{
+		Model: "canonical/model", State: map[string]any{"canvas": image},
+		Questions: map[string]SystemOneQuestion{
+			"region":  {Type: "box", Instructions: []any{"Locate the rectangle", image}},
+			"present": {Type: "noul", Instructions: "Does the canvas match?", Criteria: map[string]any{"true": image}},
+		},
+	}
+	for _, assets := range []bool{false, true} {
+		if assets {
+			request.Assets = map[string]SystemOneImageAsset{"<photo>": {Format: "png", DataBase64: "ZmFrZS1pbWFnZQ=="}}
+			request.State = map[string]any{"canvas": []any{"<photo>", image}}
+			request.Questions["region"] = SystemOneQuestion{Type: "box", Instructions: "Locate <photo> now"}
+			request.Questions["present"] = SystemOneQuestion{Type: "noul", Instructions: "Does it match?", Criteria: map[string]any{"true": "<photo>"}}
+		}
+		expected, err := json.Marshal(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+			t.Run(string(algo), func(t *testing.T) {
+				c, f := systemOneClient(t, false, algo, func(f *systemOneCloud, _ *InferenceOptions) {
+					f.expectedRequest = expected
+				})
+				result, err := c.CreateSystemOne(context.Background(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				answer := result.Data.Answers["region"]
+				if answer.Box == nil || answer.Box.Top != 0.31 || answer.Confidence == nil || *answer.Confidence != 0.82 {
+					t.Fatalf("wrong box answer: %+v", answer)
+				}
+				answer.Box.Top = 0
+				receipt, err := c.VerifyResponse(context.Background(), result.DecisionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if receipt.SignatureKind != "gateway" || f.calls.Load() != 1 || f.f.signatureCalls.Load() != 1 {
+					t.Fatal("expected one request and its Gateway receipt")
+				}
+			})
+		}
+	}
+}
+
 func TestSystemOneRejectsAnotherVerifiedSigner(t *testing.T) {
 	c, _ := systemOneClient(t, true, Ed25519, func(f *systemOneCloud, _ *InferenceOptions) {
 		f.f.extraModel = true

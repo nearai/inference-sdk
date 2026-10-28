@@ -1,15 +1,23 @@
 """Exercise the published Jev SDK against the verified HTTPX2 adapter."""
 
 import asyncio
+import json
 
 import httpx2
 import pytest
-from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
+from typesafe_sdk import (
+    AsyncTypeSafeClient,
+    Box,
+    Choice,
+    Noul,
+    RetryPolicy,
+    Score,
+)
 
 from nearai_inference_sdk import ApiError, VerificationError
 
 from .test_inference_client import BASE_URL, MODEL
-from .test_systemone import REQUEST, DecisionGateway
+from .test_systemone import BOX_BOUNDS, IMAGE_PART, REQUEST, DecisionGateway
 
 
 def official_client(client):
@@ -37,6 +45,30 @@ def decision(jev):
         },
         extra_headers={'x-model-pub-key': 'stale', 'x-client-pub-key': 'stale'},
     )
+
+
+async def test_official_box_with_openrouter_image_parts(monkeypatch):
+    gateway = DecisionGateway()
+    gateway.answers = {'region': {'type': 'box', 'box': BOX_BOUNDS, 'confidence': 0.82}}
+    gateway.install(monkeypatch)
+    async with gateway.client(e2ee=False) as client:
+        async with official_client(client) as jev:
+            result = await jev.system_one(
+                state=[IMAGE_PART],
+                questions={'region': Box(instructions='Locate the rectangle')},
+            )
+            assert result.boxes['region'].box.top == BOX_BOUNDS['top']
+            receipt_id = result.raw_http_response.headers['x-generation-id']
+        verified = await client.verify_response(receipt_id)
+        assert verified.signature_kind == 'gateway'
+    sent = json.loads(gateway.requests[0].content)
+    assert sent['state'] == [IMAGE_PART]
+    assert sent['questions']['region'] == {
+        'type': 'box',
+        'instructions': 'Locate the rectangle',
+    }
+    assert 'assets' not in sent
+    assert len(gateway.requests) == 1
 
 
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])

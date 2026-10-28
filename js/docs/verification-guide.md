@@ -318,8 +318,7 @@ console.log(data.answers.billing.noul);
 
 The adapter accepts uncompressed, nonstreaming JSON requests at the configured
 System One endpoint. Keep E2EE, OHTTP, request compression and automatic inference
-retries disabled; multipart uploads and other official SDK endpoints are outside
-this adapter's scope. Retry a transient receipt lookup through `verifyResponse(id)`.
+retries disabled. Retry a transient receipt lookup through `verifyResponse(id)`.
 
 `X-Generation-Id` identifies the NEAR receipt; the official SDK's `requestId`
 identifies the upstream request. Verification uses the exact captured bytes.

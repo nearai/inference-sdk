@@ -1053,6 +1053,7 @@ name = "example-rs"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "futures-util",
  "nearai-inference-sdk",
  "reqwest 0.12.28",

@@ -7,6 +7,7 @@ default-run = "example-rs"
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 futures-util = "0.3"
 reqwest = { version = "0.12.26", features = ["json", "stream"] }
 serde_json = "1.0.145"

@@ -17,6 +17,7 @@ All four languages use the same environment variables:
 | `NEARAI_SIGNING_ALGO` | `ed25519` (default) or `ecdsa`, used for evidence and receipts, and for Chat E2EE |
 | `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat, Responses, and Messages clients; requires Ed25519 |
 | `NEARAI_EXPECT_SIGNATURE_KIND` | System One: `gateway` (default) or `provider_tee`; the latter requires verified model evidence |
+| `NEARAI_IMAGE_PATH` | Optional PNG file path for the native System One image/Box example |
 
 Choose a model available in the selected endpoint's catalog. Chat client examples
 and the standalone Gateway Chat examples explicitly enable field-level E2EE;
@@ -53,7 +54,23 @@ examples share the inference client's verified transport and verify receipts
 through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and Jev examples
 derive their API root from it. Jev disables compression and inference retries,
 and uses `X-Generation-Id` as the receipt ID. Its native and official examples ask
-the same billing, team, and urgency questions and print answers after verification.
+the same billing, team, and urgency questions by default and print answers after
+verification.
+
+### System One images
+
+The native System One examples in all four languages can locate the main object
+in a PNG. Select a Box-capable model from your Gateway's catalog, such as Jev 1.14,
+and set the image path before running the native System One command above:
+
+```sh
+export NEARAI_MODEL=typesafe/jev-1.14
+export NEARAI_IMAGE_PATH=/absolute/path/to/photo.png
+```
+
+The example sends an `image_url` JSON part and a `box` question, then prints the
+coordinates and confidence after verifying the receipt. Unset `NEARAI_IMAGE_PATH`
+to run the text example.
 
 ### JavaScript setup
 

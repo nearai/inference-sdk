@@ -209,12 +209,14 @@ using the answers.
 | `model` | `str` | Canonical decision-model ID. |
 | `state` | `str \| dict \| list` | Text or structured decision context. |
 | `questions` | `dict[str, SystemOneQuestion]` | Named questions; request business rules are checked by the server. |
+| `assets` | Optional `dict[str, SystemOneImageAsset]` | Named images referenced from the request content. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Required mapping of labels to descriptions or `None`. |
 | `score` | Text, object, or array | Required list of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 | `SystemOneResult` member | Type | Description |
 | --- | --- | --- |
@@ -233,6 +235,17 @@ using the answers.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: string label; `confidence` and per-label `probabilities` in `[0, 1]`. |
 | `score` | `score`: finite number; `confidence` and per-level `probabilities` in `[0, 1]`; `legend`: descriptions keyed by level. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `None`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+
+See the [native image example](../../examples/example-py/gateway/jev.py) and
+[run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `response_cache_time_to_live_ms`.

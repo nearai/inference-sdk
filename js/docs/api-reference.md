@@ -197,13 +197,15 @@ Chat's model session and selected-key routing. See the
 | --- | --- | --- |
 | `model` | `string` | Canonical decision-model ID used to select deployment evidence. |
 | `state` | Text, object, or array | Decision context forwarded as JSON. |
-| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, or `score` questions. Names and choice labels may be any string. |
+| `questions` | Named `SystemOneQuestion` map | Named `noul`, `choice`, `score`, or `box` questions. Names and choice labels may be any string. |
+| `assets?` | `Record<string, SystemOneImageAsset>` | Optional named images referenced from the request content. |
 
 | Question `type` | Required `instructions` | `criteria` |
 | --- | --- | --- |
 | `noul` | Text, object, or array | Optional object with `true` and/or `false` descriptions. |
 | `choice` | Text, object, or array | Mapping of labels to descriptions or `null`. |
 | `score` | Text, object, or array | Ordered array of level descriptions. |
+| `box` | Text, object, or array | Omitted. |
 
 Use `SystemOneRequest<MyQuestions>` and `SystemOneQuestion<MyChoices>` to
 annotate application types; `create()` also infers question and choice maps.
@@ -230,6 +232,17 @@ annotate application types; `create()` also infers question and choice maps.
 | `noul` | `noul`: probability in `[0, 1]`. |
 | `choice` | `choice`: selected label; `confidence` and `probabilities`: probabilities in `[0, 1]`. |
 | `score` | `score`: numeric score; `confidence`, `probabilities`, and `legend`: confidence, level probabilities, and descriptions. |
+| `box` | `box`: `SystemOneBoxCoordinates` with finite `top`, `bottom`, `left`, and `right` numbers; optional `confidence`: finite number or `null`. |
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+
+See the [native image example](../../examples/example-js/gateway/jev.ts) and
+[run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE

@@ -4,6 +4,7 @@ import type {
   SystemOneQuestion,
   SystemOneRequest,
 } from '../src/types/systemone';
+import type { SystemOneBoxCoordinates, SystemOneAnswer } from '../src';
 
 interface Content {
   description: string;
@@ -16,6 +17,7 @@ interface Questions {
   billing: { type: 'noul'; instructions: Content };
   team: { type: 'choice'; instructions: string; criteria: Choices };
   priority: { type: 'score'; instructions: string; criteria: string[] };
+  region: { type: 'box'; instructions: Content };
 }
 interface RequestDto {
   model: string;
@@ -107,3 +109,37 @@ declare const arrayCriteria: {
 };
 // @ts-expect-error Choice criteria must remain a map rather than an array.
 void api.create(arrayCriteria);
+
+const image = {
+  type: 'image_url',
+  image_url: { url: 'data:image/png;base64,fixture' },
+};
+void api.create({
+  model: 'm',
+  state: { canvas: image },
+  questions: {
+    region: { type: 'box', instructions: ['Locate the object', image] },
+  },
+});
+declare const missingBoxInstructions: {
+  model: string;
+  state: string;
+  questions: { region: { type: 'box' } };
+};
+// @ts-expect-error Box questions require instructions.
+void api.create(missingBoxInstructions);
+declare const boxWithCriteria: {
+  model: string;
+  state: string;
+  questions: {
+    region: { type: 'box'; instructions: string; criteria: string[] };
+  };
+};
+// @ts-expect-error Box questions have no criteria.
+void api.create(boxWithCriteria);
+declare const answer: SystemOneAnswer;
+if (answer.type === 'box') {
+  const bounds: SystemOneBoxCoordinates = answer.box;
+  const confidence: number | null | undefined = answer.confidence;
+  void [bounds.top, bounds.bottom, bounds.left, bounds.right, confidence];
+}

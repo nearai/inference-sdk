@@ -78,9 +78,24 @@ from `X-Generation-Id`. Verify the receipt before using `data`.
 
 Requests accept `SystemOneRequest` or another serializable JSON value. Each
 question requires `instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`, preserving unknown fields. Structured
-content preserves arbitrary-precision JSON numbers; scores and probabilities
-use finite `f64` values.
+support `noul`, `choice`, `score`, and `box`, preserving unknown fields. A Box
+question requires only `instructions`. `SystemOneAnswer::Box` exposes `bounds`
+(the JSON `box` field) as `SystemOneBoxCoordinates` with finite `top`, `bottom`,
+`left`, and `right` values, plus `confidence: Option<f64>`; missing or null
+confidence becomes `None`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.assets` accepts an optional map of `SystemOneImageAsset` values.
+Structured content preserves arbitrary-precision JSON numbers; scores,
+probabilities, and Box coordinates/confidence use finite `f64` values.
+
+See the [native image example](../../examples/example-rs/src/bin/systemone.rs) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.

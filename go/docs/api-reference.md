@@ -72,9 +72,23 @@ required deployments and sends one nonstreaming request. `DecisionID` comes from
 
 Requests accept `SystemOneRequest` or another JSON-serializable value. Each
 question requires `Instructions` as text, an object, or an array. Responses
-support `noul`, `choice`, and `score`; `Extra` preserves unknown fields.
-Structured legend numbers use `json.Number`, while score and probability fields
-use `float64`.
+support `noul`, `choice`, `score`, and `box`; `Extra` preserves unknown fields.
+A Box question requires only `Instructions`. Its answer exposes
+`Box *SystemOneBoxCoordinates` with finite `Top`, `Bottom`, `Left`, and `Right`
+values, plus optional `Confidence *float64`; missing or null confidence becomes `nil`.
+
+Structured content accepts OpenRouter `image_url` JSON parts in state,
+instructions, and criteria. An optional JSON `assets` map holds PNG/JPEG images
+by reference: `format` (`png`, `jpg`, or `jpeg`), `data_base64` (standard base64),
+and optional `type: "image"`. Reference each asset from the request content.
+Assets and references pass through unchanged,
+including references returned in a Score's `legend`.
+`SystemOneRequest.Assets` accepts a map of `SystemOneImageAsset` values.
+Structured legend numbers use `json.Number`, while scores, probabilities,
+and Box coordinates/confidence use finite `float64` values.
+
+See the [native image example](../../examples/example-go/gateway/systemone/main.go) and
+[run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's
 receipt retention and verification.

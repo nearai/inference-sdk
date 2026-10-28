@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Anthropic from '@anthropic-ai/sdk';
-import { choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
+import { box, choice, noul, score, TypeSafeClient } from '@typesafe-ai/sdk';
 import ed2curve from 'ed2curve';
 import OpenAI from 'openai';
 import nacl from 'tweetnacl';
@@ -3680,6 +3680,193 @@ describe('System One decisions', () => {
       urgency: score('Rate the urgency.', ['Low', 'High']),
     },
   };
+
+  const imagePart = {
+    type: 'image_url',
+    image_url: { url: 'data:image/png;base64,ZmFrZS1pbWFnZQ==' },
+  };
+  const imageRequest = {
+    model,
+    state: { canvas: imagePart },
+    questions: {
+      region: {
+        type: 'box' as const,
+        instructions: ['Locate the rectangle', imagePart],
+      },
+      present: {
+        type: 'noul' as const,
+        instructions: 'Does the canvas match?',
+        criteria: { true: imagePart },
+      },
+    },
+  };
+  const boxBounds = { top: 0.31, bottom: 0.69, left: 0.25, right: 0.75 };
+
+  test.each([undefined, null, 0.82])(
+    'preserves JSON images and verifies Box receipts with confidence %s',
+    async (confidence) => {
+      const answer = {
+        type: 'box',
+        box: { ...boxBounds, future: 'preserved' },
+        ...(confidence === undefined ? {} : { confidence }),
+        future: { preserved: true },
+      };
+      const response = {
+        ...decisionResponse,
+        answers: { region: answer, present: { type: 'noul', noul: 0.98 } },
+      };
+      const fixture = decisionGateway({ response });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const result = await client.systemone.create(imageRequest);
+      expect(await fixture.requests[0].json()).toEqual(imageRequest);
+      expect(result.data.answers.region).toEqual(answer);
+      if (result.data.answers.region.type !== 'box')
+        throw new Error('expected box');
+      result.data.answers.region.box.top = 0;
+      await expect(
+        client.verifyResponse(result.decisionId),
+      ).resolves.toMatchObject({
+        signatureKind: 'gateway',
+      });
+      expect(fixture.requests).toHaveLength(1);
+    },
+  );
+
+  test('official Jev SDK forwards OpenRouter image parts and verifies Box receipts', async () => {
+    const fixture = decisionGateway({
+      response: {
+        ...decisionResponse,
+        answers: { region: { type: 'box', box: boxBounds, confidence: 0.82 } },
+      },
+    });
+    jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+    const client = new InferenceClient({
+      ...inferenceClientOptions(fixture.gateway),
+      e2ee: false,
+    });
+    const request = {
+      model,
+      state: [imagePart],
+      questions: { region: box('Locate the rectangle') },
+    };
+    const { data, response } = await officialClient(client)
+      .systemOne(request)
+      .withResponse();
+    expect(await fixture.requests[0].json()).toEqual(request);
+    expect(data.answers.region.box).toEqual(boxBounds);
+    const id = response.headers.get('x-generation-id');
+    if (!id) throw new Error('missing receipt ID');
+    await expect(client.verifyResponse(id)).resolves.toMatchObject({
+      signatureKind: 'gateway',
+    });
+    expect(fixture.requests).toHaveLength(1);
+  });
+
+  test.each(['native', 'fetch'])(
+    '%s preserves JSON assets, reference strings, and receipt bytes',
+    async (entrypoint) => {
+      const request = {
+        model,
+        assets: {
+          '<photo>': { format: 'png', data_base64: 'ZmFrZS1pbWFnZQ==' },
+        },
+        state: { '<photo>': ['<photo>', imagePart] },
+        questions: {
+          region: { type: 'box', instructions: 'Locate <photo> — now' },
+          match: {
+            type: 'score',
+            instructions: 'Rate the match.',
+            criteria: ['Different', '<photo>'],
+          },
+        },
+      } satisfies SystemOneRequest;
+      const legend = { '0': 'Different', '1': '<photo>' };
+      const fixture = decisionGateway({
+        response: {
+          ...decisionResponse,
+          answers: {
+            region: { type: 'box', box: boxBounds },
+            match: {
+              type: 'score',
+              score: 1,
+              confidence: 0.9,
+              probabilities: { '0': 0.1, '1': 0.9 },
+              legend,
+            },
+          },
+        },
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      const body =
+        entrypoint === 'native'
+          ? JSON.stringify(request)
+          : `${JSON.stringify(request, null, 2)}\n`;
+      let id: string;
+      if (entrypoint === 'native') {
+        const result = await client.systemone.create(request);
+        expect(result.data.answers.match).toMatchObject({ legend });
+        id = result.decisionId;
+      } else {
+        const response = await client.fetch(`${baseUrl}systemone`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+        });
+        expect((await response.json()).answers.match.legend).toEqual(legend);
+        id = response.headers.get('x-generation-id') ?? '';
+      }
+      expect(await fixture.requests[0].text()).toBe(body);
+      await expect(client.verifyResponse(id)).resolves.toMatchObject({
+        signatureKind: 'gateway',
+      });
+      expect(fixture.requests).toHaveLength(1);
+    },
+  );
+
+  test.each([
+    { type: 'box' },
+    { type: 'box', box: null },
+    { type: 'box', box: { bottom: 1, left: 0, right: 1 } },
+    ...[null, true, '0.31'].map((top) => ({
+      type: 'box',
+      box: { ...boxBounds, top },
+    })),
+    { type: 'box', box: boxBounds, confidence: '0.82' },
+  ])(
+    'rejects malformed Box answer %j without retaining a receipt',
+    async (answer) => {
+      const fixture = decisionGateway({
+        response: {
+          ...decisionResponse,
+          answers: { region: answer },
+        },
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(fixture.gateway),
+        e2ee: false,
+      });
+      await expect(client.systemone.create(imageRequest)).rejects.toMatchObject(
+        {
+          failure: { code: 'api.invalid_response' },
+        },
+      );
+      await expect(
+        client.verifyResponse('decision-receipt'),
+      ).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+      expect(fixture.requests).toHaveLength(1);
+    },
+  );
 
   test.each(['native', 'official'])(
     '%s Jev client verifies a response decoded by Fetch',

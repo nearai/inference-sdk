@@ -1,5 +1,6 @@
 use nearai_inference_sdk::{
-    SystemOneAnswer, SystemOneContent, SystemOneQuestion, SystemOneRequest, SystemOneResponse,
+    SystemOneAnswer, SystemOneBoxCoordinates, SystemOneContent, SystemOneQuestion,
+    SystemOneRequest, SystemOneResponse,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -8,6 +9,7 @@ use std::collections::BTreeMap;
 fn external_callers_can_construct_every_question_variant() {
     let request = SystemOneRequest {
         model: "decision-model".into(),
+        assets: None,
         state: SystemOneContent::Text("A customer request".into()),
         questions: BTreeMap::from([
             (
@@ -31,10 +33,18 @@ fn external_callers_can_construct_every_question_variant() {
                     criteria: vec![SystemOneContent::Text("Urgent".into())],
                 },
             ),
+            (
+                "region".into(),
+                SystemOneQuestion::Box {
+                    instructions: SystemOneContent::Text("Locate the rectangle".into()),
+                },
+            ),
         ]),
     };
     let encoded = serde_json::to_value(request).unwrap();
     assert_eq!(encoded["questions"]["yes_no"]["type"], "noul");
+    assert_eq!(encoded["questions"]["region"]["type"], "box");
+    assert!(encoded["questions"]["region"].get("criteria").is_none());
     assert_eq!(
         encoded["questions"]["category"]["criteria"],
         json!({"billing": null})
@@ -58,6 +68,10 @@ fn external_callers_can_read_every_answer_payload() {
             "priority": {
                 "type": "score", "score": 1.0, "confidence": 0.7,
                 "probabilities": {"1": 0.7}, "legend": {"1": "Urgent"}, "future": true
+            },
+            "region": {
+                "type": "box", "confidence": 0.82, "future": true,
+                "box": {"top": 0.31, "bottom": 0.69, "left": 0.25, "right": 0.75, "future": true}
             }
         },
         "usage": {"input_tokens": 1, "output_tokens": 1}
@@ -97,5 +111,22 @@ fn external_callers_can_read_every_answer_payload() {
     assert_eq!(*confidence, 0.7);
     assert_eq!(probabilities["1"], 0.7);
     assert!(matches!(&legend["1"], SystemOneContent::Text(value) if value == "Urgent"));
+    assert_eq!(extra["future"], true);
+
+    let SystemOneAnswer::Box {
+        bounds,
+        confidence,
+        extra,
+    } = &response.answers["region"]
+    else {
+        panic!("expected box");
+    };
+    let bounds: &SystemOneBoxCoordinates = bounds;
+    assert_eq!(
+        [bounds.top, bounds.bottom, bounds.left, bounds.right],
+        [0.31, 0.69, 0.25, 0.75]
+    );
+    assert_eq!(*confidence, Some(0.82));
+    assert_eq!(bounds.extra["future"], true);
     assert_eq!(extra["future"], true);
 }
