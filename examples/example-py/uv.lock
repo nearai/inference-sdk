@@ -1471,7 +1471,7 @@ wheels = [
 
 [[package]]
 name = "nearai-inference-sdk"
-version = "0.2.0"
+version = "0.2.1rc1"
 source = { editable = "../../py" }
 dependencies = [
     { name = "aiohttp" },
