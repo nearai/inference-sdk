@@ -1,6 +1,6 @@
 {
   "name": "@nearai/inference-sdk",
-  "version": "0.2.0",
+  "version": "0.2.1-rc.1",
   "description": "TypeScript SDK for NEAR AI inference with attestation verification and end-to-end encryption",
   "license": "MIT",
   "repository": {
