@@ -6,7 +6,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { ethers } from 'ethers';
 import OpenAI from 'openai';
 import { InferenceClient, type TdxQuoteVerificationResult } from '../src';
-import { decryptE2eeText, encryptE2eeText } from '../src/core/e2ee';
+import {
+  buildE2eeFieldAad,
+  buildE2eeRequestAad,
+  decryptE2eeText,
+  encryptE2eeText,
+} from '../src/core/e2ee';
 import { appCompose, createGatewayTlsQuote } from './fixtures';
 
 const baseUrl = 'https://gateway.test/v1/';
@@ -236,6 +241,13 @@ function createEcdsaGateway({
           privateKey: modelKey.privateKey,
         },
         field: 'messages[0].content',
+        associatedData: buildE2eeFieldAad(
+          buildE2eeRequestAad({
+            signingAlgo: 'ecdsa',
+            publicKey: clientPublicKey,
+          }),
+          'messages[].content',
+        ),
       }),
     );
     const response = jsonResponse({
@@ -329,7 +341,7 @@ describe('ECDSA inference client', () => {
     expect(headers.get('x-signing-algo')).toBe('ecdsa');
     expect(headers.get('x-client-pub-key')).toHaveLength(128);
     expect(headers.get('x-model-pub-key')).toBe(modelPublicKey);
-    expect(headers.get('x-encryption-version')).toBeNull();
+    expect(headers.get('x-encryption-version')).toBe('3');
     expect(headers.get('x-encrypt-all-fields')).toBe('true');
   });
 

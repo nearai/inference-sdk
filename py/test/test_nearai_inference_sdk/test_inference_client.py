@@ -33,7 +33,9 @@ from nearai_inference_sdk.core import cloud_api, inference_client
 from nearai_inference_sdk.core.e2ee import (
     EcdsaE2eeClientKeyPair,
     Ed25519E2eeClientKeyPair,
+    build_e2ee_request_aad,
     decrypt_e2ee_text,
+    e2ee_field_aad,
     encrypt_e2ee_text,
 )
 from nearai_inference_sdk.utils.fetch import FetchResponse
@@ -194,7 +196,13 @@ class Gateway:
         client_key = request.headers.get('x-client-pub-key')
         content = body['messages'][0]['content']
         if client_key:
-            content = decrypt_e2ee_text(content, self.encryption_key, 'content')
+            aad = e2ee_field_aad(
+                build_e2ee_request_aad(
+                    E2eeModelKey(signing_algo=self.signing_algo, public_key=client_key)
+                ),
+                'messages[].content',
+            )
+            content = decrypt_e2ee_text(content, self.encryption_key, 'content', aad)
         self.plaintexts.append(content)
         response_content = 'Hello back'
         if client_key:

@@ -456,7 +456,22 @@ from NVIDIA; set `JWKSURL` separately to use another trusted key source.
 ## Encryption and TLS binding
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.
+Both suites send `X-Encryption-Version: 3`. Each encrypted request field
+authenticates the fresh reply public key and a fixed field label through AEAD
+associated data.
+
+V3 applies encryption to supported content when present, including tool calls
+and logprob tokens/bytes, independently of `X-Encrypt-All-Fields`. Required
+fields follow the Chat API schema. Protected response containers must have the
+expected types, and protected values must decrypt successfully. Partial tool-call
+deltas are supported.
 Model IDs, roles, tool-call IDs, and other protocol metadata remain visible.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
+
 Enable `OHTTP: true` independently to encrypt the inner Chat HTTP exchange to
 the Gateway; it requires Ed25519 and can be combined with E2EE. Authorization
 remains visible to the receiving endpoint. See the

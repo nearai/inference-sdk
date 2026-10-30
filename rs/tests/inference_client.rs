@@ -374,7 +374,8 @@ impl Respond for Fixture {
                     assert_eq!(
                         encryption::decrypt_request(
                             body["messages"][0]["content"].as_str().unwrap(),
-                            algo
+                            algo,
+                            public.to_str().unwrap()
                         ),
                         "Hello"
                     );

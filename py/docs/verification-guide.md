@@ -35,10 +35,23 @@ model verification stops Chat without falling back to Incognito.
 
 E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 `e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
-`signing_algo` defaults to `'ed25519'` and also accepts
-`'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
-response signatures. ECDSA uses the legacy AES-GCM protocol and omits
-`X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
+
+`signing_algo` defaults to `'ed25519'` and also accepts `'ecdsa'`. The selected
+algorithm applies to evidence, encryption, routing, and response signatures.
+Ed25519 uses XChaCha20-Poly1305; ECDSA uses AES-256-GCM.
+
+Both algorithms send `X-Encryption-Version: 3`. Each encrypted request field
+authenticates the fresh reply public key and a fixed field label as AEAD associated
+data. V3 applies encryption to supported content when present, including tool calls
+and logprob tokens/bytes, independently of `X-Encrypt-All-Fields`. Required fields
+follow the Chat API schema. Protected response containers must have the expected
+types, and protected values must decrypt successfully. Partial tool-call deltas
+are supported.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
 
 Successful attestation checks are reused for 60 minutes per model across
 `verify()`, Chat, Responses, Messages, and System One calls on the same client.

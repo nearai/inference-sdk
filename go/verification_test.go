@@ -10,6 +10,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 
@@ -338,5 +341,196 @@ func TestQuoteVerifierPreservesSDKError(t *testing.T) {
 	_, err := VerifyModelAttestation(context.Background(), a, ClientBinding{Nonce: a.Nonce}, options)
 	if err != original {
 		t.Fatalf("quote error changed: %v", err)
+	}
+}
+
+func TestE2EEV3RichContentParts(t *testing.T) {
+	for _, algo := range []SigningAlgo{ECDSA, Ed25519} {
+		t.Run(string(algo), func(t *testing.T) {
+			key, err := newE2EEKey(algo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cipher, err := encryptText("answer", E2EEModelKey{algo, key.public})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for field, streaming := range map[string]bool{"message": false, "delta": true} {
+				t.Run(field, func(t *testing.T) {
+					makeBody := func(parts []any) (map[string]any, map[string]any) {
+						message := map[string]any{"content": parts}
+						return map[string]any{"choices": []any{map[string]any{field: message}}}, message
+					}
+					part := func() map[string]any { return map[string]any{"type": "text", "text": cipher} }
+					body, message := makeBody([]any{part()})
+					if err := decryptChat(body, key, streaming); err != nil {
+						t.Fatal(err)
+					}
+					if objects(message["content"])[0]["text"] != "answer" {
+						t.Fatal("rich text was not decrypted")
+					}
+					empty, _ := makeBody([]any{})
+					if err := decryptChat(empty, key, streaming); err != nil {
+						t.Fatal(err)
+					}
+					for _, invalid := range []any{"plaintext", 0, true, nil, []any{"nested"}} {
+						body, _ := makeBody([]any{part(), invalid})
+						requireCode(t, decryptChat(body, key, streaming), "e2ee.decryption_failed")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestE2EEV3SharedVectors(t *testing.T) {
+	raw, err := os.ReadFile("../test-fixtures/e2ee-v3.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Vectors []struct {
+			Algo        SigningAlgo `json:"signing_algo"`
+			ModelSecret string      `json:"model_secret"`
+			ModelPublic string      `json:"model_public"`
+			ReplyPublic string      `json:"reply_public"`
+			AAD         string      `json:"aad"`
+			Field       string      `json:"field"`
+			Plaintext   string      `json:"plaintext"`
+			Ciphertext  string      `json:"ciphertext"`
+		}
+	}
+	if err = json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range fixture.Vectors {
+		t.Run(string(v.Algo), func(t *testing.T) {
+			seed, _ := hex.DecodeString(v.ModelSecret)
+			secret := seed
+			if v.Algo == Ed25519 {
+				h := sha512.Sum512(seed)
+				secret = h[:32]
+				secret[0] &= 248
+				secret[31] &= 127
+				secret[31] |= 64
+			}
+			key := e2eeKey{v.Algo, v.ModelPublic, secret}
+			aad, err := requestAAD(v.Algo, v.ReplyPublic)
+			aad = fieldAAD(aad, v.Field)
+			if err != nil || hex.EncodeToString(aad) != v.AAD {
+				t.Fatalf("AAD: %v", err)
+			}
+			plain, err := decryptTextWithAAD(v.Ciphertext, key, aad)
+			if err != nil || plain != v.Plaintext {
+				t.Fatalf("vector: %q %v", plain, err)
+			}
+			if v.Algo == ECDSA {
+				canonical, err := requestAAD(v.Algo, v.ReplyPublic[2:])
+				canonical = fieldAAD(canonical, v.Field)
+				if err != nil || !bytes.Equal(canonical, aad) {
+					t.Fatal("noncanonical reply key")
+				}
+			}
+			cipher, err := encryptTextWithAAD(v.Plaintext, E2EEModelKey{v.Algo, v.ModelPublic}, aad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plain, err = decryptTextWithAAD(cipher, key, aad)
+			if err != nil || plain != v.Plaintext {
+				t.Fatalf("round trip: %q %v", plain, err)
+			}
+			wrongKey, _ := requestAAD(v.Algo, v.ModelPublic)
+			wrongSuite := append([]byte(nil), aad...)
+			wrongSuite[22] = 255
+			for _, wrong := range [][]byte{nil, wrongKey, wrongSuite} {
+				if _, err = decryptTextWithAAD(v.Ciphertext, key, wrong); err == nil {
+					t.Fatal("accepted wrong AAD")
+				}
+			}
+
+			request, err := http.NewRequest("POST", "https://example.test/v1/chat/completions", strings.NewReader(`{"model":"test","messages":[{"role":"user","content":"private prompt"}],"tools":[{"type":"function","function":{"name":"private_tool","parameters":{"type":"object"}}}]}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			prepared, err := PrepareE2EEChatRequest(request, E2EEModelKey{v.Algo, v.ModelPublic})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if prepared.Request.Header.Get("X-Encryption-Version") != "3" {
+				t.Fatal("missing v3 header")
+			}
+			preparedAAD, err := requestAAD(v.Algo, prepared.Request.Header.Get("X-Client-Pub-Key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var requestBody map[string]any
+			if err := json.NewDecoder(prepared.Request.Body).Decode(&requestBody); err != nil {
+				t.Fatal(err)
+			}
+			tool := object(objects(requestBody["tools"])[0]["function"])
+			for _, field := range []struct{ cipher, label, expected string }{
+				{objects(requestBody["messages"])[0]["content"].(string), "messages[].content", "private prompt"},
+				{tool["name"].(string), "tools[].function.name", "private_tool"},
+				{tool["parameters"].(string), "tools[].function.parameters", `{"type":"object"}`},
+			} {
+				plain, err := decryptTextWithAAD(field.cipher, key, fieldAAD(preparedAAD, field.label))
+				if err != nil || plain != field.expected {
+					t.Fatalf("prepared field: %q %v", plain, err)
+				}
+				if _, err := decryptText(field.cipher, key); err == nil {
+					t.Fatal("request accepted without AAD")
+				}
+				if _, err := decryptTextWithAAD(field.cipher, key, fieldAAD(preparedAAD, "tool_choice.function.name")); err == nil {
+					t.Fatal("request accepted in another field")
+				}
+			}
+
+			for _, text := range []string{
+				`{"choices":[{"message":{},"logprobs":{"content":[{"bytes":[115]}]}}]}`,
+				`{"choices":[{"message":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}`,
+				`{"choices":[{"message":{"tool_calls":[{"function":{"arguments":{"secret":true}}}]}}]}`,
+			} {
+				var body map[string]any
+				json.Unmarshal([]byte(text), &body)
+				if err := decryptChat(body, key, false); err == nil {
+					t.Fatal("accepted clear protected field")
+				}
+			}
+		})
+	}
+}
+
+func TestE2EEV3RejectsMalformedResponseContainers(t *testing.T) {
+	for _, algo := range []SigningAlgo{ECDSA, Ed25519} {
+		key, err := newE2EEKey(algo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared := &PreparedE2EEChatRequest{key: key}
+		for _, choice := range []string{
+			`{"message":{"tool_calls":{"function":{"arguments":"plaintext"}}}}`,
+			`{"message":{"tool_calls":[null]}}`,
+			`{"message":{"tool_calls":[{"function":["plaintext"]}]}}`,
+			`{"message":{"audio":[{"data":"plaintext"}]}}`,
+			`{"message":{"function_call":["plaintext"]}}`,
+			`{"logprobs":[]}`,
+			`{"logprobs":{"content":{"token":"plaintext"}}}`,
+			`{"logprobs":{"content":[null]}}`,
+			`{"logprobs":{"content":[{"top_logprobs":{"token":"plaintext"}}]}}`,
+		} {
+			body := `{"id":"chat-containers","choices":[` + choice + `]}`
+			_, err := prepared.DecryptJSON([]byte(body))
+			requireCode(t, err, "e2ee.decryption_failed")
+			chunk := strings.Replace(body, `"message":`, `"delta":`, 1)
+			stream := prepared.DecryptSSE(io.NopCloser(strings.NewReader("data: " + chunk + "\n\n")))
+			_, err = io.ReadAll(stream)
+			stream.Close()
+			requireCode(t, err, "e2ee.decryption_failed")
+		}
+		var valid map[string]any
+		json.Unmarshal([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1"}],"audio":null},"logprobs":null}]}`), &valid)
+		if err := decryptChat(valid, key, true); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

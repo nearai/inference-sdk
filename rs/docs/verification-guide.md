@@ -106,14 +106,29 @@ caller-authenticated pins; it accepts HTTPS only.
 ### Encryption and OHTTP
 
 Set `e2ee: true` for supported Chat fields. Ed25519 uses X25519, HKDF-SHA256,
-and XChaCha20-Poly1305; `SigningAlgo::Ecdsa` selects the legacy secp256k1,
+and XChaCha20-Poly1305; `SigningAlgo::Ecdsa` selects the secp256k1,
 HKDF-SHA256, AES-256-GCM protocol. Every request gets a fresh response key.
 Model keys are authenticated against the verified signing identity, including
-the Ethereum address derivation for ECDSA. Supported fields match the JavaScript
-and Python SDKs: message content and content-part arrays, reasoning, names,
-refusals, audio data, tool calls/definitions, function calls, and tool choice.
+the Ethereum address derivation for ECDSA.
+
+Supported request fields include message content and content-part arrays,
+reasoning, names, refusals, audio data, tool calls/definitions, function calls,
+and tool choice.
 Response decryption also handles tool results and logprob token/byte fields.
-Routing metadata, roles, token counts, and unknown fields remain visible.
+Routing metadata, roles, and token counts remain visible. Request fields outside
+the supported transforms are sent as provided.
+
+Both suites send `X-Encryption-Version: 3`. Each encrypted request field
+authenticates the reply public key and a fixed field label through AEAD associated
+data. V3 applies encryption to supported content when present, independently of
+`X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
+response containers must have the expected types, and protected values must
+decrypt successfully. Partial tool-call deltas are supported.
+
+V3 requires support in the model proxy and any gateway on the request path.
+The SDK does not downgrade on failure. See the
+[wire protocol](https://github.com/nearai/inference-proxy/blob/main/docs/e2ee.md)
+for AAD encoding, ciphertext format, and field validation.
 
 `prepare_e2ee_chat_request(request, &verified_model_key)` is the standalone
 helper. It returns the encrypted `request` and `decrypt_json` / `decrypt_sse`
