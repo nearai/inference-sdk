@@ -16,7 +16,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::Mutex;
@@ -167,7 +167,8 @@ type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, Inferen
 type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
 struct Record {
     finished: Instant,
-    state: Mutex<RecordState>,
+    // A synchronous lock prevents cancellation between terminal verification and capture release.
+    state: StdMutex<RecordState>,
 }
 struct RecordState {
     captured: Option<CapturedResponse>,
@@ -714,7 +715,7 @@ impl InferenceClient {
             id,
             Arc::new(Record {
                 finished: Instant::now(),
-                state: Mutex::new(RecordState {
+                state: StdMutex::new(RecordState {
                     captured: Some(CapturedResponse {
                         request: request.into(),
                         response: response.into(),
@@ -743,7 +744,7 @@ impl InferenceClient {
                 .ok_or(ApiError::CompletionNotFound)?
         };
         let future = {
-            let mut state = record.state.lock().await;
+            let mut state = record.state.lock().expect("response record mutex poisoned");
             if state.verification.is_none() {
                 let captured = state.captured.as_ref().expect("unverified response bytes");
                 // Do not capture Record itself: the cached future must not form an Arc cycle.
@@ -824,7 +825,7 @@ impl InferenceClient {
             .as_ref()
             .err()
             .is_some_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable");
-        let mut state = record.state.lock().await;
+        let mut state = record.state.lock().expect("response record mutex poisoned");
         if state
             .verification
             .as_ref()
@@ -1026,6 +1027,7 @@ async fn create_session(
 #[cfg(test)]
 mod cache_tests {
     use super::*;
+    use std::future::{poll_fn, Future};
 
     async fn captured_client() -> (InferenceClient, Arc<Record>) {
         let client = InferenceClient::new(None).unwrap();
@@ -1079,7 +1081,7 @@ mod cache_tests {
             let (client, record) = captured_client().await;
             let finished = record.finished;
             let (request, response, session) = {
-                let mut state = record.state.lock().await;
+                let mut state = record.state.lock().expect("response record mutex poisoned");
                 let captured = state.captured.as_ref().unwrap();
                 let refs = (
                     Arc::downgrade(&captured.request),
@@ -1115,6 +1117,56 @@ mod cache_tests {
     }
 
     #[tokio::test]
+    async fn terminal_capture_release_cannot_be_cancelled_after_verification() {
+        for result in [
+            Ok(verified_result()),
+            Err(VerificationError::SignatureSignerMismatch.into()),
+        ] {
+            let (client, record) = captured_client().await;
+            let terminal_result = result.clone();
+            let verification = async move {
+                // Finish verification with no cooperative budget left for an async lock.
+                while tokio::task::coop::has_budget_remaining() {
+                    tokio::task::coop::consume_budget().await;
+                }
+                terminal_result
+            }
+            .boxed()
+            .shared();
+            let (request, response, session) = {
+                let mut state = record.state.lock().expect("response record mutex poisoned");
+                let captured = state.captured.as_ref().unwrap();
+                let refs = (
+                    Arc::downgrade(&captured.request),
+                    Arc::downgrade(&captured.response),
+                    Arc::downgrade(&captured.session),
+                );
+                state.verification = Some(verification.clone());
+                refs
+            };
+            let mut caller = Box::pin(client.verify_response("receipt"));
+            // Dropping a pending caller models timeout/select cancellation at the yield point.
+            let _ = poll_fn(|cx| std::task::Poll::Ready(caller.as_mut().poll(cx))).await;
+            drop(caller);
+            assert!(
+                verification.peek().is_some(),
+                "verification reached a terminal result"
+            );
+            assert!(
+                request.upgrade().is_none(),
+                "request retained after terminal verification"
+            );
+            assert!(response.upgrade().is_none());
+            assert!(session.upgrade().is_none());
+            let cached = client.verify_response("receipt").await;
+            match result {
+                Ok(expected) => assert_eq!(cached.unwrap().id, expected.id),
+                Err(expected) => assert_eq!(cached.unwrap_err().code(), expected.code()),
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn retryable_receipts_keep_bytes_for_a_later_lookup() {
         for error in [
             ApiError::HttpStatus {
@@ -1128,7 +1180,7 @@ mod cache_tests {
         ] {
             let (client, record) = captured_client().await;
             let (request, response) = {
-                let mut state = record.state.lock().await;
+                let mut state = record.state.lock().expect("response record mutex poisoned");
                 let captured = state.captured.as_ref().unwrap();
                 let refs = (
                     Arc::downgrade(&captured.request),
@@ -1142,10 +1194,19 @@ mod cache_tests {
                 refs
             };
             client.verify_response("receipt").await.unwrap_err();
-            assert!(record.state.lock().await.verification.is_none());
+            assert!(record
+                .state
+                .lock()
+                .expect("response record mutex poisoned")
+                .verification
+                .is_none());
             assert!(request.upgrade().is_some());
             assert!(response.upgrade().is_some());
-            record.state.lock().await.verification = Some(
+            record
+                .state
+                .lock()
+                .expect("response record mutex poisoned")
+                .verification = Some(
                 futures_util::future::ready(Ok(verified_result()))
                     .boxed()
                     .shared(),
