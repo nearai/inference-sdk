@@ -698,6 +698,9 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 					errors.Is(e, context.DeadlineExceeded) ||
 					(errors.As(e, &sdk) && (sdk.Retryable || sdk.Code == "api.completion_signature_unavailable"))) {
 				record.verifying = nil
+			} else {
+				// Cached outcomes no longer need the captured wire bytes.
+				record.request, record.response, record.session = nil, nil, nil
 			}
 			close(p.done)
 		}()

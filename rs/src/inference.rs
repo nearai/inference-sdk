@@ -166,12 +166,18 @@ impl Session {
 type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, InferenceError>>>;
 type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
 struct Record {
+    finished: Instant,
+    state: Mutex<RecordState>,
+}
+struct RecordState {
+    captured: Option<CapturedResponse>,
+    verification: Option<ReceiptFuture>,
+}
+struct CapturedResponse {
     request: Arc<[u8]>,
     response: Arc<[u8]>,
     session: Arc<Session>,
     gateway_only: bool,
-    finished: Instant,
-    verification: Mutex<Option<ReceiptFuture>>,
 }
 #[derive(Default)]
 struct State {
@@ -707,12 +713,16 @@ impl InferenceClient {
         state.responses.insert(
             id,
             Arc::new(Record {
-                request: request.into(),
-                response: response.into(),
-                session,
-                gateway_only,
                 finished: Instant::now(),
-                verification: Mutex::new(None),
+                state: Mutex::new(RecordState {
+                    captured: Some(CapturedResponse {
+                        request: request.into(),
+                        response: response.into(),
+                        session,
+                        gateway_only,
+                    }),
+                    verification: None,
+                }),
             }),
         );
         Ok(())
@@ -733,16 +743,17 @@ impl InferenceClient {
                 .ok_or(ApiError::CompletionNotFound)?
         };
         let future = {
-            let mut pending = record.verification.lock().await;
-            if pending.is_none() {
+            let mut state = record.state.lock().await;
+            if state.verification.is_none() {
+                let captured = state.captured.as_ref().expect("unverified response bytes");
                 // Do not capture Record itself: the cached future must not form an Arc cycle.
-                let request = record.request.clone();
-                let response = record.response.clone();
-                let session = record.session.clone();
-                let gateway_only = record.gateway_only;
+                let request = captured.request.clone();
+                let response = captured.response.clone();
+                let session = captured.session.clone();
+                let gateway_only = captured.gateway_only;
                 let id = id.to_owned();
                 let algo = self.inner.options.signing_algo;
-                *pending = Some(
+                state.verification = Some(
                     async move {
                         let signature = session.api.signature(&id, algo).await?;
                         if signature.signer.signing_algo != algo {
@@ -802,17 +813,28 @@ impl InferenceClient {
                     .shared(),
                 );
             }
-            pending.as_ref().expect("initialized future").clone()
+            state
+                .verification
+                .as_ref()
+                .expect("initialized future")
+                .clone()
         };
         let result = future.clone().await;
-        if result
+        let retryable = result
             .as_ref()
             .err()
-            .is_some_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable")
+            .is_some_and(|e| e.retryable() || e.code() == "api.completion_signature_unavailable");
+        let mut state = record.state.lock().await;
+        if state
+            .verification
+            .as_ref()
+            .is_some_and(|f| f.ptr_eq(&future))
         {
-            let mut pending = record.verification.lock().await;
-            if pending.as_ref().is_some_and(|f| f.ptr_eq(&future)) {
-                *pending = None;
+            if retryable {
+                state.verification = None;
+            } else {
+                // Cached terminal results no longer need the original wire bytes.
+                state.captured = None;
             }
         }
         result
@@ -832,6 +854,7 @@ fn transport(reason: ApiTransportReason) -> ApiError {
         reason,
     }
 }
+
 pub(crate) fn verified_at() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -998,4 +1021,138 @@ async fn create_session(
         api: EvidenceApi::Gateway(api),
         ohttp,
     }))
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    async fn captured_client() -> (InferenceClient, Arc<Record>) {
+        let client = InferenceClient::new(None).unwrap();
+        let session = Arc::new(Session {
+            gateway: None,
+            models: Vec::new(),
+            selected: None,
+            direct: None,
+            verified_at: 0,
+            client: reqwest::Client::new(),
+            api: EvidenceApi::Gateway(AttestationClient::new(None)),
+            ohttp: None,
+        });
+        client
+            .register(
+                "receipt".into(),
+                vec![1; 1024],
+                vec![2; 1024],
+                session,
+                false,
+                0,
+            )
+            .await
+            .unwrap();
+        let record = client.inner.state.lock().await.responses["receipt"].clone();
+        (client, record)
+    }
+
+    fn verified_result() -> VerifiedCompletionResult {
+        VerifiedCompletionResult {
+            id: "receipt".into(),
+            signature: CompletionSignature {
+                kind: CompletionSignatureKind::ProviderTee,
+                signed_text: "fixture hashes".into(),
+                signature: "fixture signature".into(),
+                signer: SigningIdentity {
+                    signing_algo: SigningAlgo::Ed25519,
+                    signing_address: "fixture signer".into(),
+                },
+            },
+            attestation: VerifiedCompletionAttestation::Direct(Vec::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_receipts_release_bytes_and_session_but_keep_result_and_expiry() {
+        for result in [
+            Ok(verified_result()),
+            Err(VerificationError::SignatureSignerMismatch.into()),
+        ] {
+            let (client, record) = captured_client().await;
+            let finished = record.finished;
+            let (request, response, session) = {
+                let mut state = record.state.lock().await;
+                let captured = state.captured.as_ref().unwrap();
+                let refs = (
+                    Arc::downgrade(&captured.request),
+                    Arc::downgrade(&captured.response),
+                    Arc::downgrade(&captured.session),
+                );
+                // Isolate retention from the cryptographic verification covered by integration tests.
+                state.verification =
+                    Some(futures_util::future::ready(result.clone()).boxed().shared());
+                refs
+            };
+            for _ in 0..2 {
+                let actual = client.verify_response("receipt").await;
+                match &result {
+                    Ok(expected) => assert_eq!(actual.unwrap().id, expected.id),
+                    Err(expected) => assert_eq!(actual.unwrap_err().code(), expected.code()),
+                }
+            }
+            assert!(request.upgrade().is_none());
+            assert!(response.upgrade().is_none());
+            assert!(session.upgrade().is_none());
+            assert_eq!(record.finished, finished);
+            assert!(Arc::ptr_eq(
+                &record,
+                &client.inner.state.lock().await.responses["receipt"]
+            ));
+            client.clear_response_cache().await;
+            assert_eq!(
+                client.verify_response("receipt").await.unwrap_err().code(),
+                "api.completion_not_found"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn retryable_receipts_keep_bytes_for_a_later_lookup() {
+        for error in [
+            ApiError::HttpStatus {
+                resource: ApiResource::CompletionSignature,
+                status: 503,
+            },
+            ApiError::CompletionSignatureUnavailable {
+                provider_error_code: "fixture".into(),
+                provider_message: "not ready".into(),
+            },
+        ] {
+            let (client, record) = captured_client().await;
+            let (request, response) = {
+                let mut state = record.state.lock().await;
+                let captured = state.captured.as_ref().unwrap();
+                let refs = (
+                    Arc::downgrade(&captured.request),
+                    Arc::downgrade(&captured.response),
+                );
+                state.verification = Some(
+                    futures_util::future::ready(Err(error.into()))
+                        .boxed()
+                        .shared(),
+                );
+                refs
+            };
+            client.verify_response("receipt").await.unwrap_err();
+            assert!(record.state.lock().await.verification.is_none());
+            assert!(request.upgrade().is_some());
+            assert!(response.upgrade().is_some());
+            record.state.lock().await.verification = Some(
+                futures_util::future::ready(Ok(verified_result()))
+                    .boxed()
+                    .shared(),
+            );
+            client.verify_response("receipt").await.unwrap();
+            assert!(request.upgrade().is_none());
+            assert!(response.upgrade().is_none());
+        }
+    }
 }

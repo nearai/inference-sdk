@@ -22,7 +22,7 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 | `message_request(serde_json::Value)` | `reqwest::Request` | Build a Gateway Messages request for `send`, including streaming. |
 | `create_message(serde_json::Value)` | `serde_json::Value` | Create an Anthropic Message; verify its ID with `verify_response`. |
 | `send(reqwest::Request)` | `InferenceResponse` | Verify and stream Chat, Gateway Responses, or Messages. Only buffered JSON POSTs to configured creation endpoints are accepted; field-level encryption is Chat-only. |
-| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. |
+| `verify_response(id)` | `VerifiedCompletionResult` | Check exact retained wire bytes with the original session evidence. Cached terminal results release the original bytes and remain available until the original response TTL expires. |
 | `clear_response_cache().await` | `()` | Clear captured request/response bytes and cached receipt results across all clones; preserve attestation sessions. |
 
 `InferenceResponse` exposes `status`, `headers`, and `body: ByteStream`. Consume

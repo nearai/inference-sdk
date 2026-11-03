@@ -528,9 +528,10 @@ evidence. Concurrent requests can finish in any order. Repeated verification of
 the same ID shares the in-flight operation and its result. After a retryable
 API failure or `api.completion_signature_unavailable`, call `verifyResponse(id)`
 again to retry the signature lookup. Successful results and other non-retryable
-failures remain cached.
+failures remain cached, and their original request and response bytes are released.
 
-Response records retain complete bodies in memory. They expire
+Unverified responses and retryable lookups retain complete bodies in memory.
+All response records, including cached verification results, expire
 `responseCacheTimeToLiveMs` after body completion (default: 60 minutes),
 independently of the attestation cache. Unknown or expired IDs produce
 `ApiError` with code `api.completion_not_found`. For active streams, memory

@@ -115,12 +115,12 @@ type CachedVerification<VerificationResult, AttestationResult> = {
 
 type CompletionProtocol = 'chat' | 'responses' | 'messages';
 
-type ResponseRecord<VerificationResult> =
-  VerifyCapturedResponseParams<VerificationResult> & {
-    verification?: Promise<VerificationResult>;
-    expiresAt?: number;
-    expiry?: ReturnType<typeof setTimeout>;
-  };
+type ResponseRecord<VerificationResult> = {
+  captured?: VerifyCapturedResponseParams<VerificationResult>;
+  verification?: Promise<VerificationResult>;
+  expiresAt?: number;
+  expiry?: ReturnType<typeof setTimeout>;
+};
 
 type ParsedSecureRequest = {
   readonly model: string;
@@ -414,10 +414,15 @@ export abstract class VerifiedInferenceClientBase<
   /** Verify a captured response by ID. Consume streaming responses first. */
   verifyResponse(id: string): Promise<VerificationResult> {
     const record = this.getResponseRecord(id);
-    if (record === undefined) {
+    if (record?.verification !== undefined) return record.verification;
+    if (record?.captured === undefined) {
       return Promise.reject(new ApiError({ code: 'api.completion_not_found' }));
     }
-    record.verification ??= this.verifyCapturedResponse(record).catch(
+    record.verification = this.verifyCapturedResponse(record.captured).then(
+      (result) => {
+        record.captured = undefined;
+        return result;
+      },
       (cause: unknown) => {
         // Keep the captured bytes so a later call can retry a transient lookup.
         if (
@@ -426,6 +431,8 @@ export abstract class VerifiedInferenceClientBase<
             cause.failure.code === 'api.completion_signature_unavailable')
         ) {
           record.verification = undefined;
+        } else {
+          record.captured = undefined;
         }
         throw cause;
       },
@@ -444,15 +451,16 @@ export abstract class VerifiedInferenceClientBase<
 
   /** All supported endpoints share byte retention, expiry, and verification retries. */
   protected registerResponse(
-    record: ResponseRecord<VerificationResult>,
+    captured: VerifyCapturedResponseParams<VerificationResult>,
     generation: number,
   ): void {
     if (generation !== this.responseCacheGeneration) return;
     if (this.responseCacheTimeToLiveMs === 0) return;
-    const id = record.id;
+    const id = captured.id;
     if (this.getResponseRecord(id) !== undefined) {
       throw new ApiError({ code: 'api.duplicate_completion_id' });
     }
+    const record: ResponseRecord<VerificationResult> = { captured };
     this.responseRecords.set(id, record);
     const expire = (): void => {
       if (this.responseRecords.get(id) !== record) return;
@@ -471,7 +479,7 @@ export abstract class VerifiedInferenceClientBase<
       };
       release();
     };
-    void record.responseBody.then(expire, expire);
+    void captured.responseBody.then(expire, expire);
   }
 
   private getResponseRecord(

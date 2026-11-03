@@ -440,9 +440,10 @@ is not cached. Retryable signature retrieval failures can be attempted again
 without replaying the completion.
 
 Streaming is incremental, but signature verification requires retaining the wire body.
-Cache memory grows with the responses retained during the TTL. Select shorter
-retention for services that process many or large completions.
-Verified records remain available until their TTL expires. A duplicate
+Once verification caches a success or a failure that cannot be retried, it releases
+the captured request and response bytes. Subsequent calls reuse that outcome until
+the original TTL expires. Unverified records and retryable failures retain their
+bytes until expiry or explicit cleanup. A duplicate
 retained ID fails with `api.duplicate_completion_id` and preserves the original
 receipt. An expired ID can be reused.
 

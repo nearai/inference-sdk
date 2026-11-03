@@ -89,7 +89,7 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | `headers?` | `HeadersInit` | No | — | Static request headers. Gateway reports omit authentication headers; model reports use them for organization access. Other requests use configured authorization; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
 | `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model across `verify()`, Chat, Responses, Messages, and System One. Set `0` to check every request. |
-| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response bytes and verification results for this many milliseconds after body completion. Independent of the attestation cache. |
+| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Expires response records this many milliseconds after body completion. Successful verification and cached non-retryable failures release the original bodies sooner. Independent of the attestation cache. |
 | `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
 | `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
 | `ohttp?` | `boolean` | No | `false` | Encapsulates Chat, Responses, and Messages HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
@@ -144,8 +144,10 @@ OHTTP also supports Incognito models, protecting the exchange to the Gateway.
 A verified Gateway signature does not establish model TEE execution.
 
 Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
-Records retain complete request and response bodies until their TTL expires,
-including after successful or failed verification. TTL starts at body completion;
+Records retain complete request and response bodies until verification succeeds
+or returns a cached non-retryable failure. Verification results remain available
+until the original TTL expires. Unverified responses and retryable lookups retain
+their bodies until that deadline. TTL starts at body completion;
 `responseCacheTimeToLiveMs: 0` disables retention. Both TTL options accept finite,
 non-negative durations. Expired records are unavailable immediately; timers release
 retained bodies while idle. A duplicate retained ID fails with
