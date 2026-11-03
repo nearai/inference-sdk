@@ -60,13 +60,13 @@
     "hpke": "1.1.7",
     "jose": "6.2.13",
     "ohttp-ts": "0.6.1",
-    "openai": "7.39.0",
+    "openai": "7.45.1",
     "tweetnacl": "^1.0.3",
     "valibot": "1.5.0",
     "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.3",
     "@types/ed2curve": "0.2.4",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.19.2",
