@@ -86,7 +86,7 @@ stream before passing `message_start.message.id` to `verify_response`.
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
 | `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, Messages, and System One for this long; `0` verifies each request. |
-| `response_cache_time_to_live_ms` | `float` | `3600000` | Retain wire bytes for this long after the response finishes. |
+| `response_cache_time_to_live_ms` | `float` | `3600000` | Retain response records for this long after the response finishes. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
 | `deployment_policy` | `DeploymentPolicy \| None` | `None` | Optional callback `(model, deployment)` that rejects unapproved model deployments by raising. May be asynchronous. |
@@ -149,8 +149,11 @@ before calling `verify_response()`.
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
 | `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
 
-Response retention starts at body completion and lasts for the configured TTL,
-including after successful or failed verification. Set
+Response records expire at the configured TTL after body completion. Successful
+verification and cached terminal failures release the captured wire bytes and
+keep the result or error until expiry. Unverified responses and retryable failures
+retain their bytes for another verification attempt, including
+`api.completion_signature_unavailable`. Set
 `response_cache_time_to_live_ms=0` to disable retention. Both TTL options accept
 finite, non-negative durations. Expired records are unavailable immediately;
 timers release retained bodies while idle. A duplicate retained ID fails with

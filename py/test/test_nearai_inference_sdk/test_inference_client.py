@@ -36,6 +36,7 @@ from nearai_inference_sdk.core.e2ee import (
     decrypt_e2ee_text,
     encrypt_e2ee_text,
 )
+from nearai_inference_sdk.utils.errors import api_failure
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 from .fixtures import APP_COMPOSE, TLS_FINGERPRINT, create_model_quote
@@ -755,6 +756,106 @@ async def test_concurrent_receipt_checks_share_signature_retrieval(
 
     assert first == second
     assert gateway.signature_requests == 1
+
+
+@pytest.mark.parametrize('streaming', [False, True])
+@pytest.mark.parametrize('invalid_signature', [False, True])
+async def test_terminal_verification_releases_bodies_but_preserves_cached_result(
+    monkeypatch, streaming, invalid_signature
+):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+
+    # Unlike bytes, bytearray subclasses can be weakly referenced. They preserve
+    # the exact captured bytes and still exercise the real signature verifier.
+    class TrackedBytes(bytearray):
+        pass
+
+    async with gateway.client() as client:
+        result = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES, stream=streaming
+        )
+        if streaming:
+            chunks = [chunk async for chunk in result]
+            completion_id = chunks[0].id
+        else:
+            completion_id = result.id
+        record = client._responses[completion_id]
+        await record.response_body
+        await asyncio.sleep(0)
+        expiry, expires_at = record.expiry, record.expires_at
+        record.request_body = TrackedBytes(record.request_body)
+        response_body = asyncio.get_running_loop().create_future()
+        response_body.set_result(TrackedBytes(await record.response_body))
+        record.response_body = response_body
+        references = (
+            weakref.ref(record.request_body),
+            weakref.ref(response_body.result()),
+            weakref.ref(response_body),
+        )
+        del response_body
+        if invalid_signature:
+            gateway.signatures[completion_id]['signature'] = '00' * 64
+
+        async def verify():
+            try:
+                return await client.verify_response(completion_id)
+            except VerificationError as error:
+                assert invalid_signature
+                assert error.failure.code == 'signature.invalid'
+                return error
+
+        first, concurrent = await asyncio.gather(verify(), verify())
+        assert concurrent is first
+        assert await verify() is first
+        await asyncio.sleep(0)
+        gc.collect()
+        assert all(reference() is None for reference in references)
+        assert client._responses[completion_id] is record
+        assert record.expiry is expiry and record.expires_at == expires_at
+        assert expiry is not None and not expiry.cancelled()
+        assert gateway.signature_requests == 1
+
+
+@pytest.mark.parametrize('unavailable', [False, True])
+async def test_retryable_verification_retains_capture_until_success(
+    monkeypatch, unavailable
+):
+    gateway = Gateway()
+    gateway.install(monkeypatch)
+    async with gateway.client() as client:
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        record = client._responses[completion.id]
+        captured = record.request_body, record.response_body, record.session
+        fetch_signature = record.session.attestation_client.fetch_completion_signature
+
+        async def fail_once(*args, **kwargs):
+            monkeypatch.setattr(
+                record.session.attestation_client,
+                'fetch_completion_signature',
+                fetch_signature,
+            )
+            raise api_failure(
+                'api.completion_signature_unavailable'
+                if unavailable
+                else 'api.http_status',
+                retryable=not unavailable,
+            )
+
+        monkeypatch.setattr(
+            record.session.attestation_client, 'fetch_completion_signature', fail_once
+        )
+        with pytest.raises(ApiError):
+            await client.verify_response(completion.id)
+        assert record.verification is None
+        assert (record.request_body, record.response_body, record.session) == captured
+        verified = await client.verify_response(completion.id)
+        assert verified.id == completion.id
+        assert record.request_body == b''
+        assert record.response_body is None and record.session is None
+    assert len(gateway.completion_requests) == 1
 
 
 async def test_disabling_encryption_keeps_preflight_and_response_verification(
