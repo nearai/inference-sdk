@@ -190,7 +190,7 @@ For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
 request compression and inference retries. The official SDK parses the response;
 pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
 Chat's model session and selected-key routing. See the
-[official SDK guide](./verification-guide.md#use-the-official-jev-sdk).
+[official SDK guide](./verification-guide.md#use-the-official-typesafe-sdk).
 
 | Method | Parameters | Returns |
 | --- | --- | --- |
@@ -245,7 +245,7 @@ and optional `type: "image"`. Reference each asset from the request content.
 Assets and references pass through unchanged,
 including references returned in a Score's `legend`.
 
-See the [native image example](../../examples/example-js/gateway/jev.ts) and
+See the [native image example](../../examples/example-js/gateway/systemone.ts) and
 [run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.

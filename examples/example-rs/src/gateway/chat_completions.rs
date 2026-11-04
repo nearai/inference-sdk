@@ -1,5 +1,5 @@
 // Integrated Gateway JSON/SSE, E2EE, build provenance, and receipt verification.
-use example_rs::*;
+use example_rs::utils::*;
 use nearai_inference_sdk::*;
 use std::sync::Arc;
 #[tokio::main]

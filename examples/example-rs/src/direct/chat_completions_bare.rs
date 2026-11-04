@@ -1,5 +1,5 @@
 // Experimental standalone direct verification; sends plaintext over HTTPS.
-use example_rs::*;
+use example_rs::utils::*;
 use nearai_inference_sdk::*;
 #[tokio::main]
 async fn main() -> Result<()> {

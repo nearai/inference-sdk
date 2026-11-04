@@ -1,4 +1,4 @@
-"""Exercise the published Jev SDK against the verified HTTPX2 adapter."""
+"""Exercise the published TypeSafe SDK against the verified HTTPX2 adapter."""
 
 import asyncio
 import json
@@ -32,8 +32,8 @@ def official_client(client):
     )
 
 
-def decision(jev):
-    return jev.system_one(
+def decision(typesafe):
+    return typesafe.system_one(
         state={'message': 'Charged twice — please help 🌎'},
         questions={
             'useful': Noul(instructions='Is this useful?'),
@@ -47,13 +47,13 @@ def decision(jev):
     )
 
 
-async def test_official_box_with_openrouter_image_parts(monkeypatch):
+async def test_typesafe_sdk_box_with_openrouter_image_parts(monkeypatch):
     gateway = DecisionGateway()
     gateway.answers = {'region': {'type': 'box', 'box': BOX_BOUNDS, 'confidence': 0.82}}
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
-        async with official_client(client) as jev:
-            result = await jev.system_one(
+        async with official_client(client) as typesafe:
+            result = await typesafe.system_one(
                 state=[IMAGE_PART],
                 questions={'region': Box(instructions='Locate the rectangle')},
             )
@@ -74,7 +74,7 @@ async def test_official_box_with_openrouter_image_parts(monkeypatch):
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 @pytest.mark.parametrize('encoding', ['gzip', 'br'])
-async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
+async def test_typesafe_sdk_shares_preflight_and_retains_receipts_after_close(
     monkeypatch, kind, signing_algo, encoding
 ):
     gateway = DecisionGateway(signing_algo, kind)
@@ -82,8 +82,8 @@ async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
     gateway.body_id = 'not-the-receipt-id'
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
-        async with official_client(client) as jev:
-            first, second = await asyncio.gather(decision(jev), decision(jev))
+        async with official_client(client) as typesafe:
+            first, second = await asyncio.gather(decision(typesafe), decision(typesafe))
             assert first.nouls['useful'].noul == 0.9
             assert first.choices['action'].choice == 'keep'
             assert first.scores['quality'].score == 1
@@ -114,7 +114,7 @@ async def test_official_sdk_shares_preflight_and_retains_receipts_after_close(
 
 
 @pytest.mark.parametrize('fault', ['tamper', 'signer'])
-async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
+async def test_typesafe_sdk_receipt_rejects_changed_bytes_or_another_signer(
     monkeypatch, fault
 ):
     gateway = DecisionGateway(kind='provider_tee')
@@ -122,8 +122,11 @@ async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
     gateway.response_fault = 'tamper' if fault == 'tamper' else None
     gateway.use_alternate_signer = fault == 'signer'
     gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client, official_client(client) as jev:
-        result = await decision(jev)
+    async with (
+        gateway.client(e2ee=False) as client,
+        official_client(client) as typesafe,
+    ):
+        result = await decision(typesafe)
         with pytest.raises(VerificationError):
             await client.verify_response(
                 result.raw_http_response.headers['x-generation-id']
@@ -132,13 +135,16 @@ async def test_official_sdk_receipt_rejects_changed_bytes_or_another_signer(
 
 
 @pytest.mark.parametrize('fault', ['status', 'id'])
-async def test_official_sdk_does_not_retry_failed_decisions(monkeypatch, fault):
+async def test_typesafe_sdk_does_not_retry_failed_decisions(monkeypatch, fault):
     gateway = DecisionGateway()
     gateway.response_fault = fault
     gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client, official_client(client) as jev:
+    async with (
+        gateway.client(e2ee=False) as client,
+        official_client(client) as typesafe,
+    ):
         with pytest.raises(ApiError):
-            await decision(jev)
+            await decision(typesafe)
         with pytest.raises(ApiError) as missing:
             await client.verify_response('systemone-1')
         assert missing.value.failure.code == 'api.completion_not_found'
@@ -147,23 +153,26 @@ async def test_official_sdk_does_not_retry_failed_decisions(monkeypatch, fault):
 
 
 @pytest.mark.parametrize('option', ['e2ee', 'ohttp'])
-async def test_official_sdk_rejects_encryption_before_preflight(monkeypatch, option):
+async def test_typesafe_sdk_rejects_encryption_before_preflight(monkeypatch, option):
     gateway = DecisionGateway()
     gateway.install(monkeypatch)
     options = {'e2ee': False, option: True}
-    async with gateway.client(**options) as client, official_client(client) as jev:
+    async with gateway.client(**options) as client, official_client(client) as typesafe:
         with pytest.raises(ApiError) as raised:
-            await decision(jev)
+            await decision(typesafe)
         assert raised.value.failure.code == 'api.invalid_input'
     assert gateway.headers == []
 
 
-async def test_official_sdk_does_not_send_on_failed_preflight(monkeypatch):
+async def test_typesafe_sdk_does_not_send_on_failed_preflight(monkeypatch):
     gateway = DecisionGateway(kind='provider_tee')
     gateway.omit_public_key = True
     gateway.install(monkeypatch)
-    async with gateway.client(e2ee=False) as client, official_client(client) as jev:
+    async with (
+        gateway.client(e2ee=False) as client,
+        official_client(client) as typesafe,
+    ):
         with pytest.raises(VerificationError) as raised:
-            await decision(jev)
+            await decision(typesafe)
         assert raised.value.failure.code == 'e2ee.model_public_key_required'
     assert gateway.requests == []

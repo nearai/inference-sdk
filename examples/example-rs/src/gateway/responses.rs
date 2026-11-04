@@ -1,4 +1,4 @@
-use example_rs::*;
+use example_rs::utils::*;
 use nearai_inference_sdk::{InferenceClient, InferenceClientOptions};
 use serde_json::json;
 

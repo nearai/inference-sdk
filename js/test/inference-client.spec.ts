@@ -3767,7 +3767,7 @@ describe('System One decisions', () => {
     },
   );
 
-  test('official Jev SDK forwards OpenRouter image parts and verifies Box receipts', async () => {
+  test('TypeSafe SDK forwards OpenRouter image parts and verifies Box receipts', async () => {
     const fixture = decisionGateway({
       response: {
         ...decisionResponse,
@@ -3900,7 +3900,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['native', 'official'])(
-    '%s Jev client verifies a response decoded by Fetch',
+    '%s System One client verifies a response decoded by Fetch',
     async (api) => {
       const fixture = decisionGateway({ encoding: 'br' });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
@@ -3931,7 +3931,7 @@ describe('System One decisions', () => {
   );
 
   test.each([false, true])(
-    'official Jev SDK uses the pinned transport and header receipt (provider TEE: %s)',
+    'TypeSafe SDK uses the pinned transport and header receipt (provider TEE: %s)',
     async (tee) => {
       const fixture = decisionGateway({
         tee,
@@ -3950,8 +3950,8 @@ describe('System One decisions', () => {
         },
         fixture.fetch,
       );
-      const jev = officialClient(client);
-      const { data, response, requestId } = await jev
+      const typesafe = officialClient(client);
+      const { data, response, requestId } = await typesafe
         .systemOne(officialRequest, {
           headers: { 'x-model-pub-key': 'stale', 'x-client-pub-key': 'stale' },
         })
@@ -3971,7 +3971,7 @@ describe('System One decisions', () => {
       ).rejects.toMatchObject({
         failure: { code: 'api.completion_not_found' },
       });
-      await jev.systemOne(officialRequest);
+      await typesafe.systemOne(officialRequest);
       expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
       expect(fixture.requests).toHaveLength(2);
       for (const request of fixture.requests) {
@@ -3990,7 +3990,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['tamper', 'signer'])(
-    'official Jev receipt rejects %s without repeating inference',
+    'TypeSafe SDK receipt rejects %s without repeating inference',
     async (fault) => {
       const fixture = decisionGateway({
         tee: true,
@@ -4017,7 +4017,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['status', 'id'])(
-    'official Jev SDK surfaces %s failures without retries',
+    'TypeSafe SDK surfaces %s failures without retries',
     async (fault) => {
       const fixture = decisionGateway({
         status: fault === 'status' ? 503 : 200,
@@ -4048,7 +4048,7 @@ describe('System One decisions', () => {
     },
   );
 
-  test('official Jev SDK fails before inference when model key verification fails', async () => {
+  test('TypeSafe SDK fails before inference when model key verification fails', async () => {
     const fixture = decisionGateway({
       tee: true,
       includeModelPublicKey: false,
@@ -4068,7 +4068,7 @@ describe('System One decisions', () => {
   });
 
   test.each(['e2ee', 'ohttp'])(
-    'official Jev SDK rejects %s before I/O',
+    'TypeSafe SDK rejects %s before I/O',
     async (option) => {
       const fixture = decisionGateway();
       const network = jest

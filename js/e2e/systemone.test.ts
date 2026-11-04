@@ -167,7 +167,7 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
         ? 'No self-hosted System One model selected; requires cloud-api#1285'
         : false;
 
-    test(`official Jev SDK verifies ${kind} receipts with ${signingAlgo}`, {
+    test(`TypeSafe SDK verifies ${kind} receipts with ${signingAlgo}`, {
       skip,
       timeout: 180_000,
     }, async () => {
@@ -190,7 +190,7 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
       else assert.equal(preflight.models.length, 0);
 
       let inferenceRequests = 0;
-      const jev = new TypeSafeClient({
+      const typesafe = new TypeSafeClient({
         apiKey,
         baseURL: new URL('../', inference.getBaseUrl()).toString(),
         fetch: (input, init) => {
@@ -201,7 +201,7 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
         retry: { maxRetries: 0 },
         timeout: 60_000,
       });
-      const { data, response } = await jev
+      const { data, response } = await typesafe
         .systemOne({
           model,
           state: REQUEST.state,

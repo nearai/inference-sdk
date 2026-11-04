@@ -62,7 +62,7 @@ jobs:
           uv sync --locked
           ../../py/.venv/bin/ruff format --check .
           ../../py/.venv/bin/ruff check .
-          uv run python -c "from gateway import bare, client, client_openai_sdk, jev, jev_sdk, responses, responses_openai_sdk, messages, messages_anthropic_sdk; from direct import bare, client, client_openai_sdk"
+          uv run python -c "from gateway import chat_completions_bare, chat_completions, chat_completions_with_openai_sdk, systemone, systemone_with_typesafe_sdk, responses, responses_with_openai_sdk, messages, messages_with_anthropic_sdk; from direct import chat_completions_bare, chat_completions, chat_completions_with_openai_sdk"
 
   rust:
     if: inputs.language == '' || inputs.language == 'all' || inputs.language == 'rust'

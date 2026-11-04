@@ -210,7 +210,7 @@ inference client's `baseUrl` as `https://cloud-api.near.ai/v1/`. The transport u
 the inference client's configured authentication for inference and signatures;
 Gateway attestation requests omit authentication headers; model reports use configured authentication.
 See the [native example](../../examples/example-js/gateway/messages.ts) and
-[official SDK example](../../examples/example-js/gateway/messages-anthropic-sdk.ts)
+[official SDK example](../../examples/example-js/gateway/messages-with-anthropic-sdk.ts)
 for JSON and streaming calls with receipt verification.
 
 ## Responses API
@@ -282,7 +282,7 @@ Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
 Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
-### Use the official Jev SDK
+### Use the official TypeSafe SDK
 
 Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to
 `TypeSafeClient`. Its API root excludes `/v1`; the NEAR client includes `/v1/`.
@@ -298,7 +298,7 @@ const inference = new InferenceClient({
   e2ee: false,
   ohttp: false,
 });
-const jev = new TypeSafeClient({
+const typesafe = new TypeSafeClient({
   apiKey,
   baseURL: 'https://cloud-api.near.ai',
   fetch: inference.fetch,
@@ -306,7 +306,7 @@ const jev = new TypeSafeClient({
   retry: { maxRetries: 0 },
   timeout: 60_000,
 });
-const { data, response } = await jev.systemOne({
+const { data, response } = await typesafe.systemOne({
   model,
   state: 'I was charged twice.',
   questions: { billing: noul('Is this about billing?') },
@@ -327,10 +327,10 @@ Self-hosted requests route with the preselected attested `x-model-pub-key`.
 Provider receipts must match that identity; external models use Gateway receipts. The Node transport
 also pins Gateway TLS, as it does for Chat.
 
-See the [runnable official SDK example](../../examples/example-js/gateway/jev-sdk.ts).
-Its [reusable helpers](../../examples/example-js/gateway/jev-helpers.ts) keep the
+See the [runnable official SDK example](../../examples/example-js/gateway/systemone-with-typesafe-sdk.ts).
+Its [reusable helpers](../../examples/example-js/utils/systemone.ts) keep the
 verified transport configuration and receipt-ID extraction together. See the
-[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+[live E2E instructions](../../e2e/README.md#official-typesafe-sdk-integration) for
 credential-gated validation against a deployed Gateway.
 
 ## Connect through an application proxy
@@ -643,9 +643,9 @@ measurements, and available GPU evidence. `verifyDirectModelAttestations()`
 checks every entry. Reports fetched by `DirectAttestationClient` produce
 `tlsBinding.kind: 'none'`.
 
-The runnable [direct/client.ts](../../examples/example-js/direct/client.ts),
-[direct/client-openai-sdk.ts](../../examples/example-js/direct/client-openai-sdk.ts),
-and [direct/bare.ts](../../examples/example-js/direct/bare.ts) examples each
+The runnable [direct/chat-completions.ts](../../examples/example-js/direct/chat-completions.ts),
+[direct/chat-completions-with-openai-sdk.ts](../../examples/example-js/direct/chat-completions-with-openai-sdk.ts),
+and [direct/chat-completions-bare.ts](../../examples/example-js/direct/chat-completions-bare.ts) examples each
 include streaming and non-streaming calls. The bare example omits E2EE.
 
 ## Verify Gateway requests manually
@@ -775,7 +775,7 @@ Pass the captured `requestBody` and `responseBody` to the response-signature
 functions below. With `stream: true`, `decryptResponse` returns a decrypted
 SSE `Response`; consume its body as events arrive while retaining the encrypted
 response clone for signature verification. HTTP error responses pass through
-unchanged. The [bare example](../../examples/example-js/gateway/bare.ts) demonstrates
+unchanged. The [bare example](../../examples/example-js/gateway/chat-completions-bare.ts) demonstrates
 both response modes without handling protocol keys or encryption headers.
 
 ### Optional image build provenance
@@ -815,8 +815,8 @@ have a literal SHA-256 digest. Tags alongside digests are accepted, but tags
 alone are not. Image variables are not resolved. Other literal images are not
 verified. For `InferenceClient`, pass the same callback as
 `gatewayVerification.verifiers.deployment`; see the runnable
-[client example](../../examples/example-js/gateway/client.ts) and
-[bare example](../../examples/example-js/gateway/bare.ts), which require build provenance
+[client example](../../examples/example-js/gateway/chat-completions.ts) and
+[bare example](../../examples/example-js/gateway/chat-completions-bare.ts), which require build provenance
 for four Gateway images.
 
 The checks cover signatures, certificates, transparency-log evidence, artifact

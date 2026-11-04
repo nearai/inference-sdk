@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use example_rs::*;
+use example_rs::utils::*;
 use nearai_inference_sdk::*;
 use serde_json::json;
 
