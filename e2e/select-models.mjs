@@ -50,7 +50,7 @@ async function main() {
     );
     if (provider === 'near' || provider === 'external') {
       assert.equal(
-        Boolean(metadata.attestationSupported),
+        metadata.attestationSupported,
         provider === 'near',
         `Unexpected attestation support for E2E model: ${id}`,
       );

@@ -184,7 +184,11 @@ test('rejects provider changes that would alter the fixed coverage', async t => 
 test('requires NEAR attestation and external Gateway-only models', async t => {
   for (const [id, attestationSupported] of [
     ['z-ai/glm-5.3-flash', false],
+    ['z-ai/glm-5.3-flash', 'false'],
+    ['z-ai/glm-5.3-flash', 1],
     ['openai/gpt-6.1-sol', true],
+    ['openai/gpt-6.1-sol', undefined],
+    ['openai/gpt-6.1-sol', null],
     ['anthropic/claude-sonnet-5-5', true],
     ['typesafe/jev-1.13', true],
   ]) {
