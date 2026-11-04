@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import fixedModels from './models.json' with { type: 'json' };
 
-// Shared by all SDK suites. Discovery uses only the public catalog, not API keys.
 async function main() {
   const language = process.env.NEARAI_E2E_LANGUAGE || 'all';
   const systemOneSuites = {
@@ -33,88 +33,56 @@ async function main() {
     assert.ok(page.models.length > 0, 'Model catalog pagination made no progress');
   }
 
-  const price = (model) =>
-    model.inputCostPerToken.amount / 10 ** model.inputCostPerToken.scale +
-    model.outputCostPerToken.amount / 10 ** model.outputCostPerToken.scale;
-
-  let systemoneModel = '';
-  if (needsSystemOne) {
-    // Hosted Jev cases verify Gateway receipts.
-    const decisions = models.filter(({ metadata }) =>
-      metadata.ownedBy === 'typesafe' &&
-      metadata.providerType === 'external' &&
-      !metadata.attestationSupported &&
-      metadata.architecture?.outputModalities?.includes('decisions'),
+  const endpoints = ['chat', 'responses', 'messages', ...(needsSystemOne ? ['systemone'] : [])];
+  const selected = endpoints.flatMap(endpoint =>
+    fixedModels.filter(model => model.endpoints.includes(endpoint))
+      .map(({ id, provider }) => ({ id, provider, endpoint })),
+  );
+  const catalog = new Map(models.map(model => [model.modelId, model]));
+  for (const { id, provider, endpoint } of selected) {
+    const model = catalog.get(id);
+    assert.ok(model, `Required E2E model is missing from the catalog: ${id}`);
+    const { metadata } = model;
+    assert.equal(
+      metadata.providerType,
+      provider === 'near' ? 'vllm' : provider,
+      `Unexpected provider for E2E model: ${id}`,
     );
-    decisions.sort(
-      (a, b) => price(a) - price(b) || a.modelId.localeCompare(b.modelId),
-    );
-    assert.ok(decisions.length > 0, 'Expected a hosted Jev decision model');
-    systemoneModel = decisions[0].modelId;
-    assert.ok(!/[\r\n]/.test(systemoneModel), 'Model IDs must not contain line breaks');
-  }
+    if (provider === 'near' || provider === 'external') {
+      assert.equal(
+        metadata.attestationSupported,
+        provider === 'near',
+        `Unexpected attestation support for E2E model: ${id}`,
+      );
+    }
 
-  const chatModels = models.filter(({ metadata }) => {
+    if (endpoint === 'systemone') {
+      // Hosted Jev cases verify Gateway receipts.
+      assert.ok(
+        metadata.ownedBy === 'typesafe' &&
+        metadata.architecture?.outputModalities?.includes('decisions'),
+        `Expected a hosted Jev decision model: ${id}`,
+      );
+      continue;
+    }
+
     const architecture = metadata.architecture;
     const parameters = metadata.supportedSamplingParameters ?? [];
-    // Exclude embeddings, images, audio, decisions, rerankers and privacy filters.
     // Older Chat entries may omit architecture but still list token parameters.
-    return (
+    assert.ok(
       (!architecture ||
         (architecture.inputModalities.includes('text') &&
           architecture.outputModalities.includes('text'))) &&
       (parameters.includes('max_tokens') ||
-        parameters.includes('max_completion_tokens'))
+        parameters.includes('max_completion_tokens')),
+      `Expected a text generation model: ${id}`,
     );
-  });
-
-  // Prefer non-reasoning models for the short output budget, then cheaper
-  // representatives. Canonical IDs break ties without depending on catalog order.
-  const reasoning = (model) =>
-    Number(model.metadata.supportedFeatures?.includes('reasoning') ?? false);
-  chatModels.sort(
-    (a, b) =>
-      reasoning(a) - reasoning(b) || price(a) - price(b) ||
-      a.modelId.localeCompare(b.modelId),
-  );
-  const selected = [];
-  const coverage = [['near', 2], ['chutes', 1], ['external', 1]];
-  for (const [provider, count] of coverage) {
-    const candidates = chatModels.filter(({ metadata }) =>
-      provider === 'near'
-        ? metadata.providerType === 'vllm' && metadata.attestationSupported
-        : metadata.providerType === provider,
-    );
-    assert.ok(
-      candidates.length >= count,
-      `Expected ${count} ${provider} Chat models`,
-    );
-    selected.push(
-      ...candidates.slice(0, count).map(({ modelId }) => ({
-        id: modelId,
-        provider,
-        endpoint: 'chat',
-      })),
-    );
-  }
-  const nearResponse = selected.find(({ provider }) => provider === 'near');
-  const openaiResponse = chatModels.find(({ metadata }) =>
-    metadata.providerType === 'external' && metadata.ownedBy === 'openai' &&
-    !metadata.attestationSupported,
-  );
-  assert.ok(openaiResponse, 'Expected an OpenAI external text model for Responses');
-  selected.push(
-    { ...nearResponse, endpoint: 'responses' },
-    { id: openaiResponse.modelId, provider: 'external', endpoint: 'responses' },
-  );
-  const anthropicMessage = chatModels.find(({ metadata }) =>
-    metadata.providerType === 'external' && metadata.ownedBy === 'anthropic' &&
-    !metadata.attestationSupported,
-  );
-  assert.ok(anthropicMessage, 'Expected an Anthropic external text model for Messages');
-  selected.push({ id: anthropicMessage.modelId, provider: 'external', endpoint: 'messages' });
-  if (systemoneModel) {
-    selected.push({ id: systemoneModel, provider: 'external', endpoint: 'systemone' });
+    if (endpoint === 'responses' && provider === 'external') {
+      assert.equal(metadata.ownedBy, 'openai', `Expected an OpenAI Responses model: ${id}`);
+    }
+    if (endpoint === 'messages') {
+      assert.equal(metadata.ownedBy, 'anthropic', `Expected an Anthropic Messages model: ${id}`);
+    }
   }
   console.log(JSON.stringify(selected));
 }

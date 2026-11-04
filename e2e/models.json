@@ -1,0 +1,32 @@
+[
+  {
+    "id": "z-ai/glm-5.3-flash",
+    "provider": "near",
+    "endpoints": ["chat", "responses"]
+  },
+  {
+    "id": "Qwen/Qwen3.8-27B",
+    "provider": "near",
+    "endpoints": ["chat"]
+  },
+  {
+    "id": "deepseek/deepseek-v3.2",
+    "provider": "chutes",
+    "endpoints": ["chat"]
+  },
+  {
+    "id": "openai/gpt-6.1-sol",
+    "provider": "external",
+    "endpoints": ["chat", "responses"]
+  },
+  {
+    "id": "anthropic/claude-sonnet-5-5",
+    "provider": "external",
+    "endpoints": ["messages"]
+  },
+  {
+    "id": "typesafe/jev-1.13",
+    "provider": "external",
+    "endpoints": ["systemone"]
+  }
+]
