@@ -1,5 +1,5 @@
 import { choice, noul, score } from '@typesafe-ai/sdk';
-import { createVerifiedJevClients, receiptId } from './jev-helpers.ts';
+import { createVerifiedJevClients, receiptId } from '../utils/jev.ts';
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;

@@ -1,1 +1,1 @@
-include!("gateway/bare.rs");
+include!("gateway/chat_completions_bare.rs");

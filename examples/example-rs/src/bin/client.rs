@@ -1,1 +1,1 @@
-include!("../gateway/client.rs");
+include!("../gateway/chat_completions.rs");

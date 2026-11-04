@@ -5,10 +5,7 @@ import os
 
 from typesafe_sdk import Choice, Noul, Score
 
-if __package__:
-    from .jev_helpers import receipt_id, verified_jev_clients
-else:
-    from jev_helpers import receipt_id, verified_jev_clients
+from utils.jev import receipt_id, verified_jev_clients
 
 
 async def main() -> None:

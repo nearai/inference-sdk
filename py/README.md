@@ -119,7 +119,7 @@ and [image build provenance](https://github.com/nearai/inference-sdk/blob/main/p
 Pass `inference_client.http_client` to `openai.AsyncOpenAI` to use the same verified
 transport for JSON and streaming Chat. Configure credentials on `InferenceClient`
 and verify replies through it. See the
-[OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/client_openai_sdk.py).
+[OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/chat_completions_with_openai_sdk.py).
 For an OpenAI version that supports HTTPX2, install `openai[httpx2]` and pass
 `inference_client.httpx2_client` instead. Both adapters share the same Chat,
 streaming, encryption, and receipt-verification pipeline. Existing HTTPX users

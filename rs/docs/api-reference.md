@@ -95,7 +95,7 @@ including references returned in a Score's `legend`.
 Structured content preserves arbitrary-precision JSON numbers; scores,
 probabilities, and Box coordinates/confidence use finite `f64` values.
 
-See the [native image example](../../examples/example-rs/src/bin/systemone.rs) and
+See the [native image example](../../examples/example-rs/src/gateway/jev.rs) and
 [run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's

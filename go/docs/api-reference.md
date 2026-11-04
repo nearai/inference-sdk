@@ -98,7 +98,7 @@ including references returned in a Score's `legend`.
 Structured legend numbers use `json.Number`, while scores, probabilities,
 and Box coordinates/confidence use finite `float64` values.
 
-See the [native image example](../../examples/example-go/gateway/systemone/main.go) and
+See the [native image example](../../examples/example-go/gateway/jev/main.go) and
 [run instructions](../../examples/README.md#system-one-images).
 
 System One shares Chat's per-model session and the client's

@@ -1,5 +1,5 @@
 // Standalone Gateway E2EE: authenticate evidence, retain ciphertext, verify receipts.
-use example_rs::*;
+use example_rs::utils::*;
 use futures_util::StreamExt;
 use nearai_inference_sdk::*;
 use std::sync::{Arc, Mutex};

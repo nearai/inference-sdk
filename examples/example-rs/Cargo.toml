@@ -15,17 +15,29 @@ tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
 nearai-inference-sdk = { path = "../../rs" }
 
 [[bin]]
-name = "gateway-bare"
-path = "src/gateway/bare.rs"
+name = "gateway-chat-completions-bare"
+path = "src/gateway/chat_completions_bare.rs"
 
 [[bin]]
-name = "gateway-client"
-path = "src/gateway/client.rs"
+name = "gateway-chat-completions"
+path = "src/gateway/chat_completions.rs"
 
 [[bin]]
-name = "direct-bare"
-path = "src/direct/bare.rs"
+name = "direct-chat-completions-bare"
+path = "src/direct/chat_completions_bare.rs"
 
 [[bin]]
-name = "direct-client"
-path = "src/direct/client.rs"
+name = "direct-chat-completions"
+path = "src/direct/chat_completions.rs"
+
+[[bin]]
+name = "responses"
+path = "src/gateway/responses.rs"
+
+[[bin]]
+name = "messages"
+path = "src/gateway/messages.rs"
+
+[[bin]]
+name = "jev"
+path = "src/gateway/jev.rs"

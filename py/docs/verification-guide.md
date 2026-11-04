@@ -300,8 +300,8 @@ route to the preselected attested public key, and external models use Gateway
 receipts. Closing the official client closes its borrowed adapter; keep the
 owning `InferenceClient` open until verification finishes.
 
-See the [runnable official SDK example](../../examples/example-py/gateway/jev_sdk.py).
-Its [reusable helpers](../../examples/example-py/gateway/jev_helpers.py) keep the
+See the [runnable official SDK example](../../examples/example-py/gateway/jev_with_typesafe_sdk.py).
+Its [reusable helpers](../../examples/example-py/utils/jev.py) keep the
 verified transport configuration and receipt-ID extraction together. See the
 [live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
 credential-gated validation against a deployed Gateway.
@@ -342,7 +342,7 @@ Set `stream=True` for typed Anthropic events. An external `AsyncAnthropic` can u
 `max_retries=0`; the inference client's base URL includes `/v1/`. Its configured
 authentication governs model reports, inference, and signature requests; Gateway attestation omits authentication headers.
 See the [native example](../../examples/example-py/gateway/messages.py) and
-[official SDK example](../../examples/example-py/gateway/messages_anthropic_sdk.py)
+[official SDK example](../../examples/example-py/gateway/messages_with_anthropic_sdk.py)
 for JSON and streaming calls with receipt verification.
 
 ## Responses API
@@ -761,7 +761,7 @@ Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
 decryption. Retain the original encrypted response bytes separately for step 3.
 Each prepared request owns a fresh response-decryption key.
 
-See [`examples/example-py/gateway/bare.py`](../../examples/example-py/gateway/bare.py) for the
+See [`examples/example-py/gateway/chat_completions_bare.py`](../../examples/example-py/gateway/chat_completions_bare.py) for the
 complete streaming and non-streaming flow, including byte capture and TLS pinning.
 
 ## 3. Verify the returned completion signature

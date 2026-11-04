@@ -212,7 +212,7 @@ client.verify_response(id).await?;
 
 For streaming, use `message_request(body)` with `"stream": true`, then `send()`
 and consume `response.body` to completion. Set custom Anthropic headers on the
-request before sending. See the [example](../../examples/example-rs/src/bin/messages.rs).
+request before sending. See the [example](../../examples/example-rs/src/gateway/messages.rs).
 
 ## Responses API
 

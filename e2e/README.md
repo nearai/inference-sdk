@@ -135,8 +135,8 @@ Like the existing live tests, these suites require explicit configuration and
 are excluded from ordinary unit-test runs. Missing required external-model
 configuration or verification failures fail the tests.
 
-The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
-`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+The runnable examples use `examples/example-js/utils/jev.ts` and
+`examples/example-py/utils/jev.py` to keep the API root, verified
 transport, disabled retries/compression, and receipt-ID extraction together.
 The official SDKs remain example/test dependencies only. Python uses
 `inference.httpx2_client` to bridge

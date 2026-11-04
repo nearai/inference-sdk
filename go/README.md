@@ -100,7 +100,7 @@ func run() error {
 ```
 
 Import as `nearai "github.com/nearai/inference-sdk/go"`. The
-[OpenAI example](../examples/example-go/gateway/openai/main.go) uses the official OpenAI Go
+[OpenAI example](../examples/example-go/gateway/chat-completions-with-openai-sdk/main.go) uses the official OpenAI Go
 SDK and reads `NEARAI_API_KEY` from the environment. It covers JSON and streaming calls. See the [Gateway/direct
 examples](../examples/example-go/README.md) for standalone and integrated clients,
 Gateway image provenance, and exact ciphertext receipt verification. The library
@@ -126,7 +126,7 @@ Consume the stream to completion, check `stream.Err()`, close it, then call
 succeeds is not yet signature-verified. Close an abandoned stream to cancel its
 request; incomplete or failed streams are not registered for verification.
 
-The [direct OpenAI example](../examples/example-go/direct/openai/main.go) uses
+The [direct OpenAI example](../examples/example-go/direct/chat-completions-with-openai-sdk/main.go) uses
 `NewDirectInferenceClient` with the same OpenAI HTTP adapter for encrypted JSON
 and streaming Chat. Direct endpoints are experimental: they omit Gateway
 verification and do not bind direct TLS identity to attestation. Normal HTTPS

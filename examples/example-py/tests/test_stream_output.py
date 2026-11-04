@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from direct import bare as direct
-from direct.bare import read_stream as read_direct
-from gateway import bare as gateway
-from gateway.bare import read_stream as read_gateway
+from direct import chat_completions_bare as direct
+from direct.chat_completions_bare import read_stream as read_direct
+from gateway import chat_completions_bare as gateway
+from gateway.chat_completions_bare import read_stream as read_gateway
 
 
 class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
