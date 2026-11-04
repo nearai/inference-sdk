@@ -10,7 +10,7 @@
     "endpoints": ["chat"]
   },
   {
-    "id": "moonshotai/kimi-k3",
+    "id": "deepseek/deepseek-v3.2",
     "provider": "chutes",
     "endpoints": ["chat"]
   },
