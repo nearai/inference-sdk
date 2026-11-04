@@ -17,7 +17,7 @@ on:
         required: true
       NEARAI_PRD_API_KEY:
         required: true
-      SLACK_WEBHOOK_URL:
+      TEST_ALERTS_SLACK_WEBHOOK_URL:
         required: false
 
 permissions:
@@ -202,11 +202,11 @@ jobs:
       - name: Send failure summary
         shell: bash
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEST_ALERTS_SLACK_WEBHOOK_URL: ${{ secrets.TEST_ALERTS_SLACK_WEBHOOK_URL }}
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: |
-          if [ -z "$SLACK_WEBHOOK_URL" ]; then
-            echo '::warning::Set the SLACK_WEBHOOK_URL repository secret to enable live E2E failure notifications.'
+          if [ -z "$TEST_ALERTS_SLACK_WEBHOOK_URL" ]; then
+            echo '::warning::Set the TEST_ALERTS_SLACK_WEBHOOK_URL repository secret to enable live E2E failure notifications.'
             exit 0
           fi
 
@@ -228,4 +228,4 @@ jobs:
           curl --fail --silent --show-error \
             --connect-timeout 10 --max-time 30 \
             --header 'Content-Type: application/json' \
-            --data "$payload" --output /dev/null "$SLACK_WEBHOOK_URL"
+            --data "$payload" --output /dev/null "$TEST_ALERTS_SLACK_WEBHOOK_URL"

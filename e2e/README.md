@@ -70,7 +70,7 @@ block publication on failure.
 
 Create a [Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)
 for the destination channel and save its URL as the repository Actions secret
-`SLACK_WEBHOOK_URL`.
+`TEST_ALERTS_SLACK_WEBHOOK_URL`.
 
 When configuration or an SDK test job fails, the workflow sends one summary
 after all selected jobs finish, including the failed job groups, commit, and a
