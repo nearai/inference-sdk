@@ -134,8 +134,8 @@ available on `DirectInferenceClient` for Chat.
 
 Install `httpx2` to use `httpx2_client`. It is loaded only when that property is
 accessed. For OpenAI, use a version supporting HTTPX2 and install `openai[httpx2]`;
-Jev's `typesafe-sdk` already depends on HTTPX2. Regular HTTPX consumers keep the
-existing dependencies. Standalone HTTP APIs continue to use HTTPX types.
+the `typesafe-sdk` package already depends on HTTPX2. Regular HTTPX consumers
+keep the existing dependencies. Standalone HTTP APIs continue to use HTTPX types.
 
 Each access returns a new, non-owning adapter. Closing an adapter or its external
 SDK client does not close the owner or discard receipts. Keep the owner open
@@ -196,11 +196,11 @@ except Exception as error:
 and available on Gateway clients. Use E2EE and OHTTP disabled for nonstreaming
 decision requests. The client verifies deployments before sending.
 
-### Official Jev SDK
+### Official TypeSafe SDK
 
 Use `inference_client.httpx2_client` with `AsyncTypeSafeClient`. Configure its API
 key, API root, timeout, and disabled request compression/retries as shown in the
-[complete construction example](./verification-guide.md#use-the-official-jev-sdk).
+[complete construction example](./verification-guide.md#use-the-official-typesafe-sdk).
 System One accepts uncompressed, nonstreaming JSON requests with E2EE/OHTTP disabled.
 Verify `raw_http_response.headers['x-generation-id']` through the owner before
 using the answers.
@@ -247,7 +247,7 @@ and optional `type: "image"`. Reference each asset from the request content.
 Assets and references pass through unchanged,
 including references returned in a Score's `legend`.
 
-See the [native image example](../../examples/example-py/gateway/jev.py) and
+See the [native image example](../../examples/example-py/gateway/systemone.py) and
 [run instructions](../../examples/README.md#system-one-images).
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.

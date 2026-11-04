@@ -119,7 +119,7 @@ and [image build provenance](https://github.com/nearai/inference-sdk/blob/main/p
 Pass `inference_client.http_client` to `openai.AsyncOpenAI` to use the same verified
 transport for JSON and streaming Chat. Configure credentials on `InferenceClient`
 and verify replies through it. See the
-[OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/client_openai_sdk.py).
+[OpenAI integration example](https://github.com/nearai/inference-sdk/blob/main/examples/example-py/gateway/chat_completions_with_openai_sdk.py).
 For an OpenAI version that supports HTTPX2, install `openai[httpx2]` and pass
 `inference_client.httpx2_client` instead. Both adapters share the same Chat,
 streaming, encryption, and receipt-verification pipeline. Existing HTTPX users
@@ -133,9 +133,9 @@ can keep their current dependencies and calls.
   See [Responses API](./docs/verification-guide.md#responses-api).
 - **System One decisions:** send structured questions with `client.systemone.create()`
   and verify the returned decision. See the [System One guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#system-one-decisions).
-- **Official Jev SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
+- **Official TypeSafe SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
   then pass `inference_client.httpx2_client` to `AsyncTypeSafeClient`.
-  See the [Jev SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-jev-sdk).
+  See the [TypeSafe SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-typesafe-sdk).
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   With [standalone functions](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#standalone-workflow),
   your application verifies every model candidate and retains the exact wire bytes.

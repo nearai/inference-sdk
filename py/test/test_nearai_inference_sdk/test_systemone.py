@@ -647,7 +647,10 @@ async def test_invalid_decision_headers_fail_before_preflight(monkeypatch, heade
 @pytest.mark.parametrize(
     'decision_id,encoded_id',
     [
-        ('jev/run:1?variant=2#decision', 'jev%2Frun%3A1%3Fvariant%3D2%23decision'),
+        (
+            'decision/run:1?variant=2#decision',
+            'decision%2Frun%3A1%3Fvariant%3D2%23decision',
+        ),
         ('.', '%2E'),
         ('..', '%2E%2E'),
     ],

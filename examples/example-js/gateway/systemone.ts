@@ -9,7 +9,7 @@ async function main(): Promise<void> {
   const model = process.env.NEARAI_MODEL;
   if (!apiKey || !model) {
     throw new Error(
-      'Set NEARAI_API_KEY and NEARAI_MODEL to your registered canonical Jev model ID.',
+      'Set NEARAI_API_KEY and NEARAI_MODEL to your registered canonical System One model ID.',
     );
   }
   const signingAlgo = process.env.NEARAI_SIGNING_ALGO ?? 'ed25519';
