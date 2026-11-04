@@ -1,18 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-
-// Shared by all SDK suites and environments. Catalog changes must not change
-// the models under test; use the public catalog only to validate these IDs.
-const fixedModels = [
-  { id: 'z-ai/glm-5.3-flash', provider: 'near', endpoint: 'chat' },
-  { id: 'Qwen/Qwen3.8-27B', provider: 'near', endpoint: 'chat' },
-  { id: 'moonshotai/kimi-k3', provider: 'chutes', endpoint: 'chat' },
-  { id: 'openai/gpt-6.1-sol', provider: 'external', endpoint: 'chat' },
-  { id: 'z-ai/glm-5.3-flash', provider: 'near', endpoint: 'responses' },
-  { id: 'openai/gpt-6.1-sol', provider: 'external', endpoint: 'responses' },
-  { id: 'anthropic/claude-sonnet-5-5', provider: 'external', endpoint: 'messages' },
-  { id: 'typesafe/jev-1.13', provider: 'external', endpoint: 'systemone' },
-];
+import fixedModels from './models.json' with { type: 'json' };
 
 async function main() {
   const language = process.env.NEARAI_E2E_LANGUAGE || 'all';
@@ -45,8 +33,10 @@ async function main() {
     assert.ok(page.models.length > 0, 'Model catalog pagination made no progress');
   }
 
-  const selected = fixedModels.filter(({ endpoint }) =>
-    endpoint !== 'systemone' || needsSystemOne,
+  const endpoints = ['chat', 'responses', 'messages', ...(needsSystemOne ? ['systemone'] : [])];
+  const selected = endpoints.flatMap(endpoint =>
+    fixedModels.filter(model => model.endpoints.includes(endpoint))
+      .map(({ id, provider }) => ({ id, provider, endpoint })),
   );
   const catalog = new Map(models.map(model => [model.modelId, model]));
   for (const { id, provider, endpoint } of selected) {

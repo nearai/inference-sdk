@@ -69,22 +69,27 @@ block publication on failure.
 ## Coverage
 
 All SDKs and both environments use the fixed mainstream models in
-[`select-models.mjs`](select-models.mjs):
+[`models.json`](models.json). **To replace a model, edit its `id` in that file.**
+Each model is listed once, with its `provider` (`near`, `chutes`, or `external`)
+and `endpoints` (`chat`, `responses`, `messages`, or `systemone`). A model used
+by multiple endpoints shares the same ID. The first NEAR Chat model is also the
+default for shared encryption/client cases.
 
-| Model | Provider | Endpoints |
-| --- | --- | --- |
-| `z-ai/glm-5.3-flash` | NEAR TEE | Chat, Responses; default for shared encryption/client cases |
-| `Qwen/Qwen3.8-27B` | NEAR TEE | Chat |
-| `moonshotai/kimi-k3` | Chutes | Chat |
-| `openai/gpt-6.1-sol` | External OpenAI | Chat, Responses |
-| `anthropic/claude-sonnet-5-5` | External Anthropic | Messages |
-| `typesafe/jev-1.13` | Hosted Jev | System One, when the selected SDK has a suite |
+Keep the provider and endpoint coverage below when replacing models. The
+selector tests use separate fixtures, so changing a configured ID requires no
+selector, workflow, or test edits. Validate a replacement against both
+environments with `NEARAI_BASE_URL` set as described above:
+
+```sh
+node --test e2e/select-models.test.mjs
+node e2e/select-models.mjs
+```
 
 The public `/model/list` catalog is used only to validate that these exact IDs
 exist and match the required provider, attestation, and endpoint capabilities.
 A missing or incompatible model fails setup with its ID. Prices, reasoning
 labels, catalog order, and newly added models do not affect selection; updating
-the matrix requires an explicit code change. Catalog validation does not establish
+the matrix requires an explicit configuration change. Catalog validation does not establish
 live inference availability; the live suites check that separately.
 
 Each `NEARAI_E2E_MODELS` entry carries an `endpoint` (`chat`, `responses`,

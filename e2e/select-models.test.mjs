@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, copyFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, copyFile, readFile, writeFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,6 +18,12 @@ const expected = [
   { id: 'anthropic/claude-sonnet-5-5', provider: 'external', endpoint: 'messages' },
   { id: 'typesafe/jev-1.13', provider: 'external', endpoint: 'systemone' },
 ];
+// Stable fixtures exercise the selector independently of the production IDs.
+const fixtureConfig = [...new Set(expected.map(m => m.id))].map(id => ({
+  id,
+  provider: expected.find(m => m.id === id).provider,
+  endpoints: expected.filter(m => m.id === id).map(m => m.endpoint),
+}));
 const model = (modelId, providerType, decisions = false) => ({
   modelId,
   inputCostPerToken: { amount: 1, scale: 6 },
@@ -57,7 +63,7 @@ const systemOneSuites = {
 };
 
 async function runSelector(t, models = catalog, {
-  language = 'all', pageSize = 100, suites = ['javascript'],
+  language = 'all', pageSize = 100, suites = ['javascript'], config = fixtureConfig,
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'sdk-model-selection-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -68,6 +74,7 @@ async function runSelector(t, models = catalog, {
     await writeFile(path, '');
   }
   await copyFile(new URL('./select-models.mjs', import.meta.url), join(root, 'e2e/select-models.mjs'));
+  await writeFile(join(root, 'e2e/models.json'), JSON.stringify(config));
   const requests = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -98,6 +105,20 @@ test('validates the fixed Chat, Responses, Messages and System One matrix', asyn
   assert.deepEqual(result, expected);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].pathname, '/v1/model/list');
+});
+
+test('the production model configuration preserves required endpoint and provider coverage', async t => {
+  const config = JSON.parse(await readFile(new URL('./models.json', import.meta.url), 'utf8'));
+  const models = config.map(({ id, provider, endpoints }) =>
+    model(id, provider === 'near' ? 'vllm' : provider, endpoints.includes('systemone')),
+  );
+  const { result } = await runSelector(t, models, { config });
+  assert.deepEqual(result.map(({ endpoint, provider }) => `${endpoint}:${provider}`), [
+    'chat:near', 'chat:near', 'chat:chutes', 'chat:external',
+    'responses:near', 'responses:external', 'messages:external', 'systemone:external',
+  ]);
+  assert.equal(new Set(config.map(m => m.id)).size, config.length);
+  assert.deepEqual(new Set(result.map(m => m.id)), new Set(config.map(m => m.id)));
 });
 
 test('catalog order, prices, reasoning flags and additional models do not change selection', async t => {
