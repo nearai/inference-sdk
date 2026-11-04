@@ -55,6 +55,7 @@ jobs:
     secrets:
       NEARAI_STG_API_KEY: ${{ secrets.NEARAI_STG_API_KEY }}
       NEARAI_PRD_API_KEY: ${{ secrets.NEARAI_PRD_API_KEY }}
+      TEST_ALERTS_SLACK_WEBHOOK_URL: ${{ secrets.TEST_ALERTS_SLACK_WEBHOOK_URL }}
 
   create-release:
     needs:
