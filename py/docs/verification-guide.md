@@ -247,15 +247,17 @@ Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
 
-### Use the official Jev SDK
+<a id="use-the-official-jev-sdk"></a>
+
+### Use the official TypeSafe SDK
 
 Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs
 HTTPX2 automatically. Pass
 `inference.httpx2_client` to `AsyncTypeSafeClient` for the HTTPX2
 adapter; the NEAR client continues to use HTTPX for network I/O and verification.
 The official SDK's API root excludes `/v1`, while the NEAR client's base URL
-includes `/v1/`. Jev requires a non-empty `api_key` even with an injected client;
-for header-only authentication, pass a placeholder to Jev and configure the
+includes `/v1/`. TypeSafe requires a non-empty `api_key` even with an injected client;
+for header-only authentication, pass a placeholder to TypeSafe and configure the
 actual credentials on `InferenceClient`.
 
 ```python
@@ -277,8 +279,8 @@ async def decide(api_key: str, model: str) -> None:
             compression=False,
             retry=RetryPolicy(max_retries=0),
             timeout=60,
-        ) as jev:
-            result = await jev.system_one(
+        ) as typesafe:
+            result = await typesafe.system_one(
                 model=model,
                 state='I was charged twice.',
                 questions={'billing': Noul(instructions='Is this about billing?')},
@@ -300,10 +302,10 @@ route to the preselected attested public key, and external models use Gateway
 receipts. Closing the official client closes its borrowed adapter; keep the
 owning `InferenceClient` open until verification finishes.
 
-See the [runnable official SDK example](../../examples/example-py/gateway/jev_with_typesafe_sdk.py).
-Its [reusable helpers](../../examples/example-py/utils/jev.py) keep the
+See the [runnable official SDK example](../../examples/example-py/gateway/systemone_with_typesafe_sdk.py).
+Its [reusable helpers](../../examples/example-py/utils/systemone.py) keep the
 verified transport configuration and receipt-ID extraction together. See the
-[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+[live E2E instructions](../../e2e/README.md#official-typesafe-sdk-integration) for
 credential-gated validation against a deployed Gateway.
 
 ## Messages API

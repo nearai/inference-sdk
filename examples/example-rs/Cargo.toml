@@ -39,5 +39,5 @@ name = "messages"
 path = "src/gateway/messages.rs"
 
 [[bin]]
-name = "jev"
-path = "src/gateway/jev.rs"
+name = "systemone"
+path = "src/gateway/systemone.rs"

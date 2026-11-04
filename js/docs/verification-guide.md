@@ -282,7 +282,9 @@ Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
 Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
-### Use the official Jev SDK
+<a id="use-the-official-jev-sdk"></a>
+
+### Use the official TypeSafe SDK
 
 Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to
 `TypeSafeClient`. Its API root excludes `/v1`; the NEAR client includes `/v1/`.
@@ -298,7 +300,7 @@ const inference = new InferenceClient({
   e2ee: false,
   ohttp: false,
 });
-const jev = new TypeSafeClient({
+const typesafe = new TypeSafeClient({
   apiKey,
   baseURL: 'https://cloud-api.near.ai',
   fetch: inference.fetch,
@@ -306,7 +308,7 @@ const jev = new TypeSafeClient({
   retry: { maxRetries: 0 },
   timeout: 60_000,
 });
-const { data, response } = await jev.systemOne({
+const { data, response } = await typesafe.systemOne({
   model,
   state: 'I was charged twice.',
   questions: { billing: noul('Is this about billing?') },
@@ -327,10 +329,10 @@ Self-hosted requests route with the preselected attested `x-model-pub-key`.
 Provider receipts must match that identity; external models use Gateway receipts. The Node transport
 also pins Gateway TLS, as it does for Chat.
 
-See the [runnable official SDK example](../../examples/example-js/gateway/jev-with-typesafe-sdk.ts).
-Its [reusable helpers](../../examples/example-js/utils/jev.ts) keep the
+See the [runnable official SDK example](../../examples/example-js/gateway/systemone-with-typesafe-sdk.ts).
+Its [reusable helpers](../../examples/example-js/utils/systemone.ts) keep the
 verified transport configuration and receipt-ID extraction together. See the
-[live E2E instructions](../../e2e/README.md#official-jev-sdk-integration) for
+[live E2E instructions](../../e2e/README.md#official-typesafe-sdk-integration) for
 credential-gated validation against a deployed Gateway.
 
 ## Connect through an application proxy

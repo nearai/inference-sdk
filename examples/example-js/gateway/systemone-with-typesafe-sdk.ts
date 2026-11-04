@@ -1,12 +1,15 @@
 import { choice, noul, score } from '@typesafe-ai/sdk';
-import { createVerifiedJevClients, receiptId } from '../utils/jev.ts';
+import {
+  createVerifiedSystemOneClients,
+  receiptId,
+} from '../utils/systemone.ts';
 
 async function main(): Promise<void> {
   const apiKey = process.env.NEARAI_API_KEY;
   const model = process.env.NEARAI_MODEL;
   if (!apiKey || !model) {
     throw new Error(
-      'Set NEARAI_API_KEY and NEARAI_MODEL to your canonical Jev model ID.',
+      'Set NEARAI_API_KEY and NEARAI_MODEL to your canonical System One model ID.',
     );
   }
 
@@ -21,7 +24,7 @@ async function main(): Promise<void> {
     );
   }
 
-  const { inference, jev } = createVerifiedJevClients({
+  const { inference, typesafe } = createVerifiedSystemOneClients({
     apiKey,
     signingAlgo,
     modelVerification:
@@ -29,7 +32,7 @@ async function main(): Promise<void> {
     baseUrl: process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/',
   });
 
-  const { data, response } = await jev
+  const { data, response } = await typesafe
     .systemOne({
       model,
       state: {

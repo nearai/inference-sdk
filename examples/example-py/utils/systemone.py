@@ -1,4 +1,4 @@
-"""Reusable configuration for the verified official Jev SDK example."""
+"""Reusable configuration for the verified TypeSafe SDK example."""
 
 from contextlib import asynccontextmanager
 from urllib.parse import urljoin, urlsplit
@@ -13,7 +13,7 @@ from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 
 @asynccontextmanager
-async def verified_jev_clients(
+async def verified_systemone_clients(
     api_key: str,
     *,
     base_url: str,
@@ -21,7 +21,9 @@ async def verified_jev_clients(
     expected_kind: str = 'gateway',
 ):
     if not urlsplit(base_url).path.rstrip('/').endswith('/v1'):
-        raise ValueError('The Jev example requires a NEAR base URL ending in /v1/.')
+        raise ValueError(
+            'The System One example requires a NEAR base URL ending in /v1/.'
+        )
     async with (
         InferenceClient(
             api_key,
@@ -40,9 +42,9 @@ async def verified_jev_clients(
             compression=False,
             retry=RetryPolicy(max_retries=0),
             timeout=120,
-        ) as jev,
+        ) as typesafe,
     ):
-        yield inference, jev
+        yield inference, typesafe
 
 
 def receipt_id(response: httpx2.Response) -> str:

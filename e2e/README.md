@@ -108,7 +108,9 @@ a 15 second deadline; automatic inference retries are disabled. Ordinary PR CI
 checks the live test sources without credentials; the live workflow runs them
 against STG and PRD, including through the release gate.
 
-## Official Jev SDK integration
+<a id="official-jev-sdk-integration"></a>
+
+## Official TypeSafe SDK integration
 
 `js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
 `@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
@@ -121,7 +123,7 @@ The official-SDK cases are part of the existing System One live suites and run
 through the existing live commands and workflow. They use the same
 `NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
 native cases. The catalog selector supplies an external Jev model; there are no
-separate Jev environment variables or CI steps.
+separate TypeSafe SDK environment variables or CI steps.
 
 Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
 same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
@@ -135,9 +137,9 @@ Like the existing live tests, these suites require explicit configuration and
 are excluded from ordinary unit-test runs. Missing required external-model
 configuration or verification failures fail the tests.
 
-The runnable examples use `examples/example-js/utils/jev.ts` and
-`examples/example-py/utils/jev.py` to keep the API root, verified
+The runnable examples use `examples/example-js/utils/systemone.ts` and
+`examples/example-py/utils/systemone.py` to keep the API root, verified
 transport, disabled retries/compression, and receipt-ID extraction together.
 The official SDKs remain example/test dependencies only. Python uses
 `inference.httpx2_client` to bridge
-Jev's HTTPX2 client to the existing verified HTTPX transport.
+TypeSafe's HTTPX2 client to the existing verified HTTPX transport.

@@ -133,9 +133,9 @@ can keep their current dependencies and calls.
   See [Responses API](./docs/verification-guide.md#responses-api).
 - **System One decisions:** send structured questions with `client.systemone.create()`
   and verify the returned decision. See the [System One guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#system-one-decisions).
-- **Official Jev SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
+- **Official TypeSafe SDK:** install `nearai-inference-sdk` and `typesafe-sdk`,
   then pass `inference_client.httpx2_client` to `AsyncTypeSafeClient`.
-  See the [Jev SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-jev-sdk).
+  See the [TypeSafe SDK guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#use-the-official-typesafe-sdk).
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   With [standalone functions](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#standalone-workflow),
   your application verifies every model candidate and retains the exact wire bytes.

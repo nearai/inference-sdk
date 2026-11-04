@@ -36,7 +36,7 @@ run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 
 Entry points are grouped under `gateway/` and `direct/` (`src/gateway/` and
 `src/direct/` in Rust). All languages share the entry-point names
-`chat-completions`, `jev`, `messages`, and `responses`. Standalone verification
+`chat-completions`, `systemone`, `messages`, and `responses`. Standalone verification
 adds `-bare`; official SDK integrations add `-with-<vendor>-sdk`. Python and Rust source filenames use
 underscores in place of hyphens.
 
@@ -49,17 +49,17 @@ underscores in place of hyphens.
 | Responses, official OpenAI SDK | `node gateway/responses-with-openai-sdk.ts` | `uv run python -m gateway.responses_with_openai_sdk` | — | `go run ./gateway/responses-with-openai-sdk` |
 | Messages, native client | `node gateway/messages.ts` | `uv run python -m gateway.messages` | `cargo run --bin messages` | `go run ./gateway/messages` |
 | Messages, official Anthropic SDK | `node gateway/messages-with-anthropic-sdk.ts` | `uv run python -m gateway.messages_with_anthropic_sdk` | — | `go run ./gateway/messages-with-anthropic-sdk` |
-| System One, native client | `node gateway/jev.ts` | `uv run python -m gateway.jev` | `cargo run --bin jev` | `go run ./gateway/jev` |
-| System One, official Jev SDK | `node gateway/jev-with-typesafe-sdk.ts` | `uv run python -m gateway.jev_with_typesafe_sdk` | — | — |
+| System One, native client | `node gateway/systemone.ts` | `uv run python -m gateway.systemone` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
+| System One, official TypeSafe SDK | `node gateway/systemone-with-typesafe-sdk.ts` | `uv run python -m gateway.systemone_with_typesafe_sdk` | — | — |
 | Direct Chat, native client | `node direct/chat-completions.ts` | `uv run python -m direct.chat_completions` | `cargo run --bin direct-chat-completions` | `go run ./direct/chat-completions` |
 | Direct Chat, standalone verification | `node direct/chat-completions-bare.ts` | `uv run python -m direct.chat_completions_bare` | `cargo run --bin direct-chat-completions-bare` | `go run ./direct/chat-completions-bare` |
 | Direct Chat, official OpenAI SDK | `node direct/chat-completions-with-openai-sdk.ts` | `uv run python -m direct.chat_completions_with_openai_sdk` | — | `go run ./direct/chat-completions-with-openai-sdk` |
 
 A dash means the vendor has no official SDK for that language. Official SDK
 examples share the inference client's verified transport and verify receipts
-through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and Jev examples
-derive their API root from it. Jev disables compression and inference retries,
-and uses `X-Generation-Id` as the receipt ID. Its native and official examples ask
+through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and TypeSafe examples
+derive their API root from it. System One examples disable compression and inference
+retries, and use `X-Generation-Id` as the receipt ID. Native and official examples ask
 the same billing, team, and urgency questions by default and print answers after
 verification.
 
@@ -93,7 +93,8 @@ node gateway/chat-completions.ts
 Use `pnpm start:<entry-name>` for Gateway examples, such as
 `pnpm start:chat-completions-with-openai-sdk`, and `start:direct-<entry-name>`
 for direct examples. Existing `start:client`, `start:bare`,
-`start:client-openai-sdk`, `start:jev-sdk`, and existing direct aliases remain available.
+`start:client-openai-sdk`, `start:jev`, `start:jev-with-typesafe-sdk`,
+`start:jev-sdk`, and existing direct aliases remain available.
 
 ### Python setup
 
@@ -120,7 +121,8 @@ cargo run --locked --bin gateway-chat-completions
 ```
 
 `cargo run` and `cargo run --bin client` remain aliases for Gateway standalone
-and integrated Chat. The Rust client exposes its reqwest transport directly.
+and integrated Chat; `cargo run --bin jev` remains an alias for `systemone`.
+The Rust client exposes its reqwest transport directly.
 
 ### Go setup
 
