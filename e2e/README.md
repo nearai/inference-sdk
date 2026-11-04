@@ -108,8 +108,6 @@ a 15 second deadline; automatic inference retries are disabled. Ordinary PR CI
 checks the live test sources without credentials; the live workflow runs them
 against STG and PRD, including through the release gate.
 
-<a id="official-jev-sdk-integration"></a>
-
 ## Official TypeSafe SDK integration
 
 `js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published

@@ -131,8 +131,6 @@ SDK, including streaming. Follow the
 [OpenAI SDK integration example](./docs/verification-guide.md#use-the-official-openai-sdk)
 to configure it and verify responses.
 
-<a id="use-the-jev-sdk"></a>
-
 ## Use the TypeSafe SDK
 
 Pass `InferenceClient.fetch` to `@typesafe-ai/sdk` for verified System One

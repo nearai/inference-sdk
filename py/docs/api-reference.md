@@ -196,8 +196,6 @@ except Exception as error:
 and available on Gateway clients. Use E2EE and OHTTP disabled for nonstreaming
 decision requests. The client verifies deployments before sending.
 
-<a id="official-jev-sdk"></a>
-
 ### Official TypeSafe SDK
 
 Use `inference_client.httpx2_client` with `AsyncTypeSafeClient`. Configure its API

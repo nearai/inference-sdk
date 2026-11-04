@@ -247,8 +247,6 @@ Response retention and receipt retries follow the same
 lifecycle as Chat. If a receipt is temporarily unavailable, retry
 `verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
 
-<a id="use-the-official-jev-sdk"></a>
-
 ### Use the official TypeSafe SDK
 
 Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs

@@ -93,8 +93,7 @@ node gateway/chat-completions.ts
 Use `pnpm start:<entry-name>` for Gateway examples, such as
 `pnpm start:chat-completions-with-openai-sdk`, and `start:direct-<entry-name>`
 for direct examples. Existing `start:client`, `start:bare`,
-`start:client-openai-sdk`, `start:jev`, `start:jev-with-typesafe-sdk`,
-`start:jev-sdk`, and existing direct aliases remain available.
+`start:client-openai-sdk`, and existing direct aliases remain available.
 
 ### Python setup
 
@@ -121,8 +120,7 @@ cargo run --locked --bin gateway-chat-completions
 ```
 
 `cargo run` and `cargo run --bin client` remain aliases for Gateway standalone
-and integrated Chat; `cargo run --bin jev` remains an alias for `systemone`.
-The Rust client exposes its reqwest transport directly.
+and integrated Chat. The Rust client exposes its reqwest transport directly.
 
 ### Go setup
 

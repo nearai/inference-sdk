@@ -282,8 +282,6 @@ Response retention and receipt retries follow the same lifecycle as Chat.
 If a receipt is temporarily unavailable, retry `verifyResponse(result.decisionId)`.
 Pass an `AbortSignal` in the create method's second argument to cancel the call.
 
-<a id="use-the-official-jev-sdk"></a>
-
 ### Use the official TypeSafe SDK
 
 Install `@typesafe-ai/sdk` and pass the Gateway client's `fetch` to
