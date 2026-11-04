@@ -66,6 +66,24 @@ both environments after pushes to `main`, daily at 03:00 UTC, and on manual
 dispatch from `main`. Releases test all four SDKs in both environments and
 block publication on failure.
 
+### Slack failure notifications
+
+Create a [Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)
+for the destination channel and save its URL as the repository Actions secret
+`SLACK_WEBHOOK_URL`.
+
+When configuration or an SDK test job fails, the workflow sends one summary
+after all selected jobs finish, including the failed job groups, commit, and a
+link to that run attempt. Language groups cover both STG and PRD; follow the
+link to see which environment failed. This also applies to live checks in the
+release workflow, which forwards the same secret. Successful runs and runs
+with only skipped or cancelled jobs send no notification.
+
+The secret is optional: if it is missing, a failed run records a warning and
+skips notification. Delivery errors fail the notification job, while the
+original E2E failures remain visible. Notifications contain run metadata, not
+test logs or inference payloads.
+
 ## Coverage
 
 Each environment selects representative models from its public `/model/list`
