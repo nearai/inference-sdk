@@ -5592,38 +5592,45 @@ describe('Responses API', () => {
     expect(fixture.signatureCalls()).toBe(2);
   });
 
-  const responseStreamCases: { name: string; body: string; valid: boolean }[] =
-    JSON.parse(
-      readFileSync(
-        resolve(__dirname, '../../test-fixtures/responses/streams.json'),
-        'utf8',
-      ),
-    );
+  const responseStreamCases: {
+    name: string;
+    body: string;
+    tail?: number[];
+    valid: boolean;
+  }[] = JSON.parse(
+    readFileSync(
+      resolve(__dirname, '../../test-fixtures/responses/streams.json'),
+      'utf8',
+    ),
+  );
   test.each(responseStreamCases)(
     'Responses stream contract: $name',
     async (scenario) => {
       const fixture = responsesGateway({
         streaming: true,
-        rawBody: Buffer.from(scenario.body),
+        rawBody: Buffer.concat([
+          Buffer.from(scenario.body),
+          Buffer.from(scenario.tail ?? []),
+        ]),
       });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
       const client = new InferenceClient({
         ...inferenceClientOptions(fixture.gateway),
         e2ee: false,
       });
-      let body: string | undefined;
+      let body: Buffer | undefined;
       try {
         const response = await client.fetch(
           `${baseUrl}responses`,
           chatRequest({ input: 'Hello', stream: true }),
         );
-        body = await response.text();
+        body = Buffer.from(await response.arrayBuffer());
       } catch (error) {
         if (scenario.valid) throw error;
         expect(error).toBeInstanceOf(ApiError);
       }
       if (scenario.valid) {
-        expect(body).toBe(scenario.body);
+        expect(body).toEqual(fixture.raw);
         await expect(
           client.verifyResponse('resp_fixture'),
         ).resolves.toMatchObject({ signatureKind: 'gateway' });

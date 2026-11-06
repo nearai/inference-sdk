@@ -249,7 +249,7 @@ async def test_responses_json_requires_an_id(monkeypatch):
 @pytest.mark.parametrize('case', STREAM_CASES, ids=lambda case: case['name'])
 async def test_responses_stream_identity_contract(monkeypatch, case):
     gateway = ResponsesGateway(streaming=True)
-    gateway.raw = case['body'].encode()
+    gateway.raw = case['body'].encode() + bytes(case.get('tail', []))
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=False) as client:
         response = await client.send(

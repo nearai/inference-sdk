@@ -10,6 +10,12 @@
     "valid": true
   },
   {
+    "name": "opaque bytes after DONE",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: [DONE]\n\n",
+    "tail": [255, 254],
+    "valid": true
+  },
+  {
     "name": "conflicting response IDs",
     "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"other\"}}\n\n",
     "valid": false

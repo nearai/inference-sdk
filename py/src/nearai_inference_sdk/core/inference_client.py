@@ -869,7 +869,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         self._reader = response.aiter_bytes()
         self._content_type = response.headers.get('content-type', '')
         self._streaming = self._content_type.lower().startswith('text/event-stream')
-        self._decoder = codecs.getincrementaldecoder('utf-8-sig')()
+        self._decoder = codecs.getincrementaldecoder('utf-8-sig')(errors='replace')
         self._pending = ''
         self._registered = False
         self._done = False
@@ -1007,7 +1007,9 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
 def _completion_id(body: bytes, content_type: str, responses: bool = False) -> str:
     try:
         if content_type.lower().startswith('text/event-stream'):
-            for data in get_sse_data_records(body.decode('utf-8-sig')):
+            for data in get_sse_data_records(
+                body.decode('utf-8-sig', errors='replace')
+            ):
                 if data == '[DONE]':
                     break
                 if data:
@@ -1030,7 +1032,9 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
 def _validate_response_stream(body: bytes) -> None:
     """Bind a Responses receipt to one response ID before [DONE] or EOF."""
     response_id = None
-    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
+    parsed = take_complete_sse_records(
+        body.decode('utf-8-sig', errors='replace'), eof=True
+    )
     for record in [*(item.value for item in parsed.records), parsed.pending]:
         values = get_sse_data_records(record)
         if get_sse_event(record) == 'error':

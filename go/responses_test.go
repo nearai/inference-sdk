@@ -222,6 +222,7 @@ func TestResponsesStreamContract(t *testing.T) {
 	}
 	var scenarios []struct {
 		Name, Body string
+		Tail       []byte
 		Valid      bool
 	}
 	if err := json.Unmarshal(raw, &scenarios); err != nil {
@@ -230,7 +231,7 @@ func TestResponsesStreamContract(t *testing.T) {
 	for _, scenario := range scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
 			client, fixture := responsesClient(t, true, nil)
-			fixture.raw = []byte(scenario.Body)
+			fixture.raw = append([]byte(scenario.Body), scenario.Tail...)
 			body, err := sendResponse(t, client, true)
 			if scenario.Valid {
 				if err != nil || !bytes.Equal(body, fixture.raw) {

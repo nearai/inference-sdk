@@ -1113,7 +1113,7 @@ function registerCompletionResponse({
 }: RegisterCompletionResponseParams): Response {
   if (response.body === null) return response;
   const streaming = isServerSentEventResponse(response);
-  const decoder = new TextDecoder('utf-8', { fatal: true });
+  const decoder = new TextDecoder('utf-8', { fatal: !streaming });
   let pending = '';
   let registered = false;
   const body = response.body.pipeThrough(
@@ -1329,9 +1329,7 @@ function hasSseCompletionSentinel({
     return false;
   }
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(
-      concatChunks(chunks),
-    );
+    const text = new TextDecoder().decode(concatChunks(chunks));
     if (protocol === 'messages') {
       validateMessageStream(concatChunks(chunks));
       return true;
@@ -1344,7 +1342,7 @@ function hasSseCompletionSentinel({
 
 /** Responses receipts require one consistent response ID before [DONE] or EOF. */
 function validateResponsesStream(body: Uint8Array): void {
-  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  const text = new TextDecoder().decode(body);
   const { records, pending } = takeCompleteSseRecords(text, true);
   let id: string | undefined;
   for (const record of [...records.map((item) => item.value), pending]) {

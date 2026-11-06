@@ -1870,9 +1870,12 @@ async fn responses_streams_follow_the_shared_receipt_contract() {
         serde_json::from_str(include_str!("../../test-fixtures/responses/streams.json")).unwrap();
     for case in cases.as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
-        let raw = case["body"].as_str().unwrap().as_bytes();
+        let mut raw = case["body"].as_str().unwrap().as_bytes().to_vec();
+        if let Some(tail) = case["tail"].as_array() {
+            raw.extend(tail.iter().map(|byte| byte.as_u64().unwrap() as u8));
+        }
         let (_server, f, options) = setup(Fixture {
-            response_body: Some(raw.to_vec()),
+            response_body: Some(raw.clone()),
             ..Default::default()
         })
         .await;
