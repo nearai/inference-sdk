@@ -93,7 +93,7 @@ authentication; all other options have the defaults below.
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
 | `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Verifies Gateway and model deployments before inference. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified HTTP transport for Chat, Responses, Messages, and System One. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified HTTP transport for Chat, Responses, Messages, and uncompressed JSON [System One](#system-one-decisions-inferenceclientsystemone) requests. |
 | `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Creates a Chat completion as JSON or SSE, with optional E2EE. |
 | `InferenceClient.messages.create(body, options?)` | Anthropic Messages `create` overloads | Creates a Gateway Message as JSON or SSE with field-level E2EE disabled; optional OHTTP. |
 | `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
@@ -136,7 +136,7 @@ try {
 ## System One decisions (`InferenceClient.systemone`)
 
 Available on the generic and Node Gateway clients. Use `e2ee: false` and
-`ohttp: false` for nonstreaming decision requests.
+`ohttp: false` for uncompressed, nonstreaming JSON decision requests.
 
 For `@typesafe-ai/sdk`, pass `client.fetch` to `TypeSafeClient` and disable
 request compression and inference retries. Verify its `X-Generation-Id` through

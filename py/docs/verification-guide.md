@@ -520,7 +520,7 @@ async def check_model_images(deployment: MeasuredDeployment) -> None:
     )
 
 
-# Replace the model-verification loop inside verify_deployments with:
+# Replace the model-verification loop inside verify_model_deployments with:
 model_attestations = []
 for attestation in fetched_model_attestations.attestations:
     model_attestations.append(
@@ -693,7 +693,7 @@ verifiers = ModelAttestationVerifiers(
     deployment=verify_deployment_release,
 )
 
-# Replace the model-verification loop inside verify_deployments with:
+# Replace the model-verification loop inside verify_model_deployments with:
 model_attestations = []
 for attestation in fetched_model_attestations.attestations:
     model_attestations.append(
