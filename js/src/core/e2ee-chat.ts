@@ -91,12 +91,7 @@ export function parseE2eeChatStreamChunk({
 }
 
 /**
- * Encrypt protocol-defined request fields without mutating the caller's
- * object. Other Chat JSON is preserved for the Gateway and model to handle.
- *
- * E2EE requests always opt into the protocol's all-fields extension. That
- * extension is intentionally selective: it enables additional documented
- * fields but does not turn arbitrary JSON into ciphertext.
+ * Encrypt supported Chat request fields using the verified model key.
  */
 export function encryptE2eeChatRequest({
   body,

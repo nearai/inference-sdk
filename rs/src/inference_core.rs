@@ -22,7 +22,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, InferenceError>> + Send>>;
-/// Consume the entire body (including the EOF after SSE [DONE]) before verification.
+/// Consume the entire response body before verification.
 pub struct InferenceResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
@@ -197,7 +197,7 @@ impl InferenceCore {
     pub(crate) fn base_url(&self) -> &str {
         &self.inner.options.base_url
     }
-    /// Release captured responses across all clones; keep the client reusable.
+    /// Clear captured response verification records.
     pub(crate) async fn clear_response_cache(&self) {
         let mut state = self.inner.state.lock().await;
         state.response_generation = state.response_generation.wrapping_add(1);

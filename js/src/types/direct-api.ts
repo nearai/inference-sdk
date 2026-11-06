@@ -34,7 +34,7 @@ export type FetchedDirectModelAttestations = DirectModelAttestations & {
   readonly clientBinding: DirectClientBinding;
 };
 
-/** @experimental Options for the direct client, which is not recommended for production. */
+/** @experimental Options for the Direct client. */
 export type DirectAttestationClientOptions = {
   /** Provider API base URL, including its version path (for example /v1). */
   readonly baseUrl: string;

@@ -26,8 +26,7 @@ class DirectSessionAttestationClient extends DirectApiClient {
 /**
  * Node direct model transport with preflight verification.
  *
- * @experimental Not recommended for production. Use `InferenceClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class NodeDirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;

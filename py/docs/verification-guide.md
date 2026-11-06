@@ -1,10 +1,6 @@
 # Python verification guide
 
-Use this SDK to verify NEAR AI Cloud deployment attestations and completion
-signatures. The recommended workflow starts with deployment evidence, then
-sends a completion, then verifies the signature returned for that completion.
-`signature.kind` is used only in the final step to select the right response
-verifier.
+Verify deployments before inference, then verify the returned response signature.
 
 Use `InferenceClient` for verified Chat with optional encryption, or the standalone functions
 when your application needs to inspect evidence and control each step.
@@ -27,45 +23,20 @@ async def chat(api_key: str) -> None:
         print(completion.choices[0].message.content)
 ```
 
-The client always verifies Gateway attestation. It reads model metadata on a
-session cache miss; `providerType='vllm'` with `attestationSupported=True`
-requires every returned NEAR model report to pass before Chat. Other models use
-Incognito mode, which verifies the Gateway only. Invalid metadata or failed
-model verification stops Chat without falling back to Incognito.
+The Gateway client verifies Gateway evidence and every returned model report
+before inference. Models without model attestation use Gateway-only (Incognito)
+verification. E2EE and model deployment policies require model attestation.
 
-For a `provider_tee` response, `verified.attestations` contains every preflight
-report matching the request's selected signer. Multiple instances can share a
-signing key, so the response signature identifies that key, not a unique instance.
-The deprecated `verified.attestation` is representative key evidence retained for
-compatibility. A `gateway` response continues to return its Gateway `attestation`.
-Standalone callers can use `find_model_attestations_for_signature(reports, signature)`
-to select the full matching set; it does not perform signature verification.
+`verified.attestations` contains all reports sharing the selected model signer.
+For a Gateway receipt, use `verified.attestation`.
 
-E2EE is opt-in for the Gateway client and uses a verified model key. Setting
-`e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
-`signing_algo` defaults to `'ed25519'` and also accepts
-`'ecdsa'`. The selected algorithm applies to evidence, encryption, routing, and
-response signatures. ECDSA uses the legacy AES-GCM protocol and omits
-`X-Encryption-Version: 2`, which selects the Ed25519 XChaCha20-Poly1305 protocol.
+Set `e2ee=True` to encrypt supported Chat fields. `signing_algo` defaults to
+`'ed25519'` and also accepts `'ecdsa'`.
 
-Successful attestation checks are reused for 60 minutes per model across
-`verify()`, Chat, Responses, Messages, and System One calls on the same client.
-Set `attestation_cache_time_to_live_ms=0` to check every request.
-`response_cache_time_to_live_ms` separately controls how long exact response
-bytes remain available after completion; its default is also 60 minutes.
+Gateway requests use attested TLS pinning by default. For an application proxy,
+set `GatewayVerificationOptions(include_spki_fingerprint=False)`.
 
-Gateway TLS identity is checked by default. After fetching its report, the client
-pins subsequent requests to the observed TLS peer and runs Gateway verification
-alongside model evidence retrieval and verification. The Gateway quote must
-authenticate that peer's SPKI. All required checks, including configured deployment
-policies and OHTTP evidence, must pass before caching the session or sending Chat.
-When connecting through an aggregator that terminates TLS, use
-`GatewayVerificationOptions(include_spki_fingerprint=False)`; that verifies the
-Gateway evidence without claiming the aggregator's TLS identity is the Gateway's.
-
-The client delivers decrypted content before response-signature verification.
-Call `verify_response()` after fully consuming a stream. Any content displayed
-before it succeeds is not yet signature-verified:
+Consume a stream before calling `verify_response()`:
 
 ```python
 stream = await inference_client.chat.completions.create(
@@ -103,25 +74,11 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
-To use HTTPX2 with an OpenAI version that supports it, install `openai[httpx2]`
-and replace `inference_client.http_client` with `inference_client.httpx2_client`.
-Both adapters share the same supported endpoints, streaming, encryption, and
-verification pipeline. The HTTPX2 adapter only converts types and stream
-interfaces; the owner retains its HTTPX connections. Other SDKs accepting an
-HTTPX2 client can use this property for the same supported endpoints.
+For OpenAI with HTTPX2, install `openai[httpx2]` and use
+`inference_client.httpx2_client`.
 
-Configure authentication on `InferenceClient`: its `api_key` or `headers` supplies
-the authorization for model reports, metadata, Chat, and signature requests.
-The client verifies Gateway evidence first, before sending authenticated requests.
-Gateway and direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`. An external
-`AsyncOpenAI` client's API key does not override it. With header-only authentication,
-you may give `AsyncOpenAI` a placeholder key; it is not sent to the server.
-
-Use one reusable client for concurrent requests; each response is retained under
-its completion ID. `InferenceClient` owns and closes the shared HTTP connections.
-Closing the external OpenAI client only closes its adapter; receipts remain
-available until the owning inference client closes or their cache entries expire.
-The Gateway transport supports Chat Completions and [Responses](#responses-api) creation.
+Configure credentials on `InferenceClient` and keep it open through response
+verification.
 
 ### Verify before the first Chat request
 
@@ -143,18 +100,10 @@ async with InferenceClient(api_key, e2ee=True) as inference_client:
     verified = await inference_client.verify_response(completion.id)
 ```
 
-`verify()` sends no Chat request. It shares Chat's attestation cache and in-flight
-verification, including TLS, model policy, and optional OHTTP checks. It raises if
-any required check fails. The result contains the verified Gateway, every verified
-model report, and `verified_at` in Unix milliseconds. Incognito results have an
-empty `models` tuple. Cache hits preserve the original result and verification
-time. With a cache TTL of zero, the later Chat verifies again.
-
-`DirectInferenceClient.verify(model)` returns the complete verified direct report
-set, its serving entry and TLS binding, and `verified_at`. It has no Gateway
-result. In both workflows, response signatures are still checked separately
-with `verify_response(id)` after Chat.
-Chat, Responses, Messages, and System One share the session warmed by `verify(model)`.
+`verify(model)` returns the verified Gateway, all model reports, and the
+verification time. `models` is empty for Gateway-only models. Set
+`attestation_cache_time_to_live_ms` to control reuse; `0` verifies every request.
+The default is one hour.
 
 ### Use OHTTP
 
@@ -170,27 +119,12 @@ async with InferenceClient(api_key, ohttp=True) as inference_client:
     print(completion.choices[0].message.content)
 ```
 
-OHTTP is disabled by default and requires `signing_algo='ed25519'` (the default).
-The client verifies the advertised OHTTP configuration against the attested
-Gateway signer. Missing or invalid OHTTP evidence prevents the inference request
-from being sent.
-The authenticated configuration is reused with the attestation cache.
+OHTTP requires Ed25519 and an endpoint serving `/ohttp`.
 
-`e2ee` is independent and defaults to `False` for both clients.
-OHTTP protects the HTTP exchange to the Gateway, while `e2ee=True` encrypts
-supported Chat fields to the model. Gateway OHTTP
-also works with Incognito models, without providing model encryption.
+OHTTP encrypts the HTTP exchange to the Gateway; E2EE encrypts supported Chat
+fields to the model. They can be enabled independently or together.
 
-JSON, streaming, and external `AsyncOpenAI` calls use the same interfaces.
-`verify_response()` checks the inner request and response bodies before E2EE
-decryption, not the outer OHTTP ciphertext. Gateway TLS pinning remains enabled.
-
-Chat, Gateway Responses, and Messages can use OHTTP. Metadata, attestation, and signature
-requests keep their normal HTTP paths. The configured endpoint or proxy must
-serve `/ohttp` at its origin.
-Authorization and explicitly configured custom headers are also sent on the
-outer request for authentication; OHTTP does not hide them or the client's
-network address from that endpoint.
+Inference and response-verification calls use the same interfaces with OHTTP enabled.
 
 ### Connect through an application proxy
 
@@ -243,28 +177,15 @@ async with InferenceClient(api_key, base_url=base_url) as inference_client:
     print(result.data['answers'])
 ```
 
-`result.decision_id` comes from `X-Generation-Id`. Call `verify_response()` before
-using the answers; it checks the exact bytes captured by the client. Gateway
-receipts authenticate Gateway signing; provider TEE receipts authenticate the
-model signer selected before the request. Self-hosted models use
-`x-model-pub-key` routing, which the endpoint must support.
+`result.decision_id` comes from `X-Generation-Id`. Pass it to `verify_response()`
+before using the answers.
 
-Use a Gateway client with E2EE and OHTTP disabled (the defaults). System One
-returns a complete JSON response and shares Chat's attestation session per model.
-Response retention and receipt retries follow the same
-lifecycle as Chat. If a receipt is temporarily unavailable, retry
-`verify_response(result.decision_id)`. Cancel the calling task to cancel the call.
+Use a Gateway client with E2EE and OHTTP disabled.
 
 ### Use the official TypeSafe SDK
 
-Install `nearai-inference-sdk` and `typesafe-sdk`; the official SDK installs
-HTTPX2 automatically. Pass
-`inference.httpx2_client` to `AsyncTypeSafeClient` for the HTTPX2
-adapter; the NEAR client continues to use HTTPX for network I/O and verification.
-The official SDK's API root excludes `/v1`, while the NEAR client's base URL
-includes `/v1/`. TypeSafe requires a non-empty `api_key` even with an injected client;
-for header-only authentication, pass a placeholder to TypeSafe and configure the
-actual credentials on `InferenceClient`.
+Install `typesafe-sdk` and pass `inference.httpx2_client` to `AsyncTypeSafeClient`.
+The TypeSafe API root excludes `/v1`; the NEAR client base URL includes `/v1/`.
 
 ```python
 from nearai_inference_sdk import InferenceClient
@@ -301,39 +222,18 @@ uncompressed, nonstreaming JSON requests; keep E2EE, OHTTP, request compression
 and automatic inference retries disabled. Retry transient receipt lookups through
 `verify_response(receipt_id)`.
 
-Read the receipt ID from `raw_http_response.headers['x-generation-id']`, rather
-than the official SDK's upstream `request_id`. The official SDK parses the
-response; the NEAR client verifies the captured JSON bytes. Self-hosted models
-route to the preselected attested public key, and external models use Gateway
-receipts. Closing the official client closes its borrowed adapter; keep the
-owning `InferenceClient` open until verification finishes.
+Read the receipt ID from `raw_http_response.headers['x-generation-id']` and
+verify it through the inference client.
 
 See the [runnable official SDK example](../../examples/example-py/gateway/systemone_with_typesafe_sdk.py).
-Its [reusable helpers](../../examples/example-py/utils/systemone.py) keep the
-verified transport configuration and receipt-ID extraction together. See the
-[live E2E instructions](../../e2e/README.md#official-typesafe-sdk-integration) for
-credential-gated validation against a deployed Gateway.
 
 ## Messages API
 
-The Gateway client supports `POST /v1/messages` with attestation preflight,
-TLS binding where available, and optional OHTTP (Ed25519). Requests preserve
-Anthropic system/content blocks, tools, tool results, and other JSON fields;
-available features depend on the Gateway and model. `anthropic-version` and
-`anthropic-beta` headers are preserved. The built-in interface defaults to
-`anthropic-version: 2023-06-01`.
+Gateway clients support Messages creation as JSON or SSE, with optional OHTTP
+(Ed25519). Use field-level E2EE disabled.
 
-Verify the top-level message `id` after JSON consumption, or
-`message_start.message.id` after consuming the complete SSE stream through
-`message_stop`. Tool-use IDs and the billing `Inference-Id` header are separate.
-Verification uses the original request and response bytes and requires a
-`gateway` receipt. This authenticates the Gateway's observation, not external
-Anthropic model execution inside a TEE. Failed, incomplete, and cancelled streams
-cannot yield a verified complete response. If receipt lookup is temporarily
-unavailable, retry verification without sending inference again.
-
-Messages field-level E2EE and Direct clients are rejected before network I/O,
-matching the server's supported contract. Only Messages creation is supported.
+Verify the message `id` after reading a JSON response, or `message_start.message.id`
+after consuming the stream. Messages use Gateway receipts.
 
 ```python
 message = await client.messages.create(
@@ -355,25 +255,11 @@ for JSON and streaming calls with receipt verification.
 
 ## Responses API
 
-The Gateway client supports `POST /v1/responses` with the same authentication,
-attestation preflight, TLS settings, and optional OHTTP as Chat. It preserves
-input items, function tools, reasoning fields, and output events. The SDK forwards
-`store=False` unchanged; stateless behavior is provided by the server. For
-client-managed context, replay function calls with their matching outputs in
-subsequent requests. Available features depend on the server and model.
+Gateway clients support Responses creation as JSON or SSE, with optional OHTTP
+(Ed25519). Use field-level E2EE disabled.
 
-Responses receipts must have `signature_kind: gateway`: they authenticate the
-Gateway's exact request/response bytes, not a model signature over the final
-Responses object. Receipt persistence is best-effort. A successful inference can
-still have an unavailable receipt; retry receipt lookup when appropriate without
-repeating inference. Consume the entire SSE stream before verifying its nested
-`event.response.id`; output item IDs are not receipt IDs.
-
-Field-level E2EE and Direct Responses are rejected before network I/O. OHTTP is
-supported with Ed25519. Provider `reasoning.encrypted_content` is passed through
-as opaque data and is separate from NEAR field encryption. Only creation is
-supported; response retrieval, cancellation, deletion, and history endpoints are
-outside this transport.
+Verify the response `id` after reading a JSON response, or `event.response.id`
+after consuming the stream. Responses use Gateway receipts.
 
 ```python
 response = await client.responses.create(
@@ -390,8 +276,9 @@ Set `stream=True` and use `async for` for typed Responses events. An external
 
 ## Direct model endpoints
 
-Direct clients are experimental and not recommended for production. They use a
-model's own base URL, without Gateway verification or catalog lookup.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. Direct clients are experimental; attested TLS binding is currently
+unavailable.
 
 ```python
 from nearai_inference_sdk import DirectInferenceClient
@@ -408,11 +295,8 @@ async with DirectInferenceClient(
     verified = await direct_client.verify_response(completion.id)
 ```
 
-Every supplied report is verified before selecting a model key. E2EE is opt-in,
-as with the Gateway client. The example enables it explicitly. Ed25519/ECDSA,
-streaming, OHTTP, and `AsyncOpenAI(http_client=...)` use the same interfaces as
-Gateway Chat. Response verification returns every verified
-report sharing the selected signer, without identifying one particular CVM.
+Set `e2ee=True` to enable encryption. Streaming, OHTTP, and OpenAI integration
+use the same interfaces as Gateway Chat.
 
 For a manual workflow:
 
@@ -441,21 +325,10 @@ matching = verify_direct_model_response(
 )
 ```
 
-The top-level serving report must also occur in `all_attestations`. Direct fetch
-currently requests `include_tls_fingerprint=false`, matching JavaScript. When
-verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
-by its own quote and the serving fingerprint must match the observed TLS peer.
-The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
-
-Known endpoint limitations are tracked in [cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087):
-reports may omit other serving CVMs, and signature lookup may return 404 when
-inference and lookup reach different instances. Use Gateway clients for production.
-
 ## Standalone workflow
 
-The following flow uses a NEAR TEE model. For Incognito, verify Gateway evidence
-and Gateway response signatures only. `fetch_model_metadata(model)` exposes
-catalog capabilities; it does not perform cryptographic verification.
+This flow verifies a NEAR TEE model. For Gateway-only models, use Gateway
+attestation and Gateway response verification.
 
 Bootstrap Gateway verification with `AttestationClient(api_key)`, then pass a
 pinned HTTP client to a second `AttestationClient` for model reports, metadata,
@@ -468,11 +341,6 @@ and signatures. The application sends Chat and retains the exact bytes.
 | 1. Verify deployments | `fetch_gateway_attestation` → `verify_gateway_attestation`; `fetch_model_attestations` → `verify_model_attestation` | The Gateway deployment and every returned target-model deployment satisfy your evidence and policy checks. |
 | 2. Send a completion | Optional `prepare_e2ee_chat_request` | Your application sends Chat and retains the completion ID and exact encrypted request and response bytes. |
 | 3. Verify the response signature | `fetch_completion_signature` → verifier selected by `signature.kind` | The selected model or Gateway signer signed those exact bytes. |
-
-Stage 1 is useful before inference: it lets an application reject a deployment
-that does not meet its TCB, measurement, GPU, or Gateway-TLS requirements.
-Each fetch is a fresh observation, so the application decides when to refresh
-that evidence.
 
 ## 1. Verify Gateway and model deployments
 
@@ -531,28 +399,7 @@ async with create_pinned_tls_client(
     # before leaving this context. The later snippets describe those steps.
 ```
 
-`http_client` is borrowed: `AttestationClient` does not close it. Keep its context
-open through the Chat and signature steps below. It is used for every model
-report, metadata, and signature request without falling back to the default
-transport. Gateway evidence always uses the default transport so its observed
-TLS peer comes from the bootstrap request itself.
-
-`fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
-Gateway report endpoint, but ask for evidence with different client bindings:
-
-- Gateway evidence requests an SPKI fingerprint by default. The Python SDK
-  captures the peer fingerprint from that same HTTPS evidence request, and
-  `verify_gateway_attestation` checks that the peer, quote, signer, and nonce
-  agree.
-- Model evidence requests no TLS fingerprint. The client connects to the
-  Gateway rather than directly to a model CVM, so model verification checks the
-  signer and nonce binding without making a client-to-model TLS claim.
-
-The fetch helpers generate fresh nonces and reject a response whose echoed
-nonce does not match. `fetch_model_attestations()` preserves every returned
-model record. This deployment-first workflow rejects an empty collection and
-verifies every returned record before inference. `verify_*_attestation` then
-verifies the quote, measurements, deployment configuration, and policy.
+Keep the pinned HTTP client open through inference and response verification.
 
 ### Gateway TLS identity
 
@@ -584,25 +431,14 @@ verified_gateway = await verify_gateway_attestation(
 assert verified_gateway.tls_binding.kind == 'none'
 ```
 
-The second form still verifies the Gateway quote, signer, nonce, deployment,
-and policy. It does not make a claim about the TLS peer serving the evidence
-request.
-
 ### Optional image build provenance
 
-`fetch_image_provenance` retrieves a digest's GitHub attestation bundles.
-`verify_image_provenance` verifies them against Sigstore's production trust root,
-matches the signed artifact digest, and checks your expected repository and
-workflow. The statement's source commit must match the verified certificate's
-source commit, including when no commit pin is supplied. Set `ref` or `commit` to
-restrict the accepted build further.
+`fetch_image_provenance` retrieves Sigstore bundles; `verify_image_provenance`
+checks the image digest and GitHub build policy. Set `ref` or `commit` to restrict
+the source version.
 
-`verify_deployment_image_provenance` selects configured image repositories from
-the measured app-compose JSON's `docker_compose_file` YAML. Every configured
-repository must occur, and all matching service images must be digest-pinned.
-Unrelated literal images are ignored; image references containing `$` are rejected.
-Selection completes before any GitHub requests. The application supplies its
-trusted image repositories and build policies:
+Use `verify_deployment_image_provenance` in a deployment callback to check
+required container images from measured Compose:
 
 ```python
 from nearai_inference_sdk import (
@@ -648,18 +484,6 @@ policy = ImageProvenancePolicy(
     ),
 )
 ```
-
-The certificate's source repository, ref, and commit must still match the signed
-build provenance.
-
-The helpers are asynchronous. The deployment helper reports selection, request,
-and verification failures as `VerificationError`; wrapped request failures retain
-their retryability. Direct `fetch_image_provenance` failures raise `ApiError`.
-Multiple bundles are tried until one satisfies all checks.
-
-This proves the selected digest's build provenance. It does not approve the code,
-rebuild the image, resolve compose-variable overrides,
-or prove which containers are currently running.
 
 #### Model images deployed by Compose Manager
 
@@ -716,10 +540,8 @@ trusted repository. Configure this callback as `model_verification.verifiers.dep
 on Gateway or Direct inference clients. The policy runs for every model report
 and requires Compose Manager evidence in each one.
 
-The evidence covers recorded deployment actions and the configured image builds;
-current runtime state requires separate evidence. See the
-[API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
-for options and evidence fields.
+See the [API reference](./api-reference.md#verify_compose_manager_deployment_image_provenance)
+for file selection and GitHub access options.
 
 #### GitHub API access
 
@@ -737,12 +559,7 @@ a fragment. The SDK preserves its path prefix and appends these GitHub API route
 | `/repos/{owner}/{repo}/attestations/{digest}?per_page=100` | GitHub JSON with inline `attestations[].bundle` and a `Link` header for pagination. |
 | `/repos/{owner}/{repo}/contents/{file}?ref={commit}` | Exact file bytes, requested with `Accept: application/vnd.github.raw+json`. |
 
-Preserve status codes and pagination cursors, and return content directly.
-All pages are fetched through the configured endpoint. For browser callers, allow
-`Accept` and `X-GitHub-Api-Version` and expose `Link` through CORS.
-Keep GitHub credentials on the server and restrict the backend to the required
-repositories and read-only routes. Bundle signatures, image policies, and file
-hashes are verified locally by the SDK.
+The custom endpoint must preserve GitHub status codes, pagination, and response bodies.
 
 ## 2. Send the completion and retain exact bytes
 
@@ -839,40 +656,14 @@ else:
     )
 ```
 
-Retain `matching_attestations` as the matching evidence set. These reports share the
-request's selected signing key; they do not identify the serving instance.
+`matching_attestations` contains every verified report sharing the response signer.
 
-The Gateway provides two signature kinds. They are different response signatures,
-not two top-level deployment workflows:
+`signature.kind` selects the response verifier:
 
-| `signature.kind` | Call | A successful result establishes | It does not establish |
-| --- | --- | --- | --- |
-| `provider_tee` | `verify_model_response` | A verified model-serving TEE signer signed the exact request and response bytes. | Which Gateway deployment or TLS endpoint returned them. |
-| `gateway` | `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. | That an attested model executed or generated them. |
-
-The Gateway can rewrite a response before returning it, for example while
-normalizing a stream for OpenAI compatibility. A provider signature over the
-upstream bytes cannot verify rewritten bytes, so the Gateway may return a
-`gateway` signature for the final client-visible bytes. Always use the kind
-returned for that completion; never infer it from signed text.
-
-## Current evidence boundary
-
-The two preflight attestations and the single completion signature do not yet
-form a complete model-to-Gateway-to-final-bytes cryptographic chain.
-
-- With `provider_tee`, model evidence and the model signature bind the
-  model signer to the exact bytes, but do not bind those bytes to the Gateway
-  deployment verified separately.
-- With `gateway`, Gateway evidence and the Gateway signature bind the Gateway
-  signer to the final client-visible bytes, but do not prove model execution or
-  connect an upstream model response to those bytes.
-
-Consequently, successfully verifying both preflight deployments must not be
-presented as proof that they served the same inference. [cloud-api#986](https://github.com/nearai/cloud-api/issues/986)
-tracks the missing chain: preserving a provider signature and adding a Gateway
-receipt that binds the upstream and final response hashes for the same
-inference.
+| `signature.kind` | Call | Verifies |
+| --- | --- | --- |
+| `provider_tee` | `verify_model_response` | A verified model-serving TEE signer signed the exact request and response bytes. |
+| `gateway` | `verify_gateway_response` | A verified Gateway signer signed the exact client-visible request and response bytes. |
 
 ## Set policy and trust roots
 
@@ -913,15 +704,8 @@ deployment and must raise for every deployment the application does not accept.
 The SDK authenticates measured values; the callback decides which values are
 acceptable.
 
-`verify_gateway_attestation` accepts `AttestationPolicy` when an application
-needs to restrict Gateway TCB statuses. `verifiers.tdx_quote` replaces the built-in
-Intel DCAP quote verifier. The default NVIDIA verifier submits evidence to NRAS,
-then verifies the overall JWT's ES384 signature against NVIDIA's JWKS, issuer,
-expiration, not-before and issued-at times, and signed `eat_nonce`. The overall
-verdict must be `true`; detached per-device claims are not consumed. See
-[NVIDIA's claims reference](https://docs.nvidia.com/attestation/advanced-documentation/latest/claims-guide/gpu_claims.html).
-Set `verifiers.gpu_evidence` to use different trust roots or another verification
-service. Every verifier callback must return only for evidence it accepts.
+Use `AttestationPolicy` for Gateway TCB requirements. Configure `verifiers.tdx_quote`
+and `verifiers.gpu_evidence` to supply custom quote and GPU verifiers.
 
 ## Configure attestation service URLs
 
@@ -961,33 +745,15 @@ separately to use another trusted key source.
 
 ## Handle retrieval and verification errors
 
-For integrated Chat, OpenAI wraps transport errors in `APIConnectionError`;
-inspect `error.__cause__` for the original SDK failure. `InferenceClient.send()`
-and `verify_response()` expose SDK errors directly. A failed preflight sends no
-Chat request, while a failed response check occurs after content was received.
-
-`client.fetch_completion_signature()` returns one signature or raises a
-structured error. A 2xx unavailable envelope raises `ApiError` with
-`api.completion_signature_unavailable`; its details contain the service's
-`providerErrorCode` and `providerMessage`.
-
-An HTTP 404 raises `api.http_status` and remains retryable. It means the Gateway
-has no stored signature for that ID at that time. Retry only when the
-application has reason to expect a later signature, such as before the
-completion has reached its terminal state.
-
-`AttestationClient` methods and evidence selection raise `ApiError` for
-request, HTTP, response-format, nonce, unavailable-signature,
-candidate-selection, or helper-input failures. Explicit verification functions
-raise `VerificationError` for local input, cryptographic, policy, and binding
-failures. An evidence client's supplied pinned transport also propagates TLS
-binding failures as `VerificationError`.
+Request and evidence-selection failures use `ApiError`; verification failures use
+`VerificationError`. Use `get_sdk_error()` for exceptions wrapped by OpenAI or
+Anthropic; see the [API reference](./api-reference.md#errors-wrapped-by-official-sdks).
 
 | Field | Meaning |
 | --- | --- |
 | `error.failure.code` | Stable code for an application to branch on. |
-| `error.failure.details` (when present) | Code-specific diagnostic context. Do not parse `error.message`. |
-| `error.retryable` | A new attempt at the failed external operation may succeed. It does not mean that re-verifying the same evidence will succeed or that an inference should be replayed. |
+| `error.failure.details` (when present) | Code-specific diagnostic context. |
+| `error.retryable` | Whether retrying the failed operation may succeed. |
 
 ```python
 from nearai_inference_sdk import ApiError

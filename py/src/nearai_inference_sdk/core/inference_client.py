@@ -276,7 +276,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._sessions.clear()
 
     def clear_response_cache(self) -> None:
-        """Release captured responses and expiry timers; keep the client reusable."""
+        """Clear captured response verification records."""
         self._response_generation += 1
         for record in self._responses.values():
             if record.expiry is not None:
@@ -284,12 +284,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._responses.clear()
 
     async def verify(self, model: str) -> AttestationResult:
-        """Return verified deployment evidence without sending Chat.
-
-        Shares Chat's attestation cache and in-flight work. Cache hits retain
-        the original result and verified_at time. A later Chat verifies again
-        when the cache expires or its time to live is zero.
-        """
+        """Verify the required deployment attestations before sending a prompt."""
 
         if model == '':
             raise api_failure(

@@ -192,7 +192,7 @@ commit. Code changes require a new version.
 No registry token or native-library upload is needed. Consumers install with:
 
 ```sh
-go get github.com/nearai/inference-sdk/go@v0.1.0
+go get github.com/nearai/inference-sdk/go
 ```
 
 Package documentation is indexed by pkg.go.dev from the public Go module proxy.

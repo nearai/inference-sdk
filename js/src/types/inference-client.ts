@@ -136,7 +136,7 @@ export type AttestationVerificationResult = {
   readonly gateway: VerifiedGatewayAttestation;
   /** Every returned model report. Empty for Gateway-only models. */
   readonly models: readonly VerifiedModelAttestation[];
-  /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+  /** Unix time in milliseconds when verification completed. */
   readonly verifiedAt: number;
 };
 
@@ -147,11 +147,10 @@ export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** Verified reports sharing the request's selected signer, not a unique instance. */
+  /** Verified reports sharing the request's selected signer. */
   readonly attestations: readonly VerifiedModelAttestation[];
   /**
    * Report used to select the request's model public key, retained for compatibility.
-   * It does not identify which instance served the request.
    * @deprecated Use `attestations` for all verified reports sharing the selected signer.
    */
   readonly attestation: VerifiedModelAttestation;

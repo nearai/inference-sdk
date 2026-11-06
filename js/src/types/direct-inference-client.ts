@@ -15,7 +15,7 @@ export type NodeDirectModelVerificationOptions = DirectModelVerificationOptions;
 
 /**
  * Verified Chat requests to one direct model endpoint, without a Gateway.
- * @experimental Direct clients are not recommended for production.
+ * @experimental
  */
 export type DirectInferenceClientOptions = DirectAttestationClientOptions &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
@@ -23,7 +23,7 @@ export type DirectInferenceClientOptions = DirectAttestationClientOptions &
     readonly modelVerification?: DirectModelVerificationOptions;
   };
 
-/** @experimental Options for the Node direct client, which is not recommended for production. */
+/** @experimental Options for the Node Direct client. */
 export type NodeDirectInferenceClientOptions = DirectAttestationClientOptions &
   Omit<InferenceClientCommonOptions, 'modelVerification'> &
   InferenceEncryptionOptions & {
@@ -40,7 +40,7 @@ export type VerifyDirectModelResponseParams = {
 /** All verified direct reports and endpoint TLS binding, shared by verify() and Chat. */
 export type DirectAttestationVerificationResult =
   VerifiedDirectModelAttestations & {
-    /** Unix time in milliseconds when verification completed, unchanged on cache hits. */
+    /** Unix time in milliseconds when verification completed. */
     readonly verifiedAt: number;
   };
 
@@ -51,6 +51,6 @@ export type VerifiedDirectCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
-  /** Eligible verified reports sharing this signer, not a claim identifying one CVM. */
+  /** Verified reports sharing the selected model signer. */
   readonly attestations: readonly VerifiedDirectModelAttestation[];
 };

@@ -151,7 +151,7 @@ func (c *inferenceCore) prune(now time.Time) {
 
 func (c *inferenceCore) BaseURL() string { return c.api.base.String() }
 
-// ClearResponseCache releases captured responses while keeping the client reusable.
+// ClearResponseCache clears captured response verification records.
 func (c *inferenceCore) ClearResponseCache() {
 	c.mu.Lock()
 	defer c.mu.Unlock()

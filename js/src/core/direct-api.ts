@@ -199,8 +199,7 @@ export function requireDirectApiBaseUrl(baseUrl: string | undefined): string {
 /**
  * Fetch direct provider evidence without requesting TLS fingerprint binding.
  *
- * @experimental Not recommended for production. Use `AttestationClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectAttestationClient extends DirectApiClient {
   async fetchModelAttestations({

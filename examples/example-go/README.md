@@ -26,20 +26,12 @@ model, signature algorithm, and optional OHTTP. Set `NEARAI_MODEL` for System On
 for verified self-hosted decision models.
 Set `NEARAI_IMAGE_PATH` for the shared [PNG image/Box example](../README.md#system-one-images).
 
-JSON answers are printed after receipt verification. SSE text is printed as it
-arrives; the example consumes through EOF and verifies the receipt afterward.
-Verification failures exit with an error. Official clients reuse
-`inference.HTTPClient()` and disable automatic inference retries. Responses and
-Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
-Gateway examples use `InferenceClient`; Direct examples use `DirectInferenceClient`.
-Both share the HTTP adapter workflow, while Direct verification returns its own
-result types with report collections in `Attestations`.
+JSON answers are printed after verification. SSE text is printed as it arrives,
+with response verification after EOF.
 
-Native and standalone Gateway Chat apply both Gateway and Compose Manager model
-image policies. Add commit pins in `internal/demo.GatewayImages` and
-`internal/demo.ModelImages` for stricter admission. `GITHUB_TOKEN` may be used
-for GitHub provenance requests. See the shared guide for
-[direct endpoint verification](../README.md#direct-endpoints).
+Set source commit pins in `internal/demo.GatewayImages` and
+`internal/demo.ModelImages` to restrict accepted image builds.
+Use `GITHUB_TOKEN` for authenticated GitHub provenance requests.
 
 ```sh
 go vet ./...
@@ -48,6 +40,3 @@ go test -tags=e2e -run '^TestLive' -v .
 ```
 
 The last command requires the shared [live configuration](../../e2e/README.md).
-Offline tests exercise official SDK parsing against signed Chat, Responses, and
-Messages fixtures. The module uses a local SDK replacement; use a released module
-version when copying it outside this repository.

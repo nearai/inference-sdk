@@ -288,11 +288,7 @@ export abstract class VerifiedInferenceClientBase<
     return this.baseUrl;
   }
 
-  /**
-   * Verify the required attestations for a model and return the results without sending Chat.
-   * Reuses the same cache and in-flight verification as Chat. With a cache
-   * TTL of zero, a later Chat request verifies again.
-   */
+  /** Verify the required deployment attestations before sending a prompt. */
   async verify(model: string): Promise<AttestationResult> {
     if (model === '') {
       throw invalidInput({
@@ -417,7 +413,7 @@ export abstract class VerifiedInferenceClientBase<
     return record.verification;
   }
 
-  /** Release captured responses and expiry timers; keep the client reusable. */
+  /** Clear captured response verification records. */
   clearResponseCache(): void {
     this.responseCacheGeneration++;
     for (const record of this.responseRecords.values()) {

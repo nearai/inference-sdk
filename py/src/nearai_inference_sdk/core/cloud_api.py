@@ -187,7 +187,7 @@ class AttestationClient(_ApiClient):
     """Fetch Gateway evidence, model reports, metadata, and signatures.
 
     ``http_client`` supplies the transport for model reports, metadata, and
-    completion signatures. It remains caller-owned and is never closed here.
+    completion signatures.
     Gateway evidence uses the default transport to capture its own TLS peer.
     """
 
@@ -333,8 +333,7 @@ def find_model_attestations_for_signature(
 ) -> tuple[VerifiedModelAttestation, ...]:
     """Return all verified reports matching a provider signature's signing identity.
 
-    Shared signing keys do not identify a unique serving instance. This helper
-    selects evidence; it does not verify the response signature again.
+    Use ``verify_model_response`` to verify the response signature.
     """
 
     if signature.kind != 'provider_tee':

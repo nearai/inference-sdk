@@ -56,8 +56,7 @@ class DirectInferenceClient(
 ):
     """Experimental direct provider client. E2EE is opt-in, as with the Gateway.
 
-    Verifies all supplied reports before Chat and retains the selected signer
-    group for response verification. Direct clients are not recommended for production.
+    Verifies all returned model reports before Chat and verifies response signatures.
     """
 
     def __init__(

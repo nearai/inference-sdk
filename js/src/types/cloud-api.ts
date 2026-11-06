@@ -31,7 +31,6 @@ export type AttestationClientOptions = {
    * `createPinnedTlsFetch` after verifying Gateway evidence in Node.
    * Gateway-attestation requests retain the runtime's default transport so
    * the Node client can capture the TLS peer from that same request.
-   * The caller is responsible for the supplied transport's trust policy.
    */
   readonly fetch?: typeof globalThis.fetch;
 };

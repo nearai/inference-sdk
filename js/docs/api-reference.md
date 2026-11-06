@@ -14,18 +14,8 @@ in whether they can bind endpoint evidence to the TLS peer that returned it.
 | `@nearai/inference-sdk` | Gateway clients use `include_tls_fingerprint=false`; their `includeSpkiFingerprint` option can only be `false`. The matching attestation verifier returns `tlsBinding.kind: 'none'`. |
 | `@nearai/inference-sdk/node` | Gateway attestation clients request SPKI evidence and capture the attestation request's TLS peer by default. `InferenceClient` pins later requests to that observed key and verifies it against Gateway attestation before sending Chat. Disable this through `gatewayVerification.includeSpkiFingerprint` or `includeSpkiFingerprint` on `AttestationClient.fetchGatewayAttestation()`. |
 
-Direct clients are experimental and not recommended for production in either
-entry point. Use the Gateway `InferenceClient` or `AttestationClient` for production.
-Direct clients always request `include_tls_fingerprint=false`.
-Direct TLS fingerprint binding and pinning are currently disabled; standard HTTPS
-certificate validation still applies.
-
 TLS binding requires an HTTPS endpoint. For an HTTP custom endpoint, set
 the relevant `includeSpkiFingerprint` option to `false`.
-
-Node request pinning checks every later TLS peer. It permits a new HTTPS
-connection when that peer presents an allowed attested SPKI; it does not require
-the attestation socket to be reused.
 
 ## Runtime exports
 
@@ -33,8 +23,8 @@ the attestation socket to be reused.
 | --- | --- | --- |
 | `InferenceClient` | `new InferenceClient(options)` | Chat Completions, Responses, Messages, and System One with deployment and response verification; optional Chat E2EE. |
 | `AttestationClient` | `new AttestationClient(options)` | Fetches model metadata, Gateway signatures, and attestation evidence. |
-| `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental. Not recommended for production. Verified Chat and E2EE through a model endpoint, without Gateway verification. |
-| `DirectAttestationClient` | `new DirectAttestationClient(options)` | Experimental. Not recommended for production. Fetches direct model attestations and signatures. |
+| `DirectInferenceClient` | `new DirectInferenceClient(options)` | Experimental Chat and response verification through a model endpoint. |
+| `DirectAttestationClient` | `new DirectAttestationClient(options)` | Fetches attestations and signatures from a direct model endpoint. |
 | `prepareE2eeChatRequest` | `(params: PrepareE2eeChatRequestParams) => Promise<PreparedE2eeChatRequest>` | Encrypts a Chat request to a model public key and returns its matching response decryptor. |
 | `verifyOhttpKeyConfig` | `(params: VerifyOhttpKeyConfigParams) => Uint8Array` | Authenticates an OHTTP key configuration against a verified Ed25519 signer. |
 | `createOhttpFetch` | `(params: CreateOhttpFetchParams) => typeof fetch` | Encapsulates requests using an authenticated OHTTP configuration and returns decrypted inner responses. |
@@ -55,22 +45,12 @@ the attestation socket to be reused.
 
 ## `InferenceClient`
 
-Provides `chat.completions.create()`, `responses.create()`, `messages.create()`, a reusable `fetch`
-adapter, `systemone.create()`, and `verifyResponse(id)`. Chat, Responses, and Messages
-support JSON and streaming; System One uses non-streaming decisions.
-On a cache miss, the client fetches and verifies Gateway evidence and any
-required OHTTP evidence before sending authenticated model metadata and
-attestation requests. All required checks must pass before the session is
-cached or an inference request is sent.
+Provides Chat Completions, Responses, Messages, System One, a reusable `fetch`
+transport, and `verifyResponse(id)`. The client verifies the Gateway and every
+returned model report before inference.
 
-The client reads `metadata.providerType` and `metadata.attestationSupported` from
-`GET /v1/model/{model}`, with the model ID URL-encoded. A `vllm` provider with
-attestation support requires NEAR model verification. Other models use the
-Incognito flow, which verifies only the Gateway. HTTP errors, malformed metadata,
-and failed model verification reject the request without falling back to
-Gateway-only mode.
-See the [guide](./verification-guide.md#e2ee-scope-and-response-handling)
-for supported encryption fields and protocols.
+Models without NEAR model attestation use Gateway-only (Incognito) verification.
+E2EE and model deployment policies require model attestation.
 
 See [Messages API](./verification-guide.md#messages-api) and
 [Responses API](./verification-guide.md#responses-api) for Gateway receipt
@@ -78,25 +58,22 @@ semantics, streaming, and supported privacy options.
 
 ### Constructor options
 
-`InferenceClientOptions` configures the client. All options are optional;
-`new InferenceClient()` uses the defaults. Configure `apiKey` or `headers`
-when the inference endpoint requires authentication. Gateway and direct
-attestation requests omit `Authorization`, `api-key`, and `x-api-key` headers.
-Model reports through the Gateway use configured authentication after Gateway verification.
+`InferenceClientOptions` configures the client. Set `apiKey` or `headers` for
+authentication; all other options have the defaults below.
 
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, signature, and inference requests; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | — | Static request headers. Gateway reports omit authentication headers; model reports use them for organization access. Other requests use configured authorization; per-request Authorization is ignored. Other headers can be overridden per request; SDK protocol headers override conflicts. |
+| `headers?` | `HeadersInit` | No | — | Additional request headers; use `apiKey` for bearer authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute API base URL without a query or fragment. This may be a compatible proxy endpoint. |
-| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses a successful session for this many milliseconds per model across `verify()`, Chat, Responses, Messages, and System One. Set `0` to check every request. |
-| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Expires response records this many milliseconds after body completion. Successful verification and cached non-retryable failures release the original bodies sooner. Independent of the attestation cache. |
-| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Selects the algorithm for attestation, model-key routing, response signatures, and E2EE. With `ohttp: true`, only `'ed25519'` is accepted. Otherwise `'ecdsa'` selects the legacy secp256k1 ECDH and AES-GCM protocol. |
-| `e2ee?` | `boolean` | No | `false` | Enables Chat field encryption for models with supported model attestation. With `false`, attested models keep verified-key routing; Incognito models use Gateway-only verification without a model routing key. |
-| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat, Responses, and Messages HTTP requests and responses to the attested Gateway through `/ohttp`. Independent of field-level E2EE. Requires signed OHTTP key evidence and Ed25519. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Requires model attestation. Optional model-aware deployment check, run after `modelVerification.verifiers.deployment` when both are configured. No approval policy is provided by default. Throw to reject. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Deployment verification cache duration; `0` verifies each request. |
+| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Response retention after body completion; `0` disables retention. |
+| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm for attestation, E2EE, and response signatures. OHTTP requires Ed25519. |
+| `e2ee?` | `boolean` | No | `false` | Encrypt supported Chat fields to a verified model key. |
+| `ohttp?` | `boolean` | No | `false` | Encrypt Chat, Responses, and Messages HTTP exchanges to the Gateway; requires Ed25519. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Model-aware deployment check. Throw to reject a deployment. |
 | `gatewayVerification?` | `GatewayVerificationOptions` | No | — | Advanced Gateway attestation settings. In the Node entry point, it can also disable direct-Gateway TLS binding. |
-| `modelVerification?` | `ModelVerificationOptions` | No | — | Advanced model attestation policy and verifier overrides. An explicit `policy` or `verifiers.deployment` requires model attestation; quote/GPU verifier overrides alone do not. |
+| `modelVerification?` | `ModelVerificationOptions` | No | — | Model attestation policy and verifier configuration. |
 
 | Type | Field or signature | Description |
 | --- | --- | --- |
@@ -115,66 +92,34 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | Method or type | Signature or field | Description |
 | --- | --- | --- |
 | `InferenceClient.getBaseUrl()` | `string` | Resolved API base URL used by this client. |
-| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Returns Gateway and model attestation verification results without sending inference. Requires a non-empty model ID. Uses the same configured checks, cache, and in-flight verification as Chat, Responses, Messages, and System One. Rejects on failure. With `attestationCacheTimeToLiveMs: 0`, a later call verifies again. |
-| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified transport for Chat Completions, Gateway Responses, Messages, and uncompressed JSON System One requests. Uses the same preflight and receipt capture as the built-in APIs; endpoint-specific encryption settings apply. |
-| `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Ordinary or streaming OpenAI-compatible Chat Completions call. Its required `model` selects the evidence verified for this request. With E2EE enabled, protocol-covered fields are encrypted and other fields are preserved without E2EE transformation. |
+| `InferenceClient.verify(model: string)` | `Promise<AttestationVerificationResult>` | Verifies Gateway and model deployments before inference. |
+| `InferenceClient.fetch(input, init?)` | `Promise<Response>` | Verified HTTP transport for Chat, Responses, Messages, and System One. |
+| `InferenceClient.chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Creates a Chat completion as JSON or SSE, with optional E2EE. |
 | `InferenceClient.messages.create(body, options?)` | Anthropic Messages `create` overloads | Creates a Gateway Message as JSON or SSE with field-level E2EE disabled; optional OHTTP. |
 | `InferenceClient.responses.create(body, options?)` | OpenAI Responses `create` overloads | Creates a Gateway Response as JSON or SSE. Requires field-level E2EE disabled; OHTTP is supported. |
 | `InferenceClient.systemone.create(request, options?)` | `Promise<SystemOneResult>` | Sends one non-streaming decision request after deployment verification. |
-| `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies retained bytes and evidence for a Chat, Responses, Messages, or System One result. Concurrent calls share one operation. Retryable API failures and unavailable signatures permit a later lookup; other results remain cached. Unknown or expired IDs reject with `api.completion_not_found`. |
-| `InferenceClient.clearResponseCache()` | `void` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
+| `InferenceClient.verifyResponse(id)` | `Promise<VerifiedCompletionResult>` | Verifies the response signature using retained request and response bytes. |
+| `InferenceClient.clearResponseCache()` | `void` | Discards retained responses and their verification results. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
-| `VerifiedModelCompletionResult.attestations` | `readonly VerifiedModelAttestation[]` | Every verified report sharing the request's selected signer, in response order. Does not identify one serving instance. |
-| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key; does not identify the serving instance. |
+| `VerifiedModelCompletionResult.attestations` | `readonly VerifiedModelAttestation[]` | All verified reports sharing the request's selected model signer. |
+| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated: the report selected for the request key. Use `attestations`. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
 | `gateway` | `VerifiedGatewayAttestation` | Verified Gateway result and original `report`. |
 | `models` | `readonly VerifiedModelAttestation[]` | Every verified model report, in response order. Empty for Gateway-only models. |
-| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
+| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. |
 
-For attested models, every returned report must pass before the client
-selects a routing key. With `e2ee: false`, `X-Model-Pub-Key` contains the verified model
-signing key, without field-encryption headers. Incognito models make no
-model-attestation request and send no model routing key or field-encryption
-headers. `e2ee: true`,
-`deploymentPolicy`, `modelVerification.policy`, or
-`modelVerification.verifiers.deployment` reject such models before Chat;
-`modelVerification: {}` and quote/GPU verifier overrides alone are allowed.
-OHTTP also supports Incognito models, protecting the exchange to the Gateway.
-A verified Gateway signature does not establish model TEE execution.
-
-Consume the returned `Response` or stream before awaiting `verifyResponse(id)`.
-In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
-still captures the full response to EOF for signature verification and OHTTP
-authentication.
-
-Records retain complete request and response bodies until verification succeeds
-or returns a cached non-retryable failure. Verification results remain available
-until the original TTL expires. Unverified responses and retryable lookups retain
-their bodies until that deadline. TTL starts at body completion;
-`responseCacheTimeToLiveMs: 0` disables retention. Both TTL options accept finite,
-non-negative durations. Expired records are unavailable immediately; timers release
-retained bodies while idle. A duplicate retained ID fails with
-`api.duplicate_completion_id` and preserves the original receipt. An expired ID
-can be reused.
-
-Call `clearResponseCache()` when discarding a conversation. Cleared IDs become
-unavailable to `verifyResponse`. Ongoing response captures stay discarded when
-they finish. To end active work and release its buffers,
-also cancel the requests and finish any ongoing verification. Direct clients
-support the same cleanup method.
+Consume the response or stream before calling `verifyResponse(id)`. Verify
+within `responseCacheTimeToLiveMs`; `0` disables response retention.
+Use `clearResponseCache()` to discard retained responses.
 
 ### Errors wrapped by official SDKs
 
-OpenAI and Anthropic clients can wrap transport errors. Use `getSdkError(error)`
-to retrieve an `ApiError` or `VerificationError` from the cause chain; it returns
-`undefined` when no SDK error is present. This also applies to the native Chat,
-Responses, and Messages facades, which use official SDK clients internally.
-Inference retries are disabled; callers choose whether to retry after inspecting
-the error.
+Use `getSdkError(error)` to extract an SDK error from an OpenAI or Anthropic
+exception. It returns `undefined` if no SDK error is present.
 
 ```typescript
 import { getSdkError } from '@nearai/inference-sdk/node';
@@ -193,11 +138,9 @@ try {
 Available on the generic and Node Gateway clients. Use `e2ee: false` and
 `ohttp: false` for nonstreaming decision requests.
 
-For `@typesafe-ai/sdk`, inject `client.fetch` into `TypeSafeClient` and disable
-request compression and inference retries. The official SDK parses the response;
-pass its `X-Generation-Id` header to `verifyResponse`. This transport shares
-Chat's model session and selected-key routing. See the
-[official SDK guide](./verification-guide.md#use-the-official-typesafe-sdk).
+For `@typesafe-ai/sdk`, pass `client.fetch` to `TypeSafeClient` and disable
+request compression and inference retries. Verify its `X-Generation-Id` through
+`verifyResponse`. See the [integration guide](./verification-guide.md#use-the-official-typesafe-sdk).
 
 | Method | Parameters | Returns |
 | --- | --- | --- |
@@ -223,8 +166,8 @@ annotate application types; `create()` also infers question and choice maps.
 
 | `SystemOneRequestOptions` field | Type | Description |
 | --- | --- | --- |
-| `headers?` | `HeadersInit` | Per-request headers, following the client's configured authorization rules. |
-| `signal?` | `AbortSignal` | Cancels this caller's preflight wait and inference fetch, without cancelling shared evidence work or later response verification. |
+| `headers?` | `HeadersInit` | Additional request headers; use `apiKey` for bearer authentication. |
+| `signal?` | `AbortSignal` | Abort signal for the request. |
 
 | `SystemOneResult` field | Type | Description |
 | --- | --- | --- |
@@ -255,27 +198,16 @@ including references returned in a Score's `legend`.
 See the [native image example](../../examples/example-js/gateway/systemone.ts) and
 [run instructions](../../examples/README.md#system-one-images).
 
-Attestation sessions are cached per model and shared with Chat and `verify()`.
-Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
-receipts return the selected signer group's verified reports in `attestations`.
-
-Inference is sent once. Its transport failures use `api.transport_failed` with
-`retryable: false`.
-Retry transient receipt lookups with `verifyResponse(result.decisionId)` while
-the response remains cached.
-
 See the [guide](./verification-guide.md#system-one-decisions) for a complete call
 and the [Node examples](../../examples/README.md#javascript-setup) to run it.
 
 ## `DirectInferenceClient`
 
-> **Experimental — not recommended for production.** Use the Gateway
-> `InferenceClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
+Connects to a model endpoint and verifies its model attestations. Direct clients
+are experimental; attested TLS binding is currently unavailable.
 
-Uses the same Chat, Fetch, E2EE, and cache options as `InferenceClient`, with E2EE
-disabled by default. Instead of Gateway metadata and evidence, it verifies every
-returned model attestation before sending Chat.
-There is no `gatewayVerification` option.
+Supports Chat, Fetch, E2EE, OHTTP, and response verification. Configure it with
+`DirectInferenceClientOptions` and an explicit `baseUrl`.
 
 ### Constructor options
 
@@ -283,25 +215,25 @@ There is no `gatewayVerification` option.
 | --- | --- | --- | --- | --- |
 | `baseUrl` | `string` | Yes | — | Direct model API base URL, including `/v1` where applicable. |
 | `apiKey?` | `string` | No | — | Credential accepted by the direct endpoint; overrides an Authorization header. |
-| `headers?` | `HeadersInit` | No | — | Static request headers; attestation omits `Authorization`, `api-key`, and `x-api-key`. Chat and signatures use configured authentication; per-request Authorization is ignored. |
-| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm used for evidence, model-key routing, E2EE, and signature lookup. With `ohttp: true`, only `'ed25519'` is accepted. |
-| `e2ee?` | `boolean` | No | `false` | Encrypts supported Chat fields when enabled. `false` preserves model verification and sends plaintext over the selected transport. |
-| `ohttp?` | `boolean` | No | `false` | Encapsulates Chat through the direct endpoint's `/ohttp`. Authenticates its configuration with the serving attestation's Ed25519 signer, also selected for model-key routing and response verification. |
-| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Reuses verified model attestations for the same requested model. Set `0` to verify every request. |
-| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Retains response verification records after body completion. |
-| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Additional model-aware deployment check. No approval policy is supplied by default. |
-| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model `policy` and `verifiers`. |
+| `headers?` | `HeadersInit` | No | — | Additional request headers; use `apiKey` for bearer authentication. |
+| `signingAlgo?` | `SigningAlgo` | No | `'ed25519'` | Algorithm for attestation, E2EE, and response signatures. OHTTP requires Ed25519. |
+| `e2ee?` | `boolean` | No | `false` | Encrypt supported Chat fields to a verified model key. |
+| `ohttp?` | `boolean` | No | `false` | Encrypt Chat, Responses, and Messages HTTP exchanges to the Gateway; requires Ed25519. |
+| `attestationCacheTimeToLiveMs?` | `number` | No | `3600000` | Deployment verification cache duration; `0` verifies each request. |
+| `responseCacheTimeToLiveMs?` | `number` | No | `3600000` | Response retention after body completion; `0` disables retention. |
+| `deploymentPolicy?` | `DeploymentPolicy` | No | — | Model-aware deployment check. Throw to reject a deployment. |
+| `modelVerification?` | `DirectModelVerificationOptions` | No | — | Model attestation policy and verifier configuration. |
 
 ### Methods and response result
 
 | Method | Returns | Description |
 | --- | --- | --- |
 | `getBaseUrl()` | `string` | Resolved direct API base URL. |
-| `verify(model: string)` | `Promise<DirectAttestationVerificationResult>` | Returns all direct model attestation verification results without sending Chat. Requires a non-empty model ID. Uses the same checks and cache as Chat. |
+| `verify(model: string)` | `Promise<DirectAttestationVerificationResult>` | Verifies the returned Direct model reports before inference. |
 | `chat.completions.create(body, options?)` | OpenAI Chat `create` overloads | Streaming or non-streaming Chat after model verification. |
 | `fetch(input, init?)` | `Promise<Response>` | Reusable Chat transport, including for an OpenAI client. |
 | `verifyResponse(id)` | `Promise<VerifiedDirectCompletionResult>` | Verifies retained bytes against the model signer selected for the request. |
-| `clearResponseCache()` | `void` | Clears captured responses, cached receipt results, and expiry timers; preserves verified model sessions. |
+| `clearResponseCache()` | `void` | Discards retained responses and their verification results. |
 
 | `DirectAttestationVerificationResult` field | Type | Description |
 | --- | --- | --- |
@@ -309,7 +241,7 @@ There is no `gatewayVerification` option.
 | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified entry for the endpoint that returned the report. |
 | `tlsBinding` | `DirectTlsBinding` | Observed endpoint TLS binding, when enabled. |
 | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated fingerprints from all returned reports. |
-| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. Preserved on cache hits. |
+| `verifiedAt` | `number` | Unix time in milliseconds when verification completed. |
 
 | `VerifiedDirectCompletionResult` field | Type | Description |
 | --- | --- | --- |
@@ -321,11 +253,8 @@ There is no `gatewayVerification` option.
 
 ## `prepareE2eeChatRequest`
 
-Prepares one encrypted request for an application-owned Fetch transport. It
-performs no networking, attestation verification, or completion-signature
-verification. Supply the algorithm and public key obtained from model
-verification. The helper selects the encryption algorithm from
-`modelKey.signingAlgo` and creates a fresh response key pair for each call.
+Encrypts a Chat request using a verified model public key and its signing
+algorithm. Returns the request and its paired response decryptor.
 
 | Structure | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -336,11 +265,8 @@ verification. The helper selects the encryption algorithm from
 | `PreparedE2eeChatRequest` | `request` | `Request` | Request with supported Chat fields encrypted, protocol headers set, and other JSON fields preserved. |
 |  | `decryptResponse` | `(response: Response) => Promise<Response>` | Matching JSON or SSE response decryptor. Unsuccessful HTTP responses pass through unchanged. |
 
-Send the returned `request` with your chosen transport, then pass its response to
-the paired `decryptResponse`. The private response key stays inside that
-operation. For Gateway TLS pinning in Node, use `createPinnedTlsFetch` with a
-previously verified `attested` Gateway binding. See the
-[guide](./verification-guide.md#e2ee-scope-and-response-handling) for field coverage.
+Send `request` through your HTTP transport and pass the response to
+`decryptResponse`. See the [encryption guide](./verification-guide.md#encrypt-a-raw-chat-request).
 
 ## OHTTP helpers
 
@@ -363,14 +289,9 @@ responses without changing their inner body bytes.
 |  | `keyConfig` | `string` | Hexadecimal encoded OHTTP key configuration. |
 |  | `signature` | `string` | Hexadecimal signature over the raw configuration bytes. |
 
-`createOhttpFetch` does not fetch or verify attestations, encrypt Chat fields,
-or retain response bytes for signature verification. Its returned `Response`
-contains the decoded inner status, headers, and body.
-
 ## `AttestationClient`
 
-Construct `AttestationClient` once to fetch model metadata, attestations, and
-response signatures. It does not send Chat requests or retain their bodies.
+Fetches model metadata, attestations, and response signatures.
 
 The Node `AttestationClient` observes the TLS peer only for its Gateway
 attestation request. After `verifyGatewayAttestation` returns an
@@ -388,27 +309,19 @@ The Gateway's report and signature endpoints have different defaults.
 | Field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, and signature requests; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | — | Static request headers; Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Model reports use configured authentication. |
+| `headers?` | `HeadersInit` | No | — | Additional request headers; use `apiKey` for bearer authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
 | `fetch?` | `typeof globalThis.fetch` | No | Runtime Fetch | Transport for model reports, metadata, and completion signatures. Gateway attestation keeps its default transport and same-request TLS peer capture. |
 
-Use `new AttestationClient()` to fetch attestation without credentials.
-The caller controls the supplied transport's trust policy. The Node
-`createPinnedTlsFetch` helper enforces the verified Gateway SPKI without
-falling back or retrying; a pin mismatch propagates as `VerificationError`.
-
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
+Credentials are optional for public evidence. Configure `apiKey` or `headers`
+when the endpoint requires authentication.
 
 ### Methods
 
 | Method | Params | Resolves to | Behavior |
 | --- | --- | --- | --- |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Returns the completion signature. A service-provided unavailable result fails the request with a structured API error. |
-| `fetchModelMetadata(model)` | `model: string` | `ModelMetadata` | Fetches `GET /v1/model/{model}` using a URL-encoded model ID and returns its provider type and attestation-support flag. Rejects HTTP errors and malformed metadata. This does not perform cryptographic verification. |
+| `fetchModelMetadata(model)` | `model: string` | `ModelMetadata` | Returns the provider type and model attestation support. |
 | `fetchModelAttestations(params)` | `FetchModelAttestationsParams` | `FetchedModelAttestations` | Creates a fresh client nonce and fetches model attestations matching the requested model and optional signing filters. Verify every returned attestation for a deployment check. |
 | `fetchGatewayAttestation(params?)` | `FetchGatewayAttestationParams` | `FetchedGatewayAttestation` | Creates a fresh client nonce, fetches Gateway evidence, and rejects a mismatched echoed nonce. Its SPKI behavior depends on the package entry point above. |
 
@@ -431,10 +344,8 @@ and `attestationSupported` is `true`.
 
 ### Attestation fetch result types
 
-Every attestation fetch method generates and sends a fresh 32-byte client nonce
-and checks the service's echoed nonce. Each result places its client values in
-`clientBinding`. Pair that value with the result's attestation in the matching
-attestation verifier.
+Pass each fetch result's `clientBinding` and attestation together to the
+corresponding verifier.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -448,43 +359,38 @@ attestation verifier.
 
 ## `DirectAttestationClient`
 
-> **Experimental — not recommended for production.** Use the Gateway
-> `AttestationClient`. See the [known endpoint limitations](./verification-guide.md#use-a-direct-model-endpoint).
-
-Fetches `/attestation/report` and `/signature/{id}` relative to a direct model API
-base URL. Attestation requests omit `Authorization`, `api-key`, and `x-api-key`;
-signature requests use any configured authentication.
-Both entry points request `include_tls_fingerprint=false`; this is not configurable.
+Fetches model reports and signatures from a direct endpoint. Attested TLS binding
+is currently unavailable; see [Direct clients](#directinferenceclient).
 
 | Constructor field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `baseUrl` | `string` | Yes | Absolute HTTP(S) provider API base URL, including its version path. |
 | `apiKey?` | `string` | No | Endpoint bearer credential; overrides `headers.Authorization`. |
-| `headers?` | `HeadersInit` | No | Additional request headers. |
+| `headers?` | `HeadersInit` | No | Additional request headers; use `apiKey` for bearer authentication. |
 
 | Method | Params | Resolves to | Description |
 | --- | --- | --- | --- |
-| `fetchModelAttestations(params?)` | `FetchDirectModelAttestationsParams` | `FetchedDirectModelAttestations` | Generates a nonce and fetches the serving attestation and returned model-attestation set matching the optional signing filters; checks echoed nonces before returning. The endpoint may omit other serving instances. |
+| `fetchModelAttestations(params?)` | `FetchDirectModelAttestationsParams` | `FetchedDirectModelAttestations` | Fetches the serving report and model reports matching the optional signer filters. |
 | `fetchCompletionSignature(params)` | `FetchCompletionSignatureParams` | `CompletionSignature` | Fetches a direct model signature, normalized to `kind: 'provider_tee'`. |
 
 | `FetchDirectModelAttestationsParams` field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `signingAlgo?` | `SigningAlgo` | Service default | Requested signing algorithm. Use the same algorithm for signature lookup. |
+| `signingAlgo?` | `SigningAlgo` | Service default | Algorithm for attestation, E2EE, and response signatures. OHTTP requires Ed25519. |
 | `signingAddress?` | `string` | — | Optional signing-address filter. Omit to fetch the endpoint's unfiltered attestation set. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `FetchedDirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
-|  | `attestations` | `readonly DirectModelAttestation[]` | Returned model-attestation set matching the requested filters, including `servingAttestation`; not guaranteed to cover the serving fleet. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Returned model reports, including `servingAttestation`. |
 |  | `clientBinding` | `DirectClientBinding` | Client values for the matching verification call. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration; authenticate against the verified serving signer before use. |
 | `DirectClientBinding` | `nonce` | `string` | Fresh client nonce sent with this request. |
 |  | `spkiFingerprint?` | `string` | Optional observed TLS peer SPKI for manually supplied evidence. Direct fetch helpers currently omit it. |
 | `DirectModelAttestations` | `servingAttestation` | `DirectModelAttestation` | Attestation returned by the endpoint serving this request; it is also an entry in `attestations`. |
-|  | `attestations` | `readonly DirectModelAttestation[]` | Returned model-attestation set matching the requested filters, including `servingAttestation`; not guaranteed to cover the serving fleet. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Returned model reports, including `servingAttestation`. |
 |  | `ohttpAttestation?` | `OhttpAttestation` | Signed OHTTP configuration for the serving endpoint. |
 | `DirectModelAttestation` | Base fields | `ModelAttestation` | Quote, nonce, signer, measurements, and available GPU evidence. |
-|  | `modelName` | `string` | Metadata, not a model-name claim authenticated by the quote. |
+|  | `modelName` | `string` | Endpoint-reported model name. |
 |  | `instanceId?` | `string` | Instance metadata when supplied by the endpoint. |
 |  | `spkiFingerprint?` | `string` | Reported TLS SPKI; must be authenticated by quote verification before use. |
 
@@ -493,7 +399,7 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | Parameter type | Field | Type | Required | Description |
 | --- | --- | --- | --- | --- |
 | `VerifyDirectModelAttestationsParams` | `servingAttestation` | `DirectModelAttestation` | Yes | Serving report; its contents must match an entry in `attestations`. |
-|  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Returned model-attestation set from the fetch helper. Every entry is checked. |
+|  | `attestations` | `readonly DirectModelAttestation[]` | Yes | Returned model reports, including `servingAttestation`. |
 |  | `clientBinding` | `DirectClientBinding` | Yes | Nonce from the matching request, plus an observed peer fingerprint when verifying manually supplied TLS-bound evidence. |
 |  | `policy?` | `ModelAttestationPolicy` | No | Accepted TCB statuses and GPU-evidence requirements. |
 |  | `verifiers?` | `ModelAttestationVerifiers` | No | Quote, deployment, and GPU verifier overrides. |
@@ -504,18 +410,18 @@ Both entry points request `include_tls_fingerprint=false`; this is not configura
 | `VerifyDirectModelResponseParams` | `requestBody` | `Uint8Array` | Yes | Exact request bytes sent. |
 |  | `responseBody` | `Uint8Array` | Yes | Exact response bytes received, before E2EE decryption if applicable. |
 |  | `signature` | `CompletionSignature` | Yes | Direct model signature with `kind: 'provider_tee'`. |
-|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Yes | Previously verified model attestations. All signer matches are returned after byte and signature checks pass. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Yes | All verified reports returned by the endpoint. |
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |
 | `VerifiedDirectModelAttestations` | `servingAttestation` | `VerifiedDirectModelAttestation` | Verified serving attestation from the returned set. |
-|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | Verified returned model-attestation set; verification does not establish fleet completeness. |
-|  | `tlsBinding` | `GatewayTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
+|  | `attestations` | `readonly VerifiedDirectModelAttestation[]` | All verified reports returned by the endpoint. |
+|  | `tlsBinding` | `DirectTlsBinding` | `attested` when the serving quote's SPKI matches the observed peer, or `none` when no TLS evidence is requested. |
 |  | `spkiFingerprints` | `readonly string[]` | Distinct quote-authenticated SPKI fingerprints from the verified model attestations. |
 | `VerifiedDirectModelAttestation` | Base fields | `VerifiedModelAttestation` | Verified quote, signer, measurements, and GPU result. |
 |  | `report` | `DirectModelAttestation` | Original direct report retained for inspection. |
-|  | `modelName` / `instanceId?` | `string` | Preserved metadata, not additional quote-authenticated claims. |
-|  | `spkiFingerprint?` | `string` | Quote-authenticated TLS key; this alone does not claim observation of that instance's TLS peer. |
+|  | `modelName` / `instanceId?` | `string` | Endpoint-reported model and instance metadata. |
+|  | `spkiFingerprint?` | `string` | Quote-authenticated TLS public-key fingerprint. |
 
 `verifyDirectModelAttestations` verifies every returned attestation and compares
 the serving attestation with the observed TLS peer when SPKI evidence is supplied.
@@ -530,7 +436,7 @@ Use this function after verifying every candidate returned by
 `client.fetchModelAttestations`. It returns all verified reports whose signer
 matches a `provider_tee` signature, preserving their order and individual evidence.
 No match is an error. This is selection only; verify the signature with
-`verifyModelResponse`. Shared signers do not identify one serving instance.
+`verifyModelResponse`.
 
 The deprecated singular `findModelAttestationForSignature` retains its strict
 unique-match contract and rejects multiple matches.
@@ -572,10 +478,6 @@ generic client defaults to the latter. The Node client requests and captures the
 fingerprint by default. An `attested` binding can be passed to
 `createPinnedTlsFetch`; a `none` binding cannot pin later HTTPS requests.
 
-`verifyGatewayResponse` verifies gateway-service provenance and integrity for
-the exact completion body bytes. It matches the signature to the signer bound to
-verified gateway deployment evidence; it does not establish model execution.
-
 ### Response verification parameters
 
 | Type | Field | Type | Required | Description |
@@ -596,10 +498,8 @@ response verifier.
 
 ### `verifyDeploymentImageProvenance`
 
-Parses JSON `appCompose` and its YAML `docker_compose_file`, then fetches and
-verifies build proofs for the required images. Returns `Promise<void>`.
-Use in a deployment callback: this helper does not authenticate `appCompose`
-against a quote itself.
+Verifies required container images from measured `appCompose` against their
+GitHub build policies. Use in a deployment callback. Returns `Promise<void>`.
 
 | `VerifyDeploymentImageProvenanceParams` field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -608,25 +508,14 @@ against a quote itself.
 | `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
 | `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Every configured repository must appear in Compose `services`. Each matching
-reference must have a literal `sha256:` digest, optionally preceded by a tag.
-An optional `docker.io/` prefix is normalized. YAML anchors and merges are
-supported; image interpolation is not. Unlisted literal images are ignored.
-
-Throws `VerificationError`: `provenance.deployment_images_invalid` for invalid
-configuration, `provenance.image_request_failed` for proof retrieval errors, or
-`provenance.image_verification_failed` for rejected proofs. Retrieval errors
-preserve the `ApiError` cause and retryability.
+Each configured image repository is required. Compose image references must
+include a literal SHA-256 digest, for example `repository:tag@sha256:...`.
 
 ### `verifyComposeManagerDeploymentImageProvenance`
 
-Use after model verification or in its deployment callback. Returns `Promise<void>`.
-The latest matching `compose_up` supplies the commit, file path and SHA-256 hash.
-Image selection uses the action's named `services`. Independently, the latest
-manager-start action must name an image satisfying `composeManagerImagePolicy`.
-An omitted or empty service list selects all services in the file.
-Unknown service names fail with `provenance.deployment_images_invalid`
-(`reason: 'service_missing'`); images in unselected services cannot satisfy a policy.
+Verifies the recorded Compose file and selected container images, including the
+Compose Manager startup image, against the supplied policies. Use in a model
+deployment callback. Returns `Promise<void>`.
 
 | `VerifyComposeManagerDeploymentImageProvenanceParams` field | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
@@ -638,11 +527,8 @@ Unknown service names fail with `provenance.deployment_images_invalid`
 | `githubToken` | `string` | No | — | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
 | `githubApiUrl` | `string` | No | — | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Compose files are limited to 8 MiB before hashing or parsing.
-
-Fails with `VerificationError` if manager evidence or a matching action is missing,
-the file cannot be retrieved, its hash differs, or an image policy fails. See the
-[guide](./verification-guide.md#model-images-deployed-by-compose-manager) for the evidence scope.
+See the [model image guide](./verification-guide.md#model-images-deployed-by-compose-manager)
+for a complete example.
 
 | Type | Field | Type | Description |
 | --- | --- | --- | --- |
@@ -657,13 +543,11 @@ the file cannot be retrieved, its hash differs, or an image policy fails. See th
 |  | `advisoryIds` | `readonly string[]` | Manager quote advisory IDs. |
 |  | `runtimeMeasurements` | `RuntimeMeasurements` | Measurements derived from its verified event log. |
 
-Model reports retain optional `composeManagerAttestation`; successful model
-verification exposes its authenticated form as `deployment.composeManager`.
-When supplied, manager evidence is checked even without an image policy.
+Authenticated Compose Manager evidence is available as `deployment.composeManager`.
 
 ### `fetchImageProvenance`
 
-Returns all inline Sigstore bundles as JSON strings. Does not verify them.
+Fetches image provenance as serialized Sigstore bundles for `verifyImageProvenance`.
 
 | `FetchImageProvenanceParams` field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -672,23 +556,15 @@ Returns all inline Sigstore bundles as JSON strings. Does not verify them.
 | `githubToken` | `string` | No | GitHub token for direct requests; ignored when `githubApiUrl` is set. |
 | `githubApiUrl` | `string` | No | GitHub API base URL (default: `https://api.github.com`). For frontends without a token, use a [backend endpoint](verification-guide.md#github-api-access). |
 
-Responses use the GitHub API format. Pagination stays on the configured
-base URL; redirects and returned bundle URLs are not followed. See
-[GitHub API access](verification-guide.md#github-api-access)
-for endpoint requirements.
+For a custom GitHub endpoint, see [GitHub API access](verification-guide.md#github-api-access).
 
 ### `verifyImageProvenance`
 
 Verifies supplied Sigstore bundles against a digest and build policy. Both
 deployment helpers call this after selecting images and fetching their proofs.
 
-Accepts a matching GitHub Actions SLSA v1 or v0.2 proof. Sigstore verifies the
-certificate, DSSE signature and transparency log before the SDK checks the
-artifact digest and signed source. The statement's source commit must match the
-certificate's authenticated source SHA, even when `policy.commit` is omitted.
-The source repository and ref must also match the certificate's source claims.
-No deployment allowlist is provided.
-Rekor entries must use the `dsse` format; legacy `intoto` entries are not supported.
+Supports GitHub Actions SLSA v1 and v0.2 provenance. The build policy selects
+the repository and workflow, with optional source ref and commit pins.
 
 | `VerifyImageProvenanceParams` field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -702,7 +578,7 @@ Rekor entries must use the `dsse` format; legacy `intoto` entries are not suppor
 | `workflow` | `string` | Yes | — | Caller workflow path within the source repository, such as `.github/workflows/build.yml`. |
 | `ref` | `string` | No | Any matching source ref | Restricts the source to one full Git ref, such as `refs/heads/main`. |
 | `commit` | `string` | No | Any matching source commit | Restricts the signed source to one full, 40-character Git commit. |
-| `signerIdentity` | `string` | No | Source workflow at its authenticated source ref | Exact certificate SAN URI of a reusable signing workflow, including its ref or SHA. Does not change the source policy or fetch repository. |
+| `signerIdentity` | `string` | No | Source workflow at its authenticated source ref | Exact certificate SAN URI of a reusable signing workflow, including its ref or SHA. |
 | `issuer` | `string` | No | `https://token.actions.githubusercontent.com` | Expected certificate OIDC issuer. |
 
 | `VerifiedImageProvenance` field | Type | Description |
@@ -726,10 +602,7 @@ verified attestation to use.
 | Kind | Signed at | Required verified evidence | A successful response verification establishes |
 | --- | --- | --- | --- |
 | `provider_tee` | Model-serving TEE | `VerifiedModelAttestation` | A verified model TEE signer signed the exact request and response body bytes. |
-| `gateway` | Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response body bytes. It does not establish model execution. |
-
-The Gateway returns a `gateway` signature when it rewrites a response and
-the provider signature no longer matches the client-visible bytes.
+| `gateway` | Gateway TEE | `VerifiedGatewayAttestation` | A verified Gateway signer signed the exact client-visible request and response body bytes. |
 
 ### Completion signatures
 
@@ -790,10 +663,6 @@ in Node.js. NVIDIA signing keys use the official JWKS URL in both runtimes.
 | `CreateGpuEvidenceVerifierParams` | `nrasUrl?` | `string` | NEAR AI proxy (browser); NVIDIA NRAS (Node.js) | Complete GPU evidence POST URL. |
 |  | `jwksUrl?` | `string` | `https://nras.attestation.nvidia.com/.well-known/jwks.json` | Full URL for the signing-key GET. Must be a trusted source of NVIDIA keys. |
 
-The NVIDIA callback verifies the signed JWT nonce against the submitted payload
-nonce. `verifyModelAttestation` additionally binds that nonce to
-`clientBinding.nonce`; standalone callers must supply fresh evidence themselves.
-The expected NVIDIA issuer remains fixed when either URL changes.
 See [service URL configuration](./verification-guide.md#configure-attestation-service-urls)
 for default URLs and custom configuration.
 
@@ -828,9 +697,7 @@ for default URLs and custom configuration.
 `Awaitable<T>` is `T | PromiseLike<T>`, so a callback may return its result
 directly or asynchronously.
 
-The default NVIDIA verifier verifies NRAS's overall JWT signature, issuer,
-timestamps, signed nonce, and boolean verdict. Provide `gpuEvidence` to use different
-trust roots or another verification service.
+Use `gpuEvidence` to configure a custom GPU verifier.
 
 ### Quote and deployment values
 
@@ -862,7 +729,7 @@ trust roots or another verification service.
 
 | Type | Additional field | Type | Description |
 | --- | --- | --- | --- |
-| `VerifiedModelAttestation` | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence result. Cloud model verification does not establish a client-to-model TLS binding. |
+| `VerifiedModelAttestation` | `gpuEvidence` | `GpuEvidenceStatus` | GPU evidence verification status. |
 |  | `signingPublicKey?` | `string` | Quote-bound model key available for E2EE. |
 |  | `report` | `ModelAttestation` | Original input report retained for inspection, separate from the verified conclusions. |
 | `VerifiedGatewayAttestation` | `tlsBinding` | `GatewayTlsBinding` | Gateway TLS binding established by the returned quote layout. Its `attested` SPKI can pin later Node HTTPS requests. |

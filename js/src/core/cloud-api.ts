@@ -468,8 +468,7 @@ export async function readCloudApiJson({
 
 /**
  * Return every verified report matching a provider_tee signature's signer.
- * Shared signing keys identify a signer group, not one serving instance.
- * This helper does not verify attestations or the completion signature.
+ * Use `verifyModelResponse` to verify the response signature.
  */
 export function findModelAttestationsForSignature({
   attestations,

@@ -50,7 +50,6 @@ pub struct VerifiedDirectCompletionResult {
     pub id: String,
     pub signature: CompletionSignature,
     /// The request's verified reports matching its selected signing key.
-    /// A shared key does not identify which instance served the request.
     pub attestations: Vec<VerifiedDirectModelAttestation>,
 }
 impl VerifiedDirectCompletionResult {
@@ -390,7 +389,7 @@ impl DirectInferenceClient {
     pub fn base_url(&self) -> &str {
         self.core.base_url()
     }
-    /// Release captured responses across all clones; keep the client reusable.
+    /// Clear captured response verification records.
     pub async fn clear_response_cache(&self) {
         self.core.clear_response_cache().await;
     }
