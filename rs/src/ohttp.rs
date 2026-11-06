@@ -647,7 +647,11 @@ mod tests {
                 .headers_mut()
                 .insert("x-model-pub-key", "inner-key".parse().unwrap());
             let result = match client.send(request).await {
-                Ok(r) => r.bytes().await,
+                Ok(r) => {
+                    assert_eq!(r.status, reqwest::StatusCode::OK);
+                    assert_eq!(r.headers["content-type"], "text/event-stream");
+                    r.bytes().await
+                }
                 Err(e) => Err(e),
             };
             if case == "valid"
@@ -662,6 +666,86 @@ mod tests {
                     "{case}"
                 );
             }
+        }
+    }
+    #[tokio::test]
+    async fn rejects_invalid_config_and_cross_origin_requests_before_sending() {
+        let server = MockServer::start().await;
+        let raw = config().encode().unwrap();
+        let mut unsupported_kem = raw.clone();
+        unsupported_kem[2] = 33;
+        let mut unsupported_suite = raw.clone();
+        *unsupported_suite.last_mut().unwrap() = 2;
+        let mut trailing_bytes = raw.clone();
+        trailing_bytes.push(0);
+        for invalid in [
+            vec![],
+            raw[..40].to_vec(),
+            unsupported_kem,
+            unsupported_suite,
+            trailing_bytes,
+        ] {
+            let result = create_ohttp_client(
+                &invalid,
+                &server.uri(),
+                crate::inference::ordinary_client().unwrap(),
+                vec![],
+            );
+            assert_eq!(result.err().unwrap().code(), "ohttp.key_config_invalid");
+        }
+        let client = create_ohttp_client(
+            &raw,
+            &server.uri(),
+            crate::inference::ordinary_client().unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let foreign = MockServer::start().await;
+        let mut request = reqwest::Request::new(
+            reqwest::Method::POST,
+            format!("{}/v1/chat/completions", foreign.uri())
+                .parse()
+                .unwrap(),
+        );
+        *request.body_mut() = Some("{}".into());
+        assert_eq!(
+            client.send(request).await.err().unwrap().code(),
+            "ohttp.decryption_failed"
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
+        assert!(foreign.received_requests().await.unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn rejects_outer_http_errors_and_unencrypted_response_types() {
+        for (status, content_type, expected) in [
+            (503, "message/ohttp-chunked-res", "api.http_status"),
+            (200, "application/json", "ohttp.decryption_failed"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(wiremock::matchers::path("/ohttp"))
+                .respond_with(
+                    ResponseTemplate::new(status)
+                        .insert_header("content-type", content_type)
+                        .set_body_string("{}"),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = create_ohttp_client(
+                &config().encode().unwrap(),
+                &server.uri(),
+                crate::inference::ordinary_client().unwrap(),
+                vec![],
+            )
+            .unwrap();
+            let mut request = reqwest::Request::new(
+                reqwest::Method::POST,
+                format!("{}/v1/chat/completions", server.uri())
+                    .parse()
+                    .unwrap(),
+            );
+            *request.body_mut() = Some("{}".into());
+            assert_eq!(client.send(request).await.err().unwrap().code(), expected);
         }
     }
     #[tokio::test]

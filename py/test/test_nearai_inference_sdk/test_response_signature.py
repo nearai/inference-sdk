@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 
 import nacl.signing
 import pytest
@@ -34,137 +35,134 @@ REQUEST_BODY = b'{"model":"canonical-model"}'
 RESPONSE_BODY = b'data: hello\n\n'
 
 
-def model_signed_text(model: str, request: bytes, response: bytes) -> str:
-    return f'{model}:{hashlib.sha256(request).hexdigest()}:{hashlib.sha256(response).hexdigest()}'
+@pytest.fixture(params=['ed25519', 'ecdsa'])
+def signing_key(request):
+    if request.param == 'ed25519':
+        key = nacl.signing.SigningKey(bytes([7]) * 32)
+        address = key.verify_key.encode().hex()
+
+        def sign(text):
+            return key.sign(text.encode()).signature.hex()
+
+    else:
+        key = Account.from_key(bytes([7]) * 32)
+        address = key.address
+
+        def sign(text):
+            return key.sign_message(encode_defunct(text=text)).signature.hex()
+
+    return SigningIdentity(signing_algo=request.param, signing_address=address), sign
 
 
-def gateway_signed_text(request: bytes, response: bytes) -> str:
-    return (
-        f'{hashlib.sha256(request).hexdigest()}:{hashlib.sha256(response).hexdigest()}'
-    )
-
-
-async def test_model_response_accepts_equivalent_signer_hex() -> None:
-    account = Account.from_key(
-        '0x0123456789012345678901234567890123456789012345678901234567890123'
-    )
-    signed_text = model_signed_text('canonical-model', REQUEST_BODY, RESPONSE_BODY)
+@pytest.fixture(params=['provider_tee', 'gateway'])
+async def signed_response(request, signing_key):
+    signer, sign = signing_key
+    text = f'{hashlib.sha256(REQUEST_BODY).hexdigest()}:{hashlib.sha256(RESPONSE_BODY).hexdigest()}'
+    if request.param == 'provider_tee':
+        text = f'canonical-model:{text}'
+        quote = create_model_quote(signing_address=signer.signing_address)
+        attestation = await verify_model_attestation(
+            create_model_attestation(signer=signer),
+            MODEL_CLIENT_BINDING,
+            verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
+        )
+        verify = verify_model_response
+    else:
+        quote = create_gateway_tls_quote(signing_address=signer.signing_address)
+        attestation = await verify_gateway_attestation(
+            create_gateway_attestation(
+                signer=signer, reported_quote_data=quote.report_data.hex()
+            ),
+            GatewayClientBinding(nonce=NONCE, spki_fingerprint=TLS_FINGERPRINT),
+            verifiers=AttestationVerifiers(tdx_quote=lambda _: quote),
+        )
+        verify = verify_gateway_response
     signature = CompletionSignature(
-        kind='provider_tee',
-        signed_text=signed_text,
-        signature=account.sign_message(
-            encode_defunct(text=signed_text)
-        ).signature.hex(),
-        signer=SigningIdentity(
-            signing_algo='ecdsa',
-            signing_address=f'0X{account.address[2:].upper()}',
-        ),
+        kind=request.param, signed_text=text, signature=sign(text), signer=signer
     )
-    quote = create_model_quote(signing_address=account.address)
-    attestation = await verify_model_attestation(
-        create_model_attestation(
-            signer=SigningIdentity(
-                signing_algo='ecdsa', signing_address=account.address
-            )
-        ),
-        MODEL_CLIENT_BINDING,
-        verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
-    )
+    return verify, signature, attestation
 
-    verify_model_response(
-        REQUEST_BODY,
-        RESPONSE_BODY,
+
+async def test_response_verifies_exact_bytes_and_equivalent_signer_hex(signed_response):
+    verify, signature, attestation = signed_response
+    verify(REQUEST_BODY, RESPONSE_BODY, signature, attestation)
+    normalized = replace(
         signature,
-        attestation,
-    )
-
-    with pytest.raises(VerificationError) as mismatch:
-        verify_model_response(
-            b'{"model":"alias"}',
-            RESPONSE_BODY,
-            signature,
-            attestation,
-        )
-    assert mismatch.value.failure.code == 'signature.payload_mismatch'
-
-    with pytest.raises(VerificationError) as empty_model:
-        verify_model_response(
-            b'{"model":""}',
-            RESPONSE_BODY,
-            signature,
-            attestation,
-        )
-    assert empty_model.value.failure.details == {
-        'source': 'request_model',
-        'reason': 'missing_model',
-    }
-
-    with pytest.raises(VerificationError) as invalid_json:
-        verify_model_response(
-            b'{',
-            RESPONSE_BODY,
-            signature,
-            attestation,
-        )
-    assert invalid_json.value.failure.details == {
-        'source': 'request_model',
-        'reason': 'invalid_json',
-    }
-
-
-async def test_gateway_response_verifies_ed25519_signature() -> None:
-    key_pair = nacl.signing.SigningKey(bytes([7]) * 32)
-    public_key = key_pair.verify_key.encode().hex()
-    signed_text = gateway_signed_text(REQUEST_BODY, RESPONSE_BODY)
-    signature = CompletionSignature(
-        kind='gateway',
-        signed_text=signed_text,
-        signature=key_pair.sign(signed_text.encode()).signature.hex(),
-        signer=SigningIdentity(signing_algo='ed25519', signing_address=public_key),
-    )
-    quote = create_gateway_tls_quote(signing_address=public_key)
-    attestation = await verify_gateway_attestation(
-        create_gateway_attestation(
-            signer=SigningIdentity(signing_algo='ed25519', signing_address=public_key),
-            reported_quote_data=quote.report_data.hex(),
+        signer=replace(
+            signature.signer,
+            signing_address='0X'
+            + signature.signer.signing_address.removeprefix('0x').upper(),
         ),
-        GatewayClientBinding(
-            nonce=NONCE,
-            spki_fingerprint=TLS_FINGERPRINT,
-        ),
-        verifiers=AttestationVerifiers(tdx_quote=lambda _: quote),
     )
-
-    verify_gateway_response(
-        REQUEST_BODY,
-        RESPONSE_BODY,
-        signature,
-        attestation,
-    )
+    verify(REQUEST_BODY, RESPONSE_BODY, normalized, attestation)
 
 
-async def test_response_verifier_rejects_the_other_signature_kind() -> None:
-    signature = CompletionSignature(
-        kind='gateway',
-        signed_text='request:response',
-        signature='aa',
-        signer=SigningIdentity(signing_algo='ecdsa', signing_address='11' * 20),
-    )
+@pytest.mark.parametrize(
+    ('tamper', 'code'),
+    [
+        ('request-bytes', 'signature.payload_mismatch'),
+        ('request-model', 'signature.payload_mismatch'),
+        ('response-bytes', 'signature.payload_mismatch'),
+        ('signed-text', 'signature.payload_mismatch'),
+        ('signature-bytes', 'signature.invalid'),
+        ('different-signer', 'signature.signer_mismatch'),
+        ('other-kind', 'signature.kind_mismatch'),
+    ],
+)
+async def test_response_rejects_independent_tampering(signed_response, tamper, code):
+    verify, signature, attestation = signed_response
+    request_body, response_body = REQUEST_BODY, RESPONSE_BODY
+    if tamper == 'request-bytes':
+        request_body += b' '
+    elif tamper == 'request-model':
+        request_body = b'{"model":"alias"}'
+    elif tamper == 'response-bytes':
+        response_body += b' '
+    elif tamper == 'signed-text':
+        signature = replace(signature, signed_text=signature.signed_text + 'x')
+    elif tamper == 'signature-bytes':
+        mutated = bytearray.fromhex(signature.signature)
+        mutated[0] ^= 1
+        signature = replace(signature, signature=mutated.hex())
+    elif tamper == 'different-signer':
+        size = 32 if signature.signer.signing_algo == 'ed25519' else 20
+        attestation = replace(
+            attestation,
+            signer=replace(attestation.signer, signing_address='11' * size),
+        )
+    else:
+        signature = replace(
+            signature,
+            kind='gateway' if signature.kind == 'provider_tee' else 'provider_tee',
+        )
+    with pytest.raises(VerificationError) as raised:
+        verify(request_body, response_body, signature, attestation)
+    assert raised.value.failure.code == code
+
+
+@pytest.mark.parametrize(
+    ('request_body', 'reason'),
+    [
+        (b'{"model":""}', 'missing_model'),
+        (b'{}', 'missing_model'),
+        (b'{', 'invalid_json'),
+    ],
+)
+async def test_model_response_requires_a_canonical_request_model(request_body, reason):
+    signer = SigningIdentity(signing_algo='ecdsa', signing_address='11' * 20)
     attestation = await verify_model_attestation(
-        create_model_attestation(
-            signer=SigningIdentity(signing_algo='ecdsa', signing_address='11' * 20)
-        ),
+        create_model_attestation(signer=signer),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(
-            tdx_quote=lambda _: create_model_quote(signing_address='11' * 20)
+            tdx_quote=lambda _: create_model_quote(
+                signing_address=signer.signing_address
+            )
         ),
     )
-
+    signature = CompletionSignature(
+        kind='provider_tee', signed_text='', signature='', signer=signer
+    )
     with pytest.raises(VerificationError) as raised:
-        verify_model_response(
-            REQUEST_BODY,
-            RESPONSE_BODY,
-            signature,
-            attestation,
-        )
-    assert raised.value.failure.code == 'signature.kind_mismatch'
+        verify_model_response(request_body, RESPONSE_BODY, signature, attestation)
+    assert raised.value.failure.code == 'signature.payload_mismatch'
+    assert raised.value.failure.details == {'source': 'request_model', 'reason': reason}

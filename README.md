@@ -77,6 +77,7 @@ experimental; see the limitations for
 | **Rust** | [Encryption, streaming & policies](./rs/docs/verification-guide.md) | [Types & methods](./rs/docs/api-reference.md) |
 | **Go** | [Encryption, streaming & policies](./go/docs/verification-guide.md) | [Types & methods](./go/docs/api-reference.md) |
 
+- [Cross-language test contracts](./TESTING.md) — scenarios, assertions and validation.
 - [Live E2E tests](./e2e/README.md) — real-service coverage and CI setup.
 - [Release process](./RELEASING.md) — package publishing and maintainer checks.
 - [Issues](https://github.com/nearai/inference-sdk/issues) — bug reports and feature requests.

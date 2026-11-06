@@ -286,6 +286,69 @@ describe.each(['ed25519', 'ecdsa'] as const)(
   },
 );
 
+test.each([
+  { name: 'caller cancellation', content: '', code: undefined },
+  {
+    name: 'invalid UTF-8',
+    content: Uint8Array.of(0xff),
+    code: 'api.invalid_response',
+  },
+  {
+    name: 'invalid JSON',
+    content: 'data: {not-json}\n\n',
+    code: 'api.invalid_response',
+  },
+  {
+    name: 'invalid ciphertext',
+    content: 'data: {"choices":[{"delta":{"content":"00"}}]}\n\n',
+    code: 'e2ee.decryption_failed',
+  },
+])(
+  'releases the encrypted SSE source after $name',
+  async ({ content, code }) => {
+    const { modelKey } = createModelKeys();
+    const prepared = await prepareE2eeChatRequest({
+      request: chatRequest(),
+      modelKey,
+    });
+    let closed!: () => void;
+    const sourceClosed = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const cancel = jest.fn(() => {
+      closed();
+    });
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (content.length > 0)
+          controller.enqueue(
+            typeof content === 'string'
+              ? new TextEncoder().encode(content)
+              : content,
+          );
+        // Stay open: completion must cancel the underlying network body.
+      },
+      cancel,
+    });
+    const response = await prepared.decryptResponse(
+      new Response(source, {
+        headers: { 'content-type': 'text/event-stream' },
+      }),
+    );
+    if (code === undefined) {
+      const reason = new Error('caller stopped reading');
+      await response.body?.cancel(reason);
+      expect(cancel).toHaveBeenCalledWith(reason);
+    } else {
+      await expect(response.text()).rejects.toMatchObject({
+        failure: { code },
+      });
+    }
+    await sourceClosed;
+    expect(cancel).toHaveBeenCalledTimes(1);
+  },
+);
+
 test('preserves OHTTP authentication failures while reading encrypted JSON', async () => {
   const { modelKey } = createModelKeys();
   const prepared = await prepareE2eeChatRequest({

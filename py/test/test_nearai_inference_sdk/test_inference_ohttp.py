@@ -92,14 +92,20 @@ class ObliviousGateway(Gateway):
 @pytest.mark.parametrize('kind', ['provider_tee', 'gateway'])
 async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee, kind):
     gateway = ObliviousGateway(kind)
+    gateway.model_report_count = 2
     gateway.install(monkeypatch)
 
     async with gateway.client(e2ee=e2ee) as client:
+        preflight = await client.verify(MODEL)
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
         assert completion.choices[0].message.content == 'Hello back'
-        first = await client.verify_response(completion.id)
+        first, concurrent = await asyncio.gather(
+            client.verify_response(completion.id), client.verify_response(completion.id)
+        )
+        assert concurrent is first
+        assert await client.verify_response(completion.id) is first
 
         stream = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
@@ -125,6 +131,12 @@ async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee
             )
             if kind == 'provider_tee':
                 signed_text = f'{MODEL}:{signed_text}'
+                assert receipt.attestations == preflight.models
+                assert len(receipt.attestations) == 2
+                assert receipt.attestation is preflight.models[0]
+            else:
+                assert receipt.attestation is preflight.gateway
+                assert not hasattr(receipt, 'attestations')
             assert receipt.signature_kind == kind
             assert receipt.signature.signed_text == signed_text
 

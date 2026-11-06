@@ -76,7 +76,14 @@ async def test_gateway_attestation_uses_signer_nonce_binding_without_tls_fingerp
     assert result.tls_binding.spki_fingerprint is None
 
 
-async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
+@pytest.mark.parametrize(
+    ('status', 'accepted'),
+    [('OutOfDate', ('UpToDate',)), ('UpToDate', ())],
+    ids=['restricted-statuses', 'empty-denies-all'],
+)
+async def test_gateway_attestation_honors_accepted_tcb_statuses(
+    status, accepted
+) -> None:
     with pytest.raises(VerificationError) as rejected:
         await verify_gateway_attestation(
             create_gateway_attestation(),
@@ -84,9 +91,9 @@ async def test_gateway_attestation_honors_accepted_tcb_statuses() -> None:
                 nonce=NONCE,
                 spki_fingerprint=TLS_FINGERPRINT,
             ),
-            policy=AttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
+            policy=AttestationPolicy(accepted_tcb_statuses=accepted),
             verifiers=AttestationVerifiers(
-                tdx_quote=lambda _: create_gateway_tls_quote(tcb_status='OutOfDate')
+                tdx_quote=lambda _: create_gateway_tls_quote(tcb_status=status)
             ),
         )
 

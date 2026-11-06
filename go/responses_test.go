@@ -139,29 +139,35 @@ func TestResponsesClearResponseCache(t *testing.T) {
 }
 
 func TestResponsesExactGatewayReceipts(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := responsesClient(t, streaming, nil)
-			body, e := sendResponse(t, c, streaming)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if !bytes.Equal(body, f.raw) {
-				t.Fatal("response bytes changed")
-			}
-			receipt, e := c.VerifyResponse(context.Background(), "resp_fixture")
-			if e != nil {
-				t.Fatal(e)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" {
-				t.Fatal("wrong receipt")
-			}
-			_, e = c.VerifyResponse(context.Background(), "msg_1")
-			requireCode(t, e, "api.completion_not_found")
-			if f.cloud.chats.Load() != 1 {
-				t.Fatal("inference repeated")
-			}
-		})
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(string(algo)+"/"+map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
+				c, f := responsesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = algo })
+				if algo == ECDSA {
+					f.cloud.useECDSA()
+					f.ecdsaKey = f.cloud.ecdsaKey
+				}
+				body, e := sendResponse(t, c, streaming)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if !bytes.Equal(body, f.raw) {
+					t.Fatal("response bytes changed")
+				}
+				receipt, e := c.VerifyResponse(context.Background(), "resp_fixture")
+				if e != nil {
+					t.Fatal(e)
+				}
+				if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" || receipt.Signature.Signer.SigningAlgo != algo {
+					t.Fatal("wrong receipt")
+				}
+				_, e = c.VerifyResponse(context.Background(), "msg_1")
+				requireCode(t, e, "api.completion_not_found")
+				if f.cloud.chats.Load() != 1 {
+					t.Fatal("inference repeated")
+				}
+			})
+		}
 	}
 }
 func TestResponsesTamperingAndProviderReceipts(t *testing.T) {
@@ -215,6 +221,48 @@ func TestResponsesMissingIDsAndHTTPErrors(t *testing.T) {
 	_, e = c.VerifyResponse(context.Background(), "resp_fixture")
 	requireCode(t, e, "api.completion_not_found")
 }
+
+func TestResponsesStreamContract(t *testing.T) {
+	raw, err := os.ReadFile("../test-fixtures/responses/streams.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scenarios []struct {
+		Name, Body string
+		Valid      bool
+	}
+	if err := json.Unmarshal(raw, &scenarios); err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range scenarios {
+		t.Run(scenario.Name, func(t *testing.T) {
+			client, fixture := responsesClient(t, true, nil)
+			fixture.raw = []byte(scenario.Body)
+			body, err := sendResponse(t, client, true)
+			if scenario.Valid {
+				if err != nil || !bytes.Equal(body, fixture.raw) {
+					t.Fatalf("wire response changed: %s, %v", body, err)
+				}
+				receipt, err := client.VerifyResponse(context.Background(), "resp_fixture")
+				if err != nil || receipt.ID != "resp_fixture" || receipt.SignatureKind != "gateway" {
+					t.Fatalf("receipt: %+v, %v", receipt, err)
+				}
+			} else {
+				requireCode(t, err, "api.invalid_response")
+				_, err = client.VerifyResponse(context.Background(), "resp_fixture")
+				requireCode(t, err, "api.completion_not_found")
+				if fixture.cloud.signatureCalls.Load() != 0 {
+					t.Fatal("invalid stream fetched a receipt")
+				}
+			}
+			if fixture.cloud.chats.Load() != 1 {
+				t.Fatal("stream replayed inference")
+			}
+			_, err = client.VerifyResponse(context.Background(), "msg_1")
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
 func TestResponsesRejectUnsupportedBeforeIO(t *testing.T) {
 	c, f := responsesClient(t, false, func(o *InferenceOptions) { o.E2EE = true })
 	_, e := sendResponse(t, c, false)
@@ -240,38 +288,5 @@ func TestResponsesRejectUnsupportedBeforeIO(t *testing.T) {
 	requireCode(t, e, "api.invalid_input")
 	if f.cloud.attestations.Load() != 0 {
 		t.Fatal("unsupported endpoint triggered I/O")
-	}
-}
-
-func TestResponsesECDSA(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := responsesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = ECDSA })
-			key, err := secp.GeneratePrivateKey()
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.ecdsaKey = key
-			public := key.PubKey().SerializeUncompressed()[1:]
-			address := keccak(public)[12:]
-			f.cloud.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
-			f.cloud.a.SigningPublicKey = hex.EncodeToString(public)
-			clear(f.cloud.q.ReportData[:32])
-			copy(f.cloud.q.ReportData, address)
-			raw, err := sendResponse(t, c, streaming)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(raw, f.raw) {
-				t.Fatal("response bytes changed")
-			}
-			receipt, err := c.VerifyResponse(t.Context(), "resp_fixture")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != ECDSA {
-				t.Fatal("wrong receipt")
-			}
-		})
 	}
 }

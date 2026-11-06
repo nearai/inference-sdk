@@ -457,48 +457,123 @@ mod tests {
     #[test]
     fn encrypts_supported_fields_without_changing_routing_or_unknown_fields() {
         for algo in [SigningAlgo::Ed25519, SigningAlgo::Ecdsa] {
-            let (key, model) = fixed_key(algo);
-            let mut body = json!({"model":"vendor/model","messages":[{"role":"user","name":"Alice","content":[{"type":"text","text":"secret"}],"reasoning":"thought","tool_calls":[{"id":"call-1","function":{"name":"run","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"run","description":"desc","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"run"}},"temperature":0.5});
-            encrypt_request(&mut body, &model).unwrap();
-            assert_eq!(body["model"], "vendor/model");
-            assert_eq!(body["temperature"], 0.5);
-            assert_eq!(body["messages"][0]["role"], "user");
-            assert_eq!(
-                key.decrypt(body["messages"][0]["name"].as_str().unwrap())
-                    .unwrap(),
-                "Alice"
+            let (key, model_key) = fixed_key(algo);
+            let original = json!({
+                "model": "vendor/model",
+                "messages": [{
+                    "role": "user", "name": "Alice", "content": [{"type": "text", "text": "secret"}],
+                    "reasoning_content": "analysis", "reasoning": "thought", "refusal": "no",
+                    "audio": {"data": "audio", "format": "wav"},
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "run", "arguments": "{}"}}],
+                    "function_call": {"name": "legacy", "arguments": "[]"}, "unknown": "preserved"
+                }, {"role": "assistant", "content": "answer"}],
+                "tools": [{"type": "function", "function": {"name": "run", "description": "desc", "parameters": {"type": "object"}}}],
+                "tool_choice": {"type": "function", "function": {"name": "run"}},
+                "function_call": {"name": "legacy"}, "temperature": 0.5, "metadata": {"tag": "public"}
+            });
+            let mut request = reqwest::Request::new(
+                reqwest::Method::POST,
+                "https://example.com/v1/chat/completions".parse().unwrap(),
             );
-            assert_eq!(
-                serde_json::from_str::<Value>(
-                    &key.decrypt(body["messages"][0]["content"].as_str().unwrap())
-                        .unwrap()
-                )
-                .unwrap(),
-                json!([{"type":"text","text":"secret"}])
-            );
-            assert_eq!(
-                key.decrypt(body["tools"][0]["function"]["parameters"].as_str().unwrap())
-                    .unwrap(),
-                "{\"type\":\"object\"}"
-            );
-            assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
+            *request.body_mut() = Some(original.to_string().into());
+            let prepared = prepare_e2ee_chat_request(request, &model_key).unwrap();
+            let mut encrypted: Value =
+                serde_json::from_slice(prepared.request.body().unwrap().as_bytes().unwrap())
+                    .unwrap();
+            // Every protected field must independently decrypt to its original
+            // value. Comparing the complete object also protects routing and
+            // extension fields from accidental transformation.
+            for path in [
+                "/messages/0/name",
+                "/messages/0/reasoning_content",
+                "/messages/0/reasoning",
+                "/messages/0/refusal",
+                "/messages/0/audio/data",
+                "/messages/0/tool_calls/0/function/name",
+                "/messages/0/tool_calls/0/function/arguments",
+                "/messages/0/function_call/name",
+                "/messages/0/function_call/arguments",
+                "/messages/1/content",
+                "/tools/0/function/name",
+                "/tools/0/function/description",
+                "/tool_choice/function/name",
+                "/function_call/name",
+            ] {
+                let value = encrypted.pointer_mut(path).unwrap();
+                assert_ne!(value, original.pointer(path).unwrap(), "{algo}: {path}");
+                *value = Value::String(key.decrypt(value.as_str().unwrap()).unwrap());
+            }
+            for path in ["/messages/0/content", "/tools/0/function/parameters"] {
+                let value = encrypted.pointer_mut(path).unwrap();
+                *value =
+                    serde_json::from_str(&key.decrypt(value.as_str().unwrap()).unwrap()).unwrap();
+            }
+            assert_eq!(encrypted, original, "{algo}");
         }
     }
     #[test]
     fn decrypts_tools_reasoning_audio_and_logprobs() {
-        let (key, model) = fixed_key(SigningAlgo::Ed25519);
-        let e = |s| encrypt(s, &model).unwrap();
-        let mut body = json!({"choices":[{"delta":{"content":e("answer"),"reasoning_content":e("thought"),"audio":{"data":e("audio")},"tool_calls":[{"function":{"name":e("run"),"arguments":e("{}")}}],"nearai_tool_result":{"output":e("output")}},"logprobs":{"content":[{"token":e("word"),"bytes":e("[1,2,3]"),"top_logprobs":[{"token":e("other")}]}]}}]});
-        decrypt_response(&mut body, &key, true).unwrap();
-        assert_eq!(body["choices"][0]["delta"]["content"], "answer");
-        assert_eq!(
-            body["choices"][0]["delta"]["nearai_tool_result"]["output"],
-            "output"
-        );
-        assert_eq!(
-            body["choices"][0]["logprobs"]["content"][0]["bytes"],
-            json!([1, 2, 3])
-        );
+        for algo in [SigningAlgo::Ed25519, SigningAlgo::Ecdsa] {
+            for streaming in [false, true] {
+                let (key, model_key) = fixed_key(algo);
+                let message_field = if streaming { "delta" } else { "message" };
+                let mut message = json!({
+                    "role": "assistant", "content": "answer", "reasoning_content": "analysis",
+                    "reasoning": "thought", "refusal": "no", "audio": {"data": "audio", "id": "audio-1"},
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "run", "arguments": "{}"}}],
+                    "function_call": {"name": "legacy", "arguments": "[]"}, "unknown": "preserved"
+                });
+                if streaming {
+                    message["nearai_tool_result"] = json!({"output": "output", "id": "result-1"});
+                }
+                let original = json!({"id": "chat-1", "choices": [{
+                    "index": 0, message_field: message, "finish_reason": "stop",
+                    "logprobs": {
+                        "content": [{"token": "word", "bytes": [1, 2, 3], "logprob": -0.1,
+                            "top_logprobs": [{"token": "other", "bytes": [4], "logprob": -0.2}]}],
+                        "refusal": [{"token": "no", "bytes": [5], "logprob": -0.3}]
+                    }
+                }, {"index": 1, message_field: {"content": [{"type": "text", "text": "part"}]}}]});
+                let mut encrypted = original.clone();
+                for suffix in [
+                    "content",
+                    "reasoning_content",
+                    "reasoning",
+                    "refusal",
+                    "audio/data",
+                    "tool_calls/0/function/name",
+                    "tool_calls/0/function/arguments",
+                    "function_call/name",
+                    "function_call/arguments",
+                ] {
+                    let path = format!("/choices/0/{message_field}/{suffix}");
+                    let value = encrypted.pointer_mut(&path).unwrap();
+                    *value = Value::String(encrypt(value.as_str().unwrap(), &model_key).unwrap());
+                }
+                let path = format!("/choices/1/{message_field}/content/0/text");
+                encrypted
+                    .pointer_mut(&path)
+                    .unwrap()
+                    .clone_from(&json!(encrypt("part", &model_key).unwrap()));
+                if streaming {
+                    encrypted["choices"][0][message_field]["nearai_tool_result"]["output"] =
+                        json!(encrypt("output", &model_key).unwrap());
+                }
+                for path in [
+                    "/choices/0/logprobs/content/0",
+                    "/choices/0/logprobs/content/0/top_logprobs/0",
+                    "/choices/0/logprobs/refusal/0",
+                ] {
+                    let entry = encrypted.pointer_mut(path).unwrap();
+                    entry["token"] =
+                        json!(encrypt(entry["token"].as_str().unwrap(), &model_key).unwrap());
+                    entry["bytes"] =
+                        json!(encrypt(&entry["bytes"].to_string(), &model_key).unwrap());
+                }
+                decrypt_response(&mut encrypted, &key, streaming).unwrap();
+                assert_eq!(encrypted, original, "{algo}, streaming={streaming}");
+            }
+        }
     }
     #[test]
     fn each_prepared_request_has_fresh_key_and_replaces_encryption_headers() {
@@ -536,6 +611,112 @@ mod tests {
                 a.request.headers().contains_key("x-encryption-version"),
                 algo == SigningAlgo::Ed25519
             );
+            let response_key = E2eeModelKey {
+                signing_algo: algo,
+                public_key: a.request.headers()["x-client-pub-key"]
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            };
+            let response = json!({"id": "chat-1", "choices": [{"message": {
+                "content": encrypt("only request A can read this", &response_key).unwrap()
+            }}]})
+            .to_string();
+            assert_eq!(
+                a.decrypt_json(response.as_bytes()).unwrap()["choices"][0]["message"]["content"],
+                "only request A can read this"
+            );
+            assert_eq!(
+                b.decrypt_json(response.as_bytes()).unwrap_err().code(),
+                "e2ee.decryption_failed"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn decrypted_sse_releases_source_on_error_and_consumer_drop() {
+        use futures_util::{Stream, StreamExt};
+        use std::{
+            pin::Pin,
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+            task::{Context, Poll},
+        };
+        struct Source {
+            first: Option<Result<bytes::Bytes, InferenceError>>,
+            dropped: Arc<AtomicUsize>,
+        }
+        impl Stream for Source {
+            type Item = Result<bytes::Bytes, InferenceError>;
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                Poll::Ready(self.first.take())
+            }
+        }
+        impl Drop for Source {
+            fn drop(&mut self) {
+                self.dropped.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        for case in [
+            "consumer drop",
+            "source error",
+            "invalid UTF-8",
+            "invalid JSON",
+            "invalid ciphertext",
+        ] {
+            let (key, model_key) = fixed_key(SigningAlgo::Ed25519);
+            let first = match case {
+                "source error" => Err(protocol("test.source", "source failed").into()),
+                "invalid UTF-8" => Ok(bytes::Bytes::from_static(b"data: \xff\n\n")),
+                "invalid JSON" => Ok(bytes::Bytes::from_static(b"data: {\n\n")),
+                _ => {
+                    let content = if case == "invalid ciphertext" {
+                        "bad".into()
+                    } else {
+                        encrypt("hello", &model_key).unwrap()
+                    };
+                    Ok(bytes::Bytes::from(format!(
+                        "data: {}\n\n",
+                        json!({"id":"chat-1","choices":[{"delta":{"content":content}}]})
+                    )))
+                }
+            };
+            let dropped = Arc::new(AtomicUsize::new(0));
+            let source = Box::pin(Source {
+                first: Some(first),
+                dropped: dropped.clone(),
+            });
+            let prepared = PreparedE2eeChatRequest {
+                request: reqwest::Request::new(
+                    reqwest::Method::POST,
+                    "https://example.com".parse().unwrap(),
+                ),
+                key,
+            };
+            let mut output = prepared.decrypt_sse(source);
+            let result = output.next().await.unwrap();
+            if case == "consumer drop" {
+                assert!(String::from_utf8(result.unwrap().to_vec())
+                    .unwrap()
+                    .contains("hello"));
+                assert_eq!(dropped.load(Ordering::SeqCst), 0);
+            } else {
+                assert_eq!(
+                    result.unwrap_err().code(),
+                    match case {
+                        "source error" => "test.source",
+                        "invalid ciphertext" => "e2ee.decryption_failed",
+                        _ => "api.invalid_response",
+                    }
+                );
+                assert!(output.next().await.is_none(), "{case}");
+            }
+            drop(output);
+            assert_eq!(dropped.load(Ordering::SeqCst), 1, "{case}");
         }
     }
     #[tokio::test]

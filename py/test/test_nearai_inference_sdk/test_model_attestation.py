@@ -380,20 +380,27 @@ async def test_model_attestation_rejects_mismatched_nonce_before_quote() -> None
     assert raised.value.failure.details == {'source': 'attestationNonce'}
 
 
-async def test_model_policy_accepts_out_of_date_by_default_and_can_tighten() -> None:
-    quote = create_model_quote(tcb_status='OutOfDate')
+@pytest.mark.parametrize(
+    ('status', 'accepted'),
+    [('OutOfDate', ('UpToDate',)), ('UpToDate', ())],
+    ids=['restricted-statuses', 'empty-denies-all'],
+)
+async def test_model_policy_default_and_explicit_tcb_allowlist(
+    status, accepted
+) -> None:
+    quote = create_model_quote(tcb_status=status)
     result = await verify_model_attestation(
         create_model_attestation(),
         MODEL_CLIENT_BINDING,
         verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
     )
-    assert result.tcb_status == 'OutOfDate'
+    assert result.tcb_status == status
 
     with pytest.raises(VerificationError) as raised:
         await verify_model_attestation(
             create_model_attestation(),
             MODEL_CLIENT_BINDING,
-            policy=ModelAttestationPolicy(accepted_tcb_statuses=('UpToDate',)),
+            policy=ModelAttestationPolicy(accepted_tcb_statuses=accepted),
             verifiers=ModelAttestationVerifiers(tdx_quote=lambda _: quote),
         )
     assert raised.value.failure.code == 'policy.tcb_status_not_allowed'

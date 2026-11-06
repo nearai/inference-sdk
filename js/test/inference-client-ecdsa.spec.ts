@@ -44,6 +44,7 @@ type StoredSignature = {
 
 type CreateEcdsaGatewayParams = {
   readonly signatureKind?: StoredSignature['kind'];
+  readonly modelReportCount?: number;
 };
 
 function jsonResponse(value: unknown): Response {
@@ -72,6 +73,7 @@ function quoteForSigner({
 
 function createEcdsaGateway({
   signatureKind = 'provider_tee',
+  modelReportCount = 1,
 }: CreateEcdsaGatewayParams = {}): {
   readonly fetch: typeof globalThis.fetch;
   readonly tdxQuoteVerifier: (quote: string) => TdxQuoteVerificationResult;
@@ -90,12 +92,14 @@ function createEcdsaGateway({
     nonce,
     signer,
     includeModelKey,
+    replica = 0,
   }: {
     readonly nonce: string;
     readonly signer: ethers.Wallet;
     readonly includeModelKey: boolean;
+    readonly replica?: number;
   }): Record<string, unknown> {
-    const quoteId = `${signer.address}:${nonce}`;
+    const quoteId = `${signer.address}:${nonce}:${replica}`;
     const quote = quoteForSigner({ nonce, signerAddress: signer.address });
     quotes.set(quoteId, quote);
     return {
@@ -131,13 +135,16 @@ function createEcdsaGateway({
       );
       if (url.searchParams.has('model')) {
         return jsonResponse({
-          model_attestations: [
-            createAttestation({
-              nonce,
-              signer: modelKey,
-              includeModelKey: true,
-            }),
-          ],
+          model_attestations: Array.from(
+            { length: modelReportCount },
+            (_, replica) =>
+              createAttestation({
+                nonce,
+                signer: modelKey,
+                includeModelKey: true,
+                replica,
+              }),
+          ),
         });
       }
       return jsonResponse({
@@ -220,41 +227,45 @@ function createEcdsaGateway({
 
     state.completionHeaders.push(request.headers);
     const clientPublicKey = request.headers.get('x-client-pub-key');
-    if (clientPublicKey === null) {
-      throw new Error('Expected an E2EE client key');
-    }
     const requestBody = new Uint8Array(await request.clone().arrayBuffer());
     const body = JSON.parse(new TextDecoder().decode(requestBody)) as {
       messages: Array<{ content: string }>;
+      stream?: boolean;
     };
     state.decryptedPrompts.push(
-      decryptE2eeText({
-        ciphertext: body.messages[0]?.content ?? '',
-        clientKeyPair: {
-          signingAlgo: 'ecdsa',
-          publicKey: modelPublicKey,
-          privateKey: modelKey.privateKey,
-        },
-        field: 'messages[0].content',
-      }),
+      clientPublicKey === null
+        ? body.messages[0].content
+        : decryptE2eeText({
+            ciphertext: body.messages[0]?.content ?? '',
+            clientKeyPair: {
+              signingAlgo: 'ecdsa',
+              publicKey: modelPublicKey,
+              privateKey: modelKey.privateKey,
+            },
+            field: 'messages[0].content',
+          }),
     );
-    const response = jsonResponse({
+    const content =
+      clientPublicKey === null
+        ? 'private ECDSA response'
+        : encryptE2eeText({
+            plaintext: 'private ECDSA response',
+            modelKey: { signingAlgo: 'ecdsa', publicKey: clientPublicKey },
+          });
+    const value = {
       id: 'chatcmpl-ecdsa',
       choices: [
         {
-          message: {
-            role: 'assistant',
-            content: encryptE2eeText({
-              plaintext: 'private ECDSA response',
-              modelKey: {
-                signingAlgo: 'ecdsa',
-                publicKey: clientPublicKey,
-              },
-            }),
-          },
+          [body.stream ? 'delta' : 'message']: { role: 'assistant', content },
+          finish_reason: 'stop',
         },
       ],
-    });
+    };
+    const response = body.stream
+      ? new Response(`data: ${JSON.stringify(value)}\n\ndata: [DONE]\n\n`, {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      : jsonResponse(value);
     const responseBody = new Uint8Array(await response.clone().arrayBuffer());
     const signedText =
       signatureKind === 'provider_tee'
@@ -288,82 +299,83 @@ describe('ECDSA inference client', () => {
     jest.restoreAllMocks();
   });
 
-  test('verifies, encrypts, decrypts, and verifies a response signature with ECDSA', async () => {
-    const gateway = createEcdsaGateway();
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new InferenceClient({
-      baseUrl,
-      headers: { authorization: 'Bearer test-token' },
-      signingAlgo: 'ecdsa',
-      e2ee: true,
-      gatewayVerification: {
-        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
-      },
-      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
-    });
-
-    const response = await client.fetch(`${baseUrl}chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: 'private ECDSA request' }],
-      }),
-    });
-
-    await expect(response.json()).resolves.toMatchObject({
-      choices: [{ message: { content: 'private ECDSA response' } }],
-    });
-    await expect(
-      client.verifyResponse('chatcmpl-ecdsa'),
-    ).resolves.toMatchObject({
-      id: 'chatcmpl-ecdsa',
-      signatureKind: 'provider_tee',
-    });
-
-    expect(gateway.state.decryptedPrompts).toEqual(['private ECDSA request']);
-    expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
-    expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
-    expect(gateway.state.completionHeaders).toHaveLength(1);
-    const headers = gateway.state.completionHeaders[0];
-    expect(headers.get('x-signing-algo')).toBe('ecdsa');
-    expect(headers.get('x-client-pub-key')).toHaveLength(128);
-    expect(headers.get('x-model-pub-key')).toBe(modelPublicKey);
-    expect(headers.get('x-encryption-version')).toBeNull();
-    expect(headers.get('x-encrypt-all-fields')).toBe('true');
-  });
-
-  test('verifies an ECDSA Gateway signature when the Gateway signs the response', async () => {
-    const gateway = createEcdsaGateway({ signatureKind: 'gateway' });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
-    const client = new InferenceClient({
-      baseUrl,
-      headers: { authorization: 'Bearer test-token' },
-      signingAlgo: 'ecdsa',
-      e2ee: true,
-      gatewayVerification: {
-        verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
-      },
-      modelVerification: { verifiers: { tdxQuote: gateway.tdxQuoteVerifier } },
-    });
-
-    const response = await client.fetch(`${baseUrl}chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: 'private ECDSA request' }],
-      }),
-    });
-
-    await response.text();
-    await expect(
-      client.verifyResponse('chatcmpl-ecdsa'),
-    ).resolves.toMatchObject({
-      id: 'chatcmpl-ecdsa',
-      signatureKind: 'gateway',
-    });
-  });
+  test.each(
+    [false, true].flatMap((e2ee) =>
+      [false, true].flatMap((stream) =>
+        (['provider_tee', 'gateway'] as const).map((signatureKind) => ({
+          e2ee,
+          stream,
+          signatureKind,
+        })),
+      ),
+    ),
+  )(
+    'verifies ECDSA Chat and its original evidence group (e2ee=$e2ee, stream=$stream, kind=$signatureKind)',
+    async ({ e2ee, stream, signatureKind }) => {
+      const gateway = createEcdsaGateway({
+        signatureKind,
+        modelReportCount: 2,
+      });
+      jest.spyOn(globalThis, 'fetch').mockImplementation(gateway.fetch);
+      const client = new InferenceClient({
+        baseUrl,
+        headers: { authorization: 'Bearer test-token' },
+        signingAlgo: 'ecdsa',
+        e2ee,
+        gatewayVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+        modelVerification: {
+          verifiers: { tdxQuote: gateway.tdxQuoteVerifier },
+        },
+      });
+      const preflight = await client.verify(model);
+      expect(preflight.models).toHaveLength(2);
+      const response = await client.fetch(`${baseUrl}chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          stream,
+          messages: [{ role: 'user', content: 'private ECDSA request' }],
+        }),
+      });
+      const plaintext = await response.text();
+      if (stream) {
+        expect(plaintext).toContain('"content":"private ECDSA response"');
+        expect(plaintext).toContain('data: [DONE]');
+      } else {
+        expect(JSON.parse(plaintext)).toMatchObject({
+          choices: [{ message: { content: 'private ECDSA response' } }],
+        });
+      }
+      const receipt = await client.verifyResponse('chatcmpl-ecdsa');
+      expect(receipt.signatureKind).toBe(signatureKind);
+      if (receipt.signatureKind === 'provider_tee') {
+        expect(receipt.attestations).toEqual(preflight.models);
+        expect(receipt.attestation).toBe(preflight.models[0]);
+      } else {
+        expect(receipt.attestation).toBe(preflight.gateway);
+        expect(receipt).not.toHaveProperty('attestations');
+      }
+      expect(gateway.state.decryptedPrompts).toEqual(['private ECDSA request']);
+      expect(gateway.state.attestationAlgorithms).toEqual(['ecdsa', 'ecdsa']);
+      expect(gateway.state.signatureAlgorithms).toEqual(['ecdsa']);
+      expect(gateway.state.completionHeaders).toHaveLength(1);
+      const headers = gateway.state.completionHeaders[0];
+      expect(headers.get('x-model-pub-key')).toBe(modelPublicKey);
+      expect(headers.get('x-encryption-version')).toBeNull();
+      if (e2ee) {
+        expect(headers.get('x-signing-algo')).toBe('ecdsa');
+        expect(headers.get('x-client-pub-key')).toHaveLength(128);
+        expect(headers.get('x-encrypt-all-fields')).toBe('true');
+      } else {
+        expect(headers.has('x-signing-algo')).toBe(false);
+        expect(headers.has('x-client-pub-key')).toBe(false);
+        expect(headers.has('x-encrypt-all-fields')).toBe(false);
+      }
+    },
+  );
 
   test.each(['gateway', 'provider_tee'] as const)(
     'verifies System One %s receipts with ECDSA',

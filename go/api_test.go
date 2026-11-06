@@ -290,3 +290,80 @@ func TestOptionalAPIKeyAndAttestationHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestAttestationAPIBindsEveryReport(t *testing.T) {
+	for _, kind := range []string{"gateway", "model", "direct"} {
+		for _, invalid := range []string{"nonce", "TLS layout", "secondary report"} {
+			if kind == "gateway" && invalid == "secondary report" {
+				continue
+			}
+			t.Run(kind+"/"+invalid, func(t *testing.T) {
+				fixture := newFakeCloud(t)
+				fixture.direct = kind == "direct"
+				var nonces []string
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					nonces = append(nonces, r.URL.Query().Get("nonce"))
+					recorder := httptest.NewRecorder()
+					fixture.ServeHTTP(recorder, r)
+					var envelope map[string]any
+					if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+						t.Error(err)
+						return
+					}
+					if len(nonces) == 1 {
+						json.NewEncoder(w).Encode(envelope)
+						return
+					}
+					var report map[string]any
+					field := "model_attestations"
+					if kind == "direct" {
+						field = "all_attestations"
+					}
+					if kind == "gateway" {
+						report = envelope["gateway_attestation"].(map[string]any)
+					} else {
+						report = envelope[field].([]any)[0].(map[string]any)
+					}
+					switch invalid {
+					case "nonce":
+						report["request_nonce"] = nonces[0]
+					case "TLS layout":
+						report["tls_cert_fingerprint"] = strings.Repeat("11", 32)
+					case "secondary report":
+						second := make(map[string]any)
+						for key, value := range report {
+							second[key] = value
+						}
+						second["request_nonce"] = nonces[0]
+						envelope[field] = []any{report, second}
+					}
+					json.NewEncoder(w).Encode(envelope)
+				}))
+				defer server.Close()
+				constructor := NewAttestationClient
+				if kind == "direct" {
+					constructor = NewDirectAttestationClient
+				}
+				client, err := constructor(ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fetch := func() error {
+					if kind == "gateway" {
+						_, err := client.FetchGatewayAttestation(context.Background(), FetchOptions{DisableTLSBinding: true})
+						return err
+					}
+					_, err := client.FetchModelAttestations(context.Background(), "canonical/model", FetchOptions{})
+					return err
+				}
+				if err := fetch(); err != nil {
+					t.Fatal(err)
+				}
+				requireCode(t, fetch(), "api.invalid_response")
+				if len(nonces) != 2 || len(nonces[0]) != 64 || nonces[0] == nonces[1] {
+					t.Fatalf("requests did not get independent client nonces: %v", nonces)
+				}
+			})
+		}
+	}
+}

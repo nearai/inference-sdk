@@ -44,6 +44,7 @@ struct Fixture {
     systemone_id: Option<String>,
     systemone_status: Option<u16>,
     missing_model_key: bool,
+    first_model_key_missing: bool,
     extra_model: bool,
     shared_model: bool,
     gateway_chat_receipt: bool,
@@ -63,6 +64,9 @@ struct Fixture {
     ecdsa: bool,
     ohttp: Option<ohttp::KeyConfig>,
     wrong_ohttp_signer: bool,
+    bad_ohttp_signature: bool,
+    bad_ohttp_config: bool,
+    tampered_ohttp_response: bool,
     alternate_direct_signer: bool,
     response_body: Option<Vec<u8>>,
     response_provider_receipt: bool,
@@ -118,7 +122,11 @@ impl Fixture {
     }
     fn with_ohttp(&self, mut value: Value) -> Value {
         if let Some(config) = &self.ohttp {
-            let bytes = config.encode().unwrap();
+            let bytes = if self.bad_ohttp_config {
+                vec![1, 2, 3]
+            } else {
+                config.encode().unwrap()
+            };
             let signer = key(if self.wrong_ohttp_signer {
                 8
             } else if self.direct {
@@ -127,6 +135,9 @@ impl Fixture {
                 9
             });
             value["ohttp_attestation"] = json!({"signing_algo":"ed25519","signing_key":hex::encode(signer.verifying_key().as_bytes()),"key_config":hex::encode(&bytes),"signature":hex::encode(signer.sign(&bytes).to_bytes())});
+            if self.bad_ohttp_signature {
+                value["ohttp_attestation"]["signature"] = json!("00".repeat(64));
+            }
         }
         value
     }
@@ -204,6 +215,11 @@ impl Respond for Fixture {
                         let mut bad = self.report(nonce, 8);
                         bad["report_data"] = json!("ff".repeat(64));
                         reports.push(bad);
+                    }
+                    if self.first_model_key_missing {
+                        let mut no_key = self.report(nonce, 8);
+                        no_key.as_object_mut().unwrap().remove("signing_public_key");
+                        reports.insert(0, no_key);
                     }
                     ResponseTemplate::new(200).set_body_json(
                         json!({"model_attestations":if self.empty {vec![]} else {reports}}),
@@ -518,6 +534,9 @@ impl Respond for Fixture {
                 writer.write_all(&plain).await.unwrap();
                 writer.close().await.unwrap();
                 drop(writer);
+                if self.tampered_ohttp_response {
+                    *encrypted.last_mut().unwrap() ^= 1;
+                }
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "message/ohttp-chunked-res")
                     .set_body_bytes(encrypted)
@@ -1238,12 +1257,14 @@ async fn shares_concurrent_receipt_fetches_and_retries_transient_failures() {
     assert!(b.unwrap_err().retryable());
     assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     let (a, b) = tokio::join!(
-        client.verify_response("chat-0"),
+        tokio::time::timeout(Duration::from_millis(5), client.verify_response("chat-0")),
         client.verify_response("chat-0")
     );
-    a.unwrap();
+    assert!(a.is_err());
     b.unwrap();
+    client.verify_response("chat-0").await.unwrap();
     assert_eq!(f.signatures.load(Ordering::SeqCst), 2);
+    assert_eq!(f.chat.load(Ordering::SeqCst), 1);
 }
 
 fn ohttp_config() -> ohttp::KeyConfig {
@@ -1264,6 +1285,7 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             ecdsa,
             shared_model: true,
             extra_model: true,
+            first_model_key_missing: true,
             ..Default::default()
         })
         .await;
@@ -1273,8 +1295,9 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
         }
         let client = InferenceClient::with_options(options).unwrap();
         let preflight = client.verify("vendor/model").await.unwrap();
-        assert_eq!(preflight.models.len(), 3);
-        let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
+        assert_eq!(preflight.models.len(), 4);
+        assert!(preflight.models[0].signing_public_key.is_none());
+        let expected = vec![preflight.models[1].clone(), preflight.models[3].clone()];
         let completion = client.chat_completions(body()).await.unwrap();
         assert_eq!(completion["choices"][0]["message"]["content"], "Hello");
         assert_eq!(
@@ -1304,8 +1327,16 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
 #[tokio::test]
 async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
     for direct in [false, true] {
-        for case in ["valid", "alternate_spelling", "missing", "wrong_signer"] {
-            let (_server, f, mut options) = setup(Fixture {
+        for case in [
+            "valid",
+            "alternate_spelling",
+            "missing",
+            "wrong_signer",
+            "bad_signature",
+            "bad_config",
+            "tampered_final",
+        ] {
+            let (server, f, mut options) = setup(Fixture {
                 direct,
                 ohttp: if case == "missing" {
                     None
@@ -1313,6 +1344,9 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     Some(ohttp_config())
                 },
                 wrong_ohttp_signer: case == "wrong_signer",
+                bad_ohttp_signature: case == "bad_signature",
+                bad_ohttp_config: case == "bad_config",
+                tampered_ohttp_response: case == "tampered_final",
                 alternate_direct_signer: direct && case == "alternate_spelling",
                 ..Default::default()
             })
@@ -1338,6 +1372,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                                 .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
+                        assert_eq!(
+                            client.verify_response("chat-0").await.unwrap_err().code(),
+                            "api.completion_not_found"
+                        );
                         None
                     };
                     (result, receipt)
@@ -1355,6 +1393,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                                 .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
+                        assert_eq!(
+                            client.verify_response("chat-0").await.unwrap_err().code(),
+                            "api.completion_not_found"
+                        );
                         None
                     };
                     (result, receipt)
@@ -1366,8 +1408,38 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     let attestation_count = receipt.unwrap().unwrap();
                     assert_eq!(attestation_count, if direct { 2 } else { 1 });
                 } else {
-                    assert!(result.is_err());
-                    assert_eq!(f.chat.load(Ordering::SeqCst), 0);
+                    assert_eq!(
+                        result.unwrap_err().code(),
+                        match case {
+                            "missing" => "ohttp.attestation_required",
+                            "wrong_signer" => "ohttp.signer_mismatch",
+                            "bad_signature" => "ohttp.signature_invalid",
+                            "bad_config" => "ohttp.key_config_invalid",
+                            "tampered_final" => "ohttp.decryption_failed",
+                            _ => unreachable!(),
+                        }
+                    );
+                    assert_eq!(
+                        f.chat.load(Ordering::SeqCst),
+                        if case == "tampered_final" {
+                            1 + usize::from(streaming)
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(f.signatures.load(Ordering::SeqCst), 0);
+                    if !direct && case != "tampered_final" {
+                        assert_eq!(f.model.load(Ordering::SeqCst), 0);
+                        assert!(server
+                            .received_requests()
+                            .await
+                            .unwrap()
+                            .iter()
+                            .all(|request| {
+                                request.url.path() == "/v1/attestation/report"
+                                    && !request.url.query_pairs().any(|(key, _)| key == "model")
+                            }));
+                    }
                 }
             }
         }
@@ -1821,6 +1893,63 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                 "api.completion_not_found"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn responses_streams_follow_the_shared_receipt_contract() {
+    let cases: Value =
+        serde_json::from_str(include_str!("../../test-fixtures/responses/streams.json")).unwrap();
+    for case in cases.as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let raw = case["body"].as_str().unwrap().as_bytes();
+        let (_server, f, options) = setup(Fixture {
+            response_body: Some(raw.to_vec()),
+            ..Default::default()
+        })
+        .await;
+        let client = InferenceClient::with_options(options).unwrap();
+        let result = client
+            .send(
+                client
+                    .response_request(response_request_body(true))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+            .bytes()
+            .await;
+        if case["valid"] == true {
+            assert_eq!(result.unwrap(), raw, "{name}");
+            let receipt = client.verify_response("resp_fixture").await.unwrap();
+            assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+            assert!(receipt.attestations.is_empty());
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 1, "{name}");
+        } else {
+            assert_eq!(result.unwrap_err().code(), "api.invalid_response", "{name}");
+            assert_eq!(
+                client
+                    .verify_response("resp_fixture")
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}"
+            );
+            assert_eq!(f.signatures.load(Ordering::SeqCst), 0, "{name}");
+        }
+        for unrelated_id in ["msg_1", "event_only", "other"] {
+            assert_eq!(
+                client
+                    .verify_response(unrelated_id)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                "api.completion_not_found",
+                "{name}: {unrelated_id}"
+            );
+        }
+        assert_eq!(f.chat.load(Ordering::SeqCst), 1, "{name}");
     }
 }
 

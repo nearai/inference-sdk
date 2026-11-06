@@ -206,8 +206,37 @@ func TestSignaturesBindExactBytesAndKind(t *testing.T) {
 					t.Fatal(e)
 				}
 				requireCode(t, verify(request, append(response, ' '), sig, att), "signature.payload_mismatch")
-				sig.Kind = "other"
-				requireCode(t, verify(request, response, sig, att), "signature.kind_mismatch")
+				requireCode(t, verify(append(request, ' '), response, sig, att), "signature.payload_mismatch")
+				for _, scenario := range []struct {
+					name, code string
+					mutate     func(*CompletionSignature)
+				}{
+					{"kind", "signature.kind_mismatch", func(s *CompletionSignature) { s.Kind = "other" }},
+					{"signer", "signature.signer_mismatch", func(s *CompletionSignature) {
+						s.Signer.SigningAddress = strings.Repeat("11", len(s.Signer.SigningAddress)/2)
+					}},
+					{"algorithm", "signature.signer_mismatch", func(s *CompletionSignature) {
+						if s.Signer.SigningAlgo == Ed25519 {
+							s.Signer.SigningAlgo = ECDSA
+						} else {
+							s.Signer.SigningAlgo = Ed25519
+						}
+					}},
+					{"signature", "signature.invalid", func(s *CompletionSignature) {
+						raw, err := hex.DecodeString(s.Signature)
+						if err != nil {
+							t.Fatal(err)
+						}
+						raw[0] ^= 1
+						s.Signature = hex.EncodeToString(raw)
+					}},
+				} {
+					t.Run(scenario.name, func(t *testing.T) {
+						mutated := sig
+						scenario.mutate(&mutated)
+						requireCode(t, verify(request, response, mutated, att), scenario.code)
+					})
+				}
 			})
 		}
 	}
@@ -281,12 +310,27 @@ func TestOHTTPAttestation(t *testing.T) {
 		hex.EncodeToString(config),
 		hex.EncodeToString(ed25519.Sign(priv, config)),
 	}
-	if _, e := VerifyOHTTPKeyConfig(a, SigningIdentity{Ed25519, a.SigningKey}); e != nil {
-		t.Fatal(e)
+	signer := SigningIdentity{Ed25519, a.SigningKey}
+	verified, err := VerifyOHTTPKeyConfig(a, signer)
+	if err != nil || !bytes.Equal(verified, config) {
+		t.Fatalf("authenticated config = %x, %v", verified, err)
 	}
-	a.KeyConfig = "0000"
-	_, e := VerifyOHTTPKeyConfig(a, SigningIdentity{Ed25519, a.SigningKey})
-	requireCode(t, e, "ohttp.signature_invalid")
+	for _, scenario := range []struct {
+		name, code string
+		mutate     func(*OHTTPAttestation, *SigningIdentity)
+	}{
+		{"config bytes", "ohttp.signature_invalid", func(a *OHTTPAttestation, _ *SigningIdentity) { a.KeyConfig = "0000" }},
+		{"signature bytes", "ohttp.signature_invalid", func(a *OHTTPAttestation, _ *SigningIdentity) { a.Signature = strings.Repeat("00", 64) }},
+		{"unverified signer", "ohttp.signer_mismatch", func(_ *OHTTPAttestation, s *SigningIdentity) { s.SigningAddress = strings.Repeat("22", 32) }},
+		{"unsupported algorithm", "ohttp.signer_mismatch", func(a *OHTTPAttestation, _ *SigningIdentity) { a.SigningAlgo = ECDSA }},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			modified, identity := a, signer
+			scenario.mutate(&modified, &identity)
+			_, err := VerifyOHTTPKeyConfig(modified, identity)
+			requireCode(t, err, scenario.code)
+		})
+	}
 }
 func TestDefaultQuoteVerifierRejectsMalformedQuote(t *testing.T) {
 	_, e := CreateTDXQuoteVerifier("")(context.Background(), "ff")

@@ -976,6 +976,8 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
         body = b''.join(self._chunks)
         if self._messages and self._streaming:
             _validate_message_stream(body)
+        elif self._responses and self._streaming:
+            _validate_response_stream(body)
         if not self._registered:
             self._register(_completion_id(body, self._content_type, self._responses))
             self._registered = True
@@ -1046,6 +1048,36 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
     except (ValueError, UnicodeDecodeError) as error:
         raise _invalid_completion_id(error) from error
     raise _invalid_completion_id()
+
+
+def _validate_response_stream(body: bytes) -> None:
+    """Bind a Responses receipt to one response ID across all wire events."""
+    response_id = None
+    parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
+    for record in [*(item.value for item in parsed.records), parsed.pending]:
+        if get_sse_event(record) == 'error':
+            raise _invalid_completion_id()
+        for data in get_sse_data_records(record):
+            if not data or data == '[DONE]':
+                continue
+            try:
+                event = json.loads(data)
+                if not isinstance(event, dict):
+                    raise _invalid_completion_id()
+                if event.get('type') == 'error' or 'error' in event:
+                    raise _invalid_completion_id()
+                if 'response' not in event:
+                    continue
+                current_id = CompletionResponseIdSchema.model_validate(
+                    event['response']
+                ).id
+                if response_id is not None and current_id != response_id:
+                    raise _invalid_completion_id()
+                response_id = current_id
+            except (ValueError, ValidationError) as error:
+                raise _invalid_completion_id(error) from error
+    if response_id is None:
+        raise _invalid_completion_id()
 
 
 def _validate_message_stream(body: bytes) -> None:

@@ -126,29 +126,35 @@ func sendMessage(t *testing.T, c *InferenceClient, streaming bool) ([]byte, erro
 	return io.ReadAll(res.Body)
 }
 func TestMessagesExactGatewayReceipts(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := messagesClient(t, streaming, nil)
-			body, e := sendMessage(t, c, streaming)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if !bytes.Equal(body, f.raw) {
-				t.Fatal("message bytes changed")
-			}
-			receipt, e := c.VerifyResponse(context.Background(), "msg_fixture")
-			if e != nil {
-				t.Fatal(e)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" {
-				t.Fatal("wrong receipt")
-			}
-			_, e = c.VerifyResponse(context.Background(), "toolu_fixture")
-			requireCode(t, e, "api.completion_not_found")
-			if f.cloud.chats.Load() != 1 {
-				t.Fatal("inference repeated")
-			}
-		})
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(string(algo)+"/"+map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
+				c, f := messagesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = algo })
+				if algo == ECDSA {
+					f.cloud.useECDSA()
+					f.ecdsaKey = f.cloud.ecdsaKey
+				}
+				body, e := sendMessage(t, c, streaming)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if !bytes.Equal(body, f.raw) {
+					t.Fatal("message bytes changed")
+				}
+				receipt, e := c.VerifyResponse(context.Background(), "msg_fixture")
+				if e != nil {
+					t.Fatal(e)
+				}
+				if receipt.SignatureKind != "gateway" || receipt.Signature.SignedText == "" || receipt.Signature.Signer.SigningAlgo != algo {
+					t.Fatal("wrong receipt")
+				}
+				_, e = c.VerifyResponse(context.Background(), "toolu_fixture")
+				requireCode(t, e, "api.completion_not_found")
+				if f.cloud.chats.Load() != 1 {
+					t.Fatal("inference repeated")
+				}
+			})
+		}
 	}
 }
 func TestMessagesTamperingAndProviderReceipts(t *testing.T) {
@@ -331,39 +337,6 @@ func TestMessagesStreamContract(t *testing.T) {
 			}
 			if fixture.cloud.chats.Load() != 1 {
 				t.Fatal("inference replayed")
-			}
-		})
-	}
-}
-
-func TestMessagesECDSA(t *testing.T) {
-	for _, streaming := range []bool{false, true} {
-		t.Run(map[bool]string{false: "json", true: "sse"}[streaming], func(t *testing.T) {
-			c, f := messagesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = ECDSA })
-			key, err := secp.GeneratePrivateKey()
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.ecdsaKey = key
-			public := key.PubKey().SerializeUncompressed()[1:]
-			address := keccak(public)[12:]
-			f.cloud.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
-			f.cloud.a.SigningPublicKey = hex.EncodeToString(public)
-			clear(f.cloud.q.ReportData[:32])
-			copy(f.cloud.q.ReportData, address)
-			raw, err := sendMessage(t, c, streaming)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(raw, f.raw) {
-				t.Fatal("message bytes changed")
-			}
-			receipt, err := c.VerifyResponse(t.Context(), "msg_fixture")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if receipt.SignatureKind != "gateway" || receipt.Signature.Signer.SigningAlgo != ECDSA {
-				t.Fatal("wrong receipt")
 			}
 		})
 	}

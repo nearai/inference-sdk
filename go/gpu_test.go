@@ -25,7 +25,7 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 		t.Fatal(e)
 	}
 	n := strings.Repeat("11", 32)
-	for _, variant := range []string{"ok", "wrong nonce", "rejected", "expired", "wrong issuer", "missing nbf", "verdict timeout", "jwks timeout"} {
+	for _, variant := range []string{"ok", "wrong nonce", "rejected", "expired", "wrong issuer", "missing nbf", "wrong signature", "unknown kid", "verdict timeout", "jwks timeout"} {
 		t.Run(variant, func(t *testing.T) {
 			claims := jwt.MapClaims{
 				"iss":                         "https://nras.attestation.nvidia.com",
@@ -49,7 +49,17 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 			}
 			token := jwt.NewWithClaims(jwt.SigningMethodES384, claims)
 			token.Header["kid"] = "test"
-			signed, e := token.SignedString(key)
+			if variant == "unknown kid" {
+				token.Header["kid"] = "other"
+			}
+			signingKey := key
+			if variant == "wrong signature" {
+				signingKey, e = ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+				if e != nil {
+					t.Fatal(e)
+				}
+			}
+			signed, e := token.SignedString(signingKey)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -88,7 +98,12 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 				JWKSURL: server.URL + "/keys",
 			})
 			e = verifier(context.Background(), `{"nonce":"`+n+`"}`)
+			code := "gpu.jwt_verification_failed"
+			if variant == "rejected" {
+				code = "gpu.attestation_rejected"
+			}
 			if strings.HasSuffix(variant, "timeout") {
+				code = "gpu.nras_request_failed"
 				var sdkErr *Error
 				if !errors.As(e, &sdkErr) || !sdkErr.Retryable {
 					t.Fatalf("timeout is not retryable: %v", e)
@@ -97,8 +112,8 @@ func TestGPUVerifiesSignedVerdictAndNonce(t *testing.T) {
 			if variant == "ok" && e != nil {
 				t.Fatal(e)
 			}
-			if variant != "ok" && e == nil {
-				t.Fatal("bad verdict accepted")
+			if variant != "ok" {
+				requireCode(t, e, code)
 			}
 		})
 	}

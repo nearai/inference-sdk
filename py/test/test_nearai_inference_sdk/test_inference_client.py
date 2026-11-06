@@ -313,24 +313,41 @@ class Gateway:
 
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 @pytest.mark.parametrize('kind', ['provider_tee', 'gateway'])
-async def test_chat_decrypts_and_verifies_json_and_streaming_responses(
-    monkeypatch, signing_algo, kind
+@pytest.mark.parametrize('e2ee', [False, True], ids=['plaintext', 'encrypted'])
+async def test_chat_json_and_stream_receipts_keep_their_preflight_snapshot(
+    monkeypatch, signing_algo, kind, e2ee
 ):
     gateway = Gateway(signing_algo, kind)
     gateway.model_report_count = 2
-    gateway.install(monkeypatch)
+    original_attestation = gateway.attestation
 
-    async with gateway.client() as client:
+    def distinct_deployment(nonce):
+        report = original_attestation(nonce)
+        quote_id = report['intel_quote']
+        compose = json.dumps({**json.loads(APP_COMPOSE), 'name': quote_id})
+        report['info']['tcb_info']['app_compose'] = compose
+        gateway.quotes[quote_id] = replace(
+            gateway.quotes[quote_id],
+            mr_config_id=b'\x01'
+            + hashlib.sha256(compose.encode()).digest()
+            + bytes(15),
+        )
+        return report
+
+    monkeypatch.setattr(gateway, 'attestation', distinct_deployment)
+    gateway.install(monkeypatch)
+    now = 0
+    monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
+
+    async with gateway.client(
+        e2ee=e2ee, attestation_cache_time_to_live_ms=1000
+    ) as client:
         preflight = await client.verify(MODEL)
+        assert len({item.deployment.app_compose for item in preflight.models}) == 2
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
         assert completion.choices[0].message.content == 'Hello back'
-        verified = await client.verify_response(completion.id)
-        assert verified.id == completion.id
-        assert verified.signature_kind == kind
-        receipts = [verified]
-
         stream = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
         )
@@ -339,23 +356,39 @@ async def test_chat_decrypts_and_verifies_json_and_streaming_responses(
             ''.join(chunk.choices[0].delta.content or '' for chunk in chunks)
             == 'Hello back'
         )
-        verified = await client.verify_response(chunks[0].id)
-        assert verified.signature_kind == kind
-        receipts.append(verified)
-        for receipt in receipts:
+        assert await client.verify(MODEL) is preflight
+        assert gateway.model_requests == [MODEL]
+
+        now = 2
+        gateway.model_report_count = 3
+        refreshed = await client.verify(MODEL)
+        assert refreshed is not preflight
+        assert len(refreshed.models) == 3
+        for completion_id in (completion.id, chunks[0].id):
+            receipt = await client.verify_response(completion_id)
+            assert receipt.id == completion_id
+            assert receipt.signature_kind == kind
+            assert await client.verify_response(completion_id) is receipt
             if kind == 'provider_tee':
                 assert receipt.attestations == preflight.models
+                assert all(
+                    actual is expected
+                    for actual, expected in zip(
+                        receipt.attestations, preflight.models, strict=True
+                    )
+                )
                 assert receipt.attestation is preflight.models[0]
             else:
                 assert receipt.attestation is preflight.gateway
                 assert not hasattr(receipt, 'attestations')
 
     assert gateway.plaintexts == ['Hello', 'Hello']
-    assert gateway.gateway_requests == 1
-    assert gateway.model_requests == [MODEL]
+    assert gateway.gateway_requests == 2
+    assert gateway.model_requests == [MODEL, MODEL]
     assert gateway.signature_requests == 2
     assert all(
-        'Hello' not in request.content.decode()
+        ('x-client-pub-key' in request.headers) == e2ee
+        and (b'Hello' not in request.content) == e2ee
         for request in gateway.completion_requests
     )
 
@@ -645,64 +678,6 @@ async def test_verify_returns_all_model_reports_or_gateway_only_results(
 
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 @pytest.mark.parametrize('e2ee', [False, True])
-@pytest.mark.parametrize('stream', [False, True])
-async def test_response_preserves_shared_signer_reports_from_its_preflight(
-    monkeypatch, signing_algo, e2ee, stream
-):
-    gateway = Gateway(signing_algo)
-    gateway.model_report_count = 2
-    original_attestation = gateway.attestation
-
-    def distinct_deployment(nonce):
-        report = original_attestation(nonce)
-        quote_id = report['intel_quote']
-        compose = json.dumps({**json.loads(APP_COMPOSE), 'name': quote_id})
-        report['info']['tcb_info']['app_compose'] = compose
-        gateway.quotes[quote_id] = replace(
-            gateway.quotes[quote_id],
-            mr_config_id=b'\x01'
-            + hashlib.sha256(compose.encode()).digest()
-            + bytes(15),
-        )
-        return report
-
-    monkeypatch.setattr(gateway, 'attestation', distinct_deployment)
-    gateway.install(monkeypatch)
-    now = 0
-    monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
-
-    async with gateway.client(
-        e2ee=e2ee, attestation_cache_time_to_live_ms=1000
-    ) as client:
-        original = await client.verify(MODEL)
-        completion = await client.chat.completions.create(
-            model=MODEL, messages=MESSAGES, stream=stream
-        )
-        if stream:
-            chunks = [chunk async for chunk in completion]
-            completion_id = chunks[0].id
-        else:
-            completion_id = completion.id
-        assert await client.verify(MODEL) is original
-        assert len({item.deployment.app_compose for item in original.models}) == 2
-
-        now = 2
-        gateway.model_report_count = 3
-        refreshed = await client.verify(MODEL)
-        assert len(refreshed.models) == 3
-        receipt = await client.verify_response(completion_id)
-
-    assert receipt.attestations == original.models
-    assert all(
-        actual is expected
-        for actual, expected in zip(receipt.attestations, original.models, strict=True)
-    )
-    assert receipt.attestation is original.models[0]
-    assert gateway.model_requests == [MODEL, MODEL]
-
-
-@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
-@pytest.mark.parametrize('e2ee', [False, True])
 @pytest.mark.parametrize('alternate_signer', [False, True])
 async def test_response_stays_bound_to_selected_key_in_a_mixed_signer_group(
     monkeypatch, signing_algo, e2ee, alternate_signer
@@ -720,6 +695,9 @@ async def test_response_stays_bound_to_selected_key_in_a_mixed_signer_group(
         ):
             reports = response.json()['model_attestations']
             nonce = request.url.params['nonce']
+            no_public_key = other.attestation(nonce)
+            no_public_key.pop('signing_public_key')
+            reports.insert(0, no_public_key)
             reports.extend([other.attestation(nonce), gateway.attestation(nonce)])
             return httpx.Response(200, json={'model_attestations': reports})
         if alternate_signer and request.url.path.startswith('/v1/signature/'):
@@ -738,7 +716,9 @@ async def test_response_stays_bound_to_selected_key_in_a_mixed_signer_group(
     gateway.install(monkeypatch)
     async with gateway.client(e2ee=e2ee) as client:
         preflight = await client.verify(MODEL)
+        assert preflight.models[0].signing_public_key is None
         assert [report.signer.signing_address for report in preflight.models] == [
+            other.address,
             gateway.address,
             other.address,
             gateway.address,
@@ -756,8 +736,8 @@ async def test_response_stays_bound_to_selected_key_in_a_mixed_signer_group(
             assert rejected.value.failure.code == 'signature.signer_mismatch'
         else:
             receipt = await client.verify_response(completion.id)
-            assert receipt.attestations == (preflight.models[0], preflight.models[2])
-            assert receipt.attestation is preflight.models[0]
+            assert receipt.attestations == (preflight.models[1], preflight.models[3])
+            assert receipt.attestation is preflight.models[1]
 
 
 @pytest.mark.parametrize('e2ee', [False, True])
@@ -833,20 +813,28 @@ async def test_verify_rejects_an_empty_model_without_fetching_evidence(monkeypat
     assert gateway.gateway_requests == 0
 
 
-async def test_model_requests_wait_for_gateway_verification(monkeypatch):
+async def test_preflight_awaits_gateway_then_model_verifier_then_policy(monkeypatch):
     gateway = Gateway()
     gateway.install(monkeypatch)
     release_gateway = asyncio.Event()
     gateway_started = asyncio.Event()
     model_verified = asyncio.Event()
+    release_model = asyncio.Event()
+    checked = []
 
     async def verify_gateway_quote(quote):
         gateway_started.set()
         await release_gateway.wait()
         return gateway.quotes[quote]
 
-    async def verify_model_deployment(_deployment):
+    async def verify_model_deployment(deployment):
         model_verified.set()
+        await release_model.wait()
+        checked.append(('verifier', deployment))
+
+    def check_deployment(model, deployment):
+        assert model == MODEL
+        checked.append(('policy', deployment))
 
     async with gateway.client(
         gateway_verification=GatewayVerificationOptions(
@@ -858,6 +846,7 @@ async def test_model_requests_wait_for_gateway_verification(monkeypatch):
                 deployment=verify_model_deployment,
             )
         ),
+        deployment_policy=check_deployment,
     ) as client:
         preflight = asyncio.create_task(client.verify(MODEL))
         async with asyncio.timeout(1):
@@ -874,13 +863,59 @@ async def test_model_requests_wait_for_gateway_verification(monkeypatch):
         assert gateway.model_requests == []
 
         release_gateway.set()
+        async with asyncio.timeout(1):
+            await model_verified.wait()
+        assert checked == []
+        assert gateway.completion_requests == []
+        assert not preflight.done() and not chat.done()
+        release_model.set()
         await preflight
-        assert model_verified.is_set()
+        assert [phase for phase, _ in checked] == ['verifier', 'policy']
+        assert checked[0][1] is checked[1][1]
         completion = await chat
         await client.verify_response(completion.id)
 
     assert gateway.gateway_requests == 1
     assert gateway.model_requests == [MODEL]
+    assert len(gateway.completion_requests) == 1
+
+
+async def test_cancelling_one_receipt_waiter_preserves_shared_verification(
+    monkeypatch, gateway
+):
+    gateway.install(monkeypatch)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    async with gateway.client() as client:
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        record = client._responses[completion.id]
+        api = record.session.attestation_client
+        original = api.fetch_completion_signature
+
+        async def fetch_signature(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(api, 'fetch_completion_signature', fetch_signature)
+        first = asyncio.create_task(client.verify_response(completion.id))
+        async with asyncio.timeout(1):
+            await entered.wait()
+        second = asyncio.create_task(client.verify_response(completion.id))
+        await asyncio.sleep(0)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        assert not second.done()
+        release.set()
+        receipt = await second
+        assert await client.verify_response(completion.id) is receipt
+        assert receipt.id == completion.id
+        assert record.request_body == b''
+        assert record.response_body is None and record.session is None
+    assert gateway.signature_requests == 1
     assert len(gateway.completion_requests) == 1
 
 
@@ -911,23 +946,6 @@ async def test_unverified_tls_peer_never_allows_chat(monkeypatch, peer_fingerpri
     assert gateway.pins == []
     assert gateway.headers == []
     assert gateway.completion_requests == []
-
-
-async def test_concurrent_receipt_checks_share_signature_retrieval(
-    monkeypatch, gateway
-):
-    gateway.install(monkeypatch)
-
-    async with gateway.client() as client:
-        completion = await client.chat.completions.create(
-            model=MODEL, messages=MESSAGES
-        )
-        first, second = await asyncio.gather(
-            client.verify_response(completion.id), client.verify_response(completion.id)
-        )
-
-    assert first == second
-    assert gateway.signature_requests == 1
 
 
 @pytest.mark.parametrize('streaming', [False, True])
@@ -1028,29 +1046,6 @@ async def test_retryable_verification_retains_capture_until_success(
         assert record.request_body == b''
         assert record.response_body is None and record.session is None
     assert len(gateway.completion_requests) == 1
-
-
-async def test_disabling_encryption_keeps_preflight_and_response_verification(
-    monkeypatch,
-):
-    gateway = Gateway()
-    gateway.install(monkeypatch)
-
-    async with gateway.client(
-        e2ee=False, attestation_cache_time_to_live_ms=0
-    ) as client:
-        for _ in range(2):
-            completion = await client.chat.completions.create(
-                model=MODEL, messages=MESSAGES
-            )
-            await client.verify_response(completion.id)
-
-    assert gateway.model_requests == [MODEL, MODEL]
-    assert all(
-        'x-client-pub-key' not in request.headers
-        for request in gateway.completion_requests
-    )
-    assert gateway.plaintexts == ['Hello', 'Hello']
 
 
 @pytest.mark.parametrize('failure', ['quote', 'deployment_policy'])

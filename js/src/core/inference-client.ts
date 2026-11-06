@@ -1225,12 +1225,9 @@ function captureResponseEntityBody(
     if (settled) return;
     try {
       const body = concatChunks(chunks);
-      if (
-        response.ok &&
-        protocol === 'messages' &&
-        isServerSentEventResponse(response)
-      ) {
-        validateMessageStream(body);
+      if (response.ok && isServerSentEventResponse(response)) {
+        if (protocol === 'messages') validateMessageStream(body);
+        if (protocol === 'responses') validateResponsesStream(body);
       }
       settled = true;
       resolveBody(body);
@@ -1361,6 +1358,41 @@ function hasSseCompletionSentinel({
   } catch {
     return false;
   }
+}
+
+/** Responses receipts require one consistent response ID, including after registration. */
+function validateResponsesStream(body: Uint8Array): void {
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
+  const { records, pending } = takeCompleteSseRecords(text, true);
+  let id: string | undefined;
+  for (const record of [...records.map((item) => item.value), pending]) {
+    if (getSseEvent(record) === 'error') throw invalidCompletionId();
+    for (const data of getSseDataRecords(record)) {
+      if (data === '' || data === '[DONE]') continue;
+      let event: unknown;
+      try {
+        event = JSON.parse(data);
+      } catch (cause) {
+        throw invalidCompletionId(cause);
+      }
+      if (
+        event === null ||
+        typeof event !== 'object' ||
+        Array.isArray(event) ||
+        'error' in event ||
+        ('type' in event && event.type === 'error')
+      )
+        throw invalidCompletionId();
+      // Output item IDs are not receipt IDs. EOF need not contain response.completed.
+      if (!('response' in event)) continue;
+      const parsed = v.safeParse(CompletionResponseIdSchema, event.response);
+      if (!parsed.success) throw invalidCompletionId();
+      if (id !== undefined && id !== parsed.output.id)
+        throw invalidCompletionId();
+      id = parsed.output.id;
+    }
+  }
+  if (id === undefined) throw invalidCompletionId();
 }
 
 /** EOF or a tool block alone cannot complete a signed Messages stream. */

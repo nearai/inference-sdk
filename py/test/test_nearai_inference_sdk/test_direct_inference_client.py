@@ -97,7 +97,10 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
     endpoint.install(monkeypatch)
     now = 1_700_000_000
     monkeypatch.setattr(direct_inference_client, 'time', lambda: now)
-    async with endpoint.client(e2ee=e2ee, ohttp=ohttp) as client:
+    options = {'ohttp': ohttp}
+    if e2ee:
+        options['e2ee'] = True
+    async with endpoint.client(**options) as client:
         attestations = await client.verify(MODEL)
         assert isinstance(attestations, DirectAttestationVerificationResult)
         assert len(attestations.attestations) == 2
@@ -133,24 +136,10 @@ async def test_direct_chat_and_stream_verify_the_selected_signer_group(
     assert endpoint.gateway_requests == 0
     assert endpoint.model_requests == ['direct']
     assert endpoint.plaintexts == ['Hello', 'Hello']
-
-
-async def test_direct_defaults_to_plaintext_with_preflight_and_response_verification(
-    monkeypatch,
-):
-    endpoint = DirectEndpoint()
-    endpoint.install(monkeypatch)
-    async with endpoint.client() as client:
-        completion = await client.chat.completions.create(
-            model=MODEL, messages=MESSAGES
-        )
-        assert completion.choices[0].message.content == 'Hello back'
-        result = await client.verify_response(completion.id)
-        assert len(result.attestations) == 2
-    request = endpoint.completion_requests[0]
-    assert 'x-client-pub-key' not in request.headers
-    assert json.loads(request.content)['messages'] == MESSAGES
-    assert endpoint.model_requests == ['direct']
+    for request in endpoint.completion_requests:
+        assert ('x-client-pub-key' in request.headers) == e2ee
+        if not e2ee:
+            assert json.loads(request.content)['messages'] == MESSAGES
 
 
 async def test_direct_preflight_rejects_an_invalid_sibling_before_chat(monkeypatch):
@@ -195,3 +184,102 @@ async def test_deployment_verifier_blocks_chat(monkeypatch):
             )
     assert raised.value.failure.code == 'provenance.verification_failed'
     assert endpoint.completion_requests == []
+
+
+@pytest.mark.parametrize('e2ee', [False, True], ids=['plaintext', 'encrypted'])
+@pytest.mark.parametrize(
+    'alternate_signer', [False, True], ids=['selected-signer', 'other-verified-signer']
+)
+async def test_direct_ohttp_selects_serving_group_when_serving_is_not_first(
+    monkeypatch, e2ee, alternate_signer
+):
+    endpoint = DirectEndpoint()
+    other = Gateway(seed=bytes([8]) * 32)
+    other.quotes = endpoint.quotes
+    original_handle = endpoint.handle
+
+    async def handle(request):
+        response = await original_handle(request)
+        if request.url.path == '/v1/attestation/report':
+            body = response.json()
+            unrelated = {
+                **other.attestation(request.url.params['nonce']),
+                'model_name': MODEL,
+            }
+            body['all_attestations'].insert(0, unrelated)
+            return httpx.Response(200, json=body)
+        if alternate_signer and request.url.path.startswith('/v1/signature/'):
+            signature = response.json()
+            signature['signing_address'] = other.address
+            signature['signature'] = other.key.sign(
+                signature['text'].encode()
+            ).signature.hex()
+            return httpx.Response(200, json=signature)
+        return response
+
+    monkeypatch.setattr(endpoint, 'handle', handle)
+    endpoint.install(monkeypatch)
+    async with endpoint.client(e2ee=e2ee, ohttp=True) as client:
+        preflight = await client.verify(MODEL)
+        assert len(preflight.attestations) == 3
+        assert preflight.serving_attestation is preflight.attestations[1]
+        assert preflight.attestations[0].signer.signing_address == other.address
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        assert completion.choices[0].message.content == 'Hello back'
+        if alternate_signer:
+            with pytest.raises(VerificationError, match='signature.signer_mismatch'):
+                await client.verify_response(completion.id)
+        else:
+            receipt = await client.verify_response(completion.id)
+            assert receipt.attestations == preflight.attestations[1:]
+            assert all(
+                actual is expected
+                for actual, expected in zip(
+                    receipt.attestations, preflight.attestations[1:], strict=True
+                )
+            )
+    assert (
+        endpoint.completion_requests[0].headers['x-model-pub-key']
+        == endpoint.public_key
+    )
+    assert len(endpoint.completion_requests) == 1
+    assert endpoint.model_requests == ['direct']
+    assert endpoint.signature_requests == 1
+
+
+async def test_direct_ohttp_never_uses_another_signers_key_when_serving_key_is_missing(
+    monkeypatch,
+):
+    endpoint = DirectEndpoint()
+    other = Gateway(seed=bytes([8]) * 32)
+    other.quotes = endpoint.quotes
+    original_handle = endpoint.handle
+
+    async def handle(request):
+        response = await original_handle(request)
+        if request.url.path != '/v1/attestation/report':
+            return response
+        body = response.json()
+        body.pop('signing_public_key')
+        for report in body['all_attestations']:
+            report.pop('signing_public_key')
+        body['all_attestations'].insert(
+            0, {**other.attestation(request.url.params['nonce']), 'model_name': MODEL}
+        )
+        return httpx.Response(200, json=body)
+
+    monkeypatch.setattr(endpoint, 'handle', handle)
+    endpoint.install(monkeypatch)
+    async with endpoint.client(ohttp=True) as client:
+        with pytest.raises(VerificationError, match='e2ee.model_public_key_required'):
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+    assert endpoint.completion_requests == []
+    assert endpoint.signature_requests == 0

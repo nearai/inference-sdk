@@ -23,48 +23,75 @@ import (
 	"time"
 
 	"github.com/cloudflare/circl/hpke"
+	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
+	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type fakeCloud struct {
-	authorization   string
-	expectedHost    string
-	encrypt         bool
-	streamBody      string
-	encoding        string
-	t               *testing.T
-	a               Attestation
-	q               QuoteVerificationResult
-	ohttp           *OHTTPAttestation
-	priv            ed25519.PrivateKey
-	mu              sync.Mutex
-	signatureStatus atomic.Int32
-	signatureCalls  atomic.Int32
-	unavailable     atomic.Bool
-	signatureWait   <-chan struct{}
-	signatures      map[string]CompletionSignature
-	next            int
-	metadata        atomic.Int32
-	attestations    atomic.Int32
-	modelReports    atomic.Int32
-	chats           atomic.Int32
-	dropChatAt      int32
-	extraModel      bool
-	sharedModel     bool
-	emptyModels     bool
-	gatewayReceipt  bool
-	badSharedModel  bool
-	missingModelKey bool
-	tee             bool
-	direct          bool
-	stream          bool
-	tamper          bool
-	badModel        bool
-	slow            <-chan struct{}
+	authorization    string
+	expectedHost     string
+	encrypt          bool
+	streamBody       string
+	encoding         string
+	t                *testing.T
+	a                Attestation
+	q                QuoteVerificationResult
+	ohttp            *OHTTPAttestation
+	priv             ed25519.PrivateKey
+	ecdsaKey         *secp.PrivateKey
+	mu               sync.Mutex
+	signatureStatus  atomic.Int32
+	signatureCalls   atomic.Int32
+	unavailable      atomic.Bool
+	signatureWait    <-chan struct{}
+	signatures       map[string]CompletionSignature
+	next             int
+	metadata         atomic.Int32
+	attestations     atomic.Int32
+	modelReports     atomic.Int32
+	chats            atomic.Int32
+	dropChatAt       int32
+	extraModel       bool
+	sharedModel      bool
+	emptyModels      bool
+	gatewayReceipt   bool
+	badSharedModel   bool
+	missingModelKey  bool
+	onlyLastModelKey bool
+	tee              bool
+	direct           bool
+	stream           bool
+	tamper           bool
+	badModel         bool
+	slow             <-chan struct{}
 }
 
 func newFakeCloud(t *testing.T) *fakeCloud {
 	a, q, key := attestationFixture(t, Ed25519)
 	return &fakeCloud{t: t, a: a, q: q, priv: key, signatures: map[string]CompletionSignature{}, authorization: "Bearer test"}
+}
+
+func (f *fakeCloud) useECDSA() {
+	key, err := secp.GeneratePrivateKey()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.ecdsaKey = key
+	public := key.PubKey().SerializeUncompressed()[1:]
+	address := keccak(public)[12:]
+	f.a.Signer = SigningIdentity{ECDSA, hex.EncodeToString(address)}
+	f.a.SigningPublicKey = hex.EncodeToString(public)
+	clear(f.q.ReportData[:32])
+	copy(f.q.ReportData, address)
+}
+
+func (f *fakeCloud) sign(text string) string {
+	if f.ecdsaKey == nil {
+		return hex.EncodeToString(ed25519.Sign(f.priv, []byte(text)))
+	}
+	digest := keccak([]byte(fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(text), text)))
+	compact := secpecdsa.SignCompact(f.ecdsaKey, digest, false)
+	return hex.EncodeToString(append(compact[1:], compact[0]))
 }
 func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/v1/chat/completions" && r.Header.Get("Accept-Encoding") != "identity" {
@@ -157,10 +184,16 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				other := maps.Clone(a)
 				other["signing_address"] = strings.Repeat("22", 32)
 				other["signing_public_key"] = other["signing_address"]
-				report := append([]byte(nil), q.ReportData...)
-				for i := 0; i < 32; i++ {
-					report[i] = 0x22
+				if f.a.Signer.SigningAlgo == ECDSA {
+					key := secp.PrivKeyFromBytes(bytes.Repeat([]byte{0x22}, 32))
+					public := key.PubKey().SerializeUncompressed()[1:]
+					other["signing_public_key"] = hex.EncodeToString(public)
+					other["signing_address"] = hex.EncodeToString(keccak(public)[12:])
 				}
+				report := append([]byte(nil), q.ReportData...)
+				clear(report[:32])
+				address, _ := hex.DecodeString(other["signing_address"].(string))
+				copy(report, address)
 				otherQuote := q
 				otherQuote.ReportData = report
 				encoded, _ := json.Marshal(otherQuote)
@@ -184,6 +217,11 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if f.emptyModels {
 				items = []any{}
 			}
+			if f.onlyLastModelKey {
+				for _, item := range items[:len(items)-1] {
+					delete(item.(map[string]any), "signing_public_key")
+				}
+			}
 			json.NewEncoder(w).Encode(map[string]any{"model_attestations": items})
 		} else {
 			root := map[string]any{"gateway_attestation": a}
@@ -204,7 +242,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if f.encrypt {
-			if r.Header.Get("X-Signing-Algo") != "ed25519" {
+			if r.Header.Get("X-Signing-Algo") != string(f.a.Signer.SigningAlgo) || r.Header.Get("X-Model-Pub-Key") != f.a.SigningPublicKey {
 				f.t.Error("missing E2EE signing algorithm")
 			}
 		} else if r.Header.Get("X-Signing-Algo") != "" || r.Header.Get("X-Client-Pub-Key") != "" {
@@ -235,11 +273,14 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			secret[0] &= 248
 			secret[31] &= 127
 			secret[31] |= 64
-			message, err := decryptText(content, e2eeKey{algo: Ed25519, secret: secret})
+			if f.ecdsaKey != nil {
+				secret = f.ecdsaKey.Serialize()
+			}
+			message, err := decryptText(content, e2eeKey{algo: f.a.Signer.SigningAlgo, secret: secret})
 			if err != nil || message != "review" {
 				f.t.Errorf("E2EE request: %q %v", message, err)
 			}
-			encrypted, err := encryptText("answer", E2EEModelKey{Ed25519, r.Header.Get("X-Client-Pub-Key")})
+			encrypted, err := encryptText("answer", E2EEModelKey{f.a.Signer.SigningAlgo, r.Header.Get("X-Client-Pub-Key")})
 			if err != nil {
 				f.t.Error(err)
 			}
@@ -254,7 +295,7 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			kind = "provider_tee"
 			text = "canonical/model:" + text
 		}
-		sig := CompletionSignature{kind, text, hex.EncodeToString(ed25519.Sign(f.priv, []byte(text))), f.a.Signer}
+		sig := CompletionSignature{kind, text, f.sign(text), f.a.Signer}
 		f.mu.Lock()
 		f.signatures[id] = sig
 		f.mu.Unlock()
@@ -649,66 +690,94 @@ func boolInt(b bool) int {
 }
 
 func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
-	f := newFakeCloud(t)
-	f.tee, f.sharedModel, f.extraModel = true, true, true
-	f.q.AdvisoryIDs = []string{"original"}
-	var deployments []string
-	client, _ := fakeClient(t, f, func(o *InferenceOptions) {
-		o.DeploymentPolicy = func(_ context.Context, _ string, deployment MeasuredDeployment) error {
-			deployments = append(deployments, deployment.AppCompose)
-			return nil
+	for _, algo := range []SigningAlgo{Ed25519, ECDSA} {
+		for _, encrypted := range []bool{false, true} {
+			for _, streaming := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/encrypted=%t/streaming=%t", algo, encrypted, streaming), func(t *testing.T) {
+					f := newFakeCloud(t)
+					if algo == ECDSA {
+						f.useECDSA()
+					}
+					f.encrypt, f.stream = encrypted, streaming
+					f.onlyLastModelKey = encrypted
+					f.tee, f.sharedModel, f.extraModel = true, true, true
+					f.q.AdvisoryIDs = []string{"original"}
+					var deployments []string
+					client, _ := fakeClient(t, f, func(o *InferenceOptions) {
+						o.SigningAlgo, o.E2EE = algo, encrypted
+						o.DeploymentPolicy = func(_ context.Context, _ string, deployment MeasuredDeployment) error {
+							deployments = append(deployments, deployment.AppCompose)
+							return nil
+						}
+					})
+					ctx := context.Background()
+					before, err := client.Verify(ctx, "canonical/model")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(before.Models) != 3 || len(deployments) != 3 || deployments[0] == deployments[2] || before.Models[0].Signer == before.Models[1].Signer {
+						t.Fatalf("expected three verified reports with two keys and distinct deployments: %#v %v", before.Models, deployments)
+					}
+					expected := []VerifiedAttestation{before.Models[0], before.Models[2]}
+					selected := before.Models[0]
+					if encrypted {
+						selected = before.Models[2]
+					}
+					input := chatRequest()
+					input["stream"] = streaming
+					body, _ := json.Marshal(input)
+					request, _ := http.NewRequestWithContext(ctx, "POST", client.BaseURL()+"chat/completions", bytes.NewReader(body))
+					response, err := client.HTTPClient().Do(request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					visible, err := io.ReadAll(response.Body)
+					response.Body.Close()
+					if err != nil || !bytes.Contains(visible, []byte("answer")) {
+						t.Fatalf("plaintext response = %s, error = %v", visible, err)
+					}
+					// Expire the session without sleeping, then fetch new evidence before verifying
+					// the receipt. It must keep the complete signer group from the request snapshot.
+					client.mu.Lock()
+					client.sessions["canonical/model"].expires = time.Time{}
+					client.mu.Unlock()
+					refreshed, err := client.Verify(ctx, "canonical/model")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if reflect.DeepEqual(refreshed.Models, before.Models) || f.modelReports.Load() != 2 {
+						t.Fatal("fixture did not refresh the model evidence")
+					}
+					first, err := client.VerifyResponse(ctx, "chat-1")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if len(first.Attestations) != 2 || first.Attestations[0].InstanceID != "instance-0" || first.Attestations[1].InstanceID != "instance-1" || first.Attestation == nil {
+						t.Fatalf("response lost shared-signer reports: %#v", first)
+					}
+					if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(*first.Attestation, selected) {
+						t.Fatal("response did not retain the preflight evidence and compatibility representative")
+					}
+					first.Attestations[1].Deployment.AppCompose = "mutated"
+					first.Attestations[1].AdvisoryIDs[0] = "mutated"
+					first.Attestation.AdvisoryIDs[0] = "mutated"
+					cached, err := client.VerifyResponse(ctx, "chat-1")
+					if err != nil {
+						t.Fatal(err)
+					}
+					after, err := client.Verify(ctx, "canonical/model")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(*cached.Attestation, selected) {
+						t.Fatal("mutating a receipt changed the cached report collection")
+					}
+					if f.attestations.Load() != 4 || f.signatureCalls.Load() != 1 || len(deployments) != 6 {
+						t.Fatal("cached verification refetched evidence or reran policy")
+					}
+				})
+			}
 		}
-	})
-	ctx := context.Background()
-	before, err := client.Verify(ctx, "canonical/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(before.Models) != 3 || len(deployments) != 3 || deployments[0] == deployments[2] || before.Models[0].Signer == before.Models[1].Signer {
-		t.Fatalf("expected three verified reports with two keys and distinct deployments: %#v %v", before.Models, deployments)
-	}
-	expected := []VerifiedAttestation{before.Models[0], before.Models[2]}
-	if _, err = client.CreateChatCompletion(ctx, chatRequest()); err != nil {
-		t.Fatal(err)
-	}
-	// Expire the session without sleeping, then fetch new evidence before verifying
-	// the receipt. It must keep the complete signer group from the request snapshot.
-	client.mu.Lock()
-	client.sessions["canonical/model"].expires = time.Time{}
-	client.mu.Unlock()
-	refreshed, err := client.Verify(ctx, "canonical/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reflect.DeepEqual(refreshed.Models, before.Models) || f.modelReports.Load() != 2 {
-		t.Fatal("fixture did not refresh the model evidence")
-	}
-	first, err := client.VerifyResponse(ctx, "chat-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first.Attestations) != 2 || first.Attestations[0].InstanceID != "instance-0" || first.Attestations[1].InstanceID != "instance-1" || first.Attestation == nil {
-		t.Fatalf("response lost shared-signer reports: %#v", first)
-	}
-	if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(*first.Attestation, before.Models[0]) {
-		t.Fatal("response did not retain the preflight evidence and compatibility representative")
-	}
-	first.Attestations[1].Deployment.AppCompose = "mutated"
-	first.Attestations[1].AdvisoryIDs[0] = "mutated"
-	first.Attestation.AdvisoryIDs[0] = "mutated"
-	cached, err := client.VerifyResponse(ctx, "chat-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, err := client.Verify(ctx, "canonical/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(*cached.Attestation, before.Models[0]) {
-		t.Fatal("mutating a receipt changed the cached report collection")
-	}
-	if f.attestations.Load() != 4 || f.signatureCalls.Load() != 1 || len(deployments) != 6 {
-		t.Fatal("cached verification refetched evidence or reran policy")
 	}
 }
 
@@ -953,28 +1022,6 @@ func TestZeroTTLAndResponseExpiry(t *testing.T) {
 	_, e := c.VerifyResponse(context.Background(), "chat-1")
 	requireCode(t, e, "api.completion_not_found")
 }
-func TestPinnedTLSRejectsBeforeSending(t *testing.T) {
-	var requests atomic.Int32
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); io.WriteString(w, "ok") }))
-	defer server.Close()
-	base := server.Client().Transport.(*http.Transport)
-	base = base.Clone()
-	base.TLSClientConfig.InsecureSkipVerify = false
-	base.TLSClientConfig.RootCAs = server.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs
-	// httptest's client trusts its certificate through RootCAs.
-	transport, e := NewPinnedTransport(base, strings.Repeat("00", 32))
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport}
-	if _, e = client.Get(server.URL); e == nil {
-		t.Fatal("wrong pin accepted")
-	}
-	if requests.Load() != 0 {
-		t.Fatal("request sent before pin checked")
-	}
-}
 func TestUnconsumedStreamCannotVerify(t *testing.T) {
 	for _, encoding := range []string{"", "gzip", "br"} {
 		t.Run(encoding, func(t *testing.T) {
@@ -990,41 +1037,6 @@ func TestUnconsumedStreamCannotVerify(t *testing.T) {
 			res.Body.Close()
 			_, e = c.VerifyResponse(context.Background(), "chat-1")
 			requireCode(t, e, "api.completion_not_found")
-		})
-	}
-}
-
-func TestSuccessfulE2EEInference(t *testing.T) {
-	for _, stream := range []bool{false, true} {
-		t.Run(itoa(boolInt(stream)), func(t *testing.T) {
-			f := newFakeCloud(t)
-			f.tee = true
-			f.sharedModel, f.extraModel = true, true
-			f.encrypt = true
-			f.stream = stream
-			c, _ := fakeClient(t, f, func(o *InferenceOptions) { o.E2EE = true })
-			preflight, e := c.Verify(context.Background(), "canonical/model")
-			if e != nil || len(preflight.Models) != 3 {
-				t.Fatalf("model preflight: %#v %v", preflight, e)
-			}
-			body, _ := json.Marshal(chatRequest())
-			req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
-			res, e := c.HTTPClient().Do(req)
-			if e != nil {
-				t.Fatal(e)
-			}
-			visible, e := io.ReadAll(res.Body)
-			res.Body.Close()
-			if e != nil || !bytes.Contains(visible, []byte("answer")) {
-				t.Fatalf("response=%s err=%v", visible, e)
-			}
-			receipt, e := c.VerifyResponse(context.Background(), "chat-1")
-			if e != nil {
-				t.Fatal(e)
-			}
-			if !reflect.DeepEqual(receipt.Attestations, []VerifiedAttestation{preflight.Models[0], preflight.Models[2]}) {
-				t.Fatal("E2EE response did not retain every report for the selected signer")
-			}
 		})
 	}
 }

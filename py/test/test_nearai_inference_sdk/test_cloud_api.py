@@ -404,7 +404,7 @@ def completion_signature_response(
     )
 
 
-async def test_model_helper_requests_fresh_evidence(
+async def test_model_helper_requests_fresh_evidence_and_preserves_report_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[tuple[str, dict[str, str]]] = []
@@ -412,50 +412,55 @@ async def test_model_helper_requests_fresh_evidence(
     async def fake_fetch(url: str, headers: Mapping[str, str]) -> FetchResponse:
         calls.append((url, dict(headers)))
         nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        first = cloud_attestation(
+            nonce, report_data='44' * 64, signing_public_key='55' * 65
+        )
         return FetchResponse(
             status=200,
             body=json.dumps(
                 {
                     'model_attestations': [
+                        first,
                         cloud_attestation(
-                            nonce,
-                            report_data='44' * 64,
-                            signing_public_key='55' * 65,
+                            nonce, signing_address='33' * 20, report_data='44' * 64
                         ),
-                        cloud_attestation(
-                            nonce,
-                            signing_address='33' * 20,
-                            report_data='44' * 64,
-                        ),
+                        first,
                     ]
                 }
             ).encode(),
         )
 
     use_fake_cloud_api_fetch(monkeypatch, fake_fetch)
-
-    fetched = await cloud_client().fetch_model_attestations(
-        'canonical-model',
-        signing_algo='ecdsa',
-        signing_address=SIGNING_ADDRESS,
+    client = cloud_client()
+    first = await client.fetch_model_attestations(
+        'canonical-model', signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
     )
-    assert tuple(
-        attestation.signer.signing_address for attestation in fetched.attestations
-    ) == (SIGNING_ADDRESS, '33' * 20)
-    assert fetched.attestations[0].signing_public_key == '55' * 65
-    assert fetched.attestations[1].signing_public_key is None
-    assert len(calls) == 1
-    url, headers = calls[0]
-    query = parse_qs(urlsplit(url).query)
-    assert urlsplit(url).geturl().startswith(f'{BASE_URL}/attestation/report?')
-    assert query['model'] == ['canonical-model']
-    assert query['provider'] == ['near']
-    assert query['nonce'] == [fetched.client_binding.nonce]
-    assert query['include_tls_fingerprint'] == ['false']
-    assert query['signing_algo'] == ['ecdsa']
-    assert query['signing_address'] == [SIGNING_ADDRESS]
-    assert headers['authorization'] == 'Bearer test'
-    assert headers['x-no-aliasing'] == 'true'
+    second = await client.fetch_model_attestations(
+        'canonical-model', signing_algo='ecdsa', signing_address=SIGNING_ADDRESS
+    )
+    assert first.client_binding.nonce != second.client_binding.nonce
+    assert len(calls) == 2
+    for fetched, (url, headers) in zip((first, second), calls, strict=True):
+        assert tuple(
+            attestation.signer.signing_address for attestation in fetched.attestations
+        ) == (SIGNING_ADDRESS, '33' * 20, SIGNING_ADDRESS)
+        assert fetched.attestations[0] == fetched.attestations[2]
+        assert fetched.attestations[0].signing_public_key == '55' * 65
+        assert fetched.attestations[1].signing_public_key is None
+        assert all(
+            attestation.nonce == fetched.client_binding.nonce
+            for attestation in fetched.attestations
+        )
+        query = parse_qs(urlsplit(url).query)
+        assert url.startswith(f'{BASE_URL}/attestation/report?')
+        assert query['model'] == ['canonical-model']
+        assert query['provider'] == ['near']
+        assert query['nonce'] == [fetched.client_binding.nonce]
+        assert query['include_tls_fingerprint'] == ['false']
+        assert query['signing_algo'] == ['ecdsa']
+        assert query['signing_address'] == [SIGNING_ADDRESS]
+        assert headers['authorization'] == 'Bearer test'
+        assert headers['x-no-aliasing'] == 'true'
 
 
 def test_model_selection_matches_equivalent_hex_signer_formats() -> None:
@@ -1096,34 +1101,6 @@ async def test_model_attestation_fetch_preserves_an_empty_collection(
     fetched = await cloud_client().fetch_model_attestations('canonical-model')
 
     assert fetched.attestations == ()
-
-
-async def test_model_attestation_fetch_preserves_multiple_records(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def two_attestations(url: str, _: Mapping[str, str]) -> FetchResponse:
-        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
-        return FetchResponse(
-            status=200,
-            body=json.dumps(
-                {
-                    'model_attestations': [
-                        cloud_attestation(nonce),
-                        cloud_attestation(nonce),
-                    ]
-                }
-            ).encode(),
-        )
-
-    use_fake_cloud_api_fetch(monkeypatch, two_attestations)
-
-    fetched = await cloud_client().fetch_model_attestations('canonical-model')
-
-    assert len(fetched.attestations) == 2
-    assert all(
-        attestation.nonce == fetched.client_binding.nonce
-        for attestation in fetched.attestations
-    )
 
 
 async def test_model_attestation_fetch_checks_every_nonce(
