@@ -30,6 +30,10 @@ Construct it with `new(api_key: impl Into<Option<String>>)` or
 receipt registration. Non-2xx responses pass through `send`; `chat_completions`, `create_response`, and `create_message`
 turn them into `ApiError::HttpStatus`.
 
+In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
+still captures the full response to EOF for signature verification and OHTTP
+authentication.
+
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
 `Gateway` or the deprecated `Model` representative. For a Gateway
 `ProviderTee` receipt, `attestations` contains every verified report sharing the

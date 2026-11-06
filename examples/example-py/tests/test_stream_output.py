@@ -23,7 +23,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         for streaming in (False, True):
             body = (
                 b'data: {"id":"chat-fixture","choices":[{"delta":{"content":"ok"}}]}\n\n'
-                b'data: [DONE]\n\n'
+                b'data: [DONE]\n\ndata: ignored after [DONE]\n\n'
                 if streaming
                 else b'{"id":"chat-fixture","choices":[{"message":{"content":"ok"}}]}'
             )
@@ -85,6 +85,7 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     yield bytes([byte])
                 test.assertEqual(output.getvalue(), 'Hello 🌍')
                 yield (separator * 2 + 'data: [DONE]' + separator * 2).encode()
+                yield ('data: ignored after [DONE]' + separator * 2).encode()
 
         with contextlib.redirect_stdout(output):
             response = httpx.Response(200, stream=Source())

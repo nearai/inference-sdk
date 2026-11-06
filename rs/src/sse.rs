@@ -106,21 +106,25 @@ pub(crate) fn transform(
     record: &[u8],
     key: Option<&ResponseKey>,
     id: &mut Option<String>,
+    done: &mut bool,
     responses: bool,
     messages: bool,
 ) -> Result<Vec<u8>, InferenceError> {
+    if *done {
+        return Ok(record.to_vec());
+    }
     let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
     let lines = lines(text);
     let values: Vec<_> = lines.iter().filter_map(|(line, _)| data(line)).collect();
     let joined = values.join("\n");
+    if joined == "[DONE]" {
+        *done = true;
+        return Ok(record.to_vec());
+    }
     if responses && event_name(&lines) == Some("error") {
         return Err(invalid_response().into());
     }
-    if values.is_empty()
-        || joined.is_empty()
-        || joined == "[DONE]"
-        || event_name(&lines) == Some("error")
-    {
+    if values.is_empty() || joined.is_empty() || event_name(&lines) == Some("error") {
         return Ok(record.to_vec());
     }
     let mut body: Value = match serde_json::from_str(&joined) {

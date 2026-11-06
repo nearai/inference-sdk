@@ -440,6 +440,7 @@ impl InferenceCore {
             let mut wire = Vec::new();
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut done = false;
             let mut message_state = crate::sse::MessageStreamState::default();
             let mut first_record = true;
             let mut transform_record = |record: Vec<u8>| -> Result<Vec<u8>, InferenceError> {
@@ -449,7 +450,7 @@ impl InferenceCore {
                     &record
                 };
                 if messages { message_state.observe(parsed)?; }
-                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, responses, messages)?;
+                let transformed = crate::sse::transform(parsed, key.as_ref(), &mut id, &mut done, responses, messages)?;
                 // The retained signature payload and plaintext output keep the BOM.
                 Ok(if key.is_some() { transformed } else { record })
             };

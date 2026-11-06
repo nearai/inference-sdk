@@ -927,7 +927,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
 
     def _capture(self, chunk: bytes) -> None:
         self._chunks.append(chunk)
-        if not self._streaming:
+        if not self._streaming or (self._done and not self._messages):
             return
         self._pending += self._decoder.decode(chunk)
         parsed = take_complete_sse_records(self._pending)
@@ -936,6 +936,7 @@ class _CapturedResponseStream(httpx.AsyncByteStream):
             for data in get_sse_data_records(record.value):
                 if data == '[DONE]':
                     self._done = True
+                    return
                 elif self._messages and data:
                     try:
                         value = json.loads(data)
@@ -1033,7 +1034,9 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
     try:
         if content_type.lower().startswith('text/event-stream'):
             for data in get_sse_data_records(body.decode('utf-8-sig')):
-                if data and data != '[DONE]':
+                if data == '[DONE]':
+                    break
+                if data:
                     value = json.loads(data)
                     if responses:
                         value = (
@@ -1051,14 +1054,17 @@ def _completion_id(body: bytes, content_type: str, responses: bool = False) -> s
 
 
 def _validate_response_stream(body: bytes) -> None:
-    """Bind a Responses receipt to one response ID across all wire events."""
+    """Bind a Responses receipt to one response ID before [DONE] or EOF."""
     response_id = None
     parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
     for record in [*(item.value for item in parsed.records), parsed.pending]:
+        values = get_sse_data_records(record)
+        if '[DONE]' in values:
+            break
         if get_sse_event(record) == 'error':
             raise _invalid_completion_id()
-        for data in get_sse_data_records(record):
-            if not data or data == '[DONE]':
+        for data in values:
+            if not data:
                 continue
             try:
                 event = json.loads(data)

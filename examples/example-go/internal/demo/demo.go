@@ -101,6 +101,9 @@ type EventDecoder struct {
 }
 
 func (d *EventDecoder) Push(chunk []byte, eof bool) ([]map[string]any, error) {
+	if d.Done {
+		return nil, nil
+	}
 	d.pending = append(d.pending, chunk...)
 	if !d.started {
 		if len(d.pending) < 3 && !eof {
@@ -137,6 +140,8 @@ func (d *EventDecoder) Push(chunk []byte, eof bool) ([]map[string]any, error) {
 			data := strings.Join(values, "\n")
 			if data == "[DONE]" {
 				d.Done = true
+				d.pending = nil
+				return events, nil
 			} else if data != "" {
 				var event map[string]any
 				if err := json.Unmarshal([]byte(data), &event); err != nil {

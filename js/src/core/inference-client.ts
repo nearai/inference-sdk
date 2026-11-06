@@ -1278,7 +1278,8 @@ function getSseCompletionId(
   protocol: CompletionProtocol,
 ): string {
   for (const data of getSseDataRecords(text)) {
-    if (data === '' || data === '[DONE]') {
+    if (data === '[DONE]') break;
+    if (data === '') {
       continue;
     }
     let value: unknown;
@@ -1339,15 +1340,17 @@ function hasSseCompletionSentinel({
   }
 }
 
-/** Responses receipts require one consistent response ID, including after registration. */
+/** Responses receipts require one consistent response ID before [DONE] or EOF. */
 function validateResponsesStream(body: Uint8Array): void {
   const text = new TextDecoder('utf-8', { fatal: true }).decode(body);
   const { records, pending } = takeCompleteSseRecords(text, true);
   let id: string | undefined;
   for (const record of [...records.map((item) => item.value), pending]) {
+    const values = getSseDataRecords(record);
+    if (values.includes('[DONE]')) break;
     if (getSseEvent(record) === 'error') throw invalidCompletionId();
-    for (const data of getSseDataRecords(record)) {
-      if (data === '' || data === '[DONE]') continue;
+    for (const data of values) {
+      if (data === '') continue;
       let event: unknown;
       try {
         event = JSON.parse(data);

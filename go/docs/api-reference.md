@@ -471,8 +471,8 @@ all model reports, and `VerifiedAt`. Direct clients return
 preflight endpoint's `ServingAttestation`, and `VerifiedAt`. Direct TLS binding
 is disabled, so `SPKIFingerprints` is empty. The serving report identifies the
 preflight endpoint, not the instance serving a later completion. Cache hits
-preserve the original timestamp. Mutating returned evidence does not modify the
-internal cache.
+preserve the original timestamp. Treat returned evidence and its nested data as
+read-only.
 
 `AttestationTTL` and `ResponseTTL` are optional `*time.Duration` values, defaulting
 to one hour. A pointer to zero disables reuse/retention. Expired records are
@@ -483,6 +483,10 @@ is not cached. Retryable signature retrieval failures can be attempted again
 without replaying the completion.
 
 Streaming is incremental, but signature verification requires retaining the wire body.
+In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
+still captures the full response to EOF for signature verification and OHTTP
+authentication.
+
 Once verification caches a success or a failure that cannot be retried, it releases
 the captured request and response bytes. Subsequent calls reuse that outcome until
 the original TTL expires. Unverified records and retryable failures retain their

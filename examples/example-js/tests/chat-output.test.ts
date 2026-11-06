@@ -48,7 +48,10 @@ for (const separator of ['\n', '\r\n', '\r']) {
       assert.equal(output.id, 'chat-fixture');
     }
     assert.deepEqual(
-      chatOutput(`${record}data: [DONE]${separator}${separator}`, true),
+      chatOutput(
+        `${record}data: [DONE]${separator}${separator}data: ignored after [DONE]${separator}${separator}`,
+        true,
+      ),
       { id: 'chat-fixture', text: 'Hello 🌍' },
     );
     assert.throws(() => chatOutput(record, true), /without \[DONE\]/);

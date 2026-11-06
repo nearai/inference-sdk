@@ -300,7 +300,7 @@ async def test_decrypts_multiline_sse_across_split_bytes(
     }
     prefix = f': 保活{separator}event: message{line_ending}id: part-1{line_ending}'
     data = f'data: {{"id":"chat-1",{line_ending}data: "choices":{json.dumps([{"delta": delta}])}}}'
-    suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\n'
+    suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n'
     source = ByteStream((prefix + data + separator + suffix).encode())
     response = await prepared.decrypt_response(
         httpx.Response(

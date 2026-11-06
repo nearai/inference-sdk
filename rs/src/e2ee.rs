@@ -378,14 +378,15 @@ impl PreparedE2eeChatRequest {
         Box::pin(async_stream::try_stream! {
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut done = false;
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
                 for record in decoder.push(&chunk, false) {
-                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
+                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, &mut done, false, false)?);
                 }
             }
             for record in decoder.push(&[], true) {
-                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
+                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, &mut done, false, false)?);
             }
         })
     }
@@ -724,7 +725,7 @@ mod tests {
         use futures_util::StreamExt;
         let (key, model) = fixed_key(SigningAlgo::Ed25519);
         let ciphertext = encrypt("🌍", &model).unwrap();
-        let source=format!(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: {{\"id\":\"chat-1\",\r\ndata: \"choices\":[{{\"delta\":{{\"content\":\"{ciphertext}\"}}}}]}}\r\n\r\ndata: [DONE]\n\n: tail");
+        let source=format!(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: {{\"id\":\"chat-1\",\r\ndata: \"choices\":[{{\"delta\":{{\"content\":\"{ciphertext}\"}}}}]}}\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n");
         let raw = source.as_bytes().to_vec();
         let input = Box::pin(futures_util::stream::iter(
             raw.into_iter().map(|b| Ok(bytes::Bytes::from(vec![b]))),
@@ -744,6 +745,6 @@ mod tests {
         let output = String::from_utf8(bytes).unwrap();
         assert!(output.starts_with(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: "));
         assert!(output.contains("🌍"));
-        assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\n: tail"));
+        assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n"));
     }
 }

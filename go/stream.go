@@ -135,14 +135,18 @@ func (s *sseReader) Read(p []byte) (int, error) {
 				}
 			}
 		} else if data == "[DONE]" {
-			// Authenticate trailing OHTTP frames before exposing completion.
-			if _, e = io.Copy(io.Discard, s.reader); e == nil && s.finish != nil {
+			// Keep trailing bytes without interpreting more events, and
+			// authenticate the complete response before exposing completion.
+			var tail []byte
+			tail, e = io.ReadAll(s.reader)
+			if e == nil && s.finish != nil {
 				e = s.finish()
 			}
 			s.ended = true
 			if e != nil {
 				return 0, e
 			}
+			record = append(record, tail...)
 		}
 		s.pending = record
 	}

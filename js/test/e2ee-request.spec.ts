@@ -212,7 +212,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
         const prefix = `: 保活${separator}`;
         const controls = `event: message${lineEnding}id: part-1${lineEnding}`;
         const suffix =
-          'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\n';
+          'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n';
         const data = [
           `data: {"id":${JSON.stringify(chunk.id)},`,
           `data: "choices":${JSON.stringify(chunk.choices)}}`,

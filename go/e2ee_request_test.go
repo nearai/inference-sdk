@@ -146,12 +146,12 @@ func TestE2EEChatFieldContract(t *testing.T) {
 					encoded, _ := json.Marshal(payload)
 					var visible []byte
 					if stream {
-						source := io.NopCloser(bytes.NewReader(append(append([]byte("event: message\nid: event-1\ndata: "), encoded...), []byte("\n\ndata: [DONE]\n\n")...)))
+						source := io.NopCloser(bytes.NewReader(append(append([]byte("event: message\nid: event-1\ndata: "), encoded...), []byte("\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n")...)))
 						reader := prepared.DecryptSSE(source)
 						visible, err = io.ReadAll(reader)
 						reader.Close()
 						if err == nil {
-							if !bytes.Contains(visible, []byte("event: message\nid: event-1\n")) || !bytes.HasSuffix(visible, []byte("data: [DONE]\n\n")) {
+							if !bytes.Contains(visible, []byte("event: message\nid: event-1\n")) || !bytes.HasSuffix(visible, []byte("data: [DONE]\n\ndata: ignored after [DONE]\n\n")) {
 								t.Fatal("SSE controls changed")
 							}
 							data, _ := sseData(bytes.SplitN(visible, []byte("\n\n"), 2)[0])
