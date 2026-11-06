@@ -371,8 +371,9 @@ response signatures. It does not send Chat requests or retain their bodies.
 The Node `AttestationClient` observes the TLS peer only for its Gateway
 attestation request. After `verifyGatewayAttestation` returns an
 `attested` TLS binding, pass its `spkiFingerprint` to
-`createPinnedTlsFetch` for raw HTTPS requests your application owns. The
-Node inference clients apply this automatically to their complete Chat flow.
+`createPinnedTlsFetch`, then supply that transport as `fetch` to an evidence
+client and use it for raw Chat requests. The Node inference clients apply this
+automatically to their complete Chat flow.
 
 For one three-stage verification operation, pass the same explicit
 `signingAlgo` to both attestation fetches and `fetchCompletionSignature`.
@@ -385,8 +386,12 @@ The Gateway's report and signature endpoints have different defaults.
 | `apiKey?` | `string` | No | — | Bearer credential for model reports, metadata, and signature requests; overrides `headers.Authorization`. |
 | `headers?` | `HeadersInit` | No | — | Static request headers; Gateway reports omit `Authorization`, `api-key`, and `x-api-key`. Model reports use configured authentication. |
 | `baseUrl?` | `string` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway API base URL without a query or fragment. Include the API path when using a custom endpoint. |
+| `fetch?` | `typeof globalThis.fetch` | No | Runtime Fetch | Transport for model reports, metadata, and completion signatures. Gateway attestation keeps its default transport and same-request TLS peer capture. |
 
 Use `new AttestationClient()` to fetch attestation without credentials.
+The caller controls the supplied transport's trust policy. The Node
+`createPinnedTlsFetch` helper enforces the verified Gateway SPKI without
+falling back or retrying; a pin mismatch propagates as `VerificationError`.
 
 Model reports through the Gateway use the client's configured API key or authentication
 headers. Listed models can be queried without credentials; unlisted models require a

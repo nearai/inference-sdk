@@ -97,30 +97,7 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         GatewayTlsBinding::Attested { .. }
     ));
 
-    let mut models = Vec::new();
-    if model.provider == "near" {
-        let fetched_models = client
-            .fetch_model_attestations(&model.id, Some(signing_algo), None)
-            .await?;
-        assert!(
-            !fetched_models.attestations.is_empty(),
-            "Expected NEAR model evidence"
-        );
-        for attestation in &fetched_models.attestations {
-            let verified = verify_model_attestation(
-                attestation,
-                &fetched_models.client_binding,
-                None,
-                Default::default(),
-            )
-            .await?;
-            assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
-            models.push(verified);
-        }
-    }
-
-    // Bind standalone Chat to the same quote-authenticated Gateway TLS identity
-    // as the JavaScript and Python live cases, before any HTTP bytes are sent.
+    // Pin all subsequent evidence, Chat, and signature requests to the verified Gateway.
     let pin = match &gateway.tls_binding {
         GatewayTlsBinding::Attested { spki_fingerprint } => spki_fingerprint,
         GatewayTlsBinding::None => {
@@ -128,6 +105,30 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         }
     };
     let http = create_pinned_tls_client(std::slice::from_ref(pin))?;
+    let client = client.with_http_client(http.clone());
+
+    let mut model_attestations = Vec::new();
+    if model.provider == "near" {
+        let fetched_model_attestations = client
+            .fetch_model_attestations(&model.id, Some(signing_algo), None)
+            .await?;
+        assert!(
+            !fetched_model_attestations.attestations.is_empty(),
+            "Expected NEAR model evidence"
+        );
+        for attestation in &fetched_model_attestations.attestations {
+            let verified = verify_model_attestation(
+                attestation,
+                &fetched_model_attestations.client_binding,
+                None,
+                Default::default(),
+            )
+            .await?;
+            assert_eq!(verified.gpu_evidence, GpuEvidenceStatus::Verified);
+            model_attestations.push(verified);
+        }
+    }
+
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     for stream in [false, true] {
         // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
@@ -169,9 +170,10 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         altered.push(b' ');
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
-                let matching = find_model_attestations_for_signature(&models, &signature)?;
+                let matching_attestations =
+                    find_model_attestations_for_signature(&model_attestations, &signature)?;
                 // Each report is already verified; one shared key suffices for the signature.
-                let attestation = matching[0];
+                let attestation = matching_attestations[0];
                 verify_model_response(&request_body, &response_body, &signature, attestation)?;
                 assert!(
                     verify_model_response(&request_body, &altered, &signature, attestation)

@@ -64,7 +64,8 @@ pub use direct::{
     verify_direct_model_attestation, verify_direct_model_attestations,
     verify_direct_model_response, DirectAttestationClient, DirectAttestationVerificationResult,
     DirectClientBinding, DirectInferenceClient, DirectInferenceClientOptions,
-    DirectModelAttestation, FetchedDirectModelAttestations, VerifiedDirectModelAttestation,
+    DirectModelAttestation, FetchedDirectModelAttestations, VerifiedDirectCompletionResult,
+    VerifiedDirectModelAttestation,
 };
 pub use inference::{
     AttestationVerificationResult, ByteStream, DeploymentPolicy, GatewayVerificationOptions,

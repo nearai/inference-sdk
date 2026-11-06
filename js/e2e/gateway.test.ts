@@ -261,11 +261,11 @@ for (const selectedModel of MODELS) {
     test(`Standalone APIs handle ${selectedModel.provider} Chat: ${selectedModel.id}, ${signingAlgo}`, {
       timeout: 180_000,
     }, async () => {
-      const client = new AttestationClient({
+      const bootstrapClient = new AttestationClient({
         apiKey: API_KEY,
         baseUrl: BASE_URL,
       });
-      const fetchedGateway = await client.fetchGatewayAttestation({
+      const fetchedGateway = await bootstrapClient.fetchGatewayAttestation({
         signingAlgo,
       });
       const gateway = await verifyGatewayAttestation({
@@ -279,24 +279,30 @@ for (const selectedModel of MODELS) {
       const pinnedTlsFetch = createPinnedTlsFetch(
         gateway.tlsBinding.spkiFingerprint,
       );
+      const attestationClient = new AttestationClient({
+        apiKey: API_KEY,
+        baseUrl: BASE_URL,
+        fetch: pinnedTlsFetch,
+      });
 
-      const models = [];
+      const modelAttestations = [];
       if (selectedModel.provider === 'near') {
-        const fetchedModels = await client.fetchModelAttestations({
-          model: selectedModel.id,
-          signingAlgo,
-        });
+        const fetchedModelAttestations =
+          await attestationClient.fetchModelAttestations({
+            model: selectedModel.id,
+            signingAlgo,
+          });
         assert.ok(
-          fetchedModels.attestations.length > 0,
+          fetchedModelAttestations.attestations.length > 0,
           'Expected NEAR model evidence',
         );
-        for (const attestation of fetchedModels.attestations) {
-          const model = await verifyModelAttestation({
+        for (const attestation of fetchedModelAttestations.attestations) {
+          const modelAttestation = await verifyModelAttestation({
             attestation,
-            clientBinding: fetchedModels.clientBinding,
+            clientBinding: fetchedModelAttestations.clientBinding,
             policy: { gpuEvidence: 'required' },
           });
-          models.push(model);
+          modelAttestations.push(modelAttestation);
         }
       }
 
@@ -325,7 +331,10 @@ for (const selectedModel of MODELS) {
         const responseBody = new Uint8Array(await response.arrayBuffer());
         const id = readCompletionId({ responseBody, stream });
         const signature = await retryReceipt(() =>
-          client.fetchCompletionSignature({ completionId: id, signingAlgo }),
+          attestationClient.fetchCompletionSignature({
+            completionId: id,
+            signingAlgo,
+          }),
         );
         assert.equal(signature.signer.signingAlgo, signingAlgo);
         if (selectedModel.provider !== 'near') {
@@ -334,8 +343,8 @@ for (const selectedModel of MODELS) {
         // Changing even whitespace must invalidate the receipt's byte binding.
         const altered = new Uint8Array([...responseBody, 0x20]);
         if (signature.kind === 'provider_tee') {
-          const attestations = findModelAttestationsForSignature({
-            attestations: models,
+          const matchingAttestations = findModelAttestationsForSignature({
+            attestations: modelAttestations,
             signature,
           });
           // The key verifies the signature; all matching instance reports remain available.
@@ -343,7 +352,7 @@ for (const selectedModel of MODELS) {
             requestBody,
             responseBody,
             signature,
-            attestation: attestations[0],
+            attestation: matchingAttestations[0],
           };
           verifyModelResponse(params);
           assert.throws(

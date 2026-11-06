@@ -31,6 +31,9 @@ arrives; the example consumes through EOF and verifies the receipt afterward.
 Verification failures exit with an error. Official clients reuse
 `inference.HTTPClient()` and disable automatic inference retries. Responses and
 Messages keep field-level E2EE disabled; OHTTP requires Ed25519.
+Gateway examples use `InferenceClient`; Direct examples use `DirectInferenceClient`.
+Both share the HTTP adapter workflow, while Direct verification returns its own
+result types with report collections in `Attestations`.
 
 Native and standalone Gateway Chat apply both Gateway and Compose Manager model
 image policies. Add commit pins in `internal/demo.GatewayImages` and

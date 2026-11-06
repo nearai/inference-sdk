@@ -15,6 +15,7 @@ import (
 
 type session struct {
 	result    AttestationVerificationResult
+	direct    *VerifiedDirectModelAttestations
 	selected  *VerifiedAttestation
 	api       *AttestationClient
 	transport http.RoundTripper
@@ -34,8 +35,16 @@ type responseRecord struct {
 }
 type pendingResponse struct {
 	done  chan struct{}
-	value VerifiedCompletionResult
+	value verifiedResponse
 	err   error
+}
+
+// Cached verification outcomes are independent of either public client result.
+type verifiedResponse struct {
+	id           string
+	signature    CompletionSignature
+	attestation  *VerifiedAttestation
+	attestations []VerifiedAttestation
 }
 
 // InferenceClient implements http.RoundTripper for OpenAI-compatible Chat
@@ -59,15 +68,6 @@ type InferenceClient struct {
 
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error) {
 	return newInferenceClient(o, false)
-}
-
-// NewDirectInferenceClient is experimental: no Gateway or direct TLS attestation
-// binding. E2EE is opt-in, as with NewInferenceClient.
-func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error) {
-	if o.DisableE2EE {
-		o.E2EE = false
-	}
-	return newInferenceClient(o.InferenceOptions, true)
 }
 
 func newInferenceClient(o InferenceOptions, direct bool) (*InferenceClient, error) {
@@ -188,11 +188,16 @@ func cloneResult(r AttestationVerificationResult) AttestationVerificationResult 
 		v := cloneAttestation(*r.Gateway)
 		r.Gateway = &v
 	}
-	r.Models = append([]VerifiedAttestation(nil), r.Models...)
-	for i := range r.Models {
-		r.Models[i] = cloneAttestation(r.Models[i])
-	}
+	r.Models = cloneAttestations(r.Models)
 	return r
+}
+
+func cloneAttestations(attestations []VerifiedAttestation) []VerifiedAttestation {
+	out := append([]VerifiedAttestation(nil), attestations...)
+	for i := range out {
+		out[i] = cloneAttestation(out[i])
+	}
+	return out
 }
 
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error) {
@@ -298,6 +303,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, e
 		}
 		ohttp = fetchedModelAttestations.OHTTPAttestation
+		s.direct = &VerifiedDirectModelAttestations{}
 	} else {
 		fetched, e := c.api.FetchGatewayAttestation(ctx, FetchOptions{SigningAlgo: o.SigningAlgo, DisableTLSBinding: o.DisableTLSBinding})
 		if e != nil {
@@ -380,6 +386,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		s.result.Models = append(s.result.Models, verified)
 		if c.api.direct && fetchedModelAttestations.ServingAttestation != nil && sameAttestation(report, *fetchedModelAttestations.ServingAttestation) {
 			ohttpSigner = verified.Signer
+			s.direct.ServingAttestation = verified
 		}
 		if s.selected == nil &&
 			verified.Signer.SigningAlgo == o.SigningAlgo &&
@@ -399,6 +406,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 		return nil, failure("policy.model_attestation_required", nil)
 	}
 	if c.api.direct {
+		s.direct.Attestations = s.result.Models
 		if e := configureOHTTP(ohttp, ohttpSigner); e != nil {
 			return nil, e
 		}
@@ -673,11 +681,23 @@ func (c *InferenceClient) register(id string, request, response []byte, s *sessi
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {
+	result, err := c.verifyResponse(ctx, id)
+	if err != nil {
+		return VerifiedCompletionResult{}, err
+	}
+	return VerifiedCompletionResult{
+		ID: result.id, CompletionID: result.id,
+		SignatureKind: result.signature.Kind, Signature: result.signature,
+		Attestation: result.attestation, Attestations: result.attestations,
+	}, nil
+}
+
+func (c *InferenceClient) verifyResponse(ctx context.Context, id string) (verifiedResponse, error) {
 	c.mu.Lock()
 	record := c.responses[id]
 	if record == nil || !time.Now().Before(record.expires) {
 		c.mu.Unlock()
-		return VerifiedCompletionResult{}, failure("api.completion_not_found", nil)
+		return verifiedResponse{}, failure("api.completion_not_found", nil)
 	}
 	p := record.verifying
 	if p == nil {
@@ -708,30 +728,30 @@ func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (Verifi
 	c.mu.Unlock()
 	select {
 	case <-ctx.Done():
-		return VerifiedCompletionResult{}, ctx.Err()
+		return verifiedResponse{}, ctx.Err()
 	case <-c.ctx.Done():
-		return VerifiedCompletionResult{}, failure("api.client_closed", nil)
+		return verifiedResponse{}, failure("api.client_closed", nil)
 	case <-p.done:
 		result := p.value
-		if result.Attestation != nil {
-			a := cloneAttestation(*result.Attestation)
-			result.Attestation = &a
+		if result.attestation != nil {
+			a := cloneAttestation(*result.attestation)
+			result.attestation = &a
 		}
-		result.Attestations = cloneResult(AttestationVerificationResult{Models: result.Attestations}).Models
+		result.attestations = cloneAttestations(result.attestations)
 		return result, p.err
 	}
 }
 
-func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *responseRecord) (VerifiedCompletionResult, error) {
+func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *responseRecord) (verifiedResponse, error) {
 	sig, e := r.session.api.FetchCompletionSignature(ctx, id, c.options.SigningAlgo)
 	if e != nil {
-		return VerifiedCompletionResult{}, e
+		return verifiedResponse{}, e
 	}
 	if sig.Signer.SigningAlgo != c.options.SigningAlgo {
-		return VerifiedCompletionResult{}, failure("signature.signer_mismatch", nil)
+		return verifiedResponse{}, failure("signature.signer_mismatch", nil)
 	}
 	if r.gatewayOnly && sig.Kind != "gateway" {
-		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
+		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 	}
 	var a *VerifiedAttestation
 	if sig.Kind == "gateway" {
@@ -746,13 +766,17 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		}
 	}
 	if a == nil {
-		return VerifiedCompletionResult{}, failure("signature.kind_mismatch", nil)
+		return verifiedResponse{}, failure("signature.kind_mismatch", nil)
 	}
 	if e != nil {
-		return VerifiedCompletionResult{}, e
+		return verifiedResponse{}, e
 	}
 	if c.api.direct {
-		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
+		direct, err := VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
+		if err != nil {
+			return verifiedResponse{}, err
+		}
+		return verifiedResponse{id: direct.ID, signature: direct.Signature, attestations: direct.Attestations}, nil
 	}
 	var attestations []VerifiedAttestation
 	if sig.Kind == "provider_tee" {
@@ -760,11 +784,11 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 		// signer must not satisfy a request routed to the selected key.
 		attestations, e = FindModelAttestationsForSignature(r.session.result.Models, sig)
 		if e != nil {
-			return VerifiedCompletionResult{}, e
+			return verifiedResponse{}, e
 		}
 	}
 	copy := *a
-	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy, Attestations: attestations}, nil
+	return verifiedResponse{id: id, signature: sig, attestation: &copy, attestations: attestations}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import NoReturn
 from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
+import httpx
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
@@ -142,7 +143,10 @@ class _ApiClient:
         elif self._api_key is not None:
             headers['authorization'] = _authorization_header(self._api_key)
         try:
-            response = await self._fetch(
+            # Bootstrap must observe the peer on its own evidence connection;
+            # a caller-supplied ordinary API transport cannot replace it.
+            fetch = default_fetch if resource == 'gateway_attestation' else self._fetch
+            response = await fetch(
                 url,
                 headers=headers,
                 _capture_peer_spki=capture_peer_spki,
@@ -180,7 +184,43 @@ class _ApiClient:
 
 
 class AttestationClient(_ApiClient):
-    """Fetch Gateway evidence, model reports, metadata, and signatures."""
+    """Fetch Gateway evidence, model reports, metadata, and signatures.
+
+    ``http_client`` supplies the transport for model reports, metadata, and
+    completion signatures. It remains caller-owned and is never closed here.
+    Gateway evidence uses the default transport to capture its own TLS peer.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
+        headers: Mapping[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        super().__init__(api_key, base_url=base_url, headers=headers)
+        self._http_client = http_client
+
+    async def _fetch(
+        self,
+        url: str,
+        *,
+        headers: Mapping[str, str],
+        _capture_peer_spki: bool = False,
+    ) -> FetchResponse:
+        if self._http_client is None:
+            return await super()._fetch(
+                url, headers=headers, _capture_peer_spki=_capture_peer_spki
+            )
+        response = await self._http_client.get(
+            url, headers=headers, follow_redirects=False
+        )
+        return FetchResponse(
+            status=response.status_code,
+            body=response.content,
+            headers=response.headers,
+        )
 
     async def fetch_model_metadata(self, model: str) -> ModelMetadata:
         """Read catalog capabilities; metadata alone is not model verification."""

@@ -383,10 +383,15 @@ The Gateway's report and signature endpoints have different defaults.
 | `api_key` | `str \| None` | No | `None` | Bearer token for model reports, metadata, and signature requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
 | `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
+| `http_client` | `httpx.AsyncClient \| None` | No | `None` | Borrowed transport for model reports, metadata, and completion signatures; redirects are disabled. Gateway evidence retains its default peer-capturing transport. |
 
 Use `AttestationClient()` to fetch attestation without credentials. Gateway and
 direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
 including values supplied in `headers`. Other custom headers are preserved.
+After Gateway verification, pass `create_pinned_tls_client`'s result as
+`http_client` to keep subsequent evidence requests on the verified TLS identity.
+Keep the borrowed client open through signature retrieval and close it yourself;
+`AttestationClient` never closes it or falls back to another transport.
 
 Model reports through the Gateway use the client's configured API key or authentication
 headers. Listed models can be queried without credentials; unlisted models require a
@@ -397,9 +402,8 @@ this ordering automatically.
 `AttestationClient` construction and methods, plus
 the model-selection helpers, raise `ApiError` for invalid helper
 input as well as Gateway and selection failures. The `verify_*` functions
-raise `VerificationError` instead. Handle each operation at its own boundary;
-the client and selection helpers never require an `ApiError` versus
-`VerificationError` dispatch after catching an error.
+raise `VerificationError`. A supplied pinned HTTP client also propagates TLS
+binding failures as `VerificationError`.
 
 ### Completion-signature methods
 

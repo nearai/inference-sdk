@@ -31,13 +31,12 @@ receipt registration. Non-2xx responses pass through `send`; `chat_completions`,
 turn them into `ApiError::HttpStatus`.
 
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
-`Gateway`, `Model`, or `Direct` (the matching report group). For a Gateway
+`Gateway` or the deprecated `Model` representative. For a Gateway
 `ProviderTee` receipt, `attestations` contains every verified report sharing the
 response signer. The `Model` variant is deprecated: use `attestations` for model
 evidence. It retains the report used to select the request's model public key and
-does not identify the serving instance. The `Gateway` and `Direct` variants remain
-supported. `attestations` is empty for
-Gateway-signed receipts and Direct clients, whose report group stays in `Direct`.
+does not identify the serving instance. `attestations` is empty for
+Gateway-signed receipts, whose evidence is in `VerifiedCompletionAttestation::Gateway`.
 `signature_kind()` returns `CompletionSignatureKind`.
 
 Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
@@ -119,7 +118,9 @@ method while the response remains cached.
   a transformed stream. The caller authenticates the model key first.
 - `create_pinned_tls_client(&[String])` returns an HTTPS-only reqwest client that
   requires one of the supplied SHA-256 SPKI fingerprints in addition to normal
-  certificate and hostname verification.
+  certificate and hostname verification. After Gateway verification, pass a clone
+  to `AttestationClient::with_http_client` for subsequent evidence and signature
+  requests, and use the same client to send Chat.
 - `verify_ohttp_key_config(&OhttpAttestation, &SigningIdentity)` authenticates raw
   config bytes against a previously verified Ed25519 signer.
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
@@ -127,8 +128,11 @@ method while the response remains cached.
   be authenticated, and the supplied HTTP client must disable redirects.
 - `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
   Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
-  to enable it. Chat/transport/receipt methods match
-  `InferenceClient`; `verify` returns `DirectAttestationVerificationResult`.
+  to enable it. `verify` returns `DirectAttestationVerificationResult`.
+  `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
+  and `attestations: Vec<VerifiedDirectModelAttestation>`. Read the matching report
+  group directly from `receipt.attestations`; `signature_kind()` returns the
+  receipt's signature kind. Chat and transport methods match `InferenceClient`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
@@ -173,6 +177,12 @@ inference requests or retain completion bytes.
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
 | `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+
+`with_http_client(reqwest::Client)` replaces the transport for all evidence and
+signature requests and returns the configured `AttestationClient`. Use it after
+Gateway verification with `create_pinned_tls_client`. Custom clients must preserve
+certificate and hostname validation, disable redirects, and enable `tls_info(true)`
+when fetching TLS-bound Gateway reports.
 
 Use `AttestationClient::new(None)` to fetch attestation without credentials.
 Gateway and direct attestation requests omit `Authorization`, `api-key`, and

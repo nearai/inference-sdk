@@ -41,6 +41,20 @@ pub struct DirectAttestationVerificationResult {
     pub spki_fingerprints: Vec<String>,
     pub verified_at: u64,
 }
+/// A Direct client's receipt with every verified report sharing its selected signer.
+#[derive(Clone, Debug)]
+pub struct VerifiedDirectCompletionResult {
+    pub id: String,
+    pub signature: CompletionSignature,
+    /// The request's verified reports matching its selected signing key.
+    /// A shared key does not identify which instance served the request.
+    pub attestations: Vec<VerifiedDirectModelAttestation>,
+}
+impl VerifiedDirectCompletionResult {
+    pub fn signature_kind(&self) -> CompletionSignatureKind {
+        self.signature.kind
+    }
+}
 #[derive(Clone)]
 pub struct DirectAttestationClient {
     api: AttestationClient,
@@ -403,8 +417,8 @@ impl DirectInferenceClient {
     pub async fn verify_response(
         &self,
         id: &str,
-    ) -> Result<VerifiedCompletionResult, InferenceError> {
-        self.client.verify_response(id).await
+    ) -> Result<VerifiedDirectCompletionResult, InferenceError> {
+        self.client.verify_direct_response(id).await
     }
 }
 pub(crate) async fn create_session(

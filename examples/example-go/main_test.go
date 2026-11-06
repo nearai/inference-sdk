@@ -181,14 +181,29 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		GatewayVerification: nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
 		ModelVerification:   nearai.VerificationOptions{QuoteVerifier: quoteVerifier},
 	}
-	var c *nearai.InferenceClient
+	var c interface {
+		HTTPClient() *http.Client
+		BaseURL() string
+		Close() error
+	}
+	var verifyResponse func(context.Context, string) error
 	if direct {
 		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
-		c, e = nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
+		owner, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
 			InferenceOptions: opts,
 		})
+		c, e = owner, err
+		verifyResponse = func(ctx context.Context, id string) error {
+			_, err := owner.VerifyResponse(ctx, id)
+			return err
+		}
 	} else {
-		c, e = nearai.NewInferenceClient(opts)
+		owner, err := nearai.NewInferenceClient(opts)
+		c, e = owner, err
+		verifyResponse = func(ctx context.Context, id string) error {
+			_, err := owner.VerifyResponse(ctx, id)
+			return err
+		}
 	}
 	if e != nil {
 		t.Fatal(e)
@@ -204,7 +219,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if message.ID != "json" || len(message.Content) == 0 {
 			t.Fatal(message)
 		}
-		if _, err = c.VerifyResponse(t.Context(), message.ID); err != nil {
+		if err = verifyResponse(t.Context(), message.ID); err != nil {
 			t.Fatal(err)
 		}
 		stream := api.Messages.NewStreaming(t.Context(), params)
@@ -221,7 +236,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if accumulated.ID != "stream" || len(accumulated.Content) == 0 {
 			t.Fatal(accumulated)
 		}
-		if _, err = c.VerifyResponse(t.Context(), accumulated.ID); err != nil {
+		if err = verifyResponse(t.Context(), accumulated.ID); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -236,7 +251,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if response.ID != "json" || response.OutputText() == "" {
 			t.Fatal(response)
 		}
-		if _, err = c.VerifyResponse(t.Context(), response.ID); err != nil {
+		if err = verifyResponse(t.Context(), response.ID); err != nil {
 			t.Fatal(err)
 		}
 		stream := api.Responses.NewStreaming(t.Context(), params)
@@ -257,7 +272,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 		if id != "stream" || text == "" {
 			t.Fatal("incomplete stream", id, text)
 		}
-		if _, err = c.VerifyResponse(t.Context(), id); err != nil {
+		if err = verifyResponse(t.Context(), id); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -275,7 +290,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	if completion.Choices[0].Message.Content != "answer" {
 		t.Fatal(completion)
 	}
-	if _, e = c.VerifyResponse(context.Background(), completion.ID); e != nil {
+	if e = verifyResponse(context.Background(), completion.ID); e != nil {
 		t.Fatal(e)
 	}
 	stream := ai.Chat.Completions.NewStreaming(context.Background(), params)
@@ -295,7 +310,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	if text != "answer" {
 		t.Fatal(text)
 	}
-	if _, e = c.VerifyResponse(context.Background(), id); e != nil {
+	if e = verifyResponse(context.Background(), id); e != nil {
 		t.Fatal(e)
 	}
 }

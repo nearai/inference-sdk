@@ -117,13 +117,16 @@ export type InferenceEncryptionOptions =
     };
 
 /** Configuration for browser-compatible verified Chat Completions. */
-export type InferenceClientOptions = AttestationClientOptions &
+export type InferenceClientOptions = Omit<AttestationClientOptions, 'fetch'> &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: GatewayVerificationOptions;
   } & InferenceEncryptionOptions;
 
 /** Options accepted by the Node-specific `InferenceClient`. */
-export type NodeInferenceClientOptions = AttestationClientOptions &
+export type NodeInferenceClientOptions = Omit<
+  AttestationClientOptions,
+  'fetch'
+> &
   InferenceClientCommonOptions & {
     readonly gatewayVerification?: NodeGatewayVerificationOptions;
   } & InferenceEncryptionOptions;

@@ -583,16 +583,13 @@ async fn direct_deployment_verifier_checks_every_report() {
     assert_eq!(verified.attestations.len(), 2);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     client.chat_completions(body()).await.unwrap();
-    match client.verify_response("chat-0").await.unwrap().attestation {
-        VerifiedCompletionAttestation::Direct(reports) => {
-            assert_eq!(reports.len(), 2);
-            assert!(reports
-                .iter()
-                .all(|report| report.attestation.evidence.deployment_provenance
-                    == DeploymentProvenanceStatus::Verified));
-        }
-        _ => panic!("expected direct receipt"),
-    }
+    let receipt: VerifiedDirectCompletionResult = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.attestations.len(), 2);
+    assert!(receipt.attestations.iter().all(|report| report
+        .attestation
+        .evidence
+        .deployment_provenance
+        == DeploymentProvenanceStatus::Verified));
 }
 
 #[tokio::test]
@@ -1147,10 +1144,22 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
     assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
     client.chat_completions(body()).await.unwrap();
     let receipt = client.verify_response("chat-0").await.unwrap();
-    match receipt.attestation {
-        VerifiedCompletionAttestation::Direct(reports) => assert_eq!(reports.len(), 2),
-        _ => panic!("expected direct reports"),
-    };
+    assert_eq!(receipt.attestations.len(), 2);
+    assert_eq!(receipt.id, "chat-0");
+    assert_eq!(
+        receipt.signature_kind(),
+        CompletionSignatureKind::ProviderTee
+    );
+    assert_eq!(
+        client
+            .verify_response("chat-0")
+            .await
+            .unwrap()
+            .attestations
+            .len(),
+        2
+    );
+    assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
     let receipts = f.receipts.lock().unwrap();
     let request: Value = serde_json::from_slice(&receipts["chat-0"].0).unwrap();
@@ -1325,7 +1334,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                         Some(
                             client
                                 .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await,
+                                .await
+                                .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
                         None
@@ -1341,7 +1351,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                         Some(
                             client
                                 .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await,
+                                .await
+                                .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
                         None
@@ -1352,15 +1363,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     assert!(String::from_utf8(result.unwrap())
                         .unwrap()
                         .contains("Hello"));
-                    let receipt = receipt.unwrap().unwrap();
-                    if direct {
-                        match receipt.attestation {
-                            VerifiedCompletionAttestation::Direct(reports) => {
-                                assert_eq!(reports.len(), 2)
-                            }
-                            _ => panic!("expected direct reports"),
-                        }
-                    }
+                    let attestation_count = receipt.unwrap().unwrap();
+                    assert_eq!(attestation_count, if direct { 2 } else { 1 });
                 } else {
                     assert!(result.is_err());
                     assert_eq!(f.chat.load(Ordering::SeqCst), 0);

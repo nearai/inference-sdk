@@ -17,7 +17,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-from nearai_inference_sdk import VerificationError
+from nearai_inference_sdk import AttestationClient, VerificationError
+from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.core.pinned_tls import create_pinned_tls_client
 
 
@@ -73,6 +74,28 @@ async def tls_server(tmp_path: Path) -> AsyncIterator[TlsServer]:
         server.requests.append(
             (request.headers.get('Authorization'), await request.read())
         )
+        if request.path.startswith('/v1/'):
+            return web.json_response(
+                {
+                    'metadata': {'providerType': 'vllm', 'attestationSupported': True},
+                    'model_attestations': [
+                        {
+                            'request_nonce': request.query.get('nonce'),
+                            'signing_algo': 'ed25519',
+                            'signing_address': '11' * 32,
+                            'intel_quote': 'aa',
+                            'report_data': '22' * 64,
+                            'event_log': [],
+                            'info': {'tcb_info': {'app_compose': '{}'}},
+                        }
+                    ],
+                    'text': 'model:request:response',
+                    'signature': '00',
+                    'signing_address': '11' * 32,
+                    'signing_algo': 'ed25519',
+                    'signature_kind': 'provider_tee',
+                }
+            )
         if request.path != '/stream':
             return web.Response(body=b'complete')
         response = web.StreamResponse()
@@ -103,6 +126,44 @@ def trust_test_certificate(monkeypatch: pytest.MonkeyPatch, server: TlsServer) -
         initialize_transport(transport, verify=server.trusted_context)
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, '__init__', trusted_transport)
+
+
+@pytest.mark.parametrize('wrong_pin', [False, True])
+async def test_attestation_client_pins_all_ordinary_evidence_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, tls_server: TlsServer, wrong_pin: bool
+) -> None:
+    trust_test_certificate(monkeypatch, tls_server)
+    default_requests = 0
+
+    async def unexpected_default_fetch(*args, **kwargs):
+        nonlocal default_requests
+        default_requests += 1
+        raise AssertionError('ordinary evidence must use the supplied HTTP client')
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', unexpected_default_fetch)
+    async with create_pinned_tls_client(
+        '00' * 32 if wrong_pin else tls_server.spki_fingerprint
+    ) as http_client:
+        client = AttestationClient(
+            'test', base_url=tls_server.url + '/v1', http_client=http_client
+        )
+        for operation in (
+            lambda: client.fetch_model_metadata('model'),
+            lambda: client.fetch_model_attestations('model'),
+            lambda: client.fetch_completion_signature('completion'),
+        ):
+            if wrong_pin:
+                with pytest.raises(VerificationError) as rejected:
+                    await operation()
+                assert (
+                    rejected.value.failure.code == 'binding.spki_fingerprint_mismatch'
+                )
+            else:
+                assert await operation() is not None
+        assert not http_client.is_closed
+
+    assert default_requests == 0
+    assert tls_server.requests == ([] if wrong_pin else [('Bearer test', b'')] * 3)
 
 
 @pytest.mark.parametrize('multiple_pins', [False, True])

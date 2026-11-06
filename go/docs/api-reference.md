@@ -8,7 +8,7 @@ Import `nearai "github.com/nearai/inference-sdk/go"`. For walkthroughs, see the
 
 ```go
 func NewInferenceClient(o InferenceOptions) (*InferenceClient, error)
-func NewDirectInferenceClient(o DirectInferenceOptions) (*InferenceClient, error)
+func NewDirectInferenceClient(o DirectInferenceOptions) (*DirectInferenceClient, error)
 
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error)
 func (c *InferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
@@ -20,6 +20,15 @@ func (c *InferenceClient) HTTPClient() *http.Client
 func (c *InferenceClient) BaseURL() string
 func (c *InferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
 func (c *InferenceClient) Close() error
+
+func (c *DirectInferenceClient) Verify(ctx context.Context, model string) (DirectAttestationVerificationResult, error)
+func (c *DirectInferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error)
+func (c *DirectInferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedDirectCompletionResult, error)
+func (c *DirectInferenceClient) ClearResponseCache()
+func (c *DirectInferenceClient) HTTPClient() *http.Client
+func (c *DirectInferenceClient) BaseURL() string
+func (c *DirectInferenceClient) RoundTrip(req *http.Request) (*http.Response, error)
+func (c *DirectInferenceClient) Close() error
 ```
 
 `CreateChatCompletion`, `CreateResponse`, and `CreateMessage` send non-streaming JSON requests.
@@ -27,6 +36,8 @@ Use `HTTPClient` for streaming or the official OpenAI Go SDK. `RoundTrip` accept
 POST requests at the configured Chat Completions, Gateway Responses, and Messages creation
 endpoints. It verifies deployments before transmission and retains the exact wire
 bytes after complete body consumption. It does not automatically verify receipts.
+`DirectInferenceClient` supports Chat Completions and its verification/transport
+lifecycle; Responses, Messages, and System One use `InferenceClient`.
 
 `HTTPClient` uses the inference client as its transport. `BaseURL` supplies the
 matching API URL for OpenAI client configuration. Close response bodies and the
@@ -140,7 +151,7 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
-func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error)
+func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedDirectCompletionResult, error)
 func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
@@ -364,7 +375,7 @@ type VerifiedCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
- // Gateway evidence for gateway receipts; nil for Direct.
+ // Gateway evidence for gateway receipts.
  // Deprecated for provider_tee receipts: use Attestations for all matching reports.
  // Retains the report used to select the request's model public key;
  // it does not identify the serving instance.
@@ -417,12 +428,27 @@ type VerifiedDirectModelAttestations struct {
 	Attestations       []VerifiedAttestation
 	SPKIFingerprints   []string
 }
+
+type DirectAttestationVerificationResult struct {
+	VerifiedDirectModelAttestations
+	VerifiedAt time.Time
+}
+
+type VerifiedDirectCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestations  []VerifiedAttestation
+}
 ```
 
 ## Clients and lifecycle
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
-`NewDirectInferenceClient(DirectInferenceOptions)` requires an explicit base URL.
+`NewDirectInferenceClient(DirectInferenceOptions)` creates a `DirectInferenceClient`
+and requires an explicit base URL.
 Both clients leave E2EE disabled unless `InferenceOptions.E2EE` is set to `true`.
 Direct clients are experimental: they do not verify a Gateway, and direct TLS
 attestation binding is disabled, matching JavaScript/Python's current direct-endpoint limitation.
@@ -432,10 +458,15 @@ Always close the client and each HTTP response body. `Close` cancels shared
 verification work and active requests, clears retained data, and closes owned
 idle connections. Caller-supplied HTTP clients/transports are borrowed.
 
-`Verify(ctx, model)` performs deployment admission without sending Chat and
-returns `AttestationVerificationResult`: Gateway evidence (nil for direct), all
-model reports, and the original `VerifiedAt` timestamp. Cache hits preserve the
-timestamp. Mutating returned evidence does not modify the internal cache.
+`Verify(ctx, model)` performs deployment admission without sending Chat.
+Gateway clients return `AttestationVerificationResult` with Gateway evidence,
+all model reports, and `VerifiedAt`. Direct clients return
+`DirectAttestationVerificationResult` with all reports in `Attestations`, the
+preflight endpoint's `ServingAttestation`, and `VerifiedAt`. Direct TLS binding
+is disabled, so `SPKIFingerprints` is empty. The serving report identifies the
+preflight endpoint, not the instance serving a later completion. Cache hits
+preserve the original timestamp. Mutating returned evidence does not modify the
+internal cache.
 
 `AttestationTTL` and `ResponseTTL` are optional `*time.Duration` values, defaulting
 to one hour. A pointer to zero disables reuse/retention. Expired records are
@@ -505,9 +536,10 @@ signer to match the key selected for the request. Reading `Attestation` for
 old field retains the report used to select the request's model public key and
 does not identify the serving instance.
 For `gateway` receipts, `Attestation` contains Gateway evidence and `Attestations`
-is empty. Direct endpoints keep `Attestation` nil and return the matching group in
-`Attestations`: a shared signing key cannot identify an individual serving instance.
-`VerifyDirectModelResponse` provides the same behavior for manual workflows.
+is empty. Direct clients return `VerifiedDirectCompletionResult`, which contains
+the matching group in `Attestations` and no singular `Attestation` field. A shared
+signing key cannot identify an individual serving instance.
+`VerifyDirectModelResponse` returns the same Direct result type for manual workflows.
 
 Signatures and independently verified deployments do not establish a complete
 cryptographic chain from model execution through Gateway rewriting.

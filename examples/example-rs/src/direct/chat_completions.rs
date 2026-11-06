@@ -27,8 +27,11 @@ async fn main() -> Result<()> {
             serde_json::to_vec(&client.chat_completions(body(false)).await?)?
         };
         let id = completion_id(&bytes, stream)?;
-        client.verify_response(&id).await?;
-        println!("Verified direct receipt");
+        let receipt = client.verify_response(&id).await?;
+        println!(
+            "Verified direct receipt ({} matching reports).",
+            receipt.attestations.len()
+        );
         display(&bytes, stream)?;
     }
     Ok(())

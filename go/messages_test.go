@@ -222,7 +222,8 @@ func TestMessagesRejectUnsupportedBeforeIO(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer direct.Close()
-	_, e = direct.CreateMessage(context.Background(), messageInput(false))
+	req, _ := http.NewRequest("POST", direct.BaseURL()+"messages", strings.NewReader(`{"model":"canonical/model","messages":[]}`))
+	_, e = direct.RoundTrip(req)
 	requireCode(t, e, "api.invalid_input")
 	if f.cloud.attestations.Load() != 0 {
 		t.Fatal("unsupported endpoint triggered I/O")

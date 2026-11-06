@@ -29,6 +29,12 @@ and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
 
+Standalone Gateway Chat first verifies the Gateway report and its TLS peer.
+It then uses the attested TLS key to pin model-evidence requests, Chat, and
+completion-signature requests. The same pinned transport is supplied explicitly
+to the evidence client and the Chat request; no additional attestation verification
+is performed by attaching that transport.
+
 The standalone Gateway Chat examples retain all verified model reports in
 `modelAttestations` (`model_attestations` in Python/Rust), and keep the report
 selected for routing/E2EE separately as `selectedModelAttestation`
@@ -206,6 +212,10 @@ while direct TLS fingerprint binding to attestation remains disabled. Integrated
 clients use E2EE and require response signatures from the selected model signer.
 Standalone direct examples send plaintext over HTTPS and verify exact response
 bytes against the matching attestation group.
+
+Direct clients return their own verification result types. Read
+`attestations` (`Attestations` in Go) for the complete matching report group;
+Direct results do not contain Gateway evidence or require a Gateway enum branch.
 
 See the [live E2E guide](../e2e/README.md) to run the integration tests with your
 endpoint credentials and selected models.

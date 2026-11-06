@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 import pytest
 
 from nearai_inference_sdk import (
@@ -42,6 +43,68 @@ CloudApiResponder = Callable[[str, Mapping[str, str]], Awaitable[FetchResponse]]
 
 def cloud_client() -> AttestationClient:
     return AttestationClient(API_KEY, base_url=BASE_URL)
+
+
+@pytest.mark.parametrize('include_spki_fingerprint', [False, True])
+async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
+    monkeypatch, include_spki_fingerprint
+):
+    async def bootstrap_fetch(url, *, headers, _capture_peer_spki):
+        assert _capture_peer_spki is include_spki_fingerprint
+        assert 'authorization' not in headers
+        nonce = parse_qs(urlsplit(url).query)['nonce'][0]
+        fingerprint = '33' * 32 if include_spki_fingerprint else None
+        return FetchResponse(
+            status=200,
+            body=json.dumps(
+                {
+                    'gateway_attestation': cloud_attestation(
+                        nonce,
+                        report_data='44' * 64,
+                        tls_cert_fingerprint=fingerprint,
+                    )
+                }
+            ).encode(),
+            peer_spki_fingerprint=fingerprint,
+        )
+
+    async def unexpected_api_request(request):
+        raise AssertionError('Gateway bootstrap must not use the ordinary API client')
+
+    monkeypatch.setattr(cloud_api, 'default_fetch', bootstrap_fetch)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(unexpected_api_request)
+    ) as http_client:
+        client = AttestationClient(API_KEY, base_url=BASE_URL, http_client=http_client)
+        fetched = await client.fetch_gateway_attestation(
+            include_spki_fingerprint=include_spki_fingerprint
+        )
+        assert fetched.client_binding.spki_fingerprint == (
+            '33' * 32 if include_spki_fingerprint else None
+        )
+        assert not http_client.is_closed
+
+
+async def test_borrowed_http_client_does_not_follow_evidence_redirects():
+    requested_urls = []
+
+    async def redirect(request):
+        requested_urls.append(str(request.url))
+        return httpx.Response(
+            302, headers={'Location': 'https://other.example/v1/signature/completion'}
+        )
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(redirect), follow_redirects=True
+    ) as http_client:
+        client = AttestationClient(API_KEY, base_url=BASE_URL, http_client=http_client)
+        with pytest.raises(ApiError) as rejected:
+            await client.fetch_completion_signature('completion')
+        assert rejected.value.failure.code == 'api.http_status'
+        assert rejected.value.failure.details['status'] == 302
+        assert not http_client.is_closed
+
+    assert requested_urls == [BASE_URL + '/signature/completion']
 
 
 @pytest.mark.parametrize('supported', [True, False, 'true'])

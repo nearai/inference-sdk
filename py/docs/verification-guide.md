@@ -457,8 +457,9 @@ The following flow uses a NEAR TEE model. For Incognito, verify Gateway evidence
 and Gateway response signatures only. `fetch_model_metadata(model)` exposes
 catalog capabilities; it does not perform cryptographic verification.
 
-Create `client = AttestationClient(api_key)` once. It retrieves Gateway evidence
-and signatures; the application sends Chat and retains the exact bytes.
+Bootstrap Gateway verification with `AttestationClient(api_key)`, then pass a
+pinned HTTP client to a second `AttestationClient` for model reports, metadata,
+and signatures. The application sends Chat and retains the exact bytes.
 
 ## Verification lifecycle
 
@@ -484,6 +485,7 @@ different defaults.
 ```python
 from nearai_inference_sdk import (
     AttestationClient,
+    create_pinned_tls_client,
     verify_gateway_attestation,
     verify_model_attestation,
 )
@@ -492,15 +494,7 @@ MODEL = 'z-ai/glm-5.3-flash'
 SIGNING_ALGO = 'ecdsa'
 
 
-async def verify_deployments(client: AttestationClient):
-    fetched_gateway = await client.fetch_gateway_attestation(
-        signing_algo=SIGNING_ALGO,
-    )
-    verified_gateway = await verify_gateway_attestation(
-        fetched_gateway.attestation,
-        fetched_gateway.client_binding,
-    )
-
+async def verify_model_deployments(client: AttestationClient):
     fetched_model_attestations = await client.fetch_model_attestations(
         MODEL,
         signing_algo=SIGNING_ALGO,
@@ -516,11 +510,32 @@ async def verify_deployments(client: AttestationClient):
                 fetched_model_attestations.client_binding,
             )
         )
-    return verified_gateway, tuple(model_attestations)
+    return tuple(model_attestations)
 
 
-verified_gateway, model_attestations = await verify_deployments(client)
+bootstrap_client = AttestationClient(api_key)
+fetched_gateway = await bootstrap_client.fetch_gateway_attestation(
+    signing_algo=SIGNING_ALGO,
+)
+verified_gateway = await verify_gateway_attestation(
+    fetched_gateway.attestation,
+    fetched_gateway.client_binding,
+)
+assert verified_gateway.tls_binding.kind == 'attested'
+async with create_pinned_tls_client(
+    verified_gateway.tls_binding.spki_fingerprint
+) as pinned_tls_client:
+    client = AttestationClient(api_key, http_client=pinned_tls_client)
+    model_attestations = await verify_model_deployments(client)
+    # Send Chat with pinned_tls_client and verify its signature with client
+    # before leaving this context. The later snippets describe those steps.
 ```
+
+`http_client` is borrowed: `AttestationClient` does not close it. Keep its context
+open through the Chat and signature steps below. It is used for every model
+report, metadata, and signature request without falling back to the default
+transport. Gateway evidence always uses the default transport so its observed
+TLS peer comes from the bootstrap request itself.
 
 `fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
 Gateway report endpoint, but ask for evidence with different client bindings:
@@ -775,8 +790,7 @@ request_body = prepared.request.content
 ```
 
 `prepared.request` contains the encrypted fields and E2EE/routing headers.
-Send it using `httpx.AsyncClient`; when Gateway TLS verification is enabled, use
-`create_pinned_tls_client(verified_gateway.tls_binding.spki_fingerprint)` instead.
+Send it using the same `pinned_tls_client` opened in stage 1, within its context.
 Pass the response to `await prepared.decrypt_response(response)` for JSON or SSE
 decryption. Retain the original encrypted response bytes separately for step 3.
 Each prepared request owns a fresh response-decryption key.
@@ -966,8 +980,8 @@ completion has reached its terminal state.
 request, HTTP, response-format, nonce, unavailable-signature,
 candidate-selection, or helper-input failures. Explicit verification functions
 raise `VerificationError` for local input, cryptographic, policy, and binding
-failures. Handle each stage separately: client and selection handlers catch
-`ApiError`, while explicit verification handlers catch `VerificationError`.
+failures. An evidence client's supplied pinned transport also propagates TLS
+binding failures as `VerificationError`.
 
 | Field | Meaning |
 | --- | --- |

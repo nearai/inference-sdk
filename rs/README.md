@@ -131,6 +131,9 @@ or `message_request()` and `send()`.
 
 - **Manual verification:** `AttestationClient` retrieves evidence and signatures.
   Use the standalone functions below when your application controls each stage.
+  After verifying Gateway TLS evidence, install the pinned HTTP client with
+  `with_http_client()` so model reports and signature requests use the same pin
+  as Chat.
 - **Standalone E2EE:** `prepare_e2ee_chat_request()` encrypts a raw reqwest Chat
   request and supplies JSON/SSE decryptors. Key verification and response signature
   verification remain the application's responsibility. See
@@ -138,7 +141,9 @@ or `message_request()` and `send()`.
 - **Direct endpoints (experimental):** `DirectInferenceClient` and
   `DirectAttestationClient` connect without Gateway verification. Direct TLS
   fingerprint fetching is disabled pending complete fleet coverage; normal HTTPS
-  verification remains enabled. Use Gateway clients for production. See
+  verification remains enabled. `verify_response()` returns
+  `VerifiedDirectCompletionResult`, with matching Direct reports available in
+  `attestations`. Use Gateway clients for production. See
   [direct-endpoint limitations](https://github.com/nearai/inference-sdk/blob/main/rs/docs/verification-guide.md#experimental-direct-endpoints).
 
 ## Standalone verification

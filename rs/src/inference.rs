@@ -118,19 +118,17 @@ pub enum VerifiedCompletionAttestation {
         note = "Use VerifiedCompletionResult::attestations for all verified reports sharing the selected model signer."
     )]
     Model(VerifiedModelAttestation),
-    Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
+/// A Gateway client's verified completion receipt.
 #[derive(Clone, Debug)]
 pub struct VerifiedCompletionResult {
     pub id: String,
     pub signature: CompletionSignature,
-    /// Gateway or Direct evidence, or the deprecated single-model representative.
-    /// For model receipts from a Gateway client, use [`Self::attestations`].
-    /// Gateway-signed receipts and Direct clients continue to use this field.
+    /// Gateway evidence or the deprecated single-model representative.
+    /// For model receipts, use [`Self::attestations`].
     pub attestation: VerifiedCompletionAttestation,
     /// Every verified Gateway model report sharing this response's signer.
-    /// Empty for Gateway-signed receipts and Direct clients, whose reports remain
-    /// in `VerifiedCompletionAttestation::Direct`.
+    /// Empty for Gateway-signed receipts.
     pub attestations: Vec<VerifiedModelAttestation>,
 }
 impl VerifiedCompletionResult {
@@ -176,7 +174,12 @@ impl Session {
     }
 }
 type PendingSession = WeakShared<BoxFuture<'static, Result<Arc<Session>, InferenceError>>>;
-type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedCompletionResult, InferenceError>>>;
+#[derive(Clone, Debug)]
+enum VerifiedReceipt {
+    Gateway(Box<VerifiedCompletionResult>),
+    Direct(VerifiedDirectCompletionResult),
+}
+type ReceiptFuture = Shared<BoxFuture<'static, Result<VerifiedReceipt, InferenceError>>>;
 struct Record {
     finished: Instant,
     // A synchronous lock prevents cancellation between terminal verification and capture release.
@@ -744,6 +747,21 @@ impl InferenceClient {
         &self,
         id: &str,
     ) -> Result<VerifiedCompletionResult, InferenceError> {
+        match self.verify_receipt(id).await? {
+            VerifiedReceipt::Gateway(receipt) => Ok(*receipt),
+            VerifiedReceipt::Direct(_) => unreachable!("Gateway client contains a Direct receipt"),
+        }
+    }
+    pub(crate) async fn verify_direct_response(
+        &self,
+        id: &str,
+    ) -> Result<VerifiedDirectCompletionResult, InferenceError> {
+        match self.verify_receipt(id).await? {
+            VerifiedReceipt::Direct(receipt) => Ok(receipt),
+            VerifiedReceipt::Gateway(_) => unreachable!("Direct client contains a Gateway receipt"),
+        }
+    }
+    async fn verify_receipt(&self, id: &str) -> Result<VerifiedReceipt, InferenceError> {
         let record = {
             let mut state = self.inner.state.lock().await;
             state
@@ -805,7 +823,7 @@ impl InferenceClient {
                                     selected_model_attestation,
                                 )?;
                                 if let Some(direct) = &session.direct {
-                                    let matching = direct
+                                    let matching_attestations = direct
                                         .attestations
                                         .iter()
                                         .filter(|a| {
@@ -816,7 +834,13 @@ impl InferenceClient {
                                         })
                                         .cloned()
                                         .collect();
-                                    VerifiedCompletionAttestation::Direct(matching)
+                                    return Ok(VerifiedReceipt::Direct(
+                                        VerifiedDirectCompletionResult {
+                                            id,
+                                            signature,
+                                            attestations: matching_attestations,
+                                        },
+                                    ));
                                 } else {
                                     attestations = crate::find_model_attestations_for_signature(
                                         &session.models,
@@ -834,12 +858,14 @@ impl InferenceClient {
                                 }
                             }
                         };
-                        Ok(VerifiedCompletionResult {
-                            id,
-                            signature,
-                            attestation,
-                            attestations,
-                        })
+                        Ok(VerifiedReceipt::Gateway(Box::new(
+                            VerifiedCompletionResult {
+                                id,
+                                signature,
+                                attestation,
+                                attestations,
+                            },
+                        )))
                     }
                     .boxed()
                     .shared(),
@@ -1088,8 +1114,8 @@ mod cache_tests {
         (client, record)
     }
 
-    fn verified_result() -> VerifiedCompletionResult {
-        VerifiedCompletionResult {
+    fn verified_result() -> VerifiedReceipt {
+        VerifiedReceipt::Direct(VerifiedDirectCompletionResult {
             id: "receipt".into(),
             signature: CompletionSignature {
                 kind: CompletionSignatureKind::ProviderTee,
@@ -1100,8 +1126,14 @@ mod cache_tests {
                     signing_address: "fixture signer".into(),
                 },
             },
-            attestation: VerifiedCompletionAttestation::Direct(Vec::new()),
             attestations: Vec::new(),
+        })
+    }
+
+    fn receipt_id(receipt: &VerifiedReceipt) -> &str {
+        match receipt {
+            VerifiedReceipt::Gateway(receipt) => &receipt.id,
+            VerifiedReceipt::Direct(receipt) => &receipt.id,
         }
     }
 
@@ -1127,9 +1159,9 @@ mod cache_tests {
                 refs
             };
             for _ in 0..2 {
-                let actual = client.verify_response("receipt").await;
+                let actual = client.verify_receipt("receipt").await;
                 match &result {
-                    Ok(expected) => assert_eq!(actual.unwrap().id, expected.id),
+                    Ok(expected) => assert_eq!(receipt_id(&actual.unwrap()), receipt_id(expected)),
                     Err(expected) => assert_eq!(actual.unwrap_err().code(), expected.code()),
                 }
             }
@@ -1143,7 +1175,7 @@ mod cache_tests {
             ));
             client.clear_response_cache().await;
             assert_eq!(
-                client.verify_response("receipt").await.unwrap_err().code(),
+                client.verify_receipt("receipt").await.unwrap_err().code(),
                 "api.completion_not_found"
             );
         }
@@ -1177,7 +1209,7 @@ mod cache_tests {
                 state.verification = Some(verification.clone());
                 refs
             };
-            let mut caller = Box::pin(client.verify_response("receipt"));
+            let mut caller = Box::pin(client.verify_receipt("receipt"));
             // Dropping a pending caller models timeout/select cancellation at the yield point.
             let _ = poll_fn(|cx| std::task::Poll::Ready(caller.as_mut().poll(cx))).await;
             drop(caller);
@@ -1191,9 +1223,9 @@ mod cache_tests {
             );
             assert!(response.upgrade().is_none());
             assert!(session.upgrade().is_none());
-            let cached = client.verify_response("receipt").await;
+            let cached = client.verify_receipt("receipt").await;
             match result {
-                Ok(expected) => assert_eq!(cached.unwrap().id, expected.id),
+                Ok(expected) => assert_eq!(receipt_id(&cached.unwrap()), receipt_id(&expected)),
                 Err(expected) => assert_eq!(cached.unwrap_err().code(), expected.code()),
             }
         }
@@ -1226,7 +1258,7 @@ mod cache_tests {
                 );
                 refs
             };
-            client.verify_response("receipt").await.unwrap_err();
+            client.verify_receipt("receipt").await.unwrap_err();
             assert!(record
                 .state
                 .lock()
@@ -1244,7 +1276,7 @@ mod cache_tests {
                     .boxed()
                     .shared(),
             );
-            client.verify_response("receipt").await.unwrap();
+            client.verify_receipt("receipt").await.unwrap();
             assert!(request.upgrade().is_none());
             assert!(response.upgrade().is_none());
         }

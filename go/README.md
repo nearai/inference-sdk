@@ -131,6 +131,9 @@ The [direct OpenAI example](../examples/example-go/direct/chat-completions-with-
 and streaming Chat. Direct endpoints are experimental: they omit Gateway
 verification and do not bind direct TLS identity to attestation. Normal HTTPS
 validation remains enabled. Use Gateway clients for production.
+Its `DirectInferenceClient` returns independent preflight and receipt results;
+read verified reports from `Attestations`. See the
+[Direct verification guide](./docs/verification-guide.md#experimental-direct-endpoints).
 
 The Gateway adapter accepts POSTs to its configured `chat/completions` and
 `responses` and `messages` endpoints. See [Responses](./docs/verification-guide.md#responses-api)

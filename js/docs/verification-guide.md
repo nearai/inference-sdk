@@ -674,9 +674,10 @@ import {
 } from '@nearai/inference-sdk/node';
 
 const model = 'z-ai/glm-5.3-flash';
-const client = new AttestationClient({ apiKey: process.env.NEARAI_API_KEY! });
+const apiKey = process.env.NEARAI_API_KEY!;
+const bootstrapClient = new AttestationClient({ apiKey });
 
-const fetchedGateway = await client.fetchGatewayAttestation({
+const fetchedGateway = await bootstrapClient.fetchGatewayAttestation({
   signingAlgo: 'ed25519',
 });
 const gateway = await verifyGatewayAttestation({
@@ -689,6 +690,7 @@ if (gateway.tlsBinding.kind !== 'attested') {
 const pinnedTlsFetch = createPinnedTlsFetch(
   gateway.tlsBinding.spkiFingerprint,
 );
+const client = new AttestationClient({ apiKey, fetch: pinnedTlsFetch });
 
 const fetchedModelAttestations = await client.fetchModelAttestations({
   model,
@@ -712,12 +714,15 @@ Use `pinnedTlsFetch` instead of `fetch` for raw direct-Gateway requests that
 your application sends itself. It performs normal certificate and hostname
 verification, then requires each TLS peer to present the attested SPKI.
 
-The generic `@nearai/inference-sdk` entry point requests the no-TLS Gateway quote
-layout and is suitable for browsers. The `/node` `AttestationClient` observes
-only the peer for its Gateway-attestation request; it does not automatically
-apply `pinnedTlsFetch` to its model or signature helpers. Use the Node secure
-client when the complete Chat flow—including model evidence, completion, and
-response signature—must be pinned automatically.
+The `fetch` option controls model reports, metadata, and completion signatures.
+Gateway-attestation requests retain their default transport: the `/node` client
+captures the TLS peer from that same request. After verifying this bootstrap
+evidence, reuse the pinned transport for the remaining workflow as shown above.
+
+The generic `@nearai/inference-sdk` entry point is suitable for browsers and
+requests the no-TLS Gateway quote layout. Browser Fetch cannot observe or pin
+the TLS peer certificate. The high-level Node `InferenceClient` manages
+bootstrap and subsequent TLS pinning automatically.
 
 ### Encrypt a raw Chat request
 
@@ -1005,6 +1010,8 @@ It does not consume detached per-device claims. See [NVIDIA's claims reference](
 `AttestationClient` and selection helpers throw `ApiError` for SDK-classified
 request, response, nonce, and selection problems. Explicit `verify…` calls
 and E2EE integrity-check or decryption failures throw `VerificationError`.
+An evidence client's supplied pinned transport also propagates TLS binding
+failures as `VerificationError`.
 Check the stable `failure.code` rather than parsing an error message.
 
 ```ts

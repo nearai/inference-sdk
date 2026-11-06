@@ -488,14 +488,20 @@ if err != nil {
 defer client.Close()
 ```
 
-The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
+`DirectInferenceClient` supports Chat, the OpenAI HTTP adapter, streaming, and
+response verification. `Verify` returns `DirectAttestationVerificationResult`:
+all verified reports in `Attestations`, the preflight endpoint's
+`ServingAttestation`, and `VerifiedAt`. The serving report does not identify
+which instance handles a later completion.
 Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
 Gateway verification and do not bind TLS identity to attestation; normal HTTPS
 validation still applies. They are experimental and not recommended for
 production. Use Gateway clients for production integrations.
 
-Direct response results include all matching deployments in `Attestations` and
-leave `Attestation` nil: a shared signing key cannot identify one serving instance.
+`VerifyResponse` returns `VerifiedDirectCompletionResult` with every matching
+report in `Attestations`. It has no singular `Attestation` field: a shared signing
+key cannot identify one serving instance. The standalone
+`VerifyDirectModelResponse` returns the same Direct result type.
 
 ## Manual verification
 

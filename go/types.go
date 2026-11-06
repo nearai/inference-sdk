@@ -104,18 +104,22 @@ type VerifiedAttestation struct {
 	SPKIFingerprint       string
 	ModelName, InstanceID string
 }
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
 	Gateway    *VerifiedAttestation
 	Models     []VerifiedAttestation
 	VerifiedAt time.Time
 }
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	// Attestation contains Gateway evidence for gateway receipts and is nil for Direct.
+	// Attestation contains Gateway evidence for gateway receipts.
 	// For provider_tee receipts it retains the report used to select the request's
 	// model public key; it does not identify which instance served the request.
 	//
@@ -171,4 +175,24 @@ type VerifiedDirectModelAttestations struct {
 	ServingAttestation VerifiedAttestation
 	Attestations       []VerifiedAttestation
 	SPKIFingerprints   []string
+}
+
+// DirectAttestationVerificationResult contains every verified Direct report.
+// ServingAttestation is the report returned by the preflight endpoint; it does
+// not identify which instance serves a later completion. Direct TLS binding
+// remains disabled, so SPKIFingerprints is empty.
+type DirectAttestationVerificationResult struct {
+	VerifiedDirectModelAttestations
+	VerifiedAt time.Time
+}
+
+// VerifiedDirectCompletionResult contains the complete preflight-verified signer
+// group for a Direct receipt. A shared signer does not identify one instance.
+type VerifiedDirectCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestations  []VerifiedAttestation
 }

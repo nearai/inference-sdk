@@ -65,12 +65,19 @@ async function main(): Promise<void> {
     throw new Error('NEARAI_API_KEY is required');
   }
 
-  const client = new AttestationClient({ apiKey, baseUrl: BASE_URL });
+  const bootstrapClient = new AttestationClient({ apiKey, baseUrl: BASE_URL });
 
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
-  const gateway = await fetchAndVerifyGateway(client);
-  const modelAttestations = await fetchAndVerifyModelAttestations(client);
+  const gateway = await fetchAndVerifyGateway(bootstrapClient);
+  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
+  const attestationClient = new AttestationClient({
+    apiKey,
+    baseUrl: BASE_URL,
+    fetch: pinnedTlsFetch,
+  });
+  const modelAttestations =
+    await fetchAndVerifyModelAttestations(attestationClient);
 
   // Encryption needs only the verified public key and its algorithm. Keep the
   // full model verification result separately for the response signature check.
@@ -81,10 +88,6 @@ async function main(): Promise<void> {
     publicKey: selectedModelAttestation.signingPublicKey,
   };
 
-  // TLS pinning is recommended in Node. In browsers, use regular fetch instead;
-  // browser APIs do not expose the TLS peer certificate needed for this check.
-  const pinnedTlsFetch = createGatewayPinnedTlsFetch(gateway.tlsBinding);
-
   // Non-streaming: decrypt the JSON response, verify its signature, then display it.
   const nonStreamingCompletion = await runNonStreamingExample({
     apiKey,
@@ -92,7 +95,7 @@ async function main(): Promise<void> {
     modelKey,
   });
   await verifyCompletionResponse({
-    client,
+    client: attestationClient,
     completion: nonStreamingCompletion,
     gateway,
     modelAttestations,
@@ -107,7 +110,7 @@ async function main(): Promise<void> {
     modelKey,
   });
   await verifyCompletionResponse({
-    client,
+    client: attestationClient,
     completion: streamingCompletion,
     gateway,
     modelAttestations,

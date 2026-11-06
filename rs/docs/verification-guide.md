@@ -144,6 +144,11 @@ Gateway client. Its `verify(model)` returns the complete verified report set,
 serving report, TLS binding, and verification timestamp. `with_options` accepts
 `DirectInferenceClientOptions`. Set `e2ee: true` to enable encryption.
 
+`verify_response(id)` returns `VerifiedDirectCompletionResult`. Its `id` and
+`signature` describe the receipt; `attestations` contains all verified Direct
+reports sharing the selected signing key. Read that collection directly without
+matching a Gateway evidence enum.
+
 Direct clients verify every supplied instance, require the serving report to be
 in that set, and retain the selected signer group for receipt verification.
 OHTTP is bound to the serving signer. `DirectAttestationClient` and the standalone
@@ -275,17 +280,19 @@ calls, but omitting the algorithm is not suitable for this three-stage flow.
 
 ```rust,no_run
 use nearai_inference_sdk::{
-    verify_gateway_attestation, verify_model_attestation, AttestationClient,
-    GatewayAttestationFetchOptions, SigningAlgo, VerifiedGatewayAttestation,
-    VerifiedModelAttestation,
+    create_pinned_tls_client, verify_gateway_attestation, verify_model_attestation,
+    AttestationClient, GatewayAttestationFetchOptions, GatewayTlsBinding, SigningAlgo,
+    VerifiedGatewayAttestation, VerifiedModelAttestation,
 };
 
 const MODEL: &str = "z-ai/glm-5.3-flash";
 
 async fn verify_deployments(
-    client: &AttestationClient,
+    client: AttestationClient,
 ) -> Result<
     (
+        AttestationClient,
+        reqwest::Client,
         VerifiedGatewayAttestation,
         Vec<VerifiedModelAttestation>,
     ),
@@ -305,6 +312,11 @@ async fn verify_deployments(
     )
     .await?;
 
+    let GatewayTlsBinding::Attested { spki_fingerprint } = &verified_gateway.tls_binding else {
+        return Err(std::io::Error::other("Gateway TLS binding is required").into());
+    };
+    let http = create_pinned_tls_client(std::slice::from_ref(spki_fingerprint))?;
+    let client = client.with_http_client(http.clone());
     let fetched_model_attestations = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
@@ -312,9 +324,9 @@ async fn verify_deployments(
         return Err(std::io::Error::other("Gateway returned no model attestations").into());
     }
 
-    let mut verified = Vec::with_capacity(fetched_model_attestations.attestations.len());
+    let mut model_attestations = Vec::with_capacity(fetched_model_attestations.attestations.len());
     for attestation in &fetched_model_attestations.attestations {
-        verified.push(
+        model_attestations.push(
             verify_model_attestation(
                 attestation,
                 &fetched_model_attestations.client_binding,
@@ -325,12 +337,12 @@ async fn verify_deployments(
         );
     }
 
-    Ok((
-        verified_gateway,
-        verified,
-    ))
+    Ok((client, http, verified_gateway, model_attestations))
 }
 ```
+
+Use the returned pinned HTTP client for Chat and the returned `AttestationClient`
+for signature lookup. Both use the Gateway TLS identity verified during bootstrap.
 
 Gateway fetches request a TLS SPKI fingerprint by default. The Rust client
 captures the certificate peer for that same HTTPS evidence request, and

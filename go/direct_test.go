@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cloudflare/circl/hpke"
@@ -96,17 +98,36 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 		t.Fatal(e)
 	}
 	defer client.Close()
-	session, e := client.getSession(context.Background(), "canonical/model")
+	preflight, e := client.Verify(context.Background(), "canonical/model")
 	if e != nil {
 		t.Fatal(e)
 	}
-	if calls != 2 || session.result.Models[0].DeploymentProvenance != "verified" || session.result.Models[1].DeploymentProvenance != "verified" {
+	var _ DirectAttestationVerificationResult = preflight
+	if calls != 2 || len(preflight.Attestations) != 2 || preflight.Attestations[0].DeploymentProvenance != "verified" || preflight.Attestations[1].DeploymentProvenance != "verified" {
 		t.Fatal("deployment verifier must check every report")
 	}
-	receipt, err := client.verifyRecord(context.Background(), "chat", &responseRecord{session: session, request: request, response: response})
+	if preflight.ServingAttestation.InstanceID != "serving" || len(preflight.SPKIFingerprints) != 0 || preflight.VerifiedAt.IsZero() {
+		t.Fatal("preflight must retain the actual serving report without enabling TLS binding")
+	}
+	preflight.ServingAttestation.InstanceID = "changed"
+	preflight.Attestations[0].InstanceID = "changed"
+	preflight.Attestations[0].Deployment.AppCompose = "changed"
+	cached, err := client.Verify(context.Background(), "canonical/model")
+	if err != nil || calls != 2 || !cached.VerifiedAt.Equal(preflight.VerifiedAt) || cached.ServingAttestation.InstanceID != "serving" || cached.Attestations[0].InstanceID != "other" || cached.Attestations[0].Deployment.AppCompose == "changed" {
+		t.Fatal("Direct preflight must return independent snapshots of the original verification", err)
+	}
+	session, err := client.client.getSession(context.Background(), "canonical/model")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = client.client.register("chat", request, response, session, false, client.client.responseCacheGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := client.VerifyResponse(context.Background(), "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var _ VerifiedDirectCompletionResult = receipt
 	if sharedSigner {
 		if len(receipt.Attestations) != 2 || receipt.Attestations[0].InstanceID != "other" || receipt.Attestations[1].InstanceID != "serving" {
 			t.Fatal("receipt must preserve every report sharing the signer")
@@ -114,8 +135,20 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	} else if len(receipt.Attestations) != 1 || receipt.Attestations[0].InstanceID != "serving" {
 		t.Fatal("receipt must only include reports matching the signer")
 	}
-	if len(session.result.Models) != 2 || session.selected.Signer != b.Signer || !client.options.E2EE {
+	if len(session.result.Models) != 2 || session.selected.Signer != b.Signer || !client.client.options.E2EE {
 		t.Fatal("wrong routing or defaults")
+	}
+	if sharedSigner && session.selected.InstanceID != "other" {
+		t.Fatal("serving metadata must not change which key the original route selects")
+	}
+	receipt.Attestations[0].InstanceID = "changed"
+	receipt.Attestations[0].Deployment.AppCompose = "changed"
+	cachedReceipt, err := client.VerifyResponse(context.Background(), "chat")
+	if err != nil || cachedReceipt.Attestations[0].InstanceID == "changed" || cachedReceipt.Attestations[0].Deployment.AppCompose == "changed" || len(cachedReceipt.Attestations) != len(receipt.Attestations) {
+		t.Fatal("Direct receipt cache must retain the complete independent evidence snapshot", err)
+	}
+	if client.client.responses["chat"].request != nil || client.client.responses["chat"].response != nil || client.client.responses["chat"].session != nil {
+		t.Fatal("completed Direct verification must release captured bodies and session")
 	}
 }
 func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
@@ -132,7 +165,47 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	if result.ID != "chat" || result.CompletionID != result.ID {
 		t.Fatal("receipt ID alias mismatch")
 	}
-	if result.Attestation != nil || len(result.Attestations) != 2 {
+	var _ VerifiedDirectCompletionResult = result
+	if len(result.Attestations) != 2 {
 		t.Fatal("ambiguous instance attribution")
+	}
+}
+
+func TestDirectClientPublicSurface(t *testing.T) {
+	client, err := NewDirectInferenceClient(DirectInferenceOptions{InferenceOptions: InferenceOptions{
+		ClientOptions: ClientOptions{BaseURL: "https://direct.invalid/v1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var _ http.RoundTripper = client
+	var _ func(context.Context, string) (DirectAttestationVerificationResult, error) = client.Verify
+	var _ func(context.Context, string) (VerifiedDirectCompletionResult, error) = client.VerifyResponse
+	if client.HTTPClient().Transport != client {
+		t.Fatal("HTTP adapter must not expose the Gateway client engine")
+	}
+	if err := client.HTTPClient().CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
+		t.Fatal("Direct adapter must keep redirect refusal")
+	}
+	for _, method := range []string{"CreateResponse", "CreateMessage", "CreateSystemOne", "CreateSystemOneWithHeaders"} {
+		if _, exists := reflect.TypeOf(client).MethodByName(method); exists {
+			t.Fatalf("Direct client exposes Gateway-only %s", method)
+		}
+	}
+	for _, result := range []reflect.Type{reflect.TypeFor[DirectAttestationVerificationResult](), reflect.TypeFor[VerifiedDirectCompletionResult]()} {
+		for _, field := range []string{"Gateway", "Models", "Attestation"} {
+			if _, exists := result.FieldByName(field); exists {
+				t.Fatalf("%s exposes unrelated field %s", result.Name(), field)
+			}
+		}
+	}
+	for _, endpoint := range []string{"responses", "messages", "systemone"} {
+		req, err := http.NewRequest(http.MethodPost, client.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.RoundTrip(req)
+		requireCode(t, err, "api.invalid_input")
 	}
 }

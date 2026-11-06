@@ -82,7 +82,15 @@ impl AttestationClient {
         self
     }
 
-    pub(crate) fn with_http_client(mut self, client: Client) -> Self {
+    /// Use this HTTP client for all evidence and signature requests.
+    ///
+    /// After verifying Gateway evidence, pass the client returned by
+    /// [`crate::create_pinned_tls_client`] to bind subsequent requests to that
+    /// Gateway's TLS identity. Custom clients must preserve certificate and
+    /// hostname validation and disable redirects. Gateway report fetching with
+    /// TLS binding also requires `reqwest::ClientBuilder::tls_info(true)` and a
+    /// direct connection to the Gateway rather than a TLS-terminating proxy.
+    pub fn with_http_client(mut self, client: Client) -> Self {
         self.client = client.clone();
         self.gateway_client = client;
         self
