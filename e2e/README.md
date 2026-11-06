@@ -117,8 +117,8 @@ model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
 
 | Area | Live checks |
 | --- | --- |
-| Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
-| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Deployment verification | Gateway quote and TLS identity; every returned model report and its GPU evidence for NEAR TEE models. Standalone Chat and System One use the pinned transport for inference and signature retrieval. |
+| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. Provider receipts must match the selected model key and retain its complete verified report group, including through official clients. |
 | Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
 | Messages | JSON and SSE on an Anthropic model, through all four native clients and the official Anthropic JS/Python/Go clients. Ed25519 and ECDSA use plain transport; Ed25519 also uses OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
@@ -127,6 +127,11 @@ model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
 The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
 Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
 integration requirements.
+
+Report-group assertions derive the expected reports from preflight evidence and
+the selected signer. They accept one or multiple reports without assuming the
+deployed fleet size. Multi-report edge cases remain covered by offline fixtures;
+a live run receiving one report does not establish production multi-report coverage.
 
 Chat runs the same native and supported official-client modes in each language,
 with at most 1,024 completion tokens per request. Responses must contain an answer and

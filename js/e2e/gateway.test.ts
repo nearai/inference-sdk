@@ -20,7 +20,12 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '../dist/node.js';
-import { requiredEnv, retryReceipt, selectedModels } from './helpers.ts';
+import {
+  requiredEnv,
+  retryReceipt,
+  sameSigner,
+  selectedModels,
+} from './helpers.ts';
 
 type LiveModel = {
   id: string;
@@ -238,18 +243,17 @@ function assertReceiptEvidence(
   preflight: AttestationVerificationResult,
 ): void {
   if (receipt.signatureKind === 'provider_tee') {
-    const expected = findModelAttestationsForSignature({
-      attestations: preflight.models,
-      signature: receipt.signature,
-    });
     const selected = preflight.models.find(
       (report) =>
         report.signer.signingAlgo === receipt.signature.signer.signingAlgo &&
         report.signingPublicKey !== undefined,
     );
+    assert.ok(selected);
+    const expected = preflight.models.filter((report) =>
+      sameSigner(report.signer, selected.signer),
+    );
+    assert.ok(sameSigner(receipt.signature.signer, selected.signer));
     assert.deepEqual(receipt.attestations, expected);
-    assert.equal(receipt.attestation, selected);
-    assert.ok(receipt.attestations.includes(receipt.attestation));
   } else {
     assert.equal(receipt.attestation, preflight.gateway);
     assert.equal('attestations' in receipt, false);
@@ -305,6 +309,11 @@ for (const selectedModel of MODELS) {
           modelAttestations.push(modelAttestation);
         }
       }
+      const selectedAttestation = modelAttestations.find(
+        (report) =>
+          report.signer.signingAlgo === signingAlgo && report.signingPublicKey,
+      );
+      if (selectedModel.provider === 'near') assert.ok(selectedAttestation);
 
       // Chutes returns a Gateway receipt. Streaming is separately provider-gated,
       // so its live case uses JSON only.
@@ -323,6 +332,10 @@ for (const selectedModel of MODELS) {
               'Content-Type': 'application/json',
               'Accept-Encoding': 'identity',
               'x-no-aliasing': 'true',
+              'X-Signing-Algo': signingAlgo,
+              ...(selectedAttestation?.signingPublicKey && {
+                'X-Model-Pub-Key': selectedAttestation.signingPublicKey,
+              }),
             },
             body: requestBody,
           },
@@ -343,18 +356,24 @@ for (const selectedModel of MODELS) {
         // Changing even whitespace must invalidate the receipt's byte binding.
         const altered = new Uint8Array([...responseBody, 0x20]);
         if (signature.kind === 'provider_tee') {
-          const matchingAttestations = findModelAttestationsForSignature({
-            attestations: modelAttestations,
-            signature,
-          });
-          // The key verifies the signature; all matching instance reports remain available.
+          assert.ok(selectedAttestation);
           const params = {
             requestBody,
             responseBody,
             signature,
-            attestation: matchingAttestations[0],
+            attestation: selectedAttestation,
           };
           verifyModelResponse(params);
+          const matchingAttestations = findModelAttestationsForSignature({
+            attestations: modelAttestations,
+            signature,
+          });
+          assert.deepEqual(
+            matchingAttestations,
+            modelAttestations.filter((report) =>
+              sameSigner(report.signer, selectedAttestation.signer),
+            ),
+          );
           assert.throws(
             () => verifyModelResponse({ ...params, responseBody: altered }),
             VerificationError,

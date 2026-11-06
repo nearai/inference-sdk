@@ -5,7 +5,15 @@ import json
 import os
 from collections.abc import Awaitable, Callable
 
-from nearai_inference_sdk import ApiError, SystemOneRequest
+from nearai_inference_sdk import ApiError, SigningIdentity, SystemOneRequest
+
+
+def same_signer(left: SigningIdentity, right: SigningIdentity) -> bool:
+    return (
+        left.signing_algo == right.signing_algo
+        and left.signing_address.lower().removeprefix('0x')
+        == right.signing_address.lower().removeprefix('0x')
+    )
 
 
 def required_env(name: str) -> str:

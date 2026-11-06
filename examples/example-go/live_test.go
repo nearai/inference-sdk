@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ import (
 )
 
 type liveModel struct{ ID, Provider, Endpoint string }
+
+func sameSigner(left, right nearai.SigningIdentity) bool {
+	return left.SigningAlgo == right.SigningAlgo &&
+		strings.TrimPrefix(strings.ToLower(left.SigningAddress), "0x") == strings.TrimPrefix(strings.ToLower(right.SigningAddress), "0x")
+}
 
 func liveModels(t *testing.T, endpoint string) []liveModel {
 	t.Helper()
@@ -58,12 +64,14 @@ func liveOpenAI(t *testing.T, mode liveMode) (*nearai.InferenceClient, openai.Cl
 	t.Cleanup(func() { owner.Close() })
 	return owner, openai.NewClient(option.WithAPIKey(os.Getenv("NEARAI_API_KEY")), option.WithBaseURL(owner.BaseURL()), option.WithHTTPClient(owner.HTTPClient()), option.WithMaxRetries(0))
 }
-func verifyLiveReceipt(t *testing.T, ctx context.Context, owner *nearai.InferenceClient, id string, algo nearai.SigningAlgo, gateway bool) {
+func verifyLiveReceipt(t *testing.T, ctx context.Context, owner *nearai.InferenceClient, id string, algo nearai.SigningAlgo, gateway bool) nearai.VerifiedCompletionResult {
 	t.Helper()
 	receiptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	var receipt nearai.VerifiedCompletionResult
 	err := retryReceipt(receiptCtx, func() error {
-		receipt, err := owner.VerifyResponse(receiptCtx, id)
+		var err error
+		receipt, err = owner.VerifyResponse(receiptCtx, id)
 		if err == nil && (receipt.ID != id || receipt.Signature.Signer.SigningAlgo != algo || (gateway && receipt.SignatureKind != "gateway")) {
 			t.Fatal("incorrect receipt identity, algorithm, or kind")
 		}
@@ -71,6 +79,36 @@ func verifyLiveReceipt(t *testing.T, ctx context.Context, owner *nearai.Inferenc
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	return receipt
+}
+
+func assertLiveChatEvidence(t *testing.T, receipt nearai.VerifiedCompletionResult, preflight nearai.AttestationVerificationResult) {
+	t.Helper()
+	if receipt.SignatureKind == "gateway" {
+		if !reflect.DeepEqual(receipt.Attestation, preflight.Gateway) || len(receipt.Attestations) != 0 {
+			t.Fatal("expected the verified Gateway evidence")
+		}
+		return
+	}
+	var selected *nearai.VerifiedAttestation
+	for i := range preflight.Models {
+		if preflight.Models[i].Signer.SigningAlgo == receipt.Signature.Signer.SigningAlgo && preflight.Models[i].SigningPublicKey != "" {
+			selected = &preflight.Models[i]
+			break
+		}
+	}
+	if selected == nil || !sameSigner(receipt.Signature.Signer, selected.Signer) {
+		t.Fatal("receipt did not use the selected model key")
+	}
+	var expected []nearai.VerifiedAttestation
+	for _, report := range preflight.Models {
+		if sameSigner(report.Signer, selected.Signer) {
+			expected = append(expected, report)
+		}
+	}
+	if !reflect.DeepEqual(receipt.Attestations, expected) {
+		t.Fatal("receipt did not retain the complete verified signer group")
 	}
 }
 func TestLiveOpenAIChat(t *testing.T) {
@@ -84,6 +122,18 @@ func TestLiveOpenAIChat(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 180*time.Second)
 				defer cancel()
 				owner, client := liveOpenAI(t, mode)
+				preflight, err := owner.Verify(ctx, model.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if preflight.Gateway == nil || preflight.Gateway.SPKIFingerprint == "" || (len(preflight.Models) > 0) != (model.Provider == "near") {
+					t.Fatal("unexpected Gateway or model evidence")
+				}
+				for _, report := range preflight.Models {
+					if report.GPUEvidence != "verified" {
+						t.Fatal("expected verified GPU evidence")
+					}
+				}
 				request := openai.ChatCompletionNewParams{Model: model.ID, Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("Reply with the single word OK.")}, MaxCompletionTokens: openai.Int(1024)}
 				completion, err := client.Chat.Completions.New(ctx, request)
 				if err != nil {
@@ -92,7 +142,8 @@ func TestLiveOpenAIChat(t *testing.T) {
 				if completion.ID == "" || len(completion.Choices) == 0 || completion.Choices[0].FinishReason != "stop" || strings.TrimSpace(completion.Choices[0].Message.Content) == "" {
 					t.Fatal("expected complete JSON answer")
 				}
-				verifyLiveReceipt(t, ctx, owner, completion.ID, mode.algo, model.Provider != "near")
+				receipt := verifyLiveReceipt(t, ctx, owner, completion.ID, mode.algo, model.Provider != "near")
+				assertLiveChatEvidence(t, receipt, preflight)
 				if model.Provider == "chutes" {
 					return
 				} // Chutes SSE remains provider-gated.
@@ -118,7 +169,8 @@ func TestLiveOpenAIChat(t *testing.T) {
 				if id == "" || strings.TrimSpace(text) == "" || finish != "stop" {
 					t.Fatal("expected complete SSE answer")
 				}
-				verifyLiveReceipt(t, ctx, owner, id, mode.algo, model.Provider != "near")
+				receipt = verifyLiveReceipt(t, ctx, owner, id, mode.algo, model.Provider != "near")
+				assertLiveChatEvidence(t, receipt, preflight)
 			})
 		}
 	}

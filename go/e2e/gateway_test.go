@@ -21,6 +21,11 @@ import (
 
 type liveModel struct{ ID, Provider, Endpoint string }
 
+func sameSigner(left, right nearai.SigningIdentity) bool {
+	return left.SigningAlgo == right.SigningAlgo &&
+		strings.TrimPrefix(strings.ToLower(left.SigningAddress), "0x") == strings.TrimPrefix(strings.ToLower(right.SigningAddress), "0x")
+}
+
 func required(t *testing.T, name string) string {
 	t.Helper()
 	value := os.Getenv(name)
@@ -194,8 +199,8 @@ func assertEvidence(t *testing.T, m liveModel, reports []nearai.VerifiedAttestat
 		t.Fatal("expected NEAR model evidence")
 	}
 	for _, a := range reports {
-		if a.GPUEvidence != "verified" || a.SigningPublicKey == "" {
-			t.Fatal("expected verified GPU evidence and model public key")
+		if a.GPUEvidence != "verified" {
+			t.Fatal("expected verified GPU evidence")
 		}
 	}
 }
@@ -268,6 +273,16 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				}
 			}
 			assertEvidence(t, m, reports)
+			var selected *nearai.VerifiedAttestation
+			for i := range reports {
+				if reports[i].Signer.SigningAlgo == algo && reports[i].SigningPublicKey != "" {
+					selected = &reports[i]
+					break
+				}
+			}
+			if m.Provider == "near" && selected == nil {
+				t.Fatal("expected a verified model key")
+			}
 			for _, stream := range []bool{false, true} {
 				if stream && m.Provider == "chutes" {
 					continue
@@ -275,6 +290,10 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				r, request, err := chatRequest(ctx, base, key, m, stream)
 				if err != nil {
 					t.Fatal(err)
+				}
+				r.Header.Set("X-Signing-Algo", string(algo))
+				if selected != nil {
+					r.Header.Set("X-Model-Pub-Key", selected.SigningPublicKey)
 				}
 				res, err := client.Do(r)
 				if err != nil {
@@ -292,15 +311,26 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 				if m.Provider != "near" && sig.Kind != "gateway" {
 					t.Fatal("expected Gateway receipt")
 				}
+				if sig.Kind == "provider_tee" {
+					if selected == nil {
+						t.Fatal("expected a verified model key")
+					}
+					matches, err := nearai.FindModelAttestationsForSignature(reports, sig)
+					var expected []nearai.VerifiedAttestation
+					for _, report := range reports {
+						if sameSigner(report.Signer, selected.Signer) {
+							expected = append(expected, report)
+						}
+					}
+					if err != nil || !reflect.DeepEqual(matches, expected) {
+						t.Fatalf("receipt did not match the selected signer group: %v", err)
+					}
+				}
 				verify := func(body []byte) error {
 					if sig.Kind == "gateway" {
 						return nearai.VerifyGatewayResponse(request, body, sig, gateway)
 					}
-					signers, e := nearai.FindModelAttestationsForSignature(reports, sig)
-					if e != nil {
-						return e
-					}
-					return nearai.VerifyModelResponse(request, body, sig, signers[0])
+					return nearai.VerifyModelResponse(request, body, sig, *selected)
 				}
 				if err = verify(raw); err != nil {
 					t.Fatal(err)
@@ -376,9 +406,24 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 				}
 				assertEvidence(t, m, verified.Models)
 				if receipt.SignatureKind == "provider_tee" {
-					expected, err := nearai.FindModelAttestationsForSignature(verified.Models, receipt.Signature)
-					if err != nil || !reflect.DeepEqual(receipt.Attestations, expected) || !reflect.DeepEqual(cached.Attestations, expected) {
-						t.Fatalf("receipt did not retain the verified signer group: %v", err)
+					var selected *nearai.VerifiedAttestation
+					for i := range verified.Models {
+						if verified.Models[i].Signer.SigningAlgo == algo && verified.Models[i].SigningPublicKey != "" {
+							selected = &verified.Models[i]
+							break
+						}
+					}
+					if selected == nil || !sameSigner(receipt.Signature.Signer, selected.Signer) {
+						t.Fatal("receipt did not use the selected model key")
+					}
+					var expected []nearai.VerifiedAttestation
+					for _, report := range verified.Models {
+						if sameSigner(report.Signer, selected.Signer) {
+							expected = append(expected, report)
+						}
+					}
+					if !reflect.DeepEqual(receipt.Attestations, expected) || !reflect.DeepEqual(cached.Attestations, expected) {
+						t.Fatal("receipt did not retain the verified signer group")
 					}
 				} else if len(receipt.Attestations) != 0 {
 					t.Fatal("Gateway receipt unexpectedly attributed model reports")

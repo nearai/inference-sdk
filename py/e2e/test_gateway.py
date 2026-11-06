@@ -7,7 +7,7 @@ import pytest
 from openai import AsyncOpenAI
 from openai.resources.chat import AsyncChat
 
-from e2e.helpers import required_env, retry_receipt, selected_models
+from e2e.helpers import required_env, retry_receipt, same_signer, selected_models
 from nearai_inference_sdk import (
     AttestationClient,
     AttestationVerificationResult,
@@ -156,18 +156,19 @@ async def verify_client_chat(
     assert verified.id == completion_id
     assert verified.signature.signer.signing_algo == signing_algo
     if verified.signature_kind == 'provider_tee':
-        expected = find_model_attestations_for_signature(
-            preflight.models, verified.signature
-        )
         selected = next(
             report
             for report in preflight.models
             if report.signer.signing_algo == signing_algo
             and report.signing_public_key is not None
         )
+        expected = tuple(
+            report
+            for report in preflight.models
+            if same_signer(report.signer, selected.signer)
+        )
+        assert same_signer(verified.signature.signer, selected.signer)
         assert verified.attestations == expected
-        assert verified.attestation is selected
-        assert verified.attestation in verified.attestations
     else:
         assert verified.attestation is preflight.gateway
         assert not hasattr(verified, 'attestations')
@@ -239,6 +240,18 @@ async def verify_chat(
                 )
                 model_attestations.append(model_attestation)
 
+        selected_attestation = next(
+            (
+                report
+                for report in model_attestations
+                if report.signer.signing_algo == signing_algo
+                and report.signing_public_key
+            ),
+            None,
+        )
+        if provider == 'near':
+            assert selected_attestation is not None
+
         request_body = json.dumps(
             {
                 'model': model,
@@ -256,7 +269,10 @@ async def verify_chat(
             'Content-Type': 'application/json',
             'Accept-Encoding': 'identity',
             'x-no-aliasing': 'true',
+            'X-Signing-Algo': signing_algo,
         }
+        if selected_attestation is not None:
+            headers['X-Model-Pub-Key'] = selected_attestation.signing_public_key
         response = await pinned_tls_client.post(
             base_url + 'chat/completions', content=request_body, headers=headers
         )
@@ -275,15 +291,21 @@ async def verify_chat(
         # Keep original wire bytes. Even appended whitespace must invalidate them.
         altered = response_body + b' '
         if signature.kind == 'provider_tee':
+            assert selected_attestation is not None
+            verify_model_response(
+                request_body, response_body, signature, selected_attestation
+            )
             matching_attestations = find_model_attestations_for_signature(
                 model_attestations, signature
             )
-            verify_model_response(
-                request_body, response_body, signature, matching_attestations[0]
+            assert matching_attestations == tuple(
+                report
+                for report in model_attestations
+                if same_signer(report.signer, selected_attestation.signer)
             )
             with pytest.raises(VerificationError):
                 verify_model_response(
-                    request_body, altered, signature, matching_attestations[0]
+                    request_body, altered, signature, selected_attestation
                 )
         else:
             verify_gateway_response(request_body, response_body, signature, gateway)

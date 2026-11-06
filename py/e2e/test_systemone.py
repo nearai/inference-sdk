@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 import pytest
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
 
-from e2e.helpers import decision_request, required_env, retry_receipt
+from e2e.helpers import decision_request, required_env, retry_receipt, same_signer
 from nearai_inference_sdk import (
     AttestationClient,
     InferenceClient,
@@ -73,6 +73,9 @@ async def test_standalone_apis_bind_generation_id_to_exact_decision_bytes() -> N
         async with create_pinned_tls_client(
             gateway.tls_binding.spki_fingerprint
         ) as pinned_tls_client:
+            attestation_client = AttestationClient(
+                api_key, base_url=base_url, http_client=pinned_tls_client
+            )
             response = await pinned_tls_client.post(
                 base_url + 'systemone',
                 content=request_body,
@@ -89,11 +92,11 @@ async def test_standalone_apis_bind_generation_id_to_exact_decision_bytes() -> N
             decision_id = response.headers.get('x-generation-id')
             assert decision_id, 'Expected X-Generation-Id even when the body has no id'
             response_body = response.content
-        signature = await retry_receipt(
-            lambda: client.fetch_completion_signature(
-                decision_id, signing_algo=signing_algo
+            signature = await retry_receipt(
+                lambda: attestation_client.fetch_completion_signature(
+                    decision_id, signing_algo=signing_algo
+                )
             )
-        )
         assert signature.kind == 'gateway'
         verify_gateway_response(request_body, response_body, signature, gateway)
         # A real receipt rejects changed bytes on either side, without inference.
@@ -188,9 +191,11 @@ async def test_typesafe_sdk_verifies_live_receipt(kind, signing_algo):
         assert verified.signature_kind == kind
         assert verified.signature.signer.signing_algo == signing_algo
         if kind == 'provider_tee':
-            assert (
-                verified.attestation.signer.signing_address
-                == selected.signer.signing_address
+            assert same_signer(verified.signature.signer, selected.signer)
+            assert verified.attestations == tuple(
+                report
+                for report in preflight.models
+                if same_signer(report.signer, selected.signer)
             )
         assert inference_requests == 1
         assert result.model
