@@ -6,7 +6,7 @@ mod systemone;
 use std::{env, error::Error, io, time::Duration};
 
 use nearai_inference_sdk::{
-    create_pinned_tls_client, find_model_attestation_for_signature, verify_gateway_attestation,
+    create_pinned_tls_client, find_model_attestations_for_signature, verify_gateway_attestation,
     verify_gateway_response, verify_model_attestation, verify_model_response, ApiError,
     AttestationClient, CompletionSignature, CompletionSignatureKind,
     GatewayAttestationFetchOptions, GatewayTlsBinding, GpuEvidenceStatus, SigningAlgo,
@@ -169,7 +169,9 @@ async fn verify_chat(signing_algo: SigningAlgo, model: &LiveModel) -> Result<(),
         altered.push(b' ');
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
-                let attestation = find_model_attestation_for_signature(&models, &signature)?;
+                let matching = find_model_attestations_for_signature(&models, &signature)?;
+                // Each report is already verified; one shared key suffices for the signature.
+                let attestation = matching[0];
                 verify_model_response(&request_body, &response_body, &signature, attestation)?;
                 assert!(
                     verify_model_response(&request_body, &altered, &signature, attestation)

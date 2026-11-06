@@ -9,6 +9,7 @@ import type {
 import {
   AttestationClient,
   createPinnedTlsFetch,
+  findModelAttestationsForSignature,
   prepareE2eeChatRequest,
   verifyComposeManagerDeploymentImageProvenance,
   verifyDeploymentImageProvenance,
@@ -69,14 +70,15 @@ async function main(): Promise<void> {
   // Verify the Gateway and every returned model report before sending a prompt.
   // A failed check throws and stops this flow before either Chat request.
   const gateway = await fetchAndVerifyGateway(client);
-  const models = await fetchAndVerifyModelAttestations(client);
+  const modelAttestations = await fetchAndVerifyModelAttestations(client);
 
   // Encryption needs only the verified public key and its algorithm. Keep the
   // full model verification result separately for the response signature check.
-  const model = findModelAttestationForEncryption(models);
+  const selectedModelAttestation =
+    findModelAttestationForEncryption(modelAttestations);
   const modelKey: E2eeModelKey = {
-    signingAlgo: model.signer.signingAlgo,
-    publicKey: model.signingPublicKey,
+    signingAlgo: selectedModelAttestation.signer.signingAlgo,
+    publicKey: selectedModelAttestation.signingPublicKey,
   };
 
   // TLS pinning is recommended in Node. In browsers, use regular fetch instead;
@@ -93,7 +95,8 @@ async function main(): Promise<void> {
     client,
     completion: nonStreamingCompletion,
     gateway,
-    model,
+    modelAttestations,
+    selectedModelAttestation,
   });
 
   // Streaming: display decrypted SSE as it arrives. Signature verification needs
@@ -107,7 +110,8 @@ async function main(): Promise<void> {
     client,
     completion: streamingCompletion,
     gateway,
-    model,
+    modelAttestations,
+    selectedModelAttestation,
   });
 }
 
@@ -155,6 +159,7 @@ async function fetchAndVerifyGateway(
         verifyDeploymentImageProvenance({
           appCompose,
           imagePolicies: GATEWAY_IMAGE_POLICIES,
+          githubToken: process.env.GITHUB_TOKEN || undefined,
         }),
     },
   });
@@ -188,6 +193,7 @@ async function fetchAndVerifyModelAttestations(
             verifyComposeManagerDeploymentImageProvenance({
               deployment,
               imagePolicies: MODEL_IMAGE_POLICIES,
+              githubToken: process.env.GITHUB_TOKEN || undefined,
               composeManagerImagePolicy: {
                 imageRepository: 'nearaidev/compose-manager',
                 repository: 'nearai/compose-manager',
@@ -321,7 +327,8 @@ async function verifyCompletionResponse({
   client,
   completion,
   gateway,
-  model,
+  modelAttestations,
+  selectedModelAttestation,
 }: VerifyCompletionResponseParams): Promise<void> {
   // Retrieve the signature after the full response has been received. The ID is
   // only used for lookup; verification binds the saved bytes to an attested signer.
@@ -336,9 +343,16 @@ async function verifyCompletionResponse({
       requestBody: completion.requestBody,
       responseBody: completion.responseBody,
       signature,
-      attestation: model,
+      attestation: selectedModelAttestation,
     });
-    console.log(`${completion.label}: verified model response signature.`);
+    // Shared keys identify a report group, not one serving instance.
+    const matchingAttestations = findModelAttestationsForSignature({
+      attestations: modelAttestations,
+      signature,
+    });
+    console.log(
+      `${completion.label}: verified model response signature (${matchingAttestations.length} matching reports).`,
+    );
   } else {
     // A Gateway signature authenticates the final bytes returned by the Gateway.
     // It does not prove model execution, even though model attestation passed above.
@@ -393,7 +407,8 @@ type VerifyCompletionResponseParams = {
   readonly client: AttestationClient;
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;
-  readonly model: VerifiedModelAttestation;
+  readonly modelAttestations: readonly VerifiedModelAttestation[];
+  readonly selectedModelAttestation: VerifiedModelAttestation;
 };
 
 type ModelAttestationWithPublicKey = VerifiedModelAttestation & {

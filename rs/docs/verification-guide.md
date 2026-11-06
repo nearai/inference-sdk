@@ -320,19 +320,19 @@ async fn verify_deployments(
     )
     .await?;
 
-    let fetched_models = client
+    let fetched_model_attestations = client
         .fetch_model_attestations(MODEL, Some(SigningAlgo::Ecdsa), None)
         .await?;
-    if fetched_models.attestations.is_empty() {
+    if fetched_model_attestations.attestations.is_empty() {
         return Err(std::io::Error::other("Gateway returned no model attestations").into());
     }
 
-    let mut verified = Vec::with_capacity(fetched_models.attestations.len());
-    for attestation in &fetched_models.attestations {
+    let mut verified = Vec::with_capacity(fetched_model_attestations.attestations.len());
+    for attestation in &fetched_model_attestations.attestations {
         verified.push(
             verify_model_attestation(
                 attestation,
-                &fetched_models.client_binding,
+                &fetched_model_attestations.client_binding,
                 None,
                 Default::default(),
             )
@@ -366,24 +366,25 @@ original SSE bytes, including framing; do not parse and serialize them again.
 
 ## Verify the completion receipt
 
-Fetch the completion signature after the chat request completes. The only part
-of this stage that depends on `signature.kind` is the response verifier:
+Fetch the completion signature after the chat request completes, and choose the
+verifier according to `signature.kind`. Retain `selected_model_attestation`, the verified
+report used to select the request's routing/encryption public key, for the
+model-signature check.
 
 ```rust,no_run
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, verify_gateway_response,
-    verify_model_response, AttestationClient, CompletionSignature,
+    verify_gateway_response, verify_model_response, AttestationClient,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
 
-async fn verify_completion_receipt(
+async fn verify_completion_response(
     client: &AttestationClient,
     completion_id: &str,
     request_body: &[u8],
     response_body: &[u8],
     gateway: &VerifiedGatewayAttestation,
-    models: &[VerifiedModelAttestation],
+    selected_model_attestation: &VerifiedModelAttestation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signature = client
         .fetch_completion_signature(completion_id, Some(SigningAlgo::Ecdsa))
@@ -391,8 +392,7 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let model = find_model_attestation_for_signature(models, &signature)?;
-            verify_model_response(request_body, response_body, &signature, model)?;
+            verify_model_response(request_body, response_body, &signature, selected_model_attestation)?;
         }
         CompletionSignatureKind::Gateway => {
             verify_gateway_response(request_body, response_body, &signature, gateway)?;
@@ -402,10 +402,12 @@ async fn verify_completion_receipt(
 }
 ```
 
-`ProviderTee` proves that one preflight-verified model signer signed the exact
-request and response bytes. Use `find_model_attestation_for_signature` to
-require exactly one verified result for that signer. `Gateway` proves that the preflight-verified
-Gateway signer signed the exact client-visible bytes. It is not a choice
+`ProviderTee` proves that the model signer selected before the request signed the
+exact request and response bytes. To obtain the complete evidence group after
+this check, use `find_model_attestations_for_signature` with the preflight reports
+and signature. Shared signing keys do not identify one serving instance.
+`Gateway` proves that the preflight-verified Gateway signer signed the exact
+client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's
 receipt.

@@ -18,6 +18,7 @@ All four languages use the same environment variables:
 | `NEARAI_OHTTP` | `true` enables OHTTP for integrated Chat, Responses, and Messages clients; requires Ed25519 |
 | `NEARAI_EXPECT_SIGNATURE_KIND` | System One: `gateway` (default) or `provider_tee`; the latter requires verified model evidence |
 | `NEARAI_IMAGE_PATH` | Optional PNG file path for the native System One image/Box example |
+| `GITHUB_TOKEN` | Optional GitHub token for image provenance requests in native and standalone Gateway Chat examples |
 
 Choose a model available in the selected endpoint's catalog. Chat client examples
 and the standalone Gateway Chat examples explicitly enable field-level E2EE;
@@ -27,6 +28,17 @@ and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 
 Runnable examples make one explicit receipt-verification call and propagate failure.
 Native clients and official SDK adapters disable automatic inference retries.
+
+The standalone Gateway Chat examples retain all verified model reports in
+`modelAttestations` (`model_attestations` in Python/Rust), and keep the report
+selected for routing/E2EE separately as `selectedModelAttestation`
+(`selected_model_attestation`). After verifying a model response against that
+selected key, the plural signature helper returns `matchingAttestations`
+(`matching_attestations`): every preflight report sharing the response signer. The
+examples print both the preflight count and the matching count; use those
+collections to display individual reports. A shared key does not identify which
+instance served the request. Gateway-signed responses use Gateway evidence and
+do not have a model report group.
 
 ## Entry points
 

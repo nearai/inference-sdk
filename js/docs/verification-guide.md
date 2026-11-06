@@ -701,19 +701,19 @@ const pinnedTlsFetch = createPinnedTlsFetch(
   gateway.tlsBinding.spkiFingerprint,
 );
 
-const fetchedModels = await client.fetchModelAttestations({
+const fetchedModelAttestations = await client.fetchModelAttestations({
   model,
   signingAlgo: 'ed25519',
 });
-if (fetchedModels.attestations.length === 0) {
+if (fetchedModelAttestations.attestations.length === 0) {
   throw new Error('Gateway returned no model attestation');
 }
 
-const models = await Promise.all(
-  fetchedModels.attestations.map((attestation) =>
+const modelAttestations = await Promise.all(
+  fetchedModelAttestations.attestations.map((attestation) =>
     verifyModelAttestation({
       attestation,
-      clientBinding: fetchedModels.clientBinding,
+      clientBinding: fetchedModelAttestations.clientBinding,
     }),
   ),
 );
@@ -741,12 +741,14 @@ verification.
 ```ts
 import { prepareE2eeChatRequest } from '@nearai/inference-sdk/node';
 
-const modelAttestation = models.find(
-  (attestation) => attestation.signingPublicKey !== undefined,
+const selectedModelAttestation = modelAttestations.find(
+  (attestation) =>
+    attestation.signer.signingAlgo === 'ed25519' &&
+    attestation.signingPublicKey !== undefined,
 );
 if (
-  modelAttestation === undefined ||
-  modelAttestation.signingPublicKey === undefined
+  selectedModelAttestation === undefined ||
+  selectedModelAttestation.signingPublicKey === undefined
 ) {
   throw new Error('No verified model key is available');
 }
@@ -765,8 +767,8 @@ const request = new Request('https://cloud-api.near.ai/v1/chat/completions', {
 const prepared = await prepareE2eeChatRequest({
   request,
   modelKey: {
-    signingAlgo: modelAttestation.signer.signingAlgo,
-    publicKey: modelAttestation.signingPublicKey,
+    signingAlgo: selectedModelAttestation.signer.signingAlgo,
+    publicKey: selectedModelAttestation.signingPublicKey,
   },
 });
 const requestBytes = await prepared.request.clone().arrayBuffer();
@@ -779,7 +781,6 @@ const [responseBytes, plaintext] = await Promise.all([
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
-console.log(plaintext);
 ```
 
 Pass the captured `requestBody` and `responseBody` to the response-signature
@@ -887,10 +888,10 @@ const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
   },
 };
 
-for (const attestation of fetchedModels.attestations) {
+for (const attestation of fetchedModelAttestations.attestations) {
   await verifyModelAttestation({
     attestation,
-    clientBinding: fetchedModels.clientBinding,
+    clientBinding: fetchedModelAttestations.clientBinding,
     verifiers: {
       deployment: deployment =>
         verifyComposeManagerDeploymentImageProvenance({
@@ -953,13 +954,16 @@ successful verification:
 | `provider_tee` | The verified model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
 | `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
 
+The Gateway may normalize streaming responses and sign the resulting bytes, so
+use the returned signature kind even for an attested model.
+
 For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext
 object after decryption. Do not parse and reserialize either body before
 verification.
 
 ```ts
 import {
-  findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
@@ -970,16 +974,18 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
-  const attestation = findModelAttestationForSignature({
-    attestations: [modelAttestation],
-    signature,
-  });
+  // Preserve the routing/encryption key selected before sending the request.
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation,
+    attestation: selectedModelAttestation,
   });
+  const matchingAttestations = findModelAttestationsForSignature({
+    attestations: modelAttestations,
+    signature,
+  });
+  console.log(`Verified signature against ${matchingAttestations.length} matching reports.`);
 } else {
   verifyGatewayResponse({
     requestBody,
@@ -988,7 +994,13 @@ if (signature.kind === 'provider_tee') {
     attestation: gateway,
   });
 }
+console.log(plaintext);
 ```
+
+Matching reports identify a signer group, not one execution instance.
+High-level Gateway clients enforce the request's selected key and return this
+group as `result.attestations`. The deprecated singular `attestation` field is
+only a representative of that key.
 
 A Gateway signature does not establish which model generated the response.
 A model signature does not authenticate the Gateway deployment. Verify both

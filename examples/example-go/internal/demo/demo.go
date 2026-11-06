@@ -355,6 +355,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		if err != nil {
 			return err
 		}
+		fmt.Println("Gateway deployment and image provenance: verified.")
 		if gateway.SPKIFingerprint == "" {
 			return fmt.Errorf("Gateway did not supply attested TLS binding")
 		}
@@ -374,30 +375,34 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 	if err != nil {
 		return err
 	}
-	var models []nearai.VerifiedAttestation
+	var modelAttestations []nearai.VerifiedAttestation
 	if direct {
 		verified, err := nearai.VerifyDirectModelAttestations(ctx, fetched, nearai.VerificationOptions{})
 		if err != nil {
 			return err
 		}
-		models = verified.Attestations
+		modelAttestations = verified.Attestations
 	} else {
+		if len(fetched.Attestations) == 0 {
+			return fmt.Errorf("Gateway returned no model attestations")
+		}
 		for _, report := range fetched.Attestations {
 			verified, err := nearai.VerifyModelAttestation(ctx, report, fetched.ClientBinding, nearai.VerificationOptions{DeploymentVerifier: ModelImages})
 			if err != nil {
 				return err
 			}
-			models = append(models, verified)
+			modelAttestations = append(modelAttestations, verified)
 		}
+		fmt.Printf("Model deployments: verified %d.\n", len(modelAttestations))
 	}
-	var recipient *nearai.VerifiedAttestation
-	for i := range models {
-		if models[i].Signer.SigningAlgo == c.Algo && models[i].SigningPublicKey != "" {
-			recipient = &models[i]
+	var selectedModelAttestation *nearai.VerifiedAttestation
+	for i := range modelAttestations {
+		if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
+			selectedModelAttestation = &modelAttestations[i]
 			break
 		}
 	}
-	if !direct && recipient == nil {
+	if !direct && selectedModelAttestation == nil {
 		return fmt.Errorf("no verified model public key")
 	}
 	httpClient := &http.Client{
@@ -411,7 +416,8 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		}
 		var prepared *nearai.PreparedE2EEChatRequest
 		if !direct {
-			prepared, err = nearai.PrepareE2EEChatRequest(r, nearai.E2EEModelKey{SigningAlgo: c.Algo, PublicKey: recipient.SigningPublicKey})
+			modelKey := nearai.E2EEModelKey{SigningAlgo: c.Algo, PublicKey: selectedModelAttestation.SigningPublicKey}
+			prepared, err = nearai.PrepareE2EEChatRequest(r, modelKey)
 			if err != nil {
 				return err
 			}
@@ -460,20 +466,28 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		if direct {
-			_, err = nearai.VerifyDirectModelResponse(id, wireRequest, wire.Bytes(), sig, models)
+			_, err = nearai.VerifyDirectModelResponse(id, wireRequest, wire.Bytes(), sig, modelAttestations)
 		} else if sig.Kind == "gateway" {
 			err = nearai.VerifyGatewayResponse(wireRequest, wire.Bytes(), sig, gateway)
 		} else {
-			var signer nearai.VerifiedAttestation
-			signer, err = nearai.FindModelAttestationForSignature(models, sig)
-			if err == nil {
-				err = nearai.VerifyModelResponse(wireRequest, wire.Bytes(), sig, signer)
-			}
+			// Verify against the same model key selected before sending the request.
+			err = nearai.VerifyModelResponse(wireRequest, wire.Bytes(), sig, *selectedModelAttestation)
 		}
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Verified %s ciphertext receipt, stream=%t\n", sig.Kind, stream)
+		if direct {
+			fmt.Printf("Verified %s ciphertext receipt, stream=%t\n", sig.Kind, stream)
+		} else if sig.Kind == "provider_tee" {
+			// Shared keys identify a report group, not one serving instance.
+			matchingAttestations, err := nearai.FindModelAttestationsForSignature(modelAttestations, sig)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Verified model response signature (%d matching reports).\n", len(matchingAttestations))
+		} else {
+			fmt.Println("Verified Gateway response signature.")
+		}
 		if err = DisplayChat(plain, stream); err != nil {
 			return err
 		}
@@ -526,8 +540,12 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err = client.VerifyResponse(ctx, completion.ID); err != nil {
+	verified, err := client.VerifyResponse(ctx, completion.ID)
+	if err != nil {
 		return err
+	}
+	if !direct {
+		fmt.Printf("Verified %s response.\n", verified.SignatureKind)
 	}
 	text := ""
 	if len(completion.Choices) > 0 {
@@ -553,10 +571,15 @@ func runOpenAI(ctx context.Context, c Config, direct bool) error {
 	if id == "" {
 		return fmt.Errorf("stream returned no completion ID")
 	}
-	if _, err = client.VerifyResponse(ctx, id); err != nil {
+	verified, err = client.VerifyResponse(ctx, id)
+	if err != nil {
 		return err
 	}
-	fmt.Println("Verified streaming response.")
+	if direct {
+		fmt.Println("Verified streaming response.")
+	} else {
+		fmt.Printf("Verified %s streaming response.\n", verified.SignatureKind)
+	}
 	return nil
 }
 

@@ -3,6 +3,7 @@ import type {
   VerifiedDirectCompletionResult,
   VerifiedGatewayCompletionResult,
   VerifiedModelCompletionResult,
+  VerifiedModelAttestation,
 } from '../src';
 
 declare const gateway: VerifiedGatewayCompletionResult;
@@ -18,3 +19,6 @@ const ids: string[] = [
   direct.completionId,
 ];
 void ids;
+
+const modelReports: readonly VerifiedModelAttestation[] = model.attestations;
+void modelReports;

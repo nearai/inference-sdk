@@ -493,24 +493,40 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 	return t, nil
 }
 
-// FindModelAttestationForSignature rejects ambiguous signers, even when multiple
-// deployments share a key. Inference sessions retain the selected routing key.
-func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error) {
-	var found VerifiedAttestation
-	count := 0
+// FindModelAttestationsForSignature returns every verified report sharing the
+// response signer. A shared signing key does not identify an individual instance.
+// Inputs must already have passed attestation verification. This helper only
+// selects reports; it does not verify attestations or response signatures.
+// Use VerifyModelResponse for signature verification, passing the report used
+// to select the request's model key when a key was selected before sending.
+func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error) {
+	var matches []VerifiedAttestation
 	if sig.Kind != "provider_tee" {
-		return found, failure("api.invalid_input", nil)
+		return nil, failure("api.invalid_input", nil)
 	}
 	for _, a := range items {
 		if a.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(a.Signer.SigningAddress, sig.Signer.SigningAddress) {
-			found = a
-			count++
+			matches = append(matches, cloneAttestation(a))
 		}
 	}
-	if count != 1 {
-		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", count)
+	if len(matches) == 0 {
+		return nil, detail("api.model_attestation_not_found", "matches", 0)
 	}
-	return cloneAttestation(found), nil
+	return matches, nil
+}
+
+// FindModelAttestationForSignature requires exactly one matching report.
+//
+// Deprecated: use FindModelAttestationsForSignature to support shared signers.
+func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error) {
+	matches, err := FindModelAttestationsForSignature(items, sig)
+	if err != nil {
+		return VerifiedAttestation{}, err
+	}
+	if len(matches) != 1 {
+		return VerifiedAttestation{}, detail("api.model_attestation_not_found", "matches", len(matches))
+	}
+	return matches[0], nil
 }
 
 // Compare parsed event logs so JSON whitespace/key ordering cannot affect routing.

@@ -17,6 +17,7 @@ import type {
   FetchGatewayAttestationParams,
   FetchModelAttestationsParams,
   FindModelAttestationForSignatureParams,
+  FindModelAttestationsForSignatureParams,
   ModelMetadata,
 } from '../types/cloud-api';
 import type { VerifiedModelAttestation } from '../types/verification';
@@ -462,14 +463,14 @@ export async function readCloudApiJson({
 }
 
 /**
- * Select the single verified model attestation whose signer matches a
- * provider_tee completion signature. This is a selection helper; it does not
- * perform another attestation or completion-signature verification.
+ * Return every verified report matching a provider_tee signature's signer.
+ * Shared signing keys identify a signer group, not one serving instance.
+ * This helper does not verify attestations or the completion signature.
  */
-export function findModelAttestationForSignature({
+export function findModelAttestationsForSignature({
   attestations,
   signature,
-}: FindModelAttestationForSignatureParams): VerifiedModelAttestation {
+}: FindModelAttestationsForSignatureParams): readonly VerifiedModelAttestation[] {
   const signer = requireProviderSignature(signature);
   const signerAddress = validateApiSigningAddress({
     signingAddress: signer.signingAddress,
@@ -496,12 +497,23 @@ export function findModelAttestationForSignature({
       code: 'api.model_attestation_signer_not_found',
     });
   }
+  return matches;
+}
+
+/**
+ * Select exactly one report, rejecting shared-signer ambiguity.
+ * @deprecated Use `findModelAttestationsForSignature` to retain the signer group.
+ */
+export function findModelAttestationForSignature(
+  params: FindModelAttestationForSignatureParams,
+): VerifiedModelAttestation {
+  const matches = findModelAttestationsForSignature(params);
   if (matches.length !== 1) {
     throw new ApiError({
       code: 'api.ambiguous_model_attestation_signer',
       details: {
         matchingCount: matches.length,
-        totalCount: attestations.length,
+        totalCount: params.attestations.length,
       },
     });
   }

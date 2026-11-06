@@ -46,7 +46,8 @@ the attestation socket to be reused.
 | `verifyDirectModelAttestation` | `(params: VerifyDirectModelAttestationParams) => Promise<VerifiedDirectModelAttestation>` | Verifies one direct model attestation, including its quote-authenticated SPKI when present. |
 | `verifyDirectModelAttestations` | `(params: VerifyDirectModelAttestationsParams) => Promise<VerifiedDirectModelAttestations>` | Verifies all supplied model attestations and checks the serving attestation's observed TLS binding when SPKI evidence is supplied. |
 | `verifyDirectModelResponse` | `(params: VerifyDirectModelResponseParams) => readonly VerifiedDirectModelAttestation[]` | Verifies exact completion bytes and returns the verified attestations sharing its model signer. |
-| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Selects the single verified model attestation matching a `provider_tee` signature. |
+| `findModelAttestationsForSignature` | `(params: FindModelAttestationsForSignatureParams) => readonly VerifiedModelAttestation[]` | Returns all verified reports matching a `provider_tee` signer. |
+| `findModelAttestationForSignature` | `(params: FindModelAttestationForSignatureParams) => VerifiedModelAttestation` | Deprecated unique-match helper; rejects multiple matches. |
 | `fetchImageProvenance` | `(params: FetchImageProvenanceParams) => Promise<readonly string[]>` | Fetches serialized Sigstore bundles from GitHub. |
 | `verifyImageProvenance` | `(params: VerifyImageProvenanceParams) => Promise<VerifiedImageProvenance>` | Verifies image build provenance against caller-owned policy. |
 | `verifyDeploymentImageProvenance` | `(params: VerifyDeploymentImageProvenanceParams) => Promise<void>` | Verifies images listed in the quote-bound `docker_compose_file`. |
@@ -124,6 +125,8 @@ Model reports through the Gateway use configured authentication after Gateway ve
 | `InferenceClient.clearResponseCache()` | `void` | Clears captured request/response bytes, cached receipt results, and expiry timers. Keeps the client and attestation sessions reusable. |
 | `VerifiedCompletionResult.id` | `string` | Chat completion ID, Responses ID, Messages ID, or System One decision ID whose signature was verified. |
 | `VerifiedCompletionResult.completionId` | `string` | Deprecated alias of `id`. |
+| `VerifiedModelCompletionResult.attestations` | `readonly VerifiedModelAttestation[]` | Every verified report sharing the request's selected signer, in response order. Does not identify one serving instance. |
+| `VerifiedModelCompletionResult.attestation` | `VerifiedModelAttestation` | Deprecated: use `attestations` for all matching verified reports. Retains the report used to select the request's model public key; does not identify the serving instance. |
 | `VerifiedCompletionResult.signatureKind` | `'provider_tee' \| 'gateway'` | `provider_tee` matches the model signer selected before the request. `gateway` uses Gateway evidence and is the only accepted kind for Incognito sessions. |
 
 | `AttestationVerificationResult` field | Type | Description |
@@ -250,7 +253,7 @@ See the [native image example](../../examples/example-js/gateway/systemone.ts) a
 
 Attestation sessions are cached per model and shared with Chat and `verify()`.
 Response records use the client's `responseCacheTimeToLiveMs`. Provider TEE
-receipts return the matching model report in `attestation`.
+receipts return the selected signer group's verified reports in `attestations`.
 
 Inference is sent once. Its transport failures use `api.transport_failed` with
 `retryable: false`.
@@ -512,18 +515,22 @@ and `spkiFingerprints` is empty.
 
 ## Model attestation selection
 
-### `findModelAttestationForSignature`
+### `findModelAttestationsForSignature`
 
 Use this function after verifying every candidate returned by
-`client.fetchModelAttestations`. It selects the one verified result whose
-signer matches a `provider_tee` signature. It requires exactly one signer
-match and performs no additional cryptographic verification.
+`client.fetchModelAttestations`. It returns all verified reports whose signer
+matches a `provider_tee` signature, preserving their order and individual evidence.
+No match is an error. This is selection only; verify the signature with
+`verifyModelResponse`. Shared signers do not identify one serving instance.
 
-#### `FindModelAttestationForSignatureParams`
+The deprecated singular `findModelAttestationForSignature` retains its strict
+unique-match contract and rejects multiple matches.
+
+#### `FindModelAttestationsForSignatureParams`
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. Exactly one item must match `signature.signer`. |
+| `attestations` | `readonly VerifiedModelAttestation[]` | Yes | Successful results from `verifyModelAttestation`. At least one item must match `signature.signer`. |
 | `signature` | `CompletionSignatureReference` | Yes | `provider_tee` signature whose signer is used for matching. A full `CompletionSignature` can be passed directly. |
 
 ## Verification functions
@@ -725,7 +732,7 @@ the provider signature no longer matches the client-visible bytes.
 |  | `signedText` | `string` | Text covered by the signature. |
 |  | `signature` | `string` | Hexadecimal signature: 65 bytes for ECDSA or 64 bytes for Ed25519. |
 |  | `signer` | `SigningIdentity` | Signing identity that must match verified evidence. |
-| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind. `findModelAttestationForSignature` accepts only `provider_tee`. |
+| `CompletionSignatureReference` | `kind` | `'provider_tee' \| 'gateway'` | Signature kind. Model-attestation selection helpers accept only `provider_tee`. |
 |  | `signer` | `SigningIdentity` | Signing identity used when selecting evidence. |
 
 `CompletionSignatureKind` is the union `'provider_tee' | 'gateway'`.

@@ -10,6 +10,7 @@ from openai.resources.chat import AsyncChat
 from e2e.helpers import required_env, retry_receipt, selected_models
 from nearai_inference_sdk import (
     AttestationClient,
+    AttestationVerificationResult,
     InferenceClient,
     ModelAttestationPolicy,
     ModelVerificationOptions,
@@ -17,7 +18,7 @@ from nearai_inference_sdk import (
     VerificationError,
     VerifiedCompletionResult,
     create_pinned_tls_client,
-    find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
@@ -62,7 +63,7 @@ async def test_inference_client_verifies_json_and_streams(
         ) as external,
     ):
         # Explicit preflight shares its verified session with both Chat calls.
-        await inference_client.verify(model)
+        preflight = await inference_client.verify(model)
         for stream in (False, True):
             await verify_client_chat(
                 inference_client,
@@ -70,6 +71,7 @@ async def test_inference_client_verifies_json_and_streams(
                 model,
                 signing_algo,
                 stream,
+                preflight=preflight,
             )
 
 
@@ -94,7 +96,7 @@ async def test_inference_client_verifies_gateway_only_receipts(
                 max_retries=0,
             ) as external,
         ):
-            await inference_client.verify(model)
+            preflight = await inference_client.verify(model)
             # Chutes streaming is separately provider-gated; use JSON only.
             streams = (False,) if provider == 'chutes' else (False, True)
             for stream in streams:
@@ -104,6 +106,7 @@ async def test_inference_client_verifies_gateway_only_receipts(
                     model,
                     'ed25519',
                     stream,
+                    preflight=preflight,
                 )
                 assert verified.signature_kind == 'gateway'
 
@@ -114,6 +117,8 @@ async def verify_client_chat(
     model: str,
     signing_algo: SigningAlgo,
     stream: bool,
+    *,
+    preflight: AttestationVerificationResult,
 ) -> VerifiedCompletionResult:
     response = await chat.completions.create(
         model=model,
@@ -151,6 +156,22 @@ async def verify_client_chat(
     )
     assert verified.id == completion_id
     assert verified.signature.signer.signing_algo == signing_algo
+    if verified.signature_kind == 'provider_tee':
+        expected = find_model_attestations_for_signature(
+            preflight.models, verified.signature
+        )
+        selected = next(
+            report
+            for report in preflight.models
+            if report.signer.signing_algo == signing_algo
+            and report.signing_public_key is not None
+        )
+        assert verified.attestations == expected
+        assert verified.attestation is selected
+        assert verified.attestation in verified.attestations
+    else:
+        assert verified.attestation is preflight.gateway
+        assert not hasattr(verified, 'attestations')
     return verified
 
 
@@ -246,10 +267,10 @@ async def verify_chat(
     # Keep original wire bytes. Even appended whitespace must invalidate them.
     altered = response_body + b' '
     if signature.kind == 'provider_tee':
-        attestation = find_model_attestation_for_signature(models, signature)
-        verify_model_response(request_body, response_body, signature, attestation)
+        matching = find_model_attestations_for_signature(models, signature)
+        verify_model_response(request_body, response_body, signature, matching[0])
         with pytest.raises(VerificationError):
-            verify_model_response(request_body, altered, signature, attestation)
+            verify_model_response(request_body, altered, signature, matching[0])
     else:
         verify_gateway_response(request_body, response_body, signature, gateway)
         with pytest.raises(VerificationError):

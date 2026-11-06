@@ -1,8 +1,9 @@
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, ApiError, ApiResource, AttestationClient,
-    CompletionSignature, CompletionSignatureKind, DeploymentProvenanceStatus,
-    GatewayAttestationFetchOptions, GpuEvidenceStatus, MeasuredDeployment, RuntimeMeasurements,
-    SigningAlgo, SigningIdentity, TcbStatus, VerifiedAttestationEvidence, VerifiedModelAttestation,
+    find_model_attestation_for_signature, find_model_attestations_for_signature, ApiError,
+    ApiResource, AttestationClient, CompletionSignature, CompletionSignatureKind,
+    DeploymentProvenanceStatus, GatewayAttestationFetchOptions, GpuEvidenceStatus,
+    MeasuredDeployment, RuntimeMeasurements, SigningAlgo, SigningIdentity, TcbStatus,
+    VerifiedAttestationEvidence, VerifiedModelAttestation,
 };
 use serde_json::json;
 use std::sync::Once;
@@ -355,6 +356,38 @@ fn verified_model_attestation_selection_rejects_zero_or_multiple_matches() {
     let error = find_model_attestation_for_signature(&[], &signature).unwrap_err();
     assert!(matches!(error, ApiError::ModelAttestationSignerNotFound));
     assert_eq!(error.code(), "api.model_attestation_signer_not_found");
+}
+
+#[test]
+fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
+    for (signing_algo, bytes) in [(SigningAlgo::Ed25519, 32), (SigningAlgo::Ecdsa, 20)] {
+        let signature = signature_for_evidence_selection(
+            CompletionSignatureKind::ProviderTee,
+            SigningIdentity {
+                signing_algo,
+                signing_address: "ab".repeat(bytes),
+            },
+        );
+        let first = verified_model_attestation_for_signer(signature.signer.clone());
+        let mut second = first.clone();
+        second.evidence.signer.signing_address = format!("0X{}", "AB".repeat(bytes));
+        second.evidence.advisory_ids.push("second-report".into());
+        let other = verified_model_attestation_for_signer(SigningIdentity {
+            signing_algo,
+            signing_address: "cd".repeat(bytes),
+        });
+        let candidates = vec![first.clone(), other, second, first];
+        let matching_attestations =
+            find_model_attestations_for_signature(&candidates, &signature).unwrap();
+        assert_eq!(
+            matching_attestations,
+            vec![&candidates[0], &candidates[2], &candidates[3]]
+        );
+        assert!(matches!(
+            find_model_attestations_for_signature(&[], &signature),
+            Err(ApiError::ModelAttestationSignerNotFound)
+        ));
+    }
 }
 
 #[test]

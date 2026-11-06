@@ -31,8 +31,14 @@ receipt registration. Non-2xx responses pass through `send`; `chat_completions`,
 turn them into `ApiError::HttpStatus`.
 
 `VerifiedCompletionResult` contains `id`, `signature`, and an `attestation` enum:
-`Gateway`, `Model`, or `Direct` (the matching report group). `signature_kind()`
-returns `CompletionSignatureKind`.
+`Gateway`, `Model`, or `Direct` (the matching report group). For a Gateway
+`ProviderTee` receipt, `attestations` contains every verified report sharing the
+response signer. The `Model` variant is deprecated: use `attestations` for model
+evidence. It retains the report used to select the request's model public key and
+does not identify the serving instance. The `Gateway` and `Direct` variants remain
+supported. `attestations` is empty for
+Gateway-signed receipts and Direct clients, whose report group stays in `Direct`.
+`signature_kind()` returns `CompletionSignatureKind`.
 
 Call `clear_response_cache().await` when discarding a conversation. Cleared IDs
 become unavailable to `verify_response`. The client remains reusable. Ongoing
@@ -190,7 +196,7 @@ All client methods below are asynchronous and return `Result<_, ApiError>`.
 
 `signing_algo` and `signing_address` only narrow the Gateway response. They
 do not replace local selection from verified model results. Use
-`find_model_attestation_for_signature` after verifying every fetched candidate.
+`find_model_attestations_for_signature` after verifying every fetched candidate.
 
 When supplied, `signing_address` must be hexadecimal: 20 or 32 bytes without
 `signing_algo`, or the exact length for the selected algorithm. Invalid filters
@@ -213,7 +219,8 @@ TLS binding requires an HTTPS endpoint. Set `include_spki_fingerprint` to
 
 | Function | Parameters | Returns | Description |
 | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<&VerifiedModelAttestation, ApiError>` | Free pure function that selects the single verified result matching a `ProviderTee` signer. It does not verify the response signature. |
+| `find_model_attestations_for_signature` | `attestations: &[VerifiedModelAttestation]`, `signature: &CompletionSignature` | `Result<Vec<&VerifiedModelAttestation>, ApiError>` | Returns every verified report matching a `ProviderTee` signer, or an error when none match. Shared signers do not identify an individual instance. It does not verify the response signature. |
+| `find_model_attestation_for_signature` | Same parameters | `Result<&VerifiedModelAttestation, ApiError>` | Compatibility helper requiring exactly one match. Prefer the plural helper for shared-key deployments; multiple matches still return an ambiguity error. |
 
 Model fetches always send `include_tls_fingerprint=false`; model verification
 checks the signer-and-nonce quote layout and makes no client-to-model TLS
@@ -276,8 +283,11 @@ attestation must bind the signature signer.
 For a `Gateway` response, `verify_gateway_response` requires a
 `VerifiedGatewayAttestation` with the same signer. For a `ProviderTee`
 response, `verify_model_response` requires a `VerifiedModelAttestation` with
-the same signer. Select it from the verified preflight results with
-`find_model_attestation_for_signature`.
+the same signer. Obtain the matching group from verified preflight results with
+`find_model_attestations_for_signature`. One member supplies the shared key for
+cryptographic verification; retain the whole group as the matching evidence.
+Clients that selected a routing/encryption key must also require the response
+signer to match that selected key.
 
 ## Image build provenance
 
