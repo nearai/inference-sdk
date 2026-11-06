@@ -27,7 +27,7 @@ from nearai_inference_sdk import (
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import SIGNING_ADDRESS, cloud_attestation
+from .support.attestation import SIGNING_ADDRESS, cloud_attestation
 
 API_KEY = 'test'
 BASE_URL = 'https://cloud.example/v1'

@@ -12,7 +12,7 @@ from nearai_inference_sdk import (
     verify_direct_model_attestations,
 )
 
-from .fixtures import (
+from .support.attestation import (
     NONCE,
     TLS_FINGERPRINT,
     create_gateway_tls_quote,

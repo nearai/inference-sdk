@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import httpx
 import pytest
@@ -18,10 +17,11 @@ from nearai_inference_sdk import (
     VerificationError,
 )
 
-from .ohttp_fixtures import OhttpGateway
-from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
+from .support.gateway import BASE_URL, MODEL, ChunkStream, Gateway
+from .support.ohttp import OhttpGateway
+from .support.paths import TEST_FIXTURES
 
-FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures' / 'messages'
+FIXTURES = TEST_FIXTURES / 'messages'
 ERROR_HEADER_ENDING = b'event: error\ndata: {"type":"message_stop"}\n\n'
 
 

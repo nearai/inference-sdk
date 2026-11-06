@@ -1,7 +1,6 @@
 import json
 
-from e2e.helpers import selected_models
-from e2e.test_systemone import decision_request
+from e2e.helpers import decision_request, selected_models
 
 
 def test_suites_use_their_entries_from_the_shared_catalog(monkeypatch):

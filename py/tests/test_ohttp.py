@@ -13,7 +13,7 @@ from nearai_inference_sdk.utils.errors import (
     verification_failure,
 )
 
-from .ohttp_fixtures import Chunks, OhttpGateway, varint, vector
+from .support.ohttp import Chunks, OhttpGateway, varint, vector
 
 BASE_URL = 'https://gateway.example/v1/'
 

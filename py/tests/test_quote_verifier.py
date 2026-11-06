@@ -11,7 +11,7 @@ from nearai_inference_sdk.types.attestation_common import TcbStatus
 from nearai_inference_sdk.types.verification import AttestationPolicy
 from nearai_inference_sdk.utils import intel
 
-from .fixtures import create_model_quote
+from .support.attestation import create_model_quote
 
 
 async def test_quote_factories_route_collateral_and_keep_configuration_isolated(

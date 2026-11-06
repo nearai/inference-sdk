@@ -5,7 +5,6 @@ import json
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from cryptography import x509
@@ -26,10 +25,9 @@ from nearai_inference_sdk.core import provenance
 from nearai_inference_sdk.schemas import SlsaStatementSchema
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-FIXTURE = (
-    Path(__file__).resolve().parents[2]
-    / 'test-fixtures/provenance/compose-manager-launcher.bundle.json'
-)
+from .support.paths import TEST_FIXTURES
+
+FIXTURE = TEST_FIXTURES / 'provenance/compose-manager-launcher.bundle.json'
 BUNDLE = FIXTURE.read_text()
 DIGEST = 'sha256:91fdff3cfa3543d72656b2368c7d8a0a83d95a0f1087378c897aa1537acdba56'
 COMMIT = '8e07c3583909c9ab9da94d883e87add1ae90832d'

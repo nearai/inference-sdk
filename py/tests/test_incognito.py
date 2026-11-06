@@ -10,8 +10,8 @@ from nearai_inference_sdk import (
     VerificationError,
 )
 
-from .test_inference_client import BASE_URL, MESSAGES, MODEL, Gateway
-from .test_inference_ohttp import ObliviousGateway
+from .support.gateway import BASE_URL, MESSAGES, MODEL, Gateway
+from .support.gateway_ohttp import ObliviousGateway
 
 
 @pytest.mark.parametrize('ohttp', [False, True])

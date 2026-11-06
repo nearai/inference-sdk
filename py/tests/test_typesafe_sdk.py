@@ -16,8 +16,8 @@ from typesafe_sdk import (
 
 from nearai_inference_sdk import ApiError, VerificationError
 
-from .test_inference_client import BASE_URL, MODEL
-from .test_systemone import BOX_BOUNDS, IMAGE_PART, REQUEST, DecisionGateway
+from .support.gateway import BASE_URL, MODEL
+from .support.systemone import BOX_BOUNDS, IMAGE_PART, REQUEST, DecisionGateway
 
 
 def official_client(client):

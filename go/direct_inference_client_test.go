@@ -198,3 +198,41 @@ func TestDirectHTTPAdapterRejectsUnsupportedEndpoints(t *testing.T) {
 		requireCode(t, err, "api.invalid_input")
 	}
 }
+
+func TestDirectClientE2EEIsOptIn(t *testing.T) {
+	for _, scenario := range []struct {
+		name string
+		e2ee bool
+	}{
+		{"default plaintext", false},
+		{"explicit E2EE", true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee, f.direct, f.encrypt = true, true, scenario.e2ee
+			server := httptest.NewServer(f)
+			defer server.Close()
+			opts := DirectInferenceOptions{
+				DisableTLSBinding: true,
+				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
+				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
+				E2EE:              scenario.e2ee,
+			}
+			client, err := NewDirectInferenceClient(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			body, err := client.CreateChatCompletion(context.Background(), chatRequest())
+			if err != nil || !bytes.Contains(body, []byte("answer")) {
+				t.Fatalf("response=%s err=%v", body, err)
+			}
+			if _, err := client.VerifyResponse(context.Background(), "chat-1"); err != nil {
+				t.Fatal(err)
+			}
+			if f.attestations.Load() != 1 {
+				t.Fatal("expected model preflight")
+			}
+		})
+	}
+}

@@ -14,9 +14,9 @@ from openai import AsyncOpenAI
 
 from nearai_inference_sdk import ApiError, VerificationError
 
-from .test_inference_client import BASE_URL, MESSAGES, MODEL, ChunkStream, Gateway
-from .test_inference_ohttp import ObliviousGateway
-from .test_systemone import REQUEST, DecisionGateway
+from .support.gateway import BASE_URL, MESSAGES, MODEL, ChunkStream, Gateway
+from .support.gateway_ohttp import ObliviousGateway
+from .support.systemone import REQUEST, DecisionGateway
 
 
 @pytest.mark.parametrize('adapter_name', ['http_client', 'httpx2_client'])

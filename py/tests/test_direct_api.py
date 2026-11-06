@@ -7,7 +7,7 @@ from nearai_inference_sdk import ApiError, DirectAttestationClient
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import cloud_attestation
+from .support.attestation import cloud_attestation
 
 
 @pytest.mark.parametrize(

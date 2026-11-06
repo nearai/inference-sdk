@@ -7,99 +7,31 @@ import hashlib
 
 import httpx
 import pytest
-from nacl.signing import SigningKey
 
 from nearai_inference_sdk import ApiError, InferenceClient, VerificationError
 
-from .ohttp_fixtures import OhttpGateway
-from .test_inference_client import BASE_URL, MESSAGES, MODEL, Gateway
-
-
-class _RecordedStream(httpx.AsyncByteStream):
-    def __init__(self, stream: httpx.AsyncByteStream, chunks: list[bytes]):
-        self.stream = stream
-        self.chunks = chunks
-
-    async def __aiter__(self):
-        async for chunk in self.stream:
-            self.chunks.append(chunk)
-            yield chunk
-
-    async def aclose(self):
-        await self.stream.aclose()
-
-
-class ObliviousGateway(Gateway):
-    """Wrap the signed Gateway fixture with the real OHTTP server fixture."""
-
-    def __init__(self, kind: str = 'provider_tee'):
-        super().__init__(kind=kind)
-        self.ohttp_gateway = OhttpGateway(handler=self.handle_inner)
-        self.outer_requests: list[httpx.Request] = []
-        self.transport_paths: list[str] = []
-        self.response_chunks: list[list[bytes]] = []
-        self.proof_failure: str | None = None
-
-    async def handle_inner(self, request: httpx.Request) -> httpx.Response:
-        assert request.url.path == '/v1/chat/completions'
-        response = await super().handle(request)
-        chunks: list[bytes] = []
-        self.response_chunks.append(chunks)
-        response.stream = _RecordedStream(response.stream, chunks)
-        return response
-
-    async def handle(self, request: httpx.Request) -> httpx.Response:
-        self.transport_paths.append(request.url.path)
-        if request.url.path == '/ohttp':
-            self.outer_requests.append(request)
-            return await self.ohttp_gateway.handle(request)
-        response = await super().handle(request)
-        if (
-            request.url.path == '/v1/attestation/report'
-            and 'model' not in request.url.params
-        ):
-            if self.proof_failure == 'missing':
-                return response
-            key = (
-                SigningKey(bytes([9]) * 32)
-                if self.proof_failure == 'signer'
-                else self.key
-            )
-            config = (
-                b'\x00'
-                if self.proof_failure == 'malformed_config'
-                else self.ohttp_gateway.key_config
-            )
-            payload = response.json()
-            payload['ohttp_attestation'] = {
-                'signing_algo': 'ed25519',
-                'signing_key': bytes(key.verify_key).hex(),
-                'key_config': config.hex(),
-                'signature': (
-                    '00' * 64
-                    if self.proof_failure == 'signature'
-                    else key.sign(config).signature.hex()
-                ),
-            }
-            return httpx.Response(200, json=payload)
-        return response
-
-    def client(self, **options) -> InferenceClient:
-        return super().client(ohttp=True, **options)
+from .support.gateway import BASE_URL, MESSAGES, MODEL
+from .support.gateway_ohttp import ObliviousGateway
 
 
 @pytest.mark.parametrize('e2ee', [False, True])
 @pytest.mark.parametrize('kind', ['provider_tee', 'gateway'])
 async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee, kind):
     gateway = ObliviousGateway(kind)
+    gateway.model_report_count = 2
     gateway.install(monkeypatch)
 
     async with gateway.client(e2ee=e2ee) as client:
+        preflight = await client.verify(MODEL)
         completion = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES
         )
         assert completion.choices[0].message.content == 'Hello back'
-        first = await client.verify_response(completion.id)
+        first, concurrent = await asyncio.gather(
+            client.verify_response(completion.id), client.verify_response(completion.id)
+        )
+        assert concurrent is first
+        assert await client.verify_response(completion.id) is first
 
         stream = await client.chat.completions.create(
             model=MODEL, messages=MESSAGES, stream=True
@@ -125,6 +57,12 @@ async def test_ohttp_json_and_sse_verify_the_exact_inner_bytes(monkeypatch, e2ee
             )
             if kind == 'provider_tee':
                 signed_text = f'{MODEL}:{signed_text}'
+                assert receipt.attestations == preflight.models
+                assert len(receipt.attestations) == 2
+                assert receipt.attestation is preflight.models[0]
+            else:
+                assert receipt.attestation is preflight.gateway
+                assert not hasattr(receipt, 'attestations')
             assert receipt.signature_kind == kind
             assert receipt.signature.signed_text == signed_text
 

@@ -1,6 +1,5 @@
 import json
 from dataclasses import replace
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -26,14 +25,15 @@ from nearai_inference_sdk.schemas import ComposeManagerAttestationSchema
 from nearai_inference_sdk.utils.common import sha256
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-from .fixtures import (
+from .support.attestation import (
     MODEL_CLIENT_BINDING,
     NONCE,
     create_model_attestation,
     create_model_quote,
 )
+from .support.paths import TEST_FIXTURES
 
-FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures'
+FIXTURES = TEST_FIXTURES
 FIXTURE = json.loads((FIXTURES / 'compose-manager/deployment.json').read_text())
 POLICIES = {
     'nearaidev/compose-manager-launcher': ImageProvenancePolicy(

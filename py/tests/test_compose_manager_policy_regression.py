@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,7 +18,7 @@ from nearai_inference_sdk.types.compose_manager import VerifiedComposeManagerAtt
 from nearai_inference_sdk.utils.common import sha256
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
-TEST_FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures'
+from .support.paths import TEST_FIXTURES
 
 FIXTURES = TEST_FIXTURES
 FIXTURE = json.loads((FIXTURES / 'compose-manager/deployment.json').read_text())

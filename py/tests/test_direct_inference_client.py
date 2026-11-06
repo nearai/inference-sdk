@@ -15,8 +15,8 @@ from nearai_inference_sdk import (
 )
 from nearai_inference_sdk.core import direct_inference_client
 
-from .ohttp_fixtures import OhttpGateway
-from .test_inference_client import BASE_URL, MESSAGES, MODEL, TLS_FINGERPRINT, Gateway
+from .support.gateway import BASE_URL, MESSAGES, MODEL, TLS_FINGERPRINT, Gateway
+from .support.ohttp import OhttpGateway
 
 
 def bind_tls_report(endpoint, report, fingerprint):

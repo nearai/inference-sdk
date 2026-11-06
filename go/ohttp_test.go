@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -163,7 +164,7 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 				if scenario.empty && variant == "wrong length" {
 					continue
 				}
-				t.Run(itoa(int(framing))+"/"+scenario.name+"/"+variant, func(t *testing.T) {
+				t.Run(strconv.Itoa(int(framing))+"/"+scenario.name+"/"+variant, func(t *testing.T) {
 					path := scenario.path
 					if path == "" {
 						path = "/v1/chat/completions"
@@ -177,13 +178,13 @@ func TestOHTTPWireRoundtripAndFinalAuthentication(t *testing.T) {
 					config = append(config, 0, 4, 0, 1, 0, 1)
 					reply := []byte("data: {\"id\":\"test\",\"choices\":[]}\n\ndata: [DONE]\n\n")
 					if scenario.name == "responses" {
-						reply, e = os.ReadFile("testdata/responses/response.sse")
+						reply, e = os.ReadFile("../test-fixtures/responses/response.sse")
 						if e != nil {
 							t.Fatal(e)
 						}
 					}
 					if scenario.name == "messages" {
-						reply, e = os.ReadFile("testdata/messages/message.sse")
+						reply, e = os.ReadFile("../test-fixtures/messages/message.sse")
 						if e != nil {
 							t.Fatal(e)
 						}

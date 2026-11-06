@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 
 import httpx
 import pytest
@@ -13,10 +12,11 @@ from openai import AsyncOpenAI
 
 from nearai_inference_sdk import ApiError, DirectInferenceClient, VerificationError
 
-from .ohttp_fixtures import OhttpGateway
-from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
+from .support.gateway import BASE_URL, MODEL, ChunkStream, Gateway
+from .support.ohttp import OhttpGateway
+from .support.paths import TEST_FIXTURES
 
-FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures' / 'responses'
+FIXTURES = TEST_FIXTURES / 'responses'
 STREAM_CASES = json.loads((FIXTURES / 'streams.json').read_text())
 
 
