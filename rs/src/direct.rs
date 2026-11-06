@@ -374,7 +374,7 @@ impl Default for DirectInferenceClientOptions {
         let options = CoreOptions::default();
         Self {
             api_key: options.api_key,
-            base_url: options.base_url,
+            base_url: String::new(),
             headers: options.headers,
             e2ee: options.e2ee,
             ohttp: options.ohttp,

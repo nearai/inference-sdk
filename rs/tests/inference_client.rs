@@ -590,6 +590,20 @@ impl DeploymentVerifier for DeploymentCheck {
         Ok(())
     }
 }
+#[test]
+fn direct_requires_explicit_endpoint() {
+    let error = DirectInferenceClient::with_options(Default::default())
+        .err()
+        .expect("Direct requires a model endpoint URL");
+    assert_eq!(error.code(), "api.invalid_input");
+    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
+        base_url: "https://model.test/v1".into(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(client.base_url(), "https://model.test/v1/");
+}
+
 #[tokio::test]
 async fn direct_deployment_verifier_checks_every_report() {
     let (_server, _fixture, mut options) = setup(Fixture {

@@ -131,7 +131,8 @@ method while the response remains cached.
   `OhttpClient`; its `send` returns `InferenceResponse`. Config bytes must already
   be authenticated, and the supplied HTTP client must disable redirects.
 - `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
-  Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
+  Gateway client. An explicit model endpoint URL is required, including with `with_options`.
+  Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
   to enable it. Direct has its own options type without Gateway verification settings.
   `verify` returns `DirectAttestationVerificationResult`.
   `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
