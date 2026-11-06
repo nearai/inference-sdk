@@ -20,6 +20,8 @@ import {
 } from '../src';
 import type { GatewayAttestationHttpResponse } from '../src/core/cloud-api';
 import {
+  buildE2eeFieldAad,
+  buildE2eeRequestAad,
   decryptE2eeText as decryptE2eeValue,
   encryptE2eeText as encryptE2eeValue,
 } from '../src/core/e2ee';
@@ -170,19 +172,28 @@ function encryptE2eeText({
 }
 
 type DecryptEd25519TextParams = {
+  readonly replyPublicKey: string;
   readonly ciphertext: string;
   readonly recipientSecretKey: Uint8Array;
   readonly field: string;
 };
 
-/** The in-memory Gateway fixture implements the Ed25519 v2 model side. */
+/** The in-memory Gateway fixture implements the Ed25519 v3 model side. */
 function decryptE2eeText({
   ciphertext,
   recipientSecretKey,
+  replyPublicKey,
   field,
 }: DecryptEd25519TextParams): string {
   return decryptE2eeValue({
     ciphertext,
+    associatedData: buildE2eeFieldAad(
+      buildE2eeRequestAad({
+        signingAlgo: 'ed25519',
+        publicKey: replyPublicKey,
+      }),
+      field.replace(/\[\d+\]/g, '[]'),
+    ),
     clientKeyPair: {
       signingAlgo: 'ed25519',
       publicKey: '',
@@ -430,6 +441,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.content,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].content`,
           }),
         );
@@ -439,6 +451,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.reasoning_content,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].reasoning_content`,
           }),
         );
@@ -448,6 +461,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.reasoning,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].reasoning`,
           }),
         );
@@ -457,6 +471,7 @@ function createTestGateway({
           decryptE2eeText({
             ciphertext: message.audio.data,
             recipientSecretKey: modelX25519SecretKey,
+            replyPublicKey: clientPublicKey,
             field: `messages[${index}].audio.data`,
           }),
         );
@@ -469,12 +484,14 @@ function createTestGateway({
           name: decryptE2eeText({
             ciphertext: toolCall.function.name,
             recipientSecretKey: modelX25519SecretKey,
-            field: `messages[${index}].tool_calls.function.name`,
+            replyPublicKey: clientPublicKey,
+            field: `messages[${index}].tool_calls[].function.name`,
           }),
           arguments: decryptE2eeText({
             ciphertext: toolCall.function.arguments,
             recipientSecretKey: modelX25519SecretKey,
-            field: `messages[${index}].tool_calls.function.arguments`,
+            replyPublicKey: clientPublicKey,
+            field: `messages[${index}].tool_calls[].function.arguments`,
           }),
         });
       }
@@ -492,6 +509,7 @@ function createTestGateway({
         name: decryptE2eeText({
           ciphertext: functionTool.name,
           recipientSecretKey: modelX25519SecretKey,
+          replyPublicKey: clientPublicKey,
           field: 'tools[0].function.name',
         }),
         ...(functionTool.description === undefined
@@ -500,12 +518,14 @@ function createTestGateway({
               description: decryptE2eeText({
                 ciphertext: functionTool.description,
                 recipientSecretKey: modelX25519SecretKey,
+                replyPublicKey: clientPublicKey,
                 field: 'tools[0].function.description',
               }),
             }),
         parameters: decryptE2eeText({
           ciphertext: functionTool.parameters,
           recipientSecretKey: modelX25519SecretKey,
+          replyPublicKey: clientPublicKey,
           field: 'tools[0].function.parameters',
         }),
       };
@@ -521,6 +541,7 @@ function createTestGateway({
       state.decryptedNamedToolChoice = decryptE2eeText({
         ciphertext: requestedToolChoice.function.name,
         recipientSecretKey: modelX25519SecretKey,
+        replyPublicKey: clientPublicKey,
         field: 'tool_choice.function.name',
       });
     }
@@ -3040,7 +3061,7 @@ describe('inference client', () => {
         };
         const body = {
           model,
-          messages: [{ role: 'user' as const, content: '你好 🌎' }],
+          messages: [{ role: 'user' as const, content: 'UTF-8: A é € 🌍' }],
         };
         let completionId: string;
         if (entrypoint === 'fetch') {
@@ -3097,7 +3118,7 @@ describe('inference client', () => {
         });
         const sent = gateway.state.completionRequestsSeen[0];
         expect(sent.body.messages).toEqual([
-          { role: 'user', content: '你好 🌎' },
+          { role: 'user', content: 'UTF-8: A é € 🌍' },
         ]);
         for (const name of [
           'x-model-pub-key',
@@ -5137,7 +5158,7 @@ describe('Responses API', () => {
                 : '{"output":[]}',
             )
           : tamper
-            ? Buffer.from(raw.toString().replace('你好', '篡改'))
+            ? Buffer.from(raw.toString().replace('Original', 'Tampered'))
             : raw;
         return new Response(
           new ReadableStream({
@@ -5262,7 +5283,7 @@ describe('Responses API', () => {
       expect(response.id).toBe('resp_fixture');
       expect(response.output[2]).toMatchObject({
         type: 'function_call',
-        arguments: '{"city":"北京"}',
+        arguments: '{"city":"UTF-8 City é € 🌍"}',
       });
     }
     expect(await fixture.requests[0].json()).toMatchObject({

@@ -1,5 +1,4 @@
 import * as v from 'valibot';
-import type { E2eeModelKey } from '../types/e2ee';
 import {
   SecureChatCompletionResponseSchema,
   SecureChatCompletionStreamChunkSchema,
@@ -22,10 +21,12 @@ import {
   splitSseLines,
   takeCompleteSseRecords,
 } from '../utils/sse';
+import type { E2eeEncryptionKey } from './e2ee';
 import {
+  buildE2eeFieldAad,
   decryptE2eeText,
-  encryptE2eeText,
   type E2eeClientKeyPair,
+  encryptE2eeText,
 } from './e2ee';
 
 export type ParseE2eeChatResponseParams = {
@@ -38,7 +39,7 @@ export type ParseE2eeChatStreamChunkParams = {
 
 export type EncryptE2eeChatRequestParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 export type EncryptedE2eeChatRequest = {
@@ -111,7 +112,7 @@ export function decryptE2eeChatResponse({
   body,
   clientKeyPair,
 }: DecryptE2eeChatResponseParams): SecureChatCompletionResponse {
-  const choices = asJsonArray(body.choices);
+  const choices = responseArray(body.choices, 'choices');
   if (choices === undefined) {
     return { ...body };
   }
@@ -132,7 +133,7 @@ export function decryptE2eeChatStreamChunk({
   chunk,
   clientKeyPair,
 }: DecryptE2eeChatStreamChunkParams): SecureChatCompletionStreamChunk {
-  const choices = asJsonArray(chunk.choices);
+  const choices = responseArray(chunk.choices, 'choices');
   if (choices === undefined) {
     return { ...chunk };
   }
@@ -206,7 +207,7 @@ export function createE2eeChatSseTransform({
 
 type EncryptRequestBodyParams = {
   readonly body: SecureChatCompletionRequest;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptRequestBody({
@@ -246,6 +247,7 @@ function encryptRequestBody({
       functionCall,
       modelKey,
       encryptArguments: false,
+      path: 'function_call',
     });
   }
 
@@ -254,7 +256,7 @@ function encryptRequestBody({
 
 type EncryptRequestMessageParams = {
   readonly message: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptRequestMessage({
@@ -266,11 +268,13 @@ function encryptRequestMessage({
   if (typeof content === 'string') {
     encrypted.content = encryptText({
       plaintext: content,
+      label: 'messages[].content',
       modelKey,
     });
   } else if (Array.isArray(content)) {
     encrypted.content = encryptText({
       plaintext: JSON.stringify(content),
+      label: 'messages[].content',
       modelKey,
     });
   }
@@ -278,12 +282,14 @@ function encryptRequestMessage({
     source: message,
     target: encrypted,
     field: 'reasoning_content',
+    label: 'messages[].reasoning_content',
     modelKey,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'reasoning',
+    label: 'messages[].reasoning',
     modelKey,
   });
 
@@ -295,12 +301,14 @@ function encryptRequestMessage({
     source: message,
     target: encrypted,
     field: 'name',
+    label: 'messages[].name',
     modelKey,
   });
   encryptStringField({
     source: message,
     target: encrypted,
     field: 'refusal',
+    label: 'messages[].refusal',
     modelKey,
   });
 
@@ -318,6 +326,7 @@ function encryptRequestMessage({
       functionCall,
       modelKey,
       encryptArguments: true,
+      path: 'messages[].function_call',
     });
   }
   return encrypted;
@@ -325,7 +334,7 @@ function encryptRequestMessage({
 
 type EncryptAudioParams = {
   readonly audio: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptAudio({
@@ -337,6 +346,7 @@ function encryptAudio({
     source: audio,
     target: encrypted,
     field: 'data',
+    label: 'messages[].audio.data',
     modelKey,
   });
   return encrypted;
@@ -344,7 +354,7 @@ function encryptAudio({
 
 type EncryptToolsParams = {
   readonly tools: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
@@ -362,17 +372,20 @@ function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
       source: functionDefinition,
       target: encryptedFunction,
       field: 'name',
+      label: 'tools[].function.name',
       modelKey,
     });
     encryptStringField({
       source: functionDefinition,
       target: encryptedFunction,
       field: 'description',
+      label: 'tools[].function.description',
       modelKey,
     });
     if (functionDefinition.parameters !== undefined) {
       encryptedFunction.parameters = encryptText({
         plaintext: JSON.stringify(functionDefinition.parameters),
+        label: 'tools[].function.parameters',
         modelKey,
       });
     }
@@ -382,7 +395,7 @@ function encryptTools({ tools, modelKey }: EncryptToolsParams): unknown[] {
 
 type EncryptToolChoiceParams = {
   readonly toolChoice: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptToolChoice({
@@ -398,6 +411,7 @@ function encryptToolChoice({
     source: functionDefinition,
     target: encryptedFunction,
     field: 'name',
+    label: 'tool_choice.function.name',
     modelKey,
   });
   return { ...toolChoice, function: encryptedFunction };
@@ -405,7 +419,7 @@ function encryptToolChoice({
 
 type EncryptFunctionToolCallsParams = {
   readonly toolCalls: readonly unknown[];
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptFunctionToolCalls({
@@ -424,6 +438,7 @@ function encryptFunctionToolCalls({
         functionCall,
         modelKey,
         encryptArguments: true,
+        path: 'messages[].tool_calls[].function',
       }),
     };
   });
@@ -431,20 +446,23 @@ function encryptFunctionToolCalls({
 
 type EncryptFunctionCallParams = {
   readonly functionCall: SecureChatJsonObject;
-  readonly modelKey: E2eeModelKey;
+  readonly modelKey: E2eeEncryptionKey;
   readonly encryptArguments: boolean;
+  readonly path: string;
 };
 
 function encryptFunctionCall({
   functionCall,
   modelKey,
   encryptArguments,
+  path,
 }: EncryptFunctionCallParams): SecureChatJsonObject {
   const encrypted: SecureChatJsonObject = { ...functionCall };
   encryptStringField({
     source: functionCall,
     target: encrypted,
     field: 'name',
+    label: `${path}.name`,
     modelKey,
   });
   if (encryptArguments) {
@@ -452,6 +470,7 @@ function encryptFunctionCall({
       source: functionCall,
       target: encrypted,
       field: 'arguments',
+      label: `${path}.arguments`,
       modelKey,
     });
   }
@@ -462,30 +481,43 @@ type EncryptStringFieldParams = {
   readonly source: SecureChatJsonObject;
   readonly target: SecureChatJsonObject;
   readonly field: string;
-  readonly modelKey: E2eeModelKey;
+  readonly label: string;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
 function encryptStringField({
   source,
   target,
   field,
+  label,
   modelKey,
 }: EncryptStringFieldParams): void {
   const value = source[field];
   if (typeof value === 'string') {
-    target[field] = encryptText({ plaintext: value, modelKey });
+    target[field] = encryptText({ plaintext: value, modelKey, label });
   }
 }
 
 type EncryptTextParams = {
   readonly plaintext: string;
-  readonly modelKey: E2eeModelKey;
+  readonly label: string;
+  readonly modelKey: E2eeEncryptionKey;
 };
 
-function encryptText({ plaintext, modelKey }: EncryptTextParams): string {
+function encryptText({
+  plaintext,
+  modelKey,
+  label,
+}: EncryptTextParams): string {
   return encryptE2eeText({
     plaintext,
-    modelKey,
+    modelKey:
+      modelKey.associatedData === undefined
+        ? modelKey
+        : {
+            ...modelKey,
+            associatedData: buildE2eeFieldAad(modelKey.associatedData, label),
+          },
   });
 }
 
@@ -500,12 +532,9 @@ function decryptResponseChoice({
   clientKeyPair,
   path,
 }: DecryptResponseChoiceParams): unknown {
-  const record = asJsonObject(choice);
-  if (record === undefined) {
-    return choice;
-  }
+  const record = requiredResponseObject(choice, path);
   const decrypted: SecureChatJsonObject = { ...record };
-  const message = asJsonObject(record.message);
+  const message = responseObject(record.message, `${path}.message`);
   if (message !== undefined) {
     decrypted.message = decryptResponseMessage({
       message,
@@ -513,7 +542,7 @@ function decryptResponseChoice({
       path: `${path}.message`,
     });
   }
-  const logprobs = asJsonObject(record.logprobs);
+  const logprobs = responseObject(record.logprobs, `${path}.logprobs`);
   if (logprobs !== undefined) {
     decrypted.logprobs = decryptLogprobs({
       logprobs,
@@ -535,12 +564,9 @@ function decryptStreamChoice({
   clientKeyPair,
   path,
 }: DecryptStreamChoiceParams): unknown {
-  const record = asJsonObject(choice);
-  if (record === undefined) {
-    return choice;
-  }
+  const record = requiredResponseObject(choice, path);
   const decrypted: SecureChatJsonObject = { ...record };
-  const delta = asJsonObject(record.delta);
+  const delta = responseObject(record.delta, `${path}.delta`);
   if (delta !== undefined) {
     decrypted.delta = decryptStreamDelta({
       delta,
@@ -548,7 +574,7 @@ function decryptStreamChoice({
       path: `${path}.delta`,
     });
   }
-  const logprobs = asJsonObject(record.logprobs);
+  const logprobs = responseObject(record.logprobs, `${path}.logprobs`);
   if (logprobs !== undefined) {
     decrypted.logprobs = decryptLogprobs({
       logprobs,
@@ -584,6 +610,11 @@ function decryptResponseMessage({
       clientKeyPair,
       path: `${path}.content`,
     });
+  } else if (content !== undefined && content !== null) {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.content` },
+    });
   }
   decryptStringField({
     source: message,
@@ -607,11 +638,11 @@ function decryptResponseMessage({
     path,
   });
 
-  const audio = asJsonObject(message.audio);
+  const audio = responseObject(message.audio, `${path}.audio`);
   if (audio !== undefined) {
     decrypted.audio = decryptAudio({ audio, clientKeyPair, path });
   }
-  const toolCalls = asJsonArray(message.tool_calls);
+  const toolCalls = responseArray(message.tool_calls, `${path}.tool_calls`);
   if (toolCalls !== undefined) {
     decrypted.tool_calls = decryptFunctionToolCalls({
       toolCalls,
@@ -619,7 +650,10 @@ function decryptResponseMessage({
       path: `${path}.tool_calls`,
     });
   }
-  const functionCall = asJsonObject(message.function_call);
+  const functionCall = responseObject(
+    message.function_call,
+    `${path}.function_call`,
+  );
   if (functionCall !== undefined) {
     decrypted.function_call = decryptFunctionCall({
       functionCall,
@@ -646,7 +680,10 @@ function decryptStreamDelta({
     clientKeyPair,
     path,
   });
-  const toolResult = asJsonObject(delta.nearai_tool_result);
+  const toolResult = responseObject(
+    delta.nearai_tool_result,
+    `${path}.nearai_tool_result`,
+  );
   if (toolResult !== undefined) {
     const decryptedToolResult: SecureChatJsonObject = { ...toolResult };
     decryptStringField({
@@ -675,7 +712,10 @@ function decryptContentParts({
   return parts.map((part, index) => {
     const record = asJsonObject(part);
     if (record === undefined) {
-      return part;
+      throw new VerificationError({
+        code: 'e2ee.decryption_failed',
+        details: { field: `${path}[${index}]` },
+      });
     }
     const decrypted: SecureChatJsonObject = { ...record };
     decryptStringField({
@@ -724,7 +764,7 @@ function decryptLogprobs({
 }: DecryptLogprobsParams): SecureChatJsonObject {
   const decrypted: SecureChatJsonObject = { ...logprobs };
   for (const field of ['content', 'refusal']) {
-    const entries = asJsonArray(logprobs[field]);
+    const entries = responseArray(logprobs[field], `${path}.${field}`);
     if (entries !== undefined) {
       decrypted[field] = decryptLogprobsEntries({
         entries,
@@ -748,10 +788,7 @@ function decryptLogprobsEntries({
   path,
 }: DecryptLogprobsEntriesParams): unknown[] {
   return entries.map((entry, index) => {
-    const record = asJsonObject(entry);
-    if (record === undefined) {
-      return entry;
-    }
+    const record = requiredResponseObject(entry, `${path}[${index}]`);
     const decrypted: SecureChatJsonObject = { ...record };
     decryptStringField({
       source: record,
@@ -767,7 +804,10 @@ function decryptLogprobsEntries({
       clientKeyPair,
       path: `${path}[${index}]`,
     });
-    const topLogprobs = asJsonArray(record.top_logprobs);
+    const topLogprobs = responseArray(
+      record.top_logprobs,
+      `${path}[${index}].top_logprobs`,
+    );
     if (topLogprobs !== undefined) {
       decrypted.top_logprobs = decryptLogprobsEntries({
         entries: topLogprobs,
@@ -791,9 +831,12 @@ function decryptFunctionToolCalls({
   path,
 }: DecryptFunctionToolCallsParams): unknown[] {
   return toolCalls.map((toolCall, index) => {
-    const record = asJsonObject(toolCall);
-    const functionCall = asJsonObject(record?.function);
-    if (record === undefined || functionCall === undefined) {
+    const record = requiredResponseObject(toolCall, `${path}[${index}]`);
+    const functionCall = responseObject(
+      record?.function,
+      `${path}[${index}].function`,
+    );
+    if (functionCall === undefined) {
       return toolCall;
     }
     return {
@@ -852,6 +895,12 @@ function decryptStringField({
   path,
 }: DecryptStringFieldParams): void {
   const value = source[field];
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.${field}` },
+    });
+  }
   if (typeof value === 'string') {
     target[field] = decryptText({
       ciphertext: value,
@@ -877,8 +926,12 @@ function decryptJsonField({
   path,
 }: DecryptJsonFieldParams): void {
   const value = source[field];
+  if (value === undefined || value === null) return;
   if (typeof value !== 'string') {
-    return;
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: `${path}.${field}` },
+    });
   }
   const fieldPath = `${path}.${field}`;
   const plaintext = decryptText({
@@ -915,6 +968,41 @@ function decryptText({
     clientKeyPair,
     field: path,
   });
+}
+
+function requiredResponseObject(
+  value: unknown,
+  path: string,
+): SecureChatJsonObject {
+  const result = asJsonObject(value);
+  if (result === undefined) {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: path },
+    });
+  }
+  return result;
+}
+
+function responseObject(
+  value: unknown,
+  path: string,
+): SecureChatJsonObject | undefined {
+  return value == null ? undefined : requiredResponseObject(value, path);
+}
+
+function responseArray(
+  value: unknown,
+  path: string,
+): readonly unknown[] | undefined {
+  if (value == null) return undefined;
+  if (!Array.isArray(value)) {
+    throw new VerificationError({
+      code: 'e2ee.decryption_failed',
+      details: { field: path },
+    });
+  }
+  return value;
 }
 
 function asJsonObject(value: unknown): SecureChatJsonObject | undefined {

@@ -291,7 +291,7 @@ impl Respond for Fixture {
                 let visible = if self.response_tamper {
                     String::from_utf8(raw)
                         .unwrap()
-                        .replace("你好", "篡改")
+                        .replace("Original", "Tampered")
                         .into_bytes()
                 } else {
                     raw
@@ -374,7 +374,8 @@ impl Respond for Fixture {
                     assert_eq!(
                         encryption::decrypt_request(
                             body["messages"][0]["content"].as_str().unwrap(),
-                            algo
+                            algo,
+                            public.to_str().unwrap()
                         ),
                         "Hello"
                     );
@@ -1635,7 +1636,10 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
             } else {
                 let response = client.create_response(body).await.unwrap();
                 assert_eq!(response["id"], "resp_fixture");
-                assert_eq!(response["output"][2]["arguments"], "{\"city\":\"北京\"}");
+                assert_eq!(
+                    response["output"][2]["arguments"],
+                    "{\"city\":\"UTF-8 City é € 🌍\"}"
+                );
             }
 
             let receipt = client.verify_response("resp_fixture").await.unwrap();

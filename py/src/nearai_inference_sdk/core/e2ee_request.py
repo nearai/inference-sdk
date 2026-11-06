@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from ..schemas import ChatCompletionRequestSchema
 from ..types.e2ee import E2eeModelKey, PreparedE2eeChatRequest
 from ..utils.errors import api_failure
-from .e2ee import E2eeClientKeyPair, create_e2ee_client_key_pair
+from .e2ee import E2eeClientKeyPair, build_e2ee_request_aad, create_e2ee_client_key_pair
 from .e2ee_chat import (
     decrypt_e2ee_chat_response,
     decrypt_e2ee_chat_sse,
@@ -56,7 +56,12 @@ async def prepare_e2ee_chat_request(
         )
     body = await decode_chat_request(request)
     client_key_pair = create_e2ee_client_key_pair(model_key.signing_algo)
-    encrypted = encrypt_e2ee_chat_request(body, model_key)
+    aad = build_e2ee_request_aad(
+        E2eeModelKey(
+            signing_algo=model_key.signing_algo, public_key=client_key_pair.public_key
+        )
+    )
+    encrypted = encrypt_e2ee_chat_request(body, model_key, aad)
     headers = httpx.Headers(request.headers)
     for name in _REPLACED_BODY_HEADERS:
         headers.pop(name, None)
@@ -65,8 +70,7 @@ async def prepare_e2ee_chat_request(
     headers['x-signing-algo'] = model_key.signing_algo
     headers['x-client-pub-key'] = client_key_pair.public_key
     headers['x-model-pub-key'] = model_key.public_key
-    if model_key.signing_algo == 'ed25519':
-        headers['x-encryption-version'] = '2'
+    headers['x-encryption-version'] = '3'
     headers['x-no-aliasing'] = 'true'
     headers['x-encrypt-all-fields'] = 'true'
 

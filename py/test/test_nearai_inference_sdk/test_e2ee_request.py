@@ -7,8 +7,10 @@ import httpx
 import pytest
 
 from nearai_inference_sdk.core.e2ee import (
+    build_e2ee_request_aad,
     create_e2ee_client_key_pair,
     decrypt_e2ee_text,
+    e2ee_field_aad,
     encrypt_e2ee_text,
 )
 from nearai_inference_sdk.core.e2ee_request import prepare_e2ee_chat_request
@@ -17,7 +19,9 @@ from nearai_inference_sdk.utils.errors import ApiError, VerificationError
 from nearai_inference_sdk.utils.sse import get_sse_data_records
 
 ENDPOINT = 'https://gateway.test/v1/chat/completions'
-PROMPT = {'model': 'test-model', 'messages': [{'role': 'user', 'content': '私密问题'}]}
+# A, é, €, and 🌍 exercise 1-, 2-, 3-, and 4-byte UTF-8 sequences.
+UTF8_SAMPLE = 'UTF-8: A é € 🌍'
+PROMPT = {'model': 'test-model', 'messages': [{'role': 'user', 'content': UTF8_SAMPLE}]}
 
 
 @pytest.fixture(params=['ed25519', 'ecdsa'])
@@ -58,7 +62,7 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         'messages': [
             {
                 'role': 'assistant',
-                'content': [{'type': 'text', 'text': '私密问题'}],
+                'content': [{'type': 'text', 'text': UTF8_SAMPLE}],
                 'reasoning': 'reason',
                 'reasoning_content': 'thought',
                 'name': 'helper',
@@ -107,9 +111,7 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
     assert headers['x-model-pub-key'] == model_key.public_key
     assert headers['x-encrypt-all-fields'] == 'true'
     assert headers['x-no-aliasing'] == 'true'
-    assert headers.get('x-encryption-version') == (
-        '2' if signing_algo == 'ed25519' else None
-    )
+    assert headers.get('x-encryption-version') == ('3')
     assert headers['content-length'] == str(len(prepared.request.content))
     for name in (
         'content-md5',
@@ -121,37 +123,103 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         assert name not in headers
     assert prepared.request.extensions == original.extensions
     encrypted = json.loads(await prepared.request.aread())
+    aad = build_e2ee_request_aad(
+        E2eeModelKey(
+            signing_algo=model_key.signing_algo,
+            public_key=prepared.request.headers['x-client-pub-key'],
+        )
+    )
     message = encrypted['messages'][0]
     assert (
-        json.loads(decrypt_e2ee_text(message['content'], pair, 'content'))
+        json.loads(
+            decrypt_e2ee_text(
+                message['content'],
+                pair,
+                'content',
+                e2ee_field_aad(aad, 'messages[].content'),
+            )
+        )
         == body['messages'][0]['content']
     )
     for field in ('reasoning', 'reasoning_content', 'name', 'refusal'):
         assert (
-            decrypt_e2ee_text(message[field], pair, field) == body['messages'][0][field]
+            decrypt_e2ee_text(
+                message[field], pair, field, e2ee_field_aad(aad, f'messages[].{field}')
+            )
+            == body['messages'][0][field]
         )
-    assert decrypt_e2ee_text(message['audio']['data'], pair, 'audio') == 'audio-bytes'
+    assert (
+        decrypt_e2ee_text(
+            message['audio']['data'],
+            pair,
+            'audio',
+            e2ee_field_aad(aad, 'messages[].audio.data'),
+        )
+        == 'audio-bytes'
+    )
     for field in ('name', 'arguments'):
         assert (
-            decrypt_e2ee_text(message['tool_calls'][0]['function'][field], pair, field)
+            decrypt_e2ee_text(
+                message['tool_calls'][0]['function'][field],
+                pair,
+                field,
+                e2ee_field_aad(aad, f'messages[].tool_calls[].function.{field}'),
+            )
             == body['messages'][0]['tool_calls'][0]['function'][field]
         )
         assert (
-            decrypt_e2ee_text(message['function_call'][field], pair, field)
+            decrypt_e2ee_text(
+                message['function_call'][field],
+                pair,
+                field,
+                e2ee_field_aad(aad, f'messages[].function_call.{field}'),
+            )
             == body['messages'][0]['function_call'][field]
         )
     function = encrypted['tools'][0]['function']
-    assert decrypt_e2ee_text(function['name'], pair, 'name') == 'search'
-    assert decrypt_e2ee_text(function['description'], pair, 'description') == 'lookup'
     assert (
-        json.loads(decrypt_e2ee_text(function['parameters'], pair, 'parameters')) == {}
-    )
-    assert (
-        decrypt_e2ee_text(encrypted['tool_choice']['function']['name'], pair, 'name')
+        decrypt_e2ee_text(
+            function['name'], pair, 'name', e2ee_field_aad(aad, 'tools[].function.name')
+        )
         == 'search'
     )
     assert (
-        decrypt_e2ee_text(encrypted['function_call']['name'], pair, 'name') == 'legacy'
+        decrypt_e2ee_text(
+            function['description'],
+            pair,
+            'description',
+            e2ee_field_aad(aad, 'tools[].function.description'),
+        )
+        == 'lookup'
+    )
+    assert (
+        json.loads(
+            decrypt_e2ee_text(
+                function['parameters'],
+                pair,
+                'parameters',
+                e2ee_field_aad(aad, 'tools[].function.parameters'),
+            )
+        )
+        == {}
+    )
+    assert (
+        decrypt_e2ee_text(
+            encrypted['tool_choice']['function']['name'],
+            pair,
+            'name',
+            e2ee_field_aad(aad, 'tool_choice.function.name'),
+        )
+        == 'search'
+    )
+    assert (
+        decrypt_e2ee_text(
+            encrypted['function_call']['name'],
+            pair,
+            'name',
+            e2ee_field_aad(aad, 'function_call.name'),
+        )
+        == 'legacy'
     )
     assert encrypted['future_option'] == body['future_option']
     assert json.loads(await original.aread()) == body
@@ -175,8 +243,19 @@ async def test_encrypts_async_request_body_with_buffered_framing():
         len(prepared.request.content)
     )
     encrypted = json.loads(prepared.request.content)
+    aad = build_e2ee_request_aad(
+        E2eeModelKey(
+            signing_algo=model_key.signing_algo,
+            public_key=prepared.request.headers['x-client-pub-key'],
+        )
+    )
     assert (
-        decrypt_e2ee_text(encrypted['messages'][0]['content'], pair, 'content')
+        decrypt_e2ee_text(
+            encrypted['messages'][0]['content'],
+            pair,
+            'content',
+            e2ee_field_aad(aad, 'messages[].content'),
+        )
         == PROMPT['messages'][0]['content']
     )
 
@@ -197,7 +276,7 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
         'choices': [
             {
                 'message': {
-                    'content': [{'type': 'text', 'text': encrypt('回答')}],
+                    'content': [{'type': 'text', 'text': encrypt(UTF8_SAMPLE)}],
                     'reasoning': encrypt('reason'),
                     'reasoning_content': encrypt('thought'),
                     'refusal': '',
@@ -252,7 +331,7 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     response = await prepared.decrypt_response(source)
     decrypted = response.json()
     message = decrypted['choices'][0]['message']
-    assert message['content'][0]['text'] == '回答'
+    assert message['content'][0]['text'] == UTF8_SAMPLE
     assert message['reasoning'] == 'reason'
     assert message['reasoning_content'] == 'thought'
     assert message['refusal'] == ''
@@ -295,10 +374,13 @@ async def test_decrypts_multiline_sse_across_split_bytes(
     )
     client_key = response_key(prepared, signing_algo)
     delta = {
-        'content': encrypt_e2ee_text('流式回答', client_key),
+        'content': encrypt_e2ee_text(UTF8_SAMPLE, client_key),
         'nearai_tool_result': {'output': encrypt_e2ee_text('tool output', client_key)},
     }
-    prefix = f': 保活{separator}event: message{line_ending}id: part-1{line_ending}'
+    prefix = (
+        f': keepalive {UTF8_SAMPLE}{separator}'
+        f'event: message{line_ending}id: part-1{line_ending}'
+    )
     data = f'data: {{"id":"chat-1",{line_ending}data: "choices":{json.dumps([{"delta": delta}])}}}'
     suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\n'
     source = ByteStream((prefix + data + separator + suffix).encode())
@@ -335,7 +417,7 @@ async def test_decrypts_multiline_sse_across_split_bytes(
         value for value in get_sse_data_records(text) if value.startswith('{"id"')
     )
     assert json.loads(payload)['choices'][0]['delta'] == {
-        'content': '流式回答',
+        'content': UTF8_SAMPLE,
         'nearai_tool_result': {'output': 'tool output'},
     }
     assert source.closed

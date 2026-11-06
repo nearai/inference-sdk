@@ -1,6 +1,8 @@
 import { prepareE2eeChatRequest, VerificationError } from '../src';
 import { NO_ALIASING_HEADER } from '../src/core/cloud-api';
 import {
+  buildE2eeFieldAad,
+  buildE2eeRequestAad,
   createE2eeClientKeyPair,
   decryptE2eeText,
   encryptE2eeText,
@@ -8,9 +10,11 @@ import {
 import type { SigningAlgo } from '../src/types/attestation-common';
 
 const endpoint = 'https://gateway.test/v1/chat/completions';
+// A, é, €, and 🌍 exercise 1-, 2-, 3-, and 4-byte UTF-8 sequences.
+const utf8Sample = 'UTF-8: A é € 🌍';
 const prompt = {
   model: 'test-model',
-  messages: [{ role: 'user', content: '私密问题' }],
+  messages: [{ role: 'user', content: utf8Sample }],
 };
 
 function createModelKeys(signingAlgo: SigningAlgo = 'ed25519') {
@@ -83,9 +87,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       expect(headers.get('x-client-pub-key')).toHaveLength(
         signingAlgo === 'ecdsa' ? 128 : 64,
       );
-      expect(headers.get('x-encryption-version')).toBe(
-        signingAlgo === 'ed25519' ? '2' : null,
-      );
+      expect(headers.get('x-encryption-version')).toBe('3');
       expect(headers.get('x-encrypt-all-fields')).toBe('true');
       expect(headers.get(NO_ALIASING_HEADER)).toBe('true');
 
@@ -100,6 +102,13 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           ciphertext: encrypted.messages[0].content,
           clientKeyPair: keyPair,
           field: 'messages[0].content',
+          associatedData: buildE2eeFieldAad(
+            buildE2eeRequestAad({
+              signingAlgo,
+              publicKey: headers.get('x-client-pub-key') ?? '',
+            }),
+            'messages[].content',
+          ),
         }),
       ).toBe(prompt.messages[0]?.content);
       expect(await original.json()).toEqual(prompt);
@@ -119,7 +128,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       const clientPublicKey = prepared.request.headers.get('x-client-pub-key');
       if (clientPublicKey === null) throw new Error('Expected client key');
       const ciphertext = encryptE2eeText({
-        plaintext: '私密回答',
+        plaintext: utf8Sample,
         modelKey: { signingAlgo, publicKey: clientPublicKey },
       });
       const body = {
@@ -163,7 +172,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       expect(response.headers.get('x-response-header')).toBe('preserved');
       expect(await response.json()).toEqual({
         ...body,
-        choices: [{ message: { role: 'assistant', content: '私密回答' } }],
+        choices: [{ message: { role: 'assistant', content: utf8Sample } }],
       });
 
       const tampered =
@@ -202,14 +211,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
             {
               delta: {
                 content: encryptE2eeText({
-                  plaintext: '流式回答',
+                  plaintext: utf8Sample,
                   modelKey: { signingAlgo, publicKey: clientPublicKey },
                 }),
               },
             },
           ],
         };
-        const prefix = `: 保活${separator}`;
+        const prefix = `: keepalive ${utf8Sample}${separator}`;
         const controls = `event: message${lineEnding}id: part-1${lineEnding}`;
         const suffix =
           'event: error\ndata: {"message":"unchanged"}\n\ndata: [DONE]\n\n';
@@ -244,7 +253,7 @@ describe.each(['ed25519', 'ecdsa'] as const)(
         );
         const decryptedChunk = {
           ...chunk,
-          choices: [{ delta: { content: '流式回答' } }],
+          choices: [{ delta: { content: utf8Sample } }],
         };
         expect(await response.text()).toBe(
           `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,

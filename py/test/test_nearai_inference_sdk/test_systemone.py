@@ -624,7 +624,7 @@ async def test_invalid_decision_model_fails_before_preflight(monkeypatch, model_
     [
         {'x-tenant': 'invalid\nvalue'},
         {'invalid name': 'value'},
-        {'x-tenant': '雪'},
+        pytest.param({'x-tenant': 'non-ascii-€'}, id='non-ascii-header-value'),
         {'x-tenant': ' leading'},
         {'x-tenant': 'trailing '},
         {'x-tenant': '\tleading'},
