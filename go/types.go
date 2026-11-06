@@ -122,12 +122,8 @@ type VerifiedCompletionResult struct {
 	SignatureKind string
 	Signature     CompletionSignature
 	// Attestation contains Gateway evidence for gateway receipts.
-	// For provider_tee receipts it retains the report used to select the request's
-	// model public key.
-	//
-	// Reading this field for provider_tee receipts is deprecated: use Attestations
-	// for all verified reports sharing the selected signer. Gateway receipts
-	// continue to use Attestation.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
 	Attestation *VerifiedAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
 	// receipts. It is empty for Gateway receipts.

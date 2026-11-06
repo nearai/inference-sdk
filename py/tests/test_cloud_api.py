@@ -86,7 +86,8 @@ async def test_gateway_bootstrap_keeps_its_own_peer_capturing_transport(
         assert not http_client.is_closed
 
 
-async def test_borrowed_http_client_does_not_follow_evidence_redirects():
+@pytest.mark.parametrize('client_type', [AttestationClient, DirectAttestationClient])
+async def test_borrowed_http_client_does_not_follow_evidence_redirects(client_type):
     requested_urls = []
 
     async def redirect(request):
@@ -98,7 +99,9 @@ async def test_borrowed_http_client_does_not_follow_evidence_redirects():
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(redirect), follow_redirects=True
     ) as http_client:
-        client = AttestationClient(API_KEY, base_url=BASE_URL, http_client=http_client)
+        client = client_type(
+            api_key=API_KEY, base_url=BASE_URL, http_client=http_client
+        )
         with pytest.raises(ApiError) as rejected:
             await client.fetch_completion_signature('completion')
         assert rejected.value.failure.code == 'api.http_status'

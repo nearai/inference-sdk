@@ -84,10 +84,12 @@ class _ApiClient:
         *,
         base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
         headers: Mapping[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = _validate_base_url(base_url)
         self._headers = {name.lower(): value for name, value in (headers or {}).items()}
+        self._http_client = http_client
 
     async def fetch_completion_signature(
         self,
@@ -119,10 +121,15 @@ class _ApiClient:
         headers: Mapping[str, str],
         _capture_peer_spki: bool = False,
     ) -> FetchResponse:
-        """Internal transport hook for a verified Gateway's pinned requests."""
-
-        return await default_fetch(
-            url, headers=headers, _capture_peer_spki=_capture_peer_spki
+        if self._http_client is None or _capture_peer_spki:
+            return await default_fetch(
+                url, headers=headers, _capture_peer_spki=_capture_peer_spki
+            )
+        response = await self._http_client.get(
+            url, headers=headers, follow_redirects=False
+        )
+        return FetchResponse(
+            status=response.status_code, body=response.content, headers=response.headers
         )
 
     async def _get_json(
@@ -190,37 +197,6 @@ class AttestationClient(_ApiClient):
     completion signatures.
     Gateway evidence uses the default transport to capture its own TLS peer.
     """
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        *,
-        base_url: str = DEFAULT_NEAR_AI_CLOUD_BASE_URL,
-        headers: Mapping[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None:
-        super().__init__(api_key, base_url=base_url, headers=headers)
-        self._http_client = http_client
-
-    async def _fetch(
-        self,
-        url: str,
-        *,
-        headers: Mapping[str, str],
-        _capture_peer_spki: bool = False,
-    ) -> FetchResponse:
-        if self._http_client is None:
-            return await super()._fetch(
-                url, headers=headers, _capture_peer_spki=_capture_peer_spki
-            )
-        response = await self._http_client.get(
-            url, headers=headers, follow_redirects=False
-        )
-        return FetchResponse(
-            status=response.status_code,
-            body=response.content,
-            headers=response.headers,
-        )
 
     async def fetch_model_metadata(self, model: str) -> ModelMetadata:
         """Read catalog capabilities; metadata alone is not model verification."""

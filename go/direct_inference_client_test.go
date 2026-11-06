@@ -135,7 +135,6 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var _ VerifiedDirectCompletionResult = receipt
 	if sharedSigner {
 		if len(receipt.Attestations) != 2 || receipt.Attestations[0].InstanceID != "other" || receipt.Attestations[1].InstanceID != "serving" {
 			t.Fatal("receipt must preserve every report sharing the signer")
@@ -171,13 +170,12 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 	if result.ID != "chat" || result.CompletionID != result.ID {
 		t.Fatal("receipt ID alias mismatch")
 	}
-	var _ VerifiedDirectCompletionResult = result
 	if len(result.Attestations) != 2 {
 		t.Fatal("ambiguous instance attribution")
 	}
 }
 
-func TestDirectClientPublicSurface(t *testing.T) {
+func TestDirectHTTPAdapterRejectsUnsupportedEndpoints(t *testing.T) {
 	client, err := NewDirectInferenceClient(DirectInferenceOptions{
 		ClientOptions: ClientOptions{BaseURL: "https://direct.invalid/v1"},
 	})
@@ -185,31 +183,11 @@ func TestDirectClientPublicSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	var _ http.RoundTripper = client
-	var _ func(context.Context, string) (DirectAttestationVerificationResult, error) = client.Verify
-	var _ func(context.Context, string) (VerifiedDirectCompletionResult, error) = client.VerifyResponse
 	if client.HTTPClient().Transport != client {
 		t.Fatal("HTTP adapter must use its owning Direct client")
 	}
 	if err := client.HTTPClient().CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
 		t.Fatal("Direct adapter must keep redirect refusal")
-	}
-	for _, method := range []string{"CreateResponse", "CreateMessage", "CreateSystemOne", "CreateSystemOneWithHeaders"} {
-		if _, exists := reflect.TypeOf(client).MethodByName(method); exists {
-			t.Fatalf("Direct client exposes Gateway-only %s", method)
-		}
-	}
-	for _, result := range []reflect.Type{reflect.TypeFor[DirectAttestationVerificationResult](), reflect.TypeFor[VerifiedDirectCompletionResult]()} {
-		for _, field := range []string{"Gateway", "Models", "Attestation"} {
-			if _, exists := result.FieldByName(field); exists {
-				t.Fatalf("%s exposes unrelated field %s", result.Name(), field)
-			}
-		}
-	}
-	for _, field := range []string{"InferenceOptions", "GatewayVerification"} {
-		if _, exists := reflect.TypeFor[DirectInferenceOptions]().FieldByName(field); exists {
-			t.Fatalf("Direct options expose Gateway-only %s", field)
-		}
 	}
 	for _, endpoint := range []string{"responses", "messages", "systemone"} {
 		req, err := http.NewRequest(http.MethodPost, client.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))

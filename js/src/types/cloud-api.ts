@@ -27,10 +27,8 @@ export type AttestationClientOptions = {
   /** Additional request headers, subject to the authentication rules above. */
   readonly headers?: HeadersInit;
   /**
-   * Transport for model reports, metadata, and completion signatures. Pass
-   * `createPinnedTlsFetch` after verifying Gateway evidence in Node.
-   * Gateway-attestation requests retain the runtime's default transport so
-   * the Node client can capture the TLS peer from that same request.
+   * Transport for model reports, metadata, and signatures.
+   * Gateway reports use the default transport to capture their TLS peer.
    */
   readonly fetch?: typeof globalThis.fetch;
 };

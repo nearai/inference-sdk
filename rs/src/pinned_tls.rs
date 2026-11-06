@@ -126,13 +126,7 @@ mod tests {
             "gateway",
             "direct",
         ] {
-            for case in [
-                "valid",
-                "valid_second_pin",
-                "wrong_pin",
-                "wrong_hostname",
-                "untrusted",
-            ] {
+            for case in ["valid", "wrong_pin", "wrong_hostname", "untrusted"] {
                 let certified =
                     rcgen::generate_simple_self_signed(vec![if case == "wrong_hostname" {
                         "elsewhere.test"
@@ -230,12 +224,7 @@ mod tests {
                 } else {
                     roots.add(cert).unwrap();
                 }
-                let pins = if case == "valid_second_pin" {
-                    vec!["44".repeat(32), pin]
-                } else {
-                    vec![pin]
-                };
-                let client = pinned_client(&pins, roots).unwrap();
+                let client = pinned_client(&["44".repeat(32), pin], roots).unwrap();
                 let base_url = format!("https://localhost:{}/v1", address.port());
                 let api = AttestationClient::with_base_url(Some("test-key".into()), &base_url)
                     .unwrap()
@@ -294,10 +283,10 @@ mod tests {
                         .await
                         .is_ok(),
                 };
-                assert_eq!(succeeded, case.starts_with("valid"), "{operation}/{case}");
+                assert_eq!(succeeded, case == "valid", "{operation}/{case}");
                 assert_eq!(
                     task.await.unwrap(),
-                    case.starts_with("valid"),
+                    case == "valid",
                     "HTTP was written for {operation}/{case}"
                 );
             }

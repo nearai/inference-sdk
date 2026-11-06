@@ -128,11 +128,6 @@ The suite uses real verifiers and Gateway endpoints. Chutes cases use JSON and
 Gateway receipts. Browser/CORS and experimental Direct endpoints have separate
 integration requirements.
 
-Report-group assertions derive the expected reports from preflight evidence and
-the selected signer. They accept one or multiple reports without assuming the
-deployed fleet size. Multi-report edge cases remain covered by offline fixtures;
-a live run receiving one report does not establish production multi-report coverage.
-
 Chat runs the same native and supported official-client modes in each language,
 with at most 1,024 completion tokens per request. Responses must contain an answer and
 finish with `stop`. Test failures and timeouts fail the workflow.

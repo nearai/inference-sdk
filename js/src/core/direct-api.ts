@@ -127,10 +127,10 @@ export class DirectApiClient {
         resource: 'model_attestation',
       }),
     );
-    for (const [index, attestation] of [
-      modelAttestations.servingAttestation,
-      ...modelAttestations.attestations,
-    ].entries()) {
+    for (const [
+      index,
+      attestation,
+    ] of modelAttestations.attestations.entries()) {
       requireMatchingApiNonce({
         reportedNonce: attestation.nonce,
         requestedNonce: nonce,
@@ -138,12 +138,10 @@ export class DirectApiClient {
       });
       const includesSpkiFingerprint = attestation.spkiFingerprint !== undefined;
       if (includesSpkiFingerprint !== includeSpkiFingerprint) {
-        const label =
-          index === 0 ? 'attestation' : `all_attestations[${index - 1}]`;
         throw new ApiError({
           code: 'api.invalid_response',
           details: {
-            path: `${label}.tls_cert_fingerprint`,
+            path: `all_attestations[${index}].tls_cert_fingerprint`,
             expected: includeSpkiFingerprint ? 'present' : 'missing',
             actual: includesSpkiFingerprint ? 'present' : 'missing',
           },

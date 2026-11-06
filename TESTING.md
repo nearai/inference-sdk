@@ -1,8 +1,7 @@
 # Cross-language test contracts
 
-For SDK contributors changing behavior shared by JavaScript, Python, Rust and Go.
-Compare observable scenarios and assertions, not test counts. A parameterized
-case, a loop inside one test, and an SDK adapter may produce different counts.
+Use this guide to locate tests and maintain equivalent behavior across
+JavaScript, Python, Rust and Go. Compare scenarios and assertions rather than counts.
 
 ## Layout
 
@@ -21,15 +20,10 @@ failure boundary they exercise. Use descriptive scenario names in test output.
 - Go: domain-specific `go/*_test.go` files share `attestation_fixtures_test.go` and
   `inference_fixtures_test.go` in the same package, retaining private test access.
 
-Share setup and wire fixtures, while keeping each API's request, response and
-failure assertions visible in its own tests. Do not import tests from other test
-modules or introduce a generic harness merely to make the languages look alike.
+Share setup and wire fixtures; keep each API's request, response and failure
+assertions in its own tests.
 
 ## Coverage map
-
-The links below are entry points to each contract's tests, not a claim that one
-file contains every related assertion. Keep endpoint-specific, cryptographic and
-transport tests where they observe different boundaries.
 
 | Contract | Required assertions | JavaScript | Python | Rust | Go |
 | --- | --- | --- | --- | --- | --- |
@@ -52,43 +46,14 @@ transport tests where they observe different boundaries.
 | Cache snapshots and TTL | Responses retain their request’s evidence across session refresh; cache reuse retains verification time; zero TTL and cache clearing prevent stale receipt reuse. | [tests](js/test/inference-client.spec.ts) | [tests](py/tests/test_inference_client.py) | [tests](rs/tests/inference_client.rs) | [tests](go/inference_client_test.go) |
 | Cancellation and ownership | Share concurrent verification; cancelling one waiter does not cancel another; close owned resources; release captured bytes after terminal verification, retain them for retryable signature failures; retry signature lookup without replaying inference. | [tests](js/test/inference-client-abort.spec.ts) | [tests](py/tests/test_inference_client.py) | [tests](rs/src/inference_core.rs) | [tests](go/inference_client_test.go) |
 
-## Shared input, independent assertions
+## Shared fixtures
 
-- [Responses streams](test-fixtures/responses/streams.json): one canonical corpus
-  read directly by all four suites. Valid streams retain their exact signed bytes;
-  invalid streams must not produce a verified receipt or trigger signature lookup.
-  Normal EOF does not require `response.completed`: authenticating bytes is distinct
-  from asserting that generation succeeded. Item IDs never become receipt IDs.
-- [Messages streams](test-fixtures/messages/streams.json): protocol-specific lifecycle
-  cases, read directly by all four suites. Messages/Responses JSON and SSE fixtures
-  also live only in `test-fixtures/`; do not copy them into language directories.
-  Do not substitute the Responses EOF rules for Messages terminal rules.
-- [Compose Manager evidence](test-fixtures/compose-manager/README.md) and
-  [signed provenance bundles](test-fixtures/provenance/README.md): common evidence
-  with independent verification. Cryptographic success tests use actual signatures;
-  changing the verifier to always succeed must break the corresponding rejection tests.
-- [Examples](examples/README.md): retain copyable inference → SDK verification →
-  display flows, consistent receipt/report output, and incremental Unicode/SSE
-  handling. Official adapters have their own integration tests where available.
-
-## Test quality
-
-Prefer strengthening an existing end-to-end contract over another happy-path
-setup. Merge duplicates only when their assertions survive in the replacement;
-keep descriptive parameter names so a failing scenario remains identifiable.
-A negative test should assert the relevant failure boundary and observable effects
-(such as no Chat, no signature request, no partial verified result, or resource
-release), rather than only asserting that some exception occurred. Use exact
-error codes within each SDK when the operation owns that error classification.
-
-Do not duplicate language-specific machinery in other SDKs: JavaScript has Node
-and browser-compatible entry points; Python has HTTPX/HTTPX2 adapters; Go has
-native/WASM quote verification; Rust owns streams through drop. Stream errors may
-surface during consumption or receipt verification. The shared requirement is that
-invalid evidence cannot produce a verified receipt, and inference is not replayed.
-JS's Node TLS fixture exercises the real pin validator with mocked native HTTPS;
-Python, Rust and Go also run real local TLS servers. Local suites do not establish
-browser deployment compatibility or production fleet cardinality.
+All four suites read the common [Responses](test-fixtures/responses/streams.json),
+[Messages](test-fixtures/messages/streams.json),
+[Compose Manager](test-fixtures/compose-manager/README.md), and
+[provenance](test-fixtures/provenance/README.md) fixtures from `test-fixtures/`.
+Extend existing scenarios where possible, with assertions on results, error codes,
+and whether requests were sent.
 
 ## Validation
 
@@ -97,6 +62,4 @@ Python `make check`, Rust `make check`, Go `make check`. These commands also che
 live-test code without sending inference: JS typechecks it and tests its helpers,
 Python collects it, and Rust/Go compile it. Run affected examples as well.
 Python's default suite includes its example tests.
-Live suites are separate and billable; see [live E2E instructions](e2e/README.md).
-When reporting results, separate local assertions, fixture coverage and actual
-production requests, and identify the commit that was tested.
+See [live E2E instructions](e2e/README.md) for tests that send inference requests.

@@ -701,13 +701,6 @@ func (c *inferenceCore) verifyRecord(ctx context.Context, id string, r *response
 	if e != nil {
 		return verifiedResponse{}, e
 	}
-	if c.api.direct {
-		direct, err := VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.models)
-		if err != nil {
-			return verifiedResponse{}, err
-		}
-		return verifiedResponse{id: direct.ID, signature: direct.Signature, attestations: direct.Attestations}, nil
-	}
 	var attestations []VerifiedAttestation
 	if sig.Kind == "provider_tee" {
 		// The selected-key check above still applies; a different preflight-verified

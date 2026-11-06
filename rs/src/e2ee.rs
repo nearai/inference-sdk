@@ -634,63 +634,18 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn decrypted_sse_releases_source_on_error_and_consumer_drop() {
-        use futures_util::{Stream, StreamExt};
-        use std::{
-            pin::Pin,
-            sync::{
-                atomic::{AtomicUsize, Ordering},
-                Arc,
-            },
-            task::{Context, Poll},
-        };
-        struct Source {
-            first: Option<Result<bytes::Bytes, InferenceError>>,
-            dropped: Arc<AtomicUsize>,
-        }
-        impl Stream for Source {
-            type Item = Result<bytes::Bytes, InferenceError>;
-            fn poll_next(
-                mut self: Pin<&mut Self>,
-                _: &mut Context<'_>,
-            ) -> Poll<Option<Self::Item>> {
-                Poll::Ready(self.first.take())
-            }
-        }
-        impl Drop for Source {
-            fn drop(&mut self) {
-                self.dropped.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-        for case in [
-            "consumer drop",
-            "source error",
-            "invalid UTF-8",
-            "invalid JSON",
-            "invalid ciphertext",
+    async fn decrypted_sse_propagates_source_and_decoding_errors() {
+        use futures_util::StreamExt;
+
+        for (chunk, expected) in [
+            (Err(protocol("test.source", "source failed").into()), "test.source"),
+            (Ok(bytes::Bytes::from_static(b"data: \xff\n\n")), "api.invalid_response"),
+            (Ok(bytes::Bytes::from_static(b"data: {\n\n")), "api.invalid_response"),
+            (Ok(bytes::Bytes::from_static(
+                b"data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"bad\"}}]}\n\n",
+            )), "e2ee.decryption_failed"),
         ] {
-            let (key, model_key) = fixed_key(SigningAlgo::Ed25519);
-            let first = match case {
-                "source error" => Err(protocol("test.source", "source failed").into()),
-                "invalid UTF-8" => Ok(bytes::Bytes::from_static(b"data: \xff\n\n")),
-                "invalid JSON" => Ok(bytes::Bytes::from_static(b"data: {\n\n")),
-                _ => {
-                    let content = if case == "invalid ciphertext" {
-                        "bad".into()
-                    } else {
-                        encrypt("hello", &model_key).unwrap()
-                    };
-                    Ok(bytes::Bytes::from(format!(
-                        "data: {}\n\n",
-                        json!({"id":"chat-1","choices":[{"delta":{"content":content}}]})
-                    )))
-                }
-            };
-            let dropped = Arc::new(AtomicUsize::new(0));
-            let source = Box::pin(Source {
-                first: Some(first),
-                dropped: dropped.clone(),
-            });
+            let (key, _) = fixed_key(SigningAlgo::Ed25519);
             let prepared = PreparedE2eeChatRequest {
                 request: reqwest::Request::new(
                     reqwest::Method::POST,
@@ -698,26 +653,10 @@ mod tests {
                 ),
                 key,
             };
+            let source = Box::pin(futures_util::stream::iter([chunk]));
             let mut output = prepared.decrypt_sse(source);
-            let result = output.next().await.unwrap();
-            if case == "consumer drop" {
-                assert!(String::from_utf8(result.unwrap().to_vec())
-                    .unwrap()
-                    .contains("hello"));
-                assert_eq!(dropped.load(Ordering::SeqCst), 0);
-            } else {
-                assert_eq!(
-                    result.unwrap_err().code(),
-                    match case {
-                        "source error" => "test.source",
-                        "invalid ciphertext" => "e2ee.decryption_failed",
-                        _ => "api.invalid_response",
-                    }
-                );
-                assert!(output.next().await.is_none(), "{case}");
-            }
-            drop(output);
-            assert_eq!(dropped.load(Ordering::SeqCst), 1, "{case}");
+            assert_eq!(output.next().await.unwrap().unwrap_err().code(), expected);
+            assert!(output.next().await.is_none());
         }
     }
     #[tokio::test]

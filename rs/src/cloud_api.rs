@@ -82,14 +82,9 @@ impl AttestationClient {
         self
     }
 
-    /// Use this HTTP client for all evidence and signature requests.
-    ///
-    /// After verifying Gateway evidence, pass the client returned by
-    /// [`crate::create_pinned_tls_client`] to bind subsequent requests to that
-    /// Gateway's TLS identity. Custom clients must preserve certificate and
-    /// hostname validation and disable redirects. Gateway report fetching with
-    /// TLS binding also requires `reqwest::ClientBuilder::tls_info(true)` and a
-    /// direct connection to the Gateway rather than a TLS-terminating proxy.
+    /// Use this HTTP client for evidence and signatures. Use
+    /// [`crate::create_pinned_tls_client`] to pin requests to verified TLS fingerprints.
+    /// Custom clients need `tls_info(true)` when fetching TLS-bound attestations.
     pub fn with_http_client(mut self, client: Client) -> Self {
         self.client = client.clone();
         self.gateway_client = client;
@@ -390,10 +385,8 @@ pub fn find_model_attestations_for_signature<'a>(
     Ok(matching)
 }
 
-/// Select a unique verified report for a signature's signer.
+/// Select exactly one verified report for a signature's signer.
 /// Prefer [`find_model_attestations_for_signature`] for shared-key deployments.
-/// This compatibility helper rejects multiple matches rather than attributing
-/// a response to an arbitrary instance; it does not verify the signature.
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,

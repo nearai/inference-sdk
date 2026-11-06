@@ -19,7 +19,6 @@ from ..types.direct import (
     FetchedDirectModelAttestations,
 )
 from ..utils.common import generate_nonce
-from ..utils.fetch import FetchResponse
 from .cloud_api import (
     _ApiClient,
     _decode_completion_signature,
@@ -44,19 +43,8 @@ class DirectAttestationClient(_ApiClient):
         headers: Mapping[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        super().__init__(api_key, base_url=base_url, headers=headers)
-        self._http_client = http_client
-
-    async def _fetch(
-        self, url: str, *, headers: Mapping[str, str], _capture_peer_spki: bool = False
-    ) -> FetchResponse:
-        if self._http_client is None or _capture_peer_spki:
-            return await super()._fetch(
-                url, headers=headers, _capture_peer_spki=_capture_peer_spki
-            )
-        response = await self._http_client.get(url, headers=headers)
-        return FetchResponse(
-            status=response.status_code, body=response.content, headers=response.headers
+        super().__init__(
+            api_key, base_url=base_url, headers=headers, http_client=http_client
         )
 
     async def fetch_model_attestations(

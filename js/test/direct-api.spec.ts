@@ -372,24 +372,23 @@ describe('DirectAttestationClient', () => {
   );
 
   test.each([
-    { include: false, target: 'root' },
-    { include: false, target: 'array' },
-    { include: true, target: 'root' },
-    { include: true, target: 'array' },
+    { include: false, index: 0 },
+    { include: false, index: 1 },
+    { include: true, index: 0 },
+    { include: true, index: 1 },
   ])(
-    'requires TLS presence to match include=$include for $target',
-    async ({ include, target }) => {
+    'requires TLS presence to match include=$include for report $index',
+    async ({ include, index }) => {
       directFor((request) => {
         const report = reportFor(request);
         for (const entry of [report, ...report.all_attestations]) {
           entry.tls_cert_fingerprint = include ? spkiFingerprint : null;
         }
-        const entries =
-          target === 'root'
-            ? [report, report.all_attestations[0]]
-            : [report.all_attestations[1]];
-        for (const entry of entries) {
-          entry.tls_cert_fingerprint = include ? null : spkiFingerprint;
+        report.all_attestations[index].tls_cert_fingerprint = include
+          ? null
+          : spkiFingerprint;
+        if (index === 0) {
+          report.tls_cert_fingerprint = include ? null : spkiFingerprint;
         }
         return jsonResponse(report);
       });
@@ -401,7 +400,7 @@ describe('DirectAttestationClient', () => {
         failure: {
           code: 'api.invalid_response',
           details: {
-            path: `${target === 'root' ? 'attestation' : 'all_attestations[1]'}.tls_cert_fingerprint`,
+            path: `all_attestations[${index}].tls_cert_fingerprint`,
           },
         },
       });
