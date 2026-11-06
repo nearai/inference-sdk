@@ -489,7 +489,7 @@ describe('ECDSA Gateway endpoint adapters', () => {
                 if (event.type === 'response.output_text.delta')
                   text += event.delta;
               }
-              expect(text).toContain('你好');
+              expect(text).toContain('UTF-8: A é € 🌍');
             } else expect(result.id).toBe(id);
           }
           const receipt = await client.verifyResponse(id);

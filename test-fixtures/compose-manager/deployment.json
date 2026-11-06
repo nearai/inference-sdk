@@ -9,7 +9,7 @@
       "services": [
         "model"
       ],
-      "tag": "release-模型",
+      "tag": "release-unicode-é-€-🌍",
       "timestamp": "2026-10-01T00:00:00Z"
     },
     {
@@ -18,5 +18,5 @@
       "timestamp": "2026-10-01T00:00:01Z"
     }
   ],
-  "actions_hash": "44e64562c217eaddc4dbbfc945569e350879df3489f741751fda2f87821f747e"
+  "actions_hash": "94841eb10885495ce21703d2324515119132e931107cdaba21bc71cf8f5c0379"
 }

@@ -3061,7 +3061,7 @@ describe('inference client', () => {
         };
         const body = {
           model,
-          messages: [{ role: 'user' as const, content: '你好 🌎' }],
+          messages: [{ role: 'user' as const, content: 'UTF-8: A é € 🌍' }],
         };
         let completionId: string;
         if (entrypoint === 'fetch') {
@@ -3118,7 +3118,7 @@ describe('inference client', () => {
         });
         const sent = gateway.state.completionRequestsSeen[0];
         expect(sent.body.messages).toEqual([
-          { role: 'user', content: '你好 🌎' },
+          { role: 'user', content: 'UTF-8: A é € 🌍' },
         ]);
         for (const name of [
           'x-model-pub-key',
@@ -5158,7 +5158,7 @@ describe('Responses API', () => {
                 : '{"output":[]}',
             )
           : tamper
-            ? Buffer.from(raw.toString().replace('你好', '篡改'))
+            ? Buffer.from(raw.toString().replace('Original', 'Tampered'))
             : raw;
         return new Response(
           new ReadableStream({
@@ -5283,7 +5283,7 @@ describe('Responses API', () => {
       expect(response.id).toBe('resp_fixture');
       expect(response.output[2]).toMatchObject({
         type: 'function_call',
-        arguments: '{"city":"北京"}',
+        arguments: '{"city":"UTF-8 City é € 🌍"}',
       });
     }
     expect(await fixture.requests[0].json()).toMatchObject({

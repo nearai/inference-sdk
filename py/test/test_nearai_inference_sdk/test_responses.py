@@ -77,9 +77,7 @@ class ResponsesGateway(Gateway):
             'signature_kind': self.kind,
         }
         visible = (
-            self.raw.replace('你好'.encode(), '篡改'.encode())
-            if self.tamper
-            else self.raw
+            self.raw.replace(b'Original', b'Tampered') if self.tamper else self.raw
         )
         if self.missing_id:
             visible = (
@@ -166,7 +164,7 @@ async def test_responses_wire_receipts(
                 )
             else:
                 assert result.id == 'resp_fixture'
-                assert result.output[2].arguments == '{"city":"北京"}'
+                assert result.output[2].arguments == '{"city":"UTF-8 City é € 🌍"}'
             receipt = await client.verify_response('resp_fixture')
             assert receipt.signature_kind == 'gateway'
             assert receipt.signature.signed_text.endswith(

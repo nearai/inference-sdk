@@ -227,6 +227,8 @@ func itoa(n int) string {
 	return s
 }
 func TestE2EEProtocolVectorsAndRoundtrip(t *testing.T) {
+	// A, é, €, and 🌍 exercise 1-, 2-, 3-, and 4-byte UTF-8 sequences.
+	const utf8Sample = "UTF-8: A é € 🌍"
 	seed := bytes.Repeat([]byte{11}, 32)
 	hash := sha512.Sum512(seed)
 	secret := hash[:32]
@@ -260,12 +262,12 @@ func TestE2EEProtocolVectorsAndRoundtrip(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		encrypted, e := encryptText("private 日本語", E2EEModelKey{algo, key.public})
+		encrypted, e := encryptText(utf8Sample, E2EEModelKey{algo, key.public})
 		if e != nil {
 			t.Fatal(e)
 		}
 		got, e := decryptText(encrypted, key)
-		if e != nil || got != "private 日本語" {
+		if e != nil || got != utf8Sample {
 			t.Fatalf("%q %v", got, e)
 		}
 		raw, _ := hex.DecodeString(encrypted)

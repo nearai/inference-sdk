@@ -123,9 +123,9 @@ the supported transforms are sent as provided.
 Both suites send `X-Encryption-Version: 3`. Each encrypted request field
 authenticates the reply public key and a fixed field label through AEAD associated
 data. V3 applies encryption to supported content when present, independently of
-`X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
-response containers must have the expected types, and protected values must
-decrypt successfully. Partial tool-call deltas are supported.
+`X-Encrypt-All-Fields`; required fields follow the Chat Completions API schema.
+Protected response containers must have the expected types, and protected values
+must decrypt successfully. Partial tool-call deltas are supported.
 
 V3 requires support in the model proxy and any gateway on the request path.
 The SDK does not downgrade on failure. See the

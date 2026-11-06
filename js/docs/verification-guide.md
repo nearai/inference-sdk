@@ -435,9 +435,9 @@ Ed25519 uses X25519, HKDF-SHA256, and XChaCha20-Poly1305. ECDSA uses secp256k1
 ECDH, HKDF-SHA256, and AES-256-GCM.
 
 V3 applies encryption to supported content when present, independently of
-`X-Encrypt-All-Fields`; required fields follow the Chat API schema. Protected
-response containers must have the expected types, and protected values must
-decrypt successfully. Partial tool-call deltas are supported.
+`X-Encrypt-All-Fields`; required fields follow the Chat Completions API schema.
+Protected response containers must have the expected types, and protected values
+must decrypt successfully. Partial tool-call deltas are supported.
 
 | Capability | E2EE behavior |
 | --- | --- |

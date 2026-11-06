@@ -19,7 +19,7 @@
       "content": [
         {
           "type": "output_text",
-          "text": "你好 🌎",
+          "text": "Original UTF-8: A é € 🌍",
           "annotations": []
         }
       ]
@@ -29,7 +29,7 @@
       "type": "function_call",
       "call_id": "call_1",
       "name": "weather",
-      "arguments": "{\"city\":\"北京\"}",
+      "arguments": "{\"city\":\"UTF-8 City é € 🌍\"}",
       "status": "completed"
     }
   ],

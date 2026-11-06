@@ -19,7 +19,9 @@ from nearai_inference_sdk.utils.errors import ApiError, VerificationError
 from nearai_inference_sdk.utils.sse import get_sse_data_records
 
 ENDPOINT = 'https://gateway.test/v1/chat/completions'
-PROMPT = {'model': 'test-model', 'messages': [{'role': 'user', 'content': '私密问题'}]}
+# A, é, €, and 🌍 exercise 1-, 2-, 3-, and 4-byte UTF-8 sequences.
+UTF8_SAMPLE = 'UTF-8: A é € 🌍'
+PROMPT = {'model': 'test-model', 'messages': [{'role': 'user', 'content': UTF8_SAMPLE}]}
 
 
 @pytest.fixture(params=['ed25519', 'ecdsa'])
@@ -60,7 +62,7 @@ async def test_prepares_headers_and_encrypts_supported_request_fields(signing_al
         'messages': [
             {
                 'role': 'assistant',
-                'content': [{'type': 'text', 'text': '私密问题'}],
+                'content': [{'type': 'text', 'text': UTF8_SAMPLE}],
                 'reasoning': 'reason',
                 'reasoning_content': 'thought',
                 'name': 'helper',
@@ -274,7 +276,7 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
         'choices': [
             {
                 'message': {
-                    'content': [{'type': 'text', 'text': encrypt('回答')}],
+                    'content': [{'type': 'text', 'text': encrypt(UTF8_SAMPLE)}],
                     'reasoning': encrypt('reason'),
                     'reasoning_content': encrypt('thought'),
                     'refusal': '',
@@ -329,7 +331,7 @@ async def test_decrypts_json_fields_and_preserves_http_metadata(signing_algo):
     response = await prepared.decrypt_response(source)
     decrypted = response.json()
     message = decrypted['choices'][0]['message']
-    assert message['content'][0]['text'] == '回答'
+    assert message['content'][0]['text'] == UTF8_SAMPLE
     assert message['reasoning'] == 'reason'
     assert message['reasoning_content'] == 'thought'
     assert message['refusal'] == ''
@@ -372,10 +374,13 @@ async def test_decrypts_multiline_sse_across_split_bytes(
     )
     client_key = response_key(prepared, signing_algo)
     delta = {
-        'content': encrypt_e2ee_text('流式回答', client_key),
+        'content': encrypt_e2ee_text(UTF8_SAMPLE, client_key),
         'nearai_tool_result': {'output': encrypt_e2ee_text('tool output', client_key)},
     }
-    prefix = f': 保活{separator}event: message{line_ending}id: part-1{line_ending}'
+    prefix = (
+        f': keepalive {UTF8_SAMPLE}{separator}'
+        f'event: message{line_ending}id: part-1{line_ending}'
+    )
     data = f'data: {{"id":"chat-1",{line_ending}data: "choices":{json.dumps([{"delta": delta}])}}}'
     suffix = 'event: error\ndata: {"message":"unchanged"}\n\ndata:\n\ndata\n\ndata: [DONE]\n\n'
     source = ByteStream((prefix + data + separator + suffix).encode())
@@ -412,7 +417,7 @@ async def test_decrypts_multiline_sse_across_split_bytes(
         value for value in get_sse_data_records(text) if value.startswith('{"id"')
     )
     assert json.loads(payload)['choices'][0]['delta'] == {
-        'content': '流式回答',
+        'content': UTF8_SAMPLE,
         'nearai_tool_result': {'output': 'tool output'},
     }
     assert source.closed

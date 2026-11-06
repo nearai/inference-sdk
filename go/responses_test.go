@@ -69,7 +69,7 @@ func (f *responsesFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	visible := f.raw
 	if f.tamper {
-		visible = bytes.ReplaceAll(visible, []byte("你好"), []byte("篡改"))
+		visible = bytes.ReplaceAll(visible, []byte("Original"), []byte("Tampered"))
 	}
 	for i := 0; i < len(visible); i += 7 {
 		end := min(i+7, len(visible))
