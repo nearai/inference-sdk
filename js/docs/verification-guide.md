@@ -690,19 +690,19 @@ const pinnedTlsFetch = createPinnedTlsFetch(
   gateway.tlsBinding.spkiFingerprint,
 );
 
-const fetchedModels = await client.fetchModelAttestations({
+const fetchedModelAttestations = await client.fetchModelAttestations({
   model,
   signingAlgo: 'ed25519',
 });
-if (fetchedModels.attestations.length === 0) {
+if (fetchedModelAttestations.attestations.length === 0) {
   throw new Error('Gateway returned no model attestation');
 }
 
-const models = await Promise.all(
-  fetchedModels.attestations.map((attestation) =>
+const modelAttestations = await Promise.all(
+  fetchedModelAttestations.attestations.map((attestation) =>
     verifyModelAttestation({
       attestation,
-      clientBinding: fetchedModels.clientBinding,
+      clientBinding: fetchedModelAttestations.clientBinding,
     }),
   ),
 );
@@ -730,12 +730,14 @@ verification.
 ```ts
 import { prepareE2eeChatRequest } from '@nearai/inference-sdk/node';
 
-const modelAttestation = models.find(
-  (attestation) => attestation.signingPublicKey !== undefined,
+const selectedModelAttestation = modelAttestations.find(
+  (attestation) =>
+    attestation.signer.signingAlgo === 'ed25519' &&
+    attestation.signingPublicKey !== undefined,
 );
 if (
-  modelAttestation === undefined ||
-  modelAttestation.signingPublicKey === undefined
+  selectedModelAttestation === undefined ||
+  selectedModelAttestation.signingPublicKey === undefined
 ) {
   throw new Error('No verified model key is available');
 }
@@ -754,8 +756,8 @@ const request = new Request('https://cloud-api.near.ai/v1/chat/completions', {
 const prepared = await prepareE2eeChatRequest({
   request,
   modelKey: {
-    signingAlgo: modelAttestation.signer.signingAlgo,
-    publicKey: modelAttestation.signingPublicKey,
+    signingAlgo: selectedModelAttestation.signer.signingAlgo,
+    publicKey: selectedModelAttestation.signingPublicKey,
   },
 });
 const requestBytes = await prepared.request.clone().arrayBuffer();
@@ -768,7 +770,6 @@ const [responseBytes, plaintext] = await Promise.all([
   response.text(),
 ]);
 const responseBody = new Uint8Array(responseBytes);
-console.log(plaintext);
 ```
 
 Pass the captured `requestBody` and `responseBody` to the response-signature
@@ -876,10 +877,10 @@ const modelImagePolicies: Record<string, ImageProvenancePolicy> = {
   },
 };
 
-for (const attestation of fetchedModels.attestations) {
+for (const attestation of fetchedModelAttestations.attestations) {
   await verifyModelAttestation({
     attestation,
-    clientBinding: fetchedModels.clientBinding,
+    clientBinding: fetchedModelAttestations.clientBinding,
     verifiers: {
       deployment: deployment =>
         verifyComposeManagerDeploymentImageProvenance({
@@ -967,13 +968,13 @@ if (signature.kind === 'provider_tee') {
     requestBody,
     responseBody,
     signature,
-    attestation: modelAttestation,
+    attestation: selectedModelAttestation,
   });
-  const attestations = findModelAttestationsForSignature({
-    attestations: models,
+  const matchingAttestations = findModelAttestationsForSignature({
+    attestations: modelAttestations,
     signature,
   });
-  console.log(`Verified signature against ${attestations.length} matching reports.`);
+  console.log(`Verified signature against ${matchingAttestations.length} matching reports.`);
 } else {
   verifyGatewayResponse({
     requestBody,
@@ -982,6 +983,7 @@ if (signature.kind === 'provider_tee') {
     attestation: gateway,
   });
 }
+console.log(plaintext);
 ```
 
 Matching reports identify a signer group, not one execution instance.

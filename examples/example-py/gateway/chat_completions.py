@@ -51,13 +51,16 @@ async def verify_model_images(deployment: MeasuredDeployment) -> None:
             repository='nearai/compose-manager',
             workflow='.github/workflows/build.yml',
         ),
+        github_token=os.environ.get('GITHUB_TOKEN') or None,
     )
 
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
     # These caller-owned policies check Gateway images, not model runtime images.
     await verify_deployment_image_provenance(
-        deployment.app_compose, GATEWAY_IMAGE_POLICIES
+        deployment.app_compose,
+        GATEWAY_IMAGE_POLICIES,
+        github_token=os.environ.get('GITHUB_TOKEN') or None,
     )
 
 

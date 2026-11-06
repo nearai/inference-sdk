@@ -46,6 +46,7 @@ struct Fixture {
     missing_model_key: bool,
     extra_model: bool,
     shared_model: bool,
+    gateway_chat_receipt: bool,
     systemone_tamper: bool,
 
     signatures: AtomicUsize,
@@ -187,7 +188,7 @@ impl Respond for Fixture {
                     }
                     let mut reports = vec![value];
                     if self.extra_model {
-                        reports.insert(0, self.report(nonce, 8));
+                        reports.insert(usize::from(self.shared_model), self.report(nonce, 8));
                     }
                     if self.shared_model {
                         let mut other = self.report(nonce, 7);
@@ -412,7 +413,7 @@ impl Respond for Fixture {
                         .to_string()
                         .into_bytes()
                 };
-                let kind = if self.metadata.lock().unwrap().is_some() {
+                let kind = if self.gateway_chat_receipt || self.metadata.lock().unwrap().is_some() {
                     "gateway"
                 } else {
                     "provider_tee"
@@ -641,20 +642,26 @@ async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
 async fn gateway_shared_signer_preserves_all_verified_reports() {
     let (_server, fixture, options) = setup(Fixture {
         shared_model: true,
+        extra_model: true,
         ..Default::default()
     })
     .await;
     let client = InferenceClient::with_options(options).unwrap();
     let preflight = client.verify("vendor/model").await.unwrap();
-    assert_eq!(preflight.models.len(), 2);
-    assert_ne!(preflight.models[0], preflight.models[1]);
+    assert_eq!(preflight.models.len(), 3);
+    assert_ne!(preflight.models[0], preflight.models[2]);
     assert_eq!(
+        preflight.models[0].evidence.signer,
+        preflight.models[2].evidence.signer
+    );
+    assert_ne!(
         preflight.models[0].evidence.signer,
         preflight.models[1].evidence.signer
     );
+    let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
     client.chat_completions(body()).await.unwrap();
     let receipt = client.verify_response("chat-0").await.unwrap();
-    assert_eq!(receipt.attestations, preflight.models);
+    assert_eq!(receipt.attestations, expected);
     // The deprecated representative remains available to existing callers.
     #[allow(deprecated)]
     let has_legacy_representative =
@@ -662,10 +669,39 @@ async fn gateway_shared_signer_preserves_all_verified_reports() {
     assert!(has_legacy_representative);
     assert_eq!(
         client.verify_response("chat-0").await.unwrap().attestations,
-        preflight.models
+        expected
     );
     assert_eq!(fixture.model.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn gateway_stream_receipt_keeps_gateway_evidence_with_attested_models() {
+    let (_server, _fixture, options) = setup(Fixture {
+        shared_model: true,
+        gateway_chat_receipt: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+    let preflight = client.verify("vendor/model").await.unwrap();
+    assert_eq!(preflight.models.len(), 2);
+    let mut request = body();
+    request["stream"] = json!(true);
+    client
+        .send(client.chat_request(request).unwrap())
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let receipt = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+    assert!(receipt.attestations.is_empty());
+    let VerifiedCompletionAttestation::Gateway(gateway) = receipt.attestation else {
+        panic!("gateway receipt must retain gateway evidence");
+    };
+    assert_eq!(gateway, preflight.gateway);
 }
 
 #[tokio::test]
@@ -1217,6 +1253,8 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
     for ecdsa in [false, true] {
         let (_server, f, mut options) = setup(Fixture {
             ecdsa,
+            shared_model: true,
+            extra_model: true,
             ..Default::default()
         })
         .await;
@@ -1225,9 +1263,15 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             options.signing_algo = SigningAlgo::Ecdsa;
         }
         let client = InferenceClient::with_options(options).unwrap();
+        let preflight = client.verify("vendor/model").await.unwrap();
+        assert_eq!(preflight.models.len(), 3);
+        let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
         let completion = client.chat_completions(body()).await.unwrap();
         assert_eq!(completion["choices"][0]["message"]["content"], "Hello");
-        client.verify_response("chat-0").await.unwrap();
+        assert_eq!(
+            client.verify_response("chat-0").await.unwrap().attestations,
+            expected
+        );
         let mut request = body();
         request["stream"] = json!(true);
         let response = client
@@ -1238,7 +1282,10 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             .await
             .unwrap();
         assert!(String::from_utf8(response).unwrap().contains("Hello"));
-        client.verify_response("chat-1").await.unwrap();
+        assert_eq!(
+            client.verify_response("chat-1").await.unwrap().attestations,
+            expected
+        );
         for (request, response, _) in f.receipts.lock().unwrap().values() {
             assert!(!String::from_utf8_lossy(request).contains("Hello"));
             assert!(!String::from_utf8_lossy(response).contains("Hello"));

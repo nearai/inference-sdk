@@ -873,27 +873,63 @@ def test_find_model_attestation_for_signature_requires_one_matching_signer(
     assert raised.value.failure.code == expected_code
 
 
-def test_find_model_attestations_for_signature_preserves_all_matching_reports() -> None:
-    signature = model_signature()
-    first = verified_model_attestation_for_signer(signature.signer)
-    second = replace(
-        first,
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+def test_plural_matcher_preserves_nonadjacent_and_repeated_reports(
+    signing_algo,
+) -> None:
+    address = 'ab' * (20 if signing_algo == 'ecdsa' else 32)
+    signature = replace(
+        model_signature(),
+        signer=SigningIdentity(signing_algo=signing_algo, signing_address=address),
+    )
+    first_model_attestation = verified_model_attestation_for_signer(signature.signer)
+    second_model_attestation = replace(
+        first_model_attestation,
         signer=replace(
-            first.signer, signing_address=SIGNING_ADDRESS.removeprefix('0x')
+            first_model_attestation.signer, signing_address='0X' + address.upper()
         ),
-        deployment=replace(first.deployment, app_compose='{"name":"second"}'),
+        deployment=replace(
+            first_model_attestation.deployment, app_compose='{"name":"second"}'
+        ),
     )
-    other = verified_model_attestation_for_signer(
-        SigningIdentity(signing_algo='ecdsa', signing_address='44' * 20)
+    other_model_attestation = verified_model_attestation_for_signer(
+        SigningIdentity(
+            signing_algo=signing_algo, signing_address='44' * (len(address) // 2)
+        )
+    )
+    other_algorithm_attestation = verified_model_attestation_for_signer(
+        SigningIdentity(
+            signing_algo='ed25519' if signing_algo == 'ecdsa' else 'ecdsa',
+            signing_address='ab' * (32 if signing_algo == 'ecdsa' else 20),
+        )
+    )
+    model_attestations = [
+        first_model_attestation,
+        other_model_attestation,
+        other_algorithm_attestation,
+        second_model_attestation,
+        first_model_attestation,
+    ]
+
+    matching_attestations = find_model_attestations_for_signature(
+        model_attestations, signature
     )
 
-    matching = find_model_attestations_for_signature([first, other, second], signature)
-
-    assert matching == (first, second)
-    assert matching[0] is first and matching[1] is second
-    with pytest.raises(ApiError) as missing:
-        find_model_attestations_for_signature([other], signature)
-    assert missing.value.failure.code == 'api.model_attestation_signer_not_found'
+    assert matching_attestations == (
+        first_model_attestation,
+        second_model_attestation,
+        first_model_attestation,
+    )
+    assert matching_attestations[0] is first_model_attestation
+    assert matching_attestations[1] is second_model_attestation
+    assert matching_attestations[2] is first_model_attestation
+    with pytest.raises(ApiError) as ambiguous:
+        find_model_attestation_for_signature(model_attestations, signature)
+    assert ambiguous.value.failure.code == 'api.ambiguous_model_attestation_signer'
+    for candidates in ([], [other_model_attestation], [other_algorithm_attestation]):
+        with pytest.raises(ApiError) as missing:
+            find_model_attestations_for_signature(candidates, signature)
+        assert missing.value.failure.code == 'api.model_attestation_signer_not_found'
 
 
 @pytest.mark.parametrize(

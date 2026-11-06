@@ -274,7 +274,7 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return o.DeploymentPolicy(ctx, model, d)
 		}
 	}
-	var models FetchedModelAttestations
+	var fetchedModelAttestations FetchedModelAttestations
 	var ohttp *OHTTPAttestation
 	var ohttpSigner SigningIdentity
 	configureOHTTP := func(attestation *OHTTPAttestation, signer SigningIdentity) error {
@@ -293,11 +293,11 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 	}
 	if c.api.direct {
 		var e error
-		models, e = c.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
+		fetchedModelAttestations, e = c.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
 		if e != nil {
 			return nil, e
 		}
-		ohttp = models.OHTTPAttestation
+		ohttp = fetchedModelAttestations.OHTTPAttestation
 	} else {
 		fetched, e := c.api.FetchGatewayAttestation(ctx, FetchOptions{SigningAlgo: o.SigningAlgo, DisableTLSBinding: o.DisableTLSBinding})
 		if e != nil {
@@ -355,39 +355,39 @@ func (c *InferenceClient) createSession(ctx context.Context, model string) (*ses
 			return nil, e
 		}
 		if metadata.ProviderType == "vllm" && metadata.AttestationSupported {
-			models, e = s.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
+			fetchedModelAttestations, e = s.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: o.SigningAlgo})
 			if e != nil {
 				return nil, e
 			}
-			if len(models.Attestations) == 0 {
+			if len(fetchedModelAttestations.Attestations) == 0 {
 				return nil, failure("policy.model_attestation_required", nil)
 			}
 		} else if o.E2EE || o.DeploymentPolicy != nil || opts.DeploymentVerifier != nil || opts.Policy.AcceptedTCBStatuses != nil || opts.Policy.RequireGPUEvidence {
 			return nil, failure("policy.model_attestation_required", nil)
 		}
 	}
-	for _, report := range models.Attestations {
+	for _, report := range fetchedModelAttestations.Attestations {
 		var verified VerifiedAttestation
 		var e error
 		if c.api.direct {
-			verified, e = VerifyDirectModelAttestation(ctx, report, models.ClientBinding, opts)
+			verified, e = VerifyDirectModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
 		} else {
-			verified, e = VerifyModelAttestation(ctx, report, models.ClientBinding, opts)
+			verified, e = VerifyModelAttestation(ctx, report, fetchedModelAttestations.ClientBinding, opts)
 		}
 		if e != nil {
 			return nil, e
 		}
 		s.result.Models = append(s.result.Models, verified)
-		if c.api.direct && models.ServingAttestation != nil && sameAttestation(report, *models.ServingAttestation) {
+		if c.api.direct && fetchedModelAttestations.ServingAttestation != nil && sameAttestation(report, *fetchedModelAttestations.ServingAttestation) {
 			ohttpSigner = verified.Signer
 		}
 		if s.selected == nil &&
 			verified.Signer.SigningAlgo == o.SigningAlgo &&
 			verified.SigningPublicKey != "" &&
 			(!c.api.direct || !o.OHTTP ||
-				(models.ServingAttestation != nil &&
-					verified.Signer.SigningAlgo == models.ServingAttestation.Signer.SigningAlgo &&
-					sameHex(verified.Signer.SigningAddress, models.ServingAttestation.Signer.SigningAddress))) {
+				(fetchedModelAttestations.ServingAttestation != nil &&
+					verified.Signer.SigningAlgo == fetchedModelAttestations.ServingAttestation.Signer.SigningAlgo &&
+					sameHex(verified.Signer.SigningAddress, fetchedModelAttestations.ServingAttestation.Signer.SigningAddress))) {
 			copy := verified
 			s.selected = &copy
 		}

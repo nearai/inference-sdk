@@ -727,7 +727,7 @@ class InferenceClient(
             include_spki_fingerprint=self._gateway_options.include_spki_fingerprint,
         )
         # Authenticate the Gateway before sending configured credentials to it.
-        gateway, key_config = await self._verify_gateway(fetched)
+        gateway_attestation, key_config = await self._verify_gateway(fetched)
         # Pin subsequent requests to the verified report's observed TLS peer.
         fingerprint = fetched.client_binding.spki_fingerprint
         if self._gateway_options.include_spki_fingerprint:
@@ -741,25 +741,31 @@ class InferenceClient(
             self._http_clients[fingerprint] = client
         # Parse required OHTTP configuration before authenticated evidence requests.
         completion_client = self._completion_client(client, key_config)
-        attestations = _SessionAttestationClient(
+        attestation_client = _SessionAttestationClient(
             client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
         )
-        models = await self._verify_models(model, attestations)
-        selected = next(
+        model_attestations = await self._verify_model_attestations(
+            model, attestation_client
+        )
+        selected_model_attestation = next(
             (
-                item
-                for item in models
-                if item.signer.signing_algo == self._signing_algo
-                and item.signing_public_key is not None
+                attestation
+                for attestation in model_attestations
+                if attestation.signer.signing_algo == self._signing_algo
+                and attestation.signing_public_key is not None
             ),
             None,
         )
         model_key = None
-        if selected is not None and selected.signing_public_key is not None:
+        if (
+            selected_model_attestation is not None
+            and selected_model_attestation.signing_public_key is not None
+        ):
             model_key = E2eeModelKey(
-                signing_algo=self._signing_algo, public_key=selected.signing_public_key
+                signing_algo=self._signing_algo,
+                public_key=selected_model_attestation.signing_public_key,
             )
-        elif models:
+        elif model_attestations:
             raise verification_failure('e2ee.model_public_key_required')
 
         def verify_response(
@@ -769,32 +775,38 @@ class InferenceClient(
             signature: CompletionSignature,
         ) -> VerifiedCompletionResult:
             if signature.kind == 'provider_tee':
-                if selected is None:
+                if selected_model_attestation is None:
                     raise verification_failure(
                         'signature.kind_mismatch',
                         {'expected': 'gateway', 'actual': signature.kind},
                     )
-                verify_model_response(request_body, response_body, signature, selected)
+                verify_model_response(
+                    request_body, response_body, signature, selected_model_attestation
+                )
                 return VerifiedModelCompletionResult(
                     id=id,
                     signature=signature,
                     attestations=find_model_attestations_for_signature(
-                        models, signature
+                        model_attestations, signature
                     ),
-                    attestation=selected,
+                    attestation=selected_model_attestation,
                 )
-            verify_gateway_response(request_body, response_body, signature, gateway)
+            verify_gateway_response(
+                request_body, response_body, signature, gateway_attestation
+            )
             return VerifiedGatewayCompletionResult(
-                id=id, signature=signature, attestation=gateway
+                id=id, signature=signature, attestation=gateway_attestation
             )
 
         return _VerifiedSession(
             model_key=model_key,
             http_client=completion_client,
-            attestation_client=attestations,
+            attestation_client=attestation_client,
             verify_response=verify_response,
             attestation_result=AttestationVerificationResult(
-                gateway=gateway, models=models, verified_at=int(time() * 1000)
+                gateway=gateway_attestation,
+                models=model_attestations,
+                verified_at=int(time() * 1000),
             ),
         )
 
@@ -818,7 +830,7 @@ class InferenceClient(
             )
         return gateway, key_config
 
-    async def _verify_models(
+    async def _verify_model_attestations(
         self, model: str, client: AttestationClient
     ) -> tuple[VerifiedModelAttestation, ...]:
         metadata = await client.fetch_model_metadata(model)

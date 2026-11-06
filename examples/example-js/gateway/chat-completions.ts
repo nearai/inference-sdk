@@ -59,6 +59,7 @@ async function main(): Promise<void> {
           verifyComposeManagerDeploymentImageProvenance({
             deployment,
             imagePolicies: MODEL_IMAGE_POLICIES,
+            githubToken: process.env.GITHUB_TOKEN || undefined,
             composeManagerImagePolicy: {
               imageRepository: 'nearaidev/compose-manager',
               repository: 'nearai/compose-manager',
@@ -73,6 +74,7 @@ async function main(): Promise<void> {
           verifyDeploymentImageProvenance({
             appCompose,
             imagePolicies: GATEWAY_IMAGE_POLICIES,
+            githubToken: process.env.GITHUB_TOKEN || undefined,
           }),
       },
     },

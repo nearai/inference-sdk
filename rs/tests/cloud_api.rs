@@ -376,9 +376,13 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let candidates = vec![first, other, second];
-        let matches = find_model_attestations_for_signature(&candidates, &signature).unwrap();
-        assert_eq!(matches, vec![&candidates[0], &candidates[2]]);
+        let candidates = vec![first.clone(), other, second, first];
+        let matching_attestations =
+            find_model_attestations_for_signature(&candidates, &signature).unwrap();
+        assert_eq!(
+            matching_attestations,
+            vec![&candidates[0], &candidates[2], &candidates[3]]
+        );
         assert!(matches!(
             find_model_attestations_for_signature(&[], &signature),
             Err(ApiError::ModelAttestationSignerNotFound)
