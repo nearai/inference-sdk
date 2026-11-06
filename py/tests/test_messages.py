@@ -21,7 +21,7 @@ from nearai_inference_sdk import (
 from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
 
-FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures' / 'messages'
+FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures' / 'messages'
 ERROR_HEADER_ENDING = b'event: error\ndata: {"type":"message_stop"}\n\n'
 
 

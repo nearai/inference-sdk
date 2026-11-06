@@ -33,7 +33,7 @@ from .fixtures import (
     create_model_quote,
 )
 
-FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures'
+FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures'
 FIXTURE = json.loads((FIXTURES / 'compose-manager/deployment.json').read_text())
 POLICIES = {
     'nearaidev/compose-manager-launcher': ImageProvenancePolicy(

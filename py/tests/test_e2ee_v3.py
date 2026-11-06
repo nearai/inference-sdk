@@ -25,7 +25,7 @@ from nearai_inference_sdk.types.e2ee import E2eeModelKey
 from nearai_inference_sdk.utils.errors import VerificationError
 
 VECTORS = json.loads(
-    (Path(__file__).parents[3] / 'test-fixtures/e2ee-v3.json').read_text()
+    (Path(__file__).parents[2] / 'test-fixtures/e2ee-v3.json').read_text()
 )['vectors']
 
 

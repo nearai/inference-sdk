@@ -16,7 +16,7 @@ from nearai_inference_sdk import ApiError, DirectInferenceClient, VerificationEr
 from .ohttp_fixtures import OhttpGateway
 from .test_inference_client import BASE_URL, MODEL, ChunkStream, Gateway
 
-FIXTURES = Path(__file__).resolve().parents[3] / 'test-fixtures' / 'responses'
+FIXTURES = Path(__file__).resolve().parents[2] / 'test-fixtures' / 'responses'
 STREAM_CASES = json.loads((FIXTURES / 'streams.json').read_text())
 
 

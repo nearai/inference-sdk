@@ -27,7 +27,7 @@ from nearai_inference_sdk.schemas import SlsaStatementSchema
 from nearai_inference_sdk.utils.fetch import FetchResponse
 
 FIXTURE = (
-    Path(__file__).resolve().parents[3]
+    Path(__file__).resolve().parents[2]
     / 'test-fixtures/provenance/compose-manager-launcher.bundle.json'
 )
 BUNDLE = FIXTURE.read_text()
