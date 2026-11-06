@@ -2,7 +2,7 @@ import type { SigningAlgo } from '@nearai/inference-sdk/node';
 import { DirectInferenceClient } from '@nearai/inference-sdk/node';
 // Experimental direct-endpoint example. Use the Gateway examples for production.
 import OpenAI from 'openai';
-import { transportOptions } from '../transport-options.ts';
+import { transportOptions } from '../utils/transport-options.ts';
 
 const BASE_URL =
   process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1';

@@ -7,7 +7,7 @@ import {
   verifyDirectModelAttestations,
   verifyDirectModelResponse,
 } from '@nearai/inference-sdk/node';
-import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
+import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
 // Standalone verification of plaintext Chat bodies over HTTPS.
 // See client.ts for E2EE.

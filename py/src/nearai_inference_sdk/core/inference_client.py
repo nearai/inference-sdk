@@ -7,6 +7,7 @@ import codecs
 import json
 import math
 import re
+import traceback
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from time import monotonic, time
@@ -87,8 +88,8 @@ class _VerifiedSession[Result, AttestationResult]:
 @dataclass
 class _ResponseRecord[Result, AttestationResult]:
     request_body: bytes
-    response_body: asyncio.Future[bytes]
-    session: _VerifiedSession[Result, AttestationResult]
+    response_body: asyncio.Future[bytes] | None
+    session: _VerifiedSession[Result, AttestationResult] | None
     gateway_only: bool = False
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
@@ -451,8 +452,42 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
             raise api_failure('api.completion_not_found')
         if record.verification is None:
             record.verification = asyncio.create_task(self._verify_record(id, record))
-            record.verification.add_done_callback(_observe_exception)
+            record.verification.add_done_callback(
+                lambda task: self._release_verified_capture(record, task)
+            )
         return await asyncio.shield(record.verification)
+
+    def _release_verified_capture(
+        self,
+        record: _ResponseRecord[Result, AttestationResult],
+        task: asyncio.Task[Result],
+    ) -> None:
+        error = None if task.cancelled() else task.exception()
+        # Retryable failures reset the task and still need the captured bytes.
+        if record.verification is not task:
+            return
+        record.request_body = b''
+        record.response_body = None
+        record.session = None
+        # A cached failed Task retains its traceback and the verifier's arguments.
+        # Clear completed frame locals while preserving error and stack details.
+        seen: set[int] = set()
+        pending = [error] if error is not None else []
+        while pending:
+            error = pending.pop()
+            if id(error) in seen:
+                continue
+            seen.add(id(error))
+            traceback.clear_frames(error.__traceback__)
+            pending.extend(
+                cause
+                for cause in (
+                    error.__cause__,
+                    error.__context__,
+                    getattr(error, 'cause', None),
+                )
+                if isinstance(cause, BaseException)
+            )
 
     def _get_response_record(
         self, id: str
@@ -472,6 +507,8 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
     async def _verify_record(
         self, id: str, record: _ResponseRecord[Result, AttestationResult]
     ) -> Result:
+        # Only a record without a cached terminal task can start verification.
+        assert record.response_body is not None and record.session is not None
         try:
             body = await record.response_body
             signature = (
@@ -607,7 +644,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
                 self._response_ttl, expire
             )
 
-        record.response_body.add_done_callback(settled)
+        response_body.add_done_callback(settled)
 
 
 class InferenceClient(

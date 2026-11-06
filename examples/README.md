@@ -34,26 +34,32 @@ Each Chat, Responses, and Messages entry point runs JSON and SSE. Commands below
 run from `examples/example-js`, `examples/example-py`, `examples/example-rs`, or
 `examples/example-go`, respectively.
 
+Entry points are grouped under `gateway/` and `direct/` (`src/gateway/` and
+`src/direct/` in Rust). All languages share the entry-point names
+`chat-completions`, `systemone`, `messages`, and `responses`. Standalone verification
+adds `-bare`; official SDK integrations add `-with-<vendor>-sdk`. Python and Rust source filenames use
+underscores in place of hyphens.
+
 | Capability | JavaScript | Python | Rust | Go |
 | --- | --- | --- | --- | --- |
-| Gateway Chat, native client | `node gateway/client.ts` | `uv run python gateway/client.py` | `cargo run --bin gateway-client` | `go run ./gateway/client` |
-| Gateway Chat, standalone verification | `node gateway/bare.ts` | `uv run python gateway/bare.py` | `cargo run --bin gateway-bare` | `go run ./gateway/bare` |
-| Gateway Chat, official OpenAI SDK | `node gateway/client-openai-sdk.ts` | `uv run python gateway/client_openai_sdk.py` | — | `go run ./gateway/openai` |
-| Responses, native client | `node gateway/responses.ts` | `uv run python gateway/responses.py` | `cargo run --bin responses` | `go run ./gateway/responses-client` |
-| Responses, official OpenAI SDK | `node gateway/responses-openai-sdk.ts` | `uv run python gateway/responses_openai_sdk.py` | — | `go run ./gateway/responses` |
-| Messages, native client | `node gateway/messages.ts` | `uv run python gateway/messages.py` | `cargo run --bin messages` | `go run ./gateway/messages` |
-| Messages, official Anthropic SDK | `node gateway/messages-anthropic-sdk.ts` | `uv run python gateway/messages_anthropic_sdk.py` | — | `go run ./gateway/anthropic` |
-| System One, native client | `node gateway/jev.ts` | `uv run python gateway/jev.py` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
-| System One, official Jev SDK | `node gateway/jev-sdk.ts` | `uv run python gateway/jev_sdk.py` | — | — |
-| Direct Chat, native client | `node direct/client.ts` | `uv run python direct/client.py` | `cargo run --bin direct-client` | `go run ./direct/client` |
-| Direct Chat, standalone verification | `node direct/bare.ts` | `uv run python direct/bare.py` | `cargo run --bin direct-bare` | `go run ./direct/bare` |
-| Direct Chat, official OpenAI SDK | `node direct/client-openai-sdk.ts` | `uv run python direct/client_openai_sdk.py` | — | `go run ./direct/openai` |
+| Gateway Chat, native client | `node gateway/chat-completions.ts` | `uv run python -m gateway.chat_completions` | `cargo run --bin gateway-chat-completions` | `go run ./gateway/chat-completions` |
+| Gateway Chat, standalone verification | `node gateway/chat-completions-bare.ts` | `uv run python -m gateway.chat_completions_bare` | `cargo run --bin gateway-chat-completions-bare` | `go run ./gateway/chat-completions-bare` |
+| Gateway Chat, official OpenAI SDK | `node gateway/chat-completions-with-openai-sdk.ts` | `uv run python -m gateway.chat_completions_with_openai_sdk` | — | `go run ./gateway/chat-completions-with-openai-sdk` |
+| Responses, native client | `node gateway/responses.ts` | `uv run python -m gateway.responses` | `cargo run --bin responses` | `go run ./gateway/responses` |
+| Responses, official OpenAI SDK | `node gateway/responses-with-openai-sdk.ts` | `uv run python -m gateway.responses_with_openai_sdk` | — | `go run ./gateway/responses-with-openai-sdk` |
+| Messages, native client | `node gateway/messages.ts` | `uv run python -m gateway.messages` | `cargo run --bin messages` | `go run ./gateway/messages` |
+| Messages, official Anthropic SDK | `node gateway/messages-with-anthropic-sdk.ts` | `uv run python -m gateway.messages_with_anthropic_sdk` | — | `go run ./gateway/messages-with-anthropic-sdk` |
+| System One, native client | `node gateway/systemone.ts` | `uv run python -m gateway.systemone` | `cargo run --bin systemone` | `go run ./gateway/systemone` |
+| System One, official TypeSafe SDK | `node gateway/systemone-with-typesafe-sdk.ts` | `uv run python -m gateway.systemone_with_typesafe_sdk` | — | — |
+| Direct Chat, native client | `node direct/chat-completions.ts` | `uv run python -m direct.chat_completions` | `cargo run --bin direct-chat-completions` | `go run ./direct/chat-completions` |
+| Direct Chat, standalone verification | `node direct/chat-completions-bare.ts` | `uv run python -m direct.chat_completions_bare` | `cargo run --bin direct-chat-completions-bare` | `go run ./direct/chat-completions-bare` |
+| Direct Chat, official OpenAI SDK | `node direct/chat-completions-with-openai-sdk.ts` | `uv run python -m direct.chat_completions_with_openai_sdk` | — | `go run ./direct/chat-completions-with-openai-sdk` |
 
 A dash means the vendor has no official SDK for that language. Official SDK
 examples share the inference client's verified transport and verify receipts
-through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and Jev examples
-derive their API root from it. Jev disables compression and inference retries,
-and uses `X-Generation-Id` as the receipt ID. Its native and official examples ask
+through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and TypeSafe examples
+derive their API root from it. System One examples disable compression and inference
+retries, and use `X-Generation-Id` as the receipt ID. Native and official examples ask
 the same billing, team, and urgency questions by default and print answers after
 verification.
 
@@ -81,11 +87,13 @@ pnpm --dir js install --frozen-lockfile
 pnpm --dir js build
 pnpm --dir examples/example-js install --frozen-lockfile
 cd examples/example-js
-node gateway/client.ts
+node gateway/chat-completions.ts
 ```
 
-Existing `pnpm start:client`, `start:bare`, `start:client-openai-sdk`, `start:jev`,
-`start:jev-sdk`, and `start:direct-*` commands remain available.
+Use `pnpm start:<entry-name>` for Gateway examples, such as
+`pnpm start:chat-completions-with-openai-sdk`, and `start:direct-<entry-name>`
+for direct examples. Existing `start:client`, `start:bare`,
+`start:client-openai-sdk`, and existing direct aliases remain available.
 
 ### Python setup
 
@@ -95,8 +103,11 @@ imports the sibling Python SDK through an editable path dependency.
 ```sh
 cd examples/example-py
 uv sync --locked
-uv run python gateway/client.py
+uv run python -m gateway.chat_completions
 ```
+
+Run Python examples as modules from this directory so they can import the
+shared `utils` package.
 
 ### Rust setup
 
@@ -105,7 +116,7 @@ The examples use the sibling Rust SDK through a path dependency. See the
 
 ```sh
 cd examples/example-rs
-cargo run --locked --bin gateway-client
+cargo run --locked --bin gateway-chat-completions
 ```
 
 `cargo run` and `cargo run --bin client` remain aliases for Gateway standalone
@@ -118,12 +129,27 @@ replaces the SDK dependency with the sibling source.
 
 ```sh
 cd examples/example-go
-go run ./gateway/openai
+go run ./gateway/chat-completions-with-openai-sdk
 ```
 
 `go run .` remains an alias for the official OpenAI Gateway example. See the
 [Go example guide](example-go/README.md). Replace local path/link dependencies
 with released package versions when copying examples out of this repository.
+
+## Shared helpers and tests
+
+Keep reusable example code in each language's helper directory:
+
+| Language | Helpers | Offline tests |
+| --- | --- | --- |
+| JavaScript | `example-js/utils/` | `example-js/tests/`; run `pnpm check` |
+| Python | `example-py/utils/` | `example-py/tests/`; run `uv run python -m unittest discover -s tests` |
+| Rust | `example-rs/src/utils/` | Tests alongside their modules; run `cargo test --locked` |
+| Go | `example-go/internal/demo/` | Tests alongside their packages; run `go test -race ./...` |
+
+Run these commands from the corresponding language's example directory. Python
+example tests are also collected by the SDK's pytest configuration. Credentialed
+integration tests are described in the [live E2E guide](../e2e/README.md).
 
 ## Image provenance
 

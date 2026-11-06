@@ -134,7 +134,7 @@ async def test_standalone_apis_bind_generation_id_to_exact_decision_bytes() -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
 @pytest.mark.parametrize('kind', ['gateway', 'provider_tee'])
-async def test_official_jev_sdk_verifies_live_receipt(kind, signing_algo):
+async def test_typesafe_sdk_verifies_live_receipt(kind, signing_algo):
     provider = 'near' if kind == 'provider_tee' else 'external'
     model = next(
         (
@@ -188,8 +188,8 @@ async def test_official_jev_sdk_verifies_live_receipt(kind, signing_algo):
             compression=False,
             retry=RetryPolicy(max_retries=0),
             timeout=60,
-        ) as jev:
-            result = await jev.system_one(
+        ) as typesafe:
+            result = await typesafe.system_one(
                 model=model,
                 state=decision_request()['state'],
                 questions={

@@ -37,6 +37,8 @@ type fakeCloud struct {
 	mu              sync.Mutex
 	signatureStatus atomic.Int32
 	signatureCalls  atomic.Int32
+	unavailable     atomic.Bool
+	signatureWait   <-chan struct{}
 	signatures      map[string]CompletionSignature
 	next            int
 	metadata        atomic.Int32
@@ -236,6 +238,17 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeEncodedResponse(f.t, w, []byte(reply), f.encoding)
 	case strings.Contains(r.URL.Path, "/signature/"):
 		f.signatureCalls.Add(1)
+		if f.signatureWait != nil {
+			select {
+			case <-f.signatureWait:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		if f.unavailable.Load() {
+			json.NewEncoder(w).Encode(map[string]string{"error_code": "pending", "message": "Try later"})
+			return
+		}
 		if status := f.signatureStatus.Load(); status != 0 {
 			w.WriteHeader(int(status))
 			return
@@ -455,6 +468,59 @@ func TestClientPreflightAndSignature(t *testing.T) {
 		}
 	}
 }
+func TestVerificationReleasesCapturedBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		tee, stream, tamper bool
+	}{
+		{name: "gateway"},
+		{name: "model-stream", tee: true, stream: true},
+		{name: "invalid-signature", tamper: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee, f.stream, f.tamper = tc.tee, tc.stream, tc.tamper
+			c, _ := fakeClient(t, f, nil)
+			body, _ := json.Marshal(chatRequest())
+			req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
+			res, err := c.HTTPClient().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = io.ReadAll(res.Body)
+			res.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.mu.Lock()
+			record := c.responses["chat-1"]
+			expires := record.expires
+			c.mu.Unlock()
+			first, firstErr := c.VerifyResponse(context.Background(), "chat-1")
+			if tc.tamper {
+				requireCode(t, firstErr, "signature.payload_mismatch")
+			} else if firstErr != nil {
+				t.Fatal(firstErr)
+			}
+			second, secondErr := c.VerifyResponse(context.Background(), "chat-1")
+			if secondErr != firstErr || !reflect.DeepEqual(first, second) || f.signatureCalls.Load() != 1 {
+				t.Fatal("terminal verification result was not reused")
+			}
+			c.mu.Lock()
+			retained := c.responses["chat-1"]
+			released := retained == record && record.request == nil && record.response == nil && record.session == nil
+			unchangedExpiry := record.expires.Equal(expires)
+			c.prune(expires)
+			c.mu.Unlock()
+			if !released || !unchangedExpiry {
+				t.Fatal("terminal record retained captured bodies or changed its lifetime")
+			}
+			_, err = c.VerifyResponse(context.Background(), "chat-1")
+			requireCode(t, err, "api.completion_not_found")
+		})
+	}
+}
+
 func TestClearResponseCachePreservesSession(t *testing.T) {
 	for _, tee := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tee=%t", tee), func(t *testing.T) {
@@ -844,27 +910,98 @@ func TestFailedStreamsAreNotRegistered(t *testing.T) {
 }
 
 func TestVerificationRetriesTransientSignatureStatus(t *testing.T) {
-	for _, status := range []int{404, 425} {
+	for _, status := range []int{404, 425, 200} {
 		t.Run(itoa(status), func(t *testing.T) {
 			f := newFakeCloud(t)
 			c, _ := fakeClient(t, f, nil)
 			if _, err := c.CreateChatCompletion(context.Background(), chatRequest()); err != nil {
 				t.Fatal(err)
 			}
-			f.signatureStatus.Store(int32(status))
+			if status == 200 {
+				f.unavailable.Store(true)
+			} else {
+				f.signatureStatus.Store(int32(status))
+			}
 			_, err := c.VerifyResponse(context.Background(), "chat-1")
-			requireCode(t, err, "api.http_status")
-			if sdk, ok := err.(*Error); !ok || !sdk.Retryable {
-				t.Fatalf("expected retryable error: %v", err)
+			if status == 200 {
+				requireCode(t, err, "api.completion_signature_unavailable")
+			} else {
+				requireCode(t, err, "api.http_status")
+				if sdk, ok := err.(*Error); !ok || !sdk.Retryable {
+					t.Fatalf("expected retryable error: %v", err)
+				}
+			}
+			c.mu.Lock()
+			record := c.responses["chat-1"]
+			retained := len(record.request) > 0 && len(record.response) > 0 && record.session != nil
+			c.mu.Unlock()
+			if !retained {
+				t.Fatal("retryable verification discarded captured bodies")
 			}
 			f.signatureStatus.Store(0)
+			f.unavailable.Store(false)
 			if _, err := c.VerifyResponse(context.Background(), "chat-1"); err != nil {
 				t.Fatal(err)
 			}
 			if f.signatureCalls.Load() != 2 {
 				t.Fatal("signature was not fetched again")
 			}
+			c.mu.Lock()
+			released := record.request == nil && record.response == nil && record.session == nil
+			c.mu.Unlock()
+			if !released {
+				t.Fatal("successful retry retained captured bodies")
+			}
 		})
+	}
+}
+
+func TestSharedResponseVerificationCancellation(t *testing.T) {
+	f := newFakeCloud(t)
+	wait := make(chan struct{})
+	release := sync.OnceFunc(func() { close(wait) })
+	defer release()
+	f.signatureWait = wait
+	c, _ := fakeClient(t, f, nil)
+	if _, err := c.CreateChatCompletion(context.Background(), chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := make(chan error, 1)
+	go func() { _, err := c.VerifyResponse(ctx, "chat-1"); first <- err }()
+	deadline := time.Now().Add(time.Second)
+	for f.signatureCalls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if f.signatureCalls.Load() != 1 {
+		t.Fatal("signature lookup did not start")
+	}
+	second := make(chan error, 1)
+	go func() { _, err := c.VerifyResponse(context.Background(), "chat-1"); second <- err }()
+	cancel()
+	if err := <-first; err != context.Canceled {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	record := c.responses["chat-1"]
+	retained := len(record.request) > 0 && len(record.response) > 0 && record.session != nil
+	c.mu.Unlock()
+	if !retained {
+		t.Fatal("canceled waiter discarded shared verification bodies")
+	}
+	release()
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if f.signatureCalls.Load() != 1 {
+		t.Fatal("shared verification fetched the signature again")
+	}
+	c.mu.Lock()
+	released := record.request == nil && record.response == nil && record.session == nil
+	c.mu.Unlock()
+	if !released {
+		t.Fatal("completed shared verification retained captured bodies")
 	}
 }
 

@@ -77,8 +77,10 @@ The response TTL begins after successful full-body consumption;
 `response_cache_ttl = Duration::ZERO` disables retention. Receipt lookups
 and new records prune expired entries; dropping all client clones and responses
 releases state. Verification shares the retained byte buffers rather than copying
-them. Cache memory grows with the responses retained during the TTL; choose a
-retention period appropriate for your workload.
+them. Successful verification and cached non-retryable failures release the
+original request/response bytes; their results remain available until the original
+TTL expires. Unverified responses and retryable receipt lookups retain their bytes
+for a later verification attempt.
 
 A missing, expired, or incomplete completion yields `api.completion_not_found`.
 A duplicate retained completion ID fails with `api.duplicate_completion_id` and
@@ -225,7 +227,7 @@ client.verify_response(id).await?;
 
 For streaming, use `message_request(body)` with `"stream": true`, then `send()`
 and consume `response.body` to completion. Set custom Anthropic headers on the
-request before sending. See the [example](../../examples/example-rs/src/bin/messages.rs).
+request before sending. See the [example](../../examples/example-rs/src/gateway/messages.rs).
 
 ## Responses API
 

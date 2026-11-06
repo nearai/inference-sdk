@@ -5,7 +5,7 @@ import {
   verifyComposeManagerDeploymentImageProvenance,
   verifyDeploymentImageProvenance,
 } from '@nearai/inference-sdk/node';
-import { transportOptions } from '../transport-options.ts';
+import { transportOptions } from '../utils/transport-options.ts';
 
 const BASE_URL = process.env.NEARAI_BASE_URL ?? 'https://cloud-api.near.ai/v1/';
 const MODEL = process.env.NEARAI_MODEL ?? 'z-ai/glm-5.3-flash';

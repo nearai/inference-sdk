@@ -14,7 +14,7 @@ Set `NEARAI_API_KEY` through your local secret manager or shell and set
 | Staging | `https://cloud-stg-api.near.ai/v1` |
 | Production | `https://cloud-api.near.ai/v1` |
 
-Install Node.js 24.22.1 or later, then discover models once from the repository root.
+Install Node.js 24.22.1 or later, then validate the fixed models once from the repository root.
 Set `NEARAI_E2E_LANGUAGE` to `javascript`, `python`, `rust`, or `go` to select
 one SDK's suites; the default selects all available suites.
 
@@ -66,24 +66,59 @@ both environments after pushes to `main`, daily at 03:00 UTC, and on manual
 dispatch from `main`. Releases test all four SDKs in both environments and
 block publication on failure.
 
+### Slack failure notifications
+
+Create a [Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/)
+for the destination channel and save its URL as the repository Actions secret
+`TEST_ALERTS_SLACK_WEBHOOK_URL`.
+
+When configuration or an SDK test job fails, the workflow sends one summary
+after all selected jobs finish, including the failed job groups, commit, and a
+link to that run attempt. Language groups cover both STG and PRD; follow the
+link to see which environment failed. This also applies to live checks in the
+release workflow, which forwards the same secret. Successful runs and runs
+with only skipped or cancelled jobs send no notification.
+
+The secret is optional: if it is missing, a failed run records a warning and
+skips notification. Delivery errors fail the notification job, while the
+original E2E failures remain visible. Notifications contain run metadata, not
+test logs or inference payloads.
+
 ## Coverage
 
-Each environment selects representative models from its public `/model/list`
-catalog. The Chat matrix uses two NEAR TEE models, one Chutes model, and one
-external model; all SDKs use the same selection. The same list includes a hosted
-Jev model when the selected SDK has a System One suite. Each entry carries an
-`endpoint` (`chat`, `responses`, `messages`, or `systemone`), and each suite uses only its
-endpoint. A missing required category fails setup. Responses has its own `responses` entries:
-one of the selected NEAR TEE models and one OpenAI-owned external text model.
-The OpenAI model uses the same non-reasoning, price, and ID ordering as Chat;
-a cheaper external model from another owner cannot replace it.
-Messages selects one external Anthropic text model, preferring non-reasoning
-models and then lower prices. A missing Anthropic model fails setup.
+All SDKs and both environments use the fixed mainstream models in
+[`models.json`](models.json). **To replace a model, edit its `id` in that file.**
+Each model is listed once, with its `provider` (`near`, `chutes`, or `external`)
+and `endpoints` (`chat`, `responses`, `messages`, or `systemone`). A model used
+by multiple endpoints shares the same ID. The first NEAR Chat model is also the
+default for shared encryption/client cases.
+
+Keep the provider and endpoint coverage below when replacing models. The
+selector tests use separate fixtures, so changing a configured ID requires no
+selector, workflow, or test edits. Validate a replacement against both
+environments with `NEARAI_BASE_URL` set as described above:
+
+```sh
+node --test e2e/select-models.test.mjs
+node e2e/select-models.mjs
+```
+
+The public `/model/list` catalog is used only to validate that these exact IDs
+exist and match the required provider, attestation, and endpoint capabilities.
+A missing or incompatible model fails setup with its ID. Prices, reasoning
+labels, catalog order, and newly added models do not affect selection; updating
+the matrix requires an explicit configuration change. Catalog validation does not establish
+live inference availability; the live suites check that separately.
+
+Each `NEARAI_E2E_MODELS` entry carries an `endpoint` (`chat`, `responses`,
+`messages`, or `systemone`), and each suite uses only its endpoint. The matrix
+preserves two NEAR TEE Chat models, one Chutes Chat model, one external Chat
+model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
 
 | Area | Live checks |
 | --- | --- |
 | Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
-| Chat and receipts | JSON responses across the catalog; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
 | Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
 | Messages | JSON and SSE on an Anthropic model, through all four native clients and the official Anthropic JS/Python/Go clients. Ed25519 and ECDSA use plain transport; Ed25519 also uses OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |
@@ -108,7 +143,7 @@ a 15 second deadline; automatic inference retries are disabled. Ordinary PR CI
 checks the live test sources without credentials; the live workflow runs them
 against STG and PRD, including through the release gate.
 
-## Official Jev SDK integration
+## Official TypeSafe SDK integration
 
 `js/e2e/systemone.test.ts` and `py/e2e/test_systemone.py` exercise the published
 `@typesafe-ai/sdk` and `typesafe-sdk` through NEAR's verified transports. They
@@ -120,8 +155,8 @@ Both Ed25519 and ECDSA are covered.
 The official-SDK cases are part of the existing System One live suites and run
 through the existing live commands and workflow. They use the same
 `NEARAI_API_KEY`, `NEARAI_BASE_URL`, and `NEARAI_E2E_MODELS` configuration as the
-native cases. The catalog selector supplies an external Jev model; there are no
-separate Jev environment variables or CI steps.
+native cases. The selector supplies the fixed external Jev model; there are no
+separate TypeSafe SDK environment variables or CI steps.
 
 Self-hosted cases use a `provider: "near"`, `endpoint: "systemone"` entry in the
 same `NEARAI_E2E_MODELS` selection. Without one they explicitly skip. Running
@@ -129,15 +164,15 @@ these cases requires the routing contract from
 [cloud-api#1285](https://github.com/nearai/cloud-api/issues/1285) and a suitable
 self-hosted deployment. They preverify the selected model and require a provider
 receipt matching its attested signing identity. An external model is never
-substituted. The current catalog selector chooses only hosted Jev deployments.
+substituted. The fixed matrix includes only a hosted Jev deployment.
 
 Like the existing live tests, these suites require explicit configuration and
 are excluded from ordinary unit-test runs. Missing required external-model
 configuration or verification failures fail the tests.
 
-The runnable examples use `examples/example-js/gateway/jev-helpers.ts` and
-`examples/example-py/gateway/jev_helpers.py` to keep the API root, verified
+The runnable examples use `examples/example-js/utils/systemone.ts` and
+`examples/example-py/utils/systemone.py` to keep the API root, verified
 transport, disabled retries/compression, and receipt-ID extraction together.
 The official SDKs remain example/test dependencies only. Python uses
 `inference.httpx2_client` to bridge
-Jev's HTTPX2 client to the existing verified HTTPX transport.
+TypeSafe's HTTPX2 client to the existing verified HTTPX transport.

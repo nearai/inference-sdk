@@ -924,6 +924,14 @@ function mockProviderSignatures(gateway: TestGateway): void {
     .mockImplementation(createSignatureFetch(gateway));
 }
 
+function retainedCapture(client: InferenceClient, id: string): unknown {
+  const records = Reflect.get(client, 'responseRecords') as Map<
+    string,
+    { captured?: unknown }
+  >;
+  return records.get(id)?.captured;
+}
+
 function isChatCompletionRequest(input: RequestInfo | URL): boolean {
   const url = input instanceof Request ? input.url : input.toString();
   return new URL(url).pathname === '/v1/chat/completions';
@@ -1155,8 +1163,8 @@ describe('inference client', () => {
         model,
         messages: [{ role: 'user', content: 'hello' }],
       });
-      await client.verifyResponse(completion.id);
       jest.advanceTimersByTime(expectedTtl - 1);
+      await client.verifyResponse(completion.id);
       await expect(client.verifyResponse(completion.id)).resolves.toMatchObject(
         {
           id: completion.id,
@@ -1166,6 +1174,61 @@ describe('inference client', () => {
       await expect(client.verifyResponse(completion.id)).rejects.toMatchObject({
         failure: { code: 'api.completion_not_found' },
       });
+    },
+  );
+
+  test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'releases verified bodies while retaining the result (TEE=%s, stream=%s)',
+    async (tee, streaming) => {
+      const gateway = createTestGateway({
+        providerType: tee ? 'vllm' : 'openai',
+        attestationSupported: tee,
+      });
+      const fetch = createSignatureFetch(
+        gateway,
+        tee ? 'provider_tee' : 'gateway',
+      );
+      let signatureRequests = 0;
+      jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        if (new URL(request.url).pathname.startsWith('/v1/signature/')) {
+          signatureRequests++;
+        }
+        return fetch(request);
+      });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: tee,
+      });
+      const request = {
+        model,
+        messages: [{ role: 'user' as const, content: 'hello' }],
+      };
+      let id = '';
+      if (streaming) {
+        const stream = await client.chat.completions.create({
+          ...request,
+          stream: true,
+        });
+        for await (const chunk of stream) id = chunk.id;
+      } else {
+        id = (await client.chat.completions.create(request)).id;
+      }
+      expect(retainedCapture(client, id)).toBeDefined();
+      const verification = client.verifyResponse(id);
+      expect(client.verifyResponse(id)).toBe(verification);
+      expect(retainedCapture(client, id)).toBeDefined();
+      const result = await verification;
+      expect(retainedCapture(client, id)).toBeUndefined();
+      expect(client.verifyResponse(id)).toBe(verification);
+      expect(await client.verifyResponse(id)).toBe(result);
+      expect(signatureRequests).toBe(1);
+      client.clearResponseCache();
     },
   );
 
@@ -1304,6 +1367,7 @@ describe('inference client', () => {
         failure: { code: 'api.http_status', details: { status } },
         retryable: true,
       });
+      expect(retainedCapture(client, completion.id)).toBeDefined();
 
       const retry = client.verifyResponse(completion.id);
       expect(client.verifyResponse(completion.id)).toBe(retry);
@@ -1312,6 +1376,7 @@ describe('inference client', () => {
       });
       expect(client.verifyResponse(completion.id)).toBe(retry);
       expect(signatureRequests).toBe(2);
+      expect(retainedCapture(client, completion.id)).toBeUndefined();
     },
   );
 
@@ -2021,6 +2086,7 @@ describe('inference client', () => {
     await expect(verification).rejects.toMatchObject({
       failure: { code: 'signature.signer_mismatch' },
     });
+    expect(retainedCapture(client, completion.id)).toBeUndefined();
     expect(client.verifyResponse(completion.id)).toBe(verification);
   });
 
@@ -3722,7 +3788,7 @@ describe('System One decisions', () => {
     },
   );
 
-  test('official Jev SDK forwards OpenRouter image parts and verifies Box receipts', async () => {
+  test('TypeSafe SDK forwards OpenRouter image parts and verifies Box receipts', async () => {
     const fixture = decisionGateway({
       response: {
         ...decisionResponse,
@@ -3855,7 +3921,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['native', 'official'])(
-    '%s Jev client verifies a response decoded by Fetch',
+    '%s System One client verifies a response decoded by Fetch',
     async (api) => {
       const fixture = decisionGateway({ encoding: 'br' });
       jest.spyOn(globalThis, 'fetch').mockImplementation(fixture.fetch);
@@ -3886,7 +3952,7 @@ describe('System One decisions', () => {
   );
 
   test.each([false, true])(
-    'official Jev SDK uses the pinned transport and header receipt (provider TEE: %s)',
+    'TypeSafe SDK uses the pinned transport and header receipt (provider TEE: %s)',
     async (tee) => {
       const fixture = decisionGateway({
         tee,
@@ -3905,8 +3971,8 @@ describe('System One decisions', () => {
         },
         fixture.fetch,
       );
-      const jev = officialClient(client);
-      const { data, response, requestId } = await jev
+      const typesafe = officialClient(client);
+      const { data, response, requestId } = await typesafe
         .systemOne(officialRequest, {
           headers: { 'x-model-pub-key': 'stale', 'x-client-pub-key': 'stale' },
         })
@@ -3926,7 +3992,7 @@ describe('System One decisions', () => {
       ).rejects.toMatchObject({
         failure: { code: 'api.completion_not_found' },
       });
-      await jev.systemOne(officialRequest);
+      await typesafe.systemOne(officialRequest);
       expect(fixture.gateway.state.gatewayAttestationRequests).toBe(1);
       expect(fixture.requests).toHaveLength(2);
       for (const request of fixture.requests) {
@@ -3945,7 +4011,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['tamper', 'signer'])(
-    'official Jev receipt rejects %s without repeating inference',
+    'TypeSafe SDK receipt rejects %s without repeating inference',
     async (fault) => {
       const fixture = decisionGateway({
         tee: true,
@@ -3972,7 +4038,7 @@ describe('System One decisions', () => {
   );
 
   test.each(['status', 'id'])(
-    'official Jev SDK surfaces %s failures without retries',
+    'TypeSafe SDK surfaces %s failures without retries',
     async (fault) => {
       const fixture = decisionGateway({
         status: fault === 'status' ? 503 : 200,
@@ -4003,7 +4069,7 @@ describe('System One decisions', () => {
     },
   );
 
-  test('official Jev SDK fails before inference when model key verification fails', async () => {
+  test('TypeSafe SDK fails before inference when model key verification fails', async () => {
     const fixture = decisionGateway({
       tee: true,
       includeModelPublicKey: false,
@@ -4023,7 +4089,7 @@ describe('System One decisions', () => {
   });
 
   test.each(['e2ee', 'ohttp'])(
-    'official Jev SDK rejects %s before I/O',
+    'TypeSafe SDK rejects %s before I/O',
     async (option) => {
       const fixture = decisionGateway();
       const network = jest
@@ -4445,6 +4511,7 @@ describe('System One decisions', () => {
     ).rejects.toMatchObject({
       failure: { code: 'api.completion_signature_unavailable' },
     });
+    expect(retainedCapture(client, result.decisionId)).toBeDefined();
     await expect(
       client.verifyResponse(result.decisionId),
     ).resolves.toMatchObject({
@@ -4452,6 +4519,7 @@ describe('System One decisions', () => {
     });
     expect(fixture.requests).toHaveLength(1);
     expect(fixture.signaturePaths).toHaveLength(2);
+    expect(retainedCapture(client, result.decisionId)).toBeUndefined();
   });
 
   test.each([false, true])(

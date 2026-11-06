@@ -1,14 +1,11 @@
-"""Use the official Jev SDK through NEAR's verified Jev adapter."""
+"""Use the TypeSafe SDK through NEAR's verified transport."""
 
 import asyncio
 import os
 
 from typesafe_sdk import Choice, Noul, Score
 
-if __package__:
-    from .jev_helpers import receipt_id, verified_jev_clients
-else:
-    from jev_helpers import receipt_id, verified_jev_clients
+from utils.systemone import receipt_id, verified_systemone_clients
 
 
 async def main() -> None:
@@ -23,14 +20,14 @@ async def main() -> None:
         raise ValueError('Invalid signing algorithm or signature kind')
     async with (
         asyncio.timeout(120),
-        verified_jev_clients(
+        verified_systemone_clients(
             api_key,
             base_url=os.environ.get('NEARAI_BASE_URL', 'https://cloud-api.near.ai/v1/'),
             signing_algo=signing_algo,
             expected_kind=expected_kind,
-        ) as (inference, jev),
+        ) as (inference, typesafe),
     ):
-        result = await jev.system_one(
+        result = await typesafe.system_one(
             model=model,
             state={'message': 'I was charged twice for my subscription. Please help.'},
             questions={

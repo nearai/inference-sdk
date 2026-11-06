@@ -17,7 +17,7 @@ import {
   verifyModelAttestation,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
-import { ChatStreamOutput, chatOutput } from '../chat-output.ts';
+import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
 // This example composes the SDK's standalone APIs: verify deployments, encrypt
 // and send Chat requests, decrypt responses, then verify their signatures.

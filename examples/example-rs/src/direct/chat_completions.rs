@@ -1,5 +1,5 @@
 // Experimental direct JSON/SSE with E2EE. Use Gateway clients for production.
-use example_rs::*;
+use example_rs::utils::*;
 use nearai_inference_sdk::*;
 #[tokio::main]
 async fn main() -> Result<()> {

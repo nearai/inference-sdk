@@ -284,7 +284,7 @@ The official Anthropic Go SDK can use
 `option.WithHTTPClient(client.HTTPClient())` and `option.WithMaxRetries(0)`.
 Set its base URL to the API root, such as `https://cloud-api.near.ai`, because it
 appends `/v1/messages`. The inference client's base URL includes `/v1/`.
-The [official SDK example](../../examples/example-go/gateway/anthropic/main.go)
+The [official SDK example](../../examples/example-go/gateway/messages-with-anthropic-sdk/main.go)
 covers JSON and streaming, then verifies each response before printing it.
 
 ## Responses API

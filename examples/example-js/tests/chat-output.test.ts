@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ChatStreamOutput, chatOutput } from './chat-output.ts';
+import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
 for (const separator of ['\n', '\r\n', '\r']) {
   test(`incremental Chat output with ${JSON.stringify(separator)} records`, () => {

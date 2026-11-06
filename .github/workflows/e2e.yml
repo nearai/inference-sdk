@@ -17,6 +17,8 @@ on:
         required: true
       NEARAI_PRD_API_KEY:
         required: true
+      TEST_ALERTS_SLACK_WEBHOOK_URL:
+        required: false
 
 permissions:
   contents: read
@@ -48,7 +50,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - name: Select STG models from the public catalog
+      - name: Validate fixed STG models against the public catalog
         id: stg
         env:
           NEARAI_BASE_URL: ${{ env.STG_BASE_URL }}
@@ -57,7 +59,7 @@ jobs:
           selection=$(node e2e/select-models.mjs)
           printf 'models=%s\n' "$selection" >> "$GITHUB_OUTPUT"
           printf 'STG models: %s\n' "$selection"
-      - name: Select PRD models from the public catalog
+      - name: Validate fixed PRD models against the public catalog
         id: prd
         env:
           NEARAI_BASE_URL: ${{ env.PRD_BASE_URL }}
@@ -188,3 +190,42 @@ jobs:
         run: |
           "$RUNNER_TEMP/e2e-go.test" -test.v -test.timeout=15m
           "$RUNNER_TEMP/e2e-go-official.test" -test.run '^TestLive' -test.v -test.timeout=15m
+
+  notify-failure:
+    name: Notify Slack of live E2E failure
+    needs: [configuration, javascript, python, rust, go]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Send failure summary
+        shell: bash
+        env:
+          TEST_ALERTS_SLACK_WEBHOOK_URL: ${{ secrets.TEST_ALERTS_SLACK_WEBHOOK_URL }}
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          if [ -z "$TEST_ALERTS_SLACK_WEBHOOK_URL" ]; then
+            echo '::warning::Set the TEST_ALERTS_SLACK_WEBHOOK_URL repository secret to enable live E2E failure notifications.'
+            exit 0
+          fi
+
+          failed_jobs=$(jq -r 'to_entries | map(select(.value.result == "failure") | .key) | join(", ")' <<< "$JOB_RESULTS")
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          payload=$(jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg event "$GITHUB_EVENT_NAME" \
+            --arg sha "$GITHUB_SHA" \
+            --arg failed_jobs "$failed_jobs" \
+            --arg run_url "$run_url" \
+            '{text: ("Live E2E failed: " + $repository +
+              "\nWorkflow: " + $workflow + " (" + $event + ")" +
+              "\nFailed job groups: " + $failed_jobs +
+              "\nCommit: " + $sha +
+              "\n<" + $run_url + "|View run and affected STG/PRD jobs>"),
+              unfurl_links: false, unfurl_media: false}')
+          curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --header 'Content-Type: application/json' \
+            --data "$payload" --output /dev/null "$TEST_ALERTS_SLACK_WEBHOOK_URL"
