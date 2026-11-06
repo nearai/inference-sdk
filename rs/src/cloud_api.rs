@@ -349,16 +349,16 @@ impl AttestationClient {
     }
 }
 
-/// Select the exact verified model attestation matching a `provider_tee`
-/// signature. It performs no response-signature verification itself.
-pub fn find_model_attestation_for_signature<'a>(
+/// Return every verified model report sharing a `provider_tee` signature's key.
+/// Shared keys identify a signer group, not an individual serving instance.
+/// This function performs no response-signature verification itself.
+pub fn find_model_attestations_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
-) -> Result<&'a VerifiedModelAttestation, ApiError> {
+) -> Result<Vec<&'a VerifiedModelAttestation>, ApiError> {
     require_provider_signature(signature)?;
     let requested_signing_address = validate_input_signer(&signature.signer, "signature.signer")?;
-    let mut matching_index = None;
-    let mut matching_count = 0;
+    let mut matching = Vec::new();
 
     for (index, attestation) in attestations.iter().enumerate() {
         let attestation_signing_address = validate_input_signer(
@@ -368,19 +368,30 @@ pub fn find_model_attestation_for_signature<'a>(
         if attestation.evidence.signer.signing_algo == signature.signer.signing_algo
             && attestation_signing_address == requested_signing_address
         {
-            matching_index.get_or_insert(index);
-            matching_count += 1;
+            matching.push(attestation);
         }
     }
 
-    let Some(index) = matching_index else {
+    if matching.is_empty() {
         return Err(ApiError::ModelAttestationSignerNotFound);
-    };
-    if matching_count == 1 {
-        return Ok(&attestations[index]);
+    }
+    Ok(matching)
+}
+
+/// Select a unique verified report for a signature's signer.
+/// Prefer [`find_model_attestations_for_signature`] for shared-key deployments.
+/// This compatibility helper rejects multiple matches rather than attributing
+/// a response to an arbitrary instance; it does not verify the signature.
+pub fn find_model_attestation_for_signature<'a>(
+    attestations: &'a [VerifiedModelAttestation],
+    signature: &CompletionSignature,
+) -> Result<&'a VerifiedModelAttestation, ApiError> {
+    let matching = find_model_attestations_for_signature(attestations, signature)?;
+    if matching.len() == 1 {
+        return Ok(matching[0]);
     }
     Err(ApiError::AmbiguousModelAttestationSigner {
-        matching_count,
+        matching_count: matching.len(),
         total_count: attestations.len(),
     })
 }

@@ -109,6 +109,7 @@ type CreateTestGatewayParams = {
   readonly attestationSupported?: boolean;
   readonly includeNullableResponseFields?: boolean;
   readonly includeSecondModelAttestation?: boolean;
+  readonly sharedModelSigner?: boolean;
   readonly encryptedRefusal?: string;
   readonly streamRecordSeparators?: readonly string[];
 };
@@ -241,12 +242,13 @@ function createTestGateway({
   attestationSupported = true,
   includeNullableResponseFields = false,
   includeSecondModelAttestation = false,
+  sharedModelSigner = false,
   encryptedRefusal,
   streamRecordSeparators,
 }: CreateTestGatewayParams = {}): TestGateway {
   const gatewayKeyPair = keyPair(1);
   const modelKeyPair = keyPair(2);
-  const secondModelKeyPair = keyPair(3);
+  const secondModelKeyPair = sharedModelSigner ? modelKeyPair : keyPair(3);
   const modelX25519SecretKey = ed2curve.convertSecretKey(
     modelKeyPair.secretKey,
   );
@@ -275,8 +277,9 @@ function createTestGateway({
     signingKeyPair: nacl.SignKeyPair,
     includePublicKey: boolean,
     gatewaySpkiFingerprint?: string,
+    quoteSuffix = '',
   ) {
-    const quoteId = `${keyHex(signingKeyPair.publicKey)}:${nonce}`;
+    const quoteId = `${keyHex(signingKeyPair.publicKey)}:${nonce}${quoteSuffix}`;
     const quote = createGatewayTlsQuote({
       reportData:
         gatewaySpkiFingerprint === undefined
@@ -367,6 +370,8 @@ function createTestGateway({
                     nonce,
                     secondModelKeyPair,
                     includeModelPublicKey,
+                    undefined,
+                    sharedModelSigner ? ':replica-2' : '',
                   ),
                 ]
               : []),
@@ -2014,15 +2019,30 @@ describe('inference client', () => {
     ).toBeNull();
   });
 
-  test('selects a verified model key when multiple candidates are returned', async () => {
+  test('returns only the selected signer group from nonadjacent model reports', async () => {
     const gateway = createTestGateway({ includeSecondModelAttestation: true });
-    mockProviderSignatures(gateway);
+    const fetch = createSignatureFetch(gateway);
+    jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      const response = await fetch(request);
+      const url = new URL(request.url);
+      if (
+        url.pathname === '/v1/attestation/report' &&
+        url.searchParams.has('model')
+      ) {
+        const body = await response.json();
+        body.model_attestations.push(body.model_attestations[0]);
+        return jsonResponse(body);
+      }
+      return response;
+    });
     const client = new InferenceClient(inferenceClientOptions(gateway));
 
     const result = await client.verify(model);
     expect(result.models.map(({ signer }) => signer.signingAddress)).toEqual([
       keyHex(keyPair(2).publicKey),
       keyHex(keyPair(3).publicKey),
+      keyHex(keyPair(2).publicKey),
     ]);
     for (const attestation of [result.gateway, ...result.models]) {
       expect(attestation.report).toMatchObject({
@@ -2043,52 +2063,211 @@ describe('inference client', () => {
     });
     expect(gateway.state.decryptedRequestContent).toEqual(['hello model']);
     expect(gateway.state.modelAttestationRequests).toBe(1);
-    await expect(client.verifyResponse('chatcmpl-test')).resolves.toMatchObject(
-      {
-        signatureKind: 'provider_tee',
-        attestation: {
-          signer: { signingAddress: keyHex(keyPair(2).publicKey) },
-        },
-      },
-    );
+    const receipt = await client.verifyResponse('chatcmpl-test');
+    if (receipt.signatureKind !== 'provider_tee')
+      throw new Error('Expected model receipt');
+    expect(receipt.attestations).toEqual([result.models[0], result.models[2]]);
+    expect(receipt.attestation).toBe(result.models[0]);
   });
 
-  test('rejects a provider signature from a different verified model candidate', async () => {
-    const gateway = createTestGateway({ includeSecondModelAttestation: true });
-    const signWithSelectedKey = gateway.createProviderSignature;
-    const otherKey = keyPair(3);
-    jest
-      .spyOn(gateway, 'createProviderSignature')
-      .mockImplementation((requestBody, responseBody) => {
-        const signature = signWithSelectedKey(requestBody, responseBody);
-        return {
-          ...signature,
-          signing_address: keyHex(otherKey.publicKey),
-          signature: keyHex(
-            nacl.sign.detached(Buffer.from(signature.text), otherKey.secretKey),
-          ),
-        };
+  test.each(
+    [false, true].flatMap((e2ee) =>
+      [false, true].map((stream) => ({ e2ee, stream })),
+    ),
+  )(
+    'retains shared-signer reports for Chat (e2ee=$e2ee, stream=$stream)',
+    async ({ e2ee, stream }) => {
+      const gateway = createTestGateway({
+        includeSecondModelAttestation: true,
+        sharedModelSigner: true,
       });
+      mockProviderSignatures(gateway);
+      const deploymentPolicy = jest.fn();
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee,
+        deploymentPolicy,
+      });
+      const preflight = await client.verify(model);
+      expect(preflight.models).toHaveLength(2);
+      expect(preflight.models[0].report.intelQuote).not.toBe(
+        preflight.models[1].report.intelQuote,
+      );
+      expect(deploymentPolicy).toHaveBeenCalledTimes(2);
+
+      const response = await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({
+          stream,
+          messages: [{ role: 'user', content: 'hello model' }],
+        }),
+      );
+      await response.text();
+      const verified = await client.verifyResponse(
+        stream
+          ? 'chatcmpl-stream'
+          : e2ee
+            ? 'chatcmpl-test'
+            : 'chatcmpl-plaintext',
+      );
+      expect(verified.signatureKind).toBe('provider_tee');
+      if (verified.signatureKind !== 'provider_tee')
+        throw new Error('Expected model receipt');
+      expect(verified.attestations).toEqual(preflight.models);
+      expect(verified.attestations[0]).toBe(preflight.models[0]);
+      expect(verified.attestations[1]).toBe(preflight.models[1]);
+      expect(verified.attestation).toBe(preflight.models[0]);
+      expect(gateway.state.modelAttestationRequests).toBe(1);
+    },
+  );
+
+  test.each([false, true])(
+    'keeps Gateway receipts separate from model reports (stream=%s)',
+    async (stream) => {
+      const gateway = createTestGateway({
+        includeSecondModelAttestation: true,
+        sharedModelSigner: true,
+      });
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockImplementation(createSignatureFetch(gateway, 'gateway'));
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: false,
+      });
+      const preflight = await client.verify(model);
+      expect(preflight.models).toHaveLength(2);
+      const response = await client.fetch(
+        `${baseUrl}chat/completions`,
+        chatRequest({ stream, messages: [{ role: 'user', content: 'hello' }] }),
+      );
+      await response.text();
+      const receipt = await client.verifyResponse(
+        stream ? 'chatcmpl-stream' : 'chatcmpl-plaintext',
+      );
+      expect(receipt.signatureKind).toBe('gateway');
+      expect(receipt.attestation).toBe(preflight.gateway);
+      expect(receipt).not.toHaveProperty('attestations');
+    },
+  );
+
+  test.each(['quote', 'policy'] as const)(
+    'rejects a %s failure in the second shared-signer report before Chat',
+    async (failure) => {
+      const gateway = createTestGateway({
+        includeSecondModelAttestation: true,
+        sharedModelSigner: true,
+      });
+      mockProviderSignatures(gateway);
+      const deploymentPolicy = jest.fn();
+      if (failure === 'policy')
+        deploymentPolicy
+          .mockResolvedValueOnce(undefined)
+          .mockRejectedValueOnce(new Error('second deployment rejected'));
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        modelVerification: {
+          verifiers: {
+            tdxQuote: async (quote) => {
+              if (failure === 'quote' && quote.endsWith(':replica-2'))
+                throw new Error('second quote rejected');
+              return gateway.tdxQuoteVerifier(quote);
+            },
+          },
+        },
+        deploymentPolicy,
+      });
+      await expect(
+        client.fetch(
+          `${baseUrl}chat/completions`,
+          chatRequest({ messages: [{ role: 'user', content: 'hello model' }] }),
+        ),
+      ).rejects.toMatchObject({
+        failure: {
+          code:
+            failure === 'quote'
+              ? 'quote.verification_failed'
+              : 'provenance.verification_failed',
+        },
+      });
+      if (failure === 'policy')
+        expect(deploymentPolicy).toHaveBeenCalledTimes(2);
+      expect(gateway.state.completionRequests).toBe(0);
+    },
+  );
+
+  test('keeps the request signer group after a later attestation refresh', async () => {
+    const gateway = createTestGateway({
+      includeSecondModelAttestation: true,
+      sharedModelSigner: true,
+    });
     mockProviderSignatures(gateway);
     const client = new InferenceClient({
       ...inferenceClientOptions(gateway),
-      e2ee: false,
+      attestationCacheTimeToLiveMs: 0,
     });
     const completion = await client.chat.completions.create({
       model,
-      messages: [{ role: 'user', content: 'hello' }],
+      messages: [{ role: 'user', content: 'hello model' }],
     });
-
-    expect(
-      gateway.state.completionRequestsSeen[0].headers.get('x-model-pub-key'),
-    ).toBe(keyHex(keyPair(2).publicKey));
-    const verification = client.verifyResponse(completion.id);
-    await expect(verification).rejects.toMatchObject({
-      failure: { code: 'signature.signer_mismatch' },
-    });
-    expect(retainedCapture(client, completion.id)).toBeUndefined();
-    expect(client.verifyResponse(completion.id)).toBe(verification);
+    const refreshed = await client.verify(model);
+    const receipt = await client.verifyResponse(completion.id);
+    if (receipt.signatureKind !== 'provider_tee')
+      throw new Error('Expected model receipt');
+    expect(receipt.attestations).toHaveLength(2);
+    expect(receipt.attestations[0].report.nonce).not.toBe(
+      refreshed.models[0].report.nonce,
+    );
+    expect(receipt.attestations[0].report.nonce).toBe(
+      receipt.attestations[1].report.nonce,
+    );
+    expect(gateway.state.modelAttestationRequests).toBe(2);
   });
+
+  test.each([false, true])(
+    'rejects a provider signature from a different verified model candidate (e2ee=%s)',
+    async (e2ee) => {
+      const gateway = createTestGateway({
+        includeSecondModelAttestation: true,
+      });
+      const signWithSelectedKey = gateway.createProviderSignature;
+      const otherKey = keyPair(3);
+      jest
+        .spyOn(gateway, 'createProviderSignature')
+        .mockImplementation((requestBody, responseBody) => {
+          const signature = signWithSelectedKey(requestBody, responseBody);
+          return {
+            ...signature,
+            signing_address: keyHex(otherKey.publicKey),
+            signature: keyHex(
+              nacl.sign.detached(
+                Buffer.from(signature.text),
+                otherKey.secretKey,
+              ),
+            ),
+          };
+        });
+      mockProviderSignatures(gateway);
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee,
+      });
+      const completion = await client.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+
+      expect(
+        gateway.state.completionRequestsSeen[0].headers.get('x-model-pub-key'),
+      ).toBe(keyHex(keyPair(2).publicKey));
+      const verification = client.verifyResponse(completion.id);
+      await expect(verification).rejects.toMatchObject({
+        failure: { code: 'signature.signer_mismatch' },
+      });
+      expect(retainedCapture(client, completion.id)).toBeUndefined();
+      expect(client.verifyResponse(completion.id)).toBe(verification);
+    },
+  );
 
   test('decrypts a Chat Completions stream split across transport chunks', async () => {
     const gateway = createTestGateway();
@@ -4296,6 +4475,9 @@ describe('System One decisions', () => {
     const result = await client.systemone.create(decisionRequest);
     const verified = await client.verifyResponse(result.decisionId);
     expect(verified.attestation).toBe(preflight.models[0]);
+    if (verified.signatureKind !== 'provider_tee')
+      throw new Error('Expected model receipt');
+    expect(verified.attestations).toEqual(preflight.models);
     expect(fixture.requests[0].headers.get('x-model-pub-key')).toBe(
       preflight.models[0].signingPublicKey,
     );

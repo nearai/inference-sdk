@@ -1,8 +1,9 @@
 //! Real Gateway coverage for the integrated transport; never use mock verifiers.
 use super::{read_completion_id, required_env, select_models, LiveModel};
 use nearai_inference_sdk::{
-    CompletionSignatureKind, GatewayTlsBinding, GpuEvidenceStatus, InferenceClient,
-    InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
+    find_model_attestations_for_signature, CompletionSignatureKind, GatewayTlsBinding,
+    GpuEvidenceStatus, InferenceClient, InferenceClientOptions, InferenceError, SigningAlgo,
+    VerifiedCompletionResult,
 };
 use serde_json::json;
 use std::{error::Error, time::Duration};
@@ -139,6 +140,17 @@ async fn verify_chat(
                 verified.models.is_empty(),
                 "Expected Gateway-only verification"
             );
+        }
+        if receipt.signature_kind() == CompletionSignatureKind::ProviderTee {
+            let expected: Vec<_> =
+                find_model_attestations_for_signature(&verified.models, &receipt.signature)?
+                    .into_iter()
+                    .cloned()
+                    .collect();
+            assert_eq!(receipt.attestations, expected);
+            assert_eq!(cached_receipt.attestations, expected);
+        } else {
+            assert!(receipt.attestations.is_empty());
         }
         println!(
             "integrated {signing_algo}, e2ee={e2ee}, ohttp={ohttp}, stream={stream}: verified {:?} receipt",

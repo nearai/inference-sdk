@@ -22,6 +22,12 @@ struct Quote;
 impl TdxQuoteVerifier for Quote {
     async fn verify(&self, quote: &str) -> Result<TdxQuoteVerificationResult, VerificationError> {
         let mut result = model_quote(TcbStatus::UpToDate);
+        let quote = if let Some((label, quote)) = quote.split_once(':') {
+            result.advisory_ids.push(label.to_owned());
+            quote
+        } else {
+            quote
+        };
         result.report_data = hex::decode(quote).unwrap();
         Ok(result)
     }
@@ -39,6 +45,8 @@ struct Fixture {
     systemone_status: Option<u16>,
     missing_model_key: bool,
     extra_model: bool,
+    shared_model: bool,
+    gateway_chat_receipt: bool,
     systemone_tamper: bool,
 
     signatures: AtomicUsize,
@@ -171,7 +179,7 @@ impl Respond for Fixture {
                     return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
                 }
                 if q.contains_key("model") {
-                    self.model.fetch_add(1, Ordering::SeqCst);
+                    let generation = self.model.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
                     let mut value = self.report(nonce, 7);
                     if self.bad_key {
@@ -180,9 +188,19 @@ impl Respond for Fixture {
                     }
                     let mut reports = vec![value];
                     if self.extra_model {
-                        reports.insert(0, self.report(nonce, 8));
+                        reports.insert(usize::from(self.shared_model), self.report(nonce, 8));
                     }
-                    if self.bad_model {
+                    if self.shared_model {
+                        let mut other = self.report(nonce, 7);
+                        other["intel_quote"] = json!(format!(
+                            "shared-{generation}:{}",
+                            other["intel_quote"].as_str().unwrap()
+                        ));
+                        if self.bad_model {
+                            other["report_data"] = json!("ff".repeat(64));
+                        }
+                        reports.push(other);
+                    } else if self.bad_model {
                         let mut bad = self.report(nonce, 8);
                         bad["report_data"] = json!("ff".repeat(64));
                         reports.push(bad);
@@ -396,7 +414,7 @@ impl Respond for Fixture {
                         .to_string()
                         .into_bytes()
                 };
-                let kind = if self.metadata.lock().unwrap().is_some() {
+                let kind = if self.gateway_chat_receipt || self.metadata.lock().unwrap().is_some() {
                     "gateway"
                 } else {
                     "provider_tee"
@@ -619,6 +637,144 @@ async fn verifies_before_chat_and_retains_exact_bytes_and_cached_evidence() {
     client.verify_response(id).await.unwrap();
     assert_eq!(f.gateway.load(Ordering::SeqCst), 1);
     assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn gateway_shared_signer_preserves_all_verified_reports() {
+    let (_server, fixture, options) = setup(Fixture {
+        shared_model: true,
+        extra_model: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+    let preflight = client.verify("vendor/model").await.unwrap();
+    assert_eq!(preflight.models.len(), 3);
+    assert_ne!(preflight.models[0], preflight.models[2]);
+    assert_eq!(
+        preflight.models[0].evidence.signer,
+        preflight.models[2].evidence.signer
+    );
+    assert_ne!(
+        preflight.models[0].evidence.signer,
+        preflight.models[1].evidence.signer
+    );
+    let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
+    client.chat_completions(body()).await.unwrap();
+    let receipt = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.attestations, expected);
+    // The deprecated representative remains available to existing callers.
+    #[allow(deprecated)]
+    let has_legacy_representative =
+        matches!(receipt.attestation, VerifiedCompletionAttestation::Model(_));
+    assert!(has_legacy_representative);
+    assert_eq!(
+        client.verify_response("chat-0").await.unwrap().attestations,
+        expected
+    );
+    assert_eq!(fixture.model.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.signatures.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn gateway_stream_receipt_keeps_gateway_evidence_with_attested_models() {
+    let (_server, _fixture, options) = setup(Fixture {
+        shared_model: true,
+        gateway_chat_receipt: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+    let preflight = client.verify("vendor/model").await.unwrap();
+    assert_eq!(preflight.models.len(), 2);
+    let mut request = body();
+    request["stream"] = json!(true);
+    client
+        .send(client.chat_request(request).unwrap())
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let receipt = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.signature_kind(), CompletionSignatureKind::Gateway);
+    assert!(receipt.attestations.is_empty());
+    let VerifiedCompletionAttestation::Gateway(gateway) = receipt.attestation else {
+        panic!("gateway receipt must retain gateway evidence");
+    };
+    assert_eq!(gateway, preflight.gateway);
+}
+
+#[tokio::test]
+async fn gateway_shared_signer_rejects_second_report_evidence_and_policy_failures() {
+    struct RejectSecond(AtomicUsize);
+    #[async_trait]
+    impl DeploymentVerifier for RejectSecond {
+        async fn verify(&self, _: &MeasuredDeployment) -> Result<(), VerificationError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 1 {
+                return Err(VerificationError::DeploymentProvenanceRejected);
+            }
+            Ok(())
+        }
+    }
+    for bad_evidence in [true, false] {
+        let (_server, fixture, mut options) = setup(Fixture {
+            shared_model: true,
+            bad_model: bad_evidence,
+            ..Default::default()
+        })
+        .await;
+        if !bad_evidence {
+            options.model_verification.deployment =
+                Some(Arc::new(RejectSecond(AtomicUsize::new(0))));
+        }
+        let client = InferenceClient::with_options(options).unwrap();
+        assert!(client.chat_completions(body()).await.is_err());
+        assert_eq!(fixture.chat.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn gateway_receipt_rejects_another_verified_routing_key() {
+    let (_server, _fixture, options) = setup(Fixture {
+        extra_model: true,
+        ..Default::default()
+    })
+    .await;
+    let client = InferenceClient::with_options(options).unwrap();
+    assert_eq!(client.verify("vendor/model").await.unwrap().models.len(), 2);
+    // The first key (seed 8) is selected, but the fixture signs with seed 7.
+    client.chat_completions(body()).await.unwrap();
+    assert_eq!(
+        client.verify_response("chat-0").await.unwrap_err().code(),
+        "signature.signer_mismatch"
+    );
+}
+
+#[tokio::test]
+async fn gateway_receipt_keeps_its_original_signer_group_after_refresh() {
+    let (_server, fixture, mut options) = setup(Fixture {
+        shared_model: true,
+        ..Default::default()
+    })
+    .await;
+    options.attestation_cache_ttl = Duration::ZERO;
+    let client = InferenceClient::with_options(options).unwrap();
+    client.chat_completions(body()).await.unwrap();
+    let refreshed = client.verify("vendor/model").await.unwrap();
+    assert!(refreshed.models[1]
+        .evidence
+        .advisory_ids
+        .iter()
+        .any(|id| id == "shared-1"));
+    let receipt = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.attestations.len(), 2);
+    assert!(receipt.attestations[1]
+        .evidence
+        .advisory_ids
+        .iter()
+        .any(|id| id == "shared-0"));
+    assert_eq!(fixture.model.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -1098,6 +1254,8 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
     for ecdsa in [false, true] {
         let (_server, f, mut options) = setup(Fixture {
             ecdsa,
+            shared_model: true,
+            extra_model: true,
             ..Default::default()
         })
         .await;
@@ -1106,9 +1264,15 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             options.signing_algo = SigningAlgo::Ecdsa;
         }
         let client = InferenceClient::with_options(options).unwrap();
+        let preflight = client.verify("vendor/model").await.unwrap();
+        assert_eq!(preflight.models.len(), 3);
+        let expected = vec![preflight.models[0].clone(), preflight.models[2].clone()];
         let completion = client.chat_completions(body()).await.unwrap();
         assert_eq!(completion["choices"][0]["message"]["content"], "Hello");
-        client.verify_response("chat-0").await.unwrap();
+        assert_eq!(
+            client.verify_response("chat-0").await.unwrap().attestations,
+            expected
+        );
         let mut request = body();
         request["stream"] = json!(true);
         let response = client
@@ -1119,7 +1283,10 @@ async fn encrypted_json_and_sse_preserve_wire_receipts_for_both_algorithms() {
             .await
             .unwrap();
         assert!(String::from_utf8(response).unwrap().contains("Hello"));
-        client.verify_response("chat-1").await.unwrap();
+        assert_eq!(
+            client.verify_response("chat-1").await.unwrap().attestations,
+            expected
+        );
         for (request, response, _) in f.receipts.lock().unwrap().values() {
             assert!(!String::from_utf8_lossy(request).contains("Hello"));
             assert!(!String::from_utf8_lossy(response).contains("Hello"));

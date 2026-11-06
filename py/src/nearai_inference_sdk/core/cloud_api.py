@@ -61,7 +61,11 @@ SIGNATURE_RESPONSE_FIELDS = {
     'signature_kind',
 }
 
-__all__ = ['AttestationClient', 'find_model_attestation_for_signature']
+__all__ = [
+    'AttestationClient',
+    'find_model_attestation_for_signature',
+    'find_model_attestations_for_signature',
+]
 
 
 @dataclass(frozen=True)
@@ -283,11 +287,15 @@ class AttestationClient(_ApiClient):
         )
 
 
-def find_model_attestation_for_signature(
+def find_model_attestations_for_signature(
     attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
     signature: CompletionSignatureReference,
-) -> VerifiedModelAttestation:
-    """Select exactly one verified model deployment for a provider signature."""
+) -> tuple[VerifiedModelAttestation, ...]:
+    """Return all verified reports matching a provider signature's signing identity.
+
+    Shared signing keys do not identify a unique serving instance. This helper
+    selects evidence; it does not verify the response signature again.
+    """
 
     if signature.kind != 'provider_tee':
         raise _invalid_input(
@@ -315,6 +323,19 @@ def find_model_attestation_for_signature(
             matches.append(attestation)
     if not matches:
         raise api_failure('api.model_attestation_signer_not_found')
+    return tuple(matches)
+
+
+def find_model_attestation_for_signature(
+    attestations: tuple[VerifiedModelAttestation, ...] | list[VerifiedModelAttestation],
+    signature: CompletionSignatureReference,
+) -> VerifiedModelAttestation:
+    """Select exactly one verified report matching a provider signature.
+
+    Deprecated: use ``find_model_attestations_for_signature`` for shared signers.
+    This helper retains its strict unique-match contract.
+    """
+    matches = find_model_attestations_for_signature(attestations, signature)
     if len(matches) != 1:
         raise api_failure(
             'api.ambiguous_model_attestation_signer',

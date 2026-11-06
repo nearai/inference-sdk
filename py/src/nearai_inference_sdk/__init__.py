@@ -10,6 +10,7 @@ from .core.chat import verify_gateway_response, verify_model_response
 from .core.cloud_api import (
     AttestationClient,
     find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
 )
 from .core.compose_manager_provenance import (
     verify_compose_manager_deployment_image_provenance,
@@ -194,6 +195,7 @@ __all__ = [
     'create_tdx_quote_verifier',
     'fetch_image_provenance',
     'find_model_attestation_for_signature',
+    'find_model_attestations_for_signature',
     'get_sdk_error',
     'prepare_e2ee_chat_request',
     'verify_compose_manager_deployment_image_provenance',

@@ -51,7 +51,15 @@ impl DeploymentVerifier for GatewayImages {
             )
         })
         .collect();
-        verify_deployment_image_provenance(&deployment.app_compose, &policies, None).await
+        let github_token = std::env::var("GITHUB_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty());
+        verify_deployment_image_provenance(
+            &deployment.app_compose,
+            &policies,
+            github_token.as_deref(),
+        )
+        .await
     }
 }
 // Called after EOF, so receipt verification covers the complete response.
@@ -256,11 +264,17 @@ impl DeploymentVerifier for ModelImages {
             ),
             signer_identity: None,
         };
+        let github_token = std::env::var("GITHUB_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty());
         verify_compose_manager_deployment_image_provenance(
             deployment,
             &policies,
             &manager,
-            Default::default(),
+            ComposeManagerDeploymentImageProvenanceOptions {
+                github_token: github_token.as_deref(),
+                ..Default::default()
+            },
         )
         .await
     }

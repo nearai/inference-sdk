@@ -33,6 +33,14 @@ requires every returned NEAR model report to pass before Chat. Other models use
 Incognito mode, which verifies the Gateway only. Invalid metadata or failed
 model verification stops Chat without falling back to Incognito.
 
+For a `provider_tee` response, `verified.attestations` contains every preflight
+report matching the request's selected signer. Multiple instances can share a
+signing key, so the response signature identifies that key, not a unique instance.
+The deprecated `verified.attestation` is representative key evidence retained for
+compatibility. A `gateway` response continues to return its Gateway `attestation`.
+Standalone callers can use `find_model_attestations_for_signature(reports, signature)`
+to select the full matching set; it does not perform signature verification.
+
 E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 `e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
 
@@ -506,22 +514,25 @@ async def verify_deployments(client: AttestationClient):
         fetched_gateway.client_binding,
     )
 
-    fetched_model = await client.fetch_model_attestations(
+    fetched_model_attestations = await client.fetch_model_attestations(
         MODEL,
         signing_algo=SIGNING_ALGO,
     )
-    if not fetched_model.attestations:
+    if not fetched_model_attestations.attestations:
         raise RuntimeError('Gateway returned no model attestations')
 
-    verified_models = []
-    for attestation in fetched_model.attestations:
-        verified_models.append(
+    model_attestations = []
+    for attestation in fetched_model_attestations.attestations:
+        model_attestations.append(
             await verify_model_attestation(
                 attestation,
-                fetched_model.client_binding,
+                fetched_model_attestations.client_binding,
             )
         )
-    return verified_gateway, tuple(verified_models)
+    return verified_gateway, tuple(model_attestations)
+
+
+verified_gateway, model_attestations = await verify_deployments(client)
 ```
 
 `fetch_gateway_attestation()` and `fetch_model_attestations()` target the same
@@ -683,11 +694,15 @@ async def check_model_images(deployment: MeasuredDeployment) -> None:
     )
 
 
-for attestation in fetched_models.attestations:
-    await verify_model_attestation(
-        attestation,
-        fetched_models.client_binding,
-        verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+# Replace the model-verification loop inside verify_deployments with:
+model_attestations = []
+for attestation in fetched_model_attestations.attestations:
+    model_attestations.append(
+        await verify_model_attestation(
+            attestation,
+            fetched_model_attestations.client_binding,
+            verifiers=ModelAttestationVerifiers(deployment=check_model_images),
+        )
     )
 ```
 
@@ -744,18 +759,23 @@ Your application must retain:
 
 ### Encrypt a standalone request
 
-After verifying the models, select a public key from a verified result before
-Chat. `find_model_attestation_for_signature` is used later, when the response
+After verifying all model attestations, select a public key from a verified result before
+Chat. `find_model_attestations_for_signature` is used later, when the response
 signature is available; it is not the encryption-key selector.
 
 ```python
 import httpx
 from nearai_inference_sdk import E2eeModelKey, prepare_e2ee_chat_request
 
-model = next(item for item in verified_models if item.signing_public_key is not None)
+selected_model_attestation = next(
+    attestation
+    for attestation in model_attestations
+    if attestation.signer.signing_algo == SIGNING_ALGO
+    and attestation.signing_public_key is not None
+)
 model_key = E2eeModelKey(
-    signing_algo=model.signer.signing_algo,
-    public_key=model.signing_public_key,
+    signing_algo=selected_model_attestation.signer.signing_algo,
+    public_key=selected_model_attestation.signing_public_key,
 )
 request = httpx.Request(
     'POST',
@@ -780,33 +800,34 @@ complete streaming and non-streaming flow, including byte capture and TLS pinnin
 ## 3. Verify the returned completion signature
 
 Fetch the signature after the completion has reached its terminal state. A
-provider signature selects exactly one verified model result from stage 1; a
-Gateway signature uses the verified Gateway result.
+provider signature selects the matching signer group from stage 1; a Gateway
+signature uses the verified Gateway result. Multiple reports can share a signer.
 
 ```python
 from nearai_inference_sdk import (
-    find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
     verify_gateway_response,
     verify_model_response,
 )
 
 # completion_id, request_body, and response_body came from your completion
-# request. verified_gateway and verified_models came from stage 1.
+# request. verified_gateway and model_attestations came from stage 1.
 signature = await client.fetch_completion_signature(
     completion_id,
     signing_algo=SIGNING_ALGO,
 )
 
 if signature.kind == 'provider_tee':
-    verified_model = find_model_attestation_for_signature(
-        verified_models,
-        signature,
-    )
+    # Keep the routing/encryption key selected before sending the request.
     verify_model_response(
         request_body,
         response_body,
         signature,
-        verified_model,
+        selected_model_attestation,
+    )
+    matching_attestations = find_model_attestations_for_signature(
+        model_attestations,
+        signature,
     )
 else:
     verify_gateway_response(
@@ -816,6 +837,9 @@ else:
         verified_gateway,
     )
 ```
+
+Retain `matching_attestations` as the matching evidence set. These reports share the
+request's selected signing key; they do not identify the serving instance.
 
 The Gateway provides two signature kinds. They are different response signatures,
 not two top-level deployment workflows:
@@ -870,12 +894,16 @@ verifiers = ModelAttestationVerifiers(
     deployment=verify_deployment_release,
 )
 
-for attestation in fetched_model.attestations:
-    await verify_model_attestation(
-        attestation,
-        fetched_model.client_binding,
-        policy=policy,
-        verifiers=verifiers,
+# Replace the model-verification loop inside verify_deployments with:
+model_attestations = []
+for attestation in fetched_model_attestations.attestations:
+    model_attestations.append(
+        await verify_model_attestation(
+            attestation,
+            fetched_model_attestations.client_binding,
+            policy=policy,
+            verifiers=verifiers,
+        )
     )
 ```
 

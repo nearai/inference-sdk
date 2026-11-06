@@ -7,6 +7,7 @@ import {
   AttestationClient,
   InferenceClient,
   findModelAttestationForSignature,
+  findModelAttestationsForSignature,
 } from '../src';
 import {
   createCloudApiRequestConfiguration,
@@ -563,6 +564,95 @@ describe('AttestationClient', () => {
           signature,
         }),
       ).toBe(attestation);
+    });
+
+    test.each(['ed25519', 'ecdsa'] as const)(
+      'preserves nonadjacent and repeated %s reports without merging signers',
+      (signingAlgo) => {
+        const address = 'ab'.repeat(signingAlgo === 'ecdsa' ? 20 : 32);
+        const firstModelAttestation = verifiedModelAttestation({
+          signer: { signingAlgo, signingAddress: address },
+        });
+        const secondModelAttestation = verifiedModelAttestation({
+          signer: {
+            ...firstModelAttestation.signer,
+            signingAddress: `0X${firstModelAttestation.signer.signingAddress.replace(/^0x/i, '').toUpperCase()}`,
+          },
+        });
+        const otherModelAttestation = verifiedModelAttestation({
+          signer: {
+            signingAlgo,
+            signingAddress: '44'.repeat(address.length / 2),
+          },
+        });
+        const otherAlgorithmAttestation = verifiedModelAttestation({
+          signer:
+            signingAlgo === 'ecdsa'
+              ? { signingAlgo: 'ed25519', signingAddress: 'ab'.repeat(32) }
+              : { signingAlgo: 'ecdsa', signingAddress: 'ab'.repeat(20) },
+        });
+        const signature = {
+          ...modelSignature(),
+          signer: firstModelAttestation.signer,
+        };
+        const modelAttestations = [
+          secondModelAttestation,
+          otherModelAttestation,
+          otherAlgorithmAttestation,
+          firstModelAttestation,
+          secondModelAttestation,
+        ];
+        const matchingAttestations = findModelAttestationsForSignature({
+          attestations: modelAttestations,
+          signature,
+        });
+        expect(matchingAttestations).toEqual([
+          secondModelAttestation,
+          firstModelAttestation,
+          secondModelAttestation,
+        ]);
+        expect(matchingAttestations[0]).toBe(secondModelAttestation);
+        expect(matchingAttestations[1]).toBe(firstModelAttestation);
+        expect(matchingAttestations[2]).toBe(secondModelAttestation);
+        expect(() =>
+          findModelAttestationForSignature({
+            attestations: modelAttestations,
+            signature,
+          }),
+        ).toThrow(
+          expect.objectContaining({
+            failure: expect.objectContaining({
+              code: 'api.ambiguous_model_attestation_signer',
+            }),
+          }),
+        );
+        expect(() =>
+          findModelAttestationsForSignature({ attestations: [], signature }),
+        ).toThrow(
+          expect.objectContaining({
+            failure: expect.objectContaining({
+              code: 'api.model_attestation_signer_not_found',
+            }),
+          }),
+        );
+      },
+    );
+
+    test.each([
+      {
+        signature: modelSignature(`0x${'44'.repeat(20)}`),
+        code: 'api.model_attestation_signer_not_found',
+      },
+      { signature: gatewaySignature(), code: 'api.invalid_input' },
+    ])('rejects invalid plural selection with $code', ({ signature, code }) => {
+      expect(() =>
+        findModelAttestationsForSignature({
+          attestations: [verifiedModelAttestation()],
+          signature,
+        }),
+      ).toThrow(
+        expect.objectContaining({ failure: expect.objectContaining({ code }) }),
+      );
     });
 
     test('fetches model evidence without signer filters', async () => {

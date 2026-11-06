@@ -15,6 +15,7 @@ from nearai_inference_sdk import (
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
     create_pinned_tls_client,
+    find_model_attestations_for_signature,
     prepare_e2ee_chat_request,
     verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
@@ -62,6 +63,7 @@ async def verify_model_images(deployment: MeasuredDeployment) -> None:
             repository='nearai/compose-manager',
             workflow='.github/workflows/build.yml',
         ),
+        github_token=os.environ.get('GITHUB_TOKEN') or None,
     )
 
 
@@ -71,12 +73,6 @@ class Completion:
     request_body: bytes
     response_body: bytes
     text: str | None
-
-
-@dataclass(frozen=True)
-class E2eeRecipient:
-    attestation: VerifiedModelAttestation
-    key: E2eeModelKey
 
 
 class RecordingStream(httpx.AsyncByteStream):
@@ -97,7 +93,9 @@ class RecordingStream(httpx.AsyncByteStream):
 
 async def verify_gateway_images(deployment: MeasuredDeployment) -> None:
     await verify_deployment_image_provenance(
-        deployment.app_compose, GATEWAY_IMAGE_POLICIES
+        deployment.app_compose,
+        GATEWAY_IMAGE_POLICIES,
+        github_token=os.environ.get('GITHUB_TOKEN') or None,
     )
 
 
@@ -116,7 +114,7 @@ async def fetch_and_verify_gateway(
     return verified
 
 
-async def fetch_and_verify_models(
+async def fetch_and_verify_model_attestations(
     client: AttestationClient,
 ) -> list[VerifiedModelAttestation]:
     fetched = await client.fetch_model_attestations(MODEL, signing_algo=SIGNING_ALGO)
@@ -125,38 +123,33 @@ async def fetch_and_verify_models(
 
     # These are model reports fetched through the Gateway, not direct model TLS
     # connections. Verify every report before choosing an encryption recipient.
-    models = []
+    model_attestations = []
     for attestation in fetched.attestations:
         verified = await verify_model_attestation(
             attestation,
             fetched.client_binding,
             verifiers=ModelAttestationVerifiers(deployment=verify_model_images),
         )
-        models.append(verified)
-    print(f'Model deployments: verified {len(models)}.')
-    return models
+        model_attestations.append(verified)
+    print(f'Model deployments: verified {len(model_attestations)}.')
+    return model_attestations
 
 
-def find_e2ee_recipient(
-    models: list[VerifiedModelAttestation],
-) -> E2eeRecipient:
+def find_model_attestation_for_encryption(
+    model_attestations: list[VerifiedModelAttestation],
+) -> VerifiedModelAttestation:
     # No response signature exists yet; choose a verified key for the request.
-    for model in models:
+    for attestation in model_attestations:
         if (
-            model.signer.signing_algo == SIGNING_ALGO
-            and model.signing_public_key is not None
+            attestation.signer.signing_algo == SIGNING_ALGO
+            and attestation.signing_public_key is not None
         ):
-            return E2eeRecipient(
-                attestation=model,
-                key=E2eeModelKey(
-                    signing_algo=SIGNING_ALGO, public_key=model.signing_public_key
-                ),
-            )
+            return attestation
     raise RuntimeError('No verified model public key is available for E2EE')
 
 
 async def send_completion(
-    client: httpx.AsyncClient, api_key: str, recipient: E2eeRecipient, *, stream: bool
+    client: httpx.AsyncClient, api_key: str, model_key: E2eeModelKey, *, stream: bool
 ) -> Completion:
     request = httpx.Request(
         'POST',
@@ -171,7 +164,7 @@ async def send_completion(
     )
     # The helper encrypts supported fields and creates a fresh response key. It
     # does not send the request or repeat attestation verification.
-    prepared = await prepare_e2ee_chat_request(request, recipient.key)
+    prepared = await prepare_e2ee_chat_request(request, model_key)
     request_body = prepared.request.content
     response = await client.send(prepared.request, stream=True)
     recording = RecordingStream(response)
@@ -210,19 +203,20 @@ async def send_completion(
     )
 
 
-async def run_non_streaming_example(client, api_key, recipient) -> Completion:
-    return await send_completion(client, api_key, recipient, stream=False)
+async def run_non_streaming_example(client, api_key, model_key) -> Completion:
+    return await send_completion(client, api_key, model_key, stream=False)
 
 
-async def run_streaming_example(client, api_key, recipient) -> Completion:
-    return await send_completion(client, api_key, recipient, stream=True)
+async def run_streaming_example(client, api_key, model_key) -> Completion:
+    return await send_completion(client, api_key, model_key, stream=True)
 
 
-async def verify_completion_receipt(
+async def verify_completion_response(
     client: AttestationClient,
     completion: Completion,
     gateway: VerifiedGatewayAttestation,
-    recipient: E2eeRecipient,
+    model_attestations: list[VerifiedModelAttestation],
+    selected_model_attestation: VerifiedModelAttestation,
 ) -> None:
     signature = await client.fetch_completion_signature(
         completion.id, signing_algo=SIGNING_ALGO
@@ -232,7 +226,15 @@ async def verify_completion_receipt(
             completion.request_body,
             completion.response_body,
             signature,
-            recipient.attestation,
+            selected_model_attestation,
+        )
+        # Shared keys identify a report group, not one serving instance.
+        matching_attestations = find_model_attestations_for_signature(
+            model_attestations, signature
+        )
+        print(
+            'Verified model response signature '
+            f'({len(matching_attestations)} matching reports).'
         )
     else:
         # A Gateway signature proves these bytes were signed by its verified key;
@@ -240,13 +242,14 @@ async def verify_completion_receipt(
         verify_gateway_response(
             completion.request_body, completion.response_body, signature, gateway
         )
-    print(f'Verified {signature.kind} response.')
+        print('Verified Gateway response signature.')
     if completion.text is not None:
         print(completion.text)
 
 
 async def read_stream(response: httpx.Response) -> list[dict]:
     values, data = [], []
+    completion_id = None
     done = False
     first_line = True
     async for line in response.aiter_lines():
@@ -264,8 +267,12 @@ async def read_stream(response: httpx.Response) -> list[dict]:
                 done = True
             elif payload:
                 value = json.loads(payload)
-                if value.get('error'):
+                if value.get('error') or value.get('type') == 'error':
                     raise RuntimeError('Stream returned an error')
+                if value.get('id'):
+                    if completion_id is not None and value['id'] != completion_id:
+                        raise RuntimeError('Stream returned conflicting completion IDs')
+                    completion_id = value['id']
                 values.append(value)
                 for choice in value.get('choices', [])[:1]:
                     print(
@@ -281,23 +288,37 @@ async def main() -> None:
     api_key = os.environ['NEARAI_API_KEY']
     attestation_client = AttestationClient(api_key, base_url=BASE_URL)
     gateway = await fetch_and_verify_gateway(attestation_client)
-    models = await fetch_and_verify_models(attestation_client)
-    recipient = find_e2ee_recipient(models)
+    model_attestations = await fetch_and_verify_model_attestations(attestation_client)
+    selected_model_attestation = find_model_attestation_for_encryption(
+        model_attestations
+    )
+    model_key = E2eeModelKey(
+        signing_algo=SIGNING_ALGO,
+        public_key=selected_model_attestation.signing_public_key,
+    )
 
     # Pin Chat TLS to the authenticated Gateway SPKI.
     async with create_pinned_tls_client(
         gateway.tls_binding.spki_fingerprint
     ) as pinned_tls_client:
         completion = await run_non_streaming_example(
-            pinned_tls_client, api_key, recipient
+            pinned_tls_client, api_key, model_key
         )
-        await verify_completion_receipt(
-            attestation_client, completion, gateway, recipient
+        await verify_completion_response(
+            attestation_client,
+            completion,
+            gateway,
+            model_attestations,
+            selected_model_attestation,
         )
 
-        completion = await run_streaming_example(pinned_tls_client, api_key, recipient)
-        await verify_completion_receipt(
-            attestation_client, completion, gateway, recipient
+        completion = await run_streaming_example(pinned_tls_client, api_key, model_key)
+        await verify_completion_response(
+            attestation_client,
+            completion,
+            gateway,
+            model_attestations,
+            selected_model_attestation,
         )
 
 
