@@ -71,7 +71,6 @@ pub struct AttestationVerificationResult {
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
     /// Report used to select the request's model public key, retained for compatibility.
-    /// It does not identify which instance served the request.
     #[deprecated(
         note = "Use VerifiedCompletionResult::attestations for all verified reports sharing the selected model signer."
     )]
@@ -130,11 +129,11 @@ impl InferenceClient {
     pub fn base_url(&self) -> &str {
         self.core.base_url()
     }
-    /// Release captured responses across all clones; keep the client reusable.
+    /// Clear captured response verification records.
     pub async fn clear_response_cache(&self) {
         self.core.clear_response_cache().await;
     }
-    /// Gateway and model evidence; cache hits preserve the original verification time.
+    /// Verify the required deployment attestations before sending a prompt.
     pub async fn verify(
         &self,
         model: &str,

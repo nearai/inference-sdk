@@ -39,7 +39,7 @@ class AttestationVerificationResult:
 
     gateway: VerifiedGatewayAttestation
     models: tuple[VerifiedModelAttestation, ...]
-    # Unix milliseconds when verification completed; unchanged on cache hits.
+    # Unix milliseconds when verification completed.
     verified_at: int
 
 
@@ -47,10 +47,7 @@ class AttestationVerificationResult:
 class VerifiedModelCompletionResult:
     """Response verified against the request's selected signing identity.
 
-    ``attestations`` contains all matching preflight reports, without claiming
-    which instance served the response. Use ``attestations`` for model evidence.
-    The deprecated ``attestation`` field retains the report used to select the
-    request's model public key; it does not identify the serving instance.
+    ``attestations`` contains all matching verified model reports.
     """
 
     id: str
@@ -58,7 +55,7 @@ class VerifiedModelCompletionResult:
     attestations: tuple[VerifiedModelAttestation, ...]
     #: Deprecated: use ``attestations`` for all verified reports sharing the
     #: selected signer. This is the report used to select the request's model
-    #: public key, not the identity of the serving instance.
+    #: public key.
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

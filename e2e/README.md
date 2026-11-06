@@ -117,8 +117,8 @@ model, two Responses models (NEAR and OpenAI), and one Anthropic Messages model.
 
 | Area | Live checks |
 | --- | --- |
-| Deployment verification | Gateway quote and TLS identity; model and GPU evidence for NEAR TEE models. |
-| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. |
+| Deployment verification | Gateway quote and TLS identity; every returned model report and its GPU evidence for NEAR TEE models. Standalone Chat and System One use the pinned transport for inference and signature retrieval. |
+| Chat and receipts | JSON responses across the fixed Chat matrix; SSE for NEAR and external models; exact-byte signature verification and rejection of altered responses. Provider receipts must match the selected model key and retain its complete verified report group, including through official clients. |
 | Responses | JSON and SSE with `store: false`, using one NEAR vLLM model and one OpenAI external model; native and official OpenAI clients, with Ed25519/ECDSA over plain transport and Ed25519 over OHTTP. |
 | Messages | JSON and SSE on an Anthropic model, through all four native clients and the official Anthropic JS/Python/Go clients. Ed25519 and ECDSA use plain transport; Ed25519 also uses OHTTP. |
 | Encryption | Ed25519 and ECDSA E2EE, plus OHTTP + E2EE, on a NEAR model. |

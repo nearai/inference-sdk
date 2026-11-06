@@ -26,19 +26,11 @@ use a NEAR TEE model for those examples. Responses, Messages, and System One kee
 E2EE disabled. OHTTP is independent of E2EE and requires signed key configuration
 and an `/ohttp` endpoint. System One uses neither E2EE nor OHTTP.
 
-Runnable examples make one explicit receipt-verification call and propagate failure.
-Native clients and official SDK adapters disable automatic inference retries.
+Bare Gateway Chat examples verify deployments, send Chat through pinned TLS,
+and verify the response signature using the exact encrypted bytes.
 
-The standalone Gateway Chat examples retain all verified model reports in
-`modelAttestations` (`model_attestations` in Python/Rust), and keep the report
-selected for routing/E2EE separately as `selectedModelAttestation`
-(`selected_model_attestation`). After verifying a model response against that
-selected key, the plural signature helper returns `matchingAttestations`
-(`matching_attestations`): every preflight report sharing the response signer. The
-examples print both the preflight count and the matching count; use those
-collections to display individual reports. A shared key does not identify which
-instance served the request. Gateway-signed responses use Gateway evidence and
-do not have a model report group.
+Bare Chat examples display the preflight report count and the number of reports
+matching the response signer. Use these collections to display individual reports.
 
 ## Entry points
 
@@ -67,13 +59,8 @@ underscores in place of hyphens.
 | Direct Chat, standalone verification | `node direct/chat-completions-bare.ts` | `uv run python -m direct.chat_completions_bare` | `cargo run --bin direct-chat-completions-bare` | `go run ./direct/chat-completions-bare` |
 | Direct Chat, official OpenAI SDK | `node direct/chat-completions-with-openai-sdk.ts` | `uv run python -m direct.chat_completions_with_openai_sdk` | — | `go run ./direct/chat-completions-with-openai-sdk` |
 
-A dash means the vendor has no official SDK for that language. Official SDK
-examples share the inference client's verified transport and verify receipts
-through that same owner. OpenAI uses the `/v1/` base URL; Anthropic and TypeSafe examples
-derive their API root from it. System One examples disable compression and inference
-retries, and use `X-Generation-Id` as the receipt ID. Native and official examples ask
-the same billing, team, and urgency questions by default and print answers after
-verification.
+Official SDK examples use the inference client's HTTP transport and response
+verification. System One examples print verified decision answers.
 
 ### System One images
 
@@ -102,10 +89,7 @@ cd examples/example-js
 node gateway/chat-completions.ts
 ```
 
-Use `pnpm start:<entry-name>` for Gateway examples, such as
-`pnpm start:chat-completions-with-openai-sdk`, and `start:direct-<entry-name>`
-for direct examples. Existing `start:client`, `start:bare`,
-`start:client-openai-sdk`, and existing direct aliases remain available.
+Package scripts are also available, such as `pnpm start:chat-completions`.
 
 ### Python setup
 
@@ -131,9 +115,6 @@ cd examples/example-rs
 cargo run --locked --bin gateway-chat-completions
 ```
 
-`cargo run` and `cargo run --bin client` remain aliases for Gateway standalone
-and integrated Chat. The Rust client exposes its reqwest transport directly.
-
 ### Go setup
 
 Requires Go 1.26.10+. The SDK embeds the DCAP verifier. The example module
@@ -144,9 +125,8 @@ cd examples/example-go
 go run ./gateway/chat-completions-with-openai-sdk
 ```
 
-`go run .` remains an alias for the official OpenAI Gateway example. See the
-[Go example guide](example-go/README.md). Replace local path/link dependencies
-with released package versions when copying examples out of this repository.
+Replace local path dependencies with released packages when copying an example
+out of this repository.
 
 ## Shared helpers and tests
 
@@ -183,11 +163,9 @@ Compose Manager deployment-control evidence:
 | `nearaidev/vllm-proxy-rs` | `nearai/inference-proxy` | `.github/workflows/build.yml` |
 | `nearaidev/compose-manager` | `nearai/compose-manager` | `.github/workflows/build.yml` |
 
-These are example admission policies. Add reviewed commit pins for stricter
-policy. Gateway references must contain literal digests; `image:tag@sha256:...`
-is accepted, while tags alone and unresolved variables are not. Each listed
-image is required. Model checks authenticate recorded deployment intent; they
-do not establish which containers or weights are currently running.
+Set `commit` pins in the example image policies to restrict accepted builds.
+The policies check required Gateway images and container image builds recorded
+by Compose Manager.
 
 See the model image guides for [JavaScript](../js/docs/verification-guide.md#model-images-deployed-by-compose-manager),
 [Python](../py/docs/verification-guide.md#model-images-deployed-by-compose-manager),
@@ -197,14 +175,14 @@ output for receipt verification. Integrated clients capture those bytes internal
 
 ## Direct endpoints
 
-Direct clients are experimental. Use Gateway clients for production and an
-endpoint-accepted credential for direct inference.
+Direct examples use a model endpoint URL and a credential accepted by that endpoint.
 
-All direct examples verify every returned model attestation; an endpoint may
-omit other serving instances. TLS is bound to attested fingerprints by default. Integrated
-clients use E2EE and require response signatures from the selected model signer.
-Standalone direct examples send plaintext over HTTPS and verify exact response
-bytes against the matching attestation group.
+Direct examples verify every returned model report and the response signature.
+Integrated examples enable E2EE; bare examples use plaintext over HTTPS.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
+
+Read `attestations` (`Attestations` in Go) for all reports matching the response signer.
 
 See the [live E2E guide](../e2e/README.md) to run the integration tests with your
 endpoint credentials and selected models.

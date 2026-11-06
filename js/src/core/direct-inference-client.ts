@@ -129,8 +129,7 @@ export abstract class DirectInferenceClientBase extends VerifiedInferenceClientB
 /**
  * Browser-compatible direct model client without TLS fingerprint binding.
  *
- * @experimental Not recommended for production. Use `InferenceClient` through
- * the Gateway instead.
+ * @experimental
  */
 export class DirectInferenceClient extends DirectInferenceClientBase {
   private readonly attestationClient: DirectAttestationClient;
@@ -159,7 +158,7 @@ export class DirectInferenceClient extends DirectInferenceClientBase {
 
 /**
  * Verify the exact completion bytes and return the verified attestations sharing
- * its signer. A shared signing key does not identify an individual CVM.
+ * its signer.
  */
 export function verifyDirectModelResponse({
   requestBody,
