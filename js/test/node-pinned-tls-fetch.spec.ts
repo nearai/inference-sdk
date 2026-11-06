@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import type { DetailedPeerCertificate } from 'node:tls';
 import * as tls from 'node:tls';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
-import { createPinnedTlsFetch } from '../src/node';
+import { AttestationClient, createPinnedTlsFetch } from '../src/node';
 
 jest.mock('node:crypto', () => {
   const crypto =
@@ -44,7 +44,7 @@ type NativeRequestCall = {
 type InstallHttpsRequestsParams = {
   readonly peerCertificates: readonly Uint8Array[];
   readonly waitForAbort?: boolean;
-  readonly response?: IncomingMessage;
+  readonly response?: IncomingMessage | ((url: URL) => IncomingMessage);
 };
 
 function spkiFingerprint(value: Uint8Array): string {
@@ -108,7 +108,11 @@ function installHttpsRequests({
           onError?.(identityError);
           return;
         }
-        callback?.(response ?? incomingResponse('{"ok":true}'));
+        callback?.(
+          typeof response === 'function'
+            ? response(new URL(url))
+            : (response ?? incomingResponse('{"ok":true}')),
+        );
       },
       destroy(error: Error) {
         onError?.(error);
@@ -121,8 +125,127 @@ function installHttpsRequests({
 }
 
 describe('createPinnedTlsFetch', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  test.each([false, true])(
+    'AttestationClient pins every ordinary evidence request without transport fallback (wrongPin=%s)',
+    async (wrongPin) => {
+      const peerSpki = Buffer.from('gateway-spki');
+      const defaultFetch = jest
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Default transport must not be used'));
+      const servedUrls: string[] = [];
+      const requests = installHttpsRequests({
+        peerCertificates: [peerSpki, peerSpki, peerSpki],
+        response: (url) => {
+          servedUrls.push(url.pathname);
+          return incomingResponse(
+            JSON.stringify({
+              metadata: { providerType: 'vllm', attestationSupported: true },
+              model_attestations: [
+                {
+                  request_nonce: url.searchParams.get('nonce'),
+                  signing_algo: 'ed25519',
+                  signing_address: '11'.repeat(32),
+                  intel_quote: 'aa',
+                  report_data: '22'.repeat(64),
+                  event_log: [],
+                  info: { tcb_info: { app_compose: '{}' } },
+                },
+              ],
+              text: 'model:request:response',
+              signature: '00',
+              signing_address: '11'.repeat(32),
+              signing_algo: 'ed25519',
+              signature_kind: 'provider_tee',
+            }),
+          );
+        },
+      });
+      const client = new AttestationClient({
+        baseUrl: 'https://gateway.test/v1',
+        apiKey: 'test',
+        fetch: createPinnedTlsFetch(
+          wrongPin ? '00'.repeat(32) : spkiFingerprint(peerSpki),
+        ),
+      });
+      const operations = [
+        () => client.fetchModelMetadata('model'),
+        () => client.fetchModelAttestations({ model: 'model' }),
+        () => client.fetchCompletionSignature({ completionId: 'completion' }),
+      ];
+      for (const operation of operations) {
+        if (wrongPin) {
+          await expect(operation()).rejects.toMatchObject({
+            failure: { code: 'binding.spki_fingerprint_mismatch' },
+          });
+        } else {
+          await expect(operation()).resolves.toBeDefined();
+        }
+      }
+      expect(requests).toHaveLength(3);
+      expect(servedUrls).toEqual(
+        wrongPin
+          ? []
+          : [
+              '/v1/model/model',
+              '/v1/attestation/report',
+              '/v1/signature/completion',
+            ],
+      );
+      expect(defaultFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  test('AttestationClient keeps Gateway bootstrap on its peer-capturing transport', async () => {
+    const peerSpki = Buffer.from('bootstrap-spki');
+    const customFetch = jest
+      .fn<ReturnType<typeof fetch>, Parameters<typeof fetch>>()
+      .mockRejectedValue(
+        new Error('Gateway bootstrap must not use the ordinary API transport'),
+      );
+    installHttpsRequests({
+      peerCertificates: [peerSpki],
+      response: (url) =>
+        Object.assign(
+          incomingResponse(
+            JSON.stringify({
+              gateway_attestation: {
+                request_nonce: url.searchParams.get('nonce'),
+                signing_algo: 'ed25519',
+                signing_address: '11'.repeat(32),
+                intel_quote: 'aa',
+                report_data: '22'.repeat(64),
+                event_log: [],
+                info: { tcb_info: { app_compose: '{}' } },
+                tls_cert_fingerprint: spkiFingerprint(peerSpki),
+              },
+            }),
+          ),
+          {
+            socket: {
+              getPeerX509Certificate: () => ({
+                publicKey: { export: () => peerSpki },
+              }),
+            },
+          },
+        ),
+    });
+    const client = new AttestationClient({
+      baseUrl: 'https://gateway.test/v1',
+      fetch: customFetch,
+    });
+    const fetched = await client.fetchGatewayAttestation();
+    expect(fetched.clientBinding.spkiFingerprint).toBe(
+      spkiFingerprint(peerSpki),
+    );
+    expect(customFetch).not.toHaveBeenCalled();
   });
 
   test('checks every TLS peer and preserves Fetch request and response data', async () => {

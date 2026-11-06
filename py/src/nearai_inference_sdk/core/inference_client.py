@@ -49,7 +49,6 @@ from ..utils.errors import (
     api_failure,
     verification_failure,
 )
-from ..utils.fetch import FetchResponse
 from ..utils.sse import get_sse_data_records, get_sse_event, take_complete_sse_records
 from .attestation_gateway import verify_gateway_attestation
 from .attestation_model import verify_model_attestation
@@ -95,31 +94,6 @@ class _ResponseRecord[Result, AttestationResult]:
     verification: asyncio.Task[Result] | None = None
     expiry: asyncio.TimerHandle | None = None
     expires_at: float | None = None
-
-
-class _SessionAttestationClient(AttestationClient):
-    """Keep model evidence and response signatures on the pinned transport."""
-
-    def __init__(
-        self,
-        http_client: httpx.AsyncClient,
-        *,
-        api_key: str | None,
-        base_url: str,
-        headers: Mapping[str, str],
-    ) -> None:
-        super().__init__(api_key, base_url=base_url, headers=headers)
-        self._http_client = http_client
-
-    async def _fetch(
-        self, url: str, *, headers: Mapping[str, str], _capture_peer_spki: bool = False
-    ) -> FetchResponse:
-        response = await self._http_client.get(url, headers=headers)
-        return FetchResponse(
-            status=response.status_code,
-            body=response.content,
-            headers=response.headers,
-        )
 
 
 class _InferenceTransport(httpx.AsyncBaseTransport):
@@ -276,7 +250,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._sessions.clear()
 
     def clear_response_cache(self) -> None:
-        """Release captured responses and expiry timers; keep the client reusable."""
+        """Clear captured response verification records."""
         self._response_generation += 1
         for record in self._responses.values():
             if record.expiry is not None:
@@ -284,12 +258,7 @@ class _VerifiedInferenceClient[Result, AttestationResult]:
         self._responses.clear()
 
     async def verify(self, model: str) -> AttestationResult:
-        """Return verified deployment evidence without sending Chat.
-
-        Shares Chat's attestation cache and in-flight work. Cache hits retain
-        the original result and verified_at time. A later Chat verifies again
-        when the cache expires or its time to live is zero.
-        """
+        """Verify the required deployment attestations before sending a prompt."""
 
         if model == '':
             raise api_failure(
@@ -741,8 +710,11 @@ class InferenceClient(
             self._http_clients[fingerprint] = client
         # Parse required OHTTP configuration before authenticated evidence requests.
         completion_client = self._completion_client(client, key_config)
-        attestation_client = _SessionAttestationClient(
-            client, api_key=self._api_key, base_url=self.base_url, headers=self._headers
+        attestation_client = AttestationClient(
+            api_key=self._api_key,
+            base_url=self.base_url,
+            headers=self._headers,
+            http_client=client,
         )
         model_attestations = await self._verify_model_attestations(
             model, attestation_client

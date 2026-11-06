@@ -82,21 +82,18 @@ stream before passing `message_start.message.id` to `verify_response`.
 | --- | --- | --- | --- |
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
 | `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator HTTP(S) base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | `None` | Static request headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an explicit `api_key` overrides Authorization. Per-request or external OpenAI authorization does not override this configuration. |
+| `headers` | `Mapping[str, str] \| None` | `None` | Additional request headers; use `api_key` for bearer authentication. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
-| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, Messages, and System One for this long; `0` verifies each request. |
-| `response_cache_time_to_live_ms` | `float` | `3600000` | Retain response records for this long after the response finishes. |
+| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Deployment verification cache duration; `0` verifies each request. |
+| `response_cache_time_to_live_ms` | `float` | `3600000` | Response retention after body completion; `0` disables retention. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
 | `deployment_policy` | `DeploymentPolicy \| None` | `None` | Optional callback `(model, deployment)` that rejects unapproved model deployments by raising. May be asynchronous. |
 
-Gateway verification always runs. Catalog metadata selects NEAR model
-verification for `provider_type='vllm'` and `attestation_supported=True`; other
-models use Incognito verification. `e2ee=True`, a model policy, or a deployment
-callback requires model evidence. Invalid metadata and failed verification stop
-inference. The catalog decision shares the attestation cache's lifetime.
+Models without NEAR model attestation use Gateway-only (Incognito) verification.
+E2EE and model deployment policies require model attestation.
 
 ### Verification options
 
@@ -382,24 +379,18 @@ The Gateway's report and signature endpoints have different defaults.
 | --- | --- | --- | --- | --- |
 | `api_key` | `str \| None` | No | `None` | Bearer token for model reports, metadata, and signature requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
+| `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers; use `api_key` for bearer authentication. |
+| `http_client` | `httpx.AsyncClient \| None` | No | `None` | HTTP transport for model reports, metadata, and signature requests. |
 
-Use `AttestationClient()` to fetch attestation without credentials. Gateway and
-direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
-including values supplied in `headers`. Other custom headers are preserved.
-
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
+Credentials are optional for public evidence. Configure `api_key` or `headers`
+when the endpoint requires authentication. Use `http_client` to supply a pinned
+transport after Gateway verification.
 
 `AttestationClient` construction and methods, plus
 the model-selection helpers, raise `ApiError` for invalid helper
 input as well as Gateway and selection failures. The `verify_*` functions
-raise `VerificationError` instead. Handle each operation at its own boundary;
-the client and selection helpers never require an `ApiError` versus
-`VerificationError` dispatch after catching an error.
+raise `VerificationError`. A supplied pinned HTTP client also propagates TLS
+binding failures as `VerificationError`.
 
 ### Completion-signature methods
 

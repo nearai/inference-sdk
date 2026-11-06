@@ -82,7 +82,10 @@ impl AttestationClient {
         self
     }
 
-    pub(crate) fn with_http_client(mut self, client: Client) -> Self {
+    /// Use this HTTP client for evidence and signatures. Use
+    /// [`crate::create_pinned_tls_client`] to pin requests to verified TLS fingerprints.
+    /// Custom clients need `tls_info(true)` when fetching TLS-bound attestations.
+    pub fn with_http_client(mut self, client: Client) -> Self {
         self.client = client.clone();
         self.gateway_client = client;
         self

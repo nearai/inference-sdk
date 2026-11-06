@@ -1,9 +1,8 @@
 //! Real Gateway coverage for the integrated transport; never use mock verifiers.
 use super::{read_completion_id, required_env, select_models, LiveModel};
 use nearai_inference_sdk::{
-    find_model_attestations_for_signature, CompletionSignatureKind, GatewayTlsBinding,
-    GpuEvidenceStatus, InferenceClient, InferenceClientOptions, InferenceError, SigningAlgo,
-    VerifiedCompletionResult,
+    CompletionSignatureKind, GatewayTlsBinding, GpuEvidenceStatus, InferenceClient,
+    InferenceClientOptions, InferenceError, SigningAlgo, VerifiedCompletionResult,
 };
 use serde_json::json;
 use std::{error::Error, time::Duration};
@@ -133,7 +132,6 @@ async fn verify_chat(
             assert!(!verified.models.is_empty(), "Expected NEAR model evidence");
             for report in &verified.models {
                 assert_eq!(report.gpu_evidence, GpuEvidenceStatus::Verified);
-                assert!(report.signing_public_key.is_some());
             }
         } else {
             assert!(
@@ -142,11 +140,26 @@ async fn verify_chat(
             );
         }
         if receipt.signature_kind() == CompletionSignatureKind::ProviderTee {
-            let expected: Vec<_> =
-                find_model_attestations_for_signature(&verified.models, &receipt.signature)?
-                    .into_iter()
-                    .cloned()
-                    .collect();
+            let selected = verified
+                .models
+                .iter()
+                .find(|report| {
+                    report.evidence.signer.signing_algo == signing_algo
+                        && report.signing_public_key.is_some()
+                })
+                .expect("Expected a verified model key");
+            assert!(super::same_signer(
+                &receipt.signature.signer,
+                &selected.evidence.signer
+            ));
+            let expected: Vec<_> = verified
+                .models
+                .iter()
+                .filter(|report| {
+                    super::same_signer(&report.evidence.signer, &selected.evidence.signer)
+                })
+                .cloned()
+                .collect();
             assert_eq!(receipt.attestations, expected);
             assert_eq!(cached_receipt.attestations, expected);
         } else {

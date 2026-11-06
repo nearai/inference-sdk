@@ -119,7 +119,9 @@ method while the response remains cached.
   a transformed stream. The caller authenticates the model key first.
 - `create_pinned_tls_client(&[String])` returns an HTTPS-only reqwest client that
   requires one of the supplied SHA-256 SPKI fingerprints in addition to normal
-  certificate and hostname verification.
+  certificate and hostname verification. After Gateway verification, pass a clone
+  to `AttestationClient::with_http_client` for subsequent evidence and signature
+  requests, and use the same client to send Chat.
 - `verify_ohttp_key_config(&OhttpAttestation, &SigningIdentity)` authenticates raw
   config bytes against a previously verified Ed25519 signer.
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
@@ -173,6 +175,9 @@ inference requests or retain completion bytes.
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
 | `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+
+`with_http_client(reqwest::Client)` configures the transport for subsequent evidence
+and signature requests. Pass the pinned client used for inference.
 
 Use `AttestationClient::new(None)` to fetch attestation without credentials.
 Gateway and direct attestation requests omit `Authorization`, `api-key`, and
