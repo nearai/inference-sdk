@@ -1125,6 +1125,12 @@ function registerCompletionResponse({
             const complete = takeCompleteSseRecords(pending);
             pending = complete.pending;
             for (const record of complete.records) {
+              if (
+                protocol !== 'messages' &&
+                getSseDataRecords(record.value).includes('[DONE]')
+              ) {
+                throw invalidCompletionId();
+              }
               let id: string;
               try {
                 id = getSseCompletionId(record.value, protocol);
@@ -1343,8 +1349,8 @@ function validateResponsesStream(body: Uint8Array): void {
   let id: string | undefined;
   for (const record of [...records.map((item) => item.value), pending]) {
     const values = getSseDataRecords(record);
-    if (values.includes('[DONE]')) break;
     if (getSseEvent(record) === 'error') throw invalidCompletionId();
+    if (values.includes('[DONE]')) break;
     for (const data of values) {
       if (data === '') continue;
       let event: unknown;

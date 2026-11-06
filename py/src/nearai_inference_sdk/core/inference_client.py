@@ -1031,10 +1031,10 @@ def _validate_response_stream(body: bytes) -> None:
     parsed = take_complete_sse_records(body.decode('utf-8-sig'), eof=True)
     for record in [*(item.value for item in parsed.records), parsed.pending]:
         values = get_sse_data_records(record)
-        if '[DONE]' in values:
-            break
         if get_sse_event(record) == 'error':
             raise _invalid_completion_id()
+        if '[DONE]' in values:
+            break
         for data in values:
             if not data:
                 continue

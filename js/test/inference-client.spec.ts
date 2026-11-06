@@ -1148,6 +1148,38 @@ describe('inference client', () => {
     expect(inferenceClient.verifyResponse(completion.id)).toBe(verification);
   });
 
+  test.each(['chat/completions', 'responses'])(
+    'does not register a %s ID after [DONE]',
+    async (endpoint) => {
+      const gateway = createTestGateway();
+      const payload =
+        endpoint === 'responses'
+          ? { response: { id: 'late-id' } }
+          : { id: 'late-id' };
+      const raw = `data: [DONE]\n\ndata: ${JSON.stringify(payload)}\n\n`;
+      jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+        const request = new Request(input, init);
+        return new URL(request.url).pathname === `/v1/${endpoint}`
+          ? Promise.resolve(streamResponse(Array.from(raw)))
+          : gateway.fetch(request);
+      });
+      const client = new InferenceClient({
+        ...inferenceClientOptions(gateway),
+        e2ee: false,
+      });
+      const response = await client.fetch(
+        `${baseUrl}${endpoint}`,
+        chatRequest({ messages: [], input: 'Hello', stream: true }),
+      );
+      await expect(response.text()).rejects.toMatchObject({
+        failure: { code: 'api.invalid_response' },
+      });
+      await expect(client.verifyResponse('late-id')).rejects.toMatchObject({
+        failure: { code: 'api.completion_not_found' },
+      });
+    },
+  );
+
   test.each([
     ['default', undefined, 60 * 60 * 1000],
     ['custom', 1000, 1000],

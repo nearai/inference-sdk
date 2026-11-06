@@ -117,12 +117,12 @@ pub(crate) fn transform(
     let lines = lines(text);
     let values: Vec<_> = lines.iter().filter_map(|(line, _)| data(line)).collect();
     let joined = values.join("\n");
+    if responses && event_name(&lines) == Some("error") {
+        return Err(invalid_response().into());
+    }
     if joined == "[DONE]" {
         *done = true;
         return Ok(record.to_vec());
-    }
-    if responses && event_name(&lines) == Some("error") {
-        return Err(invalid_response().into());
     }
     if values.is_empty() || joined.is_empty() || event_name(&lines) == Some("error") {
         return Ok(record.to_vec());

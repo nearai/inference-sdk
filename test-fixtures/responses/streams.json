@@ -30,6 +30,16 @@
     "valid": false
   },
   {
+    "name": "error event containing the DONE sentinel",
+    "body": "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\nevent: error\ndata: [DONE]\n\n",
+    "valid": false
+  },
+  {
+    "name": "response ID after DONE",
+    "body": "data: [DONE]\n\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture\"}}\n\n",
+    "valid": false
+  },
+  {
     "name": "empty response ID",
     "body": "data: {\"response\":{\"id\":\"\"}}\n\n",
     "valid": false
