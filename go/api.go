@@ -495,6 +495,10 @@ func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transpo
 
 // FindModelAttestationsForSignature returns every verified report sharing the
 // response signer. A shared signing key does not identify an individual instance.
+// Inputs must already have passed attestation verification. This helper only
+// selects reports; it does not verify attestations or response signatures.
+// Use VerifyModelResponse for signature verification, passing the report used
+// to select the request's model key when a key was selected before sending.
 func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error) {
 	var matches []VerifiedAttestation
 	if sig.Kind != "provider_tee" {

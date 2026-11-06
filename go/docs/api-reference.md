@@ -523,9 +523,10 @@ Manual workflow APIs:
   binds its optional fingerprint to the supplied observed peer.
 - `VerifyGatewayResponse`, `VerifyModelResponse`, `VerifyDirectModelResponse`
   verify exact bytes using already authenticated evidence.
-- `FindModelAttestationsForSignature` returns all verified reports matching the
-  response signer and rejects missing matches. Their shared signature can be
-  verified once with `VerifyModelResponse` using any returned report.
+- `FindModelAttestationsForSignature` selects all matching reports from already
+  verified inputs and rejects missing matches. It does not verify attestations
+  or response signatures. Call `VerifyModelResponse` separately; if a model key
+  was selected before sending, pass the report used to select that key.
 - The deprecated `FindModelAttestationForSignature` retains its exactly-one-match
   contract and rejects missing or ambiguous matches.
 

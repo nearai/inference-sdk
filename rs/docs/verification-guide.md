@@ -351,13 +351,14 @@ original SSE bytes, including framing; do not parse and serialize them again.
 
 ## Verify the completion receipt
 
-Fetch the completion signature after the chat request completes. The only part
-of this stage that depends on `signature.kind` is the response verifier:
+Fetch the completion signature after the chat request completes, and choose the
+verifier according to `signature.kind`. Retain `selected_model`, the verified
+report used to select the request's routing/encryption public key, for the
+model-signature check.
 
 ```rust,no_run
 use nearai_inference_sdk::{
-    find_model_attestations_for_signature, verify_gateway_response,
-    verify_model_response, AttestationClient, CompletionSignature,
+    verify_gateway_response, verify_model_response, AttestationClient,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
 };
@@ -368,7 +369,7 @@ async fn verify_completion_receipt(
     request_body: &[u8],
     response_body: &[u8],
     gateway: &VerifiedGatewayAttestation,
-    models: &[VerifiedModelAttestation],
+    selected_model: &VerifiedModelAttestation,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signature = client
         .fetch_completion_signature(completion_id, Some(SigningAlgo::Ecdsa))
@@ -376,9 +377,7 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let matching = find_model_attestations_for_signature(models, &signature)?;
-            // The shared key verifies the signature; keep every matching report.
-            verify_model_response(request_body, response_body, &signature, matching[0])?;
+            verify_model_response(request_body, response_body, &signature, selected_model)?;
         }
         CompletionSignatureKind::Gateway => {
             verify_gateway_response(request_body, response_body, &signature, gateway)?;
@@ -388,12 +387,12 @@ async fn verify_completion_receipt(
 }
 ```
 
-`ProviderTee` proves that one preflight-verified model signer signed the exact
-request and response bytes. `find_model_attestations_for_signature` preserves all
-verified reports sharing that signer; the signature does not select an individual
-instance from that group. If the request selected a routing/encryption key, also
-require the response signer to match that key. `Gateway` proves that the preflight-verified
-Gateway signer signed the exact client-visible bytes. It is not a choice
+`ProviderTee` proves that the model signer selected before the request signed the
+exact request and response bytes. To obtain the complete evidence group after
+this check, use `find_model_attestations_for_signature` with the preflight reports
+and signature. Shared signing keys do not identify one serving instance.
+`Gateway` proves that the preflight-verified Gateway signer signed the exact
+client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's
 receipt.

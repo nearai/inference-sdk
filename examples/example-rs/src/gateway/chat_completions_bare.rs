@@ -106,13 +106,7 @@ async fn main() -> Result<()> {
         let signature = api.fetch_completion_signature(&id, Some(algo()?)).await?;
         match signature.kind {
             CompletionSignatureKind::ProviderTee => {
-                // Keep the selected encryption key bound to the response signer.
-                verify_model_response(&wire_request, &wire_response, &signature, recipient)?;
-                let reports = find_model_attestations_for_signature(&models, &signature)?;
-                println!(
-                    "Response signer matches {} verified model reports",
-                    reports.len()
-                );
+                verify_model_response(&wire_request, &wire_response, &signature, recipient)?
             }
             CompletionSignatureKind::Gateway => verify_gateway_response(
                 &wire_request,

@@ -15,7 +15,6 @@ from nearai_inference_sdk import (
     VerifiedGatewayAttestation,
     VerifiedModelAttestation,
     create_pinned_tls_client,
-    find_model_attestations_for_signature,
     prepare_e2ee_chat_request,
     verify_compose_manager_deployment_image_provenance,
     verify_deployment_image_provenance,
@@ -77,7 +76,6 @@ class Completion:
 @dataclass(frozen=True)
 class E2eeRecipient:
     attestation: VerifiedModelAttestation
-    attestations: tuple[VerifiedModelAttestation, ...]
     key: E2eeModelKey
 
 
@@ -150,7 +148,6 @@ def find_e2ee_recipient(
         ):
             return E2eeRecipient(
                 attestation=model,
-                attestations=tuple(models),
                 key=E2eeModelKey(
                     signing_algo=SIGNING_ALGO, public_key=model.signing_public_key
                 ),
@@ -231,17 +228,12 @@ async def verify_completion_receipt(
         completion.id, signing_algo=SIGNING_ALGO
     )
     if signature.kind == 'provider_tee':
-        # Keep the request's selected key constraint before selecting its reports.
         verify_model_response(
             completion.request_body,
             completion.response_body,
             signature,
             recipient.attestation,
         )
-        matching = find_model_attestations_for_signature(
-            recipient.attestations, signature
-        )
-        print(f'Verified response signer matches {len(matching)} model reports.')
     else:
         # A Gateway signature proves these bytes were signed by its verified key;
         # it does not prove which model deployment generated the content.

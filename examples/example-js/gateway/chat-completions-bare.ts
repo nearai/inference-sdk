@@ -9,7 +9,6 @@ import type {
 import {
   AttestationClient,
   createPinnedTlsFetch,
-  findModelAttestationsForSignature,
   prepareE2eeChatRequest,
   verifyComposeManagerDeploymentImageProvenance,
   verifyDeploymentImageProvenance,
@@ -95,7 +94,6 @@ async function main(): Promise<void> {
     completion: nonStreamingCompletion,
     gateway,
     model,
-    models,
   });
 
   // Streaming: display decrypted SSE as it arrives. Signature verification needs
@@ -110,7 +108,6 @@ async function main(): Promise<void> {
     completion: streamingCompletion,
     gateway,
     model,
-    models,
   });
 }
 
@@ -325,7 +322,6 @@ async function verifyCompletionResponse({
   completion,
   gateway,
   model,
-  models,
 }: VerifyCompletionResponseParams): Promise<void> {
   // Retrieve the signature after the full response has been received. The ID is
   // only used for lookup; verification binds the saved bytes to an attested signer.
@@ -342,13 +338,7 @@ async function verifyCompletionResponse({
       signature,
       attestation: model,
     });
-    const matches = findModelAttestationsForSignature({
-      attestations: models,
-      signature,
-    });
-    console.log(
-      `${completion.label}: verified model response signature against ${matches.length} matching reports.`,
-    );
+    console.log(`${completion.label}: verified model response signature.`);
   } else {
     // A Gateway signature authenticates the final bytes returned by the Gateway.
     // It does not prove model execution, even though model attestation passed above.
@@ -404,7 +394,6 @@ type VerifyCompletionResponseParams = {
   readonly completion: Completion;
   readonly gateway: VerifiedGatewayAttestation;
   readonly model: VerifiedModelAttestation;
-  readonly models: readonly VerifiedModelAttestation[];
 };
 
 type ModelAttestationWithPublicKey = VerifiedModelAttestation & {

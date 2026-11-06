@@ -942,6 +942,9 @@ successful verification:
 | `provider_tee` | The verified model attestation selected for the request | The model-serving TEE signer signed the exact request and response body bytes. |
 | `gateway` | The verified Gateway attestation | The Gateway signer signed the exact client-visible request and response body bytes. |
 
+The Gateway may normalize streaming responses and sign the resulting bytes, so
+use the returned signature kind even for an attested model.
+
 For an E2EE request, preserve the encrypted JSON body bytes—not the plaintext
 object after decryption. Do not parse and reserialize either body before
 verification.
