@@ -26,7 +26,7 @@ export type CreateDirectSessionTransportParams = {
   readonly tlsBinding: DirectTlsBinding;
 };
 
-/** Shared direct-endpoint preflight; Chat, E2EE and response caching reuse the Gateway transport core. */
+/** Direct-endpoint preflight over the shared Chat, E2EE and response-cache implementation. */
 export abstract class DirectInferenceClientBase extends VerifiedInferenceClientBase<
   VerifiedDirectCompletionResult,
   DirectAttestationVerificationResult

@@ -2,7 +2,10 @@
 use crate::*;
 use crate::{
     errors::protocol,
-    inference::{input, ordinary_client, verified_at, EvidenceApi, PolicyVerifier, Session},
+    inference_core::{
+        input, ordinary_client, verified_at, CoreOptions, EvidenceApi, InferenceCore,
+        PolicyVerifier, Session, SessionProvider, VerifiedReceipt,
+    },
     util::{decode_hex, generate_nonce, require_hex_length},
 };
 use reqwest::header::HeaderMap;
@@ -40,6 +43,20 @@ pub struct DirectAttestationVerificationResult {
     pub tls_binding: GatewayTlsBinding,
     pub spki_fingerprints: Vec<String>,
     pub verified_at: u64,
+}
+/// A Direct client's receipt with every verified report sharing its selected signer.
+#[derive(Clone, Debug)]
+pub struct VerifiedDirectCompletionResult {
+    pub id: String,
+    pub signature: CompletionSignature,
+    /// The request's verified reports matching its selected signing key.
+    /// A shared key does not identify which instance served the request.
+    pub attestations: Vec<VerifiedDirectModelAttestation>,
+}
+impl VerifiedDirectCompletionResult {
+    pub fn signature_kind(&self) -> CompletionSignatureKind {
+        self.signature.kind
+    }
 }
 #[derive(Clone)]
 pub struct DirectAttestationClient {
@@ -311,11 +328,7 @@ pub struct DirectInferenceClientOptions {
 }
 impl Default for DirectInferenceClientOptions {
     fn default() -> Self {
-        InferenceClientOptions::default().into()
-    }
-}
-impl From<InferenceClientOptions> for DirectInferenceClientOptions {
-    fn from(options: InferenceClientOptions) -> Self {
+        let options = CoreOptions::default();
         Self {
             api_key: options.api_key,
             base_url: options.base_url,
@@ -330,7 +343,7 @@ impl From<InferenceClientOptions> for DirectInferenceClientOptions {
         }
     }
 }
-impl From<DirectInferenceClientOptions> for InferenceClientOptions {
+impl From<DirectInferenceClientOptions> for CoreOptions {
     fn from(options: DirectInferenceClientOptions) -> Self {
         Self {
             api_key: options.api_key,
@@ -343,13 +356,12 @@ impl From<DirectInferenceClientOptions> for InferenceClientOptions {
             response_cache_ttl: options.response_cache_ttl,
             model_verification: options.model_verification,
             deployment_policy: options.deployment_policy,
-            gateway_verification: GatewayVerificationOptions::default(),
         }
     }
 }
 #[derive(Clone)]
 pub struct DirectInferenceClient {
-    client: InferenceClient,
+    core: InferenceCore,
 }
 impl DirectInferenceClient {
     pub fn new(base_url: String, api_key: Option<String>) -> Result<Self, InferenceError> {
@@ -361,14 +373,14 @@ impl DirectInferenceClient {
     }
     pub fn with_options(options: DirectInferenceClientOptions) -> Result<Self, InferenceError> {
         Ok(Self {
-            client: InferenceClient::create(options.into(), true)?,
+            core: InferenceCore::new(options.into(), SessionProvider::Direct)?,
         })
     }
     pub async fn verify(
         &self,
         model: &str,
     ) -> Result<DirectAttestationVerificationResult, InferenceError> {
-        self.client
+        self.core
             .session(model)
             .await?
             .direct
@@ -376,40 +388,43 @@ impl DirectInferenceClient {
             .ok_or_else(|| input("client", "expected direct client").into())
     }
     pub fn base_url(&self) -> &str {
-        self.client.base_url()
+        self.core.base_url()
     }
     /// Release captured responses across all clones; keep the client reusable.
     pub async fn clear_response_cache(&self) {
-        self.client.clear_response_cache().await;
+        self.core.clear_response_cache().await;
     }
     pub fn chat_request(
         &self,
         body: serde_json::Value,
     ) -> Result<reqwest::Request, InferenceError> {
-        self.client.chat_request(body)
+        self.core.chat_request(body)
     }
     pub async fn chat_completions(
         &self,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, InferenceError> {
-        self.client.chat_completions(body).await
+        self.core.chat_completions(body).await
     }
     pub async fn send(
         &self,
         request: reqwest::Request,
     ) -> Result<InferenceResponse, InferenceError> {
-        self.client.send(request).await
+        self.core.send(request).await
     }
     pub async fn verify_response(
         &self,
         id: &str,
-    ) -> Result<VerifiedCompletionResult, InferenceError> {
-        self.client.verify_response(id).await
+    ) -> Result<VerifiedDirectCompletionResult, InferenceError> {
+        match self.core.verify_receipt(id).await? {
+            VerifiedReceipt::Direct(receipt) => Ok(receipt),
+            VerifiedReceipt::Gateway(_) => unreachable!("Direct client contains a Gateway receipt"),
+        }
     }
 }
 pub(crate) async fn create_session(
     model: &str,
-    options: InferenceClientOptions,
+    options: CoreOptions,
 ) -> Result<Arc<Session>, InferenceError> {
     let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())?
         .with_headers(options.headers.clone());

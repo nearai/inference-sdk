@@ -112,55 +112,6 @@ func TestManagerEvidenceAuthenticatesEverySignedField(t *testing.T) {
 	}
 }
 
-func mutateManagerEvidence(manager *VerifiedComposeManagerAttestation, value string) {
-	manager.Actions[0]["tag"] = value
-	manager.Actions[0]["services"].([]string)[0] = value
-	manager.AdvisoryIDs[0] = value
-	manager.RuntimeMeasurements.ComposeHash = value
-	manager.TCBStatus = value
-}
-
-func TestStandaloneManagerEvidenceResultsAreIndependent(t *testing.T) {
-	fixture := loadManagerFixture(t)
-	a, q, _ := attestationFixture(t, Ed25519)
-	managerQuote := q
-	managerQuote.AdvisoryIDs = []string{"original-advisory"}
-	managerQuote.ReportData = bytes.Clone(q.ReportData)
-	hash, _ := hex.DecodeString(fixture.ActionsHash)
-	copy(managerQuote.ReportData, hash)
-	a.ComposeManagerAttestation = &ComposeManagerAttestation{
-		Actions: fixture.Actions, ActionsHash: fixture.ActionsHash,
-		Nonce: a.Nonce, IntelQuote: "bb", EventLog: a.EventLog,
-	}
-	opts := VerificationOptions{QuoteVerifier: func(_ context.Context, raw string) (QuoteVerificationResult, error) {
-		if raw == "bb" {
-			return managerQuote, nil
-		}
-		return q, nil
-	}}
-	result, err := VerifyDirectModelAttestations(context.Background(), FetchedModelAttestations{
-		Attestations: []Attestation{a}, ServingAttestation: &a, ClientBinding: ClientBinding{Nonce: a.Nonce},
-	}, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseline := cloneAttestation(result.Attestations[0])
-	mutateManagerEvidence(result.ServingAttestation.Deployment.ComposeManager, "changed serving result")
-	if !reflect.DeepEqual(result.Attestations[0], baseline) {
-		t.Error("serving result changed the attestation list")
-	}
-	selected, err := FindModelAttestationForSignature(result.Attestations, CompletionSignature{
-		Kind: "provider_tee", Signer: result.Attestations[0].Signer,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mutateManagerEvidence(selected.Deployment.ComposeManager, "changed selected result")
-	if !reflect.DeepEqual(result.Attestations[0], baseline) {
-		t.Error("selected result changed the input attestation list")
-	}
-}
-
 func TestComposeManagerImagePolicyAndProxy(t *testing.T) {
 	f := loadManagerFixture(t)
 	bundle, e := os.ReadFile("../test-fixtures/provenance/compose-manager-launcher.bundle.json")

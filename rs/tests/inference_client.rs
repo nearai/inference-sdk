@@ -579,21 +579,18 @@ async fn direct_deployment_verifier_checks_every_report() {
     .await;
     let calls = Arc::new(AtomicUsize::new(0));
     options.model_verification.deployment = Some(Arc::new(DeploymentCheck(calls.clone())));
-    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
     let verified = client.verify("vendor/model").await.unwrap();
     assert_eq!(verified.attestations.len(), 2);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     client.chat_completions(body()).await.unwrap();
-    match client.verify_response("chat-0").await.unwrap().attestation {
-        VerifiedCompletionAttestation::Direct(reports) => {
-            assert_eq!(reports.len(), 2);
-            assert!(reports
-                .iter()
-                .all(|report| report.attestation.evidence.deployment_provenance
-                    == DeploymentProvenanceStatus::Verified));
-        }
-        _ => panic!("expected direct receipt"),
-    }
+    let receipt: VerifiedDirectCompletionResult = client.verify_response("chat-0").await.unwrap();
+    assert_eq!(receipt.attestations.len(), 2);
+    assert!(receipt.attestations.iter().all(|report| report
+        .attestation
+        .evidence
+        .deployment_provenance
+        == DeploymentProvenanceStatus::Verified));
 }
 
 #[tokio::test]
@@ -1148,10 +1145,22 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
     assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
     client.chat_completions(body()).await.unwrap();
     let receipt = client.verify_response("chat-0").await.unwrap();
-    match receipt.attestation {
-        VerifiedCompletionAttestation::Direct(reports) => assert_eq!(reports.len(), 2),
-        _ => panic!("expected direct reports"),
-    };
+    assert_eq!(receipt.attestations.len(), 2);
+    assert_eq!(receipt.id, "chat-0");
+    assert_eq!(
+        receipt.signature_kind(),
+        CompletionSignatureKind::ProviderTee
+    );
+    assert_eq!(
+        client
+            .verify_response("chat-0")
+            .await
+            .unwrap()
+            .attestations
+            .len(),
+        2
+    );
+    assert_eq!(f.signatures.load(Ordering::SeqCst), 1);
     assert_eq!(f.gateway.load(Ordering::SeqCst), 0);
     let receipts = f.receipts.lock().unwrap();
     let request: Value = serde_json::from_slice(&receipts["chat-0"].0).unwrap();
@@ -1209,7 +1218,7 @@ async fn direct_rejects_invalid_nonserving_report_before_chat() {
         ..Default::default()
     })
     .await;
-    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
     assert!(client.chat_completions(body()).await.is_err());
     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
 }
@@ -1317,7 +1326,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                 request["stream"] = json!(streaming);
                 let (result, receipt) = if direct {
                     let client =
-                        DirectInferenceClient::with_options(options.clone().into()).unwrap();
+                        DirectInferenceClient::with_options(direct_options(options.clone()))
+                            .unwrap();
                     let result = match client.send(client.chat_request(request).unwrap()).await {
                         Ok(r) => r.bytes().await,
                         Err(e) => Err(e),
@@ -1326,7 +1336,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                         Some(
                             client
                                 .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await,
+                                .await
+                                .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
                         None
@@ -1342,7 +1353,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                         Some(
                             client
                                 .verify_response(&format!("chat-{}", usize::from(streaming)))
-                                .await,
+                                .await
+                                .map(|receipt| receipt.attestations.len()),
                         )
                     } else {
                         None
@@ -1353,15 +1365,8 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                     assert!(String::from_utf8(result.unwrap())
                         .unwrap()
                         .contains("Hello"));
-                    let receipt = receipt.unwrap().unwrap();
-                    if direct {
-                        match receipt.attestation {
-                            VerifiedCompletionAttestation::Direct(reports) => {
-                                assert_eq!(reports.len(), 2)
-                            }
-                            _ => panic!("expected direct reports"),
-                        }
-                    }
+                    let attestation_count = receipt.unwrap().unwrap();
+                    assert_eq!(attestation_count, if direct { 2 } else { 1 });
                 } else {
                     assert!(result.is_err());
                     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
@@ -1963,7 +1968,7 @@ async fn responses_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(options.clone().into()).unwrap();
+    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(
@@ -2211,7 +2216,7 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(options.clone().into()).unwrap();
+    let direct = DirectInferenceClient::with_options(direct_options(options.clone())).unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(
@@ -2371,5 +2376,20 @@ async fn messages_zero_response_ttl_disables_retention() {
             assert_eq!(error.code(), "api.completion_not_found");
         }
         assert_eq!(fixture.signatures.load(Ordering::SeqCst), 0);
+    }
+}
+
+fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
+    DirectInferenceClientOptions {
+        api_key: options.api_key,
+        base_url: options.base_url,
+        headers: options.headers,
+        e2ee: options.e2ee,
+        ohttp: options.ohttp,
+        signing_algo: options.signing_algo,
+        attestation_cache_ttl: options.attestation_cache_ttl,
+        response_cache_ttl: options.response_cache_ttl,
+        model_verification: options.model_verification,
+        deployment_policy: options.deployment_policy,
     }
 }

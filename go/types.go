@@ -93,6 +93,8 @@ type VerificationOptions struct {
 	GPUVerifier        GPUEvidenceVerifier
 	DeploymentVerifier DeploymentVerifier
 }
+
+// VerifiedAttestation and its nested evidence are read-only verification results.
 type VerifiedAttestation struct {
 	Signer                SigningIdentity
 	TCBStatus             string
@@ -104,18 +106,22 @@ type VerifiedAttestation struct {
 	SPKIFingerprint       string
 	ModelName, InstanceID string
 }
+
+// AttestationVerificationResult contains Gateway preflight evidence.
 type AttestationVerificationResult struct {
 	Gateway    *VerifiedAttestation
 	Models     []VerifiedAttestation
 	VerifiedAt time.Time
 }
+
+// VerifiedCompletionResult contains a response receipt verified by a Gateway client.
 type VerifiedCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	// Attestation contains Gateway evidence for gateway receipts and is nil for Direct.
+	// Attestation contains Gateway evidence for gateway receipts.
 	// For provider_tee receipts it retains the report used to select the request's
 	// model public key; it does not identify which instance served the request.
 	//
@@ -144,7 +150,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -159,16 +165,40 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 }
 
-// DirectInferenceOptions uses the same E2EE opt-in as InferenceOptions.
+// DirectInferenceOptions leaves E2EE disabled by default.
 // Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: E2EE is disabled by default. Set InferenceOptions.E2EE to enable it.
-	// When true, DisableE2EE takes precedence over E2EE.
-	DisableE2EE bool
+	ClientOptions
+	SigningAlgo       SigningAlgo
+	E2EE              bool
+	OHTTP             bool
+	AttestationTTL    *time.Duration
+	ResponseTTL       *time.Duration
+	ModelVerification VerificationOptions
+	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
 }
 type VerifiedDirectModelAttestations struct {
 	ServingAttestation VerifiedAttestation
 	Attestations       []VerifiedAttestation
 	SPKIFingerprints   []string
+}
+
+// DirectAttestationVerificationResult contains every verified Direct report.
+// ServingAttestation is the report returned by the preflight endpoint; it does
+// not identify which instance serves a later completion. Direct TLS binding
+// remains disabled, so SPKIFingerprints is empty.
+type DirectAttestationVerificationResult struct {
+	VerifiedDirectModelAttestations
+	VerifiedAt time.Time
+}
+
+// VerifiedDirectCompletionResult contains the complete preflight-verified signer
+// group for a Direct receipt. A shared signer does not identify one instance.
+type VerifiedDirectCompletionResult struct {
+	ID string
+	// Deprecated: use ID. CompletionID contains the same value.
+	CompletionID  string
+	SignatureKind string
+	Signature     CompletionSignature
+	Attestations  []VerifiedAttestation
 }

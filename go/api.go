@@ -506,7 +506,7 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 	}
 	for _, a := range items {
 		if a.Signer.SigningAlgo == sig.Signer.SigningAlgo && sameHex(a.Signer.SigningAddress, sig.Signer.SigningAddress) {
-			matches = append(matches, cloneAttestation(a))
+			matches = append(matches, a)
 		}
 	}
 	if len(matches) == 0 {
