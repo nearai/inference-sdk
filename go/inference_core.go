@@ -528,6 +528,9 @@ func (c *inferenceCore) RoundTrip(req *http.Request) (*http.Response, error) {
 			if _, ok := obj["error"]; ok {
 				failed = true
 			}
+			if responses && obj["type"] == "error" {
+				failed = true
+			}
 			if messages {
 				kind, _ := obj["type"].(string)
 				if kind == "" || (hasEvent && event != kind) || messageStopped {
@@ -552,6 +555,13 @@ func (c *inferenceCore) RoundTrip(req *http.Request) (*http.Response, error) {
 			if responses {
 				// Output item IDs are not response IDs. Lifecycle events carry
 				// the receipt ID inside their response object.
+				if response, exists := obj["response"]; exists {
+					identity, _ := response.(map[string]any)
+					candidate, _ := identity["id"].(string)
+					if candidate == "" {
+						return nil, failure("api.invalid_response", nil)
+					}
+				}
 				obj, _ = obj["response"].(map[string]any)
 			}
 			if candidate, ok := obj["id"].(string); ok && candidate != "" {

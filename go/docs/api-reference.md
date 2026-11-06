@@ -80,6 +80,10 @@ this ordering automatically.
 
 See [lifecycle](#clients-and-lifecycle) for cancellation and retention behavior.
 
+Chat and Responses stop interpreting SSE events at `[DONE]` and also accept
+normal EOF. Consume the response body before `VerifyResponse`. Messages require
+a valid `message_stop` event.
+
 ## System One decisions
 
 | Method | Result |

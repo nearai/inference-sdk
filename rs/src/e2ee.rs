@@ -527,14 +527,15 @@ impl PreparedE2eeChatRequest {
         Box::pin(async_stream::try_stream! {
             let mut decoder = crate::sse::SseDecoder::default();
             let mut id = None;
+            let mut done = false;
             while let Some(chunk) = source.next().await {
                 let chunk = chunk?;
                 for record in decoder.push(&chunk, false) {
-                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
+                    yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, &mut done, false, false)?);
                 }
             }
             for record in decoder.push(&[], true) {
-                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, false, false)?);
+                yield bytes::Bytes::from(crate::sse::transform(&record, Some(&self.key), &mut id, &mut done, false, false)?);
             }
         })
     }
@@ -606,58 +607,160 @@ mod tests {
     #[test]
     fn encrypts_supported_fields_without_changing_routing_or_unknown_fields() {
         for algo in [SigningAlgo::Ed25519, SigningAlgo::Ecdsa] {
-            let (key, model) = fixed_key(algo);
-            let mut body = json!({"model":"vendor/model","messages":[{"role":"user","name":"Alice","content":[{"type":"text","text":"secret"}],"reasoning":"thought","tool_calls":[{"id":"call-1","function":{"name":"run","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"run","description":"desc","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"run"}},"temperature":0.5});
-            let aad = request_aad(algo, &model.public_key).unwrap();
-            encrypt_request(&mut body, &model, &aad).unwrap();
-            assert_eq!(body["model"], "vendor/model");
-            assert_eq!(body["temperature"], 0.5);
-            assert_eq!(body["messages"][0]["role"], "user");
-            assert_eq!(
-                key.decrypt_with_aad(
-                    body["messages"][0]["name"].as_str().unwrap(),
-                    &field_aad(&aad, "messages[].name")
-                )
-                .unwrap(),
-                "Alice"
+            let (key, model_key) = fixed_key(algo);
+            let original = json!({
+                "model": "vendor/model",
+                "messages": [{
+                    "role": "user", "name": "Alice", "content": [{"type": "text", "text": "secret"}],
+                    "reasoning_content": "analysis", "reasoning": "thought", "refusal": "no",
+                    "audio": {"data": "audio", "format": "wav"},
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "run", "arguments": "{}"}}],
+                    "function_call": {"name": "legacy", "arguments": "[]"}, "unknown": "preserved"
+                }, {"role": "assistant", "content": "answer"}],
+                "tools": [{"type": "function", "function": {"name": "run", "description": "desc", "parameters": {"type": "object"}}}],
+                "tool_choice": {"type": "function", "function": {"name": "run"}},
+                "function_call": {"name": "legacy"}, "temperature": 0.5, "metadata": {"tag": "public"}
+            });
+            let mut request = reqwest::Request::new(
+                reqwest::Method::POST,
+                "https://example.com/v1/chat/completions".parse().unwrap(),
             );
-            assert_eq!(
-                serde_json::from_str::<Value>(
-                    &key.decrypt_with_aad(
-                        body["messages"][0]["content"].as_str().unwrap(),
-                        &field_aad(&aad, "messages[].content")
-                    )
-                    .unwrap()
+            *request.body_mut() = Some(original.to_string().into());
+            let prepared = prepare_e2ee_chat_request(request, &model_key).unwrap();
+            let aad = request_aad(
+                algo,
+                prepared.request.headers()["x-client-pub-key"]
+                    .to_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut encrypted: Value =
+                serde_json::from_slice(prepared.request.body().unwrap().as_bytes().unwrap())
+                    .unwrap();
+            // Every protected field must independently decrypt to its original
+            // value. Comparing the complete object also protects routing and
+            // extension fields from accidental transformation.
+            for (path, field) in [
+                ("/messages/0/name", "messages[].name"),
+                (
+                    "/messages/0/reasoning_content",
+                    "messages[].reasoning_content",
+                ),
+                ("/messages/0/reasoning", "messages[].reasoning"),
+                ("/messages/0/refusal", "messages[].refusal"),
+                ("/messages/0/audio/data", "messages[].audio.data"),
+                (
+                    "/messages/0/tool_calls/0/function/name",
+                    "messages[].tool_calls[].function.name",
+                ),
+                (
+                    "/messages/0/tool_calls/0/function/arguments",
+                    "messages[].tool_calls[].function.arguments",
+                ),
+                (
+                    "/messages/0/function_call/name",
+                    "messages[].function_call.name",
+                ),
+                (
+                    "/messages/0/function_call/arguments",
+                    "messages[].function_call.arguments",
+                ),
+                ("/messages/1/content", "messages[].content"),
+                ("/tools/0/function/name", "tools[].function.name"),
+                (
+                    "/tools/0/function/description",
+                    "tools[].function.description",
+                ),
+                ("/tool_choice/function/name", "tool_choice.function.name"),
+                ("/function_call/name", "function_call.name"),
+            ] {
+                let value = encrypted.pointer_mut(path).unwrap();
+                assert_ne!(value, original.pointer(path).unwrap(), "{algo}: {path}");
+                *value = Value::String(
+                    key.decrypt_with_aad(value.as_str().unwrap(), &field_aad(&aad, field))
+                        .unwrap(),
+                );
+            }
+            for (path, field) in [
+                ("/messages/0/content", "messages[].content"),
+                (
+                    "/tools/0/function/parameters",
+                    "tools[].function.parameters",
+                ),
+            ] {
+                let value = encrypted.pointer_mut(path).unwrap();
+                *value = serde_json::from_str(
+                    &key.decrypt_with_aad(value.as_str().unwrap(), &field_aad(&aad, field))
+                        .unwrap(),
                 )
-                .unwrap(),
-                json!([{"type":"text","text":"secret"}])
-            );
-            assert_eq!(
-                key.decrypt_with_aad(
-                    body["tools"][0]["function"]["parameters"].as_str().unwrap(),
-                    &field_aad(&aad, "tools[].function.parameters")
-                )
-                .unwrap(),
-                "{\"type\":\"object\"}"
-            );
-            assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
+                .unwrap();
+            }
+            assert_eq!(encrypted, original, "{algo}");
         }
     }
     #[test]
     fn decrypts_tools_reasoning_audio_and_logprobs() {
-        let (key, model) = fixed_key(SigningAlgo::Ed25519);
-        let e = |s| encrypt(s, &model).unwrap();
-        let mut body = json!({"choices":[{"delta":{"content":e("answer"),"reasoning_content":e("thought"),"audio":{"data":e("audio")},"tool_calls":[{"function":{"name":e("run"),"arguments":e("{}")}}],"nearai_tool_result":{"output":e("output")}},"logprobs":{"content":[{"token":e("word"),"bytes":e("[1,2,3]"),"top_logprobs":[{"token":e("other")}]}]}}]});
-        decrypt_response(&mut body, &key, true).unwrap();
-        assert_eq!(body["choices"][0]["delta"]["content"], "answer");
-        assert_eq!(
-            body["choices"][0]["delta"]["nearai_tool_result"]["output"],
-            "output"
-        );
-        assert_eq!(
-            body["choices"][0]["logprobs"]["content"][0]["bytes"],
-            json!([1, 2, 3])
-        );
+        for algo in [SigningAlgo::Ed25519, SigningAlgo::Ecdsa] {
+            for streaming in [false, true] {
+                let (key, model_key) = fixed_key(algo);
+                let message_field = if streaming { "delta" } else { "message" };
+                let mut message = json!({
+                    "role": "assistant", "content": "answer", "reasoning_content": "analysis",
+                    "reasoning": "thought", "refusal": "no", "audio": {"data": "audio", "id": "audio-1"},
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "run", "arguments": "{}"}}],
+                    "function_call": {"name": "legacy", "arguments": "[]"}, "unknown": "preserved"
+                });
+                if streaming {
+                    message["nearai_tool_result"] = json!({"output": "output", "id": "result-1"});
+                }
+                let original = json!({"id": "chat-1", "choices": [{
+                    "index": 0, message_field: message, "finish_reason": "stop",
+                    "logprobs": {
+                        "content": [{"token": "word", "bytes": [1, 2, 3], "logprob": -0.1,
+                            "top_logprobs": [{"token": "other", "bytes": [4], "logprob": -0.2}]}],
+                        "refusal": [{"token": "no", "bytes": [5], "logprob": -0.3}]
+                    }
+                }, {"index": 1, message_field: {"content": [{"type": "text", "text": "part"}]}}]});
+                let mut encrypted = original.clone();
+                for suffix in [
+                    "content",
+                    "reasoning_content",
+                    "reasoning",
+                    "refusal",
+                    "audio/data",
+                    "tool_calls/0/function/name",
+                    "tool_calls/0/function/arguments",
+                    "function_call/name",
+                    "function_call/arguments",
+                ] {
+                    let path = format!("/choices/0/{message_field}/{suffix}");
+                    let value = encrypted.pointer_mut(&path).unwrap();
+                    *value = Value::String(encrypt(value.as_str().unwrap(), &model_key).unwrap());
+                }
+                let path = format!("/choices/1/{message_field}/content/0/text");
+                encrypted
+                    .pointer_mut(&path)
+                    .unwrap()
+                    .clone_from(&json!(encrypt("part", &model_key).unwrap()));
+                if streaming {
+                    encrypted["choices"][0][message_field]["nearai_tool_result"]["output"] =
+                        json!(encrypt("output", &model_key).unwrap());
+                }
+                for path in [
+                    "/choices/0/logprobs/content/0",
+                    "/choices/0/logprobs/content/0/top_logprobs/0",
+                    "/choices/0/logprobs/refusal/0",
+                ] {
+                    let entry = encrypted.pointer_mut(path).unwrap();
+                    entry["token"] =
+                        json!(encrypt(entry["token"].as_str().unwrap(), &model_key).unwrap());
+                    entry["bytes"] =
+                        json!(encrypt(&entry["bytes"].to_string(), &model_key).unwrap());
+                }
+                decrypt_response(&mut encrypted, &key, streaming).unwrap();
+                assert_eq!(encrypted, original, "{algo}, streaming={streaming}");
+            }
+        }
     }
     #[test]
     fn each_prepared_request_has_fresh_key_and_replaces_encryption_headers() {
@@ -692,6 +795,51 @@ mod tests {
             assert!(!a.request.headers().contains_key("digest"));
             assert!(!a.request.headers().contains_key("content-length"));
             assert_eq!(a.request.headers()["x-encryption-version"], "3");
+            let response_key = E2eeModelKey {
+                signing_algo: algo,
+                public_key: a.request.headers()["x-client-pub-key"]
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            };
+            let response = json!({"id": "chat-1", "choices": [{"message": {
+                "content": encrypt("only request A can read this", &response_key).unwrap()
+            }}]})
+            .to_string();
+            assert_eq!(
+                a.decrypt_json(response.as_bytes()).unwrap()["choices"][0]["message"]["content"],
+                "only request A can read this"
+            );
+            assert_eq!(
+                b.decrypt_json(response.as_bytes()).unwrap_err().code(),
+                "e2ee.decryption_failed"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn decrypted_sse_propagates_source_and_decoding_errors() {
+        use futures_util::StreamExt;
+
+        for (chunk, expected) in [
+            (Err(protocol("test.source", "source failed").into()), "test.source"),
+            (Ok(bytes::Bytes::from_static(b"data: \xff\n\n")), "api.invalid_response"),
+            (Ok(bytes::Bytes::from_static(b"data: {\n\n")), "api.invalid_response"),
+            (Ok(bytes::Bytes::from_static(
+                b"data: {\"id\":\"chat-1\",\"choices\":[{\"delta\":{\"content\":\"bad\"}}]}\n\n",
+            )), "e2ee.decryption_failed"),
+        ] {
+            let (key, _) = fixed_key(SigningAlgo::Ed25519);
+            let prepared = PreparedE2eeChatRequest {
+                request: reqwest::Request::new(
+                    reqwest::Method::POST,
+                    "https://example.com".parse().unwrap(),
+                ),
+                key,
+            };
+            let source = Box::pin(futures_util::stream::iter([chunk]));
+            let mut output = prepared.decrypt_sse(source);
+            assert_eq!(output.next().await.unwrap().unwrap_err().code(), expected);
+            assert!(output.next().await.is_none());
         }
     }
     #[tokio::test]
@@ -699,7 +847,7 @@ mod tests {
         use futures_util::StreamExt;
         let (key, model) = fixed_key(SigningAlgo::Ed25519);
         let ciphertext = encrypt("🌍", &model).unwrap();
-        let source=format!(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: {{\"id\":\"chat-1\",\r\ndata: \"choices\":[{{\"delta\":{{\"content\":\"{ciphertext}\"}}}}]}}\r\n\r\ndata: [DONE]\n\n: tail");
+        let source=format!(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: {{\"id\":\"chat-1\",\r\ndata: \"choices\":[{{\"delta\":{{\"content\":\"{ciphertext}\"}}}}]}}\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n");
         let raw = source.as_bytes().to_vec();
         let input = Box::pin(futures_util::stream::iter(
             raw.into_iter().map(|b| Ok(bytes::Bytes::from(vec![b]))),
@@ -719,7 +867,7 @@ mod tests {
         let output = String::from_utf8(bytes).unwrap();
         assert!(output.starts_with(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: "));
         assert!(output.contains("🌍"));
-        assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\n: tail"));
+        assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n"));
     }
     #[test]
     fn v3_shared_vectors_and_strict_responses() {

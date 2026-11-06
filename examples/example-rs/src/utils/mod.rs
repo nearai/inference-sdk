@@ -113,6 +113,9 @@ pub struct EventDecoder {
 }
 impl EventDecoder {
     pub fn push(&mut self, chunk: &[u8], eof: bool) -> Result<Vec<Value>> {
+        if self.done {
+            return Ok(Vec::new());
+        }
         self.pending.extend_from_slice(chunk);
         if !self.started {
             if self.pending.len() < 3 && !eof {
@@ -158,6 +161,8 @@ impl EventDecoder {
                     .join("\n");
                 if data == "[DONE]" {
                     self.done = true;
+                    self.pending.clear();
+                    return Ok(values);
                 } else if !data.is_empty() {
                     let value: Value = serde_json::from_str(&data)?;
                     if value.get("error").is_some() || value["type"] == "error" {
@@ -298,7 +303,7 @@ mod tests {
                 assert_eq!(delta(&values[0]), "Hello 🌍");
                 assert!(!decoder.done);
             }
-            let body = format!("{event}data: [DONE]{separator}{separator}");
+            let body = format!("{event}data: [DONE]{separator}{separator}data: ignored after [DONE]{separator}{separator}");
             assert_eq!(completion_id(body.as_bytes(), true).unwrap(), "chat-1");
             assert!(completion_id(event.as_bytes(), true).is_err());
         }

@@ -106,27 +106,42 @@ pub(crate) fn transform(
     record: &[u8],
     key: Option<&ResponseKey>,
     id: &mut Option<String>,
+    done: &mut bool,
     responses: bool,
     messages: bool,
 ) -> Result<Vec<u8>, InferenceError> {
+    if *done {
+        return Ok(record.to_vec());
+    }
     let text = std::str::from_utf8(record).map_err(|_| invalid_response())?;
     let lines = lines(text);
     let values: Vec<_> = lines.iter().filter_map(|(line, _)| data(line)).collect();
     let joined = values.join("\n");
-    if values.is_empty()
-        || joined.is_empty()
-        || joined == "[DONE]"
-        || event_name(&lines) == Some("error")
-    {
+    if joined == "[DONE]" {
+        *done = true;
+        return Ok(record.to_vec());
+    }
+    if responses && event_name(&lines) == Some("error") {
+        return Err(invalid_response().into());
+    }
+    if values.is_empty() || joined.is_empty() || event_name(&lines) == Some("error") {
         return Ok(record.to_vec());
     }
     let mut body: Value = match serde_json::from_str(&joined) {
         Ok(value) => value,
-        Err(_) if key.is_none() => return Ok(record.to_vec()),
+        Err(_) if key.is_none() && !responses => return Ok(record.to_vec()),
         Err(_) => return Err(invalid_response().into()),
     };
+    if responses && (!body.is_object() || body.get("error").is_some() || body["type"] == "error") {
+        return Err(invalid_response().into());
+    }
     // Responses lifecycle events nest the receipt ID; item IDs are unrelated.
     let receipt = if responses {
+        if body.get("response").is_some()
+            && body["response"]["id"].as_str().is_none_or(str::is_empty)
+        {
+            return Err(invalid_response().into());
+        }
         &body["response"]
     } else if messages {
         if body["type"] == "message_start" {

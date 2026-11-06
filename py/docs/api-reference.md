@@ -140,6 +140,10 @@ SDK client does not close the owner or discard receipts. Keep the owner open
 while sending requests and verifying responses, and consume streams completely
 before calling `verify_response()`.
 
+In Chat and Responses SSE streams, `[DONE]` stops event processing. The SDK
+still captures the full response to EOF for signature verification and OHTTP
+authentication.
+
 | `VerifiedCompletionResult` field | Type | Description |
 | --- | --- | --- |
 | `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, Messages ID, or System One decision ID. |
