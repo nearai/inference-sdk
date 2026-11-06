@@ -17,6 +17,7 @@ import {
 } from '../utils/errors';
 import {
   getSseData,
+  getSseDataRecords,
   type SseLine,
   splitSseLines,
   takeCompleteSseRecords,
@@ -91,12 +92,7 @@ export function parseE2eeChatStreamChunk({
 }
 
 /**
- * Encrypt protocol-defined request fields without mutating the caller's
- * object. Other Chat JSON is preserved for the Gateway and model to handle.
- *
- * E2EE requests always opt into the protocol's all-fields extension. That
- * extension is intentionally selective: it enables additional documented
- * fields but does not turn arbitrary JSON into ciphertext.
+ * Encrypt supported Chat request fields using the verified model key.
  */
 export function encryptE2eeChatRequest({
   body,
@@ -162,6 +158,13 @@ export function createE2eeChatSseTransform({
   const decoder = new TextDecoder('utf-8', { fatal: true });
   const encoder = new TextEncoder();
   let pending = '';
+  let done = false;
+  const transformRecord = (record: string, separator: string): string => {
+    done ||= getSseDataRecords(record).includes('[DONE]');
+    return done
+      ? record + separator
+      : transformSseRecord({ record, separator, clientKeyPair });
+  };
 
   return new TransformStream({
     transform(chunk, controller) {
@@ -171,13 +174,7 @@ export function createE2eeChatSseTransform({
         pending = complete.pending;
         for (const record of complete.records) {
           controller.enqueue(
-            encoder.encode(
-              transformSseRecord({
-                record: record.value,
-                separator: record.separator,
-                clientKeyPair,
-              }),
-            ),
+            encoder.encode(transformRecord(record.value, record.separator)),
           );
         }
       } catch (cause) {
@@ -188,15 +185,7 @@ export function createE2eeChatSseTransform({
       try {
         pending += decoder.decode();
         if (pending.length > 0) {
-          controller.enqueue(
-            encoder.encode(
-              transformSseRecord({
-                record: pending,
-                separator: '',
-                clientKeyPair,
-              }),
-            ),
-          );
+          controller.enqueue(encoder.encode(transformRecord(pending, '')));
         }
       } catch (cause) {
         throw asSseResponseError(cause);
