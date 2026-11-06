@@ -201,8 +201,7 @@ Direct clients are experimental. Use Gateway clients for production and an
 endpoint-accepted credential for direct inference.
 
 All direct examples verify every returned model attestation; an endpoint may
-omit other serving instances. Standard HTTPS certificate validation applies,
-while direct TLS fingerprint binding to attestation remains disabled. Integrated
+omit other serving instances. TLS is bound to attested fingerprints by default. Integrated
 clients use E2EE and require response signatures from the selected model signer.
 Standalone direct examples send plaintext over HTTPS and verify exact response
 bytes against the matching attestation group.

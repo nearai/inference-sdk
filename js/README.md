@@ -150,9 +150,8 @@ for transport configuration and receipt verification.
   Your application verifies the model key and response signature separately.
 - **Direct model endpoints (experimental):** `DirectInferenceClient` and
   `DirectAttestationClient` connect to model endpoints without Gateway
-  verification. They are not recommended for production in either entry point;
-  direct TLS fingerprint binding is currently disabled. Use Gateway clients
-  for production and review the [direct-endpoint limitations](./docs/verification-guide.md#use-a-direct-model-endpoint).
+  verification. In Node, `DirectInferenceClient` pins verified model TLS
+  fingerprints by default. See the [Direct guide](./docs/verification-guide.md#use-a-direct-model-endpoint).
 
 ## Documentation
 

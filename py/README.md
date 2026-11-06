@@ -143,10 +143,9 @@ can keep their current dependencies and calls.
   request and supplies its JSON/SSE decryptor. Key verification and response
   signature verification remain the application's responsibility.
 - **Direct endpoints (experimental):** `DirectInferenceClient` and
-  `DirectAttestationClient` connect without Gateway verification. Direct TLS
-  fingerprint requests are disabled pending complete fleet coverage; normal HTTPS
-  verification remains enabled. Use Gateway clients for production. See
-  [direct-endpoint limitations](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
+  `DirectAttestationClient` connect without Gateway verification.
+  `DirectInferenceClient` pins verified model TLS fingerprints by default. See
+  the [Direct guide](https://github.com/nearai/inference-sdk/blob/main/py/docs/verification-guide.md#direct-model-endpoints).
 
 ## Documentation
 

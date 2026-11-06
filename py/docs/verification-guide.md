@@ -453,9 +453,9 @@ matching = verify_direct_model_response(
 ```
 
 The top-level serving report must also occur in `all_attestations`. Direct fetch
-currently requests `include_tls_fingerprint=false`, matching JavaScript. When
-verifying caller-supplied TLS-bound evidence, every fingerprint is authenticated
-by its own quote and the serving fingerprint must match the observed TLS peer.
+requests `include_tls_fingerprint=true` by default. Each fingerprint is
+authenticated by its own quote, and the serving fingerprint must match the
+observed TLS peer. Pass `include_spki_fingerprint=False` to fetch without TLS evidence.
 The returned `spki_fingerprints` can be used with `create_pinned_tls_client`.
 
 Known endpoint limitations are tracked in [cloud-api#1087](https://github.com/nearai/cloud-api/issues/1087):

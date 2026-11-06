@@ -129,8 +129,7 @@ request; incomplete or failed streams are not registered for verification.
 The [direct OpenAI example](../examples/example-go/direct/chat-completions-with-openai-sdk/main.go) uses
 `NewDirectInferenceClient` with the same OpenAI HTTP adapter for encrypted JSON
 and streaming Chat. Direct endpoints are experimental: they omit Gateway
-verification and do not bind direct TLS identity to attestation. Normal HTTPS
-validation remains enabled. Use Gateway clients for production.
+verification and pin verified model TLS fingerprints by default.
 
 The Gateway adapter accepts POSTs to its configured `chat/completions` and
 `responses` and `messages` endpoints. See [Responses](./docs/verification-guide.md#responses-api)
