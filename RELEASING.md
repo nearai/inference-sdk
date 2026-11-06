@@ -189,10 +189,11 @@ If post-tag verification fails, the module tag is already public; leave it
 immutable. Rerun the failed jobs to retry proxy verification against the same
 commit. Code changes require a new version.
 
-No registry token or native-library upload is needed. Consumers install with:
+No registry token or native-library upload is needed. Install the released version
+by replacing `<version>` below with the workflow's SemVer input:
 
 ```sh
-go get github.com/nearai/inference-sdk/go
+go get 'github.com/nearai/inference-sdk/go@v<version>'
 ```
 
 Package documentation is indexed by pkg.go.dev from the public Go module proxy.

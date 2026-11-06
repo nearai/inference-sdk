@@ -101,7 +101,8 @@ SDK for streaming. Close the client and response bodies when finished.
 
 Call `client.Verify(ctx, model)` to verify a deployment before sending a prompt.
 Use deployment and image provenance policies to restrict accepted deployments.
-For models without model attestation, disable E2EE to use Gateway-only verification.
+For models without model attestation, use Gateway-only verification with E2EE
+disabled and no model attestation policy or deployment checks configured.
 
 ## Documentation
 
