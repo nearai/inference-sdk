@@ -187,14 +187,18 @@ describe.each(['ed25519', 'ecdsa'] as const)(
       ).rejects.toMatchObject({ failure: { code: 'e2ee.decryption_failed' } });
     });
 
-    test.each([
-      { name: 'LF', lineEnding: '\n', separator: '\n\n' },
-      { name: 'CRLF', lineEnding: '\r\n', separator: '\r\n\r\n' },
-      { name: 'CR', lineEnding: '\r', separator: '\r\r' },
-      { name: 'mixed', lineEnding: '\r', separator: '\n\n' },
-    ])(
-      'decrypts multiline SSE with $name endings split across individual bytes and preserves control records',
-      async ({ lineEnding, separator }) => {
+    test.each(
+      [
+        { name: 'LF', lineEnding: '\n', separator: '\n\n' },
+        { name: 'CRLF', lineEnding: '\r\n', separator: '\r\n\r\n' },
+        { name: 'CR', lineEnding: '\r', separator: '\r\r' },
+        { name: 'mixed', lineEnding: '\r', separator: '\n\n' },
+      ].flatMap((endings) =>
+        [false, true].map((fragmented) => ({ ...endings, fragmented })),
+      ),
+    )(
+      'decrypts multiline SSE with $name endings and preserves controls and post-DONE bytes (fragmented=$fragmented)',
+      async ({ lineEnding, separator, fragmented }) => {
         const { modelKey } = createModelKeys(signingAlgo);
         const prepared = await prepareE2eeChatRequest({
           request: chatRequest({
@@ -226,11 +230,18 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           `data: {"id":${JSON.stringify(chunk.id)},`,
           `data: "choices":${JSON.stringify(chunk.choices)}}`,
         ].join(lineEnding);
-        const input = `${prefix}${controls}${data}${separator}${suffix}`;
+        const input = Uint8Array.from([
+          ...new TextEncoder().encode(
+            `${prefix}${controls}${data}${separator}${suffix}`,
+          ),
+          0xff,
+          0xfe,
+        ]);
         const source = new ReadableStream<Uint8Array>({
           start(controller) {
-            for (const byte of new TextEncoder().encode(input)) {
-              controller.enqueue(Uint8Array.of(byte));
+            const chunkSize = fragmented ? 1 : input.length;
+            for (let offset = 0; offset < input.length; offset += chunkSize) {
+              controller.enqueue(input.slice(offset, offset + chunkSize));
             }
             controller.close();
           },
@@ -255,8 +266,14 @@ describe.each(['ed25519', 'ecdsa'] as const)(
           ...chunk,
           choices: [{ delta: { content: utf8Sample } }],
         };
-        expect(await response.text()).toBe(
-          `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,
+        expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+          Uint8Array.from([
+            ...new TextEncoder().encode(
+              `${prefix}${controls}data: ${JSON.stringify(decryptedChunk)}${separator}${suffix}`,
+            ),
+            0xff,
+            0xfe,
+          ]),
         );
       },
     );

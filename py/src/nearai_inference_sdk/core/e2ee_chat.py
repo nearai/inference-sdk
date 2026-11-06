@@ -151,27 +151,40 @@ async def decrypt_e2ee_chat_sse(
     """Preserve SSE controls and boundaries, even across split UTF-8 or CRLF."""
 
     decoder = codecs.getincrementaldecoder('utf-8')()
-    pending = ''
+    pending = b''
+    text = ''
     done = False
     try:
         async for chunk in source:
-            pending += decoder.decode(chunk)
-            complete = take_complete_sse_records(pending)
-            pending = complete.pending
+            if done:
+                yield chunk
+                continue
+            decoded = len(pending)
+            pending += chunk
+            # ASCII framing with one character per byte preserves raw offsets.
+            complete = take_complete_sse_records(pending.decode('latin1'))
+            consumed = 0
             for record in complete.records:
-                done = done or '[DONE]' in get_sse_data_records(record.value)
-                yield (
-                    record.value + record.separator
-                    if done
-                    else _transform_sse_record(
-                        record.value, record.separator, client_key_pair
-                    )
+                end = consumed + len(record.value) + len(record.separator)
+                text += decoder.decode(pending[decoded:end])
+                decoded = end
+                if '[DONE]' in get_sse_data_records(text):
+                    done = True
+                    yield pending[consumed:]
+                    pending = b''
+                    text = ''
+                    break
+                yield _transform_sse_record(
+                    text[: -len(record.separator)], record.separator, client_key_pair
                 ).encode()
-        pending += decoder.decode(b'', final=True)
-        if pending:
-            yield (
-                pending if done else _transform_sse_record(pending, '', client_key_pair)
-            ).encode()
+                text = ''
+                consumed = end
+            if not done:
+                text += decoder.decode(pending[decoded:])
+                pending = pending[consumed:]
+        text += decoder.decode(b'', final=True)
+        if text:
+            yield _transform_sse_record(text, '', client_key_pair).encode()
     except UnicodeDecodeError as cause:
         raise _invalid_response('Chat Completions SSE response', cause) from cause
 

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 // Paths are the public wire-field contract, independent of the SDK traversal.
@@ -146,12 +147,16 @@ func TestE2EEChatFieldContract(t *testing.T) {
 					encoded, _ := json.Marshal(payload)
 					var visible []byte
 					if stream {
-						source := io.NopCloser(bytes.NewReader(append(append([]byte("event: message\nid: event-1\ndata: "), encoded...), []byte("\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n")...)))
-						reader := prepared.DecryptSSE(source)
-						visible, err = io.ReadAll(reader)
-						reader.Close()
-						if err == nil {
-							if !bytes.Contains(visible, []byte("event: message\nid: event-1\n")) || !bytes.HasSuffix(visible, []byte("data: [DONE]\n\ndata: ignored after [DONE]\n\n")) {
+						tail := []byte("\n\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n\xff\xfe")
+						wire := append(append([]byte("event: message\nid: event-1\ndata: "), encoded...), tail...)
+						for _, source := range []io.Reader{bytes.NewReader(wire), iotest.OneByteReader(bytes.NewReader(wire))} {
+							reader := prepared.DecryptSSE(io.NopCloser(source))
+							visible, err = io.ReadAll(reader)
+							reader.Close()
+							if err != nil {
+								t.Fatal(err)
+							}
+							if !bytes.Contains(visible, []byte("event: message\nid: event-1\n")) || !bytes.HasSuffix(visible, tail) {
 								t.Fatal("SSE controls changed")
 							}
 							data, _ := sseData(bytes.SplitN(visible, []byte("\n\n"), 2)[0])

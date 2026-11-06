@@ -845,29 +845,34 @@ mod tests {
     #[tokio::test]
     async fn decrypts_fragmented_sse_and_preserves_controls_and_newlines() {
         use futures_util::StreamExt;
-        let (key, model) = fixed_key(SigningAlgo::Ed25519);
+        let (_, model) = fixed_key(SigningAlgo::Ed25519);
         let ciphertext = encrypt("🌍", &model).unwrap();
         let source=format!(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: {{\"id\":\"chat-1\",\r\ndata: \"choices\":[{{\"delta\":{{\"content\":\"{ciphertext}\"}}}}]}}\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n");
-        let raw = source.as_bytes().to_vec();
-        let input = Box::pin(futures_util::stream::iter(
-            raw.into_iter().map(|b| Ok(bytes::Bytes::from(vec![b]))),
-        ));
-        let prepared = PreparedE2eeChatRequest {
-            request: reqwest::Request::new(
-                reqwest::Method::POST,
-                "https://example.com".parse().unwrap(),
-            ),
-            key,
-        };
-        let mut output = prepared.decrypt_sse(input);
-        let mut bytes = Vec::new();
-        while let Some(chunk) = output.next().await {
-            bytes.extend_from_slice(&chunk.unwrap());
+        let raw = [source.as_bytes(), &[0xff, 0xfe]].concat();
+        for chunk_size in [1, raw.len()] {
+            let prepared = PreparedE2eeChatRequest {
+                request: reqwest::Request::new(
+                    reqwest::Method::POST,
+                    "https://example.com".parse().unwrap(),
+                ),
+                key: fixed_key(SigningAlgo::Ed25519).0,
+            };
+            let chunks: Vec<_> = raw
+                .chunks(chunk_size)
+                .map(|chunk| Ok(bytes::Bytes::copy_from_slice(chunk)))
+                .collect();
+            let input = Box::pin(futures_util::stream::iter(chunks));
+            let mut output = prepared.decrypt_sse(input);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = output.next().await {
+                bytes.extend_from_slice(&chunk.unwrap());
+            }
+            assert!(bytes.ends_with(&[0xff, 0xfe]));
+            let output = std::str::from_utf8(&bytes[..bytes.len() - 2]).unwrap();
+            assert!(output.starts_with(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: "));
+            assert!(output.contains("🌍"));
+            assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n"));
         }
-        let output = String::from_utf8(bytes).unwrap();
-        assert!(output.starts_with(": heartbeat\r\nid: event-1\r\nevent: message\r\ndata: "));
-        assert!(output.contains("🌍"));
-        assert!(output.ends_with("\r\n\r\ndata: [DONE]\n\ndata: ignored after [DONE]\n\n"));
     }
     #[test]
     fn v3_shared_vectors_and_strict_responses() {
