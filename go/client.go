@@ -72,7 +72,6 @@ func gatewayPreflight(ctx context.Context, c *inferenceCore, s *session, model s
 	o := c.options
 	opts := o.ModelVerification
 	var fetchedModelAttestations FetchedModelAttestations
-	transport := s.transport
 	fetched, e := c.api.FetchGatewayAttestation(ctx, FetchOptions{SigningAlgo: o.SigningAlgo, DisableTLSBinding: disableTLSBinding})
 	if e != nil {
 		return FetchedModelAttestations{}, e
@@ -86,40 +85,9 @@ func gatewayPreflight(ctx context.Context, c *inferenceCore, s *session, model s
 	}
 	s.gateway = &verified
 	if !disableTLSBinding {
-		base, ok := transport.(*http.Transport)
-		if !ok {
-			return FetchedModelAttestations{}, detail("api.invalid_input", "reason", "TLS pinning requires *http.Transport")
+		if err := c.pinSession(s, []string{verified.SPKIFingerprint}); err != nil {
+			return FetchedModelAttestations{}, err
 		}
-		c.mu.Lock()
-		if c.closed {
-			c.mu.Unlock()
-			return FetchedModelAttestations{}, failure("api.client_closed", nil)
-		}
-		pinned := c.transports[verified.SPKIFingerprint]
-		if pinned == nil {
-			pinned, e = NewPinnedTransport(base, verified.SPKIFingerprint)
-			if e != nil {
-				c.mu.Unlock()
-				return FetchedModelAttestations{}, e
-			}
-			// Bound pools across Gateway key rotations. Eviction closes idle
-			// sockets; sessions still holding a pool may finish normally.
-			if len(c.transports) >= 16 {
-				for key, old := range c.transports {
-					old.CloseIdleConnections()
-					delete(c.transports, key)
-					break
-				}
-			}
-			c.transports[verified.SPKIFingerprint] = pinned
-		}
-		c.mu.Unlock()
-		s.transport = pinned
-		api := *c.api
-		client := *c.api.http
-		client.Transport = pinned
-		api.http = &client
-		s.api = &api
 	}
 	if e := c.configureOHTTP(s, fetched.OHTTPAttestation, verified.Signer); e != nil {
 		return FetchedModelAttestations{}, e

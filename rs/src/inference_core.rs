@@ -22,7 +22,7 @@ use std::{
 use tokio::sync::Mutex;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, InferenceError>> + Send>>;
-/// Consume the entire body (including the EOF after SSE [DONE]) before verification.
+/// Consume the entire response body before verification.
 pub struct InferenceResponse {
     pub status: StatusCode,
     pub headers: HeaderMap,
@@ -87,11 +87,11 @@ impl Default for CoreOptions {
 #[derive(Clone)]
 pub(crate) enum SessionProvider {
     Gateway(GatewayVerificationOptions),
-    Direct,
+    Direct { include_spki_fingerprint: bool },
 }
 impl SessionProvider {
     fn is_direct(&self) -> bool {
-        matches!(self, Self::Direct)
+        matches!(self, Self::Direct { .. })
     }
 }
 #[derive(Clone)]
@@ -197,7 +197,7 @@ impl InferenceCore {
     pub(crate) fn base_url(&self) -> &str {
         &self.inner.options.base_url
     }
-    /// Release captured responses across all clones; keep the client reusable.
+    /// Clear captured response verification records.
     pub(crate) async fn clear_response_cache(&self) {
         let mut state = self.inner.state.lock().await;
         state.response_generation = state.response_generation.wrapping_add(1);
@@ -226,8 +226,11 @@ impl InferenceCore {
                 let provider = self.inner.provider.clone();
                 let future = async move {
                     match provider {
-                        SessionProvider::Direct => {
-                            crate::direct::create_session(&owned, options).await
+                        SessionProvider::Direct {
+                            include_spki_fingerprint,
+                        } => {
+                            crate::direct::create_session(&owned, options, include_spki_fingerprint)
+                                .await
                         }
                         SessionProvider::Gateway(verification) => {
                             crate::inference::create_session(&owned, options, verification).await

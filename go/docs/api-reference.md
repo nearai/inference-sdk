@@ -62,7 +62,7 @@ semantics, streaming, and supported privacy options.
 | `SigningAlgo` | `Ed25519`; `ECDSA` is also supported. |
 | `E2EE` | `false` for Gateway and Direct; set it to `true` to enable encryption. |
 | `OHTTP` | `false`; requires Ed25519. Independent of E2EE. |
-| `DisableTLSBinding` | `false` for Gateway; direct clients disable attested TLS binding. |
+| `DisableTLSBinding` | `false` for both clients. Set `true` to disable attested TLS binding. |
 | `AttestationTTL`, `ResponseTTL` | Nil means one hour. Pointer to zero disables reuse/retention; negative durations are invalid. |
 | `GatewayVerification`, `ModelVerification` | Default quote/GPU verifiers and attestation policy. Optional deployment callbacks. |
 | `DeploymentPolicy` | Optional model-aware admission callback, after `ModelVerification.DeploymentVerifier`. |
@@ -156,7 +156,7 @@ func FindModelAttestationsForSignature(items []VerifiedAttestation, sig Completi
 // Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
-func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
+func NewPinnedTransport(base *http.Transport, fingerprints ...string) (*http.Transport, error)
 func CreateTDXQuoteVerifier(pccsURL string) QuoteVerifier
 func CreateGPUEvidenceVerifier(o GPUVerifierOptions) GPUEvidenceVerifier
 ```
@@ -415,8 +415,9 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct TLS identity binding is experimental and disabled in all clients.
+// Direct clients verify attested TLS identities by default.
 type DirectInferenceOptions struct {
+	DisableTLSBinding bool
 	ClientOptions
 	SigningAlgo       SigningAlgo
 	E2EE              bool
@@ -453,11 +454,11 @@ type VerifiedDirectCompletionResult struct {
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
 `NewDirectInferenceClient(DirectInferenceOptions)` creates a `DirectInferenceClient`
 and requires an explicit base URL. Its options configure Direct inference without
-Gateway verification or Gateway TLS-binding settings.
+Gateway verification settings.
 Both clients leave E2EE disabled unless their `E2EE` option is set to `true`.
-Direct clients are experimental: they do not verify a Gateway, and direct TLS
-attestation binding is disabled, matching JavaScript/Python's current direct-endpoint limitation.
-Normal HTTPS verification still applies.
+Direct clients are experimental and verify the serving TLS peer and every returned
+report. Subsequent requests are pinned to the verified fingerprints sharing the
+selected model signer.
 
 Always close the client and each HTTP response body. `Close` cancels shared
 verification work and active requests, clears retained data, and closes owned
@@ -467,8 +468,7 @@ idle connections. Caller-supplied HTTP clients/transports are borrowed.
 Gateway clients return `AttestationVerificationResult` with Gateway evidence,
 all model reports, and `VerifiedAt`. Direct clients return
 `DirectAttestationVerificationResult` with all reports in `Attestations`, the
-preflight endpoint's `ServingAttestation`, and `VerifiedAt`. Direct TLS binding
-is disabled, so `SPKIFingerprints` is empty. The serving report identifies the
+preflight endpoint's `ServingAttestation`, and `VerifiedAt`. `SPKIFingerprints` contains the verified TLS identities. The serving report identifies the
 preflight endpoint, not the instance serving a later completion. Cache hits
 preserve the original timestamp.
 

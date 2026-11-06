@@ -501,14 +501,13 @@ if err != nil {
 defer client.Close()
 ```
 
-The Chat, OpenAI adapter, streaming, and `VerifyResponse` APIs are the same.
-Set `E2EE: true` to enable encryption. Direct clients omit
-Gateway verification and do not bind TLS identity to attestation; normal HTTPS
-validation still applies. They are experimental and not recommended for
-production. Use Gateway clients for production integrations.
+`DirectInferenceClient` connects to a model endpoint and verifies every returned
+model report. It supports Chat, streaming, OHTTP, and OpenAI integration.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
-Direct responses use `VerifiedDirectCompletionResult` with all matching deployments
-in `Attestations`: a shared signing key cannot identify one serving instance.
+`VerifyResponse` returns `VerifiedDirectCompletionResult` with all matching model
+reports in `Attestations`. Use `VerifyDirectModelResponse` for manual verification.
 
 ## Manual verification
 

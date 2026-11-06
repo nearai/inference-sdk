@@ -239,7 +239,15 @@ async fn optional_keys_are_omitted_from_bootstrap_but_retained_for_model_reports
                     )
                     .unwrap()
                     .with_headers(headers);
-                    client.fetch_model_attestations(None, None).await.unwrap();
+                    client
+                        .fetch_model_attestations_with_options(
+                            nearai_inference_sdk::DirectAttestationFetchOptions {
+                                include_spki_fingerprint: false,
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .unwrap();
                     client
                         .fetch_completion_signature("test", None)
                         .await
@@ -376,12 +384,19 @@ fn plural_selection_preserves_shared_signer_reports_and_excludes_other_keys() {
             signing_algo,
             signing_address: "cd".repeat(bytes),
         });
-        let candidates = vec![first.clone(), other, second, first];
+        let other_algo = verified_model_attestation_for_signer(SigningIdentity {
+            signing_algo: match signing_algo {
+                SigningAlgo::Ed25519 => SigningAlgo::Ecdsa,
+                SigningAlgo::Ecdsa => SigningAlgo::Ed25519,
+            },
+            signing_address: "ab".repeat(if bytes == 32 { 20 } else { 32 }),
+        });
+        let candidates = vec![first.clone(), other, other_algo, second, first];
         let matching_attestations =
             find_model_attestations_for_signature(&candidates, &signature).unwrap();
         assert_eq!(
             matching_attestations,
-            vec![&candidates[0], &candidates[2], &candidates[3]]
+            vec![&candidates[0], &candidates[3], &candidates[4]]
         );
         assert!(matches!(
             find_model_attestations_for_signature(&[], &signature),

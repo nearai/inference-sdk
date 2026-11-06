@@ -82,21 +82,18 @@ stream before passing `message_start.message.id` to `verify_response`.
 | --- | --- | --- | --- |
 | `api_key` | `str \| None` | `None` | Gateway bearer credential; custom authentication may use `headers`. |
 | `base_url` | `str` | `https://cloud-api.near.ai/v1` | Gateway or compatible aggregator HTTP(S) base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | `None` | Static request headers. Gateway and direct reports omit `Authorization`, `api-key`, and `x-api-key`. Other requests use configured authentication; an explicit `api_key` overrides Authorization. Per-request or external OpenAI authorization does not override this configuration. |
+| `headers` | `Mapping[str, str] \| None` | `None` | Additional request headers; use `api_key` for bearer authentication. |
 | `signing_algo` | `SigningAlgo` | `'ed25519'` | Algorithm for attestation, E2EE, model routing, and response signatures. With OHTTP enabled, only `'ed25519'` is accepted. |
 | `e2ee` | `bool` | `False` | Encrypt supported Chat fields to a verified model key. Requires model attestation. |
 | `ohttp` | `bool` | `False` | Encapsulate Chat, Responses, and Messages requests and responses through `/ohttp` using authenticated Gateway key configuration. Independent of field-level E2EE. |
-| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Reuse successful verification per model across `verify()`, Chat, Responses, Messages, and System One for this long; `0` verifies each request. |
-| `response_cache_time_to_live_ms` | `float` | `3600000` | Retain response records for this long after the response finishes. |
+| `attestation_cache_time_to_live_ms` | `float` | `3600000` | Deployment verification cache duration; `0` verifies each request. |
+| `response_cache_time_to_live_ms` | `float` | `3600000` | Response retention after body completion; `0` disables retention. |
 | `gateway_verification` | `GatewayVerificationOptions \| None` | `None` | Gateway evidence, TLS, policy, and verifier configuration. |
 | `model_verification` | `ModelVerificationOptions \| None` | `None` | Model policy and verifier configuration. |
 | `deployment_policy` | `DeploymentPolicy \| None` | `None` | Optional callback `(model, deployment)` that rejects unapproved model deployments by raising. May be asynchronous. |
 
-Gateway verification always runs. Catalog metadata selects NEAR model
-verification for `provider_type='vllm'` and `attestation_supported=True`; other
-models use Incognito verification. `e2ee=True`, a model policy, or a deployment
-callback requires model evidence. Invalid metadata and failed verification stop
-inference. The catalog decision shares the attestation cache's lifetime.
+Models without NEAR model attestation use Gateway-only (Incognito) verification.
+E2EE and model deployment policies require model attestation.
 
 ### Verification options
 
@@ -268,7 +265,7 @@ same common options as `InferenceClient`, with the following differences:
 | --- | --- |
 | `base_url` | Required first argument: the model endpoint's API URL. |
 | `api_key` | Optional keyword argument: a credential accepted by the endpoint. |
-| `gateway_verification` | Not available; there is no Gateway workflow. |
+| `include_spki_fingerprint` | Defaults to `True`. Set `False` for an application proxy or HTTP endpoint. |
 | `model_verification` | `ModelVerificationOptions`: model `policy` and `verifiers`. `DirectModelVerificationOptions` is an alias. |
 | `deployment_policy` | Applied to every supplied direct model report. |
 | `verify(model)` | Returns `DirectAttestationVerificationResult` after verifying every supplied direct report without sending Chat; shares Chat's cache. |
@@ -276,21 +273,21 @@ same common options as `InferenceClient`, with the following differences:
 
 E2EE defaults to `False` for both clients. Set `e2ee=True` to enable it.
 
-`DirectAttestationClient(base_url, *, api_key=None, headers=None)` exposes:
+`DirectAttestationClient(base_url, *, api_key=None, headers=None, http_client=None)`
+exposes the following methods. Use `http_client` to supply a pinned signature transport.
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `fetch_model_attestations` | `signing_algo=None`, `signing_address=None` (keyword-only) | `FetchedDirectModelAttestations` |
+| `fetch_model_attestations` | `signing_algo=None`, `signing_address=None`, `include_spki_fingerprint=True` (keyword-only) | `FetchedDirectModelAttestations` |
 | `fetch_completion_signature` | `completion_id`, keyword-only `signing_algo=None` | `CompletionSignature` with kind `provider_tee` |
 
-Direct fetch requests no TLS fingerprint at present. Normal HTTPS certificate
-validation remains enabled. The raw report's top-level serving evidence must
-also occur in `all_attestations`, compared by content.
+Direct clients are experimental. Requests use the verified model TLS fingerprints
+by default.
 
 | Type | Field | Description |
 | --- | --- | --- |
 | `DirectModelAttestation` | Inherited `ModelAttestation` fields | Model quote, signer, nonce, deployment, GPU evidence, and optional public key. |
-| | `model_name: str`, `instance_id: str \| None` | Endpoint metadata, not additional quote-authenticated claims. |
+| | `model_name: str`, `instance_id: str \| None` | Endpoint-reported model and instance metadata. |
 | | `spki_fingerprint: str \| None` | Reported TLS SPKI fingerprint. |
 | `DirectClientBinding` | `nonce: str`, `spki_fingerprint: str \| None` | Fresh client nonce and optional observed TLS fingerprint. |
 | `FetchedDirectModelAttestations` | `serving_attestation`, `attestations` | Top-level serving report and the full tuple of supplied direct reports. |
@@ -301,9 +298,9 @@ also occur in `all_attestations`, compared by content.
 | | `tls_binding: DirectTlsBinding` | `none` or `attested`; only the serving report is compared with the observed peer. |
 | | `spki_fingerprints: tuple[str, ...]` | Distinct fingerprints authenticated by the verified reports, in response order. |
 | `DirectAttestationVerificationResult` | Inherited `VerifiedDirectModelAttestations` fields | Complete verified report set, not just the signer group selected for Chat. |
-| | `verified_at: int` | Unix time in milliseconds when verification completed; unchanged on cache hits. |
+| | `verified_at: int` | Unix time in milliseconds when verification completed. |
 | `VerifiedDirectCompletionResult` | `id`, `signature_kind`, `signature` | Completion ID and verified `provider_tee` signature. |
-| | `attestations` | Tuple of verified reports sharing its signer; this does not identify one CVM. |
+| | `attestations` | All verified reports sharing the request's selected model signer. |
 
 `verify_direct_model_attestation` accepts one report, a `ModelClientBinding`, and
 the same policy/verifier options as `verify_model_attestation`.
@@ -382,24 +379,18 @@ The Gateway's report and signature endpoints have different defaults.
 | --- | --- | --- | --- | --- |
 | `api_key` | `str \| None` | No | `None` | Bearer token for model reports, metadata, and signature requests. |
 | `base_url` | `str` | No | `https://cloud-api.near.ai/v1` | Absolute HTTP(S) Gateway base URL, without a query or fragment. |
-| `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers, including aggregator authentication. |
+| `headers` | `Mapping[str, str] \| None` | No | `None` | Additional request headers; use `api_key` for bearer authentication. |
+| `http_client` | `httpx.AsyncClient \| None` | No | `None` | HTTP transport for model reports, metadata, and signature requests. |
 
-Use `AttestationClient()` to fetch attestation without credentials. Gateway and
-direct attestation requests omit `Authorization`, `api-key`, and `x-api-key`,
-including values supplied in `headers`. Other custom headers are preserved.
-
-Model reports through the Gateway use the client's configured API key or authentication
-headers. Listed models can be queried without credentials; unlisted models require a
-key for an organization granted access. With standalone evidence clients, verify the
-Gateway before fetching an authenticated model report. Integrated clients perform
-this ordering automatically.
+Credentials are optional for public evidence. Configure `api_key` or `headers`
+when the endpoint requires authentication. Use `http_client` to supply a pinned
+transport after Gateway verification.
 
 `AttestationClient` construction and methods, plus
 the model-selection helpers, raise `ApiError` for invalid helper
 input as well as Gateway and selection failures. The `verify_*` functions
-raise `VerificationError` instead. Handle each operation at its own boundary;
-the client and selection helpers never require an `ApiError` versus
-`VerificationError` dispatch after catching an error.
+raise `VerificationError`. A supplied pinned HTTP client also propagates TLS
+binding failures as `VerificationError`.
 
 ### Completion-signature methods
 

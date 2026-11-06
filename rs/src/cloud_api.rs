@@ -82,7 +82,10 @@ impl AttestationClient {
         self
     }
 
-    pub(crate) fn with_http_client(mut self, client: Client) -> Self {
+    /// Use this HTTP client for evidence and signatures. Use
+    /// [`crate::create_pinned_tls_client`] to pin requests to verified TLS fingerprints.
+    /// Custom clients need `tls_info(true)` when fetching TLS-bound attestations.
+    pub fn with_http_client(mut self, client: Client) -> Self {
         self.client = client.clone();
         self.gateway_client = client;
         self
@@ -117,12 +120,17 @@ impl AttestationClient {
         path: &str,
         query: &[(&str, String)],
         resource: ApiResource,
-    ) -> Result<serde_json::Value, ApiError> {
+        capture_peer_spki: bool,
+    ) -> Result<(serde_json::Value, Option<String>), ApiError> {
         let mut url = self.endpoint(path)?;
         url.query_pairs_mut()
             .extend_pairs(query.iter().map(|(k, v)| (*k, v.as_str())));
-        let response = get_cloud_api_response(self, url, resource, None, false, false).await?;
-        decode_wire_response(&response.body, resource, path)
+        let response =
+            get_cloud_api_response(self, url, resource, None, capture_peer_spki, false).await?;
+        Ok((
+            decode_wire_response(&response.body, resource, path)?,
+            response.peer_spki_fingerprint,
+        ))
     }
 
     pub(crate) async fn direct_signature(
@@ -350,8 +358,7 @@ impl AttestationClient {
 }
 
 /// Return every verified model report sharing a `provider_tee` signature's key.
-/// Shared keys identify a signer group, not an individual serving instance.
-/// This function performs no response-signature verification itself.
+/// Use [`crate::verify_model_response`] to verify the response signature.
 pub fn find_model_attestations_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,
@@ -378,10 +385,8 @@ pub fn find_model_attestations_for_signature<'a>(
     Ok(matching)
 }
 
-/// Select a unique verified report for a signature's signer.
+/// Select exactly one verified report for a signature's signer.
 /// Prefer [`find_model_attestations_for_signature`] for shared-key deployments.
-/// This compatibility helper rejects multiple matches rather than attributing
-/// a response to an arbitrary instance; it does not verify the signature.
 pub fn find_model_attestation_for_signature<'a>(
     attestations: &'a [VerifiedModelAttestation],
     signature: &CompletionSignature,

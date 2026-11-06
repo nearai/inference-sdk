@@ -249,23 +249,15 @@ func DisplayChat(raw []byte, stream bool) error {
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return err
 	}
-	events := []map[string]any{event}
-	text := ""
-	for _, event := range events {
-		choices, _ := event["choices"].([]any)
-		if len(choices) == 0 {
-			continue
-		}
-		choice, _ := choices[0].(map[string]any)
-		key := "message"
-		if stream {
-			key = "delta"
-		}
-		message, _ := choice[key].(map[string]any)
-		content, _ := message["content"].(string)
-		text += content
+	choices, _ := event["choices"].([]any)
+	if len(choices) == 0 {
+		fmt.Println()
+		return nil
 	}
-	fmt.Println(text)
+	choice, _ := choices[0].(map[string]any)
+	message, _ := choice["message"].(map[string]any)
+	content, _ := message["content"].(string)
+	fmt.Println(content)
 	return nil
 }
 
@@ -330,7 +322,7 @@ func newChatExampleClient(c Config, direct, checkImages bool) (chatExampleClient
 }
 
 // RunIntegrated uses the verified transport for both JSON and SSE. Gateway mode
-// applies image provenance policy; direct mode remains experimental without TLS binding.
+// applies image provenance policy; Direct mode remains experimental.
 func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 	client, err := newChatExampleClient(c, direct, true)
 	if err != nil {
@@ -373,7 +365,7 @@ func RunIntegrated(ctx context.Context, c Config, direct bool) error {
 	return nil
 }
 
-// RunBare authenticates reports before selecting an E2EE key, pins Gateway TLS,
+// RunBare authenticates reports before selecting an E2EE key, pins attested TLS,
 // captures exact ciphertext below decryption, and verifies receipts after EOF.
 func RunBare(ctx context.Context, c Config, direct bool) error {
 	opts := nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL}
@@ -426,6 +418,17 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		modelAttestations = verified.Attestations
+		pinned, err := nearai.NewPinnedTransport(transport, verified.SPKIFingerprints...)
+		if err != nil {
+			return err
+		}
+		defer pinned.CloseIdleConnections()
+		transport = pinned
+		opts.HTTPClient = &http.Client{Transport: pinned}
+		api, err = nearai.NewDirectAttestationClient(opts)
+		if err != nil {
+			return err
+		}
 	} else {
 		if len(fetched.Attestations) == 0 {
 			return fmt.Errorf("Gateway returned no model attestations")
@@ -440,14 +443,16 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		fmt.Printf("Model deployments: verified %d.\n", len(modelAttestations))
 	}
 	var selectedModelAttestation *nearai.VerifiedAttestation
-	for i := range modelAttestations {
-		if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
-			selectedModelAttestation = &modelAttestations[i]
-			break
+	if !direct {
+		for i := range modelAttestations {
+			if modelAttestations[i].Signer.SigningAlgo == c.Algo && modelAttestations[i].SigningPublicKey != "" {
+				selectedModelAttestation = &modelAttestations[i]
+				break
+			}
 		}
-	}
-	if !direct && selectedModelAttestation == nil {
-		return fmt.Errorf("no verified model public key")
+		if selectedModelAttestation == nil {
+			return fmt.Errorf("no verified model public key")
+		}
 	}
 	httpClient := &http.Client{
 		Transport:     transport,
@@ -521,7 +526,7 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 			return err
 		}
 		if direct {
-			fmt.Printf("Verified %s ciphertext receipt, stream=%t\n", sig.Kind, stream)
+			fmt.Printf("Verified %s response receipt, stream=%t\n", sig.Kind, stream)
 		} else if sig.Kind == "provider_tee" {
 			// Shared keys identify a report group, not one serving instance.
 			matchingAttestations, err := nearai.FindModelAttestationsForSignature(modelAttestations, sig)

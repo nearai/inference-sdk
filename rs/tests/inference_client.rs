@@ -7,6 +7,7 @@ use futures_util::io::{AsyncReadExt, AsyncWriteExt};
 use futures_util::StreamExt;
 use nearai_inference_sdk::*;
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::{
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -155,7 +156,6 @@ impl Respond for Fixture {
             "/v1/attestation/report" => {
                 let q: std::collections::HashMap<_, _> = r.url.query_pairs().collect();
                 let nonce = &q["nonce"];
-                assert_eq!(q["include_tls_fingerprint"], "false");
                 if self.direct {
                     self.model.fetch_add(1, Ordering::SeqCst);
                     let mut root = self.report(nonce, 7);
@@ -163,7 +163,6 @@ impl Respond for Fixture {
                     if self.alternate_direct_signer {
                         root.as_object_mut().unwrap().remove("signing_public_key");
                     }
-                    let mut value = root.clone();
                     let mut other = self.report(nonce, 7);
                     other["info"]["instance_id"] = json!("other");
                     if self.alternate_direct_signer {
@@ -172,12 +171,33 @@ impl Respond for Fixture {
                             other["signing_address"].as_str().unwrap().to_uppercase()
                         ));
                     }
+                    if q["include_tls_fingerprint"] == "true" {
+                        for (report, pin) in
+                            [(&mut root, "11".repeat(32)), (&mut other, "22".repeat(32))]
+                        {
+                            let signer = hex::decode(
+                                report["signing_address"]
+                                    .as_str()
+                                    .unwrap()
+                                    .trim_start_matches("0X"),
+                            )
+                            .unwrap();
+                            let binding =
+                                sha2::Sha256::digest([signer, hex::decode(&pin).unwrap()].concat());
+                            let data = format!("{}{nonce}", hex::encode(binding));
+                            report["report_data"] = json!(data);
+                            report["intel_quote"] = json!(data);
+                            report["tls_cert_fingerprint"] = json!(pin);
+                        }
+                    }
                     if self.bad_model {
                         other["report_data"] = json!("ff".repeat(64));
                     }
+                    let mut value = root.clone();
                     value["all_attestations"] = json!([root, other]);
                     return ResponseTemplate::new(200).set_body_json(self.with_ohttp(value));
                 }
+                assert_eq!(q["include_tls_fingerprint"], "false");
                 if q.contains_key("model") {
                     let generation = self.model.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(r.headers.get("x-no-aliasing").unwrap(), "true");
@@ -1133,6 +1153,7 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
     })
     .await;
     let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
+        include_spki_fingerprint: false,
         api_key: options.api_key,
         base_url: options.base_url,
         headers: options.headers,
@@ -2381,6 +2402,7 @@ async fn messages_zero_response_ttl_disables_retention() {
 
 fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
     DirectInferenceClientOptions {
+        include_spki_fingerprint: false,
         api_key: options.api_key,
         base_url: options.base_url,
         headers: options.headers,
@@ -2391,5 +2413,54 @@ fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptio
         response_cache_ttl: options.response_cache_ttl,
         model_verification: options.model_verification,
         deployment_policy: options.deployment_policy,
+    }
+}
+
+#[tokio::test]
+async fn direct_tls_verifies_every_report_and_the_serving_peer() {
+    for case in ["valid", "wrong peer", "invalid sibling"] {
+        let (_server, _, options) = setup(Fixture {
+            direct: true,
+            bad_model: case == "invalid sibling",
+            ..Default::default()
+        })
+        .await;
+        let api = DirectAttestationClient::new(&options.base_url, options.api_key.clone())
+            .unwrap()
+            .with_headers(options.headers);
+        let mut fetched = api
+            .fetch_model_attestations(Some(SigningAlgo::Ed25519), None)
+            .await
+            .unwrap();
+        fetched.client_binding.spki_fingerprint =
+            Some(if case == "wrong peer" { "33" } else { "11" }.repeat(32));
+        let result = verify_direct_model_attestations(
+            &fetched,
+            None,
+            ModelAttestationVerifiers {
+                tdx_quote: options.model_verification.tdx_quote.as_deref(),
+                ..Default::default()
+            },
+        )
+        .await;
+        match case {
+            "valid" => {
+                let verified = result.unwrap();
+                assert_eq!(verified.attestations.len(), 2);
+                assert_eq!(
+                    verified.spki_fingerprints,
+                    ["11".repeat(32), "22".repeat(32)]
+                );
+                assert!(matches!(
+                    verified.tls_binding,
+                    GatewayTlsBinding::Attested { .. }
+                ));
+            }
+            "wrong peer" => assert_eq!(
+                result.unwrap_err().code(),
+                "binding.spki_fingerprint_mismatch"
+            ),
+            _ => assert_eq!(result.unwrap_err().code(), "binding.report_data_mismatch"),
+        }
     }
 }

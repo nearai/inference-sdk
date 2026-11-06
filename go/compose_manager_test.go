@@ -5,11 +5,12 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -186,89 +187,63 @@ func TestComposeManagerImagePolicyAndProxy(t *testing.T) {
 	requireCode(t, e, "provenance.compose_file_hash_mismatch")
 }
 
-func TestDirectManagerEvidenceOnlyComesFromEnvelope(t *testing.T) {
-	f := loadManagerFixture(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		nonce := r.URL.Query().Get("nonce")
-		report := map[string]any{"model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519", "signing_address": strings.Repeat("aa", 32), "intel_quote": "bb", "event_log": []any{}, "info": map[string]any{"tcb_info": map[string]any{"app_compose": "{}"}}}
-		nested := map[string]any{}
-		for k, v := range report {
-			nested[k] = v
-		}
-		nested["compose_manager_attestation"] = ComposeManagerAttestation{Actions: f.Actions, ActionsHash: f.ActionsHash, Nonce: nonce, IntelQuote: "cc", EventLog: json.RawMessage(`[]`)}
-		report["all_attestations"] = []any{nested}
-		json.NewEncoder(w).Encode(report)
-	}))
-	defer server.Close()
-	client, e := NewDirectAttestationClient(ClientOptions{BaseURL: server.URL})
-	if e != nil {
-		t.Fatal(e)
-	}
-	result, e := client.FetchModelAttestations(context.Background(), "test", FetchOptions{})
-	if e != nil {
-		t.Fatal(e)
-	}
-	if result.ServingAttestation.ComposeManagerAttestation != nil || result.Attestations[0].ComposeManagerAttestation != nil {
-		t.Fatal("nested evidence was promoted")
-	}
-}
-
-func TestDirectDiscardsMalformedNestedManagerEvidenceBeforeDecoding(t *testing.T) {
-	f := loadManagerFixture(t)
-	for name, nestedManager := range map[string]any{
-		"future action field": map[string]any{"actions": []any{map[string]any{"action": "future", "timestamp": "now", "version": 2}}},
-		"wrong type":          "future format",
-		"missing fields":      map[string]any{},
-	} {
-		for _, envelope := range []string{"absent", "valid", "invalid"} {
-			t.Run(name+"/"+envelope, func(t *testing.T) {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					nonce := r.URL.Query().Get("nonce")
-					report := map[string]any{"model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519", "signing_address": strings.Repeat("aa", 32), "intel_quote": "bb", "event_log": []any{}, "info": map[string]any{"tcb_info": map[string]any{"app_compose": "{}"}}}
-					nested := maps.Clone(report)
-					nested["compose_manager_attestation"] = nestedManager
-					other := maps.Clone(nested)
-					other["signing_address"] = strings.Repeat("dd", 32)
-					report["all_attestations"] = []any{nested, other}
-					if envelope == "valid" {
-						report["compose_manager_attestation"] = ComposeManagerAttestation{Actions: f.Actions, ActionsHash: f.ActionsHash, Nonce: nonce, IntelQuote: "cc", EventLog: json.RawMessage(`[]`)}
-					} else if envelope == "invalid" {
-						report["compose_manager_attestation"] = nestedManager
+func TestDirectPreservesPerReportManagerEvidence(t *testing.T) {
+	for _, mode := range []string{"reports", "envelope", "invalid sibling"} {
+		t.Run(mode, func(t *testing.T) {
+			f := loadManagerFixture(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nonce := r.URL.Query().Get("nonce")
+				report := map[string]any{
+					"model_name": "test", "request_nonce": nonce, "signing_algo": "ed25519",
+					"signing_address": strings.Repeat("aa", 32), "intel_quote": "bb", "event_log": []any{},
+					"info": map[string]any{"tcb_info": map[string]any{"app_compose": "{}"}},
+				}
+				first, second := maps.Clone(report), maps.Clone(report)
+				second["intel_quote"] = "ee"
+				manager := ComposeManagerAttestation{Actions: f.Actions, ActionsHash: f.ActionsHash, Nonce: nonce, IntelQuote: "cc", EventLog: json.RawMessage(`[]`)}
+				if mode == "envelope" {
+					report["compose_manager_attestation"] = manager
+				} else {
+					first["compose_manager_attestation"] = manager
+					manager.IntelQuote = "dd"
+					second["compose_manager_attestation"] = manager
+					if mode == "invalid sibling" {
+						second["compose_manager_attestation"] = "invalid"
 					}
-					json.NewEncoder(w).Encode(report)
-				}))
-				defer server.Close()
-				client, err := NewDirectAttestationClient(ClientOptions{BaseURL: server.URL})
-				if err != nil {
-					t.Fatal(err)
 				}
-				result, err := client.FetchModelAttestations(context.Background(), "test", FetchOptions{})
-				if envelope == "invalid" {
-					requireCode(t, err, "api.invalid_response")
-					return
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				if len(result.Attestations) != 2 || result.Attestations[1].ComposeManagerAttestation != nil {
-					t.Fatal("non-serving evidence was retained")
-				}
-				manager := result.ServingAttestation.ComposeManagerAttestation
-				if envelope == "valid" {
-					if manager == nil || !reflect.DeepEqual(manager.Actions, f.Actions) || result.Attestations[0].ComposeManagerAttestation != manager {
-						t.Fatal("envelope manager evidence was not preserved")
-					}
-				} else if manager != nil || result.Attestations[0].ComposeManagerAttestation != nil {
-					t.Fatal("nested evidence was promoted")
-				}
-			})
-		}
+				report["all_attestations"] = []any{first, second}
+				json.NewEncoder(w).Encode(report)
+			}))
+			defer server.Close()
+			client, err := NewDirectAttestationClient(ClientOptions{BaseURL: server.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := client.FetchModelAttestations(context.Background(), "test", FetchOptions{DisableTLSBinding: true})
+			if mode == "invalid sibling" {
+				requireCode(t, err, "api.invalid_response")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Attestations) != 2 || result.ServingAttestation != &result.Attestations[0] || result.Attestations[0].ComposeManagerAttestation.IntelQuote != "cc" {
+				t.Fatal("serving report or manager evidence was lost")
+			}
+			sibling := result.Attestations[1].ComposeManagerAttestation
+			if mode == "reports" && (sibling == nil || sibling.IntelQuote != "dd") {
+				t.Fatal("sibling manager evidence was lost")
+			}
+			if mode == "envelope" && sibling != nil {
+				t.Fatal("envelope evidence must only belong to its serving report")
+			}
+		})
 	}
 }
 
 func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
 	for _, chunked := range []bool{false, true} {
-		t.Run(itoa(boolInt(chunked)), func(t *testing.T) {
+		t.Run(fmt.Sprintf("chunked=%t", chunked), func(t *testing.T) {
 			fixture := loadManagerFixture(t)
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -276,7 +251,7 @@ func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
 				if chunked {
 					w.(http.Flusher).Flush()
 				} else {
-					w.Header().Set("Content-Length", itoa(maxComposeFileBytes+1))
+					w.Header().Set("Content-Length", strconv.Itoa(maxComposeFileBytes+1))
 				}
 				_, _ = w.Write(bytes.Repeat([]byte("x"), maxComposeFileBytes+1))
 			}))

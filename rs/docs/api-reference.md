@@ -118,7 +118,9 @@ method while the response remains cached.
   a transformed stream. The caller authenticates the model key first.
 - `create_pinned_tls_client(&[String])` returns an HTTPS-only reqwest client that
   requires one of the supplied SHA-256 SPKI fingerprints in addition to normal
-  certificate and hostname verification.
+  certificate and hostname verification. After Gateway verification, pass a clone
+  to `AttestationClient::with_http_client` for subsequent evidence and signature
+  requests, and use the same client to send Chat.
 - `verify_ohttp_key_config(&OhttpAttestation, &SigningIdentity)` authenticates raw
   config bytes against a previously verified Ed25519 signer.
 - `create_ohttp_client(config, base_url, reqwest_client, forwarded_headers)` returns
@@ -134,13 +136,19 @@ method while the response remains cached.
   receipt's signature kind. Chat and transport methods match `InferenceClient`.
 - `DirectAttestationClient::new(base_url, api_key)` retrieves all direct reports
   and direct signatures. `with_headers` configures extra headers.
+  `fetch_model_attestations_with_options(DirectAttestationFetchOptions)` accepts
+  `signing_algo`, `signing_address`, and `include_spki_fingerprint` (default `true`).
+  After verification, use `with_http_client(create_pinned_tls_client(&verified.spki_fingerprints)?)`
+  to pin signature requests.
 - `verify_direct_model_attestation`, `verify_direct_model_attestations`, and
   `verify_direct_model_response` validate individual reports, complete report
   sets, and exact completion bytes respectively. The response verifier returns
   every verified report sharing the signature's signer.
 
-See the [guide](./verification-guide.md#experimental-direct-endpoints) for direct
-endpoint limitations and source migration notes for new optional evidence fields.
+See the [Direct client guide](./verification-guide.md#experimental-direct-endpoints)
+for usage. Direct clients are experimental and use attested TLS by default.
+Set `DirectInferenceClientOptions.include_spki_fingerprint` to `false` for an
+application proxy or HTTP endpoint.
 
 ## Verification lifecycle
 
@@ -176,6 +184,9 @@ inference requests or retain completion bytes.
 | --- | --- | --- | --- |
 | `AttestationClient::new` | `api_key: impl Into<Option<String>>` | `AttestationClient` | Uses `DEFAULT_NEAR_AI_CLOUD_BASE_URL`. Accepts a `String`, `Some(String)`, or `None`. |
 | `AttestationClient::with_base_url` | `api_key: impl Into<Option<String>>`, `base_url: &str` | `Result<AttestationClient, ApiError>` | Uses an absolute HTTP(S) base URL, such as staging. The URL may include a path prefix such as `/v1`. |
+
+`with_http_client(reqwest::Client)` configures the transport for subsequent evidence
+and signature requests. Pass the pinned client used for inference.
 
 Use `AttestationClient::new(None)` to fetch attestation without credentials.
 Gateway and direct attestation requests omit `Authorization`, `api-key`, and

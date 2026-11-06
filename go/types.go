@@ -85,7 +85,7 @@ type AttestationPolicy struct {
 type QuoteVerifier func(context.Context, string) (QuoteVerificationResult, error)
 type GPUEvidenceVerifier func(context.Context, string) error
 
-// DeploymentVerifier inspects read-only evidence and returns an error to reject it.
+// DeploymentVerifier applies deployment policy and returns an error to reject it.
 type DeploymentVerifier func(context.Context, MeasuredDeployment) error
 type VerificationOptions struct {
 	Policy             AttestationPolicy
@@ -94,7 +94,7 @@ type VerificationOptions struct {
 	DeploymentVerifier DeploymentVerifier
 }
 
-// VerifiedAttestation and its nested evidence are read-only verification results.
+// VerifiedAttestation contains verified signer and deployment evidence.
 type VerifiedAttestation struct {
 	Signer                SigningIdentity
 	TCBStatus             string
@@ -122,19 +122,15 @@ type VerifiedCompletionResult struct {
 	SignatureKind string
 	Signature     CompletionSignature
 	// Attestation contains Gateway evidence for gateway receipts.
-	// For provider_tee receipts it retains the report used to select the request's
-	// model public key; it does not identify which instance served the request.
-	//
-	// Reading this field for provider_tee receipts is deprecated: use Attestations
-	// for all verified reports sharing the selected signer. Gateway receipts
-	// continue to use Attestation.
+	// For provider_tee it is the report used to select the model key;
+	// that singular model field is deprecated in favor of Attestations.
 	Attestation *VerifiedAttestation
 	// Attestations contains every matching verified model deployment for provider_tee
-	// receipts. A shared key does not identify one CVM. It is empty for Gateway receipts.
+	// receipts. It is empty for Gateway receipts.
 	Attestations []VerifiedAttestation
 }
 
-// ClientOptions configures evidence retrieval. HTTPClient is borrowed, never closed.
+// ClientOptions configures evidence retrieval.
 // A custom transport is part of the trust boundary and must perform normal TLS verification.
 type ClientOptions struct {
 	// API Key is optional. Gateway and direct reports omit authentication;
@@ -166,12 +162,12 @@ type InferenceOptions struct {
 }
 
 // DirectInferenceOptions leaves E2EE disabled by default.
-// Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
 	ClientOptions
 	SigningAlgo       SigningAlgo
 	E2EE              bool
 	OHTTP             bool
+	DisableTLSBinding bool
 	AttestationTTL    *time.Duration
 	ResponseTTL       *time.Duration
 	ModelVerification VerificationOptions
@@ -183,17 +179,14 @@ type VerifiedDirectModelAttestations struct {
 	SPKIFingerprints   []string
 }
 
-// DirectAttestationVerificationResult contains every verified Direct report.
-// ServingAttestation is the report returned by the preflight endpoint; it does
-// not identify which instance serves a later completion. Direct TLS binding
-// remains disabled, so SPKIFingerprints is empty.
+// DirectAttestationVerificationResult contains the verified Direct model reports.
 type DirectAttestationVerificationResult struct {
 	VerifiedDirectModelAttestations
 	VerifiedAt time.Time
 }
 
 // VerifiedDirectCompletionResult contains the complete preflight-verified signer
-// group for a Direct receipt. A shared signer does not identify one instance.
+// group for a Direct receipt.
 type VerifiedDirectCompletionResult struct {
 	ID string
 	// Deprecated: use ID. CompletionID contains the same value.

@@ -8,11 +8,8 @@ async fn main() -> Result<()> {
     let fetched = api.fetch_model_attestations(Some(algo()?), None).await?;
     let verified = verify_direct_model_attestations(&fetched, None, Default::default()).await?;
     println!("Verified {} model reports", verified.attestations.len());
-    // Direct TLS fingerprint fetching is disabled. Keep normal certificate/hostname
-    // validation and disable redirects; use Gateway clients for production.
-    let http = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
+    let http = create_pinned_tls_client(&verified.spki_fingerprints)?;
+    let api = api.with_http_client(http.clone());
     for stream in [false, true] {
         let request = request(&direct(), &key, stream)?;
         let wire_request = request

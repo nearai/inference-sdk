@@ -583,40 +583,64 @@ describe('DirectInferenceClient', () => {
     expect(endpoint.state.signatureRequests).toBe(1);
   });
 
-  test('verifies Node direct requests without TLS fingerprint binding', async () => {
-    const endpoint = createDirectEndpoint({ additionalSigner: true });
-    const requestHttps = jest
-      .spyOn(nodeTls, 'requestHttps')
-      .mockImplementation(async ({ request }) => ({
-        response: await endpoint.fetch(request),
-      }));
-    const createPinnedFetch = jest
-      .spyOn(nodeTls, 'createPinnedTlsFetch')
-      .mockReturnValue(endpoint.fetch);
-    const client = new NodeDirectInferenceClient(endpoint.options);
+  test.each([false, true])(
+    'pins every verified report in the selected signer group (E2EE=%s)',
+    async (e2ee) => {
+      const endpoint = createDirectEndpoint({ additionalSigner: true });
+      const requestHttps = jest
+        .spyOn(nodeTls, 'requestHttps')
+        .mockImplementation(async ({ request }) => ({
+          response: await endpoint.fetch(request),
+          peerSpkiFingerprint: spkiFingerprints[0],
+        }));
+      const pinnedFetch = jest.fn(endpoint.fetch);
+      const createPinnedFetch = jest
+        .spyOn(nodeTls, 'createPinnedTlsFetch')
+        .mockReturnValue(pinnedFetch);
+      const client = new NodeDirectInferenceClient({
+        ...endpoint.options,
+        e2ee,
+      });
 
-    const response = await client.chat.completions.create({ model, messages });
-    expect(endpoint.state.verifiedQuotes).toHaveLength(3);
-    expect(endpoint.state.decryptedPrompts).toEqual([prompt]);
-    expect(endpoint.state.requests[0].body.messages[0].content).toBe(prompt);
-    expect(endpoint.state.requests[0].headers.has('x-client-pub-key')).toBe(
-      false,
-    );
-    const attestationRequest = requestHttps.mock.calls[0][0];
-    expect(attestationRequest.capturePeerSpkiFingerprint).toBe(false);
-    expect(
-      new URL(attestationRequest.request.url).searchParams.get(
-        'include_tls_fingerprint',
-      ),
-    ).toBe('false');
-    expect(createPinnedFetch).not.toHaveBeenCalled();
+      const verified = await client.verify(model);
+      expect(verified.spkiFingerprints).toEqual(spkiFingerprints);
+      expect(verified.tlsBinding.kind).toBe('attested');
 
-    const result = await client.verifyResponse(response.id);
-    expect(result.attestations.map((item) => item.instanceId)).toEqual([
-      'instance-0',
-      'instance-1',
-    ]);
-  });
+      const response = await client.chat.completions.create({
+        model,
+        messages,
+      });
+      expect(endpoint.state.verifiedQuotes).toHaveLength(3);
+      expect(endpoint.state.decryptedPrompts).toEqual([prompt]);
+      expect(endpoint.state.requests[0].headers.has('x-client-pub-key')).toBe(
+        e2ee,
+      );
+      const attestationRequest = requestHttps.mock.calls[0][0];
+      expect(attestationRequest.capturePeerSpkiFingerprint).toBe(true);
+      expect(
+        new URL(attestationRequest.request.url).searchParams.get(
+          'include_tls_fingerprint',
+        ),
+      ).toBe('true');
+      expect(createPinnedFetch).toHaveBeenCalledWith(
+        spkiFingerprints.slice(0, 2),
+      );
+
+      const result = await client.verifyResponse(response.id);
+      expect(result.attestations.map((item) => item.instanceId)).toEqual([
+        'instance-0',
+        'instance-1',
+      ]);
+      expect(
+        pinnedFetch.mock.calls.map(([input]) =>
+          input instanceof Request ? input.url : String(input),
+        ),
+      ).toEqual([
+        `${baseUrl}/chat/completions`,
+        `${baseUrl}/signature/${response.id}?signing_algo=ed25519`,
+      ]);
+    },
+  );
 
   test.each([true, false])(
     'rejects a response signed by another verified key with E2EE set to %s',

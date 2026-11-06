@@ -998,6 +998,7 @@ func TestDirectClientE2EEIsOptIn(t *testing.T) {
 			server := httptest.NewServer(f)
 			defer server.Close()
 			opts := DirectInferenceOptions{
+				DisableTLSBinding: true,
 				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
 				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
 			}

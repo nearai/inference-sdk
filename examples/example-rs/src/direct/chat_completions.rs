@@ -1,4 +1,4 @@
-// Experimental direct JSON/SSE with E2EE. Use Gateway clients for production.
+// Experimental Direct JSON/SSE with E2EE.
 use example_rs::utils::*;
 use nearai_inference_sdk::*;
 #[tokio::main]
@@ -15,7 +15,6 @@ async fn main() -> Result<()> {
     })?;
     let verified = client.verify(&model()).await?;
     println!("Verified {} model reports", verified.attestations.len());
-    // Direct TLS evidence fetching is disabled; ordinary HTTPS validation applies.
     for stream in [false, true] {
         let bytes = if stream {
             let response = client.send(client.chat_request(body(true))?).await?;
