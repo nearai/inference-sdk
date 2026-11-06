@@ -107,12 +107,9 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if preflight.ServingAttestation.InstanceID != "serving" || len(preflight.SPKIFingerprints) != 0 || preflight.VerifiedAt.IsZero() {
 		t.Fatal("preflight must retain the actual serving report without enabling TLS binding")
 	}
-	preflight.ServingAttestation.InstanceID = "changed"
-	preflight.Attestations[0].InstanceID = "changed"
-	preflight.Attestations[0].Deployment.AppCompose = "changed"
 	cached, err := client.Verify(context.Background(), "canonical/model")
-	if err != nil || calls != 2 || !cached.VerifiedAt.Equal(preflight.VerifiedAt) || cached.ServingAttestation.InstanceID != "serving" || cached.Attestations[0].InstanceID != "other" || cached.Attestations[0].Deployment.AppCompose == "changed" {
-		t.Fatal("Direct preflight must return independent snapshots of the original verification", err)
+	if err != nil || calls != 2 || !reflect.DeepEqual(cached, preflight) {
+		t.Fatal("Direct preflight must reuse the original verified reports and timestamp", err)
 	}
 	session, err := client.inferenceCore.getSession(context.Background(), "canonical/model")
 	if err != nil {
@@ -139,11 +136,9 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if sharedSigner && session.selected.InstanceID != "other" {
 		t.Fatal("serving metadata must not change which key the original route selects")
 	}
-	receipt.Attestations[0].InstanceID = "changed"
-	receipt.Attestations[0].Deployment.AppCompose = "changed"
 	cachedReceipt, err := client.VerifyResponse(context.Background(), "chat")
-	if err != nil || cachedReceipt.Attestations[0].InstanceID == "changed" || cachedReceipt.Attestations[0].Deployment.AppCompose == "changed" || len(cachedReceipt.Attestations) != len(receipt.Attestations) {
-		t.Fatal("Direct receipt cache must retain the complete independent evidence snapshot", err)
+	if err != nil || !reflect.DeepEqual(cachedReceipt, receipt) {
+		t.Fatal("Direct receipt cache must retain the complete verified result", err)
 	}
 	if client.inferenceCore.responses["chat"].request != nil || client.inferenceCore.responses["chat"].response != nil || client.inferenceCore.responses["chat"].session != nil {
 		t.Fatal("completed Direct verification must release captured bodies and session")

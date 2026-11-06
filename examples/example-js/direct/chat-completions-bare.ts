@@ -10,7 +10,7 @@ import {
 import { ChatStreamOutput, chatOutput } from '../utils/chat-output.ts';
 
 // Standalone verification of plaintext Chat bodies over HTTPS.
-// See client.ts for E2EE.
+// See chat-completions.ts for E2EE.
 const BASE_URL = `${(
   process.env.NEARAI_BASE_URL ?? 'https://glm-5-3-flash.completions.near.ai/v1/'
 ).replace(/\/+$/, '')}/`;

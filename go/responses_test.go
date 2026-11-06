@@ -56,9 +56,9 @@ func responseInput(streaming bool) map[string]any {
 }
 func responsesClient(t *testing.T, streaming bool, modify func(*InferenceOptions)) (*InferenceClient, *responsesFixture) {
 	t.Helper()
-	path := "testdata/responses/response.json"
+	path := "../test-fixtures/responses/response.json"
 	if streaming {
-		path = "testdata/responses/response.sse"
+		path = "../test-fixtures/responses/response.sse"
 	}
 	raw, e := os.ReadFile(path)
 	if e != nil {

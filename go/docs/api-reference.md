@@ -234,6 +234,7 @@ repository names to policies and verifies every selected service image.
 
 These structures describe options, fetched evidence, verified results, and
 verification callbacks. A fetched `Attestation` is untrusted until verified.
+Treat verified attestations and their nested evidence as read-only.
 `VerifiedAttestation.Deployment` contains measured app-compose text and runtime
 hashes; applications decide whether those measurements are acceptable.
 

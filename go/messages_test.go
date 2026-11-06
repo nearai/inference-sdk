@@ -58,9 +58,9 @@ func messageInput(streaming bool) map[string]any {
 }
 func messagesClient(t *testing.T, streaming bool, modify func(*InferenceOptions)) (*InferenceClient, *messagesFixture) {
 	t.Helper()
-	path := "testdata/messages/message.json"
+	path := "../test-fixtures/messages/message.json"
 	if streaming {
-		path = "testdata/messages/message.sse"
+		path = "../test-fixtures/messages/message.sse"
 	}
 	raw, e := os.ReadFile(path)
 	if e != nil {
@@ -261,7 +261,7 @@ func TestMessagesDuplicateIDPreservesOriginalReceipt(t *testing.T) {
 
 // Exercise signed fixtures through the public transport and receipt API.
 func TestMessagesStreamContract(t *testing.T) {
-	raw, err := os.ReadFile("testdata/messages/streams.json")
+	raw, err := os.ReadFile("../test-fixtures/messages/streams.json")
 	if err != nil {
 		t.Fatal(err)
 	}

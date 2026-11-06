@@ -27,7 +27,7 @@ async fn responses_json_and_sse_retain_exact_gateway_receipts() {
                     .unwrap();
                 assert_eq!(
                     response.bytes().await.unwrap(),
-                    include_bytes!("../../test-fixtures/responses/response.sse")
+                    include_bytes!("../../../test-fixtures/responses/response.sse")
                 );
             } else {
                 let response = client.create_response(body).await.unwrap();

@@ -3,6 +3,7 @@ package nearai
 import (
 	"context"
 	"net/http"
+	"slices"
 )
 
 // DirectInferenceClient verifies experimental Direct Chat endpoints and returns
@@ -40,9 +41,9 @@ func (c *DirectInferenceClient) Verify(ctx context.Context, model string) (Direc
 	}
 	return DirectAttestationVerificationResult{
 		VerifiedDirectModelAttestations: VerifiedDirectModelAttestations{
-			ServingAttestation: cloneAttestation(s.direct.ServingAttestation),
-			Attestations:       cloneAttestations(s.direct.Attestations),
-			SPKIFingerprints:   append([]string(nil), s.direct.SPKIFingerprints...),
+			ServingAttestation: s.direct.ServingAttestation,
+			Attestations:       slices.Clone(s.direct.Attestations),
+			SPKIFingerprints:   slices.Clone(s.direct.SPKIFingerprints),
 		},
 		VerifiedAt: s.verifiedAt,
 	}, nil

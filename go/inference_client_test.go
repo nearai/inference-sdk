@@ -151,9 +151,6 @@ func TestClientPreflightAndSignature(t *testing.T) {
 				if e != nil || !first.VerifiedAt.Equal(second.VerifiedAt) {
 					t.Fatal("cache not reused")
 				}
-				if first.Gateway != nil {
-					first.Gateway.Signer.SigningAddress = "mutated"
-				}
 				body, _ := json.Marshal(chatRequest())
 				req, _ := http.NewRequest("POST", c.BaseURL()+"chat/completions", bytes.NewReader(body))
 				req.Header.Set("Authorization", "Bearer wrong")
@@ -409,9 +406,6 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 					if !reflect.DeepEqual(first.Attestations, expected) || !reflect.DeepEqual(*first.Attestation, selected) {
 						t.Fatal("response did not retain the preflight evidence and compatibility representative")
 					}
-					first.Attestations[1].Deployment.AppCompose = "mutated"
-					first.Attestations[1].AdvisoryIDs[0] = "mutated"
-					first.Attestation.AdvisoryIDs[0] = "mutated"
 					cached, err := client.VerifyResponse(ctx, "chat-1")
 					if err != nil {
 						t.Fatal(err)
@@ -421,7 +415,7 @@ func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
 						t.Fatal(err)
 					}
 					if !reflect.DeepEqual(cached.Attestations, expected) || !reflect.DeepEqual(after.Models, refreshed.Models) || !reflect.DeepEqual(*cached.Attestation, selected) {
-						t.Fatal("mutating a receipt changed the cached report collection")
+						t.Fatal("cached receipts and current sessions must retain their own preflight evidence")
 					}
 					if f.attestations.Load() != 4 || f.signatureCalls.Load() != 1 || len(deployments) != 6 {
 						t.Fatal("cached verification refetched evidence or reran policy")
@@ -511,47 +505,6 @@ func TestGatewayReceiptRejectsDifferentPreflightVerifiedKey(t *testing.T) {
 	requireCode(t, err, "signature.signer_mismatch")
 }
 
-func TestProviderReceiptManagerEvidenceDoesNotAliasCachedResults(t *testing.T) {
-	f := newFakeCloud(t)
-	f.tee = true
-	f.q.AdvisoryIDs = []string{"original-advisory"}
-	fixture := loadManagerFixture(t)
-	f.a.ComposeManagerAttestation = &ComposeManagerAttestation{Actions: fixture.Actions, ActionsHash: fixture.ActionsHash, EventLog: f.a.EventLog}
-	client, _ := fakeClient(t, f, nil)
-	ctx := context.Background()
-	if _, err := client.CreateChatCompletion(ctx, chatRequest()); err != nil {
-		t.Fatal(err)
-	}
-	before, err := client.Verify(ctx, "canonical/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := client.VerifyResponse(ctx, "chat-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	manager := first.Attestation.Deployment.ComposeManager
-	manager.Actions[0]["tag"] = "mutated"
-	manager.Actions[0]["services"].([]string)[0] = "mutated"
-	manager.AdvisoryIDs[0] = "mutated"
-	manager.RuntimeMeasurements.ComposeHash = "mutated"
-	second, err := client.VerifyResponse(ctx, "chat-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	after, err := client.Verify(ctx, "canonical/model")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := before.Models[0].Deployment.ComposeManager
-	if !reflect.DeepEqual(second.Attestation.Deployment.ComposeManager, want) || !reflect.DeepEqual(after.Models[0].Deployment.ComposeManager, want) {
-		t.Fatal("mutating a receipt changed cached manager evidence")
-	}
-	if f.signatureCalls.Load() != 1 || f.attestations.Load() != 2 {
-		t.Fatal("expected cached receipt and session results")
-	}
-}
-
 func TestClientDeploymentPoliciesReceiveManagerEvidence(t *testing.T) {
 	f := newFakeCloud(t)
 	f.tee = true
@@ -584,6 +537,16 @@ func TestClientDeploymentPoliciesReceiveManagerEvidence(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, []string{"verifier", "policy"}) || result.Models[0].DeploymentProvenance != "verified" {
 		t.Fatal("deployment policy order or result changed", calls)
+	}
+	if _, err := client.CreateChatCompletion(context.Background(), chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := client.VerifyResponse(context.Background(), "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(receipt.Attestations, result.Models) || !reflect.DeepEqual(receipt.Attestation, &result.Models[0]) {
+		t.Fatal("receipt did not retain the verified manager evidence")
 	}
 }
 

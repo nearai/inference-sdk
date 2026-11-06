@@ -60,7 +60,9 @@ transport tests where they observe different boundaries.
   Normal EOF does not require `response.completed`: authenticating bytes is distinct
   from asserting that generation succeeded. Item IDs never become receipt IDs.
 - [Messages streams](test-fixtures/messages/streams.json): protocol-specific lifecycle
-  cases. Do not substitute the Responses EOF rules for Messages terminal rules.
+  cases, read directly by all four suites. Messages/Responses JSON and SSE fixtures
+  also live only in `test-fixtures/`; do not copy them into language directories.
+  Do not substitute the Responses EOF rules for Messages terminal rules.
 - [Compose Manager evidence](test-fixtures/compose-manager/README.md) and
   [signed provenance bundles](test-fixtures/provenance/README.md): common evidence
   with independent verification. Cryptographic success tests use actual signatures;
@@ -91,8 +93,10 @@ browser deployment compatibility or production fleet cardinality.
 ## Validation
 
 Run each SDK's maintained check command from its directory: JS `pnpm check`,
-Python `make lint`, Rust `make check`, Go `make check`. Run affected examples and
-E2E source/type checks as well. Python's default suite includes its example tests.
+Python `make check`, Rust `make check`, Go `make check`. These commands also check
+live-test code without sending inference: JS typechecks it and tests its helpers,
+Python collects it, and Rust/Go compile it. Run affected examples as well.
+Python's default suite includes its example tests.
 Live suites are separate and billable; see [live E2E instructions](e2e/README.md).
 When reporting results, separate local assertions, fixture coverage and actual
 production requests, and identify the commit that was tested.

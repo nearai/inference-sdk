@@ -38,41 +38,40 @@ from nearai_inference_sdk import (
     ids=['unencrypted', 'ed25519-e2ee', 'ecdsa-e2ee', 'ohttp-e2ee'],
 )
 @pytest.mark.parametrize('official', [False, True])
-@pytest.mark.parametrize('model_index', [0, 1])
 async def test_inference_client_verifies_json_and_streams(
-    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool, model_index: int
+    e2ee: bool, signing_algo: SigningAlgo, ohttp: bool, official: bool
 ) -> None:
-    model = selected_models('chat', 'near')[model_index]
-    async with (
-        asyncio.timeout(180),
-        InferenceClient(
-            required_env('NEARAI_API_KEY'),
-            base_url=required_env('NEARAI_BASE_URL'),
-            signing_algo=signing_algo,
-            e2ee=e2ee,
-            ohttp=ohttp,
-            model_verification=ModelVerificationOptions(
-                policy=ModelAttestationPolicy(gpu_evidence='required'),
-            ),
-        ) as inference_client,
-        AsyncOpenAI(
-            api_key=required_env('NEARAI_API_KEY'),
-            base_url=required_env('NEARAI_BASE_URL'),
-            http_client=inference_client.http_client,
-            max_retries=0,
-        ) as external,
-    ):
-        # Explicit preflight shares its verified session with both Chat calls.
-        preflight = await inference_client.verify(model)
-        for stream in (False, True):
-            await verify_client_chat(
-                inference_client,
-                external.chat if official else inference_client.chat,
-                model,
-                signing_algo,
-                stream,
-                preflight=preflight,
-            )
+    for model in selected_models('chat', 'near'):
+        async with (
+            asyncio.timeout(180),
+            InferenceClient(
+                required_env('NEARAI_API_KEY'),
+                base_url=required_env('NEARAI_BASE_URL'),
+                signing_algo=signing_algo,
+                e2ee=e2ee,
+                ohttp=ohttp,
+                model_verification=ModelVerificationOptions(
+                    policy=ModelAttestationPolicy(gpu_evidence='required'),
+                ),
+            ) as inference_client,
+            AsyncOpenAI(
+                api_key=required_env('NEARAI_API_KEY'),
+                base_url=required_env('NEARAI_BASE_URL'),
+                http_client=inference_client.http_client,
+                max_retries=0,
+            ) as external,
+        ):
+            # Explicit preflight shares its verified session with both Chat calls.
+            preflight = await inference_client.verify(model)
+            for stream in (False, True):
+                await verify_client_chat(
+                    inference_client,
+                    external.chat if official else inference_client.chat,
+                    model,
+                    signing_algo,
+                    stream,
+                    preflight=preflight,
+                )
 
 
 @pytest.mark.asyncio

@@ -93,6 +93,8 @@ type VerificationOptions struct {
 	GPUVerifier        GPUEvidenceVerifier
 	DeploymentVerifier DeploymentVerifier
 }
+
+// VerifiedAttestation and its nested evidence are read-only verification results.
 type VerifiedAttestation struct {
 	Signer                SigningIdentity
 	TCBStatus             string

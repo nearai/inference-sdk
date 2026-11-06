@@ -302,9 +302,9 @@ impl Respond for Fixture {
                 let streaming = request["stream"] == true;
                 let raw = self.response_body.clone().unwrap_or_else(|| {
                     if streaming {
-                        include_bytes!("../../test-fixtures/responses/response.sse").to_vec()
+                        include_bytes!("../../../test-fixtures/responses/response.sse").to_vec()
                     } else {
-                        include_bytes!("../../test-fixtures/responses/response.json").to_vec()
+                        include_bytes!("../../../test-fixtures/responses/response.json").to_vec()
                     }
                 });
                 self.receipts.lock().unwrap().insert(
@@ -352,9 +352,9 @@ impl Respond for Fixture {
                 let streaming = request["stream"] == true;
                 let raw = self.response_body.clone().unwrap_or_else(|| {
                     if streaming {
-                        include_bytes!("../../test-fixtures/messages/message.sse").to_vec()
+                        include_bytes!("../../../test-fixtures/messages/message.sse").to_vec()
                     } else {
-                        include_bytes!("../../test-fixtures/messages/message.json").to_vec()
+                        include_bytes!("../../../test-fixtures/messages/message.json").to_vec()
                     }
                 });
                 self.receipts.lock().unwrap().insert(

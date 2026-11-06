@@ -38,7 +38,7 @@ async fn messages_json_and_sse_retain_exact_gateway_receipts() {
                     .unwrap();
                 assert_eq!(
                     response.bytes().await.unwrap(),
-                    include_bytes!("../../test-fixtures/messages/message.sse")
+                    include_bytes!("../../../test-fixtures/messages/message.sse")
                 );
             } else {
                 let response = client.create_message(body).await.unwrap();
@@ -281,7 +281,7 @@ async fn messages_dropped_stream_has_no_receipt() {
 #[tokio::test]
 async fn messages_stream_contract() {
     let cases: Value =
-        serde_json::from_str(include_str!("../../test-fixtures/messages/streams.json")).unwrap();
+        serde_json::from_str(include_str!("../../../test-fixtures/messages/streams.json")).unwrap();
     for case in cases.as_array().unwrap() {
         let raw = case["body"].as_str().unwrap().as_bytes().to_vec();
         let (_server, fixture, options) = setup(Fixture {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 )
 
 // InferenceClient verifies Gateway inference and owns its supported API methods.
@@ -35,21 +36,12 @@ func (c *InferenceClient) HTTPClient() *http.Client {
 	return &http.Client{Transport: c, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-func cloneResult(r AttestationVerificationResult) AttestationVerificationResult {
-	if r.Gateway != nil {
-		v := cloneAttestation(*r.Gateway)
-		r.Gateway = &v
-	}
-	r.Models = cloneAttestations(r.Models)
-	return r
-}
-
 func (c *InferenceClient) Verify(ctx context.Context, model string) (AttestationVerificationResult, error) {
 	s, e := c.getSession(ctx, model)
 	if e != nil {
 		return AttestationVerificationResult{}, e
 	}
-	return cloneResult(AttestationVerificationResult{Gateway: s.gateway, Models: s.models, VerifiedAt: s.verifiedAt}), nil
+	return AttestationVerificationResult{Gateway: s.gateway, Models: slices.Clone(s.models), VerifiedAt: s.verifiedAt}, nil
 }
 
 func (c *InferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedCompletionResult, error) {

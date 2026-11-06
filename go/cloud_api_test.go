@@ -103,10 +103,6 @@ func TestFindModelAttestationsForSignature(t *testing.T) {
 			if err != nil || len(matchingAttestations) != 3 || matchingAttestations[0].InstanceID != "first" || matchingAttestations[1].InstanceID != "second" || matchingAttestations[2].InstanceID != "first" {
 				t.Fatalf("shared-signer reports and duplicates: %#v %v", matchingAttestations, err)
 			}
-			matchingAttestations[0].AdvisoryIDs[0] = "changed"
-			if items[0].AdvisoryIDs[0] != "original" || matchingAttestations[2].AdvisoryIDs[0] != "original" {
-				t.Fatal("returned reports alias input evidence or another report")
-			}
 			_, err = FindModelAttestationForSignature(items, sig)
 			requireCode(t, err, "api.model_attestation_not_found")
 			if err.(*Error).Details["matches"] != 3 {

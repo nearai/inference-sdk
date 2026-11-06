@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -181,20 +182,6 @@ func (c *inferenceCore) Close() error {
 	}
 	c.wg.Wait()
 	return nil
-}
-
-func cloneAttestation(a VerifiedAttestation) VerifiedAttestation {
-	a.AdvisoryIDs = append([]string(nil), a.AdvisoryIDs...)
-	a.Deployment = cloneDeployment(a.Deployment)
-	return a
-}
-
-func cloneAttestations(attestations []VerifiedAttestation) []VerifiedAttestation {
-	out := append([]VerifiedAttestation(nil), attestations...)
-	for i := range out {
-		out[i] = cloneAttestation(out[i])
-	}
-	return out
 }
 
 func (c *inferenceCore) getSession(ctx context.Context, model string) (*session, error) {
@@ -647,11 +634,7 @@ func (c *inferenceCore) verifyResponse(ctx context.Context, id string) (verified
 		return verifiedResponse{}, failure("api.client_closed", nil)
 	case <-p.done:
 		result := p.value
-		if result.attestation != nil {
-			a := cloneAttestation(*result.attestation)
-			result.attestation = &a
-		}
-		result.attestations = cloneAttestations(result.attestations)
+		result.attestations = slices.Clone(result.attestations)
 		return result, p.err
 	}
 }
