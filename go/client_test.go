@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
 	"encoding/json"
@@ -46,6 +47,8 @@ type fakeCloud struct {
 	chats           atomic.Int32
 	dropChatAt      int32
 	extraModel      bool
+	sharedModel     bool
+	badSharedModel  bool
 	missingModelKey bool
 	tee             bool
 	direct          bool
@@ -130,6 +133,20 @@ func (f *fakeCloud) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				delete(a, "signing_public_key")
 			}
 			items := []any{a}
+			if f.sharedModel {
+				a["info"].(map[string]any)["instance_id"] = "instance-0"
+				other := maps.Clone(a)
+				const compose = `{"docker_compose_file":"services: {}","name":"second-instance"}`
+				other["info"] = map[string]any{"instance_id": "instance-1", "tcb_info": map[string]any{"app_compose": compose}}
+				otherQuote := q
+				otherQuote.MRConfigID = bytes.Clone(q.MRConfigID)
+				hash := sha256.Sum256([]byte(compose))
+				copy(otherQuote.MRConfigID[1:], hash[:])
+				otherQuote.DebugEnabled = f.badSharedModel
+				encoded, _ := json.Marshal(otherQuote)
+				other["intel_quote"] = string(encoded)
+				items = append(items, other)
+			}
 			if f.extraModel {
 				other := maps.Clone(a)
 				other["signing_address"] = strings.Repeat("22", 32)
@@ -616,6 +633,105 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func TestGatewaySharedSignerReportsSurviveResponseAndCache(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee, f.sharedModel = true, true
+	f.q.AdvisoryIDs = []string{"original"}
+	var deployments []string
+	client, _ := fakeClient(t, f, func(o *InferenceOptions) {
+		o.DeploymentPolicy = func(_ context.Context, _ string, deployment MeasuredDeployment) error {
+			deployments = append(deployments, deployment.AppCompose)
+			return nil
+		}
+	})
+	ctx := context.Background()
+	before, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Models) != 2 || len(deployments) != 2 || deployments[0] == deployments[1] {
+		t.Fatalf("expected two independently verified deployments: %#v %v", before.Models, deployments)
+	}
+	if _, err = client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	first, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Attestations) != 2 || first.Attestations[0].InstanceID != "instance-0" || first.Attestations[1].InstanceID != "instance-1" || first.Attestation == nil {
+		t.Fatalf("response lost shared-signer reports: %#v", first)
+	}
+	if !reflect.DeepEqual(first.Attestations, before.Models) || !reflect.DeepEqual(*first.Attestation, before.Models[0]) {
+		t.Fatal("response did not retain the preflight evidence and compatibility representative")
+	}
+	first.Attestations[1].Deployment.AppCompose = "mutated"
+	first.Attestations[1].AdvisoryIDs[0] = "mutated"
+	first.Attestation.AdvisoryIDs[0] = "mutated"
+	cached, err := client.VerifyResponse(ctx, "chat-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cached.Attestations, before.Models) || !reflect.DeepEqual(after.Models, before.Models) || !reflect.DeepEqual(*cached.Attestation, before.Models[0]) {
+		t.Fatal("mutating a receipt changed the cached report collection")
+	}
+	if f.attestations.Load() != 2 || f.signatureCalls.Load() != 1 || len(deployments) != 2 {
+		t.Fatal("cached verification refetched evidence or reran policy")
+	}
+}
+
+func TestGatewayRejectsUnacceptedSharedSignerReportBeforeChat(t *testing.T) {
+	for _, name := range []string{"policy", "evidence"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFakeCloud(t)
+			f.tee, f.sharedModel = true, true
+			f.badSharedModel = name == "evidence"
+			client, _ := fakeClient(t, f, func(o *InferenceOptions) {
+				if name == "policy" {
+					o.DeploymentPolicy = func(_ context.Context, _ string, deployment MeasuredDeployment) error {
+						if deployment.AppCompose != f.a.AppCompose {
+							return failure("test.second_deployment_rejected", nil)
+						}
+						return nil
+					}
+				}
+			})
+			_, err := client.CreateChatCompletion(context.Background(), chatRequest())
+			if name == "evidence" {
+				requireCode(t, err, "policy.debug_enabled")
+			} else {
+				requireCode(t, err, "provenance.verification_failed")
+			}
+			if f.chats.Load() != 0 {
+				t.Fatal("sent Chat before every shared-signer deployment was accepted")
+			}
+		})
+	}
+}
+
+func TestGatewayReceiptRejectsDifferentPreflightVerifiedKey(t *testing.T) {
+	f := newFakeCloud(t)
+	f.tee, f.extraModel = true, true
+	client, _ := fakeClient(t, f, nil)
+	ctx := context.Background()
+	verified, err := client.Verify(ctx, "canonical/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verified.Models) != 2 || verified.Models[0].Signer == f.a.Signer || verified.Models[1].Signer != f.a.Signer {
+		t.Fatal("fixture must select a key different from the response signer")
+	}
+	if _, err = client.CreateChatCompletion(ctx, chatRequest()); err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.VerifyResponse(ctx, "chat-1")
+	requireCode(t, err, "signature.signer_mismatch")
 }
 
 func TestProviderReceiptManagerEvidenceDoesNotAliasCachedResults(t *testing.T) {

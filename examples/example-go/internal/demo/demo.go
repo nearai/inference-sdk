@@ -464,10 +464,14 @@ func RunBare(ctx context.Context, c Config, direct bool) error {
 		} else if sig.Kind == "gateway" {
 			err = nearai.VerifyGatewayResponse(wireRequest, wire.Bytes(), sig, gateway)
 		} else {
-			var signer nearai.VerifiedAttestation
-			signer, err = nearai.FindModelAttestationForSignature(models, sig)
+			// Require the key selected for encryption before returning its report group.
+			err = nearai.VerifyModelResponse(wireRequest, wire.Bytes(), sig, *recipient)
 			if err == nil {
-				err = nearai.VerifyModelResponse(wireRequest, wire.Bytes(), sig, signer)
+				var signers []nearai.VerifiedAttestation
+				signers, err = nearai.FindModelAttestationsForSignature(models, sig)
+				if err == nil {
+					fmt.Printf("Verified response against %d matching model reports.\n", len(signers))
+				}
 			}
 		}
 		if err != nil {

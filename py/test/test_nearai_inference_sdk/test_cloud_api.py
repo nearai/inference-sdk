@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -20,6 +21,7 @@ from nearai_inference_sdk import (
     SigningIdentity,
     VerifiedModelAttestation,
     find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
 )
 from nearai_inference_sdk.core import cloud_api
 from nearai_inference_sdk.utils.fetch import FetchResponse
@@ -871,14 +873,41 @@ def test_find_model_attestation_for_signature_requires_one_matching_signer(
     assert raised.value.failure.code == expected_code
 
 
-def test_find_model_attestation_for_signature_rejects_a_gateway_signature() -> None:
+def test_find_model_attestations_for_signature_preserves_all_matching_reports() -> None:
+    signature = model_signature()
+    first = verified_model_attestation_for_signer(signature.signer)
+    second = replace(
+        first,
+        signer=replace(
+            first.signer, signing_address=SIGNING_ADDRESS.removeprefix('0x')
+        ),
+        deployment=replace(first.deployment, app_compose='{"name":"second"}'),
+    )
+    other = verified_model_attestation_for_signer(
+        SigningIdentity(signing_algo='ecdsa', signing_address='44' * 20)
+    )
+
+    matching = find_model_attestations_for_signature([first, other, second], signature)
+
+    assert matching == (first, second)
+    assert matching[0] is first and matching[1] is second
+    with pytest.raises(ApiError) as missing:
+        find_model_attestations_for_signature([other], signature)
+    assert missing.value.failure.code == 'api.model_attestation_signer_not_found'
+
+
+@pytest.mark.parametrize(
+    'find_attestations',
+    [find_model_attestation_for_signature, find_model_attestations_for_signature],
+)
+def test_model_signature_helpers_reject_a_gateway_signature(find_attestations) -> None:
     signature = CompletionSignatureReference(
         kind='gateway',
         signer=SigningIdentity(signing_algo='ecdsa', signing_address=SIGNING_ADDRESS),
     )
 
     with pytest.raises(ApiError) as raised:
-        find_model_attestation_for_signature(
+        find_attestations(
             [verified_model_attestation_for_signer(signature.signer)],
             signature,
         )

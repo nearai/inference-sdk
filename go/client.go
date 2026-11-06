@@ -754,8 +754,17 @@ func (c *InferenceClient) verifyRecord(ctx context.Context, id string, r *respon
 	if c.api.direct {
 		return VerifyDirectModelResponse(id, r.request, r.response, sig, r.session.result.Models)
 	}
+	var attestations []VerifiedAttestation
+	if sig.Kind == "provider_tee" {
+		// The selected-key check above still applies; a different preflight-verified
+		// signer must not satisfy a request routed to the selected key.
+		attestations, e = FindModelAttestationsForSignature(r.session.result.Models, sig)
+		if e != nil {
+			return VerifiedCompletionResult{}, e
+		}
+	}
 	copy := *a
-	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy}, nil
+	return VerifiedCompletionResult{ID: id, CompletionID: id, SignatureKind: sig.Kind, Signature: sig, Attestation: &copy, Attestations: attestations}, nil
 }
 
 // CreateChatCompletion accepts ordinary or future OpenAI fields and returns JSON.

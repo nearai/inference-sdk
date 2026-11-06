@@ -58,6 +58,7 @@ from .cloud_api import (
     AttestationClient,
     _ApiClient,
     _validate_base_url,
+    find_model_attestations_for_signature,
 )
 from .e2ee_request import (
     decode_chat_request,
@@ -777,6 +778,9 @@ class InferenceClient(
                 return VerifiedModelCompletionResult(
                     id=id,
                     signature=signature,
+                    attestations=find_model_attestations_for_signature(
+                        models, signature
+                    ),
                     attestation=selected,
                 )
             verify_gateway_response(request_body, response_body, signature, gateway)

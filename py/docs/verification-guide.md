@@ -33,6 +33,14 @@ requires every returned NEAR model report to pass before Chat. Other models use
 Incognito mode, which verifies the Gateway only. Invalid metadata or failed
 model verification stops Chat without falling back to Incognito.
 
+For a `provider_tee` response, `verified.attestations` contains every preflight
+report matching the request's selected signer. Multiple instances can share a
+signing key, so the response signature identifies that key, not a unique instance.
+The deprecated `verified.attestation` is representative key evidence retained for
+compatibility. A `gateway` response continues to return its Gateway `attestation`.
+Standalone callers can use `find_model_attestations_for_signature(reports, signature)`
+to select the full matching set; it does not perform signature verification.
+
 E2EE is opt-in for the Gateway client and uses a verified model key. Setting
 `e2ee=True`, a model policy, or a deployment callback rejects Incognito models.
 `signing_algo` defaults to `'ed25519'` and also accepts
@@ -732,7 +740,7 @@ Your application must retain:
 ### Encrypt a standalone request
 
 After verifying the models, select a public key from a verified result before
-Chat. `find_model_attestation_for_signature` is used later, when the response
+Chat. `find_model_attestations_for_signature` is used later, when the response
 signature is available; it is not the encryption-key selector.
 
 ```python
@@ -767,12 +775,12 @@ complete streaming and non-streaming flow, including byte capture and TLS pinnin
 ## 3. Verify the returned completion signature
 
 Fetch the signature after the completion has reached its terminal state. A
-provider signature selects exactly one verified model result from stage 1; a
-Gateway signature uses the verified Gateway result.
+provider signature selects the matching signer group from stage 1; a Gateway
+signature uses the verified Gateway result. Multiple reports can share a signer.
 
 ```python
 from nearai_inference_sdk import (
-    find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
     verify_gateway_response,
     verify_model_response,
 )
@@ -785,15 +793,16 @@ signature = await client.fetch_completion_signature(
 )
 
 if signature.kind == 'provider_tee':
-    verified_model = find_model_attestation_for_signature(
-        verified_models,
-        signature,
-    )
+    # Keep the routing/encryption key selected before sending the request.
     verify_model_response(
         request_body,
         response_body,
         signature,
-        verified_model,
+        model,
+    )
+    matching_models = find_model_attestations_for_signature(
+        verified_models,
+        signature,
     )
 else:
     verify_gateway_response(
@@ -803,6 +812,9 @@ else:
         verified_gateway,
     )
 ```
+
+Retain `matching_models` as the matching evidence set. These reports share the
+request's selected signing key; they do not identify the serving instance.
 
 The Gateway provides two signature kinds. They are different response signatures,
 not two top-level deployment workflows:

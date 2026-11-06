@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -295,11 +296,11 @@ func standalone(t *testing.T, algo nearai.SigningAlgo) {
 					if sig.Kind == "gateway" {
 						return nearai.VerifyGatewayResponse(request, body, sig, gateway)
 					}
-					signer, e := nearai.FindModelAttestationForSignature(reports, sig)
+					signers, e := nearai.FindModelAttestationsForSignature(reports, sig)
 					if e != nil {
 						return e
 					}
-					return nearai.VerifyModelResponse(request, body, sig, signer)
+					return nearai.VerifyModelResponse(request, body, sig, signers[0])
 				}
 				if err = verify(raw); err != nil {
 					t.Fatal(err)
@@ -374,6 +375,14 @@ func integrated(t *testing.T, e2ee bool, algo nearai.SigningAlgo, ohttp bool) {
 					t.Fatal("missing attested Gateway TLS binding")
 				}
 				assertEvidence(t, m, verified.Models)
+				if receipt.SignatureKind == "provider_tee" {
+					expected, err := nearai.FindModelAttestationsForSignature(verified.Models, receipt.Signature)
+					if err != nil || !reflect.DeepEqual(receipt.Attestations, expected) || !reflect.DeepEqual(cached.Attestations, expected) {
+						t.Fatalf("receipt did not retain the verified signer group: %v", err)
+					}
+				} else if len(receipt.Attestations) != 0 {
+					t.Fatal("Gateway receipt unexpectedly attributed model reports")
+				}
 				if !preflight.VerifiedAt.IsZero() && !preflight.VerifiedAt.Equal(verified.VerifiedAt) {
 					t.Fatal("preflight was not cached")
 				}

@@ -45,8 +45,16 @@ class AttestationVerificationResult:
 
 @dataclass(frozen=True, kw_only=True)
 class VerifiedModelCompletionResult:
+    """Response verified against the request's selected signing identity.
+
+    ``attestations`` contains all matching preflight reports, without claiming
+    which instance served the response. ``attestation`` is deprecated: it is
+    representative key evidence retained for compatibility, not an instance ID.
+    """
+
     id: str
     signature: CompletionSignature
+    attestations: tuple[VerifiedModelAttestation, ...]
     attestation: VerifiedModelAttestation
     signature_kind: Literal['provider_tee'] = 'provider_tee'
 

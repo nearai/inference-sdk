@@ -144,6 +144,9 @@ export type VerifiedModelCompletionResult = {
   readonly completionId: string;
   readonly signatureKind: 'provider_tee';
   readonly signature: CompletionSignature;
+  /** Verified reports sharing the request's selected signer, not a unique instance. */
+  readonly attestations: readonly VerifiedModelAttestation[];
+  /** @deprecated Use `attestations`. This represents the selected key, not the serving instance. */
   readonly attestation: VerifiedModelAttestation;
 };
 

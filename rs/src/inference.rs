@@ -112,6 +112,8 @@ pub struct AttestationVerificationResult {
 #[derive(Clone, Debug)]
 pub enum VerifiedCompletionAttestation {
     Gateway(VerifiedGatewayAttestation),
+    /// A representative of the selected routing key, not a serving-instance claim.
+    /// See `VerifiedCompletionResult::attestations` for all matching Gateway reports.
     Model(VerifiedModelAttestation),
     Direct(Vec<crate::direct::VerifiedDirectModelAttestation>),
 }
@@ -120,6 +122,10 @@ pub struct VerifiedCompletionResult {
     pub id: String,
     pub signature: CompletionSignature,
     pub attestation: VerifiedCompletionAttestation,
+    /// Every verified Gateway model report sharing this response's signer.
+    /// Empty for Gateway-signed receipts and Direct clients, whose reports remain
+    /// in `VerifiedCompletionAttestation::Direct`.
+    pub attestations: Vec<VerifiedModelAttestation>,
 }
 impl VerifiedCompletionResult {
     pub fn signature_kind(&self) -> CompletionSignatureKind {
@@ -767,6 +773,7 @@ impl InferenceClient {
                             }
                             .into());
                         }
+                        let mut attestations = Vec::new();
                         let attestation = match signature.kind {
                             CompletionSignatureKind::Gateway => {
                                 let gateway = session.gateway.as_ref().ok_or(
@@ -800,6 +807,13 @@ impl InferenceClient {
                                         .collect();
                                     VerifiedCompletionAttestation::Direct(matching)
                                 } else {
+                                    attestations = crate::find_model_attestations_for_signature(
+                                        &session.models,
+                                        &signature,
+                                    )?
+                                    .into_iter()
+                                    .cloned()
+                                    .collect();
                                     VerifiedCompletionAttestation::Model(model.clone())
                                 }
                             }
@@ -808,6 +822,7 @@ impl InferenceClient {
                             id,
                             signature,
                             attestation,
+                            attestations,
                         })
                     }
                     .boxed()
@@ -1069,6 +1084,7 @@ mod cache_tests {
                 },
             },
             attestation: VerifiedCompletionAttestation::Direct(Vec::new()),
+            attestations: Vec::new(),
         }
     }
 

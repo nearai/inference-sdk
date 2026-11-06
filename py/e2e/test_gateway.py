@@ -17,7 +17,7 @@ from nearai_inference_sdk import (
     VerificationError,
     VerifiedCompletionResult,
     create_pinned_tls_client,
-    find_model_attestation_for_signature,
+    find_model_attestations_for_signature,
     verify_gateway_attestation,
     verify_gateway_response,
     verify_model_attestation,
@@ -246,10 +246,10 @@ async def verify_chat(
     # Keep original wire bytes. Even appended whitespace must invalidate them.
     altered = response_body + b' '
     if signature.kind == 'provider_tee':
-        attestation = find_model_attestation_for_signature(models, signature)
-        verify_model_response(request_body, response_body, signature, attestation)
+        matching = find_model_attestations_for_signature(models, signature)
+        verify_model_response(request_body, response_body, signature, matching[0])
         with pytest.raises(VerificationError):
-            verify_model_response(request_body, altered, signature, attestation)
+            verify_model_response(request_body, altered, signature, matching[0])
     else:
         verify_gateway_response(request_body, response_body, signature, gateway)
         with pytest.raises(VerificationError):

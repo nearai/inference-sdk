@@ -225,11 +225,14 @@ for (const kind of ['gateway', 'provider_tee'] as const) {
       assert.equal(verified.id, id);
       assert.equal(verified.signatureKind, kind);
       assert.equal(verified.signature.signer.signingAlgo, signingAlgo);
-      if (kind === 'provider_tee') {
-        assert.equal(
-          verified.attestation.signer.signingAddress,
-          selected?.signer.signingAddress,
-        );
+      if (verified.signatureKind === 'provider_tee') {
+        assert.ok(verified.attestations.length > 0);
+        for (const attestation of verified.attestations) {
+          assert.equal(
+            attestation.signer.signingAddress,
+            selected?.signer.signingAddress,
+          );
+        }
       }
       assert.equal(
         inferenceRequests,

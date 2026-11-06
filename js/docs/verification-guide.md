@@ -948,7 +948,7 @@ verification.
 
 ```ts
 import {
-  findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   verifyGatewayResponse,
   verifyModelResponse,
 } from '@nearai/inference-sdk/node';
@@ -959,16 +959,18 @@ const signature = await client.fetchCompletionSignature({
 });
 
 if (signature.kind === 'provider_tee') {
-  const attestation = findModelAttestationForSignature({
-    attestations: [modelAttestation],
-    signature,
-  });
+  // Preserve the routing/encryption key selected before sending the request.
   verifyModelResponse({
     requestBody,
     responseBody,
     signature,
-    attestation,
+    attestation: modelAttestation,
   });
+  const attestations = findModelAttestationsForSignature({
+    attestations: models,
+    signature,
+  });
+  console.log(`Verified signature against ${attestations.length} matching reports.`);
 } else {
   verifyGatewayResponse({
     requestBody,
@@ -978,6 +980,11 @@ if (signature.kind === 'provider_tee') {
   });
 }
 ```
+
+Matching reports identify a signer group, not one execution instance.
+High-level Gateway clients enforce the request's selected key and return this
+group as `result.attestations`. The deprecated singular `attestation` field is
+only a representative of that key.
 
 A Gateway signature does not establish which model generated the response.
 A model signature does not authenticate the Gateway deployment. Verify both

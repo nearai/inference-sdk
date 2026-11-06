@@ -356,7 +356,7 @@ of this stage that depends on `signature.kind` is the response verifier:
 
 ```rust,no_run
 use nearai_inference_sdk::{
-    find_model_attestation_for_signature, verify_gateway_response,
+    find_model_attestations_for_signature, verify_gateway_response,
     verify_model_response, AttestationClient, CompletionSignature,
     CompletionSignatureKind, SigningAlgo, VerifiedGatewayAttestation,
     VerifiedModelAttestation,
@@ -376,8 +376,9 @@ async fn verify_completion_receipt(
 
     match signature.kind {
         CompletionSignatureKind::ProviderTee => {
-            let model = find_model_attestation_for_signature(models, &signature)?;
-            verify_model_response(request_body, response_body, &signature, model)?;
+            let matching = find_model_attestations_for_signature(models, &signature)?;
+            // The shared key verifies the signature; keep every matching report.
+            verify_model_response(request_body, response_body, &signature, matching[0])?;
         }
         CompletionSignatureKind::Gateway => {
             verify_gateway_response(request_body, response_body, &signature, gateway)?;
@@ -388,8 +389,10 @@ async fn verify_completion_receipt(
 ```
 
 `ProviderTee` proves that one preflight-verified model signer signed the exact
-request and response bytes. Use `find_model_attestation_for_signature` to
-require exactly one verified result for that signer. `Gateway` proves that the preflight-verified
+request and response bytes. `find_model_attestations_for_signature` preserves all
+verified reports sharing that signer; the signature does not select an individual
+instance from that group. If the request selected a routing/encryption key, also
+require the response signer to match that key. `Gateway` proves that the preflight-verified
 Gateway signer signed the exact client-visible bytes. It is not a choice
 between doing model verification and Gateway verification: both were completed
 before chat. The kind only determines which signer issued this completion's

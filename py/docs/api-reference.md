@@ -49,7 +49,8 @@ cleanup are synchronous.
 | `client.fetch_model_metadata` | `(model)` | `ModelMetadata` | Reads catalog capabilities, without cryptographic verification. |
 | `client.fetch_model_attestations` | `(model, *, signing_algo=None, signing_address=None)` | `FetchedModelAttestations` | Fetches target-model deployment evidence; optional signer fields narrow the API response. |
 | `client.fetch_gateway_attestation` | `(*, signing_algo=None, include_spki_fingerprint=True)` | `FetchedGatewayAttestation` | Fetches Gateway deployment evidence, optionally including its TLS fingerprint. |
-| `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Locally selects the sole preverified model deployment for a `provider_tee` signer. |
+| `find_model_attestations_for_signature` | `(attestations, signature)` | `tuple[VerifiedModelAttestation, ...]` | Selects every preverified report matching a `provider_tee` signer. |
+| `find_model_attestation_for_signature` | `(attestations, signature)` | `VerifiedModelAttestation` | Deprecated unique-match helper; raises if multiple reports share the signer. |
 | `verify_model_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedModelAttestation` | Verifies target-model deployment evidence. |
 | `verify_gateway_attestation` | `(attestation, client_binding, *, policy=None, verifiers=None)` | `VerifiedGatewayAttestation` | Verifies Gateway deployment evidence using the layout in the attestation. |
 | `verify_model_response` | `(request_body, response_body, signature, attestation)` | `None` | Verifies a `provider_tee` signature using preverified model evidence. |
@@ -147,7 +148,8 @@ before calling `verify_response()`.
 | `id` | `str` | ID supplied to `verify_response`: a Chat completion ID, Responses ID, Messages ID, or System One decision ID. |
 | `signature_kind` | `Literal['provider_tee', 'gateway']` | Trust boundary of the verified signature. |
 | `signature` | `CompletionSignature` | Retrieved signature and signer identity. |
-| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Verified evidence matching the signature kind. |
+| `attestations` | `tuple[VerifiedModelAttestation, ...]` | Present for `provider_tee`: all preflight reports matching the request's selected signer, without attributing the response to a unique instance. |
+| `attestation` | `VerifiedModelAttestation \| VerifiedGatewayAttestation` | Gateway evidence for `gateway`. Deprecated for `provider_tee`: representative key evidence retained for compatibility. |
 
 Response records expire at the configured TTL after body completion. Successful
 verification and cached terminal failures release the captured wire bytes and
@@ -393,7 +395,7 @@ Gateway before fetching an authenticated model report. Integrated clients perfor
 this ordering automatically.
 
 `AttestationClient` construction and methods, plus
-`find_model_attestation_for_signature`, raise `ApiError` for invalid helper
+the model-selection helpers, raise `ApiError` for invalid helper
 input as well as Gateway and selection failures. The `verify_*` functions
 raise `VerificationError` instead. Handle each operation at its own boundary;
 the client and selection helpers never require an `ApiError` versus
@@ -424,16 +426,21 @@ Every model-attestation fetch generates a fresh 32-byte client nonce, requests
 `ModelClientBinding` with the raw evidence. `signing_algo` and
 `signing_address` only narrow the remote response. The result preserves every
 model attestation the Gateway returns, including an empty collection. Verify each
-returned item before inference. Use `find_model_attestation_for_signature`
-after a `provider_tee` signature is available to select exactly one matching
-verified result for response verification.
+returned item before inference. Use `find_model_attestations_for_signature`
+after a `provider_tee` signature is available to select all matching verified
+reports. Matching the signer does not identify a unique serving instance.
 
 ### Local model selection
 
 | Function | Parameter | Type | Required | Description |
 | --- | --- | --- | --- | --- |
-| `find_model_attestation_for_signature` | `attestations` | `tuple[VerifiedModelAttestation, ...] \| list[VerifiedModelAttestation]` | Yes | Results returned by verifying every item from `client.fetch_model_attestations()`. Exactly one item must match the signer. |
+| `find_model_attestations_for_signature` | `attestations` | `tuple[VerifiedModelAttestation, ...] \| list[VerifiedModelAttestation]` | Yes | Results returned by verifying every item from `client.fetch_model_attestations()`. All matching reports are retained; no match raises `ApiError`. |
 |  | `signature` | `CompletionSignatureReference` | Yes | A `provider_tee` signature whose signer selects the result. |
+
+The deprecated singular `find_model_attestation_for_signature` accepts the same
+arguments and retains its strict unique-match contract. Both helpers select
+evidence without verifying the signature. If the request selected a routing or
+encryption key, response verification must still require that selected key.
 
 | Result type | Field | Type | Description |
 | --- | --- | --- | --- |

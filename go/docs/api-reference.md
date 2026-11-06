@@ -141,6 +141,8 @@ func VerifyDirectModelAttestations(ctx context.Context, fetched FetchedModelAtte
 func VerifyModelResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyGatewayResponse(request, response []byte, signature CompletionSignature, attestation VerifiedAttestation) error
 func VerifyDirectModelResponse(id string, request, response []byte, sig CompletionSignature, attestations []VerifiedAttestation) (VerifiedCompletionResult, error)
+func FindModelAttestationsForSignature(items []VerifiedAttestation, sig CompletionSignature) ([]VerifiedAttestation, error)
+// Deprecated: use FindModelAttestationsForSignature for shared signers.
 func FindModelAttestationForSignature(items []VerifiedAttestation, sig CompletionSignature) (VerifiedAttestation, error)
 
 func NewPinnedTransport(base *http.Transport, fingerprint string) (*http.Transport, error)
@@ -362,8 +364,10 @@ type VerifiedCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	Attestation   *VerifiedAttestation
-	// Attestations contains every matching direct deployment; a shared key does not identify one CVM.
+ // Gateway evidence or the selected model-key representative; nil for Direct.
+ // A model-key representative does not identify an individual instance.
+ Attestation *VerifiedAttestation
+ // Every matching verified model deployment for provider_tee receipts.
 	Attestations []VerifiedAttestation
 }
 
@@ -492,9 +496,13 @@ E2EE. It distinguishes:
 - `gateway`: a verified Gateway signer signed the exact client-visible bytes.
   This does not prove execution in a model TEE.
 
-`VerifiedCompletionResult.Attestation` contains Gateway/routed-model evidence.
-For direct endpoints, it is nil and `Attestations` includes every matching model
-report: a shared signing key cannot identify an individual serving instance.
+`VerifiedCompletionResult.Attestations` includes every verified model report
+matching a `provider_tee` response's signer. Gateway clients also require that
+signer to match the key selected for the request. The legacy `Attestation` field
+retains the selected model-key representative; it does not identify one instance.
+For `gateway` receipts, `Attestation` contains Gateway evidence and `Attestations`
+is empty. Direct endpoints keep `Attestation` nil and return the matching group in
+`Attestations`: a shared signing key cannot identify an individual serving instance.
 `VerifyDirectModelResponse` provides the same behavior for manual workflows.
 
 Signatures and independently verified deployments do not establish a complete
@@ -511,8 +519,11 @@ Manual workflow APIs:
   binds its optional fingerprint to the supplied observed peer.
 - `VerifyGatewayResponse`, `VerifyModelResponse`, `VerifyDirectModelResponse`
   verify exact bytes using already authenticated evidence.
-- `FindModelAttestationForSignature` requires exactly one matching model report;
-  it rejects missing and ambiguous matches.
+- `FindModelAttestationsForSignature` returns all verified reports matching the
+  response signer and rejects missing matches. Their shared signature can be
+  verified once with `VerifyModelResponse` using any returned report.
+- The deprecated `FindModelAttestationForSignature` retains its exactly-one-match
+  contract and rejects missing or ambiguous matches.
 
 ## Encryption
 

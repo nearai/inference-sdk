@@ -110,6 +110,47 @@ func TestAddressOnlyAttestationFilter(t *testing.T) {
 	}
 }
 
+func TestFindModelAttestationsForSignature(t *testing.T) {
+	signer := SigningIdentity{SigningAlgo: Ed25519, SigningAddress: strings.Repeat("ab", 32)}
+	items := []VerifiedAttestation{
+		{Signer: signer, InstanceID: "first", AdvisoryIDs: []string{"original"}, Deployment: MeasuredDeployment{AppCompose: "first-compose"}},
+		{Signer: SigningIdentity{SigningAlgo: Ed25519, SigningAddress: strings.Repeat("cd", 32)}, InstanceID: "other-key"},
+		{Signer: signer, InstanceID: "second", Deployment: MeasuredDeployment{AppCompose: "second-compose"}},
+	}
+	sig := CompletionSignature{Kind: "provider_tee", Signer: signer}
+	matches, err := FindModelAttestationsForSignature(items, sig)
+	if err != nil || len(matches) != 2 || matches[0].InstanceID != "first" || matches[1].InstanceID != "second" {
+		t.Fatalf("shared-signer reports: %#v %v", matches, err)
+	}
+	matches[0].AdvisoryIDs[0] = "changed"
+	if items[0].AdvisoryIDs[0] != "original" {
+		t.Fatal("returned reports alias input evidence")
+	}
+	_, err = FindModelAttestationForSignature(items, sig)
+	requireCode(t, err, "api.model_attestation_not_found")
+	if err.(*Error).Details["matches"] != 2 {
+		t.Fatal("singular helper lost its unique-match contract")
+	}
+	one, err := FindModelAttestationsForSignature(items[:1], sig)
+	if err != nil || len(one) != 1 {
+		t.Fatalf("single match: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		sig  CompletionSignature
+		code string
+	}{
+		{"wrong kind", CompletionSignature{Kind: "gateway", Signer: signer}, "api.invalid_input"},
+		{"missing signer", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: Ed25519, SigningAddress: strings.Repeat("ef", 32)}}, "api.model_attestation_not_found"},
+		{"wrong algorithm", CompletionSignature{Kind: "provider_tee", Signer: SigningIdentity{SigningAlgo: ECDSA, SigningAddress: signer.SigningAddress}}, "api.model_attestation_not_found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := FindModelAttestationsForSignature(items, tc.sig)
+			requireCode(t, err, tc.code)
+		})
+	}
+}
+
 func TestStructuralAttestationComparison(t *testing.T) {
 	a := Attestation{EventLog: json.RawMessage(`[{"imr":3,"nested":{"b":2,"a":9007199254740993}}]`)}
 	b := a

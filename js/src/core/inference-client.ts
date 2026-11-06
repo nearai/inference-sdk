@@ -53,6 +53,7 @@ import {
   AttestationClient,
   CloudApiClient,
   createCloudApiRequestConfiguration,
+  findModelAttestationsForSignature,
   mergeCloudApiRequestHeaders,
   NO_ALIASING_HEADER,
   resolveCloudApiBaseUrl,
@@ -944,11 +945,16 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
             signature,
             attestation: modelAttestation,
           });
+          const attestations = findModelAttestationsForSignature({
+            attestations: modelAttestations,
+            signature,
+          });
           return {
             id,
             completionId: id,
             signatureKind: 'provider_tee',
             signature,
+            attestations,
             attestation: modelAttestation,
           };
         }

@@ -10,7 +10,7 @@ import type {
 import {
   AttestationClient,
   createPinnedTlsFetch,
-  findModelAttestationForSignature,
+  findModelAttestationsForSignature,
   InferenceClient,
   VerificationError,
   verifyGatewayAttestation,
@@ -301,11 +301,17 @@ for (const selectedModel of MODELS) {
         // Changing even whitespace must invalidate the receipt's byte binding.
         const altered = new Uint8Array([...responseBody, 0x20]);
         if (signature.kind === 'provider_tee') {
-          const attestation = findModelAttestationForSignature({
+          const attestations = findModelAttestationsForSignature({
             attestations: models,
             signature,
           });
-          const params = { requestBody, responseBody, signature, attestation };
+          // The key verifies the signature; all matching instance reports remain available.
+          const params = {
+            requestBody,
+            responseBody,
+            signature,
+            attestation: attestations[0],
+          };
           verifyModelResponse(params);
           assert.throws(
             () => verifyModelResponse({ ...params, responseBody: altered }),

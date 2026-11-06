@@ -632,6 +632,81 @@ async def test_verify_returns_all_model_reports_or_gateway_only_results(
     assert gateway.completion_requests == []
 
 
+@pytest.mark.parametrize('signing_algo', ['ed25519', 'ecdsa'])
+async def test_response_preserves_shared_signer_reports_from_its_preflight(
+    monkeypatch, signing_algo
+):
+    gateway = Gateway(signing_algo)
+    gateway.model_report_count = 2
+    original_attestation = gateway.attestation
+
+    def distinct_deployment(nonce):
+        report = original_attestation(nonce)
+        quote_id = report['intel_quote']
+        compose = json.dumps({**json.loads(APP_COMPOSE), 'name': quote_id})
+        report['info']['tcb_info']['app_compose'] = compose
+        gateway.quotes[quote_id] = replace(
+            gateway.quotes[quote_id],
+            mr_config_id=b'\x01'
+            + hashlib.sha256(compose.encode()).digest()
+            + bytes(15),
+        )
+        return report
+
+    monkeypatch.setattr(gateway, 'attestation', distinct_deployment)
+    gateway.install(monkeypatch)
+    now = 0
+    monkeypatch.setattr(inference_client, 'monotonic', lambda: now)
+
+    async with gateway.client(attestation_cache_time_to_live_ms=1000) as client:
+        original = await client.verify(MODEL)
+        completion = await client.chat.completions.create(
+            model=MODEL, messages=MESSAGES
+        )
+        assert await client.verify(MODEL) is original
+        assert len({item.deployment.app_compose for item in original.models}) == 2
+
+        now = 2
+        gateway.model_report_count = 3
+        refreshed = await client.verify(MODEL)
+        assert len(refreshed.models) == 3
+        receipt = await client.verify_response(completion.id)
+
+    assert receipt.attestations == original.models
+    assert all(
+        actual is expected
+        for actual, expected in zip(receipt.attestations, original.models, strict=True)
+    )
+    assert receipt.attestation is original.models[0]
+    assert gateway.model_requests == [MODEL, MODEL]
+
+
+async def test_second_shared_signer_report_must_pass_deployment_policy(monkeypatch):
+    gateway = Gateway()
+    gateway.model_report_count = 2
+    gateway.install(monkeypatch)
+    checked = []
+
+    def deployment_policy(model, deployment):
+        checked.append((model, deployment))
+        if len(checked) == 2:
+            raise ValueError('second deployment rejected')
+
+    async with gateway.client(deployment_policy=deployment_policy) as client:
+        with pytest.raises(VerificationError) as rejected:
+            await client.send(
+                httpx.Request(
+                    'POST',
+                    BASE_URL + 'chat/completions',
+                    json={'model': MODEL, 'messages': MESSAGES},
+                )
+            )
+
+    assert rejected.value.failure.code == 'provenance.verification_failed'
+    assert len(checked) == 2
+    assert gateway.completion_requests == []
+
+
 async def test_failed_preverification_is_not_cached(monkeypatch):
     gateway = Gateway()
     gateway.bad_quote = True

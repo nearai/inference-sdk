@@ -115,8 +115,12 @@ type VerifiedCompletionResult struct {
 	CompletionID  string
 	SignatureKind string
 	Signature     CompletionSignature
-	Attestation   *VerifiedAttestation
-	// Attestations contains every matching direct deployment; a shared key does not identify one CVM.
+	// Attestation contains Gateway evidence, or the selected model-key representative
+	// for compatibility. For provider_tee receipts it does not identify one instance;
+	// use Attestations for the complete verified signer group. It is nil for Direct.
+	Attestation *VerifiedAttestation
+	// Attestations contains every matching verified model deployment for provider_tee
+	// receipts. A shared key does not identify one CVM. It is empty for Gateway receipts.
 	Attestations []VerifiedAttestation
 }
 
