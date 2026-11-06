@@ -142,7 +142,8 @@ origin; supply a client with redirects disabled (or a pinned client).
 `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
 Gateway client. Its `verify(model)` returns the complete verified report set,
 serving report, TLS binding, and verification timestamp. `with_options` accepts
-`DirectInferenceClientOptions`. Set `e2ee: true` to enable encryption.
+`DirectInferenceClientOptions`, which configures Direct inference without Gateway
+verification settings. Set `e2ee: true` to enable encryption.
 
 `verify_response(id)` returns `VerifiedDirectCompletionResult`. Its `id` and
 `signature` describe the receipt; `attestations` contains all verified Direct

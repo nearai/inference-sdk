@@ -275,9 +275,12 @@ type chatExampleClient struct {
 	verifyResponse func(context.Context, string) (string, error)
 }
 
-func newChatExampleClient(opts nearai.InferenceOptions, direct bool) (chatExampleClient, error) {
+func newChatExampleClient(c Config, direct, checkImages bool) (chatExampleClient, error) {
 	if direct {
-		client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{InferenceOptions: opts})
+		client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
+			ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+			SigningAlgo:   c.Algo, E2EE: true, OHTTP: c.OHTTP,
+		})
 		if err != nil {
 			return chatExampleClient{}, err
 		}
@@ -292,6 +295,14 @@ func newChatExampleClient(opts nearai.InferenceOptions, direct bool) (chatExampl
 				return verified.SignatureKind, err
 			},
 		}, nil
+	}
+	opts := nearai.InferenceOptions{
+		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
+		SigningAlgo:   c.Algo, E2EE: true, OHTTP: c.OHTTP,
+	}
+	if checkImages {
+		opts.GatewayVerification.DeploymentVerifier = GatewayImages
+		opts.ModelVerification.DeploymentVerifier = ModelImages
 	}
 	client, err := nearai.NewInferenceClient(opts)
 	if err != nil {
@@ -313,17 +324,7 @@ func newChatExampleClient(opts nearai.InferenceOptions, direct bool) (chatExampl
 // RunIntegrated uses the verified transport for both JSON and SSE. Gateway mode
 // applies image provenance policy; direct mode remains experimental without TLS binding.
 func RunIntegrated(ctx context.Context, c Config, direct bool) error {
-	opts := nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
-		SigningAlgo:   c.Algo,
-		OHTTP:         c.OHTTP,
-		E2EE:          true,
-	}
-	if !direct {
-		opts.GatewayVerification.DeploymentVerifier = GatewayImages
-		opts.ModelVerification.DeploymentVerifier = ModelImages
-	}
-	client, err := newChatExampleClient(opts, direct)
+	client, err := newChatExampleClient(c, direct, true)
 	if err != nil {
 		return err
 	}
@@ -543,13 +544,7 @@ func RunDirectOpenAI(ctx context.Context, c Config) error {
 }
 
 func runOpenAI(ctx context.Context, c Config, direct bool) error {
-	opts := nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{APIKey: c.Key, BaseURL: c.BaseURL},
-		SigningAlgo:   c.Algo,
-		OHTTP:         c.OHTTP,
-		E2EE:          true,
-	}
-	client, err := newChatExampleClient(opts, direct)
+	client, err := newChatExampleClient(c, direct, false)
 	if err != nil {
 		return err
 	}

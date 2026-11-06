@@ -709,8 +709,10 @@ async fn integrated_ohttp_authenticates_config_and_verifies_inner_receipts() {
                 let mut request = body();
                 request["stream"] = json!(streaming);
                 let (result, receipt) = if direct {
-                    let client =
-                        DirectInferenceClient::with_options(options.clone().into()).unwrap();
+                    let client = DirectInferenceClient::with_options(fixture::direct_options(
+                        options.clone(),
+                    ))
+                    .unwrap();
                     let result = match client.send(client.chat_request(request).unwrap()).await {
                         Ok(r) => r.bytes().await,
                         Err(e) => Err(e),

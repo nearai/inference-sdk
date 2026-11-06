@@ -575,6 +575,22 @@ pub(super) async fn setup(fixture: Fixture) -> (MockServer, Arc<Fixture>, Infere
     };
     (server, fixture, options)
 }
+
+pub(super) fn direct_options(options: InferenceClientOptions) -> DirectInferenceClientOptions {
+    DirectInferenceClientOptions {
+        api_key: options.api_key,
+        base_url: options.base_url,
+        headers: options.headers,
+        e2ee: options.e2ee,
+        ohttp: options.ohttp,
+        signing_algo: options.signing_algo,
+        attestation_cache_ttl: options.attestation_cache_ttl,
+        response_cache_ttl: options.response_cache_ttl,
+        model_verification: options.model_verification,
+        deployment_policy: options.deployment_policy,
+    }
+}
+
 pub(super) fn body() -> Value {
     json!({"model":"vendor/model","messages":[{"role":"user","content":"Hello"}]})
 }

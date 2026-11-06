@@ -190,7 +190,7 @@ func testOpenAIClientIntegration(t *testing.T, direct bool, protocol string, alg
 	if direct {
 		// These adapter fixtures are plaintext; E2EE has dedicated SDK coverage.
 		owner, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-			InferenceOptions: opts,
+			ClientOptions: opts.ClientOptions, SigningAlgo: algo, ModelVerification: opts.ModelVerification,
 		})
 		c, e = owner, err
 		verifyResponse = func(ctx context.Context, id string) error {

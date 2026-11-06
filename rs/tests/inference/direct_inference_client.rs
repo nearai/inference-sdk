@@ -1,4 +1,4 @@
-use super::fixture::{body, setup, Fixture};
+use super::fixture::{body, direct_options, setup, Fixture};
 use async_trait::async_trait;
 use nearai_inference_sdk::*;
 use serde_json::Value;
@@ -25,7 +25,7 @@ async fn direct_deployment_verifier_checks_every_report() {
     .await;
     let calls = Arc::new(AtomicUsize::new(0));
     options.model_verification.deployment = Some(Arc::new(DeploymentCheck(calls.clone())));
-    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
     let verified = client.verify("vendor/model").await.unwrap();
     assert_eq!(verified.attestations.len(), 2);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -46,14 +46,7 @@ async fn direct_client_verifies_entire_report_set_and_default_signature_kind() {
         ..Default::default()
     })
     .await;
-    let client = DirectInferenceClient::with_options(DirectInferenceClientOptions {
-        api_key: options.api_key,
-        base_url: options.base_url,
-        headers: options.headers,
-        model_verification: options.model_verification,
-        ..Default::default()
-    })
-    .unwrap();
+    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
     let verified = client.verify("vendor/model").await.unwrap();
     assert_eq!(verified.attestations.len(), 2);
     assert_eq!(verified.tls_binding, GatewayTlsBinding::None);
@@ -89,7 +82,7 @@ async fn direct_rejects_invalid_nonserving_report_before_chat() {
         ..Default::default()
     })
     .await;
-    let client = DirectInferenceClient::with_options(options.into()).unwrap();
+    let client = DirectInferenceClient::with_options(direct_options(options)).unwrap();
     assert!(client.chat_completions(body()).await.is_err());
     assert_eq!(f.chat.load(Ordering::SeqCst), 0);
 }

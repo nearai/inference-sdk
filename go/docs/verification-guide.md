@@ -474,13 +474,11 @@ default; this example enables it:
 
 ```go
 client, err := nearai.NewDirectInferenceClient(nearai.DirectInferenceOptions{
-	InferenceOptions: nearai.InferenceOptions{
-		ClientOptions: nearai.ClientOptions{
-			APIKey:  apiKey,
-			BaseURL: directBaseURL,
-		},
-		E2EE: true,
+	ClientOptions: nearai.ClientOptions{
+		APIKey:  apiKey,
+		BaseURL: directBaseURL,
 	},
+	E2EE: true,
 })
 if err != nil {
 	return err

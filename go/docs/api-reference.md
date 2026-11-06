@@ -399,7 +399,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -417,8 +417,16 @@ type InferenceOptions struct {
 // DirectInferenceOptions leaves E2EE disabled by default.
 // Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: set InferenceOptions.E2EE to enable encryption.
+	ClientOptions
+	SigningAlgo       SigningAlgo
+	E2EE              bool
+	OHTTP             bool
+	AttestationTTL    *time.Duration
+	ResponseTTL       *time.Duration
+	ModelVerification VerificationOptions
+	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
+
+	// Deprecated: E2EE is disabled by default. Set E2EE to enable it.
 	// When true, DisableE2EE takes precedence over E2EE.
 	DisableE2EE bool
 }
@@ -448,8 +456,9 @@ type VerifiedDirectCompletionResult struct {
 
 `NewInferenceClient(InferenceOptions)` creates a Gateway client.
 `NewDirectInferenceClient(DirectInferenceOptions)` creates a `DirectInferenceClient`
-and requires an explicit base URL.
-Both clients leave E2EE disabled unless `InferenceOptions.E2EE` is set to `true`.
+and requires an explicit base URL. Its options configure Direct inference without
+Gateway verification or Gateway TLS-binding settings.
+Both clients leave E2EE disabled unless their `E2EE` option is set to `true`.
 Direct clients are experimental: they do not verify a Gateway, and direct TLS
 attestation binding is disabled, matching JavaScript/Python's current direct-endpoint limitation.
 Normal HTTPS verification still applies.

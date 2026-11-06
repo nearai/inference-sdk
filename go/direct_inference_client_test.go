@@ -87,12 +87,10 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	calls := 0
 	check := func(context.Context, MeasuredDeployment) error { calls++; return nil }
 	client, e := NewDirectInferenceClient(DirectInferenceOptions{
-		InferenceOptions: InferenceOptions{
-			ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
-			E2EE:              true,
-			OHTTP:             ohttp,
-			ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: check},
-		},
+		ClientOptions:     ClientOptions{BaseURL: server.URL + "/v1"},
+		E2EE:              true,
+		OHTTP:             ohttp,
+		ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote, DeploymentVerifier: check},
 	})
 	if e != nil {
 		t.Fatal(e)
@@ -116,11 +114,11 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if err != nil || calls != 2 || !cached.VerifiedAt.Equal(preflight.VerifiedAt) || cached.ServingAttestation.InstanceID != "serving" || cached.Attestations[0].InstanceID != "other" || cached.Attestations[0].Deployment.AppCompose == "changed" {
 		t.Fatal("Direct preflight must return independent snapshots of the original verification", err)
 	}
-	session, err := client.client.getSession(context.Background(), "canonical/model")
+	session, err := client.inferenceCore.getSession(context.Background(), "canonical/model")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = client.client.register("chat", request, response, session, false, client.client.responseCacheGeneration()); err != nil {
+	if err = client.inferenceCore.register("chat", request, response, session, false, client.inferenceCore.responseCacheGeneration()); err != nil {
 		t.Fatal(err)
 	}
 	receipt, err := client.VerifyResponse(context.Background(), "chat")
@@ -135,7 +133,7 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	} else if len(receipt.Attestations) != 1 || receipt.Attestations[0].InstanceID != "serving" {
 		t.Fatal("receipt must only include reports matching the signer")
 	}
-	if len(session.result.Models) != 2 || session.selected.Signer != b.Signer || !client.client.options.E2EE {
+	if len(session.models) != 2 || session.selected.Signer != b.Signer || !client.inferenceCore.options.E2EE {
 		t.Fatal("wrong routing or defaults")
 	}
 	if sharedSigner && session.selected.InstanceID != "other" {
@@ -147,7 +145,7 @@ func testDirectRoute(t *testing.T, ohttp, sharedSigner bool) {
 	if err != nil || cachedReceipt.Attestations[0].InstanceID == "changed" || cachedReceipt.Attestations[0].Deployment.AppCompose == "changed" || len(cachedReceipt.Attestations) != len(receipt.Attestations) {
 		t.Fatal("Direct receipt cache must retain the complete independent evidence snapshot", err)
 	}
-	if client.client.responses["chat"].request != nil || client.client.responses["chat"].response != nil || client.client.responses["chat"].session != nil {
+	if client.inferenceCore.responses["chat"].request != nil || client.inferenceCore.responses["chat"].response != nil || client.inferenceCore.responses["chat"].session != nil {
 		t.Fatal("completed Direct verification must release captured bodies and session")
 	}
 }
@@ -172,9 +170,9 @@ func TestDirectSharedSignerDoesNotAttributeInstance(t *testing.T) {
 }
 
 func TestDirectClientPublicSurface(t *testing.T) {
-	client, err := NewDirectInferenceClient(DirectInferenceOptions{InferenceOptions: InferenceOptions{
+	client, err := NewDirectInferenceClient(DirectInferenceOptions{
 		ClientOptions: ClientOptions{BaseURL: "https://direct.invalid/v1"},
-	}})
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +181,7 @@ func TestDirectClientPublicSurface(t *testing.T) {
 	var _ func(context.Context, string) (DirectAttestationVerificationResult, error) = client.Verify
 	var _ func(context.Context, string) (VerifiedDirectCompletionResult, error) = client.VerifyResponse
 	if client.HTTPClient().Transport != client {
-		t.Fatal("HTTP adapter must not expose the Gateway client engine")
+		t.Fatal("HTTP adapter must use its owning Direct client")
 	}
 	if err := client.HTTPClient().CheckRedirect(nil, nil); err != http.ErrUseLastResponse {
 		t.Fatal("Direct adapter must keep redirect refusal")
@@ -200,6 +198,11 @@ func TestDirectClientPublicSurface(t *testing.T) {
 			}
 		}
 	}
+	for _, field := range []string{"InferenceOptions", "GatewayVerification", "DisableTLSBinding"} {
+		if _, exists := reflect.TypeFor[DirectInferenceOptions]().FieldByName(field); exists {
+			t.Fatalf("Direct options expose Gateway-only %s", field)
+		}
+	}
 	for _, endpoint := range []string{"responses", "messages", "systemone"} {
 		req, err := http.NewRequest(http.MethodPost, client.BaseURL()+endpoint, strings.NewReader(`{"model":"canonical/model"}`))
 		if err != nil {
@@ -211,22 +214,24 @@ func TestDirectClientPublicSurface(t *testing.T) {
 }
 
 func TestDirectClientE2EEIsOptIn(t *testing.T) {
-	for _, e2ee := range []bool{false, true} {
-		name := "default plaintext"
-		if e2ee {
-			name = "explicit E2EE"
-		}
-		t.Run(name, func(t *testing.T) {
+	for _, scenario := range []struct {
+		name              string
+		e2ee, disableE2EE bool
+	}{
+		{"default plaintext", false, false},
+		{"explicit E2EE", true, false},
+		{"legacy disable overrides opt-in", true, true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
 			f := newFakeCloud(t)
-			f.tee, f.direct, f.encrypt = true, true, e2ee
+			f.tee, f.direct, f.encrypt = true, true, scenario.e2ee && !scenario.disableE2EE
 			server := httptest.NewServer(f)
 			defer server.Close()
-			opts := DirectInferenceOptions{InferenceOptions: InferenceOptions{
+			opts := DirectInferenceOptions{
 				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
 				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
-			}}
-			if e2ee {
-				opts.E2EE = true
+				E2EE:              scenario.e2ee,
+				DisableE2EE:       scenario.disableE2EE,
 			}
 			client, err := NewDirectInferenceClient(opts)
 			if err != nil {

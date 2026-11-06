@@ -89,7 +89,7 @@ func TestGatewayOHTTPVerificationPrecedesAuthenticatedRequests(t *testing.T) {
 			if _, ok := session.transport.(*ohttpTransport); !ok {
 				t.Fatal("valid OHTTP configuration was not installed")
 			}
-			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.result.Models) != 1 {
+			if fixture.metadata.Load() != 1 || fixture.attestations.Load() != 2 || len(session.models) != 1 {
 				t.Fatal("valid OHTTP evidence did not allow authenticated model verification")
 			}
 		})

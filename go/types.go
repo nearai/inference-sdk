@@ -148,7 +148,7 @@ type FetchOptions struct {
 	DisableTLSBinding bool
 }
 
-// InferenceOptions applies to Gateway and experimental direct clients. Nil TTLs
+// InferenceOptions configures Gateway inference. Nil TTLs
 // default to one hour; a pointer to zero disables the corresponding cache.
 type InferenceOptions struct {
 	ClientOptions
@@ -163,11 +163,19 @@ type InferenceOptions struct {
 	DeploymentPolicy    func(context.Context, string, MeasuredDeployment) error
 }
 
-// DirectInferenceOptions uses the same E2EE opt-in as InferenceOptions.
+// DirectInferenceOptions leaves E2EE disabled by default.
 // Direct TLS identity binding is experimental and disabled in all clients.
 type DirectInferenceOptions struct {
-	InferenceOptions
-	// Deprecated: E2EE is disabled by default. Set InferenceOptions.E2EE to enable it.
+	ClientOptions
+	SigningAlgo       SigningAlgo
+	E2EE              bool
+	OHTTP             bool
+	AttestationTTL    *time.Duration
+	ResponseTTL       *time.Duration
+	ModelVerification VerificationOptions
+	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
+
+	// Deprecated: E2EE is disabled by default. Set E2EE to enable it.
 	// When true, DisableE2EE takes precedence over E2EE.
 	DisableE2EE bool
 }

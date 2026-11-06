@@ -204,7 +204,9 @@ async fn messages_unsupported_modes_are_rejected_before_preflight() {
     );
 
     options.e2ee = false;
-    let direct = DirectInferenceClient::with_options(options.clone().into()).unwrap();
+    let direct =
+        DirectInferenceClient::with_options(super::fixture::direct_options(options.clone()))
+            .unwrap();
     let client = InferenceClient::with_options(options).unwrap();
 
     assert_eq!(

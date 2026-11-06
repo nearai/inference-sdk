@@ -128,7 +128,8 @@ method while the response remains cached.
   be authenticated, and the supplied HTTP client must disable redirects.
 - `DirectInferenceClient::new(base_url, api_key)` leaves E2EE disabled, as with the
   Gateway client. Use `with_options` and `DirectInferenceClientOptions { e2ee: true, .. }`
-  to enable it. `verify` returns `DirectAttestationVerificationResult`.
+  to enable it. Direct has its own options type without Gateway verification settings.
+  `verify` returns `DirectAttestationVerificationResult`.
   `verify_response` returns `VerifiedDirectCompletionResult` with `id`, `signature`,
   and `attestations: Vec<VerifiedDirectModelAttestation>`. Read the matching report
   group directly from `receipt.attestations`; `signature_kind()` returns the

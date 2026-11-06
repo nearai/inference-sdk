@@ -2,15 +2,14 @@ package nearai
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 )
 
-// DirectInferenceClient verifies experimental Direct Chat endpoints. It shares
-// transport and cache behavior with InferenceClient, but returns Direct evidence
-// and does not expose Gateway-only APIs. Always Close it when finished.
+// DirectInferenceClient verifies experimental Direct Chat endpoints and returns
+// Direct evidence. Always Close it when finished; verify responses after consuming
+// their full body.
 type DirectInferenceClient struct {
-	client *InferenceClient
+	*inferenceCore
 }
 
 // NewDirectInferenceClient is experimental: no Gateway or direct TLS attestation
@@ -19,17 +18,26 @@ func NewDirectInferenceClient(o DirectInferenceOptions) (*DirectInferenceClient,
 	if o.DisableE2EE {
 		o.E2EE = false
 	}
-	client, err := newInferenceClient(o.InferenceOptions, true)
+	core, err := newInferenceCore(inferenceOptions{
+		ClientOptions:     o.ClientOptions,
+		SigningAlgo:       o.SigningAlgo,
+		E2EE:              o.E2EE,
+		OHTTP:             o.OHTTP,
+		AttestationTTL:    o.AttestationTTL,
+		ResponseTTL:       o.ResponseTTL,
+		ModelVerification: o.ModelVerification,
+		DeploymentPolicy:  o.DeploymentPolicy,
+	}, true, directPreflight)
 	if err != nil {
 		return nil, err
 	}
-	return &DirectInferenceClient{client: client}, nil
+	return &DirectInferenceClient{inferenceCore: core}, nil
 }
 
 // Verify authenticates all reports and retains the preflight endpoint's serving
 // report. Cached results keep their original VerifiedAt timestamp.
 func (c *DirectInferenceClient) Verify(ctx context.Context, model string) (DirectAttestationVerificationResult, error) {
-	s, err := c.client.getSession(ctx, model)
+	s, err := c.getSession(ctx, model)
 	if err != nil {
 		return DirectAttestationVerificationResult{}, err
 	}
@@ -39,14 +47,14 @@ func (c *DirectInferenceClient) Verify(ctx context.Context, model string) (Direc
 			Attestations:       cloneAttestations(s.direct.Attestations),
 			SPKIFingerprints:   append([]string(nil), s.direct.SPKIFingerprints...),
 		},
-		VerifiedAt: s.result.VerifiedAt,
+		VerifiedAt: s.verifiedAt,
 	}, nil
 }
 
 // VerifyResponse authenticates the retained exact bytes and returns every
 // preflight report sharing the request's selected signer.
 func (c *DirectInferenceClient) VerifyResponse(ctx context.Context, id string) (VerifiedDirectCompletionResult, error) {
-	result, err := c.client.verifyResponse(ctx, id)
+	result, err := c.verifyResponse(ctx, id)
 	if err != nil {
 		return VerifiedDirectCompletionResult{}, err
 	}
@@ -62,19 +70,11 @@ func (c *DirectInferenceClient) HTTPClient() *http.Client {
 	return &http.Client{Transport: c, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
-func (c *DirectInferenceClient) BaseURL() string { return c.client.BaseURL() }
-
-// RoundTrip accepts POSTs to the configured Direct Chat Completions endpoint.
-func (c *DirectInferenceClient) RoundTrip(req *http.Request) (*http.Response, error) {
-	return c.client.RoundTrip(req)
+func directPreflight(ctx context.Context, c *inferenceCore, s *session, model string) (FetchedModelAttestations, error) {
+	fetched, err := c.api.FetchModelAttestations(ctx, model, FetchOptions{SigningAlgo: c.options.SigningAlgo})
+	if err != nil {
+		return FetchedModelAttestations{}, err
+	}
+	s.direct = &VerifiedDirectModelAttestations{}
+	return fetched, nil
 }
-
-// CreateChatCompletion sends JSON Chat. Use HTTPClient for streaming requests.
-func (c *DirectInferenceClient) CreateChatCompletion(ctx context.Context, request any) (json.RawMessage, error) {
-	return c.client.CreateChatCompletion(ctx, request)
-}
-
-// ClearResponseCache releases captured responses while keeping the client reusable.
-func (c *DirectInferenceClient) ClearResponseCache() { c.client.ClearResponseCache() }
-
-func (c *DirectInferenceClient) Close() error { return c.client.Close() }

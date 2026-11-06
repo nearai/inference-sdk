@@ -183,7 +183,7 @@ func TestMessagesRejectUnsupportedBeforeIO(t *testing.T) {
 		_, e = c.RoundTrip(req)
 		requireCode(t, e, "api.invalid_input")
 	}
-	direct, e := NewDirectInferenceClient(DirectInferenceOptions{InferenceOptions: c.options})
+	direct, e := NewDirectInferenceClient(DirectInferenceOptions{ClientOptions: c.options.ClientOptions})
 	if e != nil {
 		t.Fatal(e)
 	}
