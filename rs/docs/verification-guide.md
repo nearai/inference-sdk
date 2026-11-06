@@ -81,9 +81,10 @@ and logprobs. Both Ed25519 and ECDSA are supported.
 request and `decrypt_json` / `decrypt_sse` helpers. Retain the encrypted request
 and response bytes for standalone signature verification.
 
-Set `ohttp: true` to encrypt the HTTP exchange to the Gateway. OHTTP requires
-Ed25519 and an endpoint serving `/ohttp`. E2EE and OHTTP can be enabled
-independently or together.
+Set `ohttp: true` to encrypt encapsulated requests and responses to the Gateway
+or Direct endpoint. `Authorization` and configured forwarded headers remain on
+the outer HTTP request. OHTTP requires Ed25519 and an endpoint serving `/ohttp`;
+it can be enabled independently of E2EE.
 
 For manual OHTTP, authenticate the key configuration with
 `verify_ohttp_key_config`, then pass it to `create_ohttp_client`.

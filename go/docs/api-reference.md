@@ -489,9 +489,9 @@ Protected fields include message content, reasoning, audio, tool definitions and
 calls, logprobs, and streaming tool-result output. Use `PrepareE2EEChatRequest`
 with a verified model key for standalone encryption.
 
-OHTTP protects the HTTP exchange to the Gateway or Direct endpoint. It is
-independent of E2EE and also supports Gateway-only models. Authenticate the key
-configuration before using `NewOHTTPTransport`.
+OHTTP encrypts encapsulated requests and responses to the Gateway or Direct
+endpoint. It is independent of E2EE and also supports Gateway-only models.
+Authenticate the key configuration before using `NewOHTTPTransport`.
 
 ## Deployment and image policies
 

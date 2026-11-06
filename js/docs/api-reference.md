@@ -428,8 +428,9 @@ The Node client captures the attestation connection's TLS fingerprint by default
 
 `verifyDirectModelAttestations` verifies every returned attestation and compares
 the serving attestation with the observed TLS peer when SPKI evidence is supplied.
-The browser client requests reports without TLS fingerprints; the Node client
-requests and verifies them by default.
+The Node `DirectAttestationClient` requests SPKI evidence by default; pass
+`includeSpkiFingerprint: false` to omit it. The generic entry does not capture
+the TLS peer and requests reports without SPKI evidence.
 
 ## Model attestation selection
 

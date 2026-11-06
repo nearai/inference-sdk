@@ -65,8 +65,10 @@ const client = new InferenceClient({
 
 OHTTP requires Ed25519 and an endpoint serving `/ohttp`.
 
-OHTTP encrypts the HTTP exchange to the Gateway; E2EE encrypts supported Chat
-fields to the model. They can be enabled independently or together.
+OHTTP encrypts encapsulated requests and responses to the Gateway or Direct
+endpoint. `Authorization` and configured forwarded headers remain on the outer
+HTTP request. E2EE encrypts supported Chat fields to the model; both options can
+be enabled independently or together.
 
 Chat calls and `verifyResponse(id)` use the same interfaces with OHTTP enabled.
 

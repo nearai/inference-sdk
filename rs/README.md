@@ -8,7 +8,8 @@ with deployment attestation, response signature verification, and optional encry
 Rust stable and Cargo.
 
 ```sh
-cargo add nearai-inference-sdk
+cargo add nearai-inference-sdk serde_json
+cargo add tokio --features macros,rt-multi-thread
 ```
 
 ## Send and verify a Chat completion
@@ -60,7 +61,7 @@ The [runnable project](../examples/example-rs) includes the Tokio setup.
 
 Call `client.verify(model).await?` to verify a deployment before sending a prompt.
 Use deployment and image provenance policies to restrict accepted deployments.
-Models without model attestation use Gateway-only verification with E2EE disabled.
+For models without model attestation, disable E2EE to use Gateway-only verification.
 
 ## Documentation
 

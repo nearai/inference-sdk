@@ -415,9 +415,9 @@ field label through authenticated data. The endpoint must support v3. See the
 for the format and supported fields.
 
 Enable `E2EE: true` to encrypt supported content fields to an attested model key.
-Enable `OHTTP: true` independently to encrypt the inner Chat HTTP exchange to
-the Gateway; it requires Ed25519 and can be combined with E2EE. Authorization
-remains visible to the receiving endpoint. See the
+Enable `OHTTP: true` to encrypt encapsulated requests and responses to the Gateway
+or Direct endpoint. `Authorization` and configured forwarded headers remain on
+the outer HTTP request. OHTTP requires Ed25519 and can be combined with E2EE. See the
 [encryption reference](./api-reference.md#encryption) for exact field coverage.
 
 Gateway requests use attested TLS pinning by default. For an application proxy,
