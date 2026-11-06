@@ -30,6 +30,7 @@ import {
   model,
   type NodeAttestationClientPrototype,
   retainedCapture,
+  streamResponse,
   TestNodeInferenceClient,
 } from './inference-client-fixtures';
 import { createOhttpEndpoint } from './ohttp-fixtures';

@@ -201,7 +201,7 @@ export function fixtureId(id: string, requestNumber: number): string {
   return requestNumber === 1 ? id : `${id}-${requestNumber}`;
 }
 
-function streamResponse(events: readonly string[]): Response {
+export function streamResponse(events: readonly string[]): Response {
   const encoder = new TextEncoder();
   let index = 0;
   const body = new ReadableStream<Uint8Array>({
