@@ -15,9 +15,6 @@ type DirectInferenceClient struct {
 // NewDirectInferenceClient is experimental: no Gateway or direct TLS attestation
 // binding. E2EE is opt-in, as with NewInferenceClient.
 func NewDirectInferenceClient(o DirectInferenceOptions) (*DirectInferenceClient, error) {
-	if o.DisableE2EE {
-		o.E2EE = false
-	}
 	core, err := newInferenceCore(inferenceOptions{
 		ClientOptions:     o.ClientOptions,
 		SigningAlgo:       o.SigningAlgo,

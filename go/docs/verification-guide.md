@@ -491,10 +491,9 @@ response verification. `Verify` returns `DirectAttestationVerificationResult`:
 all verified reports in `Attestations`, the preflight endpoint's
 `ServingAttestation`, and `VerifiedAt`. The serving report does not identify
 which instance handles a later completion.
-Use `E2EE` to configure encryption; `DisableE2EE` is deprecated. Direct clients omit
-Gateway verification and do not bind TLS identity to attestation; normal HTTPS
-validation still applies. They are experimental and not recommended for
-production. Use Gateway clients for production integrations.
+Direct clients omit Gateway verification and do not bind TLS identity to
+attestation; normal HTTPS validation still applies. They are experimental and
+not recommended for production. Use Gateway clients for production integrations.
 
 `VerifyResponse` returns `VerifiedDirectCompletionResult` with every matching
 report in `Attestations`. It has no singular `Attestation` field: a shared signing

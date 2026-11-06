@@ -215,23 +215,21 @@ func TestDirectClientPublicSurface(t *testing.T) {
 
 func TestDirectClientE2EEIsOptIn(t *testing.T) {
 	for _, scenario := range []struct {
-		name              string
-		e2ee, disableE2EE bool
+		name string
+		e2ee bool
 	}{
-		{"default plaintext", false, false},
-		{"explicit E2EE", true, false},
-		{"legacy disable overrides opt-in", true, true},
+		{"default plaintext", false},
+		{"explicit E2EE", true},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			f := newFakeCloud(t)
-			f.tee, f.direct, f.encrypt = true, true, scenario.e2ee && !scenario.disableE2EE
+			f.tee, f.direct, f.encrypt = true, true, scenario.e2ee
 			server := httptest.NewServer(f)
 			defer server.Close()
 			opts := DirectInferenceOptions{
 				ClientOptions:     ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"},
 				ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote},
 				E2EE:              scenario.e2ee,
-				DisableE2EE:       scenario.disableE2EE,
 			}
 			client, err := NewDirectInferenceClient(opts)
 			if err != nil {

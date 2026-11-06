@@ -425,10 +425,6 @@ type DirectInferenceOptions struct {
 	ResponseTTL       *time.Duration
 	ModelVerification VerificationOptions
 	DeploymentPolicy  func(context.Context, string, MeasuredDeployment) error
-
-	// Deprecated: E2EE is disabled by default. Set E2EE to enable it.
-	// When true, DisableE2EE takes precedence over E2EE.
-	DisableE2EE bool
 }
 
 type VerifiedDirectModelAttestations struct {
