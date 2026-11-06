@@ -3,25 +3,18 @@ package nearai
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
-
-	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	secpecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 )
 
 type messagesFixture struct {
 	cloud                       *fakeCloud
-	ecdsaKey                    *secp.PrivateKey
 	raw                         []byte
 	streaming, tamper, provider bool
 	status                      int
@@ -46,38 +39,15 @@ func (f *messagesFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if items[1].(map[string]any)["role"] != "user" {
 		f.cloud.t.Error("replay input not preserved")
 	}
-	kind := "gateway"
-	text := hashText(body) + ":" + hashText(f.raw)
-	if f.provider {
-		kind = "provider_tee"
-		text = "canonical/model:" + text
-	}
-	sig := CompletionSignature{kind, text, hex.EncodeToString(ed25519.Sign(f.cloud.priv, []byte(text))), f.cloud.a.Signer}
-	if f.ecdsaKey != nil {
-		digest := keccak([]byte("\x19Ethereum Signed Message:\n" + itoa(len(text)) + text))
-		compact := secpecdsa.SignCompact(f.ecdsaKey, digest, false)
-		sig.Signature = hex.EncodeToString(append(compact[1:], compact[0]))
-	}
+	sig := f.cloud.completionSignature(body, f.raw, f.provider)
 	f.cloud.mu.Lock()
 	f.cloud.signatures["msg_fixture"] = sig
 	f.cloud.mu.Unlock()
-	contentType := "application/json"
-	if f.streaming {
-		contentType = "text/event-stream"
-	}
-	w.Header().Set("Content-Type", contentType)
-	if f.status != 0 {
-		w.WriteHeader(f.status)
-	}
 	visible := f.raw
 	if f.tamper {
 		visible = bytes.ReplaceAll(visible, []byte("Hello"), []byte("Altered"))
 	}
-	for i := 0; i < len(visible); i += 7 {
-		end := min(i+7, len(visible))
-		w.Write(visible[i:end])
-		w.(http.Flusher).Flush()
-	}
+	writeChunkedResponse(w, visible, f.streaming, f.status)
 }
 
 func messageInput(streaming bool) map[string]any {
@@ -99,16 +69,7 @@ func messagesClient(t *testing.T, streaming bool, modify func(*InferenceOptions)
 	cloud := newFakeCloud(t)
 	cloud.tee = true
 	f := &messagesFixture{cloud: cloud, raw: raw, streaming: streaming}
-	server := httptest.NewServer(f)
-	options := InferenceOptions{ClientOptions: ClientOptions{APIKey: "test", BaseURL: server.URL + "/v1"}, DisableTLSBinding: true, GatewayVerification: VerificationOptions{QuoteVerifier: fakeQuote}, ModelVerification: VerificationOptions{QuoteVerifier: fakeQuote}}
-	if modify != nil {
-		modify(&options)
-	}
-	c, e := NewInferenceClient(options)
-	if e != nil {
-		t.Fatal(e)
-	}
-	t.Cleanup(func() { c.Close(); server.Close() })
+	c, _ := fakeClient(t, f, modify)
 	return c, f
 }
 func sendMessage(t *testing.T, c *InferenceClient, streaming bool) ([]byte, error) {
@@ -132,7 +93,6 @@ func TestMessagesExactGatewayReceipts(t *testing.T) {
 				c, f := messagesClient(t, streaming, func(o *InferenceOptions) { o.SigningAlgo = algo })
 				if algo == ECDSA {
 					f.cloud.useECDSA()
-					f.ecdsaKey = f.cloud.ecdsaKey
 				}
 				body, e := sendMessage(t, c, streaming)
 				if e != nil {

@@ -8,7 +8,6 @@ import {
 import type { SigningAlgo, SigningIdentity } from '../types/attestation-common';
 import type { CompletionSignature } from '../types/chat';
 import type {
-  AttestationClientOptions,
   FetchCompletionSignatureParams,
   FetchedGatewayAttestation,
   FetchedModelAttestations,
@@ -198,29 +197,6 @@ type GatewaySessionTransport = {
     params: FetchCompletionSignatureParams,
   ) => Promise<CompletionSignature>;
 };
-
-type GatewaySessionEvidenceClientParams = {
-  readonly options: AttestationClientOptions;
-  readonly fetch: typeof globalThis.fetch;
-  readonly signal: AbortSignal;
-};
-
-/** Session evidence requests share the transport and cancellation owned by preflight. */
-class GatewaySessionEvidenceClient extends CloudApiClient {
-  private readonly gatewayFetch: typeof globalThis.fetch;
-  private readonly signal: AbortSignal;
-
-  constructor({ options, fetch, signal }: GatewaySessionEvidenceClientParams) {
-    super(options);
-    this.gatewayFetch = fetch;
-    this.signal = signal;
-  }
-
-  protected override requestCloudApi(request: Request): Promise<Response> {
-    this.signal.throwIfAborted();
-    return this.gatewayFetch(new Request(request, { signal: this.signal }));
-  }
-}
 
 type VerifyModelAttestationsParams = {
   readonly model: string;
@@ -883,10 +859,13 @@ export abstract class InferenceClientBase extends VerifiedInferenceClientBase<
     );
     const controller = new AbortController();
     const { signal } = controller;
-    const client = new GatewaySessionEvidenceClient({
-      options: this.gatewayOptions,
-      fetch: gatewayFetch,
-      signal,
+    const client = new CloudApiClient({
+      ...this.gatewayOptions,
+      // Evidence requests share the transport and cancellation owned by preflight.
+      fetch: (input, init) => {
+        signal.throwIfAborted();
+        return gatewayFetch(new Request(input, { ...init, signal }));
+      },
     });
     const transport: GatewaySessionTransport = {
       fetch: gatewayFetch,

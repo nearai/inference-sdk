@@ -7,40 +7,16 @@ from urllib.parse import urljoin
 import pytest
 from typesafe_sdk import AsyncTypeSafeClient, Choice, Noul, RetryPolicy, Score
 
-from e2e.helpers import required_env, retry_receipt, selected_models
+from e2e.helpers import decision_request, required_env, retry_receipt
 from nearai_inference_sdk import (
     AttestationClient,
     InferenceClient,
     SigningAlgo,
-    SystemOneRequest,
     VerificationError,
     create_pinned_tls_client,
     verify_gateway_attestation,
     verify_gateway_response,
 )
-
-
-def decision_request() -> SystemOneRequest:
-    return {
-        'model': selected_models('systemone', 'external')[0],
-        'state': {'message': 'I was charged twice for my subscription. Please help.'},
-        'questions': {
-            'billing': {'type': 'noul', 'instructions': 'Is this about billing?'},
-            'team': {
-                'type': 'choice',
-                'instructions': 'Which team should handle this?',
-                'criteria': {
-                    'billing': 'Payments and subscriptions',
-                    'support': 'Technical issues',
-                },
-            },
-            'urgency': {
-                'type': 'score',
-                'instructions': 'How urgent is this request?',
-                'criteria': ['Routine', 'Needs prompt attention', 'Critical'],
-            },
-        },
-    }
 
 
 @pytest.mark.asyncio

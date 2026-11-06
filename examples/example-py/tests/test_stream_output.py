@@ -8,9 +8,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from direct import chat_completions_bare as direct
-from direct.chat_completions_bare import read_stream as read_direct
 from gateway import chat_completions_bare as gateway
-from gateway.chat_completions_bare import read_stream as read_gateway
+from utils.chat_output import read_stream
 
 
 class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
@@ -63,11 +62,11 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(completion.response_body, body)
 
     async def test_displays_before_done_and_handles_split_utf8(self):
-        for read_stream in (read_direct, read_gateway):
-            for separator in ('\n', '\r\n', '\r'):
-                await self.check_stream(read_stream, separator)
+        for separator in ('\n', '\r\n', '\r'):
+            with self.subTest(separator=repr(separator)):
+                await self.check_stream(separator)
 
-    async def check_stream(self, read_stream, separator):
+    async def check_stream(self, separator):
         record = separator.join(
             [
                 'data: {"id":"chat-fixture",',
@@ -97,15 +96,15 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.getvalue(), 'Hello 🌍\n')
 
     async def test_removes_only_initial_bom_across_chunks(self):
-        for read_stream in (read_direct, read_gateway):
-            for prefix in (
-                '\ufeff',
-                '\ufeff\ufeffdata: {"error":"ignored"}\n\n',
-                ': first\n\n\ufeffdata: {"error":"ignored"}\n\n',
-            ):
-                await self.check_bom_stream(read_stream, prefix)
+        for prefix in (
+            '\ufeff',
+            '\ufeff\ufeffdata: {"error":"ignored"}\n\n',
+            ': first\n\n\ufeffdata: {"error":"ignored"}\n\n',
+        ):
+            with self.subTest(prefix=repr(prefix)):
+                await self.check_bom_stream(prefix)
 
-    async def check_bom_stream(self, read_stream, prefix):
+    async def check_bom_stream(self, prefix):
         event = 'data: {"id":"chat-fixture","choices":[{"delta":{"content":"Hello 🌍"}}]}\n\n'
         record = (prefix + event).encode()
         output = io.StringIO()
@@ -128,14 +127,13 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output.getvalue(), 'Hello 🌍\n')
 
     async def test_truncated_stream_is_an_error(self):
-        for read_stream in (read_direct, read_gateway):
-            with (
-                contextlib.redirect_stdout(io.StringIO()),
-                self.assertRaisesRegex(RuntimeError, 'without'),
-            ):
-                await read_stream(httpx.Response(200, content=b'data: {}\n\n'))
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            self.assertRaisesRegex(RuntimeError, 'without'),
+        ):
+            await read_stream(httpx.Response(200, content=b'data: {}\n\n'))
 
-    async def test_gateway_rejects_conflicting_completion_ids(self):
+    async def test_rejects_conflicting_completion_ids(self):
         body = (
             b'data: {"id":"chat-first","choices":[]}\n\n'
             b'data: {"id":"chat-other","choices":[]}\n\n'
@@ -145,15 +143,15 @@ class StreamOutputTests(unittest.IsolatedAsyncioTestCase):
             contextlib.redirect_stdout(io.StringIO()),
             self.assertRaisesRegex(RuntimeError, 'conflicting completion IDs'),
         ):
-            await read_gateway(httpx.Response(200, content=body))
+            await read_stream(httpx.Response(200, content=body))
 
-    async def test_gateway_rejects_error_events(self):
+    async def test_rejects_error_events(self):
         for event in (b'{"error":"failed"}', b'{"type":"error","message":"failed"}'):
             with (
                 contextlib.redirect_stdout(io.StringIO()),
                 self.assertRaisesRegex(RuntimeError, 'Stream returned an error'),
             ):
-                await read_gateway(
+                await read_stream(
                     httpx.Response(
                         200, content=b'data: ' + event + b'\n\ndata: [DONE]\n\n'
                     )

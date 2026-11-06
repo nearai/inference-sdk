@@ -1,0 +1,26 @@
+import json
+
+from e2e.helpers import decision_request, selected_models
+
+
+def test_suites_use_their_entries_from_the_shared_catalog(monkeypatch):
+    monkeypatch.setenv(
+        'NEARAI_E2E_MODELS',
+        json.dumps(
+            [
+                {'id': 'near/chat', 'provider': 'near', 'endpoint': 'chat'},
+                {'id': 'typesafe/jev', 'provider': 'external', 'endpoint': 'systemone'},
+                {'id': 'external/chat', 'provider': 'external', 'endpoint': 'chat'},
+                {
+                    'id': 'anthropic/text',
+                    'provider': 'external',
+                    'endpoint': 'messages',
+                },
+            ]
+        ),
+    )
+
+    assert selected_models('chat', 'near') == ['near/chat']
+    assert selected_models('chat', 'external') == ['external/chat']
+    assert decision_request()['model'] == 'typesafe/jev'
+    assert selected_models('messages', 'external') == ['anthropic/text']

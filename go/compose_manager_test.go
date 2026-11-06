@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -317,7 +319,7 @@ func TestDirectDiscardsMalformedNestedManagerEvidenceBeforeDecoding(t *testing.T
 
 func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
 	for _, chunked := range []bool{false, true} {
-		t.Run(itoa(boolInt(chunked)), func(t *testing.T) {
+		t.Run(fmt.Sprintf("chunked=%t", chunked), func(t *testing.T) {
 			fixture := loadManagerFixture(t)
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +327,7 @@ func TestComposeFileSizeBoundPrecedesHashAndParsing(t *testing.T) {
 				if chunked {
 					w.(http.Flusher).Flush()
 				} else {
-					w.Header().Set("Content-Length", itoa(maxComposeFileBytes+1))
+					w.Header().Set("Content-Length", strconv.Itoa(maxComposeFileBytes+1))
 				}
 				_, _ = w.Write(bytes.Repeat([]byte("x"), maxComposeFileBytes+1))
 			}))
